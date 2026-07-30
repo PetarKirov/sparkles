@@ -1,0 +1,219 @@
+{
+    "code": "// NB: a documented unittest is *not* surfaced as an Examples section here.\n/++\nReturns the larger of two ints.\nReturns: a when it is at least b.\n+/\nint larger(int a, int b) => a >= b ? a : b;\n\n/// The documented-unittest form: this example belongs to `larger`.\nunittest\n{\n    assert(larger(2, 3) == 3);\n}\n\nauto top = larger(10, 20);\n",
+    "language": "d",
+    "nodes": [
+        {
+            "character": 4,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "Returns the `larger` of two ints.",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 5,
+            "name": "",
+            "start": 153,
+            "tags": [
+                [
+                    "returns",
+                    "`a` when it is at least `b`."
+                ]
+            ],
+            "text": "int sample.larger(int a, int b)",
+            "type": "hover"
+        },
+        {
+            "character": 15,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 1,
+            "level": "",
+            "line": 5,
+            "name": "",
+            "start": 164,
+            "tags": [],
+            "text": "(parameter) int a",
+            "type": "hover"
+        },
+        {
+            "character": 22,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 1,
+            "level": "",
+            "line": 5,
+            "name": "",
+            "start": 171,
+            "tags": [],
+            "text": "(parameter) int b",
+            "type": "hover"
+        },
+        {
+            "character": 28,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 1,
+            "level": "",
+            "line": 5,
+            "name": "",
+            "start": 177,
+            "tags": [],
+            "text": "(parameter) int a",
+            "type": "hover"
+        },
+        {
+            "character": 33,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 1,
+            "level": "",
+            "line": 5,
+            "name": "",
+            "start": 182,
+            "tags": [],
+            "text": "(parameter) int b",
+            "type": "hover"
+        },
+        {
+            "character": 37,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 1,
+            "level": "",
+            "line": 5,
+            "name": "",
+            "start": 186,
+            "tags": [],
+            "text": "(parameter) int a",
+            "type": "hover"
+        },
+        {
+            "character": 41,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 1,
+            "level": "",
+            "line": 5,
+            "name": "",
+            "start": 190,
+            "tags": [],
+            "text": "(parameter) int b",
+            "type": "hover"
+        },
+        {
+            "character": 11,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "Returns the `larger` of two ints.",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 10,
+            "name": "",
+            "start": 284,
+            "tags": [
+                [
+                    "returns",
+                    "`a` when it is at least `b`."
+                ]
+            ],
+            "text": "int sample.larger(int a, int b)",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 3,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 312,
+            "tags": [],
+            "text": "(thread local global) int sample.top",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 3,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 312,
+            "tags": [],
+            "text": "(thread local global) int sample.top",
+            "type": "query"
+        },
+        {
+            "character": 11,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "Returns the `larger` of two ints.",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 318,
+            "tags": [
+                [
+                    "returns",
+                    "`a` when it is at least `b`."
+                ]
+            ],
+            "text": "int sample.larger(int a, int b)",
+            "type": "hover"
+        },
+        {
+            "character": 11,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "Returns the `larger` of two ints.",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 318,
+            "tags": [
+                [
+                    "returns",
+                    "`a` when it is at least `b`."
+                ]
+            ],
+            "text": "int sample.larger(int a, int b)",
+            "type": "query"
+        }
+    ],
+    "offsetEncoding": "utf-8"
+}

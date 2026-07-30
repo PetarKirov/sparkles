@@ -1,0 +1,169 @@
+{
+    "code": "/++\nParses a decimal byte count with an optional `KB`/`MB` suffix.\n\nThe input is trimmed first; a bare number means bytes.\n\nReturns: The size in bytes.\nThrows: `Exception` when text is not a number.\nSee_Also: $(LREF formatBytes)\nDeprecated: Prefer `parseSize` — this spelling goes away in 2.0.\nAuthors: The sparkles authors\nVersion: 1.3.0\nComplexity_Notes: Single pass, $(BIGOH n) in the length of text.\n+/\nsize_t parseBytes(string text) => text.length;\n",
+    "language": "d",
+    "nodes": [
+        {
+            "character": 0,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 409,
+            "tags": [],
+            "text": "(alias) object.size_t = ulong",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "Parses a decimal byte count with an optional `KB`/`MB` suffix.\n\nThe input is trimmed first; a bare number means bytes.\n\n### Complexity Notes\n\nSingle pass, O(n) in the length of `text`.",
+            "id": "",
+            "length": 10,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 416,
+            "tags": [
+                [
+                    "returns",
+                    "The size in bytes."
+                ],
+                [
+                    "throws",
+                    "`Exception` when `text` is not a number."
+                ],
+                [
+                    "see",
+                    "`formatBytes`"
+                ],
+                [
+                    "deprecated",
+                    "Prefer `parseSize` — this spelling goes away in 2.0."
+                ],
+                [
+                    "authors",
+                    "The sparkles authors"
+                ],
+                [
+                    "version",
+                    "1.3.0"
+                ]
+            ],
+            "text": "ulong sample.parseBytes(string text)",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "Parses a decimal byte count with an optional `KB`/`MB` suffix.\n\nThe input is trimmed first; a bare number means bytes.\n\n### Complexity Notes\n\nSingle pass, O(n) in the length of `text`.",
+            "id": "",
+            "length": 10,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 416,
+            "tags": [
+                [
+                    "returns",
+                    "The size in bytes."
+                ],
+                [
+                    "throws",
+                    "`Exception` when `text` is not a number."
+                ],
+                [
+                    "see",
+                    "`formatBytes`"
+                ],
+                [
+                    "deprecated",
+                    "Prefer `parseSize` — this spelling goes away in 2.0."
+                ],
+                [
+                    "authors",
+                    "The sparkles authors"
+                ],
+                [
+                    "version",
+                    "1.3.0"
+                ]
+            ],
+            "text": "ulong sample.parseBytes(string text)",
+            "type": "query"
+        },
+        {
+            "character": 18,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 427,
+            "tags": [],
+            "text": "(alias) object.string = string",
+            "type": "hover"
+        },
+        {
+            "character": 25,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 4,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 434,
+            "tags": [],
+            "text": "(parameter) string text",
+            "type": "hover"
+        },
+        {
+            "character": 34,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 4,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 443,
+            "tags": [],
+            "text": "(parameter) string text",
+            "type": "hover"
+        },
+        {
+            "character": 39,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 448,
+            "tags": [],
+            "text": "(field) ulong string.length",
+            "type": "hover"
+        }
+    ],
+    "offsetEncoding": "utf-8"
+}
