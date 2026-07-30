@@ -1,0 +1,27 @@
+name "twoslash-extract"
+description "Batch D twoslash extractor: annotated D sample -> .twoslash.json node payload"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+targetType "executable"
+targetName "twoslash-extract"
+
+dependency "sparkles:core-cli" path="../.."
+dependency "sparkles:twoslash-d" path="../.."
+
+// Like sparkles:dmd-lsp / sparkles:twoslash-d: no -preview flags (the dmd
+// frontend dependency's headers are not dip1000-clean).
+
+configuration "application" {
+    targetType "executable"
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
