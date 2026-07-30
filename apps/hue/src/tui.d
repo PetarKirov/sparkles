@@ -1,13 +1,12 @@
-// hue's full-screen terminal viewer — the interactive TUI port of the GUI, built
-// on `sparkles:tui`. It reuses the GUI's raylib-free layout (`gui_preview`
-// `layoutPreview` / `buildRawPlines` → the wrapped `PreviewLine[]`) and paints it
-// into a `sparkles.tui.Grid`; the library's `Terminal` cell-diffs each frame and
-// writes only the changed cells (so scrolling emits a minimal update — no full
-// repaint, no flicker), and `PosixEvents` decodes input.
+// hue's terminal document viewer — the `workspace` split's right pane (and the
+// whole screen when the explorer is hidden). The markdown preview renders
+// through the composable widget view; the raw view wraps highlighted source
+// (`buildRawPlines` → `PreviewLine[]`). Painted into a `sparkles.tui.Grid`
+// at the pane's origin; the workspace's `Terminal` cell-diffs each frame.
 //
 // Covers scrolling, a raw/preview toggle, live theme cycling, a cell scrollbar,
-// mouse (wheel + scrollbar + drag-selection → OSC 52), incremental search, and
-// reflow on resize. Posix-only; Windows degrades to the non-interactive emit.
+// mouse (wheel + scrollbar + drag-selection → OSC 52), incremental search,
+// folding, and reflow on resize. Posix-only.
 module tui;
 
 version (Posix):
@@ -103,7 +102,11 @@ struct PreviewTui
     private size_t themeIdx;
     private long top;               // first visible visual line
     private bool showPreview;       // preview vs raw source (Tab)
-    private int width, height;      // last-measured terminal size
+    private int width, height;      // pane size in cells
+    /// Grid column of the pane's left edge — 0 when full-screen; the split
+    /// workspace places the viewer right of the explorer. Pointer events are
+    /// translated to pane-local coordinates by the caller.
+    int originX;
     private PreviewLine[] plines;   // laid out for (themeIdx, width, showPreview)
     private ResolvedTheme theme;
     private RgbColor pageFg, pageBg, gutterFg;
@@ -158,6 +161,33 @@ struct PreviewTui
 
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
 
+    /// The pane is consuming typed text (the workspace must not steal keys).
+    bool inputActive() const @safe pure nothrow @nogc => searching;
+
+    /// Selects the theme by index (the workspace initializes the pane; the
+    /// first `relayout` resolves it).
+    void setTheme(size_t idx) @safe pure nothrow @nogc
+    {
+        themeIdx = idx < names.length ? idx : 0;
+    }
+
+    /// Sets the pane size in cells (the workspace arranges; `relayout` after).
+    void resize(int w, int h) @safe pure nothrow @nogc
+    {
+        width = w;
+        height = h;
+    }
+
+    /// The pending OSC 52 clipboard write, if any (cleared by the take) — the
+    /// event loop flushes it out of band after the frame.
+    const(char)[] takeClipboard() return @safe pure nothrow @nogc
+    {
+        if (!clipReady)
+            return null;
+        clipReady = false;
+        return clip[];
+    }
+
     // The markdown preview renders through the widget tree; raw source (and
     // non-markdown files) keep the styled-line path.
     private bool usingWidgets() const @safe pure nothrow @nogc
@@ -169,7 +199,7 @@ struct PreviewTui
 
     /// Rebuild the laid-out lines for the current theme / width / view mode (GC;
     /// run on a theme, resize, or toggle change — never per frame).
-    private void relayout() @system
+    void relayout() @system
     {
         theme = resolveTheme(themes[themeIdx], labels);
         pageFg = toRgb(theme.defaults.fg, fallbackFg);
@@ -344,12 +374,33 @@ struct PreviewTui
 
     // ── Painting into the cell grid ──────────────────────────────────────────
 
+    /// Replaces the viewed document (the workspace's pane reuses the session):
+    /// content swaps, scroll/search/selection/folds reset, layout rebuilds.
+    void setDocument(string title_, const(char)[] source_,
+        const(HighlightEvent)[] events_, PreviewModel model_,
+        bool startPreview) @system
+    {
+        title = title_;
+        source = source_;
+        events = events_;
+        model = model_;
+        showPreview = startPreview && model.present;
+        top = 0;
+        sel = Selection!long.cleared;
+        searching = false;
+        qlen = 0;
+        copiedFenceSrc = size_t.max;
+        folds = DisclosureState!size_t(true);
+        relayout();
+    }
+
     /// Paint the whole frame into `g` (immediate mode). The library diffs it
     /// against the last frame, so only changed cells reach the wire.
     void paint(ref Grid g) @system
     {
-        // Fill the screen with the theme background (the full-screen look).
-        g.clearTo(cellStyle(pageFg, true, pageBg, 0));
+        // Fill the pane with the theme background (the full-screen look).
+        g.fillRect(cast(ushort) originX, 0, cast(ushort) width,
+            cast(ushort) height, cellStyle(pageFg, true, pageBg, 0));
         paintHeader(g);
 
         if (usingWidgets)
@@ -378,7 +429,7 @@ struct PreviewTui
     private void paintMarkdown(ref Grid g) @system
     {
         const rows = bodyRows();
-        paintGrid(g, pageBg, mdOps, 0, cast(int)(1 - top),
+        paintGrid(g, pageBg, mdOps, originX, cast(int)(1 - top),
             Rect(0, cast(int) top, width, rows));
         if (!sel.active)
             return;
@@ -389,7 +440,7 @@ struct PreviewTui
             if (gy < 1 || gy > rows)
                 continue;
             foreach (x; 0 .. (width > 1 ? width - 1 : 0))
-                g[cast(ushort) x, cast(ushort) gy].style.bg = selFill;
+                g[cast(ushort)(originX + x), cast(ushort) gy].style.bg = selFill;
         }
     }
 
@@ -406,7 +457,7 @@ struct PreviewTui
         auto tree = b.finish(col);
         auto ops = buildDisplayList(tree, layout(tree),
             themes[themeIdx].effectivePalette, pageFg, pageBg);
-        paintGrid(g, pageBg, ops, 0, y);
+        paintGrid(g, pageBg, ops, originX, y);
     }
 
     private void paintHeader(ref Grid g) @system
@@ -442,23 +493,27 @@ struct PreviewTui
     private void paintLine(ref Grid g, ushort y, in PreviewLine pl, bool sel) @system
     {
         const fillBg = sel ? selBg : (pl.band == BandKind.heading ? pl.bandBg : pageBg);
-        g.fill(0, y, g.cols, cellStyle(pageFg, true, fillBg, 0));
+        const right = cast(ushort)(originX + width < g.cols
+            ? originX + width : g.cols);
+        g.fill(cast(ushort) originX, y, cast(ushort)(right - originX),
+            cellStyle(pageFg, true, fillBg, 0));
 
-        ushort x = pl.indentCols > 0 ? cast(ushort) pl.indentCols : 0;
+        ushort x = cast(ushort)(originX
+            + (pl.indentCols > 0 ? pl.indentCols : 0));
         foreach (d; 0 .. pl.quoteDepth)
         {
             const barFg = pl.hasBarFg ? pl.barFg : bars[d % quoteBarCycle];
-            if (x < g.cols)
+            if (x < right)
                 x = g.putText(x, y, "│", cellStyle(barFg, true, fillBg, 0));
-            if (x < g.cols)
+            if (x < right)
                 ++x; // the 2-column bar spacing (already fillBg from the row fill)
         }
-        if (pl.leader.length && x < g.cols)
+        if (pl.leader.length && x < right)
             x = g.putText(x, y, pl.leader,
                 cellStyle(pl.hasLeaderFg ? pl.leaderFg : gutterFg, true, fillBg, 0));
         foreach (ref r; pl.runs)
         {
-            if (x >= g.cols)
+            if (x >= right)
                 break;
             const rbg = sel ? selBg : (r.hasBg ? r.bg : fillBg);
             x = g.putText(x, y, r.text, cellStyle(r.fg, true, rbg, r.attrs));
@@ -470,12 +525,12 @@ struct PreviewTui
     private void paintScrollbar(ref Grid g) @system
     {
         const rows = bodyRows();
-        if (lineCount <= rows || g.cols < 2)
+        if (lineCount <= rows || g.cols < 2 || originX + width > g.cols)
             return;
         // The one thumb formula (STM2) — the GUI renders the same geometry.
         const thumb = scrollbarThumb(cast(size_t) lineCount, rows, top, rows);
 
-        const col = cast(ushort)(g.cols - 1);
+        const col = cast(ushort)(originX + width - 1);
         foreach (r; 0 .. rows)
         {
             const inThumb = r >= thumb.start && r < thumb.start + thumb.extent;
@@ -539,8 +594,8 @@ struct PreviewTui
         clampTop();
     }
 
-    // Apply an event; returns false to quit.
-    private bool handle(in Event e) @system
+    /// Apply an event; returns false to quit.
+    bool handle(in Event e) @system
     {
         if (copiedFenceSrc != size_t.max)
         {
@@ -695,59 +750,6 @@ struct PreviewTui
             default: break;
         }
     }
-}
-
-/// Run the interactive scrolling viewer until the user quits. Uses `sparkles:tui`
-/// for the terminal lifecycle + cell-diffed frame flush and for input decoding.
-/// `themeIdx` is the starting theme; `startPreview` opens a markdown file in the
-/// decorated preview (else raw source). Returns 0 (1 if stdin isn't a tty).
-int runPreviewTui(ref PreviewTui t, size_t themeIdx, bool startPreview) @system
-{
-    t.themeIdx = themeIdx < t.names.length ? themeIdx : 0;
-    t.showPreview = startPreview;
-
-    auto term = Terminal.open();
-    if (!term.active)
-        return 1; // not a real tty — the caller should have used the ANSI emit
-    scope (exit) term.close();
-
-    auto events = PosixEvents.start();
-
-    Grid g;
-    for (;;)
-    {
-        const sz = term.size();
-        if (sz.width != t.width) // width changed (or first frame) → reflow layout
-        {
-            t.width = sz.width;
-            t.height = sz.height;
-            t.relayout();
-        }
-        else
-        {
-            t.height = sz.height;
-            t.clampTop();
-        }
-
-        g.resize(sz.width, sz.height);
-        t.paint(g);
-        term.draw(g); // cell-diff: only changed cells reach the terminal
-
-        if (t.clipReady)
-        {
-            term.writeRaw(t.clip[]); // OSC 52 clipboard write (out of band)
-            t.clipReady = false;
-        }
-
-        const ev = events.next();
-        if (ev.isEndOfInput)
-            break;
-        if (ev.match!((in ResizeEvent _) => true, _ => false))
-            continue; // next iteration re-measures + reflows
-        if (!t.handle(ev))
-            break;
-    }
-    return 0;
 }
 
 @("tui.paint.rawGridContent")

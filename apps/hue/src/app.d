@@ -356,31 +356,24 @@ int main(string[] args)
     bool haveSet;
     if (isDirectoryPath(target))
     {
-        // The interactive terminal opens the file explorer (`TVU1`): the tree
-        // picks a file, the existing viewer shows it, quitting the viewer
-        // returns to the tree — the preview pane is the whole viewer.
+        // The interactive terminal opens the split-pane workspace (`XPL2`)
+        // with the explorer focused: picking a file fills the viewer pane
+        // beside it — one loop, no full-screen transitions.
         version (Posix)
             if (backend == Backend.tui && !forceTwoslash)
             {
-                import explorer : runExplorer;
+                import workspace : runWorkspace, WorkspaceDoc;
 
                 auto themeSet = sortedThemes(cli.theme);
-                for (;;)
-                {
-                    const picked = runExplorer(target,
-                        &themeSet.themes[themeSet.idx], labels);
-                    if (picked is null)
-                        return 0;
-                    Document pickedDoc;
-                    try
-                        pickedDoc = pipeline.load(picked);
-                    catch (Exception e)
-                    {
-                        stderr.writeln("hue: ", e.msg);
-                        continue;
-                    }
-                    runTuiSink(cli, pickedDoc, labels, theme, cache, null);
-                }
+                auto pl = &pipeline;
+                return runWorkspace(target, isDir: true, WorkspaceDoc.init,
+                    delegate WorkspaceDoc(string path) @system {
+                        auto d = pl.load(path);
+                        return WorkspaceDoc(d.title, d.source, d.events,
+                            d.preview);
+                    },
+                    themeSet.names, themeSet.themes, themeSet.idx, labels,
+                    &cache);
             }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
@@ -419,7 +412,7 @@ int main(string[] args)
             return runHtmlSink(doc, theme, registry, cache);
         case Backend.tui:
             return runTuiSink(cli, doc, labels, theme, cache,
-                haveSet ? &docSet : null);
+                haveSet ? &docSet : null, &pipeline);
         case Backend.ansi:
             return runAnsiSink(cli, doc, theme, cache);
     }
@@ -510,7 +503,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
 /// elsewhere the theme-selection previewer (no raw-termios TUI) fills in.
 private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
     in ResolvedTheme theme, ref TsConfigCache cache,
-    scope SourceSet* docSet) @system
+    scope SourceSet* docSet, scope DocumentPipeline* pipeline = null) @system
 {
     import source_set : SourceSet;
 
@@ -532,30 +525,28 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         }
     }
 
-    const bgMode = parseBackgroundMode(cli.background);
-    const depth = detectColorDepth();
     auto themeSet = sortedThemes(cli.theme);
 
     version (Posix)
     {
-        // The full-screen scrolling viewer (tui.md T1): the terminal port of the
-        // GUI. A markdown document starts in the decorated preview (Tab toggles
-        // to raw); code shows highlighted source.
-        import tui : PreviewTui, runPreviewTui;
+        // The split-pane workspace (XPL2): the viewer pane on the document,
+        // the explorer pane hidden until `e` (revealed at this file). One
+        // loop hosts both — no full-screen transitions.
+        import workspace : runWorkspace, WorkspaceDoc, WsLoader;
 
-        auto t = PreviewTui(
-            title: doc.title,
-            source: doc.source,
-            events: doc.events,
-            model: doc.preview,
-            cache: &cache,
-            labels: labels,
-            names: themeSet.names,
-            themes: themeSet.themes,
-            background: bgMode,
-            depth: depth,
-        );
-        return runPreviewTui(t, themeSet.idx, doc.kind == ContentKind.markdown);
+        WsLoader loader;
+        if (pipeline !is null)
+        {
+            auto pl = pipeline; // capture the pointer, not the scope param
+            loader = delegate WorkspaceDoc(string path) @system {
+                auto d = pl.load(path);
+                return WorkspaceDoc(d.title, d.source, d.events, d.preview);
+            };
+        }
+        return runWorkspace(doc.path, isDir: false,
+            WorkspaceDoc(doc.title, doc.source, doc.events, doc.preview),
+            loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
+            &cache);
     }
     else
     {
