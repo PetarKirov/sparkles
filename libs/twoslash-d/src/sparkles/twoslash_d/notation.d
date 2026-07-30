@@ -126,6 +126,20 @@ struct ParsedNotation
         }
         return offset - shift;
     }
+
+    /// The inverse of `mapToDisplay`: a `displayCode` offset back to its
+    /// `fullSource` offset (total — every display offset has an origin).
+    size_t mapToFull(size_t displayOffset) const @safe pure nothrow @nogc
+    {
+        size_t full = displayOffset;
+        foreach (r; removals)
+        {
+            if (r.start > full)
+                break;
+            full += r.end - r.start;
+        }
+        return full;
+    }
 }
 
 /// Parses the notation out of an annotated sample. Pure text processing;
@@ -583,4 +597,18 @@ private void normalizeRemovals(ref Removal[] removals) @safe pure nothrow
     assert(n.files[1].name == "app.d");
     assert(n.fullSource[n.files[1].contentStart .. n.files[1].contentEnd]
         == "module app;\nimport helper;\n");
+}
+
+@("notation.mapToFull.inverseOfMapToDisplay")
+@safe pure unittest
+{
+    const n = parseNotation(
+        "int hidden;\n// ---cut---\nint a;\n// ---cut-start---\nint h2;\n// ---cut-end---\nint b;\n");
+    // Every visible offset round-trips.
+    foreach (d; 0 .. n.displayCode.length)
+    {
+        const full = n.mapToFull(d);
+        assert(n.mapToDisplay(full) == cast(ptrdiff_t) d);
+        assert(n.fullSource[full] == n.displayCode[d]);
+    }
 }

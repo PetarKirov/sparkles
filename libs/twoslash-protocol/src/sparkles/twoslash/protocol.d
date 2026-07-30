@@ -68,6 +68,13 @@ struct Node
     size_t character; /// 0-based column of `start`
 
     /// hover/query type signature, error message, or tag text.
+    ///
+    /// $(B Lazy convention): a hover node whose `text` (and `docs`/`tags`)
+    /// are empty is a $(I lazy span) — the producer declared where a hover
+    /// lives without resolving its content (`twoslash-extract --lazy` /
+    /// `--serve`). Renderers still mark the span (the discoverability
+    /// underline) but suppress the empty popup; a live consumer fills the
+    /// content in on demand.
     @WireOptional() string text;
     /// hover/query attached JSDoc description, if any.
     @WireOptional() string docs;

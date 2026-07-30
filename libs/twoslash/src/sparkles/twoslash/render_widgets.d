@@ -361,6 +361,8 @@ in (nodeIndex < tw.nodes.length)
 {
     auto b = Builder();
     const node = tw.nodes[nodeIndex];
+    if (!node.text.length && !node.docs.length && !node.tags.length)
+        return WidgetTree.init; // lazy span: nothing to pop up (yet)
     const hit = hitOf(nodeIndex);
     // No grammar registry ⇒ docs render as plain newline-split lines (JSDoc `\n`
     // must not reach a backend as a literal control char). The `registry` overlay
@@ -385,6 +387,8 @@ in (nodeIndex < tw.nodes.length)
 {
     auto b = Builder();
     const node = tw.nodes[nodeIndex];
+    if (!node.text.length && !node.docs.length && !node.tags.length)
+        return WidgetTree.init; // lazy span: nothing to pop up (yet)
     const hit = hitOf(nodeIndex);
     uint[] docsRows = node.docs.length ? markdownDocsRows(b, registry, node.docs, hit) : null;
     uint[] tagRows;
