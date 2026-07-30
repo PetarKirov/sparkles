@@ -125,6 +125,36 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
         nodes ~= node;
     }
 
+    // --- `^|` completion lists: candidates at the caret, filtered by the
+    // identifier prefix already typed before it (TS semantics).
+    foreach (c; notation.completions)
+    {
+        import sparkles.twoslash.protocol : Completion;
+
+        const prefixStart = identifierStartAt(notation.fullSource,
+            c.offset ? c.offset - 1 : 0);
+        const prefix = prefixStart < c.offset
+            ? notation.fullSource[prefixStart .. c.offset] : "";
+        const pos = fullIndex.lineColAt(c.offset);
+        auto items = analyzed.completionsAt(
+            cast(uint) pos.line + 1, cast(uint) pos.column + 1, prefix.idup);
+        if (!items.length)
+        {
+            result.warnings ~= "completion at offset " ~ c.offset.toStr
+                ~ " produced no candidates";
+            continue;
+        }
+        Completion[] entries;
+        foreach (it; items)
+            entries ~= Completion(name: it.name, kind: it.kind);
+        nodes ~= Node(
+            type: NodeType.completion,
+            start: c.offset,
+            length: 0,
+            completions: entries,
+            completionsPrefix: prefix.idup);
+    }
+
     // --- `^^^` highlight spans (pure notation; no oracle involved).
     foreach (h; notation.highlights)
         nodes ~= Node(
@@ -444,4 +474,35 @@ version (unittest) private AnalyzerConfig gatedConfig() @system
     assert(err.text.canFind("cannot implicitly convert"), err.text);
     assert(err.level == "error");
     assert(err.line == 1); // 0-based display line of the offending code
+}
+
+@("analyze.analyzeTwoslash.completions")
+@system unittest
+{
+    // The caret sits right after a typed prefix that is itself a valid
+    // identifier, so the sample stays compilable while `^|` asks "what
+    // could continue here" — expect both prefix-matching symbols.
+    auto r = analyzeTwoslash("sample.d", "module sample;\n"
+        ~ "int alpha = 1;\n"
+        ~ "int alphabet = 2;\n"
+        ~ "auto x = alpha;\n"
+        ~ "//            ^|\n",
+        gatedConfig());
+
+    size_t idx = size_t.max;
+    foreach (i, ref nd; r.payload.nodes)
+        if (nd.type == NodeType.completion)
+            idx = i;
+    assert(idx != size_t.max, "no completion node emitted");
+    const node = r.payload.nodes[idx];
+    assert(node.completionsPrefix == "alpha", node.completionsPrefix);
+    assert(node.length == 0);
+
+    bool sawAlpha, sawAlphabet;
+    foreach (c; node.completions)
+    {
+        if (c.name == "alpha") sawAlpha = true;
+        if (c.name == "alphabet") sawAlphabet = true;
+    }
+    assert(sawAlpha && sawAlphabet, node.completions.length.toStr);
 }
