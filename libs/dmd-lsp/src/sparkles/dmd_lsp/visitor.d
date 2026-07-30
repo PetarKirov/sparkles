@@ -3255,12 +3255,6 @@ version (unittest)
 @("visitor.findTip.importedPackageAndModule")
 @system unittest
 {
-    // NB: the package/module tips that resolve through an *import* are
-    // correct, but a tip on the analyzed file's own `module a.b;` declaration
-    // is not: `dmd.frontend.parseModule` never calls `Module.resolvePackage`,
-    // so the module keeps its filename-derived name. Upstream's equivalent
-    // assertions (`(package) `pkg``, `(module) `pkg.source``) are therefore
-    // not ported.
     withAnalysis(enumSource, (m) {
         checkTip(m, 7, 16, "(package) `core`");
         checkTip(m, 7, 21, "(module) `core.cpuid`");
@@ -3272,6 +3266,20 @@ version (unittest)
             ~ " pure nothrow @nogc @property @trusted`");
         checkTip(m, 10, 20, "`string core.cpuid.vendor() pure nothrow @nogc"
             ~ " @property @trusted`");
+    });
+}
+
+@("visitor.findTip.ownModuleDeclaration")
+@system unittest
+{
+    // The analyzed file's own `module pkg.source;` declaration takes effect
+    // (upstream's `(package)`/`(module)` assertions): `Analyzer.analyze`
+    // runs `Module.resolvePackage`, which `dmd.frontend.parseModule` alone
+    // does not — without it every tip carries the filename-derived name.
+    withAnalysis("module pkg.source;\nint x;\n", (m) {
+        checkTip(m, 1, 8, "(package) `pkg`");
+        checkTip(m, 1, 12, "(module) `pkg.source`");
+        checkTip(m, 2, 5, "(thread local global) `int pkg.source.x`");
     });
 }
 

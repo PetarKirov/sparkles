@@ -1,55 +1,55 @@
 {
-    "code": "void broken()\n{\n    int x = \"not an int\";\n}\n",
-    "language": "d",
-    "nodes": [
-        {
-            "character": 5,
-            "code": 0,
-            "completions": [],
-            "completionsPrefix": "",
-            "docs": "",
-            "id": "",
-            "length": 6,
-            "level": "",
-            "line": 0,
-            "name": "",
-            "start": 5,
-            "tags": [],
-            "text": "void 03-errors.broken()",
-            "type": "hover"
-        },
-        {
-            "character": 8,
-            "code": 0,
-            "completions": [],
-            "completionsPrefix": "",
-            "docs": "",
-            "id": "",
-            "length": 1,
-            "level": "",
-            "line": 2,
-            "name": "",
-            "start": 24,
-            "tags": [],
-            "text": "(local variable) int x",
-            "type": "hover"
-        },
-        {
-            "character": 12,
-            "code": 0,
-            "completions": [],
-            "completionsPrefix": "",
-            "docs": "",
-            "id": "err-0",
-            "length": 1,
-            "level": "error",
-            "line": 2,
-            "name": "",
-            "start": 28,
-            "tags": [],
-            "text": "cannot implicitly convert expression `\"not an int\"` of type `string` to `int`",
-            "type": "error"
-        }
-    ],
-    "offsetEncoding": "utf-8"
+  "code": "void broken()\n{\n    int x = \"not an int\";\n}\n",
+  "language": "d",
+  "nodes": [
+    {
+      "character": 5,
+      "code": 0,
+      "completions": [],
+      "completionsPrefix": "",
+      "docs": "",
+      "id": "",
+      "length": 6,
+      "level": "",
+      "line": 0,
+      "name": "",
+      "start": 5,
+      "tags": [],
+      "text": "void sample.broken()",
+      "type": "hover"
+    },
+    {
+      "character": 8,
+      "code": 0,
+      "completions": [],
+      "completionsPrefix": "",
+      "docs": "",
+      "id": "",
+      "length": 1,
+      "level": "",
+      "line": 2,
+      "name": "",
+      "start": 24,
+      "tags": [],
+      "text": "(local variable) int x",
+      "type": "hover"
+    },
+    {
+      "character": 12,
+      "code": 0,
+      "completions": [],
+      "completionsPrefix": "",
+      "docs": "",
+      "id": "err-0",
+      "length": 1,
+      "level": "error",
+      "line": 2,
+      "name": "",
+      "start": 28,
+      "tags": [],
+      "text": "cannot implicitly convert expression `\"not an int\"` of type `string` to `int`",
+      "type": "error"
+    }
+  ],
+  "offsetEncoding": "utf-8"
 }
