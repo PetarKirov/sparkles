@@ -1101,6 +1101,18 @@ int runGui(
             }
             canvas.popClip();
 
+            // Fold markers in the pane's left padding column (FLD5): ▾ on
+            // an open region's first row, ▸ on a folded one; click toggles.
+            foreach (ref const fm; vm.foldMarkers)
+            {
+                if (fm.row < topLine || fm.row >= topLine + docRows)
+                    continue;
+                const g2 = cstrOf(buf, fm.open ? "▾" : "▸");
+                drawText(fonts, g2, cast(float)(treePx() + 2),
+                    docY0 + (fm.row - topLine) * cast(float) cellH,
+                    TextStyle(0), rl(vm.gutterFg));
+            }
+
             // Source line numbers in the gutter — from the row's source range
             // (first visual row of each source line only).
             if (gcols > 0)
@@ -1145,6 +1157,20 @@ int runGui(
             const mp = GetMousePosition();
             const dp = Point(cast(int)((mp.x - gutterPx) / cellW),
                 cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH)));
+            // The fold column: a click on a marker toggles its region.
+            if (mp.x >= treePx() && mp.x < treePx() + cellW
+                && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+            {
+                const row = vm.top + cast(long)((mp.y - docY0) / cellH);
+                foreach (ref const fm; vm.foldMarkers)
+                    if (cast(long) fm.row == row)
+                    {
+                        vm.folds = vm.folds.toggled(fm.key);
+                        vm.rebuild();
+                        copyClicked = true; // not a selection
+                        break;
+                    }
+            }
             if (mp.x >= gutterPx && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
                 foreach_reverse (ref const tgt; vm.targets)
                 {
