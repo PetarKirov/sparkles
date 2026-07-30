@@ -102,6 +102,15 @@
         };
     in
     {
+      # The source-closure machinery, exported for builders that bypass dub
+      # (the Android cross build): `srcClosure "apps/hue"` → repo-relative
+      # source dirs of the app's transitive sparkles closure; `sourceFor dirs`
+      # → the filtered fileset source tree.
+      legacyPackages.sparklesSources = {
+        srcClosure = sparklesSrcClosure;
+        inherit sourceFor;
+      };
+
       legacyPackages.buildSparklesApp = lib.extendMkDerivation {
         constructDrv = pkgs.buildDubPackage;
 
