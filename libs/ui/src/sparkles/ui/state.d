@@ -313,6 +313,90 @@ long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p)
     return found;
 }
 
+/**
+Char-precise selection geometry: the 1-row cell rects covering source bytes
+`[lo, hi)` in a laid-out tree — the paint side of the identity channel, one
+rect per covered span segment per wrapped row (same placement rules as
+$(LREF sourceOffsetAt)). Backends tint these; none re-derives byte→column.
+*/
+Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
+    size_t lo, size_t hi)
+{
+    import sparkles.ui.geometry : cellsOf;
+
+    Rect[] result;
+
+    void checkRow(scope const TextSpan[] spans, int x, int y)
+    {
+        foreach (ref const s; spans)
+        {
+            const w = cast(int) cellsOf(s.text);
+            if (s.srcStart != size_t.max && s.srcEnd > lo && s.srcStart < hi)
+            {
+                size_t bStart = lo > s.srcStart ? lo - s.srcStart : 0;
+                size_t bEnd = (hi < s.srcEnd ? hi : s.srcEnd) - s.srcStart;
+                if (bStart > s.text.length)
+                    bStart = s.text.length;
+                if (bEnd > s.text.length)
+                    bEnd = s.text.length;
+                if (bEnd > bStart)
+                {
+                    const c0 = cast(int) cellsOf(s.text[0 .. bStart]);
+                    const c1 = cast(int) cellsOf(s.text[0 .. bEnd]);
+                    if (c1 > c0)
+                        result ~= Rect(x + c0, y, c1 - c0, 1);
+                }
+            }
+            x += w;
+        }
+    }
+
+    void walk(uint idx)
+    {
+        const node = tree.nodes[idx];
+        if (node.visibility != Visibility.visible)
+            return;
+        const inner = frames[idx].rect.deflate(node.padding);
+        if (node.kind == WidgetKind.rich)
+        {
+            if (frames[idx].spanLines.length)
+                foreach (li, line; frames[idx].spanLines)
+                    checkRow(line, inner.x + (li ? node.hangIndent : 0),
+                        inner.y + cast(int) li);
+            else
+                checkRow(node.spans, inner.x, inner.y);
+        }
+        foreach (ci; node.children)
+            walk(ci);
+    }
+
+    walk(tree.root);
+    return result;
+}
+
+@("ui.state.selectionRects.charPrecise")
+@safe unittest
+{
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+    import sparkles.ui.wrap : TextWrap;
+
+    auto b = Builder();
+    Widget para = Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy, spans: [
+        TextSpan("alpha beta", srcStart: 50, srcEnd: 60),
+    ]);
+    para.width.max = 5;
+    const t = b.add(para);
+    auto tree = b.finish(b.container(WidgetKind.column, [t]));
+    auto frames = layout(tree);
+
+    // Select "pha be" (bytes 52..58): tail of row 0, head of row 1.
+    const rects = selectionRects(tree, frames, 52, 58);
+    assert(rects.length == 2);
+    assert(rects[0] == Rect(2, 0, 3, 1)); // "pha"
+    assert(rects[1] == Rect(0, 1, 2, 1)); // "be"
+}
+
 /// A keyed node's identity + laid-out geometry (see $(LREF keyedRects)).
 struct KeyedRect
 {

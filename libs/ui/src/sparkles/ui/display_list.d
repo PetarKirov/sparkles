@@ -120,6 +120,11 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
                     if (span.hasFg) // the syntax channel: a resolved color
                         vis.fg = span.fg;
                     vis.hasBg = span.paintBackground && vis.hasBg;
+                    if (span.hasBg) // resolved bg (pre-styled ANSI content)
+                    {
+                        vis.bg = span.bg;
+                        vis.hasBg = true;
+                    }
                     const r = Rect(x, y, w, 1);
                     if (vis.hasBg)
                         ops ~= DrawOp(kind: OpKind.fillRect, rect: r,
