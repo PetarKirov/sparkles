@@ -559,6 +559,17 @@ export default withMermaid(
               ],
             },
             {
+              text: 'DMD-LSP',
+              collapsed: false,
+              items: [
+                { text: 'Overview', link: '/specs/dmd-lsp/' },
+                {
+                  text: 'Feature Requirements',
+                  link: '/specs/dmd-lsp/feature-requirements',
+                },
+              ],
+            },
+            {
               text: 'Hue',
               collapsed: false,
               items: [

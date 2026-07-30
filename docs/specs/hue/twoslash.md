@@ -190,10 +190,17 @@ The render-side substrate (independent of any D backend) that twoslash builds on
 ## Backend: DMD-as-a-library (`DMD`, researched)
 
 The current modes consume a **pre-parsed** node model (produced by the reference
-TS `twoslash` at fixture-generation time). A future D-native backend
+TS `twoslash` at fixture-generation time). The D-native backend
 ([issue #124](https://github.com/PetarKirov/sparkles/issues/124),
-`sparkles:dmd-lsp`) would produce that node model from D source directly, swapping
+`sparkles:dmd-lsp`) produces that node model from D source directly, swapping
 in **behind the proven node-model seam** (no renderer change).
+
+> [!NOTE]
+> The backend now has its own spec —
+> [`docs/specs/dmd-lsp/`](../dmd-lsp/index.md) — which **supersedes the rows
+> below as the requirement of record** (`DMD1` → `COR1`, `DMD2`/`DMD3` →
+> `BLD*`/`TIP*`, `DMD4` → its non-goals). The rows are kept for traceability
+> from the hue surface.
 
 | ID   | Requirement                                                                                                                                                                                                                                 | Status                 | Traces to                                                 |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------- |
@@ -229,19 +236,20 @@ behind the node-model seam later.
 
 **`sparkles:twoslash` track:**
 
-| Milestone | Scope                                                          | Status                                            |
-| --------- | -------------------------------------------------------------- | ------------------------------------------------- |
-| M0        | Design spec (`docs/specs/twoslash/`, `dmd-lsp/`)               | done (branch)                                     |
-| M1        | Node model + ingest (notation parser deferred — see `NOT`)     | done (branch; parser not built)                   |
-| M2–M4     | Diagnostics / hovers / completions **from a backend**          | not started (needs `DMD*`)                        |
-| M5        | Rich HTML renderer (`.twoslash-*` contract)                    | done (branch)                                     |
-| M6        | ANSI / terminal renderer (meta-lines) + hue GUI overlay        | done (branch; `TWO*`)                             |
-| M7        | Markdown/docs integration (#45) + `apps/ci --verify` + caching | partial (fixtures; CI verify + VitePress pending) |
-| M8        | _(optional)_ Interactive web client for VitePress              | not started                                       |
+| Milestone | Scope                                                                   | Status                                            |
+| --------- | ----------------------------------------------------------------------- | ------------------------------------------------- |
+| M0        | Design spec (`docs/specs/twoslash/`, [`dmd-lsp/`](../dmd-lsp/index.md)) | done                                              |
+| M1        | Node model + ingest (notation parser deferred — see `NOT`)              | done (branch; parser not built)                   |
+| M2–M4     | Diagnostics / hovers / completions **from a backend**                   | not started (needs `DMD*`)                        |
+| M5        | Rich HTML renderer (`.twoslash-*` contract)                             | done (branch)                                     |
+| M6        | ANSI / terminal renderer (meta-lines) + hue GUI overlay                 | done (branch; `TWO*`)                             |
+| M7        | Markdown/docs integration (#45) + `apps/ci --verify` + caching          | partial (fixtures; CI verify + VitePress pending) |
+| M8        | _(optional)_ Interactive web client for VitePress                       | not started                                       |
 
 **`sparkles:dmd-lsp` track (`#124`):** D1 fork + build + analysis driver · D2
 type oracle (`findTip`/`findDefinition`) · D3 completions + semantic tokens + refs
-— all **not started** (see `DMD*`).
+— in progress; milestones now tracked in
+[`docs/specs/dmd-lsp/`](../dmd-lsp/index.md) (L0–L12).
 
 ## Module coverage (twoslash surface)
 
