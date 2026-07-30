@@ -23,6 +23,7 @@ rails per frame.
 module sparkles.ui.components.tree_widget;
 
 import sparkles.ui.state : DisclosureState;
+import sparkles.base.term_color : RgbColor;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
 
@@ -123,13 +124,16 @@ FlatTreeRow[] flatten(T)(in TreeData!T data, scope bool delegate(uint) @safe isO
     return rows;
 }
 
-/// The tree's charset — theme-glyph data with unicode defaults.
+/// The tree's charset — theme-glyph data with unicode defaults. All guide
+/// cells are three columns wide, with one space between the connector and
+/// the row's content. An adapter whose icons already express disclosure
+/// (the explorer's open/closed folder) passes empty marker strings.
 struct TreeGlyphs
 {
-    string fork = "├─";
-    string end = "└─";
-    string continueBar = "│ ";
-    string space = "  ";
+    string fork = "├─ ";
+    string end = "└─ ";
+    string continueBar = "│  ";
+    string space = "   ";
     string closed = "▸ "; /// disclosure marker: children, not shown
     string open = "▾ ";   /// disclosure marker: children, shown
     string leaf = "";     /// no children
@@ -146,7 +150,8 @@ one renderer with no type hierarchy.
 */
 uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
     scope bool delegate(uint) @safe isOpen,
-    uint selected = uint.max, TreeGlyphs glyphs = TreeGlyphs.init)
+    uint selected = uint.max, TreeGlyphs glyphs = TreeGlyphs.init,
+    RgbColor selectionBg = RgbColor.init, bool hasSelectionBg = false)
 {
     static const(char)[] labelOf(ref const T v)
     {
@@ -196,12 +201,27 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
         static if (__traits(compiles, { Slot s = v.slot; }))
             labelSlot = v.slot;
 
-        spans ~= TextSpan(labelOf(v), labelSlot);
+        auto lbl = TextSpan(labelOf(v), labelSlot);
+        // Optional per-node label color (VMD6) — e.g. the open document's
+        // theme accent — riding the resolved-color channel.
+        static if (__traits(compiles, { bool b2 = v.hasLabelFg; lbl.fg = v.labelFg; }))
+            if (v.hasLabelFg)
+            {
+                lbl.fg = v.labelFg;
+                lbl.hasFg = true;
+            }
+        spans ~= lbl;
 
         Widget w = Widget(kind: WidgetKind.rich, spans: spans,
             hitId: node + 1, // hit identity = node index + 1 (0 = none)
             paintBackground: node == selected, stretch: node == selected,
             slot: node == selected ? Slot.selection : Slot.inherit);
+        // A resolved (theme-derived) selection tint overrides the palette slot.
+        if (node == selected && hasSelectionBg)
+        {
+            w.bgOverride = selectionBg;
+            w.hasBgOverride = true;
+        }
         rowIds[i] = b.add(w);
     }
     return b.container(WidgetKind.column, rowIds);
@@ -295,12 +315,31 @@ version (unittest)
     {
         if (op.kind == OpKind.textRun && op.text == "▾ ")
             sawOpenMarker = true;
-        if (op.kind == OpKind.textRun && op.text == "└─")
+        if (op.kind == OpKind.textRun && op.text == "└─ ")
             sawEndGuide = true;
         if (op.kind == OpKind.fillRect && op.slot == Slot.selection)
             sawSelection = true;
     }
     assert(sawOpenMarker && sawEndGuide && sawSelection);
+
+    // A theme-derived selection tint overrides the palette slot; empty marker
+    // strings suppress the disclosure column (icon-as-disclosure adapters).
+    auto b2 = Builder();
+    const t2 = treeView(b2, t, rows, (uint) => true, selected: 2,
+        TreeGlyphs(closed: "", open: "", leaf: ""),
+        RgbColor(0x20, 0x30, 0x40), hasSelectionBg: true);
+    auto wt2 = b2.finish(t2);
+    auto ops2 = buildDisplayList(wt2, layout(wt2), defaultTwoslashPalette(),
+        RgbColor(0xff, 0xff, 0xff), RgbColor(0, 0, 0));
+    bool sawThemedSel, sawMarker2;
+    foreach (ref op; ops2)
+    {
+        if (op.kind == OpKind.fillRect && op.visual.bg == RgbColor(0x20, 0x30, 0x40))
+            sawThemedSel = true;
+        if (op.kind == OpKind.textRun && (op.text == "▾ " || op.text == "▸ "))
+            sawMarker2 = true;
+    }
+    assert(sawThemedSel && !sawMarker2);
 }
 
 @("ui.tree_widget.capabilitiesByIntrospection")
