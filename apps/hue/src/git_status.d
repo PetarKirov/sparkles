@@ -98,9 +98,41 @@ struct GitStatusMap
         if (abs == toplevel)
             return "";
         const prefix = toplevel ~ "/";
-        if (abs.length <= prefix.length || abs[0 .. prefix.length] != prefix)
+        if (abs.length > prefix.length && abs[0 .. prefix.length] == prefix)
+            return abs[prefix.length .. $];
+        // The toplevel from `git rev-parse` is symlink-resolved while the
+        // caller's spelling may not be (macOS: `/var/folders/…` vs
+        // `/private/var/…`) — retry with the path resolved. Lazy: this
+        // branch is never reached when the spellings already agree.
+        const real_ = realPathOf(abs);
+        if (real_.length)
+        {
+            if (real_ == toplevel)
+                return "";
+            if (real_.length > prefix.length
+                && real_[0 .. prefix.length] == prefix)
+                return real_[prefix.length .. $];
+        }
+        return null;
+    }
+
+    // `realpath(3)` (symlinks resolved; the file must exist), or null.
+    private static string realPathOf(scope const(char)[] p) @trusted
+    {
+        version (Posix)
+        {
+            import core.stdc.string : strlen;
+            import core.sys.posix.stdlib : free, realpath;
+            import std.string : toStringz;
+
+            auto r = realpath(p.toStringz, null);
+            if (r is null)
+                return null;
+            scope (exit) free(r);
+            return r[0 .. strlen(r)].idup;
+        }
+        else
             return null;
-        return abs[prefix.length .. $];
     }
 
     private static const(char)[] parentOf(scope return const(char)[] rel)
@@ -403,4 +435,22 @@ unittest
     // Within the TTL nothing respawns.
     c.ensureFresh();
     assert(!c.poll());
+
+    // A symlinked spelling of the repo still resolves (macOS: tempDir is
+    // `/var/…` while git's toplevel is the resolved `/private/var/…`).
+    version (Posix)
+    {
+        import std.file : symlink;
+
+        const alias_ = root ~ "-alias";
+        symlink(root, alias_);
+        scope (exit)
+        {
+            import std.file : remove;
+
+            remove(alias_);
+        }
+        assert(c.map.statusOf(buildPath(alias_, "fresh.txt"), false)
+            == GitStatus.untracked, "symlinked spelling resolves");
+    }
 }
