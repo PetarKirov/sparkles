@@ -18,10 +18,10 @@ import sparkles.ghostty;
 import sparkles.base.term_color : RgbColor;
 
 // The neutral presentation types (Attr / AnsiSpan / AnsiLine) live in the
-// ghostty-free `ansi_model` module so the preview model (`gui_preview`) and the
-// terminal painter (`preview_ansi`) can use them without pulling libghostty-vt;
-// this module keeps only `decodeAnsi` (the off-screen VT). Re-exported so
-// existing `import gui_ansi : Attr, …` sites keep working.
+// ghostty-free `ansi_model` module so the preview model (`gui_preview`) can
+// use them without pulling libghostty-vt; this module keeps only `decodeAnsi`
+// (the off-screen VT). Re-exported so existing `import gui_ansi : Attr, …`
+// sites keep working.
 public import ansi_model : Attr, AnsiSpan, AnsiLine;
 
 /**
