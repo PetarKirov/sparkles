@@ -220,6 +220,9 @@ struct GitStatusCache
 
 @system:
 
+    /// True while a refresh is in flight (the host may idle-tick on it).
+    bool refreshing() const pure nothrow @nogc => inFlight !is null;
+
     /// Starts a refresh if the TTL has lapsed and none is in flight.
     void ensureFresh()
     {

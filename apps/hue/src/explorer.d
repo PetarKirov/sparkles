@@ -15,6 +15,8 @@ import std.algorithm.sorting : sort;
 import std.file : dirEntries, SpanMode;
 import std.path : baseName, buildPath;
 
+import git_status : GitBadge, gitBadge, GitStatus, GitStatusCache;
+
 import sparkles.base.term_color : mix;
 import sparkles.syntax : LabelSet, ResolvedTheme, resolveTheme, RgbColor,
     Theme, toRgb;
@@ -51,6 +53,10 @@ struct FsEntry
     bool hasLabelFg;
     RgbColor rowBg;     // the open document's row band (XPL3)
     bool hasRowBg;
+    string badge;       // git-status letter (XPF1; "" = none)
+    RgbColor badgeFg;
+    bool hasBadgeFg;
+    GitStatus gitSt;    // the raw status (]g/[g navigation; ignored dimming)
 
     const(char)[] label() const @safe pure nothrow @nogc => name;
     const(char)[] icon() const @safe pure nothrow @nogc
@@ -140,6 +146,8 @@ struct ExplorerTui
 
     string picked;  // the chosen file (empty = none yet)
     string current; // the open document's path — highlighted in the tree (XPL3)
+    GitStatusCache git;   // async per-root status snapshot (XPF1)
+    private char pending; // the ']'/'[' prefix of the ]g/[g sequences
 
     // Theme-derived interaction colors (XPL3/XPL5): the cursor row's tint and
     // the open document's accent come from the theme, matching the viewer's
@@ -267,6 +275,35 @@ struct ExplorerTui
                     n.value.rowBg = currentBg;
                     n.value.hasRowBg = true;
                 }
+
+        // Git-status badges (XPF1): kick/harvest the async snapshot and stamp
+        // each node — the letter badge with its color, worst-wins on dirs
+        // (the map propagates), and a dimmed label on ignored rows. The
+        // result of an in-flight refresh lands on the next rebuild (or the
+        // host's poll); manual refresh is `r`.
+        git.root = root;
+        git.ensureFresh();
+        git.poll();
+        const dimFg = mix(pageFg, pageBg, 0.55);
+        if (git.map.present)
+            foreach (ref n; data.nodes)
+            {
+                const st = git.map.statusOf(n.value.path, n.value.isDir);
+                n.value.gitSt = st;
+                const b = gitBadge(st);
+                n.value.badge = b.letter;
+                if (b.letter.length)
+                {
+                    n.value.badgeFg = b.fg;
+                    n.value.hasBadgeFg = true;
+                }
+                if (st == GitStatus.ignored && n.value.path != current)
+                {
+                    n.value.labelFg = dimFg;
+                    n.value.hasLabelFg = true;
+                    n.value.iconFg = dimFg;
+                }
+            }
 
         rows = flatten(data, (uint i) @safe
             => qlen != 0 || open.isOpen(data.nodes[i].value.path));
@@ -452,6 +489,36 @@ struct ExplorerTui
         );
     }
 
+    /// Manual refresh (`XPF4`, the deliberate alternative to FS watching):
+    /// re-reads the filesystem and forces a git-status refresh, preserving
+    /// the open set — the `open`/`expanded` split's payoff (`rebuild` always
+    /// re-lists; `open` survives it by construction).
+    void refreshNow() @system
+    {
+        git.force();
+        rebuild();
+    }
+
+    /// `]g`/`[g`: the next/prev row (cyclic, in tree order) with a git
+    /// change — a badge-carrying status; ignored rows are skipped.
+    void jumpChange(int dir) @system
+    {
+        const n = cast(long) rows.length;
+        if (n == 0)
+            return;
+        foreach (step; 1 .. n + 1)
+        {
+            const i = ((sel + dir * step) % n + n) % n;
+            const st = data.nodes[rows[cast(size_t) i].node].value.gitSt;
+            if (st > GitStatus.ignored)
+            {
+                sel = i;
+                clamp();
+                return;
+            }
+        }
+    }
+
     /// Enter/→ on a dir toggles it; on a file, picks it (`picked` is set and
     /// `false` returned — the host opens it and clears `picked`).
     bool activate() @system
@@ -508,17 +575,34 @@ struct ExplorerTui
             case Key.escape:
                 return false;
             case Key.char_:
+            {
+                const pk = pending;
+                pending = 0;
                 switch (e.ch)
                 {
                     case 'q': return false;
                     case 'j': ++sel; clamp(); break;
                     case 'k': --sel; clamp(); break;
-                    case 'g': sel = 0; clamp(); break;
+                    case 'g':
+                        // g = top; ]g / [g = next/prev git change (XPF1).
+                        if (pk == ']')
+                            jumpChange(1);
+                        else if (pk == '[')
+                            jumpChange(-1);
+                        else
+                        {
+                            sel = 0;
+                            clamp();
+                        }
+                        break;
                     case 'G': sel = cast(long) rows.length - 1; clamp(); break;
                     case '/': searching = true; qlen = 0; rebuild(); break;
+                    case ']', '[': pending = cast(char) e.ch; break;
+                    case 'r': refreshNow(); break;
                     default: break;
                 }
                 break;
+            }
             default: break;
         }
         return true;
@@ -676,4 +760,98 @@ unittest
                 && g[xx, y].style.bg == Color.fromRgb(x.currentBg))
                 sawBandAndAccent = true;
     assert(sawBandAndAccent, "open-document row band + accent");
+}
+
+@("explorer.gitBadges.stampDimAndJump")
+@system
+unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : execute;
+    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.test_runner.skip : skipTest;
+    import git_status : GitStatus;
+
+    // A real repo: one committed-then-modified file, one untracked, one
+    // ignored dir with contents.
+    const root = buildPath(tempDir(), "hue-explorer-git-test");
+    if (root.exists)
+        rmdirRecurse(root);
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    try
+    {
+        if (execute(["git", "init", "-q", root]).status != 0)
+            skipTest("git init failed");
+    }
+    catch (Exception)
+        skipTest("git not available");
+    write(buildPath(root, "tracked.d"), "int a;\n");
+    write(buildPath(root, ".gitignore"), "junk/\n");
+    execute(["git", "-C", root, "add", "-A"]);
+    execute(["git", "-C", root, "-c", "user.email=t@t", "-c", "user.name=t",
+        "commit", "-qm", "init"]);
+    write(buildPath(root, "tracked.d"), "int a; int b;\n"); // modified
+    write(buildPath(root, "fresh.d"), "int c;\n");          // untracked
+    mkdirRecurse(buildPath(root, "junk"));
+    write(buildPath(root, "junk", "x.o"), "");              // ignored dir
+
+    static immutable Theme dark = builtinDark;
+    ExplorerTui x;
+    x.root = root;
+    x.themeValue = &dark;
+    x.theme = resolveTheme(dark, LabelSet.standard());
+    x.pageFg = fallbackFg;
+    x.pageBg = fallbackBg;
+    x.width = 44;
+    x.height = 10;
+    x.rebuild(); // kicks the async refresh
+    foreach (_; 0 .. 5000)
+    {
+        if (x.git.poll())
+            break;
+        Thread.sleep(1.msecs);
+    }
+    x.rebuild(); // stamp from the harvested snapshot
+
+    GitStatus stOf(string name)
+    {
+        foreach (ref const n; x.data.nodes)
+            if (n.value.name == name)
+                return n.value.gitSt;
+        assert(false, name);
+    }
+
+    string badgeOf(string name)
+    {
+        foreach (ref const n; x.data.nodes)
+            if (n.value.name == name)
+                return n.value.badge;
+        assert(false, name);
+    }
+
+    // Badges: modified M, untracked ?, the ignored dir dimmed with no badge.
+    assert(stOf("tracked.d") == GitStatus.modified);
+    assert(badgeOf("tracked.d") == "M");
+    assert(stOf("fresh.d") == GitStatus.untracked);
+    assert(badgeOf("fresh.d") == "?");
+    assert(stOf("junk") == GitStatus.ignored);
+    assert(badgeOf("junk") == "");
+    foreach (ref const n; x.data.nodes)
+        if (n.value.name == "junk")
+            assert(n.value.hasLabelFg, "the ignored row is dimmed");
+
+    // ]g / [g cycle over change-carrying rows, skipping the ignored dir.
+    x.sel = 0;
+    x.jumpChange(1);
+    assert(x.data.nodes[x.rows[cast(size_t) x.sel].node].value.gitSt
+        > GitStatus.ignored);
+    const first = x.sel;
+    x.jumpChange(1);
+    assert(x.sel != first, "a second change exists");
+    x.jumpChange(-1);
+    assert(x.sel == first);
 }
