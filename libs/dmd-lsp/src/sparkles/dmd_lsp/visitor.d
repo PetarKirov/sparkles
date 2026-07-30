@@ -1231,6 +1231,7 @@ struct TipData
     string code;
     string doc;
     string sna; // size and aligmment
+    Dsymbol symbol; // owner of `doc` when known (sparkles extension, for ddoc rendering)
 }
 
 string tipForObject(RootObject obj)
@@ -1380,13 +1381,17 @@ TipData tipForType(Type t)
         kind = t.kind().to!string;
     string txt = t.toPrettyChars(true).to!string;
     string doc;
+    Dsymbol docSym;
     if (auto sym = typeSymbol(t))
         if (sym.comment)
+        {
             doc = sym.comment.to!string;
+            docSym = sym;
+        }
     string sna;
     if (showSizeAndAlignment)
         sna = tipSizeAndAlignment(t);
-    return TipData(kind, txt, doc, sna);
+    return TipData(kind, txt, doc, sna, docSym);
 }
 
 TipData tipForDotIdExp(DotIdExp die)
@@ -1486,6 +1491,7 @@ TipData tipDataForObject(RootObject obj)
 {
     TipData tip;
     const(char)* doc;
+    Dsymbol docSym;
 
     if (auto t = obj.isType())
     {
@@ -1499,10 +1505,12 @@ TipData tipDataForObject(RootObject obj)
             case EXP.symbolOffset:
                 tip = tipForDeclaration((cast(SymbolExp)e).var);
                 doc = docForSymbol((cast(SymbolExp)e).var);
+                docSym = (cast(SymbolExp)e).var;
                 break;
             case EXP.dotVariable:
                 tip = tipForDeclaration((cast(DotVarExp)e).var);
                 doc = docForSymbol((cast(DotVarExp)e).var);
+                docSym = (cast(DotVarExp)e).var;
                 break;
             case EXP.dotIdentifier:
                 auto die = e.isDotIdExp();
@@ -1535,12 +1543,14 @@ TipData tipDataForObject(RootObject obj)
         {
             tip = tipForDeclaration(decl);
             doc = docForSymbol(s);
+            docSym = s;
         }
         else
         {
             tip.kind = s.kind().to!string;
             tip.code = s.toPrettyChars(true).to!string;
             doc = docForSymbol(s);
+            docSym = s;
         }
         if (showSizeAndAlignment)
             if (auto aggr = s.isAggregateDeclaration())
@@ -1563,7 +1573,11 @@ TipData tipDataForObject(RootObject obj)
     }
     // append doc
     if (doc)
+    {
         tip.doc = cast(string)doc[0..strlen(doc)];
+        if (docSym !is null)
+            tip.symbol = docSym;
+    }
     return tip;
 }
 

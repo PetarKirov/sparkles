@@ -34,30 +34,30 @@ struct AnalyzerConfig
     /// gate on this for environment-dependent behavior, spec `COR6`).
     string[] effectiveImportPaths() const @safe
     {
+        import std.process : environment;
+
+        return resolveImportPaths(environment.get("SPARKLES_DMD_IMPORT_PATH", ""));
+    }
+
+    /// The pure resolution rule behind `effectiveImportPaths` (separated so
+    /// tests never mutate the process environment — the parallel test runner
+    /// makes that a race against every env-gated analyzer test).
+    string[] resolveImportPaths(scope const(char)[] envValue) const @safe pure
+    {
         import std.algorithm.iteration : splitter;
         import std.array : array;
-        import std.process : environment;
 
         if (importPaths.length)
             return importPaths.dup;
-        const env = environment.get("SPARKLES_DMD_IMPORT_PATH", "");
-        return env.length ? env.splitter(':').array : null;
+        return envValue.length ? envValue.idup.splitter(':').array : null;
     }
 }
 
-@("dmd_lsp.options.effectiveImportPaths")
-@system unittest
+@("dmd_lsp.options.resolveImportPaths")
+@safe pure unittest
 {
-    import std.process : environment;
-
-    assert(AnalyzerConfig(importPaths: ["/a", "/b"]).effectiveImportPaths
+    assert(AnalyzerConfig(importPaths: ["/a", "/b"]).resolveImportPaths("/x:/y")
         == ["/a", "/b"]);
-
-    const saved = environment.get("SPARKLES_DMD_IMPORT_PATH");
-    scope (exit) environment["SPARKLES_DMD_IMPORT_PATH"] = saved is null ? "" : saved;
-
-    environment["SPARKLES_DMD_IMPORT_PATH"] = "/x:/y";
-    assert(AnalyzerConfig().effectiveImportPaths == ["/x", "/y"]);
-    environment["SPARKLES_DMD_IMPORT_PATH"] = "";
-    assert(AnalyzerConfig().effectiveImportPaths.length == 0);
+    assert(AnalyzerConfig().resolveImportPaths("/x:/y") == ["/x", "/y"]);
+    assert(AnalyzerConfig().resolveImportPaths("").length == 0);
 }
