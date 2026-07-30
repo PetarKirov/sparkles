@@ -380,7 +380,7 @@ int main(string[] args)
                     delegate WorkspaceDoc(string path) @system {
                         auto d = pl.load(path);
                         return WorkspaceDoc(d.title, d.source, d.events,
-                            d.preview, d.twoslash);
+                            d.preview, d.twoslash, d.lang);
                     },
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
                     &cache);
@@ -538,12 +538,12 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             loader = delegate WorkspaceDoc(string path) @system {
                 auto d = pl.load(path);
                 return WorkspaceDoc(d.title, d.source, d.events, d.preview,
-                    d.twoslash);
+                    d.twoslash, d.lang);
             };
         }
         return runWorkspace(doc.path, isDir: false,
             WorkspaceDoc(doc.title, doc.source, doc.events, doc.preview,
-                doc.twoslash),
+                doc.twoslash, doc.lang),
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache);
     }
@@ -575,7 +575,8 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         LoadedDoc loadDoc(string path) @system
         {
             auto d = pipeline.load(path);
-            return LoadedDoc(d.source, d.events, d.preview, d.twoslash);
+            return LoadedDoc(d.source, d.events, d.preview, d.twoslash,
+                d.lang);
         }
 
         auto themeSet = sortedThemes(cli.theme);
@@ -586,7 +587,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             docSet, &loadDoc, &cache, doc.twoslash,
             doc.path, startInTree: treeRoot.length != 0, treeRoot,
             FontSet.FaceOverrides(cli.fontBold, cli.fontItalic,
-                cli.fontBoldItalic));
+                cli.fontBoldItalic), doc.lang);
     }
     else
     {

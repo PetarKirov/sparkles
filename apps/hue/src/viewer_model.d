@@ -98,6 +98,7 @@ struct ViewerModel
     string title;
     string summary;
     const(char)[] source;
+    string lang;                    /// canonical language (CST fold provider)
     const(HighlightEvent)[] events;
     PreviewModel preview;
     TwoslashReturn tw;              /// empty `code` ⇒ not a twoslash document
@@ -143,11 +144,12 @@ struct ViewerModel
     /// reset, the pipeline rebuilds at the current width.
     void setDocument(string title_, string summary_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel preview_,
-        TwoslashReturn tw_)
+        TwoslashReturn tw_, string lang_ = null)
     {
         title = title_;
         summary = summary_;
         source = source_;
+        lang = lang_;
         events = events_;
         preview = preview_;
         tw = tw_;
@@ -214,16 +216,26 @@ struct ViewerModel
         if (!showPreview || !preview.present)
         {
             // The raw view: the highlighted source as the same widget
-            // pipeline (one painter for every view kind).
-            tree = viewCodeDocument(source, events, thisCurrent(), pageFg);
+            // pipeline (one painter for every view kind). Fold ranges come
+            // from the CST provider (FSR1/FSR2) when a grammar is known.
+            import sparkles.syntax.ts.folds : foldableSpansCst;
+            import sparkles.ui.wrap : TextWrap;
+
+            foldable = cache !is null && lang.length
+                ? foldableSpansCst(*cache, lang, source) : null;
+            Span[] closed;
+            foreach (sp; foldable)
+                if (!folds.isOpen(sp.start))
+                    closed ~= sp;
+            tree = viewCodeDocument(source, events, thisCurrent(), pageFg,
+                TextWrap.greedy, closed, foldHitBase);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
                 themes[themeIdx].effectivePalette, pageFg, pageBg);
-            derive(withTargets: false);
+            derive(withTargets: foldable.length != 0);
             cells = null;
             fences.length = 0;
             cellList.length = 0;
-            foldable = null;
             return;
         }
         MdViewOptions opt = {
@@ -510,4 +522,51 @@ struct ViewerModel
     assert(vm.matches.length == 1);
     assert(vm.visualOfMatch(vm.matches[0]) == 2);
     assert(vm.matchRects.length == 1 && vm.matchRects[0].length == 1);
+}
+
+@("viewer_model.cstFoldsInTheRawView")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.process : environment;
+    import sparkles.syntax : builtinDark, GrammarRegistry;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    const labels = LabelSet.standard();
+    auto cache = TsConfigCache.create(&reg, labels);
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = labels;
+    vm.cache = &cache;
+    vm.widthCols = 60;
+    vm.applyTheme(0);
+
+    const src = "void f()\n{\n    int a;\n    int b;\n}\nint tail;\n";
+    vm.setDocument("f.d", "", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        TwoslashReturn.init, "d");
+
+    // The raw code view has CST fold ranges (FSR1) and full rows.
+    assert(!vm.showPreview && vm.foldable.length, "CST regions found");
+    const openRows = vm.rows.length;
+    assert(openRows == 6);
+
+    // zc at the function body folds it to a placeholder row.
+    assert(vm.foldAt(2, ViewerModel.FoldOp.close));
+    assert(vm.rows.length < openRows);
+    bool sawPlaceholder;
+    foreach (ref const r; vm.rows)
+        if (r.text.canFind("lines") && r.text.canFind("▸"))
+            sawPlaceholder = true;
+    assert(sawPlaceholder, "fold placeholder rendered");
+
+    // zR restores everything.
+    vm.setAllFolds(false);
+    assert(vm.rows.length == openRows);
 }

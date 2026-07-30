@@ -41,6 +41,7 @@ struct WorkspaceDoc
     HighlightEvent[] events;
     PreviewModel preview;
     TwoslashReturn twoslash; /// empty `code` ⇒ not a twoslash document
+    string lang;             /// canonical language (CST fold provider)
 }
 
 /// ditto
@@ -112,7 +113,7 @@ struct WorkspaceTui
             return; // the previous document stays on screen
         }
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
-            startPreview: true, doc.twoslash);
+            startPreview: true, doc.twoslash, doc.lang);
         tree.reveal(path);
         treeFocused = false;
     }
@@ -296,7 +297,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         // The already-loaded document (no second read); reveal it in the
         // (hidden) tree so `e` opens onto it highlighted.
         w.viewer.setDocument(initial.title, initial.source, initial.events,
-            initial.preview, startPreview: true, initial.twoslash);
+            initial.preview, startPreview: true, initial.twoslash,
+            initial.lang);
         if (target.length)
             w.tree.reveal(target);
     }
