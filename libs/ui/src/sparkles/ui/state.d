@@ -28,7 +28,7 @@ module sparkles.ui.state;
 import sparkles.input : PointerAction, PointerEvent;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
-import sparkles.ui.widget : Visibility, WidgetKind, WidgetTree;
+import sparkles.ui.widget : TextSpan, Visibility, WidgetKind, WidgetTree;
 
 @safe:
 
@@ -218,27 +218,28 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
         const node = tree.nodes[idx];
         if (node.visibility != Visibility.visible)
             return;
-        const rect = frames[idx].rect;
+        // Text rows start inside the node's padding (display-list parity).
+        const inner = frames[idx].rect.deflate(node.padding);
         final switch (node.kind) with (WidgetKind)
         {
             case text:
                 if (frames[idx].lines.length)
                     foreach (li, ln; frames[idx].lines)
-                        addText(rect.y + cast(int) li, ln, size_t.max, 0);
+                        addText(inner.y + cast(int) li, ln, size_t.max, 0);
                 else
-                    addText(rect.y, node.text, size_t.max, 0);
+                    addText(inner.y, node.text, size_t.max, 0);
                 break;
             case rich:
                 if (frames[idx].spanLines.length)
                 {
                     foreach (li, line; frames[idx].spanLines)
                         foreach (ref const s; line)
-                            addText(rect.y + cast(int) li, s.text,
+                            addText(inner.y + cast(int) li, s.text,
                                 s.srcStart, s.srcEnd);
                 }
                 else
                     foreach (ref const s; node.spans)
-                        addText(rect.y, s.text, s.srcStart, s.srcEnd);
+                        addText(inner.y, s.text, s.srcStart, s.srcEnd);
                 break;
             case glyph, line, box:
                 break;
@@ -251,6 +252,122 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
 
     walk(tree.root);
     return rows;
+}
+
+/**
+The char-precise inverse of the identity channel: the source byte offset of
+the content cell at document coordinate `p`, or `-1` when nothing with source
+identity is there. Mirrors the display list's span placement (padding inset,
+one row per wrapped line, hang indent on continuations, one column per
+codepoint), so a pointer hit on the painted glyph maps to the byte that
+produced it — the shared hit-test for precise selection on every backend.
+The topmost (latest-painted) content under the point wins.
+*/
+long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p)
+{
+    long found = -1;
+
+    void checkRow(scope const TextSpan[] spans, int x, int y)
+    {
+        import sparkles.ui.geometry : cellsOf;
+
+        if (y != p.y)
+            return;
+        foreach (ref const s; spans)
+        {
+            const w = cast(int) cellsOf(s.text);
+            if (p.x >= x && p.x < x + w && s.srcStart != size_t.max)
+            {
+                // Column → byte: stride codepoints (the layout's own measure).
+                import std.utf : stride;
+
+                size_t o;
+                foreach (_; 0 .. p.x - x)
+                    o += stride(s.text[o .. $]);
+                found = cast(long)(s.srcStart + o);
+            }
+            x += w;
+        }
+    }
+
+    void walk(uint idx)
+    {
+        const node = tree.nodes[idx];
+        if (node.visibility != Visibility.visible)
+            return;
+        const inner = frames[idx].rect.deflate(node.padding);
+        if (node.kind == WidgetKind.rich)
+        {
+            if (frames[idx].spanLines.length)
+                foreach (li, line; frames[idx].spanLines)
+                    checkRow(line, inner.x + (li ? node.hangIndent : 0),
+                        inner.y + cast(int) li);
+            else
+                checkRow(node.spans, inner.x, inner.y);
+        }
+        foreach (ci; node.children)
+            walk(ci);
+    }
+
+    walk(tree.root);
+    return found;
+}
+
+/// A keyed node's identity + laid-out geometry (see $(LREF keyedRects)).
+struct KeyedRect
+{
+    size_t key;
+    Rect rect;
+}
+
+/// All keyed visible nodes' `(key, frame rect)` in paint order — the geometry
+/// side of widget identity: a view stamps domain keys (e.g. source-anchored
+/// table cells) and a backend resolves them back to document structure
+/// without re-deriving the tree shape.
+KeyedRect[] keyedRects(in WidgetTree tree, in Frame[] frames) pure nothrow
+{
+    KeyedRect[] result;
+
+    void walk(uint idx)
+    {
+        const node = tree.nodes[idx];
+        if (node.visibility != Visibility.visible)
+            return;
+        if (node.key != 0)
+            result ~= KeyedRect(node.key, frames[idx].rect);
+        foreach (ci; node.children)
+            walk(ci);
+    }
+
+    walk(tree.root);
+    return result;
+}
+
+@("ui.state.sourceOffsetAt.charPreciseThroughWrap")
+@safe unittest
+{
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
+    import sparkles.ui.wrap : TextWrap;
+
+    // "alpha beta" wrapped at 7 → "alpha" / "beta"; identity at bytes 50..60.
+    auto b = Builder();
+    Widget para = Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy, spans: [
+        TextSpan("• ", noBreak: true),               // synthetic leader
+        TextSpan("alpha beta", srcStart: 50, srcEnd: 60),
+    ]);
+    para.width.max = 7;
+    para.hangIndent = 2;
+    const t = b.add(para);
+    auto tree = b.finish(b.container(WidgetKind.column, [t]));
+    auto frames = layout(tree);
+
+    assert(sourceOffsetAt(tree, frames, Point(0, 0)) == -1);      // the leader
+    assert(sourceOffsetAt(tree, frames, Point(2, 0)) == 50);      // 'a'lpha
+    assert(sourceOffsetAt(tree, frames, Point(4, 0)) == 52);      // al'p'ha
+    assert(sourceOffsetAt(tree, frames, Point(2, 1)) == 56);      // 'b'eta (hang)
+    assert(sourceOffsetAt(tree, frames, Point(1, 1)) == -1);      // hang gutter
+    assert(sourceOffsetAt(tree, frames, Point(30, 0)) == -1);     // past the text
 }
 
 @("ui.state.documentRows.textAndSourceRanges")

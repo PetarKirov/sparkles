@@ -72,6 +72,12 @@ struct MdViewOptions
     /// its header shows the copied glyph instead of the copy glyph — the
     /// feedback state lives in the app, the view stays a pure function of it.
     size_t copiedFence = size_t.max;
+
+    /// Non-zero stamps every table cell wrapper with
+    /// `key = tableKeyBase + cell.span.start` — source-anchored identity an
+    /// interactive backend resolves back to the document's cell structure
+    /// (2-D table selection, per-cell copy) via the cells' frames.
+    size_t tableKeyBase = 0;
 }
 
 /**
@@ -462,6 +468,11 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         alignX: a == ColAlign.right ? Alignment.end
                             : a == ColAlign.center ? Alignment.center
                             : Alignment.start);
+                    // Source-anchored cell identity for interactive backends.
+                    if (opt.tableKeyBase != 0
+                        && ci < blk.children[ri].children.length)
+                        colW.key = opt.tableKeyBase
+                            + blk.children[ri].children[ci].span.start;
                     cells ~= b.add(colW);
                 }
                 rows ~= b.container(WidgetKind.row, cells, gap: 2);
@@ -1105,6 +1116,34 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
             sawHit = true;
     }
     assert(sawProse && sawFenceLine2 && sawHit);
+}
+
+@("md.render_widgets.identityChannel.tableCellKeys")
+@safe unittest
+{
+    import sparkles.ui.widget : WidgetKind;
+
+    // A 2×2 table: with a tableKeyBase every cell wrapper is stamped with a
+    // source-anchored key a backend maps back to the document's cell.
+    const src = "a b\nc d";
+    static MdBlock cell(size_t a, size_t b)
+        => MdBlock(kind: MdBlockKind.tableCell, span: Span(a, b),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(a, b))]);
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.table, span: Span(0, src.length), children: [
+            MdBlock(kind: MdBlockKind.tableRow, children: [cell(0, 1), cell(2, 3)]),
+            MdBlock(kind: MdBlockKind.tableRow, children: [cell(4, 5), cell(6, 7)]),
+        ]),
+    ]), src);
+
+    MdViewOptions opt = {tableKeyBase: 1 << 20};
+    auto tree = viewMarkdown(doc, opt);
+
+    size_t[] keys;
+    foreach (ref const n; tree.nodes)
+        if (n.key != 0)
+            keys ~= n.key - (1 << 20);
+    assert(keys == [0, 2, 4, 6], "one source-anchored key per cell");
 }
 
 @("md.render_widgets.calloutDetectedFromRawSource")
