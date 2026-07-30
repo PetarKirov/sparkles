@@ -18,7 +18,7 @@ import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 import sparkles.syntax.md.render_widgets : foldableSpans, MdViewOptions,
     MdViewTheme, viewMarkdown;
-import sparkles.syntax.render.widgets : viewCodeDocument;
+import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewTwoslashDocument;
@@ -115,6 +115,8 @@ struct ViewerModel
     size_t srcTotal;                /// source (physical) line count
     size_t[] lineStarts;
     bool showPreview;               /// decorated view vs raw source (Tab)
+    int tabWidth = 4;               /// tab stops in the raw view (--tab-width)
+    bool listWhitespace;            /// vim `list` (--list-whitespace)
 
     // ── theme-resolved values ───────────────────────────────────────────────
     size_t themeIdx;
@@ -239,7 +241,10 @@ struct ViewerModel
                 if (!folds.isOpen(sp.start))
                     closed ~= sp;
             tree = viewCodeDocument(source, events, thisCurrent(), pageFg,
-                TextWrap.greedy, closed, foldHitBase);
+                CodeViewOptions(foldedRegions: closed,
+                    foldHitBase: foldHitBase, tabWidth: tabWidth,
+                    listWhitespace: listWhitespace,
+                    whitespaceFg: gutterFg, hasWhitespaceFg: true));
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
                 themes[themeIdx].effectivePalette, pageFg, pageBg);

@@ -185,6 +185,8 @@ int runGui(
     string[] includeGlobs = null,        // explorer globs (XPF2)
     string[] excludeGlobs = null,        // ditto
     int treeWidth = 32,                  // explorer pane width in cells
+    int tabWidth = 4,                    // tab stops in the raw view
+    bool listWhitespace = false,         // vim 'list' whitespace glyphs
 ) @system
 {
     import std.stdio : stderr;
@@ -269,6 +271,8 @@ int runGui(
     vm.cache = tsCache;
     vm.decodeAnsi = (const(char)[] b) => decodeAnsi(b);
     vm.themeIdx = startIdx;
+    vm.tabWidth = tabWidth < 1 ? 1 : tabWidth;
+    vm.listWhitespace = listWhitespace;
 
     // Resize debounce: during a drag the column count changes almost every frame,
     // so re-wrap only once the width has held steady for a few frames — the drag

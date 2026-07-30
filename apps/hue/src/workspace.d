@@ -303,11 +303,13 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     const(string)[] names, immutable(Theme)[] themes, size_t themeIdx,
     LabelSet labels, TsConfigCache* cache,
     string[] includeGlobs = null, string[] excludeGlobs = null,
-    int treeWidth = 32) @system
+    int treeWidth = 32, int tabWidth = 4, bool listWhitespace = false) @system
 {
     WorkspaceTui w;
     w.loadDoc = loadDoc;
     w.split = SplitState(treeWidth < 12 ? 12 : treeWidth);
+    w.viewer.tabWidth = tabWidth < 1 ? 1 : tabWidth;
+    w.viewer.listWhitespace = listWhitespace;
     w.tree.includeGlobs = includeGlobs;
     w.tree.excludeGlobs = excludeGlobs;
 
