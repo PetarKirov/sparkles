@@ -37,8 +37,8 @@ import gui_ansi : Attr, decodeAnsi;
 // The composable markdown view (M10): the preview is one widget tree; the
 // identity channel + keyed cells drive selection/search/copy.
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
-import sparkles.syntax.md.render_widgets : highlightedFenceRenderer,
-    MdViewOptions, MdViewTheme, viewMarkdown;
+import sparkles.syntax.md.render_widgets : foldableSpans,
+    highlightedFenceRenderer, MdViewOptions, MdViewTheme, viewMarkdown;
 
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
 import sparkles.ui.components.table : GridHit;
@@ -66,9 +66,9 @@ import sparkles.ui.style : defaultTwoslashPalette, Palette, resolveSlot,
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.state : DocRow, documentRows, HoverTarget, hoverTargets,
-    KeyedRect, keyedRects, scrollbarThumb, selectionRects, sourceOffsetAt,
-    Timeline;
+import sparkles.ui.state : DisclosureState, DocRow, documentRows, HoverTarget,
+    hoverTargets, KeyedRect, keyedRects, scrollbarThumb, selectionRects,
+    sourceOffsetAt, Timeline;
 import sparkles.ui.widget : TextSpan, WidgetTree;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
@@ -277,7 +277,13 @@ int runGui(
     size_t copiedFenceSrc = size_t.max; // body start of the just-copied fence
     // Source-anchored identity bases (see the markdown view's options).
     enum size_t fenceHitBase = size_t.max / 2 + 1;
+    enum size_t foldHitBase = size_t.max / 4 * 3 + 1;
     enum size_t tableKeyBase = 1;
+
+    // Content folding (`FLD`): the shared disclosure machine, keyed by source
+    // span start, plus the document's foldable spans (the FSR3 provider).
+    DisclosureState!size_t mdFolds = DisclosureState!size_t(true);
+    Span[] mdFoldable;
 
     int lastWidthCols = -1;
     // Resize debounce: during a drag the column count changes almost every frame,
@@ -372,7 +378,10 @@ int runGui(
             tableKeyBase: tableKeyBase,
             copiedFence: copiedFenceSrc,
             fenceRenderer: mdFenceRenderer(),
+            foldedSpans: mdFolds.exceptions,
+            foldHitBase: foldHitBase,
         };
+        mdFoldable = foldableSpans(curPreview.doc);
         mdTree = viewMarkdown(curPreview.doc, opt);
         mdFrames = layout(mdTree, Constraints(maxW: lastWidthCols));
         mdOps = buildDisplayList(mdTree, mdFrames,
@@ -639,6 +648,45 @@ int runGui(
             if (txt.length)
                 SetClipboardText(txt.toStringz);
         }
+    }
+
+    // 'z': toggle the innermost fold at the text selection (else the top
+    // visible row) — unfold the innermost folded region first, else fold the
+    // innermost foldable one.
+    void toggleFold()
+    {
+        long off = -1;
+        if (regime == Regime.text && selMax() > selMin())
+            off = selMin();
+        else if (mdRows.length)
+        {
+            const t0 = cast(size_t)(top >= 0
+                && top < cast(long) mdRows.length ? top : 0);
+            if (mdRows[t0].srcStart != size_t.max)
+                off = cast(long) mdRows[t0].srcStart;
+        }
+        if (off < 0)
+            return;
+        size_t best = size_t.max, bestLen = size_t.max;
+        foreach (sp; mdFoldable)
+            if (!mdFolds.isOpen(sp.start) && off >= cast(long) sp.start
+                && off < cast(long) sp.end && sp.end - sp.start < bestLen)
+            {
+                best = sp.start;
+                bestLen = sp.end - sp.start;
+            }
+        if (best == size_t.max)
+            foreach (sp; mdFoldable)
+                if (mdFolds.isOpen(sp.start) && off >= cast(long) sp.start
+                    && off < cast(long) sp.end && sp.end - sp.start < bestLen)
+                {
+                    best = sp.start;
+                    bestLen = sp.end - sp.start;
+                }
+        if (best == size_t.max)
+            return;
+        mdFolds = mdFolds.toggled(best);
+        rebuildMd();
     }
 
     int frame = 0;
@@ -922,6 +970,10 @@ int runGui(
                 copyModeMsg = ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
                 toast = Timeline.triggered(toastCfg);
             }
+            // 'z' toggles the innermost fold at the selection (else the top
+            // row) — the FLD5 keyboard entry, over the row's source identity.
+            if (mdActive && pressed(KeyboardKey.KEY_Z))
+                toggleFold();
             if (pressed(KeyboardKey.KEY_T))
             {
                 tableFmt = tableFmt == TableCopyFormat.tsv
@@ -1073,6 +1125,14 @@ int runGui(
                 cast(int)(top + cast(long)(mp.y / cellH)));
             if (mp.x >= gutterPx && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
                 foreach_reverse (ref const tgt; mdTargets)
+                {
+                    if (tgt.hitId >= foldHitBase && tgt.rect.contains(dp))
+                    {
+                        mdFolds = mdFolds.toggled(tgt.hitId - foldHitBase);
+                        rebuildMd();
+                        copyClicked = true; // not a selection either
+                        break;
+                    }
                     if (tgt.hitId >= fenceHitBase && tgt.rect.contains(dp))
                     {
                         const bodyStart = tgt.hitId - fenceHitBase;
@@ -1094,6 +1154,7 @@ int runGui(
                             }
                         break;
                     }
+                }
         }
 
         // Mouse selection (both views). `hitAt` classifies the cursor: over a
