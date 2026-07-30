@@ -160,6 +160,23 @@ private final class LogcatLogger : CoreLogger
     }
 }
 
+// ── clipboard ────────────────────────────────────────────────────────────────
+
+// The JNI bridge in apps/hue/android/clipboard_jni.c (compiled by the nix
+// cross build with the NDK clang and linked into libhue.so).
+private extern (C) int hue_android_set_clipboard(
+    void* vm, void* activity, const(char)* text) nothrow;
+
+/// Copy NUL-terminated text to the system clipboard through the activity's
+/// `ClipboardManager` — raylib's Android `SetClipboardText` is unimplemented,
+/// and `hasCode="false"` leaves no Java side to delegate to, so the JNI dance
+/// lives in `clipboard_jni.c`. Returns `false` when any JNI step failed.
+bool setClipboardTextZ(const(char)* textZ) @trusted nothrow
+{
+    auto activity = GetAndroidApp().activity;
+    return hue_android_set_clipboard(activity.vm, activity.clazz, textZ) == 0;
+}
+
 // ── debug environment ────────────────────────────────────────────────────────
 
 /// Load `<dataDir>/hue-debug.env` into the process environment, re-enabling

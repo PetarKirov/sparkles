@@ -17,18 +17,18 @@ and every native dependency in it, is built by nix (no Gradle): see
 
 ## Architecture decisions
 
-| Decision          | Choice                                                                                                                                                                                                                                                                      | Where                                                     |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Rendering backend | raylib cross-built for `PLATFORM_ANDROID` (static, per ABI); `RaylibCanvas` unchanged                                                                                                                                                                                       | `nix/packages/android/raylib.nix`                         |
-| ABIs              | `arm64-v8a` (devices) + `x86_64` (emulator); the dual-ABI `ldc-android` (dlang.nix) carries one ldc2.conf section per target                                                                                                                                                | `nix/packages/android/ndk.nix`, dlang.nix `feat/ldc-wasm` |
-| Entry / dispatch  | `main()` runs inside the activity: `pickBackend` answers `gui` unconditionally; TUI modules stay out of the module graph                                                                                                                                                    | `apps/hue/src/app.d`                                      |
-| Font resolution   | fontconfig-free: `FontSet.FontSources` scans the extracted `fonts/` dir + `/system/fonts`; coverage from build-time `fc-query` `.charset` sidecars                                                                                                                          | `libs/raylib-text/…/font_set.d`                           |
-| Grammars          | parsers ship as `lib/<abi>/libtree_sitter_<lang_>.so`, dlopen'd by bare soname from the app's linker namespace (`GrammarRegistry.fromSonames`); queries are extracted assets                                                                                                | `libs/syntax/…/ts/registry.d`, `ts-grammars.nix`          |
-| Assets            | one `assets/` bundle (fonts + sidecars, grammar queries, sample docs), extracted by D over `AAssetManager` on first run, keyed by `bundle-hash`, driven by `asset-manifest.txt` (AAssetDir cannot list subdirectories)                                                      | `android_glue.d`, `nix/packages/android/hue.nix`          |
-| Lifecycle         | rotation resizes IN PLACE (the nix raylib build carries raylib-android-in-place-resize.patch — stock 5.5 never resizes on Android), and `main()` exits the process when the activity is destroyed — a statically linked druntime cannot `rt_init` twice in a reused process | raylib.nix patch, manifests, `app.d`                      |
-| Input             | `TouchScroller` (pure, host-tested): tap = click, drag = kinetic scroll + fling, long-press = selection, pinch = font zoom; a five-segment bottom toolbar covers the keyboard essentials; hardware keyboards keep every desktop binding                                     | `apps/hue/src/gui_touch.d`, `gui.d`                       |
-| Logging           | a `CoreLogger` subclass writing to logcat tag `hue` (stderr goes nowhere in an activity)                                                                                                                                                                                    | `android_glue.d`                                          |
-| Debug hooks       | `<dataDir>/hue-debug.env` (`KEY=VALUE`) loads into the environment at boot, re-enabling every `HUE_GUI_*` golden/screenshot hook on-device                                                                                                                                  | `android_paths.d`, `android_glue.d`                       |
+| Decision          | Choice                                                                                                                                                                                                                                                                                                                   | Where                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| Rendering backend | raylib cross-built for `PLATFORM_ANDROID` (static, per ABI); `RaylibCanvas` unchanged                                                                                                                                                                                                                                    | `nix/packages/android/raylib.nix`                         |
+| ABIs              | `arm64-v8a` (devices) + `x86_64` (emulator); the dual-ABI `ldc-android` (dlang.nix) carries one ldc2.conf section per target                                                                                                                                                                                             | `nix/packages/android/ndk.nix`, dlang.nix `feat/ldc-wasm` |
+| Entry / dispatch  | `main()` runs inside the activity: `pickBackend` answers `gui` unconditionally; TUI modules stay out of the module graph                                                                                                                                                                                                 | `apps/hue/src/app.d`                                      |
+| Font resolution   | fontconfig-free: `FontSet.FontSources` scans the extracted `fonts/` dir + `/system/fonts`; coverage from build-time `fc-query` `.charset` sidecars                                                                                                                                                                       | `libs/raylib-text/…/font_set.d`                           |
+| Grammars          | parsers ship as `lib/<abi>/libtree_sitter_<lang_>.so`, dlopen'd by bare soname from the app's linker namespace (`GrammarRegistry.fromSonames`); queries are extracted assets                                                                                                                                             | `libs/syntax/…/ts/registry.d`, `ts-grammars.nix`          |
+| Assets            | one `assets/` bundle (fonts + sidecars, grammar queries, sample docs), extracted by D over `AAssetManager` on first run, keyed by `bundle-hash`, driven by `asset-manifest.txt` (AAssetDir cannot list subdirectories)                                                                                                   | `android_glue.d`, `nix/packages/android/hue.nix`          |
+| Lifecycle         | rotation resizes IN PLACE (the nix raylib build carries raylib-android-in-place-resize.patch — stock raylib — verified through the released 6.0 tag — never resizes on Android), and `main()` exits the process when the activity is destroyed — a statically linked druntime cannot `rt_init` twice in a reused process | raylib.nix patch, manifests, `app.d`                      |
+| Input             | `TouchScroller` (pure, host-tested): tap = click, drag = kinetic scroll + fling, long-press = selection, pinch = font zoom; a five-segment bottom toolbar covers the keyboard essentials; hardware keyboards keep every desktop binding                                                                                  | `apps/hue/src/gui_touch.d`, `gui.d`                       |
+| Logging           | a `CoreLogger` subclass writing to logcat tag `hue` (stderr goes nowhere in an activity)                                                                                                                                                                                                                                 | `android_glue.d`                                          |
+| Debug hooks       | `<dataDir>/hue-debug.env` (`KEY=VALUE`) loads into the environment at boot, re-enabling every `HUE_GUI_*` golden/screenshot hook on-device                                                                                                                                                                               | `android_paths.d`, `android_glue.d`                       |
 
 ## Requirements
 
@@ -50,22 +50,22 @@ Interaction parity is honest, not aspirational: **touch covers the reading
 workflows; full parity needs a (BT) keyboard**, whose events flow through
 raylib's Android input into every existing binding.
 
-| Desktop feature                      | On Android                                                                                                   |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Scroll (wheel / j k / PgUp…)         | touch drag + fling; keyboard works                                                                           |
-| Theme cycling (← →)                  | toolbar `◀ thm` / `thm ▶`                                                                                    |
-| Raw ↔ preview (Tab)                  | toolbar `view`                                                                                               |
-| Explorer (e)                         | toolbar `tree`; back button closes                                                                           |
-| Line numbers (l)                     | toolbar `ln №`                                                                                               |
-| Font size (Ctrl-±)                   | pinch zoom                                                                                                   |
-| Click (fold chevrons, tree, buttons) | tap                                                                                                          |
-| Text/table selection (mouse drag)    | long-press, then drag                                                                                        |
-| Copy (Ctrl-C / copy buttons)         | **degraded**: raylib Android clipboard is a no-op → logged; a JNI `ClipboardManager` bridge is the follow-up |
-| Search `/`, goto `g`, copy-modes y/t | **keyboard-only** (no soft-keyboard IME through raylib)                                                      |
-| Set navigation `[` `]` `i`           | keyboard-only (explorer covers browsing)                                                                     |
-| Fullscreen F11                       | n/a — the surface is the screen                                                                              |
-| Hover popups (twoslash)              | tap a token (the pointer rests where the last tap landed)                                                    |
-| Window title                         | n/a                                                                                                          |
+| Desktop feature                      | On Android                                                                                                                |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Scroll (wheel / j k / PgUp…)         | touch drag + fling; keyboard works                                                                                        |
+| Theme cycling (← →)                  | toolbar `◀ thm` / `thm ▶`                                                                                                 |
+| Raw ↔ preview (Tab)                  | toolbar `view`                                                                                                            |
+| Explorer (e)                         | toolbar `tree`; back button closes                                                                                        |
+| Line numbers (l)                     | toolbar `ln №`                                                                                                            |
+| Font size (Ctrl-±)                   | pinch zoom                                                                                                                |
+| Click (fold chevrons, tree, buttons) | tap                                                                                                                       |
+| Text/table selection (mouse drag)    | long-press, then drag                                                                                                     |
+| Copy (Ctrl-C / copy buttons)         | works — the JNI `ClipboardManager` bridge (`apps/hue/android/clipboard_jni.c`; raylib's own Android clipboard is a no-op) |
+| Search `/`, goto `g`, copy-modes y/t | **keyboard-only** (no soft-keyboard IME through raylib)                                                                   |
+| Set navigation `[` `]` `i`           | keyboard-only (explorer covers browsing)                                                                                  |
+| Fullscreen F11                       | n/a — the surface is the screen                                                                                           |
+| Hover popups (twoslash)              | tap a token (the pointer rests where the last tap landed)                                                                 |
+| Window title                         | n/a                                                                                                                       |
 
 ## Build & run
 
@@ -95,7 +95,7 @@ SELinux-denied), relaunch, pull the PNG the same way.
   glue structs are hand-mirrored in `android_glue.d`.
 - A statically linked druntime cannot `rt_init` twice: Android reuses the
   process across activity recreations → exit the process when `main` returns.
-- Stock raylib 5.5 never resizes on Android (empty `CONFIG_CHANGED` stub, no
+- Stock raylib (verified through the released 6.0 tag) never resizes on Android (empty `CONFIG_CHANGED` stub, no
   `WINDOW_RESIZED` case, resume path pins the old buffer geometry) — an
   in-place rotation keeps rendering the stale orientation, compositor-scaled.
   `raylib-android-in-place-resize.patch` fixes it; without the patch, keep

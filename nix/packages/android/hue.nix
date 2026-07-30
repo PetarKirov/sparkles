@@ -80,7 +80,9 @@
         "Have_bolts"
       ];
 
-      srcDirs = sources.srcClosure "apps/hue";
+      # The app closure + apps/hue/android (the JNI clipboard shim rides the
+      # fileset's .c filter; hello/main.d comes along unused).
+      srcDirs = sources.srcClosure "apps/hue" ++ [ "apps/hue/android" ];
 
       libhue = pkgs.stdenv.mkDerivation {
         pname = "libhue-android";
@@ -101,6 +103,11 @@
           '') dubDeps}
 
           ${lib.concatMapStrings (t: ''
+            # The JNI clipboard bridge — plain C compiled with the NDK clang
+            # (jni.h comes from its sysroot), linked into libhue.so below.
+            ${t.cc} -c apps/hue/android/clipboard_jni.c -O2 -fPIC \
+              -o clipboard_jni-${t.abi}.o
+
             ldc2 -mtriple=${t.triple} -relocation-model=pic -O2 \
               -preview=in -preview=dip1000 \
               ${toString (map (v: "-d-version=${v}") versions)} \
@@ -112,6 +119,7 @@
               -P-I${config.packages.libghostty-vt-android}/include \
               -i \
               apps/hue/src/app.d \
+              clipboard_jni-${t.abi}.o \
               ${config.packages.raylib-android}/lib/${t.abi}/libraylib.a \
               ${config.packages.tree-sitter-android}/lib/${t.abi}/libtree-sitter.a \
               ${config.packages.libghostty-vt-android}/lib/${t.abi}/libghostty-vt.a \
