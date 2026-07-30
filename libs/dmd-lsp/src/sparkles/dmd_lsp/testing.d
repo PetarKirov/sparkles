@@ -7,9 +7,9 @@ Semantic analysis needs frontend-matched druntime/phobos sources at runtime
 never a failure — following the `loadGrammarForTest` pattern from
 `sparkles:tree-sitter`.
 
-`checkErrors` is the port of `dmdserver`'s `semanalysis.do_unittests` helper
-of the same name, against the structured `Diagnostic` model instead of a
-rendered wire string.
+`checkErrors` and `checkTip` are ports of `dmdserver`'s
+`semanalysis.do_unittests` helpers of the same name — `checkErrors` against
+the structured `Diagnostic` model instead of a rendered wire string.
 */
 module sparkles.dmd_lsp.testing;
 
@@ -21,10 +21,22 @@ AnalyzerConfig analyzerConfigForTest(string[] dflags = null) @system
 {
     import std.process : environment;
 
-    import sparkles.test_runner.skip : skipTest;
+    enum reason = "SPARKLES_DMD_IMPORT_PATH not set (enter `nix develop`)";
 
     if (!environment.get("SPARKLES_DMD_IMPORT_PATH", "").length)
-        skipTest("SPARKLES_DMD_IMPORT_PATH not set (enter `nix develop`)");
+    {
+        // The runner is a `configuration "unittest"` dependency, so it is
+        // absent from the plain `library` build this module is also compiled
+        // into. Without the guard that build fails outright on the import.
+        version (Have_sparkles_test_runner)
+        {
+            import sparkles.test_runner.skip : skipTest;
+
+            skipTest(reason);
+        }
+        else
+            throw new Exception(reason);
+    }
     return AnalyzerConfig(dflags: dflags);
 }
 
@@ -35,12 +47,40 @@ AnalyzedModule checkErrors(string source, string[] expected = null,
     string[] dflags = null,
     string file = __FILE__, size_t line = __LINE__) @system
 {
+    auto analyzer = Analyzer(analyzerConfigForTest(dflags));
+    auto result = analyzer.analyze("test.d", source);
+    assertErrors(result, expected, file, line);
+    return result;
+}
+
+/**
+Analyzes `source` and runs `queries` against it $(B while the session is still
+alive).
+
+Use this, not `checkErrors`, for anything that walks the AST. `Analyzer`'s
+destructor calls `deinitializeDMD`, which resets `dmd.location`'s global line
+table among other things, so the `AnalyzedModule` `checkErrors` returns is
+only good for its `diagnostics` afterwards — and because the destructor also
+releases the process-wide lock, a concurrently running test can reinitialize
+those globals underneath a late AST walk. (Symptom: the suite wedges, spinning
+inside `Loc.filename`'s file-table search.)
+*/
+void withAnalysis(string source, scope void delegate(AnalyzedModule) @system queries,
+    string[] expected = null, string[] dflags = null,
+    string file = __FILE__, size_t line = __LINE__) @system
+{
+    auto analyzer = Analyzer(analyzerConfigForTest(dflags));
+    auto result = analyzer.analyze("test.d", source);
+    assertErrors(result, expected, file, line);
+    queries(result);
+}
+
+private void assertErrors(in AnalyzedModule result, in string[] expected,
+    string file, size_t line) @system
+{
     import core.exception : AssertError;
     import std.algorithm.searching : canFind;
     import std.conv : text;
-
-    auto analyzer = Analyzer(analyzerConfigForTest(dflags));
-    auto result = analyzer.analyze("test.d", source);
 
     const(string)[] errors;
     foreach (ref d; result.diagnostics)
@@ -54,7 +94,42 @@ AnalyzedModule checkErrors(string source, string[] expected = null,
         if (!errors[i].canFind(want))
             throw new AssertError(text("error ", i, " mismatch:\n  expected: …",
                 want, "…\n  actual:   ", errors[i]), file, line);
-    return result;
+}
+
+/**
+Asserts the tooltip the type oracle renders at `line`:`col` (both 1-based).
+
+Upstream's convention is preserved: an `expected` ending in `...` is a prefix
+match, for tips whose tail is a Phobos/druntime doc comment that would make
+the assertion brittle. Everything else must match exactly, `""` included —
+that is the assertion that a position resolves to nothing.
+*/
+void checkTip(AnalyzedModule m, uint line, uint col, string expected,
+    string file = __FILE__, size_t assertLine = __LINE__) @system
+{
+    import core.exception : AssertError;
+    import std.algorithm.comparison : min;
+    import std.algorithm.searching : endsWith;
+    import std.conv : text;
+
+    import sparkles.dmd_lsp.visitor : findTip;
+
+    const tip = findTip(m.module_, line, col, line, col + 1,
+        addlinks: false, addsize: false);
+
+    if (expected.endsWith("..."))
+    {
+        const want = expected[0 .. $ - 3];
+        const got = tip[0 .. min($, want.length)];
+        if (got != want)
+            throw new AssertError(text("tip at ", line, ":", col,
+                " prefix mismatch:\n  expected: ", want, "…\n  actual:   ", tip),
+                file, assertLine);
+    }
+    else if (tip != expected)
+        throw new AssertError(text("tip at ", line, ":", col,
+            " mismatch:\n  expected: ", expected, "\n  actual:   ", tip),
+            file, assertLine);
 }
 
 // The first slice of the dmdserver `do_unittests` corpus (77 checkErrors

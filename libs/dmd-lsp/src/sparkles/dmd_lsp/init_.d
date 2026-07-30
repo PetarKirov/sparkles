@@ -17,6 +17,25 @@ module sparkles.dmd_lsp.init_;
 import sparkles.dmd_lsp.diag : DiagnosticSink;
 import sparkles.dmd_lsp.options : AnalyzerConfig;
 
+import core.sync.mutex : Mutex;
+
+/**
+Serializes access to DMD's process-wide globals; held for an `Analyzer`'s
+whole lifetime (see $(REF Analyzer, sparkles,dmd_lsp,api)).
+
+It lives here rather than next to its only user because the module
+constructor that creates it would otherwise close a cycle:
+`api` → `visitor` → `testing` → `api`, with `visitor`'s property-table
+constructor at the other end. `init_` is a leaf, so the runtime can order
+the two.
+*/
+__gshared Mutex dmdGlobalsLock;
+
+shared static this()
+{
+    dmdGlobalsLock = new Mutex;
+}
+
 /// Initializes DMD's globals for one analysis session: frontend `initDMD`
 /// with the sink's handler, analysis-friendly parameters, the `-dflags`
 /// subset, and the resolved import paths. Call exactly once per process.

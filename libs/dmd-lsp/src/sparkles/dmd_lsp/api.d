@@ -8,13 +8,17 @@ $(B one) full semantic pass over one in-memory module and answers queries from
 it; it is deliberately single-use (spec `COR2`) — batch isolation comes from
 one-analysis-per-process, so there is no global-state reset machinery here.
 
-The type-oracle queries (`tipAt`, `identifierSpans` — the `semvisitor` port,
-spec `TIP*`) land in milestone L7.
+The type-oracle queries (`tipAt`, `identifierSpans`, `definitionAt` — spec
+`TIP*`/`DOC1`) are thin, position-typed wrappers over
+$(MREF sparkles,dmd_lsp,visitor), the `semvisitor` port; reach for that module
+directly for the queries this facade does not surface (completion expansions,
+references, the module outline).
 */
 module sparkles.dmd_lsp.api;
 
 public import sparkles.dmd_lsp.diag : Diagnostic, DiagKind, DiagPos;
 public import sparkles.dmd_lsp.options : AnalyzerConfig;
+public import sparkles.dmd_lsp.support : TypeReferenceKind;
 
 import sparkles.dmd_lsp.diag : DiagnosticSink;
 
@@ -43,9 +47,9 @@ struct Analyzer
 
     this(AnalyzerConfig config) @system
     {
-        import sparkles.dmd_lsp.init_ : initAnalyzer;
+        import sparkles.dmd_lsp.init_ : dmdGlobalsLock, initAnalyzer;
 
-        dmdLock.lock();
+        dmdGlobalsLock.lock();
         _config = config;
         initAnalyzer(_sink, _config);
         _initialized = true;
@@ -56,10 +60,11 @@ struct Analyzer
         if (!_initialized)
             return;
         import dmd.frontend : deinitializeDMD;
+        import sparkles.dmd_lsp.init_ : dmdGlobalsLock;
 
         deinitializeDMD();
         _initialized = false;
-        dmdLock.unlock();
+        dmdGlobalsLock.unlock();
     }
 
     /// Parses + fully analyzes `source` as `filename`, entirely in memory.
@@ -81,15 +86,6 @@ struct Analyzer
     }
 }
 
-private
-{
-    import core.sync.mutex : Mutex;
-
-    __gshared Mutex dmdLock;
-
-    shared static this() { dmdLock = new Mutex; }
-}
-
 /// The result of `Analyzer.analyze`: the analyzed module + its diagnostics.
 struct AnalyzedModule
 {
@@ -107,6 +103,130 @@ struct AnalyzedModule
                 return true;
         return false;
     }
+
+    /**
+    The type oracle's answer for the position `line`:`col` (both 1-based).
+
+    Returns `Tip.init` — `found` is `false` — when nothing resolves there,
+    which is the common case for punctuation and whitespace.
+    */
+    Tip tipAt(uint line, uint col) @system
+    {
+        import std.string : strip;
+
+        import sparkles.dmd_lsp.visitor : findTipData;
+
+        auto data = findTipData(module_, line, col, line, col + 1, addsize: false);
+        return Tip(kind: data.kind, code: data.code, doc: data.doc.strip);
+    }
+
+    /**
+    How each identifier in the module is classified, as position-ordered
+    $(I transitions).
+
+    This is `findIdentifierTypes`' model, and it is run-length, not
+    per-occurrence: an entry says "from here on, this spelling means `kind`",
+    and the visitor only records a new one where the meaning changes. A name
+    used consistently — a type, a local — therefore yields exactly one entry,
+    at its first position; a name that is a method here and a free function
+    there yields one per switch. Consumers colour by walking the list and
+    carrying the last `kind` for a spelling forward.
+
+    Entries carry only a start: an occurrence's extent is
+    `[col, col + ident.length)`, which is all the underlying model records.
+    */
+    IdentSpan[] identifierSpans() @system
+    {
+        import std.algorithm.sorting : sort;
+
+        import sparkles.dmd_lsp.visitor : findIdentifierTypes;
+
+        IdentSpan[] spans;
+        foreach (ident, positions; findIdentifierTypes(module_))
+            foreach (p; positions)
+                spans ~= IdentSpan(
+                    ident: ident.idup,
+                    line: cast(uint) p.line,
+                    col: cast(uint) p.col,
+                    kind: cast(TypeReferenceKind) p.type);
+
+        // The visitor keys by identifier name, so iteration order is the AA's.
+        // Source order is what every consumer wants and is a stable contract.
+        spans.sort!((a, b) => a.line != b.line ? a.line < b.line
+            : a.col != b.col ? a.col < b.col
+            : a.ident < b.ident);
+        return spans;
+    }
+
+    /// Where the symbol at `line`:`col` (both 1-based) is declared, or
+    /// `DefinitionPos.init` — `found` is `false` — if nothing resolves there.
+    DefinitionPos definitionAt(uint line, uint col) @system
+    {
+        import sparkles.dmd_lsp.visitor : findDefinition;
+
+        int l = cast(int) line, c = cast(int) col;
+        auto filename = findDefinition(module_, l, c);
+        return filename.length
+            ? DefinitionPos(filename: filename, line: cast(uint) l, col: cast(uint) c)
+            : DefinitionPos.init;
+    }
+}
+
+/**
+A resolved tooltip: `dmdserver`'s `TipData` minus the size/alignment field,
+which only the Visual D "show size" toggle populated.
+
+`kind` is the category word `dmdserver` parenthesizes — `"parameter"`,
+`"local variable"`, `"struct"`, `"enum value"`, … — and is empty for
+functions, which render as a bare signature.
+*/
+struct Tip
+{
+    /// The category word, or empty (functions, and anything unclassified).
+    string kind;
+
+    /// The rendered declaration, e.g. `int test.S.fun(int par)`.
+    string code;
+
+    /// The declaration's DDoc comment, stripped (spec `DOC1`); empty when the
+    /// declaration carries none.
+    string doc;
+
+    /// Whether the query resolved to anything.
+    bool found() const @safe pure nothrow @nogc => kind.length != 0 || code.length != 0;
+}
+
+/// One identifier-classification transition. See the run-length semantics on
+/// `AnalyzedModule.identifierSpans`.
+struct IdentSpan
+{
+    /// The identifier's spelling; also its length in the source.
+    string ident;
+
+    /// 1-based line where this classification starts applying.
+    uint line;
+
+    /// 1-based column of the identifier's first character.
+    uint col;
+
+    /// What the identifier means from here on.
+    TypeReferenceKind kind;
+}
+
+/// A declaration site. See `AnalyzedModule.definitionAt`.
+struct DefinitionPos
+{
+    /// The declaring file, as the frontend spells it; empty when not found.
+    string filename;
+
+    /// 1-based line.
+    uint line;
+
+    /// 1-based column.
+    uint col;
+
+    /// Whether the query resolved to anything.
+    bool found() const @safe pure nothrow @nogc => filename.length != 0;
 }
 
 @("dmd_lsp.api.languageServerEnabled")
