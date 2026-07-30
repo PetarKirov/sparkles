@@ -63,7 +63,9 @@ whether that overflows or leaves slack).
 int[] resolveTracks(
     in TrackSpec[] tracks, in int[] contentWidths, int avail, int gap = 0)
     pure nothrow
-in (tracks.length == contentWidths.length)
+// A message keeps the assert non-templated (`_d_assert_msg`), so consumers
+// building with a different `-checkaction` never chase a missing instance.
+in (tracks.length == contentWidths.length, "one content width per track")
 {
     auto extents = new int[](tracks.length);
 
