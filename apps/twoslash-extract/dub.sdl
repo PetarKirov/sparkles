@@ -19,6 +19,13 @@ configuration "application" {
 }
 
 configuration "unittest" {
+    // `dub test` supplies its own `main` (in the generated `dub_test_root`),
+    // so the test build is a library and `app.main` is version-guarded out —
+    // without this dub never generates that module and the runner shim's
+    // "Couldn't find 'dub_test_root'" static assert fires. (hue takes the
+    // other route for the same reason: it excludes its `app.d` outright.)
+    targetType "library"
+
     dependency "sparkles:test-runner" path="../.."
 
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
