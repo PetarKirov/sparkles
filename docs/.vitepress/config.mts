@@ -568,6 +568,7 @@ export default withMermaid(
                   link: '/specs/dmd-lsp/feature-requirements',
                 },
                 { text: 'DDoc Test Plan', link: '/specs/dmd-lsp/ddoc' },
+                { text: 'Dub-Project Context', link: '/specs/dmd-lsp/project' },
               ],
             },
             {

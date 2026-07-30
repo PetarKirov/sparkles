@@ -76,31 +76,34 @@ resolved to `line`/`character` against the post-cut display code.
 
 ## Documentation map
 
-| Page                                              | What it covers                                                                                                                                    |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Overview** (this page)                          | what `sparkles:dmd-lsp` is · architecture · why the fork · milestones · module coverage                                                           |
-| [Feature requirements](./feature-requirements.md) | the requirement inventory: build & pinning (`BLD`), semantic core (`COR`), type oracle (`TIP`), ddoc (`DOC`), analyzer (`NTN`), extractor (`EXT`) |
+| Page                                              | What it covers                                                                                                                                                     |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Overview** (this page)                          | what `sparkles:dmd-lsp` is · architecture · why the fork · milestones · module coverage                                                                            |
+| [Feature requirements](./feature-requirements.md) | the requirement inventory: build & pinning (`BLD`), semantic core (`COR`), type oracle (`TIP`), ddoc (`DOC`), analyzer (`NTN`), extractor (`EXT`)                  |
+| [DDoc test plan](./ddoc.md)                       | the whole DDoc language as a traceable test matrix (`DDC1`–`DDC84`), grounded in `spec/ddoc.dd`; supersedes `DOC3` as the requirement of record for ddoc rendering |
+| [Dub-project context](./project.md)               | analyzing files that belong to a real project (`PRJ`): recipe discovery, `dub describe`, the translation to `AnalyzerConfig`, and the viewer path that consumes it |
 
 ## Milestones
 
 The commit-level execution plan; each lands green on its own. Track A has no
 DMD dependency; Track B needs the fork pin.
 
-| Milestone | Track | Scope                                                                                       | Status                                                   |
-| --------- | ----- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| L0        | A     | This spec                                                                                   | full (`bd21a054`)                                        |
-| L1        | A     | `sparkles.base.text.lineindex` — byte ↔ line/col                                            | full (`34369c9c`)                                        |
-| L2        | A     | Extract `libs/twoslash-protocol`; add `language` + `offsetEncoding` (`NTN4`)                | full (`a0626e09`)                                        |
-| L3        | A     | Parameterize the popup/highlight language in `overlay.d` + hue (`EXT5`)                     | full (`1344c42b`)                                        |
-| L4        | A     | `sparkles:twoslash-d` notation parser (`NTN1`–`NTN3`)                                       | full (`f8c9a846`)                                        |
-| L5        | B     | Fork branch `dmdserver-dub` + pin + `dmd-import-paths` nix plumbing (`BLD1`–`BLD4`)         | full (`acef0edd`)                                        |
-| L6        | B     | `sparkles:dmd-lsp` analysis core + diagnostics (`COR1`–`COR6`)                              | full (`ec71308d`)                                        |
-| L7        | B     | `semvisitor.d` port — tips, identifier types (`TIP1`–`TIP3`, `DOC1`)                        | full (`032f3b35`)                                        |
-| L8        | B     | `twoslash-d` node assembly + emit + golden fixtures (`NTN2`, `DOC2`)                        | full (`618e98a0`)                                        |
-| L9        | B     | `apps/twoslash-extract` CLI (`EXT1`–`EXT4`)                                                 | full (`5aa94285`)                                        |
-| L10       | B     | hue showcase fixtures; reconcile [hue/twoslash.md](../hue/twoslash.md) `NOT`/`DMD` statuses | partial (corpus `67c04784`; spec reconciliation pending) |
-| L11       | B     | Diátaxis docs (`docs/libs/dmd-lsp/`, `docs/libs/twoslash-d/`) + `AGENTS.md` rows            | not started                                              |
-| L12       | —     | _(follow-up)_ `apps/ci` twoslash verification (`@errors:` glob via `{{_}}`)                 | not started                                              |
+| Milestone | Track | Scope                                                                                       | Status                                                                 |
+| --------- | ----- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| L0        | A     | This spec                                                                                   | full (`bd21a054`)                                                      |
+| L1        | A     | `sparkles.base.text.lineindex` — byte ↔ line/col                                            | full (`34369c9c`)                                                      |
+| L2        | A     | Extract `libs/twoslash-protocol`; add `language` + `offsetEncoding` (`NTN4`)                | full (`a0626e09`)                                                      |
+| L3        | A     | Parameterize the popup/highlight language in `overlay.d` + hue (`EXT5`)                     | full (`1344c42b`)                                                      |
+| L4        | A     | `sparkles:twoslash-d` notation parser (`NTN1`–`NTN3`)                                       | full (`f8c9a846`)                                                      |
+| L5        | B     | Fork branch `dmdserver-dub` + pin + `dmd-import-paths` nix plumbing (`BLD1`–`BLD4`)         | full (`acef0edd`)                                                      |
+| L6        | B     | `sparkles:dmd-lsp` analysis core + diagnostics (`COR1`–`COR6`)                              | full (`ec71308d`)                                                      |
+| L7        | B     | `semvisitor.d` port — tips, identifier types (`TIP1`–`TIP3`, `DOC1`)                        | full (`032f3b35`)                                                      |
+| L8        | B     | `twoslash-d` node assembly + emit + golden fixtures (`NTN2`, `DOC2`)                        | full (`618e98a0`)                                                      |
+| L9        | B     | `apps/twoslash-extract` CLI (`EXT1`–`EXT4`)                                                 | full (`5aa94285`)                                                      |
+| L10       | B     | hue showcase fixtures; reconcile [hue/twoslash.md](../hue/twoslash.md) `NOT`/`DMD` statuses | partial (corpus `67c04784`; spec reconciliation pending)               |
+| L11       | B     | Diátaxis docs (`docs/libs/dmd-lsp/`, `docs/libs/twoslash-d/`) + `AGENTS.md` rows            | not started                                                            |
+| L12       | —     | _(follow-up)_ `apps/ci` twoslash verification (`@errors:` glob via `{{_}}`)                 | not started                                                            |
+| L13       | B     | [Dub-project context](./project.md) (`PRJ1`–`PRJ11`) + `twoslash-extract --dub`             | full (`95a85f51`, `59e623ff`); viewer path `PRJ12`–`PRJ16` not started |
 
 Issue #124's D3 (completions, references) and D4 (JSON-RPC LSP server) are
 follow-on milestones behind the same core.
@@ -116,7 +119,9 @@ follow-on milestones behind the same core.
 | `libs/dmd-lsp/src/sparkles/dmd_lsp/api.d` + `testing.d`        | the facade; `COR2`, test gating                |
 | `libs/twoslash-d/src/sparkles/twoslash_d/notation.d`           | `NTN1`–`NTN2`                                  |
 | `libs/twoslash-d/src/sparkles/twoslash_d/analyze.d` + `emit.d` | `NTN3`–`NTN4`, `DOC2`–`DOC3`                   |
-| `apps/twoslash-extract/src/app.d`                              | `EXT1`–`EXT4`                                  |
+| `libs/dmd-lsp/src/sparkles/dmd_lsp/ddoc.d`                     | `DOC3`; the [`DDC`](./ddoc.md) matrix          |
+| `libs/dmd-lsp/src/sparkles/dmd_lsp/project.d`                  | [`PRJ1`–`PRJ9`](./project.md)                  |
+| `apps/twoslash-extract/src/app.d`                              | `EXT1`–`EXT4`, `EXT6`; `PRJ10`–`PRJ11`         |
 | `libs/twoslash-protocol/` (extracted) + `apps/hue/src/app.d`   | `NTN4`, `EXT5`                                 |
 | `nix/packages/dmd-import-paths.nix` + `nix/dub-lock.json`      | `BLD2`–`BLD3`                                  |
 
