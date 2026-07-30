@@ -194,8 +194,54 @@ struct ExplorerTui
     private const(char)[] query() const return @safe pure nothrow @nogc
         => qbuf[0 .. qlen];
 
+    /// The live-filter query (for a host that paints its own input line —
+    /// the GUI pane has no status bar of its own).
+    const(char)[] filterQuery() const return @safe pure nothrow @nogc
+        => query;
+
     /// The pane is consuming typed text (the workspace must not steal keys).
     bool inputActive() const @safe pure nothrow @nogc => searching;
+
+    // ── The live filter, drivable by either backend's input ───────────────
+    /// `/`: enter filter mode (broot's tree-as-search-result — XPL/TRV5).
+    void filterStart() @system
+    {
+        searching = true;
+        qlen = 0;
+        rebuild();
+    }
+
+    /// ditto — a typed character narrows per keystroke.
+    void filterInput(dchar c) @system
+    {
+        if (c >= 32 && c < 127 && qlen < qbuf.length)
+        {
+            qbuf[qlen++] = cast(char) c;
+            rebuild();
+        }
+    }
+
+    /// ditto
+    void filterBackspace() @system
+    {
+        if (qlen)
+            --qlen;
+        rebuild();
+    }
+
+    /// Enter keeps the filtered tree; Esc clears it.
+    void filterAccept() @safe pure nothrow @nogc
+    {
+        searching = false;
+    }
+
+    /// ditto
+    void filterCancel() @system
+    {
+        searching = false;
+        qlen = 0;
+        rebuild();
+    }
 
     // Shallow directory listing: dirs first, each group name-sorted. All
     // visibility policy (hidden / ignored / globs) lives in `visible`;
@@ -705,7 +751,7 @@ struct ExplorerTui
                     case 'k': --sel; clamp(); break;
                     case 'g': sel = 0; clamp(); break;
                     case 'G': sel = cast(long) rows.length - 1; clamp(); break;
-                    case '/': searching = true; qlen = 0; rebuild(); break;
+                    case '/': filterStart(); break;
                     // Next/prev git change (XPF1) — the tree pane owns the
                     // brackets while focused (the viewer keeps them for
                     // document navigation).
@@ -730,24 +776,10 @@ struct ExplorerTui
         return ev.match!((in KeyEvent e) {
             switch (e.key)
             {
-                case Key.char_:
-                    if (qlen < qbuf.length)
-                        qbuf[qlen++] = cast(char) e.ch;
-                    rebuild();
-                    break;
-                case Key.backspace:
-                    if (qlen)
-                        --qlen;
-                    rebuild();
-                    break;
-                case Key.enter:
-                    searching = false;
-                    break;
-                case Key.escape:
-                    searching = false;
-                    qlen = 0;
-                    rebuild();
-                    break;
+                case Key.char_: filterInput(e.ch); break;
+                case Key.backspace: filterBackspace(); break;
+                case Key.enter: filterAccept(); break;
+                case Key.escape: filterCancel(); break;
                 default: break;
             }
             return true;

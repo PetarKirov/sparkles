@@ -44,6 +44,15 @@ struct CliParams
     @CliOption("theme", "Syntax highlighting theme name.")
     string theme = "catppuccin-mocha";
 
+    @CliOption("include", "Explorer glob(s) to always show (overrides hidden, git-ignored, and --exclude); matched against the entry name and its root-relative path. Repeatable.")
+    string[] include;
+
+    @CliOption("exclude", "Explorer glob(s) to hide. Repeatable; --include wins.")
+    string[] exclude;
+
+    @CliOption("tree-width", "Explorer pane width in cells (default 32).")
+    int treeWidth = 32;
+
     @CliOption("gui", "Force the raylib GPU window (requires the 'gui' build configuration). With neither --gui nor --no-gui, hue opens the window automatically when a display is available and falls back to the terminal otherwise.")
     bool gui;
 
@@ -383,7 +392,7 @@ int main(string[] args)
                             d.preview, d.twoslash, d.lang);
                     },
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
-                    &cache);
+                    &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth);
             }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
@@ -545,7 +554,7 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             WorkspaceDoc(doc.title, doc.source, doc.events, doc.preview,
                 doc.twoslash, doc.lang),
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
-            &cache);
+            &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth);
     }
     else
     {
@@ -587,7 +596,8 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             docSet, &loadDoc, &cache, doc.twoslash,
             doc.path, startInTree: treeRoot.length != 0, treeRoot,
             FontSet.FaceOverrides(cli.fontBold, cli.fontItalic,
-                cli.fontBoldItalic), doc.lang);
+                cli.fontBoldItalic), doc.lang,
+            cli.include.dup, cli.exclude.dup, cli.treeWidth);
     }
     else
     {

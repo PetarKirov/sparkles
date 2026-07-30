@@ -62,7 +62,7 @@ struct WorkspaceTui
     private RgbColor pageFg, pageBg;
     private size_t lastThemeIdx = size_t.max;
 
-    private enum treeCols = 32; // sidebar width incl. its own chrome
+    int treeCols = 32; /// sidebar width incl. its own chrome (--tree-width)
 
     /// Recomputes the pane geometry for the current terminal size.
     void arrange(int w, int h) @system
@@ -267,10 +267,15 @@ terminal session, one loop — the panes swap content, never the screen.
 int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     WsLoader loadDoc,
     const(string)[] names, immutable(Theme)[] themes, size_t themeIdx,
-    LabelSet labels, TsConfigCache* cache) @system
+    LabelSet labels, TsConfigCache* cache,
+    string[] includeGlobs = null, string[] excludeGlobs = null,
+    int treeWidth = 32) @system
 {
     WorkspaceTui w;
     w.loadDoc = loadDoc;
+    w.treeCols = treeWidth < 12 ? 12 : treeWidth;
+    w.tree.includeGlobs = includeGlobs;
+    w.tree.excludeGlobs = excludeGlobs;
 
     // The tree pane state (built even while hidden — [ / ] navigate it).
     w.tree.root = isDir ? target : (target.length ? dirName(target) : ".");

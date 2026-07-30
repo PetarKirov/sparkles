@@ -182,6 +182,9 @@ int runGui(
     string treeRoot = null,              // explorer root (default: docPath's dir)
     FontSet.FaceOverrides faces = FontSet.FaceOverrides.init, // per-style fonts
     string docLang = null,               // canonical language (CST folds)
+    string[] includeGlobs = null,        // explorer globs (XPF2)
+    string[] excludeGlobs = null,        // ditto
+    int treeWidth = 32,                  // explorer pane width in cells
 ) @system
 {
     import std.stdio : stderr;
@@ -292,9 +295,11 @@ int runGui(
     import std.path : dirName;
 
     ExplorerTui tree;
+    tree.includeGlobs = includeGlobs;
+    tree.excludeGlobs = excludeGlobs;
     bool treeVisible = startInTree;
     bool treeFocused = startInTree;
-    enum treeCols = 32;
+    const treeCols = treeWidth < 12 ? 12 : treeWidth;
     int treePx() => treeVisible ? (treeCols + 1) * fonts.cellW() : 0;
 
     int widthCols()
@@ -598,7 +603,21 @@ int runGui(
         }
 
         const inputMode = mode != Mode.normal;
-        if (inputMode)
+        if (treeFocused && tree.searching)
+        {
+            // The tree pane's live filter (broot mode): typed chars narrow
+            // per keystroke; Enter keeps the filtered tree, Esc clears it.
+            for (int c = GetCharPressed(); c > 0; c = GetCharPressed())
+                if (c != '/')
+                    tree.filterInput(cast(dchar) c);
+            if (IsKeyPressed(KeyboardKey.KEY_BACKSPACE))
+                tree.filterBackspace();
+            if (IsKeyPressed(KeyboardKey.KEY_ENTER))
+                tree.filterAccept();
+            if (IsKeyPressed(KeyboardKey.KEY_ESCAPE))
+                tree.filterCancel();
+        }
+        else if (inputMode)
         {
             // Typing a search query or a goto-line number.
             for (int c = GetCharPressed(); c > 0; c = GetCharPressed())
@@ -904,8 +923,11 @@ int runGui(
                 toast = Timeline.triggered(toastCfg);
             }
 
-            // Enter an input mode: '/' search (raw view only), 'g' goto-line.
-            if (!treeFocused && !vm.showPreview && IsKeyPressed(KeyboardKey.KEY_SLASH))
+            // Enter an input mode: '/' filters the tree pane when focused,
+            // else searches (raw view only); 'g' goto-line.
+            if (treeFocused && IsKeyPressed(KeyboardKey.KEY_SLASH))
+                tree.filterStart();
+            else if (!treeFocused && !vm.showPreview && IsKeyPressed(KeyboardKey.KEY_SLASH))
             {
                 mode = Mode.search;
                 query.clear();
@@ -1442,6 +1464,21 @@ int runGui(
             auto tCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
                 0, cast(float)(treeTopRows * cellH));
             paint(tCanvas, tOps);
+
+            // The live-filter input line, pinned to the pane's bottom row
+            // (the GUI pane has no status bar; the TUI shows it there).
+            if (tree.searching)
+            {
+                const barY = screenH - cellH;
+                DrawRectangle(0, barY, treeCols * cellW, cellH,
+                    rl(vm.gutterFg));
+                buf.clear();
+                buf ~= "/";
+                buf ~= tree.filterQuery;
+                buf ~= "▏\0";
+                drawText(fonts, buf[][0 .. $ - 1], 4, cast(float) barY,
+                    TextStyle(0), rl(vm.pageBg));
+            }
 
             // The pane's scrollbar: the same animated-width thumb + hover
             // track as the document's, in the pane's theme tint.
