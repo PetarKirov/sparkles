@@ -130,6 +130,12 @@ struct AnalyzedModule
             return Tip(kind: data.kind, code: data.code,
                 doc: rendered.docs, tags: rendered.tags);
         }
+        if (data.kind == "parameter" && data.symbol !is null)
+        {
+            auto tip = parameterTip(data);
+            if (tip.found)
+                return tip;
+        }
         return Tip(kind: data.kind, code: data.code, doc: data.doc.strip);
     }
 
@@ -169,6 +175,31 @@ struct AnalyzedModule
             : a.col != b.col ? a.col < b.col
             : a.ident < b.ident);
         return spans;
+    }
+
+    // A parameter inherits its docs from the enclosing function's `Params:`
+    // row (the JSDoc/twoslash reference does exactly this for `@param`).
+    private Tip parameterTip(TipDataT)(ref TipDataT data) @system
+    {
+        import core.stdc.string : strlen;
+
+        import sparkles.dmd_lsp.ddoc : paramDocFor, renderDdocText;
+
+        auto fn = data.symbol.parent;
+        while (fn !is null && fn.isFuncDeclaration() is null
+            && fn.isTemplateDeclaration() is null)
+            fn = fn.parent;
+        if (fn is null || fn.comment is null || data.symbol.ident is null)
+            return Tip.init;
+
+        const comment = fn.comment[0 .. strlen(fn.comment)].idup;
+        auto rendered = renderDdocText(comment, fn);
+        const name = data.symbol.ident.toString.idup;
+        const doc = paramDocFor(rendered, name);
+        if (doc is null)
+            return Tip.init;
+        return Tip(kind: data.kind, code: data.code, doc: doc,
+            tags: [["param", doc.length ? name ~ " " ~ doc : name]]);
     }
 
     /// Where the symbol at `line`:`col` (both 1-based) is declared, or

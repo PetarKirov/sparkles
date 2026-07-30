@@ -619,3 +619,30 @@ private string toDebugString(in string[][] tags) @safe pure
 
     return tags.to!string;
 }
+
+@("ddoc.render.parameterHoverDocs")
+@system unittest
+{
+    import sparkles.dmd_lsp.testing : withAnalysis;
+
+    // Hovering a parameter usage inherits its Params: row from the enclosing
+    // function (the 08-jsdoc reference shape): docs = the row's description,
+    // tags = only that parameter's chip.
+    withAnalysis("module test;\n"
+        ~ "/**\n"
+        ~ "Scales.\n"
+        ~ "Params:\n"
+        ~ "    factor = the multiplier applied to `value`\n"
+        ~ "    value = the input\n"
+        ~ "*/\n"
+        ~ "int scale(int factor, int value) => factor * value;\n", (m) {
+        const tip = m.tipAt(8, 40); // `factor` in the body expression
+        assert(tip.kind == "parameter", tip.kind);
+        // ``value``: the engine auto-emphasizes the parameter name inside the
+        // author's own backticks — a double-backtick code span, which is
+        // valid CommonMark and renders identically to `value`.
+        assert(tip.doc == "the multiplier applied to ``value``", tip.doc);
+        assert(tip.tags == [["param",
+            "factor the multiplier applied to ``value``"]], tip.tags.toDebugString);
+    });
+}
