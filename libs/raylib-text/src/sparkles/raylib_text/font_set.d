@@ -6,9 +6,21 @@
 /// O(log n) glyph maps. All loading needs an active raylib GL context (call after
 /// `InitWindow`). Holds move-only `SmallBuffer`s, so it is non-copyable — declare
 /// one instance and pass it by `ref`.
+///
+/// Face $(I resolution) (name → file path) has two strategies, selected by
+/// `FontSet.FontSources`: the desktop default shells out to fontconfig
+/// (`fc-match`/`fc-query`/`fc-scan`), while `useFontconfig: false` (Android:
+/// no fontconfig, no subprocesses) scans plain font directories —
+/// `resolveFontInDirs` for names, `fontVariantPaths` for styled siblings,
+/// `<font>.charset` sidecar files for coverage. Face $(I loading) is the same
+/// on both: real file paths into `LoadFontEx`.
 module sparkles.raylib_text.font_set;
 
 import raylib;
+
+import std.algorithm.iteration : filter, map;
+import std.algorithm.searching : canFind, endsWith;
+import std.string : indexOf, strip, split, toLower;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 
@@ -104,30 +116,50 @@ struct FontSet
         string bold, italic, boldItalic;
     }
 
+    /// Where face resolution looks for font files. The default — no dirs,
+    /// `useFontconfig: true` — preserves the desktop behavior exactly
+    /// (fc-match/fc-query/fc-scan subprocesses). With `useFontconfig: false`
+    /// (Android: no fontconfig, and subprocesses are unavailable) names
+    /// resolve by scanning `dirs` in order (`resolveFontInDirs`), styled
+    /// variants by the sibling-file naming convention (`fontVariantPaths`),
+    /// and the primary's coverage from a `<font>.charset` sidecar (written at
+    /// build time from `fc-query --format=%{charset}`; without one, on-demand
+    /// atlas growth is simply disabled).
+    static struct FontSources
+    {
+        string[] dirs;
+        bool useFontconfig = true;
+    }
+
     static bool tryLoad(string nameOrPath, int fontSizePx, out FontSet fs,
         string[] codepointMapOpt = null,
-        FaceOverrides faces = FaceOverrides.init) @system
+        FaceOverrides faces = FaceOverrides.init,
+        FontSources sources = FontSources.init) @system
     {
         import std.file : exists;
         import std.process : execute;
-        import std.string : strip, toStringz, splitLines;
-        import std.algorithm.searching : canFind;
+        import std.string : toStringz, splitLines;
 
         string fontPath = nameOrPath;
         if (!fontPath.exists)
         {
-            auto res = execute(["fc-match", "-f", "%{file}", nameOrPath]);
-            if (res.status == 0 && res.output.strip.length > 0)
-                fontPath = res.output.strip.idup;
+            if (sources.useFontconfig)
+            {
+                auto res = execute(["fc-match", "-f", "%{file}", nameOrPath]);
+                if (res.status == 0 && res.output.strip.length > 0)
+                    fontPath = res.output.strip.idup;
+            }
+            else
+                fontPath = resolveFontInDirs(nameOrPath, sources.dirs);
         }
-        if (!fontPath.exists)
+        if (fontPath.length == 0 || !fontPath.exists)
             return false;
 
         fs.fontSize_ = fontSizePx < 1 ? 1 : fontSizePx;
         fs.codepoints = baseCodepoints;
         foreach (cp; baseCodepoints)
             fs.requestedCps ~= cp;
-        fs.loadFaceCharset(fontPath);
+        fs.loadFaceCharset(fontPath, sources.useFontconfig);
 
         fs.primary.pathZ = fontPath.toStringz;
         loadFontInto(fs.primary, fs.fontSize_, fs.requestedCps[]);
@@ -136,40 +168,45 @@ struct FontSet
 
         // Explicit per-style faces first (they win); the same-family scan
         // then fills only the still-empty slots.
-        fs.loadFaceOverride(fs.fontBold, faces.bold, "bold");
-        fs.loadFaceOverride(fs.fontItalic, faces.italic, "italic");
-        fs.loadFaceOverride(fs.fontBoldItalic, faces.boldItalic, "bold:italic");
+        fs.loadFaceOverride(fs.fontBold, faces.bold, "bold", sources);
+        fs.loadFaceOverride(fs.fontItalic, faces.italic, "italic", sources);
+        fs.loadFaceOverride(fs.fontBoldItalic, faces.boldItalic, "bold:italic", sources);
         // Real bold/italic/bold-italic faces of the same family.
-        fs.loadStyleVariants(fontPath);
+        fs.loadStyleVariants(fontPath, sources);
         // Optional --font-codepoint-map fonts.
-        fs.parseCodepointMaps(codepointMapOpt);
+        fs.parseCodepointMaps(codepointMapOpt, sources);
 
-        // Fallbacks: the first Nerd Font and first common regular monospace.
-        auto fbRes = execute(["fc-match", "-f", "%{file}\\n", "monospace", "-s"]);
-        if (fbRes.status == 0)
+        if (sources.useFontconfig)
         {
-            foreach (line; fbRes.output.splitLines)
+            // Fallbacks: the first Nerd Font and first common regular monospace.
+            auto fbRes = execute(["fc-match", "-f", "%{file}\\n", "monospace", "-s"]);
+            if (fbRes.status == 0)
             {
-                string path = line.strip.idup;
-                if (path.length == 0 || path == fontPath)
-                    continue;
-                const isNerd = path.canFind("NerdFont") || path.canFind("Nerd Font");
-                if (isNerd && !fs.nerdFallback.present)
+                foreach (line; fbRes.output.splitLines)
                 {
-                    fs.nerdFallback.pathZ = path.toStringz;
-                    loadFontInto(fs.nerdFallback, fs.fontSize_, fs.codepoints);
+                    string path = line.strip.idup;
+                    if (path.length == 0 || path == fontPath)
+                        continue;
+                    const isNerd = path.canFind("NerdFont") || path.canFind("Nerd Font");
+                    if (isNerd && !fs.nerdFallback.present)
+                    {
+                        fs.nerdFallback.pathZ = path.toStringz;
+                        loadFontInto(fs.nerdFallback, fs.fontSize_, fs.codepoints);
+                    }
+                    else if (!isNerd && !fs.regularFallback.present
+                        && (path.canFind("DejaVu") || path.canFind("FreeMono")
+                            || path.canFind("LiberationMono")))
+                    {
+                        fs.regularFallback.pathZ = path.toStringz;
+                        loadFontInto(fs.regularFallback, fs.fontSize_, fs.codepoints);
+                    }
+                    if (fs.nerdFallback.present && fs.regularFallback.present)
+                        break;
                 }
-                else if (!isNerd && !fs.regularFallback.present
-                    && (path.canFind("DejaVu") || path.canFind("FreeMono")
-                        || path.canFind("LiberationMono")))
-                {
-                    fs.regularFallback.pathZ = path.toStringz;
-                    loadFontInto(fs.regularFallback, fs.fontSize_, fs.codepoints);
-                }
-                if (fs.nerdFallback.present && fs.regularFallback.present)
-                    break;
             }
         }
+        else
+            fs.loadFallbacksFromDirs(fontPath, sources.dirs);
 
         fs.measure();
         return true;
@@ -328,74 +365,87 @@ struct FontSet
         cellH_ = cast(int) m.y < 1 ? 1 : cast(int) m.y;
     }
 
-    // Parse the primary FACE's coverage from fc-query into the sorted lo/hi
-    // buffers. Best-effort: on failure the buffers stay empty (on-demand requesting
-    // simply disabled).
-    private void loadFaceCharset(string fontPath) @system
+    // Parse the primary FACE's coverage into the sorted lo/hi buffers — from
+    // fc-query, or (no fontconfig) from a `<fontPath>.charset` sidecar written
+    // at build time. Best-effort: on failure the buffers stay empty (on-demand
+    // requesting simply disabled).
+    private void loadFaceCharset(string fontPath, bool useFontconfig) @system
     {
         import std.process : execute;
-        import std.string : strip, split, indexOf;
-        import std.conv : to;
+
+        if (!useFontconfig)
+        {
+            import std.file : exists, readText;
+
+            const sidecar = fontPath ~ ".charset";
+            if (!sidecar.exists)
+                return;
+            try
+                parseCharsetTokens(readText(sidecar), faceLo, faceHi);
+            catch (Exception) { /* unreadable sidecar → growth disabled */ }
+            return;
+        }
 
         auto res = execute(["fc-query", "--format=%{charset}", fontPath]);
         if (res.status != 0)
             return;
-        foreach (tok; res.output.strip.split)
-        {
-            if (tok.length == 0)
-                continue;
-            const dash = tok.indexOf('-');
-            try
-            {
-                if (dash < 0)
-                {
-                    const v = tok.to!int(16);
-                    faceLo ~= v;
-                    faceHi ~= v;
-                }
-                else
-                {
-                    faceLo ~= tok[0 .. dash].to!int(16);
-                    faceHi ~= tok[dash + 1 .. $].to!int(16);
-                }
-            }
-            catch (Exception) { /* skip a malformed token, keep the rest */ }
-        }
+        parseCharsetTokens(res.output, faceLo, faceHi);
     }
 
     // Load one explicitly-selected styled face: a file path directly, else a
-    // fontconfig pattern (`<spec>:style` when the spec names no style).
+    // fontconfig pattern (`<spec>:style` when the spec names no style) — or,
+    // without fontconfig, a directory-scan resolution of the bare spec.
     private void loadFaceOverride(ref LoadedFont target, string spec,
-        string style) @system
+        string style, in FontSources sources) @system
     {
         import std.file : exists;
         import std.process : execute;
-        import std.string : strip;
-        import std.algorithm.searching : canFind;
 
         if (spec.length == 0)
             return;
         string path = spec;
         if (!path.exists)
         {
-            const pattern = spec.canFind(':') ? spec : spec ~ ":" ~ style;
-            auto res = execute(["fc-match", "-f", "%{file}", pattern]);
-            if (res.status != 0 || res.output.strip.length == 0)
-                return;
-            path = res.output.strip.idup;
+            if (sources.useFontconfig)
+            {
+                const pattern = spec.canFind(':') ? spec : spec ~ ":" ~ style;
+                auto res = execute(["fc-match", "-f", "%{file}", pattern]);
+                if (res.status != 0 || res.output.strip.length == 0)
+                    return;
+                path = res.output.strip.idup;
+            }
+            else
+                path = resolveFontInDirs(spec, sources.dirs);
         }
+        if (path.length == 0)
+            return;
         loadVariantFile(target, path, fontSize_, requestedCps[]);
     }
 
     // Resolve/load the bold/italic/bold-italic faces of the SAME family as the
-    // primary by scanning the primary's directory with fc-scan and matching on
-    // family + weight + slant (works even for fonts fontconfig hasn't registered).
-    private void loadStyleVariants(string fontPath) @system
+    // primary: with fontconfig by scanning the primary's directory with fc-scan
+    // and matching on family + weight + slant (works even for fonts fontconfig
+    // hasn't registered); without it by the sibling-file naming convention
+    // (`fontVariantPaths`).
+    private void loadStyleVariants(string fontPath, in FontSources sources) @system
     {
         import std.process : execute;
-        import std.string : strip, splitLines, split, join;
+        import std.string : splitLines, join;
         import std.conv : to;
         import std.path : dirName;
+
+        if (!sources.useFontconfig)
+        {
+            string boldPath, italicPath, boldItalicPath;
+            fontVariantPaths(fontPath, boldPath, italicPath, boldItalicPath);
+            if (!fontBold.present)
+                loadVariantFile(fontBold, boldPath, fontSize_, requestedCps[]);
+            if (!fontItalic.present)
+                loadVariantFile(fontItalic, italicPath, fontSize_, requestedCps[]);
+            if (!fontBoldItalic.present)
+                loadVariantFile(fontBoldItalic, boldItalicPath, fontSize_, requestedCps[]);
+            return;
+        }
 
         string pFamily;
         int pWeight, pSlant;
@@ -440,14 +490,44 @@ struct FontSet
             loadVariantFile(fontBoldItalic, boldItalicPath, fontSize_, requestedCps[]);
     }
 
+    // Fallback faces without fontconfig: the first Nerd-Font file in `dirs`
+    // that is not the primary, and the first family of a fixed common-mono
+    // preference list (the stand-in for `fc-match monospace -s`).
+    private void loadFallbacksFromDirs(string fontPath, const(string)[] dirs) @system
+    {
+        import std.string : toStringz;
+
+        foreach (path; fontFilesInDirs(dirs))
+        {
+            if (path == fontPath)
+                continue;
+            if ((path.canFind("NerdFont") || path.canFind("Nerd Font"))
+                && !nerdFallback.present)
+            {
+                nerdFallback.pathZ = path.toStringz;
+                loadFontInto(nerdFallback, fontSize_, codepoints);
+                break;
+            }
+        }
+        const regular = resolveFontInDirs(
+            "DejaVu Sans Mono,Roboto Mono,Droid Sans Mono,Liberation Mono,Cousine",
+            dirs);
+        if (regular.length != 0 && regular != fontPath && !regularFallback.present)
+        {
+            regularFallback.pathZ = regular.toStringz;
+            loadFontInto(regularFallback, fontSize_, codepoints);
+        }
+    }
+
     // Parse `--font-codepoint-map` entries (`<ranges>=<family>`) and load each
-    // mapped font, accepting only families fontconfig actually has installed.
-    private void parseCodepointMaps(string[] entries) @system
+    // mapped font, accepting only families fontconfig actually has installed
+    // (without fontconfig: only families the directory scan resolves).
+    private void parseCodepointMaps(string[] entries, in FontSources sources) @system
     {
         import std.process : execute;
-        import std.string : strip, split, indexOf, lastIndexOf, startsWith, toLower, toStringz;
+        import std.string : lastIndexOf, startsWith, toStringz;
         import std.conv : to;
-        import std.algorithm : sort, uniq, canFind;
+        import std.algorithm : sort, uniq;
         import std.array : array;
         import std.file : exists;
 
@@ -491,17 +571,23 @@ struct FontSet
                 continue;
             cps = cps.sort.uniq.array;
 
-            auto res = execute(["fc-match", "-f", "%{file}\t%{family}", family]);
-            if (res.status != 0)
-                continue;
-            auto fields = res.output.strip.split("\t");
-            if (fields.length < 2)
-                continue;
-            const path = fields[0];
+            string path;
+            if (sources.useFontconfig)
+            {
+                auto res = execute(["fc-match", "-f", "%{file}\t%{family}", family]);
+                if (res.status != 0)
+                    continue;
+                auto fields = res.output.strip.split("\t");
+                if (fields.length < 2)
+                    continue;
+                path = fields[0].idup;
+                if (!fields[1].toLower.canFind(family.toLower))
+                    continue; // fontconfig substituted a different family → not installed
+            }
+            else
+                path = resolveFontInDirs(family, sources.dirs);
             if (path.length == 0 || !path.exists)
                 continue;
-            if (!fields[1].toLower.canFind(family.toLower))
-                continue; // fontconfig substituted a different family → not installed
 
             auto m = &codepointMaps[codepointMapCount];
             foreach (c; cps)
@@ -517,4 +603,232 @@ struct FontSet
             codepointMapCount++;
         }
     }
+}
+
+// ── fontconfig-free resolution helpers (pure directory/name logic) ───────────
+
+/// Lowercase with spaces and dashes stripped — the normalization under which a
+/// family name ("FiraCode Nerd Font Mono") matches a font file's basename
+/// ("FiraCodeNerdFontMono-Regular").
+private string normalizeFontName(scope const(char)[] s) @safe pure
+{
+    import std.ascii : toLower;
+    import std.array : array;
+    import std.utf : byChar;
+
+    return s.byChar.filter!(c => c != ' ' && c != '-').map!(c => c.toLower).array.idup;
+}
+
+/// The `.ttf`/`.otf` files under `dirs` (shallow, sorted per dir for
+/// determinism), scanned in order — earlier dirs win.
+private string[] fontFilesInDirs(const(string)[] dirs) @safe
+{
+    import std.algorithm.sorting : sort;
+    import std.array : array;
+    import std.file : dirEntries, exists, isDir, SpanMode;
+    import std.path : extension;
+
+    string[] result;
+    foreach (dir; dirs)
+    {
+        if (!dir.exists || !dir.isDir)
+            continue;
+        auto files = dirEntries(dir, SpanMode.shallow)
+            .map!(e => e.name)
+            .filter!((string p) {
+                const ext = p.extension.toLower;
+                return ext == ".ttf" || ext == ".otf";
+            })
+            .array;
+        sort(files);
+        result ~= files;
+    }
+    return result;
+}
+
+/**
+Resolve a font family name — or a fontconfig-style comma-separated preference
+list ("FiraCode Nerd Font Mono,JetBrains Mono,monospace") — against plain
+directories of font files, without fontconfig. For each name in order, the
+candidates are files whose normalized basename contains the normalized name;
+among them the best-ranked wins: an exact stem match, then an explicit
+`…-Regular` face, then a stem with no bold/italic/oblique decoration, then
+anything (ties broken lexicographically). Returns the first name's winner, or
+`""` when nothing matches (generic aliases like "monospace" match no file and
+simply fall through to the next name).
+*/
+string resolveFontInDirs(const(char)[] nameOrList, const(string)[] dirs) @safe
+{
+    import std.path : baseName, stripExtension;
+
+    const files = fontFilesInDirs(dirs);
+    foreach (rawName; nameOrList.split(','))
+    {
+        const name = normalizeFontName(rawName.strip);
+        if (name.length == 0)
+            continue;
+
+        string best;
+        int bestRank = int.max;
+        foreach (path; files)
+        {
+            const stem = normalizeFontName(path.baseName.stripExtension);
+            if (!stem.canFind(name))
+                continue;
+            int rank;
+            if (stem == name)
+                rank = 0;
+            else if (stem == name ~ "regular")
+                rank = 1;
+            else if (!stem.canFind("bold") && !stem.canFind("italic")
+                && !stem.canFind("oblique"))
+                rank = 2;
+            else
+                rank = 3;
+            if (rank < bestRank || (rank == bestRank && (best.length == 0 || path < best)))
+            {
+                best = path;
+                bestRank = rank;
+            }
+        }
+        if (best.length != 0)
+            return best;
+    }
+    return "";
+}
+
+@("resolveFontInDirs.preferenceListAndRanking")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+
+    const dir = buildPath(tempDir, "sparkles-font-resolve-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+    foreach (f; ["FiraCodeNerdFontMono-Regular.ttf", "FiraCodeNerdFontMono-Bold.ttf",
+        "FiraCodeNerdFontMono-Italic.ttf", "DejaVuSansMono.ttf", "notafont.txt"])
+        write(buildPath(dir, f), "x");
+
+    // Preference list: first resolvable name wins; the -Regular face beats
+    // the styled siblings; generic "monospace" matches nothing and falls
+    // through.
+    assert(resolveFontInDirs("monospace,FiraCode Nerd Font Mono", [dir])
+        == buildPath(dir, "FiraCodeNerdFontMono-Regular.ttf"));
+    // Exact stem match (no -Regular suffix on the file).
+    assert(resolveFontInDirs("DejaVu Sans Mono", [dir])
+        == buildPath(dir, "DejaVuSansMono.ttf"));
+    // Unresolvable everything → "".
+    assert(resolveFontInDirs("Comic Sans,monospace", [dir]) == "");
+    // Non-font files are never candidates.
+    assert(resolveFontInDirs("notafont", [dir]) == "");
+    // Missing dirs are skipped, not errors.
+    assert(resolveFontInDirs("DejaVu Sans Mono", [buildPath(dir, "absent"), dir])
+        == buildPath(dir, "DejaVuSansMono.ttf"));
+}
+
+/**
+The sibling-file naming convention that stands in for fc-scan: given the
+primary face's path, the styled variants are `<Base>-Bold`, `-Italic` (or
+`-Oblique`), and `-BoldItalic` (or `-BoldOblique`) next to it, where `<Base>`
+is the primary's stem minus a trailing `-Regular`. Nerd-Font and DejaVu
+releases both follow it. Out-params are `""` when the file does not exist.
+*/
+void fontVariantPaths(string primaryPath,
+    out string bold, out string italic, out string boldItalic) @safe
+{
+    import std.file : exists;
+    import std.path : baseName, buildPath, dirName, extension, stripExtension;
+
+    const dir = primaryPath.dirName;
+    const ext = primaryPath.extension;
+    string stem = primaryPath.baseName.stripExtension;
+    if (stem.toLower.endsWith("-regular"))
+        stem = stem[0 .. $ - "-Regular".length];
+
+    string pick(scope string[] suffixes...) @safe
+    {
+        foreach (s; suffixes)
+        {
+            const p = buildPath(dir, stem ~ s ~ ext);
+            if (p.exists)
+                return p;
+        }
+        return "";
+    }
+
+    bold = pick("-Bold");
+    italic = pick("-Italic", "-Oblique");
+    boldItalic = pick("-BoldItalic", "-BoldOblique");
+}
+
+@("fontVariantPaths.namingConvention")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+
+    const dir = buildPath(tempDir, "sparkles-font-variant-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+    foreach (f; ["Mono-Regular.ttf", "Mono-Bold.ttf", "Mono-BoldOblique.ttf",
+        "Solo.otf", "Solo-Italic.otf"])
+        write(buildPath(dir, f), "x");
+
+    string b, i, bi;
+    // -Regular stem: bold present, italic absent, bold-italic via -BoldOblique.
+    fontVariantPaths(buildPath(dir, "Mono-Regular.ttf"), b, i, bi);
+    assert(b == buildPath(dir, "Mono-Bold.ttf"));
+    assert(i == "");
+    assert(bi == buildPath(dir, "Mono-BoldOblique.ttf"));
+    // Bare stem (no -Regular), .otf, only italic present.
+    fontVariantPaths(buildPath(dir, "Solo.otf"), b, i, bi);
+    assert(b == "");
+    assert(i == buildPath(dir, "Solo-Italic.otf"));
+    assert(bi == "");
+}
+
+/// Parse fontconfig charset syntax (space-separated `lo-hi` hex ranges and
+/// bare hex singletons — `fc-query --format=%{charset}` output, also the
+/// `<font>.charset` sidecar format) into the sorted lo/hi bound buffers.
+/// Malformed tokens are skipped, the rest kept.
+package void parseCharsetTokens(const(char)[] text,
+    ref SmallBuffer!(int, 256, true) lo, ref SmallBuffer!(int, 256, true) hi) @safe
+{
+    import std.conv : to;
+
+    foreach (tok; text.strip.split)
+    {
+        if (tok.length == 0)
+            continue;
+        const dash = tok.indexOf('-');
+        try
+        {
+            if (dash < 0)
+            {
+                const v = tok.to!int(16);
+                lo ~= v;
+                hi ~= v;
+            }
+            else
+            {
+                lo ~= tok[0 .. dash].to!int(16);
+                hi ~= tok[dash + 1 .. $].to!int(16);
+            }
+        }
+        catch (Exception) { /* skip a malformed token, keep the rest */ }
+    }
+}
+
+@("parseCharsetTokens.rangesSingletonsMalformed")
+@safe unittest
+{
+    SmallBuffer!(int, 256, true) lo, hi;
+    parseCharsetTokens("20-7e a0 100-17f zz 1f600-1f64f", lo, hi);
+    assert(lo[] == [0x20, 0xa0, 0x100, 0x1f600]);
+    assert(hi[] == [0x7e, 0xa0, 0x17f, 0x1f64f]);
+
+    SmallBuffer!(int, 256, true) lo2, hi2;
+    parseCharsetTokens("", lo2, hi2);
+    assert(lo2.length == 0 && hi2.length == 0);
 }
