@@ -230,6 +230,19 @@ version (Posix)
                 sigaction(SIGWINCH, &_oldWinch, null);
         }
 
+        /// True when input is ready within `timeout`, without consuming any —
+        /// a bounded idle tick for callers that also harvest async work
+        /// (e.g. the explorer's git-status refresh) between events.
+        bool ready(Duration timeout) @trusted nothrow
+        {
+            import core.sys.posix.poll : poll, pollfd, POLLIN;
+
+            pollfd pfd;
+            pfd.fd = _fd;
+            pfd.events = POLLIN;
+            return poll(&pfd, 1, cast(int) timeout.total!"msecs") > 0;
+        }
+
         /// Block for the next event. A SIGWINCH mid-read yields a `ResizeEvent`
         /// (with a zero size — the caller re-queries the terminal); EOF / read
         /// error yields `EndOfInput`.

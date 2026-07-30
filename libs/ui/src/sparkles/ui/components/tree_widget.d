@@ -212,6 +212,22 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
             }
         spans ~= lbl;
 
+        // Optional trailing status badge (VMD6, the case study's `hasStatus`
+        // capability) — e.g. a git-status letter with its own color.
+        static if (__traits(compiles, { const(char)[] bt = v.badge; }))
+            if (v.badge.length)
+            {
+                auto bsp = TextSpan(v.badge, labelSlot);
+                static if (__traits(compiles, { bool hb = v.hasBadgeFg; bsp.fg = v.badgeFg; }))
+                    if (v.hasBadgeFg)
+                    {
+                        bsp.fg = v.badgeFg;
+                        bsp.hasFg = true;
+                    }
+                spans ~= TextSpan(" ", labelSlot);
+                spans ~= bsp;
+            }
+
         Widget w = Widget(kind: WidgetKind.rich, spans: spans,
             hitId: node + 1, // hit identity = node index + 1 (0 = none)
             paintBackground: node == selected, stretch: node == selected,

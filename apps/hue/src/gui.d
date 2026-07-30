@@ -680,6 +680,8 @@ int runGui(
                 }
                 if (IsKeyPressed(KeyboardKey.KEY_ENTER) || pressed(KeyboardKey.KEY_L))
                     activateTree();
+                if (pressed(KeyboardKey.KEY_R))
+                    tree.refreshNow(); // XPF4: re-read fs + force git status
                 if (pressed(KeyboardKey.KEY_H))
                 {
                     // Close the selected dir, or jump to the parent row.
@@ -1345,6 +1347,8 @@ int runGui(
         // The explorer pane (XPL2): the tree's widget view painted through
         // RaylibCanvas at the window's left edge, viewport-sliced, with a
         // hairline divider. The whole pane clips at its own width.
+        if (treeVisible && tree.git.poll())
+            tree.rebuild(); // a finished async git refresh paints this frame
         if (treeVisible)
         {
             tree.height = visibleRows - treeTopRows;

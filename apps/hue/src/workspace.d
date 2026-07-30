@@ -13,6 +13,7 @@ module workspace;
 
 version (Posix):
 
+import core.time : msecs;
 import std.path : dirName;
 
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
@@ -309,6 +310,21 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         if (clip.length)
             term.writeRaw(clip); // OSC 52 clipboard write (out of band)
 
+        // While a git-status refresh is in flight, wait in short slices so
+        // the finished snapshot paints without requiring a keypress; with
+        // none in flight this is the plain blocking read.
+        bool gitApplied;
+        while (w.tree.git.refreshing && !events.ready(150.msecs))
+            if (w.tree.git.poll())
+            {
+                gitApplied = true;
+                break;
+            }
+        if (gitApplied)
+        {
+            w.tree.rebuild();
+            continue; // repaint with the badges, then wait again
+        }
         const ev = events.next();
         if (ev.isEndOfInput)
             break;
