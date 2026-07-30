@@ -36,6 +36,18 @@
         version = pkgs.raylib.version;
         src = pkgs.raylib.src;
 
+        # Upstream 5.5 never resizes on Android: APP_CMD_CONFIG_CHANGED is an
+        # empty stub ("Check screen orientation here!"), APP_CMD_WINDOW_RESIZED
+        # is unhandled, and the pause/resume rebind pins the buffer geometry to
+        # the old size — so an in-place rotation keeps rendering the stale
+        # orientation, compositor-scaled. The patch refreshes every
+        # size-derived dimension (display/screen/render/fbo, buffers follow
+        # the window, viewport, IsWindowResized) on
+        # WINDOW_RESIZED/CONTENT_RECT_CHANGED/CONFIG_CHANGED and after a
+        # context rebind, letting hue keep orientation|screenSize in
+        # configChanges and rotate without an activity restart.
+        patches = [ ./raylib-android-in-place-resize.patch ];
+
         dontConfigure = true;
 
         buildPhase = ''
