@@ -18,5 +18,6 @@
     ./raylib.nix
     ./sdk.nix
     ./tree-sitter.nix
+    ./ts-grammars.nix
   ];
 }

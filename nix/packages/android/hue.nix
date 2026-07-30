@@ -171,6 +171,18 @@
               fc-query --format=%{charset} "$font" > "$font.charset"
             done
 
+            # Grammar queries — the desktop bundle's normalized queries/ dirs
+            # verbatim (parsers ship separately as native libs; the registry's
+            # soname layout reads <root>/<lang>/queries/*.scm from here).
+            mkdir -p $out/grammars
+            for langDir in ${config.packages.ts-grammars}/*/; do
+              lang=$(basename "$langDir")
+              if [ -d "$langDir/queries" ]; then
+                mkdir -p "$out/grammars/$lang"
+                cp -rL "$langDir/queries" "$out/grammars/$lang/queries"
+              fi
+            done
+
             (cd $out && find . -type f -printf '%P\n' | sort > asset-manifest.txt)
             (cd $out && find . -type f ! -name bundle-hash -print0 | sort -z \
               | xargs -0 sha256sum | sha256sum | cut -d' ' -f1 > bundle-hash)
@@ -182,11 +194,24 @@
       packages.hue-apk = config.legacyPackages.buildAndroidApk {
         pname = "hue";
         manifest = ../../../apps/hue/android/AndroidManifest.xml;
+        # libhue.so + every grammar parser (dlopen'd by bare soname from the
+        # app's linker namespace — see ts-grammars.nix).
         libs = lib.mapAttrs' (name: t: {
           name = t.abi;
           value = {
             "libhue.so" = "${libhue}/lib/${t.abi}/libhue.so";
-          };
+          }
+          // (
+            let
+              grammarLibDir = "${config.packages.ts-grammars-android}/lib/${t.abi}";
+            in
+            lib.listToAttrs (
+              map (so: {
+                name = so;
+                value = "${grammarLibDir}/${so}";
+              }) (builtins.attrNames (builtins.readDir grammarLibDir))
+            )
+          );
         }) ndk.targets;
         assetsDir = hueAssets;
         keystore = ../../../apps/hue/android/debug.keystore;
