@@ -80,7 +80,7 @@ hue-side requirements referencing those areas live in
 > For a **markdown** file every sink renders the render-markdown **decorated
 > preview** by default (general [`MOD8`](./feature-requirements.md)) — ANSI
 > (`ANS3`), HTML (`HTM5`), the terminal previewer ([`MDP-T`](./tui.md)), and the
-> GUI ([`MDP`](./gui.md)) — over the shared `MdDoc` / `PreviewLine[]` model; `--raw`
+> GUI ([`MDP`](./gui.md)) — over the shared `MdDoc` model and widget view; `--raw`
 > forces highlighted source.
 
 ## Status scheme
@@ -127,12 +127,12 @@ its own docs.
 | `apps/hue/src/gallery.d`         | general — `HTM4`, `HTM6`–`HTM8`; [gallery](./gallery.md) — `GAL2`–`GAL4`, `GAL6`, `GAL7`        |
 | `apps/hue/src/previewer.d`       | general — `PRV`, `NFR`                                                                          |
 | `apps/hue/src/gui.d`             | GUI — `WIN`, `FNT`, `RND`, `VIW`, `NUM`, `NAV`, `SCB`, `THG`, `FND`, `COD`, `SEL`, `FSC`, `DBG` |
-| `apps/hue/src/gui_preview.d`     | GUI — `RND`, `VIW`, `WRP`, `NUM`, `MDP`, `COD`                                                  |
+| `apps/hue/src/gui_preview.d`     | GUI — `VIW`, `MDP` (the document model; rendering is the shared widget views)                   |
+| `apps/hue/src/viewer_model.d`    | GUI — `RND`, `WRP`, `NUM`, `FND` (the viewer's Whole; ui/migration `MIG9`)                      |
 | `apps/hue/src/gui_ansi.d`        | GUI — `MDP` (the ` ```ansi ` fence decoder)                                                     |
 | `apps/hue/src/gui_text.d`        | GUI — `WRP`, `FND`, `NUM` (pure metrics/search)                                                 |
 | `apps/hue/src/table_select.d`    | GUI — `TBL1`, `TBL2`, `TBL5` (presentation-free smart-drag + serializers)                       |
 | `apps/hue/src/tui.d`             | [TUI](./tui.md) — `TIN`, `TSF`, `TSB`, `TSL`, `MDP-T`; general — `PRV` (the shipped viewer)     |
-| `apps/hue/src/preview_ansi.d`    | general — `ANS3`; [TUI](./tui.md) — `MDP-T3` (the SGR painter for `PreviewLine[]`)              |
 | `apps/hue/src/ansi_model.d`      | GUI — `MDP12`; general — `NFR3` (ghostty-free presentation types shared by both painters)       |
 | `apps/hue/src/gui_canvas.d`      | [ui/backends](../ui/backends.md) — `TGT6` (the raylib canvas adapter)                           |
 | `apps/hue/src/tui_canvas.d`      | [ui/backends](../ui/backends.md) — `TGT6` (the cell-grid canvas adapter)                        |
