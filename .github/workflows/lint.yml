@@ -18,7 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     # A full lychee link-check over the whole docs tree runs ~14m; cached runs
     # are ~3m. Cap with headroom over the uncached case.
-    timeout-minutes: 20
+    # The markdown-example verifier compiles every sample; a cold nix cache
+    # pushes past 20 minutes (two auto-merge round-trips lost to the
+    # cancellation), while warm reruns finish in ~12.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
 
