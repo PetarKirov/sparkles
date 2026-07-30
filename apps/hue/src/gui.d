@@ -200,7 +200,16 @@ int runGui(
     // Debug/CI capture: HUE_GUI_SCREENSHOT=<path> renders a few frames, writes a
     // PNG, and exits — the golden-frame harness the syntax spec's totality and
     // M5's byte-identical-render checks rely on (skipTest-gated when headless).
-    const shotPath = environment.get("HUE_GUI_SCREENSHOT", "");
+    // Android anchors relative paths in the app data dir (CWD is '/', not
+    // writable); pull the PNG with `adb shell run-as`.
+    auto shotPath = environment.get("HUE_GUI_SCREENSHOT", "");
+    version (Android)
+    {
+        import android_glue : androidDataDir;
+
+        if (shotPath.length && shotPath[0] != '/')
+            shotPath = androidDataDir() ~ "/" ~ shotPath;
+    }
     // HUE_GUI_FLASH=1: alternate the clear color every ~0.5 s and skip the
     // pane fill — a ghosting discriminator. If the background flashes
     // everywhere but stale text rides on vm.top, the ghost is DRAWN each frame;
@@ -362,6 +371,36 @@ int runGui(
     void relayout()
     {
         vm.relayout(widthCols());
+    }
+
+    // Ctrl-± / pinch zoom: reload every face at the new size and reflow (the
+    // cell size — and thus the column count — changed).
+    void bumpFontSize(int delta)
+    {
+        const next = fonts.size() + delta;
+        if (next < 6)
+            return;
+        fonts.reload(next);
+        relayout();
+    }
+
+    // 'e' / the toolbar: toggle the explorer pane (XPL2); focus follows.
+    void toggleExplorer()
+    {
+        treeVisible = !treeVisible;
+        treeFocused = treeVisible;
+        vm.widthCols = -1;
+        relayout();
+    }
+
+    // Tab / the toolbar: preview ↔ raw view (when the document has a preview).
+    void toggleView()
+    {
+        if (!vm.preview.present && vm.tw.code.length == 0)
+            return;
+        vm.showPreview = !vm.showPreview;
+        vm.widthCols = -1; // force a reflow on next frame
+        relayout();
     }
 
     void applyTheme(size_t i)
@@ -543,6 +582,21 @@ int runGui(
     long selMin() => anchorLo < headLo ? anchorLo : headLo;
     long selMax() => anchorHi > headHi ? anchorHi : headHi;
 
+    // The one clipboard seam. raylib's Android SetClipboardText is an
+    // unimplemented no-op (a real one needs a JNI ClipboardManager bridge —
+    // a self-contained follow-up); log instead of silently dropping.
+    void copyToClipboard(const(char)* z)
+    {
+        version (Android)
+        {
+            import sparkles.base.logger : info;
+
+            info(i"copy: clipboard unavailable on this build");
+        }
+        else
+            SetClipboardText(z);
+    }
+
     // Copy the current selection: a text range → `vm.source[min..max]`
     // (SGR-stripped when `ansiStrip`); a table region → TSV / markdown cells
     // (SEL7/TBL2). Always slices `vm.source` — the DISPLAYED document — not
@@ -554,7 +608,7 @@ int runGui(
         if (regime == Regime.text && selMax() > selMin() && selMax() <= vm.source.length)
         {
             auto txt = vm.source[cast(size_t) selMin() .. cast(size_t) selMax()];
-            SetClipboardText((ansiStrip ? stripSgr(txt) : txt).toStringz);
+            copyToClipboard((ansiStrip ? stripSgr(txt) : txt).toStringz);
         }
         else if (regime == Regime.table && selTable >= 0)
         {
@@ -573,7 +627,7 @@ int runGui(
             }
             const txt = serializeTable(reg, &cellText, tableFmt);
             if (txt.length)
-                SetClipboardText(txt.toStringz);
+                copyToClipboard(txt.toStringz);
         }
     }
 
@@ -633,6 +687,31 @@ int runGui(
 
 
     int frame = 0;
+    // Touch interaction (Android): raylib maps the first touch to the mouse;
+    // the TouchScroller classifies those samples into tap / drag-scroll /
+    // long-press, and two touch points pinch-zoom the font. Desktop input is
+    // untouched — the helpers below are the only seam.
+    version (Android)
+    {
+        import gui_touch : TouchScroller;
+
+        TouchScroller touch;
+        touch.slopPx = fonts.cellH() / 2.0f > 8 ? fonts.cellH() / 2.0f : 8;
+        TouchScroller.Frame touchFrame;
+        float touchAccumPx = 0;
+        float prevPinchDist = 0;
+
+        // A tap is the touch spelling of a click; a long-press starts a
+        // selection (drag-extends via the existing machinery).
+        bool clickPressed() => touchFrame.tap;
+        bool selectStartPressed() => touchFrame.longPress;
+    }
+    else
+    {
+        bool clickPressed() => IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT);
+        bool selectStartPressed() => IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT);
+    }
+
     while (!WindowShouldClose())
     {
         const cellW = fonts.cellW();
@@ -648,6 +727,93 @@ int runGui(
         const docRows = visibleRows - treeTopRows - 1;
         const docY0 = (treeTopRows + 1) * cellH;
         const hdrY = treeTopRows * cellH;
+
+        version (Android)
+        {
+            // Two fingers = pinch zoom; the scroller sees an up so a pinch
+            // never scrolls or taps.
+            if (GetTouchPointCount() >= 2)
+            {
+                import std.math.algebraic : hypot;
+
+                const p0 = GetTouchPosition(0);
+                const p1 = GetTouchPosition(1);
+                const dist = hypot(p1.x - p0.x, p1.y - p0.y);
+                if (prevPinchDist > 0 && dist > prevPinchDist * 1.15f)
+                {
+                    bumpFontSize(2);
+                    prevPinchDist = dist;
+                }
+                else if (prevPinchDist > 0 && dist < prevPinchDist * 0.87f)
+                {
+                    bumpFontSize(-2);
+                    prevPinchDist = dist;
+                }
+                else if (prevPinchDist == 0)
+                    prevPinchDist = dist;
+                touchFrame = touch.update(false, 0, 0, GetFrameTime() * 1000);
+            }
+            else
+            {
+                prevPinchDist = 0;
+                const tp = GetMousePosition();
+                touchFrame = touch.update(
+                    IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT),
+                    tp.x, tp.y, GetFrameTime() * 1000);
+            }
+
+            // Drag/fling → whole rows into the pane under the gesture anchor
+            // (same routing rule as the wheel).
+            if (touchFrame.scrollPx != 0)
+            {
+                touchAccumPx += touchFrame.scrollPx;
+                const rows = cast(long)(touchAccumPx / cellH);
+                if (rows != 0)
+                {
+                    touchAccumPx -= rows * cellH;
+                    if (treeVisible && touchFrame.x < treeCols * cellW)
+                        tree.scrollBy(rows);
+                    else
+                        vm.top += rows;
+                }
+            }
+
+            // Bottom-row toolbar taps — the touch equivalents of the keyboard
+            // essentials; a consumed tap never reaches the panes. Layout must
+            // match the draw block near the end of the loop.
+            if (touchFrame.tap && GetMousePosition().y >= screenH - cellH)
+            {
+                import sparkles.base.logger : info;
+
+                const seg = cast(int)(GetMousePosition().x / (screenW / 5.0f));
+                info(i"toolbar: tap at $(cast(int) GetMousePosition().x),$(cast(int) GetMousePosition().y) → segment $(seg)");
+                switch (seg)
+                {
+                    case 0: applyTheme(vm.themeIdx == 0 ? themes.length - 1 : vm.themeIdx - 1); break;
+                    case 1: applyTheme(vm.themeIdx + 1 == themes.length ? 0 : vm.themeIdx + 1); break;
+                    case 2: toggleView(); break;
+                    case 3: toggleExplorer(); break;
+                    default:
+                        lineNumbers = !lineNumbers;
+                        vm.widthCols = -1;
+                        relayout();
+                        break;
+                }
+                touchFrame.tap = false; // consumed
+            }
+
+            // The system back button: close the explorer, else leave (the
+            // activity finishes). A hover popup needs no case of its own —
+            // it follows the pointer, and the pointer is wherever the last
+            // tap landed, so tapping elsewhere already dismisses it.
+            if (IsKeyPressed(KeyboardKey.KEY_BACK))
+            {
+                if (treeVisible)
+                    toggleExplorer();
+                else
+                    break;
+            }
+        }
 
 
         // Reflow (both views wrap) when the window width in columns changes — but
@@ -772,12 +938,7 @@ int runGui(
 
             // 'e' toggles the explorer pane (XPL2); focus follows visibility.
             if (pressed(KeyboardKey.KEY_E))
-            {
-                treeVisible = !treeVisible;
-                treeFocused = treeVisible;
-                vm.widthCols = -1;
-                relayout();
-            }
+                toggleExplorer();
 
             if (treeFocused && treeVisible)
             {
@@ -902,15 +1063,9 @@ int runGui(
             const ctrl = IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL)
                 || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL);
             if (ctrl && pressed(KeyboardKey.KEY_EQUAL))
-            {
-                fonts.reload(fonts.size() + 2);
-                relayout();
-            }
-            else if (ctrl && pressed(KeyboardKey.KEY_MINUS) && fonts.size() > 6)
-            {
-                fonts.reload(fonts.size() - 2);
-                relayout();
-            }
+                bumpFontSize(2);
+            else if (ctrl && pressed(KeyboardKey.KEY_MINUS))
+                bumpFontSize(-2);
 
             // Match navigation: n next, Shift-n previous.
             if (vm.matches.length && pressed(KeyboardKey.KEY_N))
@@ -945,12 +1100,8 @@ int runGui(
             }
 
             // Tab toggles the decorated view ↔ raw highlighted source.
-            if ((vm.preview.present || vm.tw.code.length) && IsKeyPressed(KeyboardKey.KEY_TAB))
-            {
-                vm.showPreview = !vm.showPreview;
-                vm.widthCols = -1; // force a reflow on next frame
-                relayout();
-            }
+            if (IsKeyPressed(KeyboardKey.KEY_TAB))
+                toggleView();
 
             // 'l' toggles the file line-number gutter (changes the wrap width).
             if (!treeFocused && pressed(KeyboardKey.KEY_L))
@@ -1088,8 +1239,7 @@ int runGui(
                 const pos = GetMousePosition();
                 const hoverTrack = pos.x >= screenW - hoverW;
                 docSb = docSb.hoveredNow(hoverTrack);
-                if (hoverTrack && !docSb.dragging
-                    && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                if (hoverTrack && !docSb.dragging && clickPressed())
                     docSb = docSb.pressed(cast(int)(pos.y - docY0),
                         total, docRows, trackH, minExtent: 24);
                 else if (docSb.dragging)
@@ -1125,8 +1275,7 @@ int runGui(
             const hoverTrack = pos.x >= edge - hoverW && pos.x < edge
                 && pos.y >= trackTop;
             treeVSb = treeVSb.scrolledTo(tree.top).hoveredNow(hoverTrack);
-            if (hoverTrack && !treeVSb.dragging
-                && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+            if (hoverTrack && !treeVSb.dragging && clickPressed())
                 treeVSb = treeVSb.pressed(cast(int)(pos.y - trackTop),
                     tree.rows.length, treePaneRows, trackH, minExtent: 24);
             else if (treeVSb.dragging)
@@ -1192,7 +1341,7 @@ int runGui(
                 cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH)));
             // The fold column: a click on a marker toggles its region.
             if (mp.x >= treePx() && mp.x < treePx() + cellW
-                && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                && clickPressed())
             {
                 const row = vm.top + cast(long)((mp.y - docY0) / cellH);
                 foreach (ref const fm; vm.foldMarkers)
@@ -1204,7 +1353,7 @@ int runGui(
                         break;
                     }
             }
-            if (mp.x >= gutterPx && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+            if (mp.x >= gutterPx && clickPressed())
                 foreach_reverse (ref const tgt; vm.targets)
                 {
                     if (tgt.hitId >= vm.foldHitBase && tgt.rect.contains(dp))
@@ -1229,7 +1378,7 @@ int runGui(
                                 // Match the selection copy mode (SEL7).
                                 const txt = (ansiStrip && f.isAnsi)
                                     ? stripSgr(fbody) : fbody;
-                                SetClipboardText(txt.toStringz);
+                                copyToClipboard(txt.toStringz);
                                 vm.copiedFenceSrc = bodyStart;
                                 copiedFlash = Timeline.triggered(copiedCfg);
                                 copiedShown = true;
@@ -1355,7 +1504,7 @@ int runGui(
                         tree.contentCols, treeCols - 1, treeCols - 1);
             }
             if (overTree && !overTreeSb && !overHBar && !tree.hsb.dragging
-                && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                && clickPressed())
             {
                 treeFocused = true;
                 const row = tree.top
@@ -1369,12 +1518,12 @@ int runGui(
                         activateTree();
                 }
             }
-            else if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
+            else if (clickPressed()
                 && !overSb && !overTree)
                 treeFocused = false;
             const shiftMod = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
             const altMod = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
-            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && !overSb
+            if (selectStartPressed() && !overSb
                 && !overTree && !copyClicked && !treeVSb.dragging
                 && !docSb.dragging && !split.dragging)
             {
@@ -1771,6 +1920,31 @@ int runGui(
             const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next   i index");
             const px = cast(float)(screenW - cast(int)((pos.length + 1) * cellW));
             drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), rl(vm.gutterFg));
+        }
+
+        // Bottom toolbar (Android): tappable equivalents of the keyboard
+        // essentials, in five equal segments — the tap handler at the top of
+        // the loop hit-tests the same geometry. Drawn over the bottom row like
+        // the input bar (which replaces it while typing).
+        version (Android)
+        {
+            if (!inputMode)
+            {
+                const tbY = screenH - cellH;
+                DrawRectangle(0, tbY, screenW, cellH, rl(mix(vm.pageBg, vm.pageFg, 0.12)));
+                DrawRectangle(0, tbY - 1, screenW, 1, rl(vm.gutterFg));
+                static immutable string[5] tbLabels = ["◀ thm", "thm ▶", "view", "tree", "ln №"];
+                const segW = screenW / 5.0f;
+                foreach (i, label; tbLabels)
+                {
+                    if (i != 0)
+                        DrawRectangle(cast(int)(segW * i), tbY + 2, 1, cellH - 4,
+                            rl(vm.gutterFg));
+                    const lx = segW * i + (segW - label.length * cellW) / 2;
+                    drawText(fonts, cstrOf(buf, label), lx < segW * i + 2 ? segW * i + 2 : lx,
+                        cast(float) tbY, TextStyle(0), rl(vm.pageFg));
+                }
+            }
         }
 
         // Input line at the bottom: '/query' while searching, ':n' while going
