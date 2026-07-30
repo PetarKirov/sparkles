@@ -30,8 +30,9 @@ import sparkles.syntax.ts.highlighter : highlightInjected, HighlightOptions;
 
 import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
 
-/// The language name the popup re-highlighter resolves in the grammar bundle.
-/// Type signatures are TypeScript regardless of the snippet's own dialect.
+/// The legacy popup-signature language: payloads predating
+/// `TwoslashReturn.language` are TypeScript (see `effectiveLanguage`).
+/// Renderers pass `tw.effectiveLanguage` to $(LREF highlightSignature).
 enum popupLanguage = "typescript";
 
 /**
@@ -189,11 +190,12 @@ grammar degrades to plain text — the overlay never fails.
 
 `@system` (transitively, via `highlightInjected`); not `@nogc`.
 */
-void highlightSignature(Sink)(ref TsConfigCache cache, scope const(char)[] sig, ref Sink sink) @system
+void highlightSignature(Sink)(ref TsConfigCache cache, scope const(char)[] language,
+    scope const(char)[] sig, ref Sink sink) @system
 {
     import std.range.primitives : put;
 
-    auto res = highlightInjected(cache, popupLanguage, sig, sink);
+    auto res = highlightInjected(cache, language, sig, sink);
     if (res.hasError)
         put(sink, HighlightEvent.sourceSpan(0, sig.length));
 }

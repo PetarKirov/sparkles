@@ -207,7 +207,7 @@ private int runDirectoryTarget(in CliParams cli, string dir, bool twoslash,
             if (twRes.hasError)
                 throw new Exception(twRes.error.toString);
             const tw = twRes.value;
-            if (highlightInjected(cache, "typescript", tw.code, ev).hasError)
+            if (highlightInjected(cache, tw.effectiveLanguage, tw.code, ev).hasError)
                 ev ~= HighlightEvent.sourceSpan(0, tw.code.length);
             return twoslashFragment(tw, ev[], theme, cache);
         }

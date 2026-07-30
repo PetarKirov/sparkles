@@ -438,7 +438,8 @@ struct PreviewTui
         // With a grammar cache the signature renders as resolved-color spans
         // inside the widget model (the same mapping the GUI uses).
         TextSpan[] sig = cache !is null
-            ? signatureSpans(*cache, (() @trusted => &vm.current)(), pageFg,
+            ? signatureSpans(*cache, tw.effectiveLanguage,
+                (() @trusted => &vm.current)(), pageFg,
                 withoutQuickinfoPrefix(n.text)) : null;
         auto tree = viewHoverPopup(tw, hoverNodes[hoverSel], sig);
         auto frames = layout(tree);

@@ -136,7 +136,7 @@ ref Writer renderTwoslashHtml(Writer)(
         {
             case NodeType.hover:
                 put(w, `<span class="twoslash-hover">`);
-                writePopup(w, theme, cache, tw.nodes[d.node], options);
+                writePopup(w, theme, cache, tw.effectiveLanguage, tw.nodes[d.node], options);
                 break;
             case NodeType.highlight:
                 put(w, `<span class="twoslash-highlighted">`);
@@ -164,7 +164,7 @@ ref Writer renderTwoslashHtml(Writer)(
     {
         while (bi < below.length && below[bi].line == flushedLine)
         {
-            writeBelowBlock(w, theme, cache, tw.nodes[below[bi].node], options);
+            writeBelowBlock(w, theme, cache, tw.effectiveLanguage, tw.nodes[below[bi].node], options);
             ++bi;
         }
     }
@@ -228,7 +228,7 @@ ref Writer renderTwoslashHtml(Writer)(
         closeDeco();
     while (bi < below.length)
     {
-        writeBelowBlock(w, theme, cache, tw.nodes[below[bi].node], options);
+        writeBelowBlock(w, theme, cache, tw.effectiveLanguage, tw.nodes[below[bi].node], options);
         ++bi;
     }
     return w;
@@ -279,13 +279,14 @@ private bool writeSyntaxOpen(Writer)(ref Writer w, in ResolvedTheme theme, Label
 /// class="twoslash-popup-arrow"></div><code class="twoslash-popup-code">{sig}</code>
 /// [docs]</span>`. The connector arrow points the popup back at its token.
 private void writePopup(Writer)(ref Writer w, in ResolvedTheme theme,
-    ref TsConfigCache cache, in Node node, in TwoslashHtmlOptions options) @system
+    ref TsConfigCache cache, scope const(char)[] language, in Node node,
+    in TwoslashHtmlOptions options) @system
 {
     put(w, `<span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div>`);
     put(w, `<code class="twoslash-popup-code">`);
     const text = options.stripQuickinfoPrefix ? withoutQuickinfoPrefix(node.text) : node.text;
     SmallBuffer!HighlightEvent sig;
-    highlightSignature(cache, text, sig);
+    highlightSignature(cache, language, text, sig);
     renderHtml(text, sig[], theme, w, HtmlOptions(mode: HtmlMode.cssClasses));
     put(w, `</code>`);
     if (node.docs.length)
@@ -352,7 +353,8 @@ private void writePopupTags(Writer)(ref Writer w, ref TsConfigCache cache,
 
 /// A below-line block for a query / completion / error / tag node.
 private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
-    ref TsConfigCache cache, in Node node, in TwoslashHtmlOptions options) @system
+    ref TsConfigCache cache, scope const(char)[] language, in Node node,
+    in TwoslashHtmlOptions options) @system
 {
     final switch (node.type)
     {
@@ -374,7 +376,7 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
             put(w, `<code class="twoslash-popup-code">`);
             const text = options.stripQuickinfoPrefix ? withoutQuickinfoPrefix(node.text) : node.text;
             SmallBuffer!HighlightEvent sig;
-            highlightSignature(cache, text, sig);
+            highlightSignature(cache, language, text, sig);
             renderHtml(text, sig[], theme, w, HtmlOptions(mode: HtmlMode.cssClasses));
             put(w, `</code></div>`);
             break;
