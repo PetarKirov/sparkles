@@ -4,31 +4,17 @@
     "nodes": [
         {
             "character": 0,
-            "code": 0,
-            "completions": [],
-            "completionsPrefix": "",
-            "docs": "",
-            "id": "",
             "length": 6,
-            "level": "",
             "line": 10,
-            "name": "",
             "start": 398,
-            "tags": [],
             "text": "(alias) object.string = string",
             "type": "hover"
         },
         {
             "character": 7,
-            "code": 0,
-            "completions": [],
-            "completionsPrefix": "",
             "docs": "Escapes `<html>` markup: the literal $(NOT_A_MACRO) stays as text, and\n`snake_case_name` keeps every underscore it was written with.",
-            "id": "",
             "length": 10,
-            "level": "",
             "line": 10,
-            "name": "",
             "start": 405,
             "tags": [
                 [
@@ -49,15 +35,9 @@
         },
         {
             "character": 7,
-            "code": 0,
-            "completions": [],
-            "completionsPrefix": "",
             "docs": "Escapes `<html>` markup: the literal $(NOT_A_MACRO) stays as text, and\n`snake_case_name` keeps every underscore it was written with.",
-            "id": "",
             "length": 10,
-            "level": "",
             "line": 10,
-            "name": "",
             "start": 405,
             "tags": [
                 [
@@ -78,31 +58,17 @@
         },
         {
             "character": 18,
-            "code": 0,
-            "completions": [],
-            "completionsPrefix": "",
-            "docs": "",
-            "id": "",
             "length": 6,
-            "level": "",
             "line": 10,
-            "name": "",
             "start": 416,
-            "tags": [],
             "text": "(alias) object.string = string",
             "type": "hover"
         },
         {
             "character": 25,
-            "code": 0,
-            "completions": [],
-            "completionsPrefix": "",
             "docs": "the text to escape, underscores and all",
-            "id": "",
             "length": 15,
-            "level": "",
             "line": 10,
-            "name": "",
             "start": 423,
             "tags": [
                 [
@@ -115,15 +81,9 @@
         },
         {
             "character": 46,
-            "code": 0,
-            "completions": [],
-            "completionsPrefix": "",
             "docs": "how many replacements to allow; the count spelling in this sentence suppresses the usual identifier emphasis",
-            "id": "",
             "length": 5,
-            "level": "",
             "line": 10,
-            "name": "",
             "start": 444,
             "tags": [
                 [
@@ -136,15 +96,9 @@
         },
         {
             "character": 56,
-            "code": 0,
-            "completions": [],
-            "completionsPrefix": "",
             "docs": "the text to escape, underscores and all",
-            "id": "",
             "length": 15,
-            "level": "",
             "line": 10,
-            "name": "",
             "start": 454,
             "tags": [
                 [
