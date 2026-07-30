@@ -156,9 +156,11 @@ struct PreviewTui
 
     // Content folding (`FLD`): the one disclosure machine, keyed by source
     // span start (default open; the exceptions are the folded regions), plus
-    // the document's foldable spans (the `FSR3` provider).
+    // the document's foldable spans (the `FSR3` provider) and the pending
+    // 'z' of the vim fold sequences (za/zz, zc, zo, zR, zM).
     private DisclosureState!size_t folds = DisclosureState!size_t(true);
     private Span[] foldable;
+    private char zPending;
 
     // Twoslash hover popups in the pane: the hover-typed node indices (for
     // `p` cycling) and the selected one (-1 = none; click toggles).
@@ -512,7 +514,7 @@ struct PreviewTui
         auto b = Builder();
         const line = b.add(Widget(kind: WidgetKind.text,
             text: searching ? text("/", query, "▏")
-                : "scroll ↑↓ · ←→ theme · Tab raw/preview · / search · z fold · drag+y copy · q quit",
+                : "scroll ↑↓ · ←→ theme · Tab raw/preview · / search · za fold · drag+y copy · q quit",
             slot: searching ? Slot.inherit : Slot.gutter));
         paintBar(g, y, [line], null, null, b);
     }
@@ -552,10 +554,17 @@ struct PreviewTui
             }
     }
 
-    // `z`: toggle the innermost fold at the selection (else the top row) —
-    // unfold the innermost folded region containing it, or fold the innermost
-    // foldable one (`FLD5`'s za, over the row's source identity).
-    private void toggleFold() @system
+    /// The fold family's directed op (`FLD5`, mirroring the GUI's).
+    enum FoldOp : ubyte
+    {
+        toggle, /// `za`/`zz`: unfold the innermost folded region, else fold
+        close,  /// `zc`: fold the innermost still-open foldable region
+        open,   /// `zo`: unfold the innermost folded region
+    }
+
+    // Applies `op` at the selection (else the top row), over the row's
+    // source identity.
+    private void foldAt(FoldOp op) @system
     {
         const rowIdx = sel.active ? sel.lo : top;
         if (rowIdx < 0 || rowIdx >= cast(long) mdRows.length
@@ -563,28 +572,36 @@ struct PreviewTui
             return;
         const off = mdRows[cast(size_t) rowIdx].srcStart;
 
-        size_t best = size_t.max;
-        size_t bestLen = size_t.max;
-        // Prefer unfolding the innermost folded region containing `off`…
-        foreach (sp; foldable)
-            if (!folds.isOpen(sp.start) && off >= sp.start && off < sp.end
-                && sp.end - sp.start < bestLen)
-            {
-                best = sp.start;
-                bestLen = sp.end - sp.start;
-            }
-        // …else fold the innermost foldable one.
-        if (best == size_t.max)
+        size_t innermost(bool wantOpen)
+        {
+            size_t best = size_t.max, bestLen = size_t.max;
             foreach (sp; foldable)
-                if (folds.isOpen(sp.start) && off >= sp.start && off < sp.end
-                    && sp.end - sp.start < bestLen)
+                if (folds.isOpen(sp.start) == wantOpen && off >= sp.start
+                    && off < sp.end && sp.end - sp.start < bestLen)
                 {
                     best = sp.start;
                     bestLen = sp.end - sp.start;
                 }
+            return best;
+        }
+
+        size_t best = op == FoldOp.close ? innermost(true) : innermost(false);
+        if (best == size_t.max && op == FoldOp.toggle)
+            best = innermost(true);
         if (best == size_t.max)
             return;
         folds = folds.toggled(best);
+        rebuildMd();
+        clampTop();
+    }
+
+    // `zR` / `zM`: open every fold, or fold every foldable region.
+    private void setAllFolds(bool folded) @system
+    {
+        folds = DisclosureState!size_t(true);
+        if (folded)
+            foreach (sp; foldable)
+                folds = folds.closed(sp.start);
         rebuildMd();
         clampTop();
     }
@@ -642,6 +659,9 @@ struct PreviewTui
                 }
                 return false;
             case Key.char_:
+            {
+                const pk = zPending;
+                zPending = 0;
                 switch (e.ch)
                 {
                     case 'q': return false;
@@ -657,10 +677,38 @@ struct PreviewTui
                     case 'n': jumpMatch(top + 1, true); break;
                     case 'N': jumpMatch(top - 1, false); break;
                     case 'y': copySelection(); break;
-                    case 'z': toggleFold(); break;
+                    // The vim fold family (FLD5): z arms; then a/z toggle,
+                    // c close, o open, R open-all, M fold-all.
+                    case 'z':
+                        if (pk == 'z')
+                            foldAt(FoldOp.toggle);
+                        else
+                            zPending = 'z';
+                        break;
+                    case 'a':
+                        if (pk == 'z')
+                            foldAt(FoldOp.toggle);
+                        break;
+                    case 'c':
+                        if (pk == 'z')
+                            foldAt(FoldOp.close);
+                        break;
+                    case 'o':
+                        if (pk == 'z')
+                            foldAt(FoldOp.open);
+                        break;
+                    case 'R':
+                        if (pk == 'z')
+                            setAllFolds(false);
+                        break;
+                    case 'M':
+                        if (pk == 'z')
+                            setAllFolds(true);
+                        break;
                     default: break;
                 }
                 break;
+            }
             default: break;
         }
         return true;
@@ -951,6 +999,7 @@ unittest
     assert(bodyRow > 0);
     t.sel = Selection!long.started(bodyRow);
     t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
     assert(t.mdRows.length < openRows, "the fold collapsed the fence");
 
     // The placeholder row carries the region's identity; 'z' on it unfolds.
@@ -961,7 +1010,16 @@ unittest
     assert(ph >= 0, "placeholder row with the fold's source identity");
     t.sel = Selection!long.started(ph);
     t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'a'))); // za, like zz
     assert(t.mdRows.length == openRows, "the fold reopened");
+
+    // zM folds every foldable region; zR opens them all again (FLD5).
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'M')));
+    assert(t.mdRows.length < openRows, "zM folded the fence");
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'R')));
+    assert(t.mdRows.length == openRows, "zR reopened everything");
 }
 
 @("tui.twoslash.paneRendersAndPopups")
