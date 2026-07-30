@@ -492,6 +492,7 @@ int runGui(
         relayout();  // preview colors follow the theme
     }
 
+    tree.chromeRows = 0; // the GUI pane is all tree rows
     tree.root = treeRoot.length ? treeRoot
         : (docPath.length ? dirName(docPath) : ".");
     applyTheme(themeIdx);
@@ -1128,7 +1129,8 @@ int runGui(
         // The tree pane's scrollbar — the SAME hover-expand behavior as the
         // document's (one affordance, two panes): animated width, faint track
         // on hover, draggable thumb, track click centers.
-        const treePaneRows = visibleRows - treeTopRows;
+        tree.height = visibleRows - treeTopRows;
+        const treePaneRows = tree.bodyRows;
         const treeMaxTop = cast(long) tree.rows.length - treePaneRows;
         if (treeVisible && treeMaxTop > 0 && treePaneRows > 0)
         {
@@ -1371,8 +1373,8 @@ int runGui(
                 return h;
             }
             const row = cast(int)((my - docY0) / cellH);
-            if (row < 0 || topLine + row >= plines.length)
-                return h;
+            if (row < 0 || topLine + row >= plines.length || mx < gutterPx)
+                return h; // left of the content (tree/scrollbar) hits nothing
             const pl = plines[topLine + row];
             const rx = gutterPx + runStartCells(pl) * cellW;
             const x = mx <= rx ? 0 : cast(int)((mx - rx) / cellW);
@@ -1409,7 +1411,8 @@ int runGui(
                 treeFocused = false;
             const shiftMod = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
             const altMod = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
-            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && !overSb && !copyClicked)
+            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && !overSb
+                && !overTree && !copyClicked && !treeSb.isDragging && !sb.isDragging)
             {
                 const h = hitAt(mp.x, mp.y);
                 selecting = h.ok;
@@ -1631,7 +1634,7 @@ int runGui(
         if (treeVisible)
         {
             tree.height = visibleRows - treeTopRows;
-            tree.clamp();
+            tree.scrollBy(0); // bounds only — never yank the view to the cursor
             DrawRectangle(0, 0, treeCols * cellW, screenH,
                 rl(mix(pageBg, pageFg, 0.03)));
             DrawRectangle(treeCols * cellW + cellW / 2, 0, 1, screenH,
