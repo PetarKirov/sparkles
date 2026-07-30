@@ -168,10 +168,15 @@ struct GridT(uint MaxBytes = 16)
     {
         import std.utf : byDchar;
 
-        foreach (dchar cp; text.byDchar)
+        foreach (dchar cp0; text.byDchar)
         {
             if (x >= _cols)
                 break;
+            // A control codepoint (a tab in source, a stray C0) writes as a
+            // styled space — a raw control byte on the wire would move the
+            // terminal's cursor and desync the diff (one column, the v1
+            // tab-counts-as-one metric).
+            const dchar cp = cp0 < 0x20 || cp0 == 0x7f ? ' ' : cp0;
             const int w = codepointWidth(cp);
             if (w == 0)
                 continue; // combining mark — cluster merge is out of scope here

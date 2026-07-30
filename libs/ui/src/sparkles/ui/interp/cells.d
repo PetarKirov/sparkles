@@ -216,7 +216,9 @@ struct CellGrid
                 ++i;
                 g = '�';
             }
-            putGlyph(x, at.y, g, v);
+            // Control codepoints (a tab in source) write as spaces: a raw
+            // control byte in the serialized stream would move the cursor.
+            putGlyph(x, at.y, g < 0x20 || g == 0x7f ? ' ' : g, v);
             ++x;
         }
     }
