@@ -33,6 +33,7 @@ import dmd.dmacro : MacroTable;
 import dmd.doc : DocComment, escapetable, highlightText, isIdStart, isIdTail,
     ParamSection, Section;
 import dmd.dscope : Scope;
+import dmd.location : Loc;
 import dmd.dsymbol : Dsymbol;
 import dmd.dsymbolsem : scopeCreateGlobal;
 import dmd.globals : global;
@@ -93,7 +94,7 @@ DdocRendered renderDdocText(string comment, Dsymbol sym, Scope* sc = null) @syst
     if (dc.macros !is null)
         DocComment.parseMacros(escapetable(sym.getModule()), table, dc.macros.body_);
 
-    const loc = sym.loc;
+    const loc = renderLoc(sym);
     DdocRendered result;
     OutBuffer docs;
 
@@ -110,6 +111,9 @@ DdocRendered renderDdocText(string comment, Dsymbol sym, Scope* sc = null) @syst
         {
             // DMD's own `ident = desc` row parser (continuations included);
             // the recovery macros mark the row/field boundaries.
+            if (!loc.isValid)
+                continue; // see renderLoc: the row parser highlights too
+
             OutBuffer rows;
             ps.write(loc, dc, sc, &dc.a, rows);
             expandWith(table, rows);
@@ -135,7 +139,8 @@ DdocRendered renderDdocText(string comment, Dsymbol sym, Scope* sc = null) @syst
         {
             const o = body_.length;
             body_.write(sec.body_);
-            highlightText(sc, &dc.a, loc, body_, o);
+            if (loc.isValid)
+                highlightText(sc, &dc.a, loc, body_, o);
         }
         expandWith(table, body_);
         import std.string : strip;
@@ -172,6 +177,37 @@ DdocRendered renderDdocText(string comment, Dsymbol sym, Scope* sc = null) @syst
 
     result.docs = docs[].idup.strip;
     return result;
+}
+
+/**
+The location `highlightText`/`ParamSection.write` may be handed.
+
+Both begin by advancing the location one line, which indexes DMD's global
+source-location table; an unset `Loc` (index 0) walks off the front of that
+table and kills the process. A $(B module)'s own `loc` is unset — the
+module-level doc comment, the one Phobos-style modules always carry, is
+exactly the case that hits this — so borrow the first member's location. It is
+only used to attribute a line number to a ddoc warning, so a nearby location
+costs nothing and an invalid one costs the process.
+
+Returns `Loc.initial` when nothing valid exists; callers must then skip the
+highlight pass rather than pass it on.
+*/
+private Loc renderLoc(Dsymbol sym) @system
+{
+    if (sym.loc.isValid)
+        return sym.loc;
+
+    auto mod = sym.getModule();
+    if (mod is null)
+        return Loc.initial;
+    if (mod.loc.isValid)
+        return mod.loc;
+    if (mod.members !is null)
+        foreach (member; *mod.members)
+            if (member !is null && member.loc.isValid)
+                return member.loc;
+    return Loc.initial;
 }
 
 /// The `Params:` row description for one parameter name, or null.
