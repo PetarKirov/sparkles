@@ -46,6 +46,11 @@ struct CodeViewOptions
     size_t foldHitBase;           /// unfold hit-id base (0 = not clickable)
     /// Tab stops: a tab advances to the next multiple of this many columns.
     int tabWidth = 4;
+    /// The fold placeholder's leading `▸ ` marker. A host with a gutter
+    /// fold column (the GUI) disables it — the column carries the
+    /// affordance, and the placeholder shows unobstructed content.
+    bool inlineFoldMarker = true;
+
     /// vim's `list`: render whitespace visibly with `glyphs`, in
     /// `whitespaceFg` (when set) so the marks read as chrome, not content.
     bool listWhitespace;
@@ -269,14 +274,14 @@ WidgetTree viewCodeDocument(const(char)[] source,
             SmallBuffer!(char, 32) cnt;
             writeInteger(cnt, lines);
             const clampedEnd = fr.end > source.length ? source.length : fr.end;
-            TextSpan[] ph = [
-                TextSpan("▸ ", Slot.code, noBreak: true),
-                TextSpan(source[starts[first] .. starts[first] + firstLen],
-                    Slot.code, noBreak: true,
-                    srcStart: starts[first], srcEnd: clampedEnd),
-                TextSpan("  ⋯ " ~ cnt[].idup ~ " lines", Slot.gutter,
-                    noBreak: true),
-            ];
+            TextSpan[] ph;
+            if (opt.inlineFoldMarker)
+                ph ~= TextSpan("▸ ", Slot.code, noBreak: true);
+            ph ~= TextSpan(source[starts[first] .. starts[first] + firstLen],
+                Slot.code, noBreak: true,
+                srcStart: starts[first], srcEnd: clampedEnd);
+            ph ~= TextSpan("  ⋯ " ~ cnt[].idup ~ " lines", Slot.gutter,
+                noBreak: true);
             rows ~= b.add(Widget(kind: WidgetKind.rich, spans: ph,
                 slot: Slot.code,
                 hitId: foldHitBase != 0 ? foldHitBase + fr.start : 0));
