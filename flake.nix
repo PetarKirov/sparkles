@@ -67,6 +67,7 @@
         ./nix/packages/text-wasm.nix
         ./nix/packages/table-wasm.nix
         ./nix/packages/ts-grammars.nix
+        ./nix/packages/twoslash-extract.nix
         ./nix/packages/uwidth-rs.nix
         ./nix/packages/wired-bench-data.nix
         ./nix/packages/json-test-suite.nix

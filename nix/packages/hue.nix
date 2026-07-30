@@ -32,11 +32,17 @@
         env = d-toolchain.env;
 
         # Wrap so grammars resolve outside the devshell ($SPARKLES_TS_GRAMMAR_PATH
-        # is only a *default* — a caller who exports their own still wins), and so
-        # the GUI's fontconfig lookups (fc-match) work under `nix run`.
+        # is only a *default* — a caller who exports their own still wins), so the
+        # GUI's fontconfig lookups (fc-match) work under `nix run`, and so live D
+        # types (LIV1-LIV4) work out of the box: opening a `.d` file spawns
+        # `twoslash-extract --dub --serve`, which hue finds via
+        # $SPARKLES_TWOSLASH_EXTRACT before falling back to PATH. hue never links
+        # the analyzer (PRJ13) — the flake-built extractor carries its own
+        # druntime/phobos import paths and `dub`, so the pair composes.
         postFixup = ''
           wrapProgram $out/bin/${finalAttrs.pname} \
             --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
+            --set-default SPARKLES_TWOSLASH_EXTRACT ${lib.getExe config.packages.twoslash-extract} \
             --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
         '';
 
