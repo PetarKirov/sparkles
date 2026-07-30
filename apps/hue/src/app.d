@@ -121,6 +121,9 @@ struct CliParams
 
     @CliOption("out", "Output directory for the static HTML gallery a directory target renders into (with --html); defaults to <target>/html.")
     string outDir;
+
+    @CliOption("no-live-types", "Disable live D types in the interactive views: opening a .d file normally starts a twoslash-extract oracle beside it, underlines every hover span, and resolves a token's type when you point at it. Needs twoslash-extract on PATH (or $SPARKLES_TWOSLASH_EXTRACT); without it the viewer says so once and carries on.")
+    bool noLiveTypes;
 }
 
 /// Parses `--table-copy` (`CLI11`) into a `TableCopyFormat`; unknown → `tsv`.
@@ -493,7 +496,7 @@ int main(string[] args)
                     },
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
                     &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
-                    cli.tabWidth, cli.listWhitespace);
+                    cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes);
             }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
@@ -672,7 +675,7 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
                 doc.twoslash, doc.lang),
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
-            cli.tabWidth, cli.listWhitespace);
+            cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes);
     }
     else
     {
@@ -757,7 +760,8 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             doc.path, startInTree: startInTree, treeRoot,
             faceOv, doc.lang,
             cli.include.dup, cli.exclude.dup, cli.treeWidth,
-            cli.tabWidth, cli.listWhitespace, cpMaps);
+            cli.tabWidth, cli.listWhitespace, cpMaps,
+            liveTypes: !cli.noLiveTypes);
     }
     else
     {

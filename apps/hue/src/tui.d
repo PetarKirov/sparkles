@@ -367,6 +367,31 @@ struct PreviewTui
         clampTop();
     }
 
+    /**
+    Attaches a live twoslash payload to the open document (`PRJ12`/`PRJ14`):
+    the source is unchanged, the decorations arrive. The pane switches to the
+    document view, so every hover span shows its discoverability underline
+    even while the types behind them are still lazy.
+    */
+    void attachTwoslash(TwoslashReturn tw_) @system
+    {
+        tw = tw_;
+        hoverSel = -1;
+        showPreview = tw.code.length != 0 || model.present;
+        relayout(); // clamps the scroll to the document view's row count
+    }
+
+    /// The payload the pane renders — the live oracle fills lazy hover nodes
+    /// in it in place, and the next popup reads them (no relayout: the
+    /// document body draws the spans, not their text).
+    ref TwoslashReturn twoslashPayload() return @safe pure nothrow @nogc => tw;
+
+    /// The node index of the hover popup the user opened (`p` cycles, a click
+    /// toggles), or -1 — what the live oracle resolves on demand.
+    long selectedHoverNode() const @safe pure nothrow @nogc
+        => hoverSel >= 0 && hoverSel < cast(int) hoverNodes.length
+            ? cast(long) hoverNodes[hoverSel] : -1;
+
     /// Paint the whole frame into `g` (immediate mode). The library diffs it
     /// against the last frame, so only changed cells reach the wire.
     void paint(ref Grid g) @system
@@ -442,6 +467,10 @@ struct PreviewTui
                 (() @trusted => &vm.current)(), pageFg,
                 withoutQuickinfoPrefix(n.text)) : null;
         auto tree = viewHoverPopup(tw, hoverNodes[hoverSel], sig);
+        // A lazy hover span (live types: underlined, type not yet resolved)
+        // views as an empty tree — nothing to paint until the answer lands.
+        if (!tree.nodes.length)
+            return;
         auto frames = layout(tree);
         auto ops = buildDisplayList(tree, frames,
             defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg, pageBg);

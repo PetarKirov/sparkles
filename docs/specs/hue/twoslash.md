@@ -71,6 +71,22 @@ removals, then resolve `line`/`character` against the post-cut text.
 | TWM4 | `--markdown <file.md>` must render any Markdown to HTML via the shared `sparkles:syntax` `MdDoc → HTML` emitter (no twoslash/theme) — a standalone exercise of that emitter. | planned/branch-only (`app.d runMarkdownMode`) | `app.runMarkdownMode`                        |
 | TWM5 | The twoslash driver must live **only in `apps/hue`**; the reusable overlay logic stays in `libs/twoslash` (no standalone demo app).                                          | planned/branch-only (design)                  | decision (memory `twoslash-render-side-123`) |
 
+## Live D types in the viewer (`LIV`)
+
+The twoslash overlay with no payload file: `apps/hue/src/live_types.d` runs a
+`twoslash-extract --dub --serve` oracle beside the open document and the
+existing overlay renders what it answers. The producer half of the contract is
+[`docs/specs/dmd-lsp/project.md`](../dmd-lsp/project.md) `PRJ12`-`PRJ16`
+(and `EXT7` for the `--serve` wire format).
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                | Status    | Traces to                                                             |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | --------------------------------------------------------------------- |
+| LIV1 | Opening a `.d` file in an interactive sink (GUI window or terminal workspace) starts one oracle for that document and attaches its **lazy** payload when it lands: the code is unchanged, every hover span gains its discoverability underline, and the previous session ends when another document opens. | full (P5) | `live_types.LiveTypesSession`; `gui.startLive`, `workspace.startLive` |
+| LIV2 | Pointing at a lazy span (GUI) or opening its popup (TUI) requests **that node's** type, at most once per node per session; the popup shows nothing until the answer arrives, then paints the resolved signature, ddoc and tag chips with no relayout.                                                      | full (P5) | `requestTip`/`applyTip`; `viewHoverPopup` empty-tree guard            |
+| LIV3 | Analysis must never block the loop: the GUI drains the oracle once per frame, and the terminal loop wakes on a 33 ms deadline **only while a session is live**, repainting only when the tick changed the document — an idle session writes nothing to the wire.                                           | full (P5) | `PosixEvents.next(Duration)`; `workspace.pollLive`                    |
+| LIV4 | Degradation is one line, never fatal: `--no-live-types`, a missing `twoslash-extract` (`$SPARKLES_TWOSLASH_EXTRACT` overrides the `PATH` lookup) or a child that dies leaves the ordinary view in place and prints a single notice — in the terminal, only after the alt screen is restored.               | full (P5) | `liveTypesBinary`, `takeLiveNotice`                                   |
+| LIV5 | hue **spawns** the extractor and speaks JSON lines to it; it never links `sparkles:dmd-lsp` or `sparkles:twoslash-d` (one analysis per process, `COR2`/`EXT2`). The child's stderr is silenced for the alt screen, where a stray `dub describe` line would corrupt the frame.                              | full (P5) | `apps/hue/dub.json` (no analyzer dep); `StderrSilencer`               |
+
 ## Twoslash raylib overlay (`TWO`)
 
 `apps/hue/src/gui.d` (branch) — `runGuiTwoslash`, gated behind `version(HueGui)`;
@@ -265,6 +281,7 @@ type oracle (`findTip`/`findDefinition`) · D3 completions + semantic tokens + r
 | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `apps/hue/src/app.d` (`runTwoslashMode`, `runMarkdownMode`)                                                                     | `TWM1`–`TWM5`                                                                              |
 | `apps/hue/src/gui.d` (`runGuiTwoslash`)                                                                                         | `TWO1`–`TWO3`                                                                              |
+| `apps/hue/src/live_types.d` + the `startLive`/`pollLive` seams in `gui.d`, `workspace.d`, `tui.d`                               | `LIV1`–`LIV5` (producer half: `PRJ12`–`PRJ16`)                                             |
 | `libs/twoslash/src/sparkles/twoslash/*.d` (`render_html.d`, `style.d`/`views/twoslash.css`, `icons.d`, `ingest.d`, `overlay.d`) | `TWH1`–`TWH8`; library summary (→ `docs/specs/twoslash/SPEC.md` on `feat/syntax-twoslash`) |
 | `libs/twoslash/examples/` (`compare-shiki.mjs`, `visual-check.mjs`)                                                             | verification tooling (the preview gallery moved to `apps/hue/src/gallery.d`, `TWD3`)       |
 | `sparkles:dmd-lsp` (proposed)                                                                                                   | `DMD1`–`DMD3`                                                                              |

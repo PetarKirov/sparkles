@@ -68,7 +68,7 @@ import sparkles.twoslash.render_widgets : viewHoverPopup;
 // error/warn/tag/highlight colors this backend used to hand-copy as literals, and
 // the widget views drive the hover popup (so the GUI matches the TUI/HTML chrome).
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
-    schemeForBackground, Slot, UiTextStyle = TextStyle;
+    resolveSlot, schemeForBackground, Slot, UiTextStyle = TextStyle;
 import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
@@ -81,6 +81,10 @@ import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : drawScrollbar, RaylibCanvas, ScrollbarAnim,
     scrollbarLayout, toRaylibCursor;
+
+// Live D types (`PRJ12`-`PRJ16`): the `twoslash-extract --serve` oracle beside
+// the window. A subprocess, never a link-time dependency (`PRJ13`).
+import live_types : applyTip, LiveTypesSession;
 
 // The multi-document set the twoslash view navigates with `[`/`]` (`GNV1`), plus
 // the two entry points a navigation reload needs.
@@ -199,6 +203,7 @@ int runGui(
     int tabWidth = 4,                    // tab stops in the raw view
     bool listWhitespace = false,         // vim 'list' whitespace glyphs
     string[] codepointMaps = null,       // --font-codepoint-map entries (Android defaults)
+    bool liveTypes = true,               // live D types via the oracle (PRJ12)
 ) @system
 {
     import std.stdio : stderr;
@@ -457,6 +462,49 @@ int runGui(
 
     SmallBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
 
+    // Live D types (`PRJ12`): a `.d` file that arrived without a payload gets a
+    // `twoslash-extract --dub --serve` oracle of its own. The session is per
+    // open document — opening another file ends the previous one — and the
+    // notice (no binary, or a child that died) is printed once per window.
+    LiveTypesSession* liveSession;
+    bool liveNoticeShown;
+
+    void noteLive(string why)
+    {
+        if (liveNoticeShown)
+            return;
+        liveNoticeShown = true;
+        stderr.writeln("hue: live D types unavailable: ", why);
+    }
+
+    void stopLive()
+    {
+        if (liveSession is null)
+            return;
+        liveSession.shutdown();
+        liveSession = null;
+    }
+
+    // `PRJ12`: triggered by the document open, never from the render path.
+    void startLive(string path, bool alreadyHasPayload)
+    {
+        import std.algorithm.searching : endsWith;
+
+        stopLive();
+        if (!liveTypes || alreadyHasPayload || !path.endsWith(".d"))
+            return;
+        string reason;
+        liveSession = LiveTypesSession.start(path, reason);
+        if (liveSession is null)
+            noteLive(reason);
+    }
+
+    scope (exit) stopLive();
+
+    // The document hue opened with (a payload target needs no oracle).
+    if (docPath.length)
+        startLive(docPath, vm.tw.code.length != 0);
+
     /// Loads the set's currently-selected document in place (`GNV1`): re-read,
     /// re-highlight, rebuild the preview model, relayout. Scroll and search reset;
     /// the theme and the view toggles persist (`GNV3`). A document that fails to
@@ -481,6 +529,7 @@ int runGui(
         mode = Mode.normal;
         SetWindowTitle(("hue — " ~ name).toStringz);
         tree.reveal(path); // the explorer follows the open document (XPL3/4)
+        startLive(path, vm.tw.code.length != 0);
         return true;
     }
 
@@ -793,6 +842,30 @@ int runGui(
 
     while (!WindowShouldClose())
     {
+        // Live D types (`PRJ12`/`PRJ14`): drain the oracle's non-blocking
+        // output. The lazy payload attaches to the open document (every hover
+        // span gets its underline); each tip answer fills one node in place —
+        // the popup is rebuilt from `vm.tw` every frame, so a resolved hover
+        // simply appears, with no relayout.
+        if (liveSession !is null)
+        {
+            liveSession.poll();
+            if (liveSession.payloadReady)
+            {
+                vm.tw = liveSession.takePayload();
+                vm.showPreview = true;
+                vm.widthCols = -1; // force the relayout at an unchanged width
+                relayout();
+            }
+            foreach (a; liveSession.takeAnswers())
+                applyTip(vm.tw, a);
+            if (liveSession.failed)
+            {
+                noteLive(liveSession.reason);
+                stopLive();
+            }
+        }
+
         const cellW = fonts.cellW();
         const cellH = fonts.cellH();
         const screenW = GetScreenWidth();
@@ -1971,6 +2044,13 @@ int runGui(
             if (overNode != hotNode)
                 fade = Timeline.init;
             hotNode = overNode;
+            // A lazy span (underlined, no text yet) resolves on demand: ask the
+            // oracle for this node's tip. The request is deduped per node, so
+            // holding the pointer still costs one round trip (~0.6 ms warm);
+            // the popup stays empty until the answer lands a frame or two later.
+            if (liveSession !is null && hotNode != 0
+                && !vm.tw.nodes[hotNode - 1].text.length)
+                liveSession.requestTip(hotNode - 1);
             if (hotNode != 0)
             {
                 if (!fade.visible)
@@ -2008,7 +2088,9 @@ int runGui(
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
                         vm.pageFg, vm.pageBg);
-                    havePopup = true;
+                    // Zero width ⇒ a lazy node drew no popup (nothing to keep
+                    // the pointer inside yet).
+                    havePopup = hotPopup.width > 0;
                 }
             }
         }
@@ -2236,6 +2318,11 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
         (() @trusted => &theme)(), pageFg,
         withoutQuickinfoPrefix(tw.nodes[nodeIndex].text));
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry, sig);
+    // A lazy hover span (live types: the underline is up, the type has not
+    // arrived yet) views as an EMPTY tree — there is nothing to lay out, and
+    // the zero rect tells the caller there is no popup to keep the pointer in.
+    if (!tree.nodes.length)
+        return Rectangle(x, y, 0, 0);
     auto frames = layout(tree);
     auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
