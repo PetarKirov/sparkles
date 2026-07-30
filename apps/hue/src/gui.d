@@ -615,6 +615,7 @@ int runGui(
     }
 
     Scrollbar sb;
+    Scrollbar treeSb; // the tree pane's — same behavior, its own state
 
     // Fullscreen (F11): a manual borderless toggle. raylib's
     // ToggleBorderlessWindowed forces the primary monitor and, on some
@@ -1101,6 +1102,64 @@ int runGui(
             sb.currentWidth += (sb.targetWidth - sb.currentWidth) * 15.0f * GetFrameTime();
         }
 
+        // The tree pane's scrollbar — the SAME hover-expand behavior as the
+        // document's (one affordance, two panes): animated width, faint track
+        // on hover, draggable thumb, track click centers.
+        const treePaneRows = visibleRows - treeTopRows;
+        const treeMaxTop = cast(long) tree.rows.length - treePaneRows;
+        if (treeVisible && treeMaxTop > 0 && treePaneRows > 0)
+        {
+            const float hoverW = cast(float) scrollbarGutter();
+            const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
+            const trackTop = treeTopRows * cellH;
+            const trackH = screenH - trackTop;
+            const tg = thumbGeometry(tree.rows.length, treePaneRows, tree.top,
+                treeMaxTop, trackH);
+            const pos = GetMousePosition();
+            const edge = treeCols * cellW;
+            const hoverTrack = pos.x >= edge - hoverW && pos.x < edge
+                && pos.y >= trackTop;
+            const hoverThumb = hoverTrack && pos.y >= trackTop + tg.y
+                && pos.y <= trackTop + tg.y + tg.h;
+            treeSb.isHovered = hoverTrack || treeSb.isDragging;
+            treeSb.targetWidth = treeSb.isHovered ? hoverW : idleW;
+
+            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && hoverTrack)
+            {
+                if (hoverThumb)
+                {
+                    treeSb.isDragging = true;
+                    treeSb.dragStartY = pos.y;
+                    treeSb.dragStartOffset = tree.top;
+                }
+                else // track click: center the pane on the click
+                {
+                    tree.top = cast(long)((pos.y - trackTop) / cast(float) trackH
+                        * tree.rows.length) - treePaneRows / 2;
+                    tree.scrollBy(0); // clamp
+                }
+            }
+            if (treeSb.isDragging)
+            {
+                if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+                    treeSb.isDragging = false;
+                else if (tg.movable > 0)
+                {
+                    tree.top = treeSb.dragStartOffset
+                        + cast(long)((pos.y - treeSb.dragStartY) * treeMaxTop
+                            / tg.movable);
+                    tree.scrollBy(0); // clamp
+                }
+            }
+            treeSb.currentWidth += (treeSb.targetWidth - treeSb.currentWidth)
+                * 15.0f * GetFrameTime();
+        }
+        else
+        {
+            treeSb.isHovered = false;
+            treeSb.isDragging = false;
+        }
+
         top = top < 0 ? 0 : (top > maxTop ? maxTop : top);
         const topLine = cast(size_t) top;
 
@@ -1555,16 +1614,21 @@ int runGui(
                 0, cast(float)(treeTopRows * cellH));
             paint(tCanvas, tOps);
 
-            // The pane's scrollbar when the tree overflows (STM2, thin rail).
-            if (cast(long) tree.rows.length > tree.height && tree.height > 0)
+            // The pane's scrollbar: the same animated-width thumb + hover
+            // track as the document's, in the pane's theme tint.
+            if (treeMaxTop > 0 && treePaneRows > 0)
             {
-                const thumb = sparkles.ui.state.scrollbarThumb(
-                    tree.rows.length, tree.height, tree.top, tree.height);
-                const sx = treeCols * cellW - 4;
-                DrawRectangle(sx, treeTopRows * cellH,
-                    3, tree.height * cellH, rl(tree.sbTrack));
-                DrawRectangle(sx, (treeTopRows + cast(int) thumb.start) * cellH,
-                    3, cast(int) thumb.extent * cellH, rl(tree.sbThumb));
+                const trackTop = treeTopRows * cellH;
+                const trackH = screenH - trackTop;
+                const tg = thumbGeometry(tree.rows.length, treePaneRows,
+                    tree.top, treeMaxTop, trackH);
+                const w = treeSb.currentWidth;
+                const x = treeCols * cellW - w;
+                if (treeSb.isHovered || treeSb.isDragging)
+                    DrawRectangle(cast(int) x, trackTop, cast(int) w,
+                        trackH, rl(tree.sbTrack));
+                DrawRectangle(cast(int) x, cast(int)(trackTop + tg.y),
+                    cast(int) w, cast(int) tg.h, rl(tree.sbThumb));
             }
         }
 

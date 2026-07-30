@@ -49,6 +49,8 @@ struct FsEntry
     bool hasIconFg;
     RgbColor labelFg;   // the open document's theme accent (XPL3)
     bool hasLabelFg;
+    RgbColor rowBg;     // the open document's row band (XPL3)
+    bool hasRowBg;
 
     const(char)[] label() const @safe pure nothrow @nogc => name;
     const(char)[] icon() const @safe pure nothrow @nogc
@@ -138,7 +140,7 @@ struct ExplorerTui
     // Theme-derived interaction colors (XPL3/XPL5): the cursor row's tint and
     // the open document's accent come from the theme, matching the viewer's
     // selection chrome. Recomputed by rebuild, so a theme change re-skins.
-    RgbColor selBg, accent, sbTrack, sbThumb;
+    RgbColor selBg, accent, currentBg, sbTrack, sbThumb;
 
     /// Selects + reveals `path` (`XPL4`): every ancestor directory under the
     /// root is opened, the tree rebuilds, and the node's row is selected and
@@ -247,6 +249,7 @@ struct ExplorerTui
         const linkC = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
         selBg = mix(pageBg, linkC, 0.35);
         accent = linkC;
+        currentBg = mix(pageBg, linkC, 0.16);
         sbTrack = mix(pageBg, linkC, 0.22);
         sbThumb = mix(pageBg, linkC, 0.5);
 
@@ -257,6 +260,8 @@ struct ExplorerTui
                 {
                     n.value.labelFg = accent;
                     n.value.hasLabelFg = true;
+                    n.value.rowBg = currentBg;
+                    n.value.hasRowBg = true;
                 }
 
         rows = flatten(data, (uint i) @safe
@@ -623,4 +628,48 @@ unittest
     x.sel = 1;
     assert(!x.activate());
     assert(x.picked.canFind("app.d"));
+}
+@("explorer.currentDoc.rowBandAndAccent")
+@system
+unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    // XPL3: with the cursor on ANOTHER row, the open document still shows an
+    // unmistakable indicator — the theme-tinted row band + the accent label.
+    const root = buildPath(tempDir(), "hue-accent-probe");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, "aaa.d"), "int a;\n");
+    write(buildPath(root, "bbb.d"), "int b;\n");
+
+    static immutable Theme dark = builtinDark;
+    ExplorerTui x;
+    x.root = root;
+    x.themeValue = &dark;
+    x.theme = resolveTheme(dark, LabelSet.standard());
+    x.pageFg = fallbackFg;
+    x.pageBg = fallbackBg;
+    x.width = 40;
+    x.height = 10;
+    x.current = buildPath(root, "aaa.d");
+    x.rebuild();
+    x.sel = 1; // the cursor on bbb.d
+
+    Grid g;
+    g.resize(40, 10);
+    x.paint(g);
+
+    bool sawBandAndAccent;
+    foreach (ushort y; 0 .. g.rows)
+        foreach (ushort xx; 0 .. cast(ushort)(g.cols - 4))
+            if (g[xx, y].grapheme == "a"
+                && g[cast(ushort)(xx + 1), y].grapheme == "a"
+                && g[cast(ushort)(xx + 2), y].grapheme == "a"
+                && g[xx, y].style.fg == Color.fromRgb(x.accent)
+                && g[xx, y].style.bg == Color.fromRgb(x.currentBg))
+                sawBandAndAccent = true;
+    assert(sawBandAndAccent, "open-document row band + accent");
 }
