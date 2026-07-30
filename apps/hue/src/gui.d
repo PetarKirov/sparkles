@@ -190,6 +190,7 @@ int runGui(
     int treeWidth = 32,                  // explorer pane width in cells
     int tabWidth = 4,                    // tab stops in the raw view
     bool listWhitespace = false,         // vim 'list' whitespace glyphs
+    string[] codepointMaps = null,       // --font-codepoint-map entries (Android defaults)
 ) @system
 {
     import std.stdio : stderr;
@@ -283,7 +284,7 @@ int runGui(
             fontSizePx = cast(int) (fontSizePx * (dpiScale > 4 ? 4 : dpiScale));
     }
     FontSet fonts;
-    if (!FontSet.tryLoad(fontName, fontSizePx, fonts, null, faces, fontSrc))
+    if (!FontSet.tryLoad(fontName, fontSizePx, fonts, codepointMaps, faces, fontSrc))
     {
         stderr.writeln("hue --gui: could not load a font from '", fontName,
             "' (is fontconfig available?)");

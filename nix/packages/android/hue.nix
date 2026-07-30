@@ -152,10 +152,20 @@
         };
       };
 
-      # The APK asset bundle. fc-query runs here, at build time, to write the
-      # coverage sidecars FontSet reads instead of shelling out on-device.
-      hueAssets =
-        pkgs.runCommand "hue-android-assets"
+      # Maple Mono NF CN — the on-device primary family: the custom build with
+      # frozen OpenType features (see ./maple-mono, adapted from the machine
+      # config's pkgs/maple-mono-custom). Uiua386 (nixpkgs) renders the Uiua
+      # glyph planes via the codepoint map in app.d (androidUiuaCodepointMap).
+      mapleMono = pkgs.callPackage ./maple-mono { };
+
+      # The APK asset bundle, parameterized over the docs/ tree (the
+      # explorer's browse surface — `stageDocs` fills $out/docs). Fonts +
+      # charset sidecars and grammar queries are common to every variant;
+      # fc-query runs here, at build time, to write the coverage sidecars
+      # FontSet reads instead of shelling out on-device.
+      mkAssets =
+        name: stageDocs:
+        pkgs.runCommand name
           {
             nativeBuildInputs = [ pkgs.fontconfig ];
           }
@@ -175,6 +185,18 @@
               cp ${pkgs.dejavu_fonts}/share/fonts/truetype/$f $out/fonts/
             done
 
+            # Primary on-device family: Maple Mono NF CN, all four styled
+            # faces (the -Bold/-Italic/-BoldItalic siblings the fontconfig-free
+            # variant scan resolves), plus the Uiua386 codepoint-map font.
+            for f in ${mapleMono}/share/fonts/truetype/*.ttf; do
+              case "$(basename "$f")" in
+                *-Regular.ttf | *-Bold.ttf | *-Italic.ttf | *-BoldItalic.ttf)
+                  cp "$f" $out/fonts/
+                  ;;
+              esac
+            done
+            cp ${pkgs.uiua386}/share/fonts/truetype/Uiua386.ttf $out/fonts/
+
             for font in $out/fonts/*.ttf; do
               fc-query --format=%{charset} "$font" > "$font.charset"
             done
@@ -191,24 +213,111 @@
               fi
             done
 
-            # Sample documents — the explorer's browse surface on-device
-            # (markdown incl. ` ```ansi ` fences, a D source, a twoslash
-            # payload: one of each render path).
             mkdir -p $out/docs
-            cp ${../../../docs/libs/base/tutorial/getting-started.md} \
-              $out/docs/getting-started.md
-            # Real SGR escapes in its ansi fences — the libghostty-vt render
-            # path is visibly exercised (colors, not stripped text).
-            cp ${../../../docs/libs/base/how-to/prettyprint-values.md} \
-              $out/docs/prettyprint-values.md
-            cp ${../../../apps/hue/src/gui_touch.d} $out/docs/gui_touch.d
-            cp ${../../../libs/twoslash/examples/fixtures/12-async.twoslash.json} \
-              $out/docs/async-example.twoslash.json
+            ${stageDocs}
 
             (cd $out && find . -type f -printf '%P\n' | sort > asset-manifest.txt)
             (cd $out && find . -type f ! -name bundle-hash -print0 | sort -z \
               | xargs -0 sha256sum | sha256sum | cut -d' ' -f1 > bundle-hash)
           '';
+
+      # Sample documents (the default hue-apk) — one exhibit of each render
+      # path: markdown incl. ` ```ansi ` fences (prettyprint-values.md carries
+      # real SGR escapes, so the libghostty-vt path renders visibly), a D
+      # source, and a twoslash payload.
+      hueAssets = mkAssets "hue-android-assets" ''
+        cp ${../../../docs/libs/base/tutorial/getting-started.md} \
+          $out/docs/getting-started.md
+        cp ${../../../docs/libs/base/how-to/prettyprint-values.md} \
+          $out/docs/prettyprint-values.md
+        cp ${../../../apps/hue/src/gui_touch.d} $out/docs/gui_touch.d
+        cp ${../../../libs/twoslash/examples/fixtures/12-async.twoslash.json} \
+          $out/docs/async-example.twoslash.json
+      '';
+
+      # The whole repository as the browse surface (hue-apk-repo): every
+      # tracked text file — sources, markdown, and aux files — minus
+      # docs/.vitepress (site tooling) and binaries (fonts, images, the
+      # keystore), which hue cannot render. Dotfiles stay out too:
+      # aapt2 silently excludes them from assets, so a manifest entry for a
+      # .gitignore could never be extracted on-device. ~1.5k files / ~29 MB of text;
+      # the flake source is the tracked tree, so untracked build junk is
+      # absent by construction.
+      repoTextExts = [
+        "bazel"
+        "c"
+        "cc"
+        "cpp"
+        "css"
+        "csv"
+        "d"
+        "go"
+        "h"
+        "html"
+        "i"
+        "ini"
+        "js"
+        "json"
+        "lock"
+        "md"
+        "mjs"
+        "nix"
+        "patch"
+        "py"
+        "rs"
+        "scm"
+        "sdl"
+        "sh"
+        "svg"
+        "toml"
+        "ts"
+        "tsx"
+        "txt"
+        "vue"
+        "xml"
+        "yaml"
+        "yml"
+        "zig"
+      ];
+      repoDocsTree = lib.fileset.toSource {
+        root = ../../..;
+        fileset = lib.fileset.difference (lib.fileset.fileFilter (
+          file:
+          lib.any file.hasExt repoTextExts
+          || lib.elem file.name [
+            "LICENSE"
+            "Makefile"
+          ]
+        ) ../../..) ../../../docs/.vitepress;
+      };
+      hueAssetsRepo = mkAssets "hue-android-assets-repo" ''
+        cp -r ${repoDocsTree}/. $out/docs/
+        # aapt2 silently excludes dot-entries (files AND directories) from
+        # assets — prune them so the manifest never lists what can't ship.
+        chmod -R u+w $out/docs
+        find $out/docs -depth -name '.*' -exec rm -rf {} +
+      '';
+
+      # The native-lib set both APK variants share: libhue.so + every grammar
+      # parser (dlopen'd by bare soname from the app's linker namespace — see
+      # ts-grammars.nix).
+      apkLibs = lib.mapAttrs' (name: t: {
+        name = t.abi;
+        value = {
+          "libhue.so" = "${libhue}/lib/${t.abi}/libhue.so";
+        }
+        // (
+          let
+            grammarLibDir = "${config.packages.ts-grammars-android}/lib/${t.abi}";
+          in
+          lib.listToAttrs (
+            map (so: {
+              name = so;
+              value = "${grammarLibDir}/${so}";
+            }) (builtins.attrNames (builtins.readDir grammarLibDir))
+          )
+        );
+      }) ndk.targets;
     in
     lib.optionalAttrs (system == "x86_64-linux") {
       packages.libhue-android = libhue;
@@ -216,28 +325,20 @@
       packages.hue-apk = config.legacyPackages.buildAndroidApk {
         pname = "hue";
         manifest = ../../../apps/hue/android/AndroidManifest.xml;
-        # libhue.so + every grammar parser (dlopen'd by bare soname from the
-        # app's linker namespace — see ts-grammars.nix).
-        libs = lib.mapAttrs' (name: t: {
-          name = t.abi;
-          value = {
-            "libhue.so" = "${libhue}/lib/${t.abi}/libhue.so";
-          }
-          // (
-            let
-              grammarLibDir = "${config.packages.ts-grammars-android}/lib/${t.abi}";
-            in
-            lib.listToAttrs (
-              map (so: {
-                name = so;
-                value = "${grammarLibDir}/${so}";
-              }) (builtins.attrNames (builtins.readDir grammarLibDir))
-            )
-          );
-        }) ndk.targets;
+        libs = apkLibs;
         assetsDir = hueAssets;
         keystore = ../../../apps/hue/android/debug.keystore;
         description = "hue — syntax-highlighting viewer (Android NativeActivity APK)";
+      };
+      # Same app, the whole sparkles repository embedded as the browse surface
+      # (dogfooding: hue reading its own codebase on-device).
+      packages.hue-apk-repo = config.legacyPackages.buildAndroidApk {
+        pname = "hue";
+        manifest = ../../../apps/hue/android/AndroidManifest.xml;
+        libs = apkLibs;
+        assetsDir = hueAssetsRepo;
+        keystore = ../../../apps/hue/android/debug.keystore;
+        description = "hue — syntax-highlighting viewer with the sparkles repo embedded (Android APK)";
       };
     };
 }

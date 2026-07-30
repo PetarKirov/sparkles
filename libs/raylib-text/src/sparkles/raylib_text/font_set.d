@@ -415,7 +415,18 @@ struct FontSet
                 path = res.output.strip.idup;
             }
             else
-                path = resolveFontInDirs(spec, sources.dirs);
+            {
+                // Directory scan: resolve the family, then the STYLED sibling
+                // (fontVariantPaths) — a bare family override would otherwise
+                // land every style on the Regular file. No sibling → no
+                // override; the fake-bold/upright-italic fallbacks apply.
+                const base = resolveFontInDirs(spec, sources.dirs);
+                if (base.length == 0)
+                    return;
+                string b, i, bi;
+                fontVariantPaths(base, b, i, bi);
+                path = style == "bold" ? b : style == "italic" ? i : bi;
+            }
         }
         if (path.length == 0)
             return;
