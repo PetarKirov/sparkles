@@ -680,9 +680,26 @@ int runGui(
                 }
                 if (IsKeyPressed(KeyboardKey.KEY_ENTER) || pressed(KeyboardKey.KEY_L))
                     activateTree();
+                const treeShift = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
+                    || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
                 if (pressed(KeyboardKey.KEY_R))
-                    tree.refreshNow(); // XPF4: re-read fs + force git status
-                if (pressed(KeyboardKey.KEY_H))
+                {
+                    // r = manual refresh (XPF4); Shift-R = re-root to the
+                    // selected item (XPF3).
+                    if (treeShift)
+                        tree.rerootSel();
+                    else
+                        tree.refreshNow();
+                }
+                if (treeShift && pressed(KeyboardKey.KEY_I))
+                    tree.toggleIgnored(); // XPF2
+                if (pressed(KeyboardKey.KEY_U))
+                    tree.rerootParent(); // XPF3
+                if (pressed(KeyboardKey.KEY_C))
+                    tree.closeAll(); // XPF3
+                if (treeShift && pressed(KeyboardKey.KEY_H))
+                    tree.toggleHidden(); // XPF2
+                else if (pressed(KeyboardKey.KEY_H))
                 {
                     // Close the selected dir, or jump to the parent row.
                     if (tree.sel < cast(long) tree.rows.length)
