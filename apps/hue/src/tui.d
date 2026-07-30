@@ -93,6 +93,7 @@ struct PreviewTui
     string title;
     const(char)[] source;
     const(HighlightEvent)[] events;
+    string lang;                    // canonical language (CST fold provider)
     PreviewModel model;             // present ⇒ a markdown file (preview available)
     TwoslashReturn tw;              // non-empty code ⇒ a twoslash document
     TsConfigCache* cache;           // fence highlighting for the widget markdown
@@ -232,15 +233,25 @@ struct PreviewTui
         if (!showPreview || (!model.present && !tw.code.length))
         {
             // The raw view: the highlighted source as the same widget
-            // pipeline (one painter for every view kind).
-            mdTree = viewCodeDocument(source, events, &theme, pageFg);
+            // pipeline (one painter for every view kind). Fold ranges come
+            // from the CST provider (FSR1/FSR2) when a grammar is known.
+            import sparkles.syntax.ts.folds : foldableSpansCst;
+            import sparkles.ui.wrap : TextWrap;
+
+            foldable = cache !is null && lang.length
+                ? foldableSpansCst(*cache, lang, source) : null;
+            Span[] closed;
+            foreach (sp; foldable)
+                if (!folds.isOpen(sp.start))
+                    closed ~= sp;
+            mdTree = viewCodeDocument(source, events, &theme, pageFg,
+                TextWrap.greedy, closed, foldHitBase);
             mdFrames = layout(mdTree, Constraints(maxW: w));
             mdOps = buildDisplayList(mdTree, mdFrames,
                 themes[themeIdx].effectivePalette, pageFg, pageBg);
             mdRows = documentRows(mdTree, mdFrames);
-            mdTargets = null;
+            mdTargets = hoverTargets(mdTree, mdFrames);
             mdFences.length = 0;
-            foldable = null;
             hoverNodes.length = 0;
             return;
         }
@@ -392,13 +403,15 @@ struct PreviewTui
     /// content swaps, scroll/search/selection/folds reset, layout rebuilds.
     void setDocument(string title_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel model_,
-        bool startPreview, TwoslashReturn tw_ = TwoslashReturn.init) @system
+        bool startPreview, TwoslashReturn tw_ = TwoslashReturn.init,
+        string lang_ = null) @system
     {
         title = title_;
         source = source_;
         events = events_;
         model = model_;
         tw = tw_;
+        lang = lang_;
         hoverSel = -1;
         showPreview = startPreview && (model.present || tw.code.length != 0);
         top = 0;

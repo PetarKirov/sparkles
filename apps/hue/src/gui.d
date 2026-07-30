@@ -140,6 +140,7 @@ struct LoadedDoc
     const(HighlightEvent)[] events;
     PreviewModel preview;
     TwoslashReturn twoslash; /// empty `code` ⇒ not a twoslash document
+    string lang;             /// canonical language (CST fold provider)
 }
 
 /// Loads a document by path. Supplied by `app.d`, which owns the grammar registry
@@ -180,6 +181,7 @@ int runGui(
     bool startInTree = false,            // a directory target opens in the tree
     string treeRoot = null,              // explorer root (default: docPath's dir)
     FontSet.FaceOverrides faces = FontSet.FaceOverrides.init, // per-style fonts
+    string docLang = null,               // canonical language (CST folds)
 ) @system
 {
     import std.stdio : stderr;
@@ -336,7 +338,7 @@ int runGui(
         : (docPath.length ? dirName(docPath) : ".");
     applyTheme(vm.themeIdx); // resolves the theme before the first document
     vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
-        source, events, preview, twoslash);
+        source, events, preview, twoslash, docLang);
     // A markdown file opens in preview by default; Tab toggles to the raw
     // highlighted-source view. `HUE_GUI_PREVIEW=0/1` pins the initial mode
     // for deterministic golden captures.
@@ -370,7 +372,7 @@ int runGui(
 
         vm.widthCols = widthCols();
         vm.setDocument(name, summary, doc.source, doc.events, doc.preview,
-            doc.twoslash);
+            doc.twoslash, doc.lang);
         query.clear();
         mode = Mode.normal;
         SetWindowTitle(("hue — " ~ name).toStringz);
