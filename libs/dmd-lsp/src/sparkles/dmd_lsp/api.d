@@ -62,6 +62,7 @@ struct Analyzer
         import dmd.frontend : deinitializeDMD;
         import sparkles.dmd_lsp.init_ : dmdGlobalsLock;
 
+        Module.loadModuleHandler = null;
         deinitializeDMD();
         _initialized = false;
         dmdGlobalsLock.unlock();
@@ -69,13 +70,30 @@ struct Analyzer
 
     /// Parses + fully analyzes `source` as `filename`, entirely in memory.
     /// The result's `module_` stays valid until this `Analyzer` is destroyed.
-    AnalyzedModule analyze(string filename, string source) @system
+    /// `virtualModules` are additional in-memory files the entry module's
+    /// imports resolve against (before falling back to the import paths) —
+    /// the `@filename:` multi-file seam.
+    AnalyzedModule analyze(string filename, string source,
+        VirtualModule[] virtualModules = null) @system
     in (_initialized, "construct the Analyzer with a config first")
     in (!_analyzed, "Analyzer is single-use: one analyze() per session (COR2)")
     {
         import dmd.frontend : fullSemantic, parseModule;
 
         _analyzed = true;
+
+        if (virtualModules.length)
+        {
+            auto provided = virtualModules.dup;
+            Module.loadModuleHandler = (const ref loc, packages, ident)
+            {
+                if (packages.length == 0)
+                    foreach (vm; provided)
+                        if (moduleBaseName(vm.filename) == ident.toString)
+                            return parseModule(vm.filename, vm.source).module_;
+                return Module.loadFromFile(loc, packages, ident, 1, 0);
+            };
+        }
 
         auto parsed = parseModule(filename, source);
         // parseModule stops short of Module.resolvePackage, leaving the
@@ -331,6 +349,21 @@ struct DefinitionPos
     });
     assert(!result.hasErrors);
     assert(result.module_ !is null);
+}
+
+/// An in-memory file the entry module's imports can resolve to (matched by
+/// the file's base name against the imported module identifier).
+struct VirtualModule
+{
+    string filename;
+    string source;
+}
+
+private string moduleBaseName(string filename) @safe pure
+{
+    import std.path : baseName, stripExtension;
+
+    return filename.baseName.stripExtension;
 }
 
 /// One completion candidate: the inserted name plus a renderer-facing kind

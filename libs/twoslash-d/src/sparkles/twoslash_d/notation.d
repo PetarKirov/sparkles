@@ -38,6 +38,16 @@ struct QueryMarker
     size_t offset;
 }
 
+/// One `// @filename: name.d` segment: a virtual file of the sample. The
+/// marker line itself stays in the display (the TS convention); `content`
+/// bounds are `fullSource` byte offsets of the file's text.
+struct VirtualFile
+{
+    string name;
+    size_t contentStart;
+    size_t contentEnd; /// exclusive; the last file runs to the end
+}
+
 /// A `^|` completion marker: the byte offset (into `fullSource`) of the
 /// caret position on the previous kept line.
 struct CompletionMarker
@@ -85,6 +95,11 @@ struct ParsedNotation
 
     QueryMarker[] queries;
     CompletionMarker[] completions;
+
+    /// `@filename:` segments, in order (empty for a single-file sample).
+    /// Analysis treats the $(B last) file as the entry module; the others
+    /// resolve through its imports.
+    VirtualFile[] files;
     HighlightMarker[] highlights;
     TagDirective[] tags;
 
@@ -209,6 +224,27 @@ ParsedNotation parseNotation(string source) @safe pure
             }
         }
 
+        // --- `@filename:` opens a virtual-file segment; unlike the other
+        // directives its marker line stays in the display (TS convention).
+        {
+            const d = parseDirective(stripped);
+            if (d.kind == DirectiveKind.filename && d.name.length)
+            {
+                if (result.files.length)
+                    result.files[$ - 1].contentEnd = fullSource.length;
+                const start = fullSource.length;
+                fullSource ~= rawLine;
+                fullSource ~= '\n';
+                kept ~= Line(rawLine, start);
+                foreach (ti; pendingTagIndexes)
+                    result.tags[ti].offset = start;
+                pendingTagIndexes = null;
+                result.files ~= VirtualFile(
+                    name: d.value, contentStart: fullSource.length);
+                continue;
+            }
+        }
+
         // --- `@word` directives (closed set only — see the module docs).
         if (auto directive = parseDirective(stripped))
         {
@@ -241,6 +277,8 @@ ParsedNotation parseNotation(string source) @safe pure
                     result.tags ~= TagDirective(directive.name, directive.value, 0);
                     pendingTagIndexes ~= result.tags.length - 1;
                     break;
+                case DirectiveKind.filename:
+                    assert(0); // handled before this switch (line is kept)
             }
             continue;
         }
@@ -257,6 +295,8 @@ ParsedNotation parseNotation(string source) @safe pure
     // Tags at EOF anchor to the end of the source.
     foreach (ti; pendingTagIndexes)
         result.tags[ti].offset = fullSource.length;
+    if (result.files.length)
+        result.files[$ - 1].contentEnd = fullSource.length;
 
     result.fullSource = fullSource;
 
@@ -310,7 +350,7 @@ ParsedNotation parseNotation(string source) @safe pure
     return result;
 }
 
-private enum DirectiveKind { errors, noErrors, dflags, importPath, tag }
+private enum DirectiveKind { errors, noErrors, dflags, importPath, tag, filename }
 
 private struct Directive
 {
@@ -355,6 +395,10 @@ private Directive parseDirective(string stripped) @safe pure
                 : Directive.init;
         case "annotate", "log", "warn", "error":
             return colonAt >= 0 ? Directive(DirectiveKind.tag, word, value)
+                : Directive.init;
+        case "filename":
+            return colonAt >= 0 && value.length
+                ? Directive(DirectiveKind.filename, word, value)
                 : Directive.init;
         default:
             return Directive.init;
@@ -515,4 +559,28 @@ private void normalizeRemovals(ref Removal[] removals) @safe pure nothrow
     assert(n.highlights[0].text == "the interesting part");
     assert(n.highlights[1].offset == 24 + 4 && n.highlights[1].length == 2);
     assert(n.highlights[1].text == "");
+}
+
+@("notation.parseNotation.filenames")
+@safe pure unittest
+{
+    const n = parseNotation(
+        "// @filename: helper.d\n" ~
+        "module helper;\n" ~
+        "int seven() => 7;\n" ~
+        "// @filename: app.d\n" ~
+        "module app;\n" ~
+        "import helper;\n");
+    // Marker lines stay in the display (the TS convention).
+    assert(n.fullSource ==
+        "// @filename: helper.d\nmodule helper;\nint seven() => 7;\n"
+        ~ "// @filename: app.d\nmodule app;\nimport helper;\n");
+    assert(n.displayCode == n.fullSource);
+    assert(n.files.length == 2);
+    assert(n.files[0].name == "helper.d");
+    assert(n.fullSource[n.files[0].contentStart .. n.files[0].contentEnd]
+        == "module helper;\nint seven() => 7;\n");
+    assert(n.files[1].name == "app.d");
+    assert(n.fullSource[n.files[1].contentStart .. n.files[1].contentEnd]
+        == "module app;\nimport helper;\n");
 }
