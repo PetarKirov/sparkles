@@ -376,7 +376,7 @@ if (isTextMeasure!TM)
                     if (avail < 1)
                         avail = 1;
                     frames[idx].spanLines = wrapSpans(node.spans, avail,
-                        (scope const(char)[] s) => tm.width(s));
+                        (scope const(char)[] s) => tm.width(s), node.hangIndent);
                     content = cast(int) frames[idx].spanLines.length;
                     if (content < 1)
                         content = 1;

@@ -359,9 +359,12 @@ Greedy only (the balanced strategy applies to plain runs; styled prose is
 ragged-right by design).
 */
 TextSpan[][] wrapSpans(F)(
-    const(TextSpan)[] spans, int width, scope F measure)
+    const(TextSpan)[] spans, int width, scope F measure, int hangIndent = 0)
 if (is(typeof(measure("")) : int))
 {
+    // A hang indent narrows every line after the first (the painter offsets
+    // them right by the same amount — a leader's continuation alignment).
+    const contWidth = hangIndent < width ? width - hangIndent : 1;
     // A fragment is a maximal unbreakable piece of one span: either a word
     // fragment / whole noBreak span (glue = false), a run of spaces
     // (glue = true), or a forced break (newline = true).
@@ -459,7 +462,8 @@ if (is(typeof(measure("")) : int))
         }
         const glueW = pendingGlue != size_t.max
             ? measure(frags[pendingGlue].text) : 0;
-        if (cur.length && curW + glueW + tokenW > width)
+        const limit = lines.length == 0 ? width : contWidth;
+        if (cur.length && curW + glueW + tokenW > limit)
             flush(); // the pending glue is consumed by the break
         else if (pendingGlue != size_t.max && cur.length)
             append(pendingGlue);
