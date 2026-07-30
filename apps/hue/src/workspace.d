@@ -27,6 +27,7 @@ import sparkles.ui.style : Slot;
 import ansi_model : BackgroundMode;
 import explorer : ExplorerTui;
 import gui_preview : PreviewModel;
+import sparkles.twoslash.protocol : TwoslashReturn;
 import tui : PreviewTui;
 
 /// One loaded document, as the viewer pane consumes it. Supplied by `app.d`'s
@@ -38,6 +39,7 @@ struct WorkspaceDoc
     string source;
     HighlightEvent[] events;
     PreviewModel preview;
+    TwoslashReturn twoslash; /// empty `code` ⇒ not a twoslash document
 }
 
 /// ditto
@@ -108,7 +110,7 @@ struct WorkspaceTui
             return; // the previous document stays on screen
         }
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
-            startPreview: true);
+            startPreview: true, doc.twoslash);
         tree.reveal(path);
         treeFocused = false;
     }
@@ -243,7 +245,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         // The already-loaded document (no second read); reveal it in the
         // (hidden) tree so `e` opens onto it highlighted.
         w.viewer.setDocument(initial.title, initial.source, initial.events,
-            initial.preview, startPreview: true);
+            initial.preview, startPreview: true, initial.twoslash);
         if (target.length)
             w.tree.reveal(target);
     }
