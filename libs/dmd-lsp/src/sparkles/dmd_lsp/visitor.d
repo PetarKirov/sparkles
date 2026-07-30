@@ -1220,6 +1220,19 @@ extern(C++) class FindTipVisitor : FindASTVisitor
 
     override void foundNode(RootObject obj)
     {
+        // Not upstream. A lowering's temporary carries the location of the
+        // code it was generated from — `foreach (v; 0 .. n)` puts DMD's
+        // `__limit` on `v` itself — so resolving one answers a hover with a
+        // name the user never wrote. Worse, it is not even stable: which of
+        // the two symbols this walk reaches first depends on their order in
+        // DMD's name-hashed symbol table, and `Identifier.generateId` numbers
+        // temporaries with a process-wide counter, so the same query answered
+        // `v` or `__limit225` depending on what had been analyzed before.
+        // Skipping them keeps the walk going and lands on the real symbol —
+        // which is also what `collectTips` reports (`TipOccurrence` parity).
+        if (isLoweringTemporary(obj))
+            return;
+
         found = obj;
         if (obj)
         {
@@ -1228,6 +1241,33 @@ extern(C++) class FindTipVisitor : FindASTVisitor
             stop = true;
         }
     }
+}
+
+/**
+Whether `obj` is a compiler-introduced temporary — a lowered `foreach`'s
+`__limit`/`__key`, an inliner's scratch variable — rather than a declaration
+the user wrote.
+
+`STC.temp` alone is not the test: a lowered `foreach` marks the loop variable
+the user *did* write with `STC.temp | STC.foreach_` too. What separates them is
+the name, since every synthetic one comes from `Identifier.generateId` and so
+begins with `__`.
+*/
+private bool isLoweringTemporary(RootObject obj)
+{
+    if (obj is null)
+        return false;
+
+    Dsymbol sym = obj.isDsymbol();
+    if (sym is null)
+        if (auto e = obj.isExpression())
+            if (e.op == EXP.variable || e.op == EXP.symbolOffset)
+                sym = (cast(SymbolExp) e).var;
+
+    if (auto v = sym !is null ? sym.isVarDeclaration() : null)
+        return (v.storage_class & STC.temp) != 0
+            && v.ident !is null && v.ident.toString().startsWith("__");
+    return false;
 }
 
 string quoteCode(bool quote, string s)
@@ -2287,12 +2327,14 @@ $(LIST
         which is what makes the difference invisible in the pipeline.
     * $(B Residual disagreement, ~0.1%.) Where a compiler-generated node
         shares a source location with the identifier the user wrote, the two
-        walks reach different nodes: a lowered `foreach` tips as its loop
-        variable here and as the generated `__limit` under a positional
-        query, an `a[i]` rewritten to `opIndex` tips as `i` here and as the
-        operator overload there, and a `cast(T)`'s type name tips as `T` here
-        and as nothing there. The parity unittests pin every shape that has
-        been reconciled; these are the ones that have not.
+        walks reach different nodes: an `a[i]` rewritten to `opIndex` tips as
+        `i` here and as the operator overload under a positional query, and a
+        `cast(T)`'s type name tips as `T` here and as nothing there. The
+        parity unittests pin every shape that has been reconciled; these are
+        the ones that have not. (A lowered `foreach` used to belong on this
+        list — its generated `__limit`/`__key` sit on the loop variable — and
+        is now reconciled from the other end: neither walk reports a
+        temporary, see `isLoweringTemporary`.)
 )
 
 The size/alignment suffix is off for the whole walk (`addsize: false`).
@@ -2362,6 +2404,13 @@ extern(C++) class TipCollectVisitor : IdentifierTypesVisitor
     protected override void record(ref const Loc loc, Identifier ident, int type, RootObject obj)
     {
         if (obj is null || loc.linnum <= 0)
+            return;
+
+        // Same rule as the positional query (`FindTipVisitor.foundNode`): a
+        // lowering's temporary sits on the user's own code — a `foreach`'s
+        // `__key`/`__limit` on the loop variable — and reporting it would put
+        // a generated, run-varying name in the overlay.
+        if (isLoweringTemporary(obj))
             return;
 
         // A positional query matches a whole identifier extent, not just its
