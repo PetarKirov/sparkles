@@ -180,6 +180,10 @@ struct PreviewTui
         themeIdx = idx < names.length ? idx : 0;
     }
 
+    /// The active theme index — the workspace watches it to re-skin the
+    /// explorer pane when ←/→ cycles the theme (`XPL5`).
+    size_t themeIndex() const @safe pure nothrow @nogc => themeIdx;
+
     /// Sets the pane size in cells (the workspace arranges; `relayout` after).
     void resize(int w, int h) @safe pure nothrow @nogc
     {

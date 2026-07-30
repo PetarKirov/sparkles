@@ -58,6 +58,7 @@ struct WorkspaceTui
     WsLoader loadDoc;
     private int width, height;
     private RgbColor pageFg, pageBg;
+    private size_t lastThemeIdx = size_t.max;
 
     private enum treeCols = 32; // sidebar width incl. its own chrome
 
@@ -140,6 +141,23 @@ struct WorkspaceTui
         openDoc(files[cast(size_t) next]);
     }
 
+    /// The explorer follows the viewer's theme (`XPL5`): when ←/→ cycled it,
+    /// re-resolve the tree's page colors + palette and rebuild — the whole
+    /// frame re-skins together, not just the document's syntax colors.
+    private void syncTreeTheme() @system
+    {
+        if (viewer.themeIndex == lastThemeIdx || !viewer.themes.length)
+            return;
+        lastThemeIdx = viewer.themeIndex;
+        tree.themeValue = &viewer.themes[viewer.themeIndex];
+        tree.theme = resolveTheme(*tree.themeValue, viewer.labels);
+        pageFg = tree.pageFg = toRgb(tree.theme.defaults.fg,
+            RgbColor(0xcc, 0xcc, 0xcc));
+        pageBg = tree.pageBg = toRgb(tree.theme.defaults.bg,
+            RgbColor(0x1e, 0x1e, 0x1e));
+        tree.rebuild();
+    }
+
     /// Applies one event; returns false to quit.
     bool handle(in Event e) @system
     {
@@ -203,7 +221,9 @@ struct WorkspaceTui
             }
             return true;
         }
-        return viewer.handle(ev);
+        const alive = viewer.handle(ev);
+        syncTreeTheme();
+        return alive;
     }
 }
 
@@ -239,6 +259,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
 
     w.treeVisible = isDir;
     w.treeFocused = isDir;
+    w.lastThemeIdx = themeIdx;
     w.tree.rebuild();
     if (!isDir && initial.title.length)
     {
