@@ -277,6 +277,32 @@ version (Posix)
             return classifyByte(b);
         }
 
+        /**
+        Wait at most `timeout` for the next event; `NoEvent` when it elapses.
+
+        The seam an event loop needs when something other than the terminal
+        also has to make progress (a background subprocess feeding the view):
+        the loop keeps blocking on input, but wakes on a deadline instead of
+        only on a keystroke. A zero timeout polls. `next()` itself is
+        unchanged — a loop that never passes a timeout blocks exactly as before.
+        */
+        Event next(Duration timeout) @trusted nothrow
+        {
+            import core.sys.posix.poll : poll, pollfd, POLLIN;
+
+            pollfd pfd;
+            pfd.fd = _fd;
+            pfd.events = POLLIN;
+            const ms = timeout.total!"msecs";
+            const r = poll(&pfd, 1, ms > int.max ? int.max : cast(int) ms);
+            if (r == 0)
+                return Event(NoEvent()); // the deadline, not input
+            if (r < 0)
+                return errno == EINTR
+                    ? Event(ResizeEvent()) : Event(EndOfInput());
+            return next(); // readable (or hung up): the blocking path decodes it
+        }
+
         // Assemble an escape sequence: introducer, then params/coords until a
         // final byte (letter or `~`, or `M`/`m` for mouse). A lone ESC (nothing
         // within the poll window) decodes as Esc.
@@ -335,6 +361,33 @@ version (Posix)
                 return false;
             return read(_fd, &b, 1) == 1;
         }
+    }
+
+    @("input.PosixEvents.nextWithTimeout")
+    @system unittest
+    {
+        import core.sys.posix.unistd : close, pipe, write;
+
+        // A pipe stands in for the terminal (`start` takes the fd), so the
+        // deadline behavior is testable with no tty and no raw mode.
+        int[2] fds;
+        assert(pipe(fds) == 0);
+        scope (exit) close(fds[0]);
+
+        auto ev = PosixEvents.start(fds[0]);
+
+        // Nothing to read: the deadline expires with no event (not EOF).
+        assert(ev.next(0.msecs) == Event(NoEvent()));
+        assert(ev.next(10.msecs) == Event(NoEvent()));
+
+        // A byte within the window decodes exactly as the blocking path does.
+        immutable char[1] a = "a";
+        assert(write(fds[1], a.ptr, 1) == 1);
+        assert(ev.next(1000.msecs) == charEvent('a'));
+
+        // The writer closing is end-of-input, not another timeout.
+        close(fds[1]);
+        assert(ev.next(1000.msecs).isEndOfInput);
     }
 }
 

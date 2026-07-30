@@ -32,6 +32,7 @@ import sparkles.ui.style : Slot;
 import ansi_model : BackgroundMode;
 import explorer : ExplorerTui;
 import gui_preview : PreviewModel;
+import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import tui : PreviewTui;
 
@@ -62,6 +63,13 @@ struct WorkspaceTui
     bool treeVisible;
     bool treeFocused;
     WsLoader loadDoc;
+    /// Live D types (`PRJ12`-`PRJ16`): a `twoslash-extract --dub --serve`
+    /// oracle for the open `.d` document. The session belongs to the document
+    /// — opening another file ends it — and its stderr is silenced, because
+    /// this pane is an alt screen a stray `dub describe` line would corrupt.
+    bool liveTypes = true;
+    private LiveTypesSession* live;
+    private string liveNotice; // shown once, after the terminal is restored
     private int width, height;
     private RgbColor pageFg, pageBg;
     private size_t lastThemeIdx = size_t.max;
@@ -163,6 +171,85 @@ struct WorkspaceTui
             startPreview: true, doc.twoslash, doc.lang);
         tree.reveal(path);
         treeFocused = false;
+        startLive(path, doc.twoslash.code.length != 0);
+    }
+
+    // ── Live D types ────────────────────────────────────────────────────────
+
+    /// Starts the oracle for a freshly opened `.d` document (`PRJ12`: on open,
+    /// off the render path). A document that already carries a payload — a
+    /// `*.twoslash.json` target — needs none.
+    package void startLive(string path, bool alreadyHasPayload) @system
+    {
+        import std.algorithm.searching : endsWith;
+
+        stopLive();
+        if (!liveTypes || alreadyHasPayload || !path.endsWith(".d"))
+            return;
+        string reason;
+        // The child's stderr goes to /dev/null: the analyzer's warnings and
+        // dub's own chatter would otherwise land on the alt screen.
+        live = LiveTypesSession.start(path, reason, silenceChildStderr: true);
+        if (live is null && !liveNotice.length)
+            liveNotice = reason;
+    }
+
+    /// ditto
+    package void stopLive() @system
+    {
+        if (live is null)
+            return;
+        live.shutdown();
+        live = null;
+    }
+
+    /// The loop ticks on a deadline (rather than blocking on input) exactly
+    /// while this holds.
+    package bool liveActive() const @safe pure nothrow @nogc
+        => live !is null;
+
+    /// One tick of the oracle: attach the payload when it lands, write
+    /// answered tips into their nodes, and resolve the open popup's node.
+    /// Non-blocking — nothing here waits on the analysis. Returns `true` when
+    /// the frame changed, so an idle tick costs a `poll` and a `read`, not a
+    /// repaint (the wire stays silent between keystrokes, as it always was).
+    package bool pollLive() @system
+    {
+        if (live is null)
+            return false;
+        bool changed;
+        live.poll();
+        if (live.payloadReady)
+        {
+            viewer.attachTwoslash(live.takePayload());
+            changed = true;
+        }
+        foreach (a; live.takeAnswers())
+            changed |= applyTip(viewer.twoslashPayload, a);
+
+        // The popup the user opened is the request: `p`-cycling or clicking a
+        // lazy span asks for that node once (the session dedupes).
+        const sel = viewer.selectedHoverNode;
+        if (sel >= 0 && !viewer.twoslashPayload.nodes[cast(size_t) sel].text.length)
+            live.requestTip(cast(size_t) sel);
+
+        if (live.failed)
+        {
+            if (!liveNotice.length)
+                liveNotice = live.reason;
+            stopLive();
+        }
+        return changed;
+    }
+
+    /// The one-line live-types notice (no binary, or a child that died), taken
+    /// once — the caller prints it after the terminal is restored, never into
+    /// the alt screen (`PRJ15`).
+    package string takeLiveNotice() @safe pure nothrow @nogc
+    {
+        const n = liveNotice;
+        liveNotice = null;
+        return n;
     }
 
     // The tree's visible files in row order — the [ / ] navigation space.
@@ -398,10 +485,12 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     const(string)[] names, immutable(Theme)[] themes, size_t themeIdx,
     LabelSet labels, TsConfigCache* cache,
     string[] includeGlobs = null, string[] excludeGlobs = null,
-    int treeWidth = 32, int tabWidth = 4, bool listWhitespace = false) @system
+    int treeWidth = 32, int tabWidth = 4, bool listWhitespace = false,
+    bool liveTypes = true) @system
 {
     WorkspaceTui w;
     w.loadDoc = loadDoc;
+    w.liveTypes = liveTypes;
     w.split = SplitState(treeWidth < 12 ? 12 : treeWidth);
     w.viewer.tabWidth = tabWidth < 1 ? 1 : tabWidth;
     w.viewer.listWhitespace = listWhitespace;
@@ -437,62 +526,99 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             initial.lang);
         if (target.length)
             w.tree.reveal(target);
+        if (target.length)
+            w.startLive(target, initial.twoslash.code.length != 0);
     }
     else if (!isDir && target.length)
         w.openDoc(target);
 
-    // Any-event tracking (1003): bare pointer motion reports too, so the
-    // divider can show a hover resize cursor.
-    auto term = Terminal.open(TerminalOptions(motion: true));
-    if (!term.active)
-        return 1;
-    scope (exit) term.close();
-
-    auto events = PosixEvents.start();
-
-    Grid g;
-    for (;;)
+    // The terminal session is a block of its own: the live-types notice must
+    // reach a restored screen, never the alt screen (`PRJ15`).
     {
-        const sz = term.size();
-        if (sz.width != w.width || sz.height != w.height)
-            w.arrange(sz.width, sz.height);
+        // Any-event tracking (1003): bare pointer motion reports too, so the
+        // divider can show a hover resize cursor.
+        auto term = Terminal.open(TerminalOptions(motion: true));
+        if (!term.active)
+            return 1;
+        scope (exit) term.close();
+        scope (exit) w.stopLive();
 
-        g.resize(sz.width, sz.height);
-        w.paint(g);
-        term.draw(g);
+        auto events = PosixEvents.start();
 
-        const clip = w.viewer.takeClipboard();
-        if (clip.length)
-            term.writeRaw(clip); // OSC 52 clipboard write (out of band)
-        const shape = w.takeCursorShape();
-        if (shape.length)
-            term.writeRaw(shape); // OSC 22 pointer shape (out of band)
-
-        // While a git-status refresh is in flight, wait in short slices so
-        // the finished snapshot paints without requiring a keypress; with
-        // none in flight this is the plain blocking read.
-        bool gitApplied;
-        while (w.tree.git.refreshing && !events.ready(150.msecs))
-            if (w.tree.git.poll())
-            {
-                gitApplied = true;
-                break;
-            }
-        if (gitApplied)
+        Grid g;
+        // Every event repaints; a live tick only does when it changed the
+        // document, so an idle session emits nothing to the terminal.
+        bool dirty = true;
+        for (;;)
         {
-            w.tree.rebuild();
-            continue; // repaint with the badges, then wait again
+            // Live types tick before the frame, so an arriving payload or tip
+            // paints in the same pass.
+            dirty |= w.pollLive();
+
+            if (dirty)
+            {
+                const sz = term.size();
+                if (sz.width != w.width || sz.height != w.height)
+                    w.arrange(sz.width, sz.height);
+
+                g.resize(sz.width, sz.height);
+                w.paint(g);
+                term.draw(g);
+                dirty = false;
+            }
+
+            const clip = w.viewer.takeClipboard();
+            if (clip.length)
+                term.writeRaw(clip); // OSC 52 clipboard write (out of band)
+            const shape = w.takeCursorShape();
+            if (shape.length)
+                term.writeRaw(shape); // OSC 22 pointer shape (out of band)
+
+            // While a git-status refresh is in flight, wait in short slices so
+            // the finished snapshot paints without requiring a keypress.
+            bool gitApplied;
+            while (w.tree.git.refreshing && !events.ready(150.msecs))
+                if (w.tree.git.poll())
+                {
+                    gitApplied = true;
+                    break;
+                }
+            if (gitApplied)
+            {
+                w.tree.rebuild();
+                dirty = true;
+                continue; // repaint with the badges, then wait again
+            }
+
+            // With an oracle running the loop wakes on a deadline as well as
+            // on input, so the analysis lands without a keystroke; with none it
+            // blocks exactly as it always has (no idle wakeups).
+            const ev = w.liveActive ? events.next(liveTick) : events.next();
+            if (ev.isEndOfInput)
+                break;
+            if (ev == Event.init)
+                continue; // the live tick expired (or an unrecognized sequence)
+            dirty = true;
+            if (ev.match!((in ResizeEvent _) => true, _ => false))
+                continue; // next iteration re-measures + re-arranges
+            if (!w.handle(ev))
+                break;
         }
-        const ev = events.next();
-        if (ev.isEndOfInput)
-            break;
-        if (ev.match!((in ResizeEvent _) => true, _ => false))
-            continue; // next iteration re-measures + re-arranges
-        if (!w.handle(ev))
-            break;
+    }
+
+    const notice = w.takeLiveNotice();
+    if (notice.length)
+    {
+        import std.stdio : stderr;
+
+        stderr.writeln("hue: live D types unavailable: ", notice);
     }
     return 0;
 }
+
+/// How long the loop waits for input before ticking the live oracle again
+/// (~30 Hz — imperceptible for a ~0.6 ms tip answer, idle when no session).
+private enum liveTick = 33.msecs;
 
 @("workspace.splitPane.composeToggleAndSync")
 @system
@@ -877,4 +1003,135 @@ unittest
     assert(w.handle(Event(WheelEvent(dy: -linesPerNotch, pos: Point(60, 5)))));
     w.paint(g);
     assert(row(1)[w.viewer.originX .. $].canFind("int line00;"), row(1));
+}
+
+@("workspace.liveTypes.payloadAttachesAndTipResolves")
+@system
+unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.algorithm.searching : canFind;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+
+    import sparkles.core_cli.process_utils : isInPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.test_runner.skip : skipTest;
+    import live_types : LiveTypesSession;
+
+    if (!isInPath("sh"))
+        skipTest("no `sh` for the scripted oracle");
+
+    // The TUI half of `PRJ12`-`PRJ14`, end to end without a terminal: a
+    // scripted oracle stands in for `twoslash-extract --serve` (same wire
+    // contract), so this exercises the loop's tick — payload attaches, the
+    // opened popup requests its node, the answer paints — with no DMD, no
+    // pty, and no timing on a real analysis.
+    const root = buildPath(tempDir(), "hue-live-types-test");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    const src = "int alpha;\n";
+    const path = buildPath(root, "alpha.d");
+    write(path, src);
+
+    enum payload = `{"code":"int alpha;\n","offsetEncoding":"utf-8",` ~
+        `"language":"d","nodes":[{"type":"hover","start":4,"length":5,` ~
+        `"line":0,"character":4}]}`;
+    enum script = `printf '%s\n' '` ~ payload ~ `'; ` ~
+        `while IFS= read -r line; do ` ~
+        `printf '%s\n' '{"node":0,"text":"(variable) int alpha",` ~
+        `"docs":"","tags":[]}'; done`;
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    const labels = LabelSet.standard();
+
+    WorkspaceTui w;
+    w.loadDoc = delegate WorkspaceDoc(string p) @system {
+        import std.file : readText;
+        import std.path : baseName;
+
+        const s = readText(p);
+        return WorkspaceDoc(baseName(p), s,
+            [HighlightEvent.sourceSpan(0, s.length)], PreviewModel.init);
+    };
+    w.tree.root = root;
+    w.tree.themeValue = &themes[0];
+    w.tree.theme = resolveTheme(themes[0], labels);
+    w.pageFg = w.tree.pageFg = toRgb(w.tree.theme.defaults.fg,
+        RgbColor(0xcc, 0xcc, 0xcc));
+    w.pageBg = w.tree.pageBg = toRgb(w.tree.theme.defaults.bg,
+        RgbColor(0x1e, 0x1e, 0x1e));
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = labels;
+    w.tree.rebuild();
+    w.arrange(60, 14);
+    w.openDoc(path);
+
+    // The session the loop would have started (`startLive` spawns the real
+    // binary; the test injects the scripted stand-in instead).
+    string reason;
+    w.live = LiveTypesSession.startWith(["sh", "-c", script], reason);
+    assert(w.live !is null, reason);
+    scope (exit) w.stopLive();
+    assert(w.liveActive, "the loop ticks while a session is alive");
+
+    bool tick(scope bool delegate() @system done)
+    {
+        foreach (_; 0 .. 400)
+        {
+            w.pollLive();
+            if (done())
+                return true;
+            Thread.sleep(5.msecs);
+        }
+        return false;
+    }
+
+    // The payload attaches to the document already on screen: same source,
+    // now with the hover span the underline decoration rides on.
+    assert(tick(() => w.viewer.twoslashPayload.nodes.length != 0),
+        "no payload attached");
+    assert(w.viewer.twoslashPayload.code == src);
+    assert(!w.viewer.twoslashPayload.nodes[0].text.length, "the span is lazy");
+
+    Grid g;
+    g.resize(60, 14);
+    w.paint(g);
+    string row(ushort y)
+    {
+        string s;
+        foreach (x; 0 .. g.cols)
+            s ~= g[cast(ushort) x, y].grapheme;
+        return s;
+    }
+    assert(row(1).canFind("int alpha;"), row(1));
+
+    // How many rows show the type text — the code line itself, plus the popup
+    // once it has content. A lazy span must add none.
+    int rowsWith(string needle)
+    {
+        int n;
+        foreach (y; 0 .. g.rows)
+            if (row(cast(ushort) y).canFind(needle))
+                ++n;
+        return n;
+    }
+
+    // Opening the popup ('p') is the request; until the answer lands the popup
+    // has nothing to show (the underline is the only affordance).
+    assert(w.handle(Event(KeyEvent(key: Key.char_, ch: 'p'))));
+    assert(w.viewer.selectedHoverNode == 0);
+    w.paint(g);
+    assert(rowsWith("int alpha") == 1, "a lazy popup paints nothing");
+
+    // The tick sends the request and writes the answer into the node in
+    // place; the popup then paints the resolved type.
+    assert(tick(() => w.viewer.twoslashPayload.nodes[0].text.length != 0),
+        "no tip answer");
+    w.paint(g);
+    assert(rowsWith("int alpha") == 2,
+        "the resolved type composites over the pane");
 }

@@ -72,16 +72,32 @@ knows.
 The consumer this milestone exists for: opening a `.d` file in `apps/hue` and
 seeing real types and real doc comments.
 
-| ID    | Requirement                                                                                                                                                                                                                                                                                     | Status      | Traces to                            |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------ |
-| PRJ12 | Opening a `.d` file **triggers discovery once**, on first open, keyed by project root and off the render path (`PRJ9`); every later file in the same project reuses it.                                                                                                                         | not started | `PRJ8`; hue's document-open path     |
-| PRJ13 | hue must **not link `sparkles:dmd-lsp`**. DMD-as-a-library is one analysis per process (`COR2`/`EXT2`) and a viewer is long-lived, so live analysis is a `twoslash-extract` **subprocess** per file whose payload feeds the existing twoslash overlay. This is a constraint, not a convenience. | not started | `COR2`, `EXT2`; `--overlay twoslash` |
-| PRJ14 | The resulting overlay attaches to the open document — hover types plus the ddoc body and tag chips — and re-extracts when the file changes on disk.                                                                                                                                             | not started | hue `TWH*`; `DOC2`                   |
-| PRJ15 | Degradation is visible but never fatal: a file outside any project still analyzes with the environment defaults, and a describe failure is a dismissible notice, never a modal error and never a blank view.                                                                                    | not started | `PRJ7`; hue notifier spec            |
-| PRJ16 | Per-file payloads are cached alongside the project context, so navigating back to a file is instant.                                                                                                                                                                                            | not started | `PRJ8`                               |
+Shipped shape (P5): `apps/hue/src/live_types.d` owns one
+`twoslash-extract --dub --serve --quiet` child per open document
+(`LiveTypesSession` over `sparkles.core_cli.process_utils.ResidentProcess`).
+Its first stdout line is the lazy payload — attached to the document, so every
+hover span underlines immediately — and pointing at (GUI) or opening the popup
+of (TUI) a lazy span sends `{"tip": <node>}` for that node alone. hue's own
+requirements are `LIV1`-`LIV5` in
+[`docs/specs/hue/twoslash.md`](../hue/twoslash.md).
+
+| ID    | Requirement                                                                                                                                                                                                                                                                                     | Status       | Traces to                                                                                                                                                       |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PRJ12 | Opening a `.d` file **triggers discovery once**, on first open, keyed by project root and off the render path (`PRJ9`); every later file in the same project reuses it.                                                                                                                         | full (P5)    | `apps/hue/src/live_types.d`; `gui.startLive` / `workspace.startLive`; hue `LIV1`                                                                                |
+| PRJ13 | hue must **not link `sparkles:dmd-lsp`**. DMD-as-a-library is one analysis per process (`COR2`/`EXT2`) and a viewer is long-lived, so live analysis is a `twoslash-extract` **subprocess** per file whose payload feeds the existing twoslash overlay. This is a constraint, not a convenience. | full (P5)    | `LiveTypesSession` over `ResidentProcess`; `apps/hue/dub.json` has no analyzer dependency; hue `LIV5`                                                           |
+| PRJ14 | The resulting overlay attaches to the open document — hover types plus the ddoc body and tag chips — and re-extracts when the file changes on disk.                                                                                                                                             | partial (P5) | attach + on-demand tips ship (hue `LIV1`/`LIV2`); re-opening the file re-extracts, but nothing **watches** it yet                                               |
+| PRJ15 | Degradation is visible but never fatal: a file outside any project still analyzes with the environment defaults, and a describe failure is a dismissible notice, never a modal error and never a blank view.                                                                                    | full (P5)    | one-line notice (`takeLiveNotice`, printed after the alt screen is restored); a lazy popup renders empty, never blank-screens; hue `LIV4`                       |
+| PRJ16 | Per-file payloads are cached alongside the project context, so navigating back to a file is instant.                                                                                                                                                                                            | partial (P5) | in-memory per session: the payload lives with the open document and each node's tip is fetched at most once; navigating away drops it (no cross-document cache) |
 
 ## Known limitations
 
+- **Discovery is memoized per child, not per project.** `PRJ8`'s cache lives in
+  the analyzing process, and the viewer starts one process per open document
+  (`PRJ13` leaves it no choice), so opening a second file in the same project
+  re-runs `dub describe` in the new child rather than reusing the first one's
+  result. It costs the `PRJ9` figures (0.04 s–0.5 s) per open, off the render
+  path. A shared context — a describe cache the viewer passes down, or one
+  resident oracle per project — is the follow-up.
 - **Sub-packages declared inline.** A file under a directory whose package is
   declared as a `subPackage` block in the parent recipe (rather than by its own
   `dub.sdl`) resolves to the parent, so the described settings are the parent's.
