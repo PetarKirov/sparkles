@@ -619,6 +619,25 @@ struct PreviewTui
         clampTop();
     }
 
+    // `z1`–`z9`: fold to nesting level (vim's foldlevel) — regions nested
+    // `level` deep or deeper fold, shallower ones open. Depth via an
+    // enclosing-ends stack over the source-ordered, properly nested regions.
+    private void foldToLevel(int level) @system
+    {
+        folds = DisclosureState!size_t(true);
+        size_t[] ends;
+        foreach (sp; foldable)
+        {
+            while (ends.length && ends[$ - 1] <= sp.start)
+                ends = ends[0 .. $ - 1];
+            if (cast(int) ends.length >= level)
+                folds = folds.closed(sp.start);
+            ends ~= sp.end;
+        }
+        rebuildMd();
+        clampTop();
+    }
+
     /// Apply an event; returns false to quit.
     bool handle(in Event e) @system
     {
@@ -717,6 +736,10 @@ struct PreviewTui
                     case 'M':
                         if (pk == 'z')
                             setAllFolds(true);
+                        break;
+                    case '1': .. case '9':
+                        if (pk == 'z')
+                            foldToLevel(cast(int)(e.ch - '0'));
                         break;
                     default: break;
                 }
