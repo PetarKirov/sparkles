@@ -38,6 +38,15 @@ struct QueryMarker
     size_t offset;
 }
 
+/// A `^^^` highlight: a caret-run span on the previous kept line, with an
+/// optional trailing annotation.
+struct HighlightMarker
+{
+    size_t offset; /// span start in `fullSource` bytes
+    size_t length; /// caret-run length
+    string text;   /// annotation after the run ("" when bare)
+}
+
 /// A custom tag line (`// @log: hello`), anchored to the start of the next
 /// kept line in `fullSource` bytes.
 struct TagDirective
@@ -68,6 +77,7 @@ struct ParsedNotation
     Removal[] removals;
 
     QueryMarker[] queries;
+    HighlightMarker[] highlights;
     TagDirective[] tags;
 
     /// `@errors:` patterns (whitespace-split), in declaration order.
@@ -151,20 +161,34 @@ ParsedNotation parseNotation(string source) @safe pure
             continue;
         }
 
-        // --- `^?` query markers: `//` + spaces + `^?` and nothing else.
+        // --- caret markers: `//` + spaces + `^?` (query) or `^^^…` run
+        // (highlight, optional trailing annotation). Both point at the
+        // previous kept line, caret-column aligned.
         {
             const commentAt = rawLine.indexOf("//");
             if (commentAt >= 0)
             {
                 const afterSlashes = rawLine[commentAt + 2 .. $];
                 const body = afterSlashes.stripLeft;
-                if (body == "^?" || body == "^?." )
+                const caretCol = commentAt + 2
+                    + (afterSlashes.length - body.length);
+                if (body == "^?" || body == "^?.")
                 {
-                    const caretCol = commentAt + 2
-                        + (afterSlashes.length - body.length);
                     if (kept.length)
                         result.queries ~= QueryMarker(
                             kept[$ - 1].fullStart + caretCol);
+                    continue;
+                }
+                if (body.length >= 2 && body[0] == '^' && body[1] == '^')
+                {
+                    size_t run = 0;
+                    while (run < body.length && body[run] == '^')
+                        run++;
+                    if (kept.length)
+                        result.highlights ~= HighlightMarker(
+                            offset: kept[$ - 1].fullStart + caretCol,
+                            length: run,
+                            text: body[run .. $].strip.idup);
                     continue;
                 }
             }
@@ -457,4 +481,23 @@ private void normalizeRemovals(ref Removal[] removals) @safe pure nothrow
         "// ---cut-start---\nint h1;\n// ---cut-end---\n// ---cut-start---\nint h2;\n// ---cut-end---\nint v;\n");
     assert(n.displayCode == "int v;\n");
     assert(n.removals.length == 1); // adjacent regions merged
+}
+
+@("notation.parseNotation.highlights")
+@safe pure unittest
+{
+    // A caret run marks the aligned span above; trailing text annotates.
+    const n = parseNotation(
+        "auto value = compute();\n" ~
+        "//   ^^^^^ the interesting part\n" ~
+        "int plain;\n" ~
+        "//  ^^\n");
+    assert(n.fullSource == "auto value = compute();\nint plain;\n");
+    assert(n.highlights.length == 2);
+    assert(n.highlights[0].offset == 5 && n.highlights[0].length == 5);
+    assert(n.fullSource[n.highlights[0].offset .. n.highlights[0].offset + 5]
+        == "value");
+    assert(n.highlights[0].text == "the interesting part");
+    assert(n.highlights[1].offset == 24 + 4 && n.highlights[1].length == 2);
+    assert(n.highlights[1].text == "");
 }
