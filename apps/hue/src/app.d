@@ -193,7 +193,7 @@ private int runDirectoryTarget(in CliParams cli, string dir, bool twoslash,
             return builtinDark;
         }()), labels);
 
-    auto registry = GrammarRegistry.fromEnvironment();
+    auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
 
     // One entry → its content fragment. Throwing here is how `writeGallery` learns
@@ -262,6 +262,12 @@ enum defaultGuiFont =
     "CaskaydiaCove Nerd Font Mono,Cascadia Code,Hack Nerd Font Mono,Hack," ~
     "Iosevka Term,Iosevka,Source Code Pro,DejaVu Sans Mono,monospace";
 
+/// The grammar registry every sink resolves through. Desktop: the nix grammar
+/// bundle via `$SPARKLES_TS_GRAMMAR_PATH`. Android will switch this to the
+/// soname layout (APK-bundled parser libraries + queries extracted from
+/// assets) once the bootstrap lands — this seam is where that decision lives.
+private GrammarRegistry defaultRegistry() @safe => GrammarRegistry.fromEnvironment();
+
 /// Heuristic for whether a graphical display is available, used to pick the GUI
 /// vs the terminal by default (no `--gui`/`--no-gui`). On Linux/BSD a display is
 /// present when `$DISPLAY` (X11) or `$WAYLAND_DISPLAY` is set; on macOS/Windows a
@@ -298,6 +304,11 @@ enum Backend : ubyte
 /// streams ANSI.
 private Backend pickBackend(in CliParams cli)
 {
+    // Android: the library runs inside a NativeActivity — no tty, no argv, no
+    // $DISPLAY. The window *is* the app; every other sink is meaningless.
+    version (Android)
+        return Backend.gui;
+
     bool guiCompiledIn = false;
     version (HueGui) guiCompiledIn = true;
 
@@ -365,7 +376,7 @@ int main(string[] args)
             return builtinDark;
         }()), labels);
 
-    auto registry = GrammarRegistry.fromEnvironment();
+    auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
     auto pipeline = DocumentPipeline(&registry, &cache, cli.markdown, cli.raw);
 
@@ -383,8 +394,11 @@ int main(string[] args)
     {
         // The interactive terminal opens the split-pane workspace (`XPL2`)
         // with the explorer focused: picking a file fills the viewer pane
-        // beside it — one loop, no full-screen transitions.
-        version (Posix)
+        // beside it — one loop, no full-screen transitions. Android is Posix
+        // but has no terminal: never import the raw-termios workspace there
+        // (the gate also keeps workspace.d out of the Android module graph).
+        version (Android) {}
+        else version (Posix)
             if (backend == Backend.tui)
             {
                 import workspace : runWorkspace, WorkspaceDoc;
@@ -544,7 +558,13 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
 
     auto themeSet = sortedThemes(cli.theme);
 
-    version (Posix)
+    version (Android)
+    {
+        // Unreachable (pickBackend always answers gui on Android), but the
+        // gate keeps the raw-termios workspace out of the module graph.
+        return runAnsiSink(cli, doc, theme, cache);
+    }
+    else version (Posix)
     {
         // The split-pane workspace (XPL2): the viewer pane on the document,
         // the explorer pane hidden until `e` (revealed at this file). One
@@ -657,7 +677,11 @@ well as a tty. See apps/hue/tools. Returns `true` when it emitted.
 private bool tryTwoslashCapture(ref Document doc, in ResolvedTheme theme,
     ref TsConfigCache cache) @system
 {
-    version (Posix)
+    // Android: no terminal to capture for — and the gate keeps twoslash_tui.d
+    // (raw-termios TUI) out of the Android module graph.
+    version (Android)
+        return false;
+    else version (Posix)
     {
         import std.process : environment;
 
