@@ -76,6 +76,32 @@ WidgetTree viewCodeDocument(const(char)[] source,
             ? [TextSpan(" ", Slot.code,
                 srcStart: starts[li], srcEnd: starts[li])]
             : byLine[li];
+        // Indentation survives wrapping as a `noBreak` prefix span: the
+        // breaker treats leading spaces as droppable glue (prose semantics),
+        // but a noBreak span is a token that the first word joins — so the
+        // line keeps its leading whitespace, identity intact.
+        if (!blank)
+        {
+            const t = spans[0].text;
+            size_t ws;
+            while (ws < t.length && (t[ws] == ' ' || t[ws] == '\t'))
+                ++ws;
+            if (ws == t.length)
+                spans[0].noBreak = true; // an all-whitespace lead span
+            else if (ws)
+            {
+                auto head = spans[0], rest = spans[0];
+                head.text = t[0 .. ws];
+                head.noBreak = true;
+                rest.text = t[ws .. $];
+                if (head.srcStart != size_t.max)
+                {
+                    head.srcEnd = head.srcStart + ws;
+                    rest.srcStart += ws;
+                }
+                spans = [head, rest] ~ spans[1 .. $];
+            }
+        }
         // A blank row never wraps: the greedy breaker consumes a lone space
         // (a break eats its space), which would drop the row's identity.
         rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,

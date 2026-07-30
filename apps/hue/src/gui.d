@@ -29,9 +29,8 @@ import sparkles.raylib_text : TextStyle, FontSet, drawText;
 // hue-specific viewport/search layout (raylib-free, so it stays testable).
 import gui_text : columnWidth, lineCount, Match, buildLineStarts, findMatches;
 
-// Markdown-preview model + layout (raylib-free) and the ANSI attribute bits.
-import gui_preview : PreviewModel, PreviewLine, BandKind,
-    buildRawPlines, quoteBarColors, quoteBarCycle, stripSgr;
+// Markdown-preview model (raylib-free) and the ANSI attribute bits.
+import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle, stripSgr;
 import gui_ansi : Attr, decodeAnsi;
 
 // The composable markdown view (M10): the preview is one widget tree; the
@@ -39,6 +38,8 @@ import gui_ansi : Attr, decodeAnsi;
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 import sparkles.syntax.md.render_widgets : foldableSpans,
     highlightedFenceRenderer, MdViewOptions, MdViewTheme, viewMarkdown;
+// The raw view is the same pipeline: the highlighted source as one tree.
+import sparkles.syntax.render.widgets : viewCodeDocument;
 
 // The explorer pane (XPL2): the same tree model the TUI workspace uses.
 import explorer : ExplorerTui, explorerGlyphs;
@@ -280,11 +281,11 @@ int runGui(
         showPreview = false;
     else if (environment.get("HUE_GUI_PREVIEW", "") == "1")
         showPreview = curPreview.present || curTw.code.length != 0;
-    PreviewLine[] plines; // the raw (highlighted-source) view's wrapped lines
-
-    // The markdown widget pipeline (M10): the preview is one laid-out tree.
-    // `mdRows` (per-visual-row text + source range) and the keyed cell rects
-    // are the identity channel the interactions run on.
+    // The document widget pipeline (M10): every view — the markdown preview,
+    // the twoslash overlay, and the raw highlighted source — is one laid-out
+    // tree; there is no second painter. `mdRows` (per-visual-row text + source
+    // range) and the keyed cell rects are the identity channel the
+    // interactions run on.
     WidgetTree mdTree;
     Frame[] mdFrames;
     DrawOp[] mdOps;
@@ -387,7 +388,7 @@ int runGui(
     // and keyed cell rects, and the document's fence/cell structure.
     void rebuildMd()
     {
-        if (curTw.code.length)
+        if (showPreview && curTw.code.length)
         {
             // A twoslash document: the whole-document widget view (code lines
             // as resolved spans + fused decorations + interleaved blocks).
@@ -404,6 +405,23 @@ int runGui(
             mdCells = null;
             mdFences.length = 0;
             mdCellList.length = 0;
+            mdFoldable = null;
+            return;
+        }
+        if (!showPreview || !curPreview.present)
+        {
+            // The raw view: the highlighted source as the same widget
+            // pipeline (one painter for every view kind).
+            mdTree = viewCodeDocument(curSource, curEvents, &current, pageFg);
+            mdFrames = layout(mdTree, Constraints(maxW: lastWidthCols));
+            mdOps = buildDisplayList(mdTree, mdFrames,
+                themes[themeIdx].effectivePalette, pageFg, pageBg);
+            mdRows = documentRows(mdTree, mdFrames);
+            mdTargets = null;
+            mdCells = null;
+            mdFences.length = 0;
+            mdCellList.length = 0;
+            mdFoldable = null;
             return;
         }
         MdViewOptions opt = {
@@ -460,16 +478,29 @@ int runGui(
         return d;
     }
 
-    // Both views reflow on resize. The markdown preview lays its widget tree
-    // out to the new width; the raw view wraps the highlighted source into
-    // visual lines (`PreviewLine[]`) so line numbers track the source line.
+    // Search / goto state (M4). Declared before `relayout` so the cached
+    // match rects re-derive whenever the layout they anchor to changes.
+    Mode mode = Mode.normal;
+    SmallBuffer!(char, 256) query;
+    Match[] matches;
+    size_t curMatch;
+    Rect[][] matchRects; // per-match on-screen rects via the identity channel
+
+    void rebuildMatchRects()
+    {
+        matchRects.length = matches.length;
+        foreach (i, ref const m; matches)
+            matchRects[i] = selectionRects(mdTree, mdFrames, m.start, m.end);
+    }
+
+    // Every view reflows on resize: the active widget tree lays out to the
+    // new width (raw source rows wrap greedily; line numbers derive from each
+    // row's source range).
     void relayout()
     {
         lastWidthCols = widthCols();
-        if (showPreview && (curPreview.present || curTw.code.length))
-            rebuildMd();
-        else
-            plines = buildRawPlines(curSource, curEvents, current, pageFg, pageBg, lastWidthCols);
+        rebuildMd();
+        rebuildMatchRects();
     }
 
     void applyTheme(size_t i)
@@ -509,13 +540,6 @@ int runGui(
 
     SmallBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
     long top = initialTop; // index of the first visible line
-
-    // Search / goto state (M4).
-    Mode mode = Mode.normal;
-    SmallBuffer!(char, 256) query;
-    Match[] matches;
-    size_t curMatch;
-
 
     /// Loads the set's currently-selected document in place (`GNV1`): re-read,
     /// re-highlight, rebuild the preview model, relayout. Scroll and search reset;
@@ -582,30 +606,36 @@ int runGui(
     }
 
     // Recompute all match ranges for the current query — an extra decoration
-    // layer over the styled spans (the pure mapping lives in gui_text).
+    // layer over the styled spans (the pure mapping lives in gui_text). Each
+    // match's on-screen rects come from the identity channel, cached here (and
+    // re-derived on relayout) so the per-frame overlay is a rect walk.
     void recompute()
     {
         matches = findMatches(curSource, query[], lineStarts);
         curMatch = 0;
+        rebuildMatchRects();
     }
 
-    // Lines wrap, so source coordinates must be mapped to visual (`plines`) rows.
-    // The first visual row at/after source line `srcLine`.
+    // Lines wrap, so source coordinates map to visual rows through each row's
+    // source range. The first visual row at/after source line `srcLine`.
     long visualOfSrc(size_t srcLine)
     {
-        foreach (idx, ref pl; plines)
-            if (pl.showNumber && pl.srcLine >= srcLine)
+        const target = srcLine < lineStarts.length
+            ? lineStarts[srcLine] : curSource.length;
+        foreach (idx, ref const r; mdRows)
+            if (r.srcStart != size_t.max
+                && (r.srcStart >= target || r.srcEnd > target))
                 return cast(long) idx;
-        return plines.length ? cast(long) plines.length - 1 : 0;
+        return mdRows.length ? cast(long) mdRows.length - 1 : 0;
     }
 
-    // The visual row a match falls on (its source line's wrapped row covering the
-    // match column), else that source line's first row.
+    // The visual row a match falls on (the row whose source range covers its
+    // byte offset), else its source line's first row.
     long visualOfMatch(in Match m)
     {
-        foreach (idx, ref pl; plines)
-            if (pl.srcLine == m.line && pl.wrapColOffset <= cast(long) m.col
-                && cast(long) m.col < pl.wrapColOffset + lineCols(pl))
+        foreach (idx, ref const r; mdRows)
+            if (r.srcStart != size_t.max && r.srcStart <= m.start
+                && m.start < r.srcEnd)
                 return cast(long) idx;
         return visualOfSrc(m.line);
     }
@@ -785,9 +815,9 @@ int runGui(
                 relayout();
         }
         prevWidthCols = wc;
-        // The active view's visual-line space (scroll/selection/search).
-        const mdActive = showPreview && (curPreview.present || curTw.code.length);
-        const total = mdActive ? mdRows.length : plines.length;
+        // The one visual-line space (scroll/selection/search): the active
+        // widget tree's rows, whichever view kind built it.
+        const total = mdRows.length;
         const maxTop = total > docRows ? cast(long)(total - docRows) : 0;
 
         // F11 toggles borderless fullscreen on the window's current monitor;
@@ -1055,8 +1085,9 @@ int runGui(
                 toast = Timeline.triggered(toastCfg);
             }
             // 'z' toggles the innermost fold at the selection (else the top
-            // row) — the FLD5 keyboard entry, over the row's source identity.
-            if (mdActive && !treeFocused && pressed(KeyboardKey.KEY_Z))
+            // row) — the FLD5 keyboard entry, over the row's source identity
+            // (a no-op in views without foldable spans).
+            if (!treeFocused && pressed(KeyboardKey.KEY_Z))
                 toggleFold();
             if (pressed(KeyboardKey.KEY_T))
             {
@@ -1221,11 +1252,10 @@ int runGui(
         // padding, and the line-number gutter.
         const gutterPx = treePx() + padX + gcols * cellW;
 
-        if (mdActive)
+        // The one painter: the active tree's precomputed ops through the
+        // raylib canvas, offset by the scroll position and culled to the
+        // viewport rows (raylib clips px; the cull skips dead draw calls).
         {
-            // The widget path: paint the tree's precomputed ops through the
-            // raylib canvas, offset by the scroll position and culled to the
-            // viewport rows (raylib clips px; the cull skips dead draw calls).
             auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
                 gutterPx, cast(float)(docY0 - top * cellH));
             // The pane's base clip: content (an unwrappable code line inside
@@ -1266,16 +1296,6 @@ int runGui(
                 }
             }
         }
-        else
-        {
-            // The raw view under the same pane clip (long lines don't wrap).
-            BeginScissorMode(treePx(), docY0,
-                screenW - rightPad - treePx(), screenH - docY0);
-            drawPreview(fonts, plines, topLine, docRows, cellW, cellH,
-                pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf,
-                treePx(), docY0);
-            EndScissorMode();
-        }
 
         copiedFlash = copiedFlash.stepped(frameMs(), copiedCfg);
         // The ✔ glyph lives in the widget tree: rebuild when the flash ends so
@@ -1284,8 +1304,7 @@ int runGui(
         {
             copiedShown = false;
             copiedFenceSrc = size_t.max;
-            if (mdActive)
-                rebuildMd();
+            rebuildMd();
         }
 
         bool copyClicked; // a click landing on a copy button is not a selection
@@ -1293,7 +1312,7 @@ int runGui(
         // The fence copy affordance: the header band is the hit target (its
         // source-anchored id resolves the fence body); a click copies and the
         // ✔ glyph — part of the widget tree — holds for the flash duration.
-        if (mdActive)
+        // (Views without hit targets — raw, twoslash — have an empty list.)
         {
             const mp = GetMousePosition();
             const dp = Point(cast(int)((mp.x - gutterPx) / cellW),
@@ -1342,62 +1361,45 @@ int runGui(
             Hit h;
             if (my < 0)
                 return h;
-            if (mdActive)
-            {
-                const cx = cast(int)((mx - gutterPx) / cellW);
-                const cy = top + cast(long)((my - docY0) / cellH);
-                if (mx < gutterPx || cy < 0 || cy >= cast(long) mdRows.length)
-                    return h;
-                const p = Point(cx, cast(int) cy);
-                const off = sourceOffsetAt(mdTree, mdFrames, p);
-                // Inside a keyed table cell: a grid hit (2-D regime anchor),
-                // with the char offset relative to the cell's source span.
-                foreach (ref const kr; mdCells)
-                    if (kr.rect.contains(p))
-                    {
-                        const cellStart = kr.key - tableKeyBase;
-                        foreach (mi, ref const mc; mdCellList)
-                            if (mc.span.start == cellStart)
-                            {
-                                h.table = true;
-                                h.tableIdx = mc.table;
-                                h.cell = GridHit(mc.row, mc.col,
-                                    off >= cast(long) cellStart
-                                        ? cast(size_t)(off - cellStart) : 0);
-                                h.lo = h.hi = off >= 0 ? off : cast(long) cellStart;
-                                h.ok = true;
-                                return h;
-                            }
-                        break;
-                    }
-                if (off >= 0) // char-precise content
+            const cx = cast(int)((mx - gutterPx) / cellW);
+            const cy = top + cast(long)((my - docY0) / cellH);
+            if (mx < gutterPx || cy < 0 || cy >= cast(long) mdRows.length)
+                return h; // left of the content (tree/gutter) hits nothing
+            const p = Point(cx, cast(int) cy);
+            const off = sourceOffsetAt(mdTree, mdFrames, p);
+            // Inside a keyed table cell: a grid hit (2-D regime anchor),
+            // with the char offset relative to the cell's source span.
+            foreach (ref const kr; mdCells)
+                if (kr.rect.contains(p))
                 {
-                    h.ok = true;
-                    h.lo = h.hi = off;
-                    return h;
+                    const cellStart = kr.key - tableKeyBase;
+                    foreach (mi, ref const mc; mdCellList)
+                        if (mc.span.start == cellStart)
+                        {
+                            h.table = true;
+                            h.tableIdx = mc.table;
+                            h.cell = GridHit(mc.row, mc.col,
+                                off >= cast(long) cellStart
+                                    ? cast(size_t)(off - cellStart) : 0);
+                            h.lo = h.hi = off >= 0 ? off : cast(long) cellStart;
+                            h.ok = true;
+                            return h;
+                        }
+                    break;
                 }
-                // Decoration under the cursor (band/border/pre-styled ANSI):
-                // fall back to the row's whole source span (block-granular).
-                if (mdRows[cast(size_t) cy].srcStart != size_t.max)
-                {
-                    h.ok = true;
-                    h.lo = cast(long) mdRows[cast(size_t) cy].srcStart;
-                    h.hi = cast(long) mdRows[cast(size_t) cy].srcEnd;
-                }
-                return h;
-            }
-            const row = cast(int)((my - docY0) / cellH);
-            if (row < 0 || topLine + row >= plines.length || mx < gutterPx)
-                return h; // left of the content (tree/scrollbar) hits nothing
-            const pl = plines[topLine + row];
-            const rx = gutterPx + runStartCells(pl) * cellW;
-            const x = mx <= rx ? 0 : cast(int)((mx - rx) / cellW);
-            const o = srcOffsetAtCol(pl, x);
-            if (o >= 0)
+            if (off >= 0) // char-precise content
             {
                 h.ok = true;
-                h.lo = o;
-                h.hi = o;
+                h.lo = h.hi = off;
+                return h;
+            }
+            // Decoration under the cursor (band/border/pre-styled ANSI):
+            // fall back to the row's whole source span (block-granular).
+            if (mdRows[cast(size_t) cy].srcStart != size_t.max)
+            {
+                h.ok = true;
+                h.lo = cast(long) mdRows[cast(size_t) cy].srcStart;
+                h.hi = cast(long) mdRows[cast(size_t) cy].srcEnd;
             }
             return h;
         }
@@ -1488,42 +1490,10 @@ int runGui(
                 tintRow(r.y - top, r.x, r.x + r.width);
         }
         if (regime == Regime.text && selMax() > selMin())
-        {
-            const smin = selMin(), smax = selMax();
-            if (mdActive)
-                // One pass covers prose, code and table cells alike — every
-                // span with source identity inside [smin, smax) tints.
-                tintSrcRange(smin, smax);
-            else
-                foreach (row; 0 .. docRows)
-                {
-                    const vi = topLine + row;
-                    if (vi >= plines.length)
-                        break;
-                    const pl = plines[vi];
-                    const startCol = runStartCells(pl);
-                    int c;
-                    foreach (r; pl.runs)
-                    {
-                        const rc = cast(int) columnWidth(r.text);
-                        if (r.srcStart != size_t.max)
-                        {
-                            const rStart = cast(long) r.srcStart;
-                            const rEnd = rStart + cast(long) r.text.length;
-                            if (rEnd > smin && rStart < smax)
-                            {
-                                const bStart = (smin > rStart ? smin : rStart) - rStart;
-                                const bEnd = (smax < rEnd ? smax : rEnd) - rStart;
-                                const colStart = cast(int) columnWidth(r.text[0 .. bStart]);
-                                const colEnd = cast(int) columnWidth(r.text[0 .. bEnd]);
-                                tintRow(row, startCol + c + colStart, startCol + c + colEnd);
-                            }
-                        }
-                        c += rc;
-                    }
-                }
-        }
-        else if (mdActive && regime == Regime.table && selTable >= 0)
+            // One pass covers prose, code and table cells alike — every
+            // span with source identity inside [smin, smax) tints.
+            tintSrcRange(selMin(), selMax());
+        else if (regime == Regime.table && selTable >= 0)
         {
             const dims = tableDims(mdCellList, selTable);
             const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
@@ -1544,36 +1514,26 @@ int runGui(
             }
         }
 
-        // Search-match overlay (raw view only): translucent tint over each visible
-        // match, remapped onto the wrapped visual line via each line's srcLine +
-        // wrapColOffset (the current match brighter).
+        // Search-match overlay (raw view only): a translucent tint over each
+        // visible match, its rects derived once from the identity channel
+        // (the current match brighter).
         if (!showPreview)
-            foreach (i, m; matches)
-                foreach (row; 0 .. docRows)
+            foreach (i, rects; matchRects)
+                foreach (ref const r; rects)
                 {
-                    const vi = topLine + row;
-                    if (vi >= plines.length)
-                        break;
-                    const pl = plines[vi];
-                    const off = pl.wrapColOffset;
-                    const rowCols = lineCols(pl);
-                    if (pl.srcLine != m.line || cast(long) m.col < off
-                        || cast(long) m.col >= off + rowCols)
+                    const row = r.y - top;
+                    if (row < 0 || row >= docRows)
                         continue;
-                    const vc = cast(int) m.col - off;
-                    const remain = off + rowCols - cast(int) m.col;
-                    const cols = cast(int) m.cols < remain ? cast(int) m.cols : remain;
-                    DrawRectangle(gutterPx + vc * cellW,
-                        cast(int)(docY0 + row * cellH),
-                        cols * cellW, cellH, i == curMatch ? currentMatchTint : matchTint);
-                    break; // the match starts on this visual row
+                    DrawRectangle(gutterPx + r.x * cellW,
+                        cast(int)(docY0 + row * cellH), r.width * cellW, cellH,
+                        i == curMatch ? currentMatchTint : matchTint);
                 }
 
         // Twoslash hover: pointer → byte (the identity channel) → hover node;
         // the token's dotted underline fades in and the popup (the shared
         // viewHoverPopup chrome via drawPopup) draws on top, with pointer
         // hysteresis so moving down into the open popup keeps it open.
-        if (mdActive && curTw.code.length && tsCache !is null)
+        if (showPreview && curTw.code.length && tsCache !is null)
         {
             const mp = GetMousePosition();
             size_t overNode = 0;
@@ -1768,93 +1728,6 @@ int runGui(
     return 0;
 }
 
-/// Paint the markdown preview: `plines` index-culled to the viewport. Each line
-/// draws its full-width band, then `quoteDepth` gutter bars, its muted `leader`
-/// (bullet/marker), and its styled runs (per-run background + `drawText`). The
-/// gutter/scrollbar/search of the raw view are intentionally absent (glow-like).
-private void drawPreview(
-    ref FontSet fonts,
-    const(PreviewLine)[] plines,
-    size_t topLine,
-    int visibleRows,
-    int cellW,
-    int cellH,
-    RgbColor pageFg,
-    RgbColor pageBg,
-    RgbColor gutterFg,
-    const RgbColor[quoteBarCycle] quoteBars,
-    int padX,
-    int rightPad,
-    int gutterCols,
-    ref SmallBuffer!(char, 4096) buf,
-    int paneX = 0,
-    int y0 = 0,
-) @system
-{
-    const screenW = GetScreenWidth();
-    // Content starts after the workspace's tree pane (`paneX`), the 1-cell
-    // left padding, and the line-number gutter; bands span from there to the
-    // scrollbar gutter on the right.
-    const originX = paneX + padX + gutterCols * cellW;
-    const bandW = (screenW - rightPad) - originX;
-    foreach (row; 0 .. visibleRows)
-    {
-        const li = topLine + row;
-        if (li >= plines.length)
-            break;
-        const pl = plines[li];
-        const y = y0 + row * cast(float) cellH;
-
-        // Band behind the line (code panel / header / table / heading), inset to
-        // the padded content column so the padding stays page-background.
-        if (pl.band != BandKind.none && pl.band != BandKind.rule)
-            DrawRectangle(originX, cast(int) y, bandW, cellH, rl(pl.bandBg));
-
-        // Source (physical) line number in the gutter, right-aligned — only on the
-        // first visual row of a wrapped physical line.
-        if (gutterCols > 0 && pl.showNumber)
-        {
-            const s = cstrOf(buf, uintToBuf(pl.srcLine + 1));
-            drawText(fonts, s, originX - (s.length + 1) * cast(float) cellW, y,
-                TextStyle(0), rl(gutterFg));
-        }
-
-        // Quote gutter: one `│` bar per depth (2 cols each). A callout paints
-        // every bar in its accent (`barFg`); otherwise each depth takes its color
-        // from the theme-derived cycle.
-        foreach (d; 0 .. pl.quoteDepth)
-        {
-            const barColor = pl.hasBarFg ? pl.barFg : quoteBars[d % quoteBarCycle];
-            drawText(fonts, cstrOf(buf, "│"), originX + d * 2 * cast(float) cellW, y,
-                TextStyle(0), rl(barColor));
-        }
-
-        const contentCol = pl.quoteDepth * 2 + pl.indentCols;
-        float x = originX + contentCol * cast(float) cellW;
-
-        // Leader (bullet / number / checkbox / heading marker) — colored when the
-        // layouter gave it an accent (heading icon, checked box, callout icon).
-        if (pl.leader.length)
-        {
-            const lfg = pl.hasLeaderFg ? pl.leaderFg : gutterFg;
-            drawText(fonts, cstrOf(buf, pl.leader), x, y, TextStyle(0), rl(lfg));
-            x += columnWidth(pl.leader) * cellW;
-        }
-
-        // Styled runs.
-        foreach (r; pl.runs)
-        {
-            if (r.text.length == 0)
-                continue;
-            const wpx = cast(int)(columnWidth(r.text) * cellW);
-            if (r.hasBg)
-                DrawRectangle(cast(int) x, cast(int) y, wpx, cellH, rl(r.bg));
-            drawText(fonts, cstrOf(buf, r.text), x, y, mapAttrs(r.attrs), rl(r.fg));
-            x += wpx;
-        }
-    }
-}
-
 /// The source (physical) line containing byte `off` — a binary search over the
 /// line-start offsets (the preview gutter's row → line number mapping).
 private size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
@@ -1884,22 +1757,6 @@ private UiTextStyle attrsToTextStyle(ubyte attrs) pure nothrow @nogc @safe
     t.strikethrough = (attrs & Attr.strikethrough) != 0;
     if (attrs & Attr.underline)
         t.underline = UStyle.single;
-    return t;
-}
-
-/// Maps `gui_ansi.Attr` bits (used by the preview model) onto raylib-text's
-/// `TextStyle` — the preview counterpart of `mapStyle`.
-private TextStyle mapAttrs(ubyte attrs) pure nothrow @nogc @safe
-{
-    TextStyle t;
-    if (attrs & Attr.bold)
-        t.bits |= TextStyle.bold;
-    if (attrs & Attr.italic)
-        t.bits |= TextStyle.italic;
-    if (attrs & Attr.underline)
-        t.bits |= TextStyle.underline;
-    if (attrs & Attr.strikethrough)
-        t.bits |= TextStyle.strikethrough;
     return t;
 }
 
@@ -2082,58 +1939,6 @@ TextStyle mapStyle(in StyleSpec spec) pure nothrow @nogc @safe
         t.bits |= TextStyle.underline;
     return t;
 }
-
-/// Total display columns of a wrapped line's runs (for search-overlay remapping).
-private int lineCols(in PreviewLine pl) @safe
-{
-    int c;
-    foreach (r; pl.runs)
-        c += cast(int) columnWidth(r.text);
-    return c;
-}
-
-/// The byte index in `t` at display column `targetCol` (for column → file-offset).
-private size_t byteAtColumn(const(char)[] t, int targetCol) @safe
-{
-    import std.utf : decode;
-    size_t i;
-    int c;
-    while (i < t.length && c < targetCol)
-    {
-        const s = i;
-        decode(t, i);
-        c += cast(int) columnWidth(t[s .. i]);
-    }
-    return i;
-}
-
-/// The source-file offset at display column `col` within a line's runs — walking
-/// only source-backed runs (decorations/gutters are skipped), so a click in a
-/// gutter snaps to the adjacent content. -1 if the line has no selectable content.
-private long srcOffsetAtCol(in PreviewLine pl, int col) @safe
-{
-    long lastEnd = -1;
-    int c;
-    foreach (r; pl.runs)
-    {
-        const rc = cast(int) columnWidth(r.text);
-        if (r.srcStart != size_t.max)
-        {
-            if (col <= c)
-                return cast(long) r.srcStart;
-            if (col < c + rc)
-                return cast(long) r.srcStart + cast(long) byteAtColumn(r.text, col - c);
-            lastEnd = cast(long)(r.srcStart + r.text.length);
-        }
-        c += rc;
-    }
-    return lastEnd;
-}
-
-/// Columns from the content origin to where a line's runs begin (after the quote
-/// gutter, indent, and leader), matching `drawPreview`'s layout.
-private int runStartCells(in PreviewLine pl) @safe
-    => pl.quoteDepth * 2 + pl.indentCols + cast(int) columnWidth(pl.leader);
 
 /// An RGB triple as a raylib color (fully opaque).
 Color rl(RgbColor c) pure nothrow @nogc @trusted => Color(c.r, c.g, c.b, 255);

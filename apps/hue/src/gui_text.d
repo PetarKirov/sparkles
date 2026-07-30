@@ -68,12 +68,16 @@ unittest
     assert(lineCount("\n\n") == 2);
 }
 
-/// A search hit resolved to monospace grid coordinates for drawing.
+/// A search hit resolved to monospace grid coordinates for drawing, plus its
+/// source byte range — the identity-channel currency the widget path tints
+/// and jumps with (`selectionRects` / row lookup).
 struct Match
 {
-    size_t line; /// 0-based line the match starts on
-    int col;     /// start column (display cells) within the line
-    int cols;    /// width in display cells (clipped at the line end)
+    size_t line;  /// 0-based line the match starts on
+    int col;      /// start column (display cells) within the line
+    int cols;     /// width in display cells (clipped at the line end)
+    size_t start; /// source byte offset of the match
+    size_t end;   /// source byte end (clipped at the line end, like `cols`)
 }
 
 /// Byte offset where each display line starts (line 0 at 0, then after each
@@ -114,7 +118,7 @@ Match[] findMatches(scope const(char)[] source, scope const(char)[] query,
         const end = nl < 0 || cast(size_t) nl >= query.length
             ? start + query.length : start + cast(size_t) nl;
         matches ~= Match(line, cast(int) columnWidth(source[lineStart .. start]),
-            cast(int) columnWidth(source[start .. end]));
+            cast(int) columnWidth(source[start .. end]), start, end);
         from = start + query.length;
     }
     return matches;
@@ -129,8 +133,8 @@ unittest
 
     auto m = findMatches(src, "ab", ls);
     assert(m.length == 2);
-    assert(m[0] == Match(0, 0, 2));  // first "ab" at line 0, column 0
-    assert(m[1] == Match(1, 2, 2));  // "ab" inside "abc" at line 1, column 2
+    assert(m[0] == Match(0, 0, 2, 0, 2)); // first "ab" at line 0, column 0
+    assert(m[1] == Match(1, 2, 2, 5, 7)); // "ab" inside "abc" at line 1, column 2
 
     assert(findMatches(src, "zzz", ls).length == 0);
     assert(findMatches(src, "", ls).length == 0);
