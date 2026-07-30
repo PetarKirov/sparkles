@@ -30,6 +30,14 @@ indent_size = unset
 charset = unset
 insert_final_newline = unset
 
+# The Android debug signing keystore is a binary artifact, checked in so the
+# APK signature stays stable across rebuilds (see
+# nix/packages/android/build-apk.nix)
+[apps/hue/android/debug.keystore]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+
 # Disable indent checking for markdown - code blocks may have intentional
 # spacing for visual output examples
 [*.md]
