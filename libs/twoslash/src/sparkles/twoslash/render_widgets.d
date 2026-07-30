@@ -35,13 +35,14 @@ import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, Tex
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
-import sparkles.twoslash.overlay : BelowBlock, errIsWarning, planTwoslash,
-    TwoslashPlan, withoutQuickinfoPrefix;
+import sparkles.twoslash.overlay : BelowBlock, errIsWarning,
+    highlightSignature, planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
 
 import sparkles.syntax.md.model : extractMarkdown, MdBlock, MdBlockKind, MdDoc,
     MdInline, MdInlineKind, Span;
+import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.syntax.ts.registry : GrammarRegistry;
 import sparkles.base.term_style : UnderlineStyle;
 
@@ -93,13 +94,35 @@ geometry from $(REF selectionRects, sparkles,ui,state).
 */
 WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
     const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
-    RgbColor pageFg)
+    RgbColor pageFg, TsConfigCache* cache = null)
 {
     import sparkles.ui.canvas : LineStyle;
     import sparkles.ui.geometry : Point, SizeSpec;
 
     auto plan = planTwoslash(tw);
     auto b = Builder();
+
+    // With a grammar cache, a `^?` query's type signature renders as resolved
+    // syntax-colored spans — the widget model carries the color, so no backend
+    // overpaints the toolkit's output to re-highlight it (`WGT6`).
+    TextSpan[] sigSpans(const Node n) @trusted
+    {
+        if (cache is null || n.type != NodeType.query || !n.text.length)
+            return null;
+        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.syntax.event : byStyledSpan;
+
+        SmallBuffer!HighlightEvent ev;
+        highlightSignature(*cache, n.text, ev);
+        TextSpan[] spans;
+        foreach (sp; byStyledSpan(ev[]))
+        {
+            const spec = (*theme)[sp.label];
+            spans ~= TextSpan(n.text[sp.start .. sp.end], Slot.code,
+                TextStyle.init, fg: toRgb(spec.fg, pageFg), hasFg: true);
+        }
+        return spans;
+    }
 
     // Styled runs bucketed per source line, as identity-carrying spans.
     size_t total = 1;
@@ -158,7 +181,8 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
 
         foreach (ref const blk; plan.belowBlocks)
             if (blk.line == line)
-                rows ~= buildBelowBlock(b, tw.nodes[blk.node], blk.node);
+                rows ~= buildBelowBlock(b, tw.nodes[blk.node], blk.node,
+                    sigSpans(tw.nodes[blk.node]));
     }
 
     return b.finish(b.container(WidgetKind.column, rows));
@@ -199,7 +223,10 @@ in (nodeIndex < tw.nodes.length)
 }
 
 /// One below-line block: a left-indented `column` of a caret row + payload.
-private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex)
+/// `sigSpans` (when non-empty) replaces a query signature's single-color text
+/// with resolved syntax-colored spans.
+private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex,
+    TextSpan[] sigSpans = null)
 {
     const indent = Insets(0, 0, 0, cast(int) node.character);
     const hit = hitOf(nodeIndex);
@@ -223,8 +250,11 @@ private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex)
         case NodeType.query:
             const caret = b.add(Widget(kind: WidgetKind.text,
                 text: "^?", slot: Slot.caret, hitId: hit));
-            const sig = b.add(Widget(kind: WidgetKind.text, text: node.text,
-                slot: Slot.code, hitId: hit));
+            const sig = sigSpans.length
+                ? b.add(Widget(kind: WidgetKind.rich, spans: sigSpans,
+                    slot: Slot.code, hitId: hit))
+                : b.add(Widget(kind: WidgetKind.text, text: node.text,
+                    slot: Slot.code, hitId: hit));
             return b.container(WidgetKind.column, [caret, sig], padding: indent);
 
         case NodeType.completion:

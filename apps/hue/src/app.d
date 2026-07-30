@@ -549,22 +549,15 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
 
     version (HueGui)
     {
-        if (doc.kind == ContentKind.twoslash)
-        {
-            import gui : runGuiTwoslash;
-
-            return runGuiTwoslash(doc.title, doc.twoslash, doc.events, labels,
-                theme, cache, docSet, cli.lineNumbers);
-        }
-
         import gui : LoadedDoc, runGui;
 
         // The document loader the viewer calls when navigating a set (`GNV1`):
-        // the one pipeline again — the GUI never duplicates it.
+        // the one pipeline again — the GUI never duplicates it. A twoslash
+        // payload rides along, so mixed sets navigate through one window.
         LoadedDoc loadDoc(string path) @system
         {
             auto d = pipeline.load(path);
-            return LoadedDoc(d.source, d.events, d.preview);
+            return LoadedDoc(d.source, d.events, d.preview, d.twoslash);
         }
 
         auto themeSet = sortedThemes(cli.theme);
@@ -572,7 +565,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             themeSet.themes, themeSet.idx, doc.preview, cli.font, cli.fontSize,
             cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
             cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
-            docSet, docSet !is null ? &loadDoc : null, &cache);
+            docSet, docSet !is null ? &loadDoc : null, &cache, doc.twoslash);
     }
     else
     {

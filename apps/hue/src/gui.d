@@ -142,6 +142,7 @@ struct LoadedDoc
     const(char)[] source;
     const(HighlightEvent)[] events;
     PreviewModel preview;
+    TwoslashReturn twoslash; /// empty `code` ⇒ not a twoslash document
 }
 
 /// Loads a document by path. Supplied by `app.d`, which owns the grammar registry
@@ -177,6 +178,7 @@ int runGui(
     SourceSet* set = null,               // the document set to navigate (GNV1)
     DocLoader loadDoc = null,            // loads a set entry (supplied by app.d)
     TsConfigCache* tsCache = null,       // fence highlighting for the widget view
+    TwoslashReturn twoslash = TwoslashReturn.init, // twoslash document payload
 ) @system
 {
     import std.stdio : stderr;
@@ -242,6 +244,7 @@ int runGui(
     const(char)[] curSource = source;
     const(HighlightEvent)[] curEvents = events;
     PreviewModel curPreview = preview;
+    TwoslashReturn curTw = twoslash;
     string curName = title;
     string curSummary = set !is null && !set.empty ? set.current.summary : "";
     size_t srcTotal = lineCount(curSource);
@@ -249,11 +252,11 @@ int runGui(
     // Markdown-preview state (M4). A markdown file opens in preview by default;
     // Tab toggles to the raw highlighted-source view. `HUE_GUI_PREVIEW=0/1`
     // pins the initial mode for deterministic golden captures.
-    bool showPreview = curPreview.present;
+    bool showPreview = curPreview.present || curTw.code.length != 0;
     if (environment.get("HUE_GUI_PREVIEW", "") == "0")
         showPreview = false;
     else if (environment.get("HUE_GUI_PREVIEW", "") == "1")
-        showPreview = curPreview.present;
+        showPreview = curPreview.present || curTw.code.length != 0;
     PreviewLine[] plines; // the raw (highlighted-source) view's wrapped lines
 
     // The markdown widget pipeline (M10): the preview is one laid-out tree.
@@ -344,6 +347,25 @@ int runGui(
     // and keyed cell rects, and the document's fence/cell structure.
     void rebuildMd()
     {
+        if (curTw.code.length)
+        {
+            // A twoslash document: the whole-document widget view (code lines
+            // as resolved spans + fused decorations + interleaved blocks).
+            import sparkles.twoslash.render_widgets : viewTwoslashDocument;
+
+            mdTree = viewTwoslashDocument(curTw, curEvents, &current, pageFg,
+                tsCache);
+            mdFrames = layout(mdTree, Constraints(maxW: lastWidthCols));
+            mdOps = buildDisplayList(mdTree, mdFrames,
+                defaultTwoslashPalette(schemeForBackground(pageBg)),
+                pageFg, pageBg);
+            mdRows = documentRows(mdTree, mdFrames);
+            mdTargets = hoverTargets(mdTree, mdFrames);
+            mdCells = null;
+            mdFences.length = 0;
+            mdCellList.length = 0;
+            return;
+        }
         MdViewOptions opt = {
             theme: MdViewTheme.derive(current, pageFg, pageBg),
             fenceHitBase: fenceHitBase,
@@ -401,7 +423,7 @@ int runGui(
     void relayout()
     {
         lastWidthCols = widthCols();
-        if (showPreview && curPreview.present)
+        if (showPreview && (curPreview.present || curTw.code.length))
             rebuildMd();
         else
             plines = buildRawPlines(curSource, curEvents, current, pageFg, pageBg, lastWidthCols);
@@ -464,11 +486,12 @@ int runGui(
         curSource = doc.source;
         curEvents = doc.events;
         curPreview = doc.preview;
+        curTw = doc.twoslash;
         curName = entry.name;
         curSummary = entry.summary;
         srcTotal = lineCount(curSource);
         lineStarts = buildLineStarts(curSource);
-        showPreview = curPreview.present;
+        showPreview = curPreview.present || curTw.code.length != 0;
 
         top = 0;            // a new document starts at the top (`GNV3`)
         query.clear();
@@ -546,6 +569,20 @@ int runGui(
     // checkmark feedback (the copied fence itself is `copiedFenceSrc`).
     Timeline copiedFlash;
     bool copiedShown; // the ✔ glyph is in the tree; rebuild when the flash ends
+
+    // Twoslash hover latch: the open popup's node (+1; 0 = none), its rect
+    // (pointer hysteresis), and the token-underline fade (STM6).
+    size_t hotNode = 0;
+    Rectangle hotPopup;
+    bool havePopup = false;
+    Timeline fade;
+    int forceHover = -1; // HUE_GUI_HOVER=<n>: force the Nth popup (goldens)
+    try
+        forceHover = environment.get("HUE_GUI_HOVER", null).length
+            ? environment.get("HUE_GUI_HOVER").to!int : -1;
+    catch (Exception)
+    {
+    }
 
     // Mouse selection has two regimes (a drag stays in the one it starts in, TBL4):
     //  • text  (SEL): a source byte range [selMin, selMax). Prose/code map a click
@@ -700,7 +737,7 @@ int runGui(
         }
         prevWidthCols = wc;
         // The active view's visual-line space (scroll/selection/search).
-        const mdActive = showPreview && curPreview.present;
+        const mdActive = showPreview && (curPreview.present || curTw.code.length);
         const total = mdActive ? mdRows.length : plines.length;
         const maxTop = total > visibleRows ? cast(long)(total - visibleRows) : 0;
 
@@ -850,8 +887,8 @@ int runGui(
                 }
             }
 
-            // Tab toggles markdown preview ↔ raw highlighted source.
-            if (curPreview.present && IsKeyPressed(KeyboardKey.KEY_TAB))
+            // Tab toggles the decorated view ↔ raw highlighted source.
+            if ((curPreview.present || curTw.code.length) && IsKeyPressed(KeyboardKey.KEY_TAB))
             {
                 showPreview = !showPreview;
                 lastWidthCols = -1; // force a reflow on next frame
@@ -1275,6 +1312,79 @@ int runGui(
                     break; // the match starts on this visual row
                 }
 
+        // Twoslash hover: pointer → byte (the identity channel) → hover node;
+        // the token's dotted underline fades in and the popup (the shared
+        // viewHoverPopup chrome via drawPopup) draws on top, with pointer
+        // hysteresis so moving down into the open popup keeps it open.
+        if (mdActive && curTw.code.length && tsCache !is null)
+        {
+            const mp = GetMousePosition();
+            size_t overNode = 0;
+            if (mp.x >= gutterPx)
+            {
+                const off = sourceOffsetAt(mdTree, mdFrames,
+                    Point(cast(int)((mp.x - gutterPx) / cellW),
+                        cast(int)(top + cast(long)(mp.y / cellH))));
+                if (off >= 0)
+                    foreach (ni, ref const n; curTw.nodes)
+                        if (n.type == NodeType.hover && off >= cast(long) n.start
+                            && off < cast(long)(n.start + n.length))
+                            overNode = ni + 1;
+            }
+            if (overNode == 0 && hotNode != 0 && havePopup
+                && mp.x >= hotPopup.x && mp.x <= hotPopup.x + hotPopup.width
+                && mp.y >= hotPopup.y && mp.y <= hotPopup.y + hotPopup.height)
+                overNode = hotNode; // still over the open popup → keep it open
+            bool forced = false;
+            if (forceHover >= 0)
+            {
+                int seen = 0;
+                foreach (ni, ref const n; curTw.nodes)
+                    if (n.type == NodeType.hover && seen++ == forceHover)
+                    {
+                        overNode = ni + 1;
+                        forced = true;
+                        break;
+                    }
+            }
+            if (overNode != hotNode)
+                fade = Timeline.init;
+            hotNode = overNode;
+            if (hotNode != 0)
+            {
+                if (!fade.visible)
+                    fade = Timeline.triggered(fadeCfg);
+                fade = forced ? Timeline(Timeline.Phase.hold, 0)
+                    : fade.stepped(frameMs(), fadeCfg);
+            }
+            havePopup = false;
+            if (hotNode != 0)
+            {
+                // The token's geometry through the identity channel.
+                const n = curTw.nodes[hotNode - 1];
+                auto rects = selectionRects(mdTree, mdFrames,
+                    n.start, n.start + n.length);
+                if (rects.length)
+                {
+                    const r = rects[0];
+                    const hx = gutterPx + r.x * cellW;
+                    const hy = cast(int)((r.y - top) * cellH);
+                    const hw = r.width * cellW;
+                    const uy = hy + cellH - 2;
+                    const uc = Color(pageFg.r, pageFg.g, pageFg.b,
+                        cast(ubyte)(fade.alphaPercent(fadeCfg) * 255 / 100));
+                    for (int i = 0; i + 2 <= hw; i += 4)
+                        DrawRectangle(hx + i, uy, 2, 1, uc);
+                    hotPopup = drawPopup(fonts, buf, curTw, hotNode - 1,
+                        cast(float) hx, cast(float)(hy + cellH),
+                        cellW, cellH, current, *tsCache,
+                        defaultTwoslashPalette(schemeForBackground(pageBg)),
+                        pageFg, pageBg);
+                    havePopup = true;
+                }
+            }
+        }
+
         // Scrollbar: an animated-width thumb, plus a faint track while hovered
         // or dragging. Colors follow the theme's muted gutter tone.
         if (maxTop > 0)
@@ -1513,354 +1623,6 @@ private ThumbGeometry thumbGeometry(size_t total, int visibleRows, long top,
 private Color alpha(RgbColor c, ubyte a) pure nothrow @nogc @trusted
     => Color(c.r, c.g, c.b, a);
 
-/// The margin left of the code column, in cells (breathing room for decorations).
-private enum twoslashPadCells = 1;
-
-/**
-`hue --gui --twoslash`: the raylib overlay backend. Draws the highlighted
-snippet, then the twoslash decorations on top — highlight spans as translucent
-tint boxes, error spans as a wavy underline, and the below-line blocks
-(error / query / completion / tag) as annotation rows interleaved between the
-code lines. Hover popups (with the re-highlighted type signature) appear on
-mouse-over, the GPU counterpart of the HTML `:hover` popup.
-
-`theme` is already resolved and `cache` drives the reentrant popup highlight;
-unlike `runGui` this view does not cycle themes (a twoslash payload is a fixed
-annotated snippet, not a theme browser).
-*/
-int runGuiTwoslash(
-    string title,
-    in TwoslashReturn tw,
-    const(HighlightEvent)[] events,
-    LabelSet labels,
-    in ResolvedTheme theme,
-    ref TsConfigCache cache,
-    SourceSet* set = null,
-    bool lineNumbers = true,
-) @system
-{
-    import std.stdio : stderr;
-    import std.string : toStringz;
-    import std.process : environment;
-    import std.conv : text, to;
-
-    const shotPath = environment.get("HUE_GUI_SCREENSHOT", "");
-    int fontSize = defaultFontSize;
-    try
-        fontSize = environment.get("HUE_GUI_FONTSIZE", null).length
-            ? environment.get("HUE_GUI_FONTSIZE").to!int : defaultFontSize;
-    catch (Exception)
-    {
-    }
-    // Golden-capture hook: force the Nth hover popup open (no live mouse needed).
-    int forceHover = -1;
-    try
-        forceHover = environment.get("HUE_GUI_HOVER", null).length
-            ? environment.get("HUE_GUI_HOVER").to!int : -1;
-    catch (Exception)
-    {
-    }
-
-    InitWindow(900, 640, ("hue twoslash — " ~ title).toStringz);
-    scope (exit) CloseWindow();
-    SetWindowState(ConfigFlags.FLAG_WINDOW_RESIZABLE);
-    SetTargetFPS(60);
-    SetExitKey(KeyboardKey.KEY_ESCAPE);
-
-    FontSet fonts;
-    if (!FontSet.tryLoad("monospace", fontSize, fonts))
-    {
-        stderr.writeln("hue --gui: could not load a monospace font (is fontconfig available?)");
-        return 1;
-    }
-    scope (exit) fonts.unload();
-
-    const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
-    const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-
-    // Twoslash brand colors from the single-source palette (retiring the four
-    // hand-copied literals). error/warn/tag are theme-independent; the highlight
-    // tint is a translucent background. The popup surface stays theme-derived
-    // (pageBg), so a dark GUI theme isn't forced onto the light CSS surface.
-    const pal = defaultTwoslashPalette(schemeForBackground(pageBg));
-    const errVis = resolveSlot(pal, Slot.error, pageFg, pageBg);
-    const warnVis = resolveSlot(pal, Slot.warn, pageFg, pageBg);
-    const highlightVis = resolveSlot(pal, Slot.highlight, pageFg, pageBg);
-
-    // The current document. A pointer-to-const so navigating a set can rebind it
-    // (`Node[]` is mutable, so a const payload cannot be copied into a mutable
-    // local — the same constraint `TwoslashTui` hit).
-    const(TwoslashReturn)* cur = &tw;
-    const(HighlightEvent)[] curEvents = events;
-    string curName = title;
-    string curSummary = set !is null && !set.empty ? set.current.summary : "";
-
-    auto plan = planTwoslash(*cur);
-    // Per-line styled runs, bucketed for a top-to-bottom draw with annotation
-    // rows interleaved (so `y` cannot be `line * cellH` — it accumulates).
-    size_t lineTotal;
-    StyledRun[][] runsByLine;
-
-    void rebuild()
-    {
-        plan = planTwoslash(*cur);
-        lineTotal = lineCount(cur.code) + 1;
-        runsByLine = new StyledRun[][](lineTotal);
-        foreach (ls; byStyledLine(cur.code, curEvents))
-            runsByLine[ls.line] ~= StyledRun(ls.span.start, ls.span.end, ls.span.label);
-    }
-
-    rebuild();
-
-    SmallBuffer!(char, 4096) buf;
-    float scrollY = 0;
-    int shotFrame = 0;
-
-    /// Loads the set's currently-selected payload in place (`GNV1`): re-read,
-    /// re-highlight, re-plan. The window, font atlas and grammar cache are reused —
-    /// only the document changes. A payload that fails to load is reported and the
-    /// previous one stays on screen.
-    bool loadSelected()
-    {
-        if (set is null || set.empty)
-            return false;
-        const entry = set.current;
-        auto res = loadTwoslashFile(entry.path);
-        if (res.hasError)
-        {
-            stderr.writeln("hue: ", res.error.msg);
-            return false;
-        }
-        auto owned = new TwoslashReturn;
-        *owned = res.value;
-
-        SmallBuffer!HighlightEvent ev;
-        if (highlightInjected(cache, "typescript", owned.code, ev).hasError)
-            ev ~= HighlightEvent.sourceSpan(0, owned.code.length);
-
-        cur = owned;
-        curEvents = ev[].dup;
-        curName = entry.name;
-        curSummary = entry.summary;
-        rebuild();
-        scrollY = 0; // a new document starts at the top (`GNV3`)
-        SetWindowTitle(("hue twoslash — " ~ curName).toStringz);
-        return true;
-    }
-
-    // Hover latch, persisted across frames: the open popup's node (+1; 0 = none),
-    // its on-screen rect (for pointer hysteresis — the popup stays open while the
-    // pointer is over token-or-popup), and the hovered-token underline fade (0..1
-    // over 0.3s, matching the CSS `.twoslash-hover` `border-color 0.3s` affordance).
-    size_t hotNode = 0;
-    Rectangle hotPopup;
-    bool havePopup = false;
-    Timeline fade;
-
-    while (!WindowShouldClose())
-    {
-        const cellW = fonts.cellW();
-        const cellH = fonts.cellH();
-
-        // `[` / `]` (and the mouse back/forward buttons) walk the document set —
-        // the reload primitive navigation (`LNK3`/`LNK4`) will reuse (`GNV1`).
-        if (set !is null && !set.empty)
-        {
-            const back = IsKeyPressed(KeyboardKey.KEY_LEFT_BRACKET)
-                || IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_BACK);
-            const fwd = IsKeyPressed(KeyboardKey.KEY_RIGHT_BRACKET)
-                || IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_FORWARD);
-            if ((back || fwd) && set.move(back ? -1 : 1))
-                loadSelected();
-        }
-
-        // A header bar (name · summary · i/n) when navigating a set (`GNV2`), and
-        // the physical-line gutter (`GNV4`) — both shift the code's origin.
-        const headerH = set !is null && !set.empty ? cast(float) cellH : 0.0f;
-        const gutterCols = lineNumbers ? cast(int)(digitCount(lineTotal - 1) + 1) : 0;
-        const padPx = cast(float)((twoslashPadCells + gutterCols) * cellW);
-        scrollY -= GetMouseWheelMove() * 3 * cellH;
-        if (scrollY < 0)
-            scrollY = 0;
-
-        // The sparkles:ui raylib backend — cell-space primitives (highlight
-        // fill, error squiggle, below-line rows) route through it; its origin is
-        // moved per use to the current row's screen position.
-        auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH);
-
-        BeginDrawing();
-        ClearBackground(rl(pageBg));
-
-        // Hover token rects captured this frame for the mouse hit-test.
-        HoverHit[] hovers;
-
-        float y = headerH - scrollY;
-        foreach (line; 0 .. lineTotal)
-        {
-            // The physical source-line number, right-aligned in the gutter and
-            // muted — the same rule the raw view uses (`NUM1`), so the GUI, the
-            // TUI and the HTML gallery number lines alike (`GNV4`).
-            if (gutterCols > 0 && y >= headerH - cellH && y < GetScreenHeight())
-            {
-                const numText = text(line + 1);
-                const nx = padPx - cast(float)((numText.length + 1) * cellW);
-                drawText(fonts, cstrOf(buf, numText), nx, y, TextStyle(0),
-                    rl(mix(pageFg, pageBg, 0.5)));
-            }
-
-            // Code runs for this line.
-            float x = padPx;
-            foreach (ref const r; runsByLine[line])
-            {
-                const run = cur.code[r.start .. r.end];
-                if (run.length == 0)
-                    continue;
-                const spec = theme[r.label];
-                const wpx = cast(int)(columnWidth(run) * cellW);
-                if (spec.bg.isSet)
-                    DrawRectangle(cast(int) x, cast(int) y, wpx, cellH, rl(toRgb(spec.bg, pageBg)));
-                drawText(fonts, cstrOf(buf, run), x, y, mapStyle(spec), rl(toRgb(spec.fg, pageFg)));
-                x += wpx;
-            }
-
-            // Inline decorations on this line.
-            foreach (ref const d; plan.inlineDecorations)
-            {
-                if (d.line != line)
-                    continue;
-                const dx = cast(int)(padPx + d.character * cellW);
-                const dcols = cast(int) columnWidth(cur.code[d.start .. d.end]);
-                canvas.originX = padPx;
-                canvas.originY = y;
-                final switch (d.kind)
-                {
-                    case NodeType.highlight:
-                        canvas.fillRect(Rect(cast(int) d.character, 0, dcols, 1), highlightVis);
-                        break;
-                    case NodeType.error:
-                        canvas.line(Point(cast(int) d.character, 0),
-                            Point(cast(int) d.character + dcols, 0), errVis, LineStyle.wavy);
-                        break;
-                    case NodeType.hover:
-                        hovers ~= HoverHit(dx, cast(int) y, dcols * cellW, cellH, d.node);
-                        break;
-                    case NodeType.query:
-                    case NodeType.completion:
-                    case NodeType.tag:
-                        break;
-                }
-            }
-            y += cellH;
-
-            // Below-line meta blocks, from the shared `viewBelowBlock` widget view
-            // (caret + message / ^? / completion list / @tag chip), so the GUI grows
-            // the same chrome as the TUI/HTML. Each block is multiple rows.
-            foreach (ref const b; plan.belowBlocks)
-            {
-                if (b.line != line)
-                    continue;
-                y += drawBelowBlock(fonts, buf, *cur, b.node, padPx, y, cellW, cellH,
-                    theme, cache, pal, pageFg, pageBg) * cellH;
-            }
-        }
-
-        // Hover: latch the token under the pointer — or keep the open popup while
-        // the pointer is over IT (hysteresis, so you can move down into the popup)
-        // — fade in the token's dotted underline, and draw the popup last (on top).
-        // HUE_GUI_HOVER=<index> force-shows the Nth popup (golden captures).
-        const mouse = GetMousePosition();
-        size_t overNode = 0;
-        foreach (ref const h; hovers)
-            if (mouse.x >= h.x && mouse.x <= h.x + h.w
-                    && mouse.y >= h.y && mouse.y <= h.y + h.h)
-                overNode = h.node + 1;
-        if (overNode == 0 && hotNode != 0 && havePopup
-                && mouse.x >= hotPopup.x && mouse.x <= hotPopup.x + hotPopup.width
-                && mouse.y >= hotPopup.y && mouse.y <= hotPopup.y + hotPopup.height)
-            overNode = hotNode; // still over the open popup → keep it open
-        bool forced = false;
-        if (forceHover >= 0 && forceHover < cast(int) hovers.length)
-        {
-            overNode = hovers[forceHover].node + 1;
-            forced = true;
-        }
-
-        // Advance the underline fade while the same token stays hot; reset on change.
-        if (overNode != hotNode)
-            fade = Timeline.init;
-        hotNode = overNode;
-        if (hotNode != 0)
-        {
-            if (!fade.visible)
-                fade = Timeline.triggered(fadeCfg);
-            fade = forced ? Timeline(Timeline.Phase.hold, 0)
-                : fade.stepped(frameMs(), fadeCfg);
-        }
-
-        havePopup = false;
-        if (hotNode != 0)
-            foreach (ref const h; hovers)
-                if (h.node + 1 == hotNode)
-                {
-                    // The hovered token's dotted underline (currentColor), faded in.
-                    const uy = h.y + h.h - 2;
-                    const uc = Color(pageFg.r, pageFg.g, pageFg.b, cast(ubyte)(fade.alphaPercent(fadeCfg) * 255 / 100));
-                    for (int i = 0; i + 2 <= h.w; i += 4)
-                        DrawRectangle(h.x + i, uy, 2, 1, uc);
-                    // The popup on top; remember its rect for next-frame hysteresis.
-                    hotPopup = drawPopup(fonts, buf, *cur, h.node,
-                        cast(float) h.x, cast(float)(h.y + h.h),
-                        cellW, cellH, theme, cache, pal, pageFg, pageBg);
-                    havePopup = true;
-                    break;
-                }
-
-        // The header bar last, so scrolled code passes UNDER it (`GNV2`):
-        // `name · summary` on the left, the set position on the right.
-        if (headerH > 0)
-        {
-            const w = GetScreenWidth();
-            DrawRectangle(0, 0, w, cast(int) headerH, rl(mix(pageBg, pageFg, 0.12)));
-            DrawRectangle(0, cast(int) headerH - 1, w, 1, rl(mix(pageFg, pageBg, 0.5)));
-
-            const left = curSummary.length ? curName ~ "  " ~ curSummary : curName;
-            drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0,
-                TextStyle(0), rl(pageFg));
-
-            const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next");
-            const px = cast(float)(w - cast(int)((pos.length + 1) * cellW));
-            drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), rl(mix(pageFg, pageBg, 0.5)));
-        }
-
-        EndDrawing();
-
-        if (shotPath.length)
-        {
-            // Warm up ~20 frames before capturing (the glyph atlas uploads over
-            // the first frames and a headless GL swap lags the draw — see runGui).
-            if (++shotFrame == 20)
-                TakeScreenshot(shotPath.toStringz);
-            if (shotFrame >= 21)
-                break;
-        }
-    }
-    return 0;
-}
-
-/// A styled run within one line (byte offsets into the whole source).
-private struct StyledRun
-{
-    size_t start, end;
-    LabelId label;
-}
-
-/// A hover token's on-screen rect + its node index, for the mouse hit-test.
-private struct HoverHit
-{
-    int x, y, w, h;
-    size_t node;
-}
-
 /// Draws styled text `text` (highlighted into `ev`) run-by-run starting at
 /// `(x, y)`; returns the ending pen x. Used for popup / query type signatures.
 private float drawStyledRuns(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
@@ -1879,44 +1641,6 @@ private float drawStyledRuns(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf
         cx += columnWidth(run) * cellW;
     }
     return cx;
-}
-
-/// One below-line meta block (error / query / completion / tag), built from the
-/// shared `viewBelowBlock` widget view and painted at `(padPx, y)` through
-/// `RaylibCanvas`; returns its height in rows so the caller advances `y`. A query's
-/// type signature is a single `Slot.code` run in the widget model, so it is
-/// overpainted with the per-token re-highlighted signature (the painter's job).
-private int drawBelowBlock(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
-    in TwoslashReturn tw, size_t nodeIndex, float padPx, float y, int cellW, int cellH,
-    in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
-    RgbColor pageFg, RgbColor pageBg) @system
-{
-    import sparkles.twoslash.render_widgets : viewBelowBlock;
-
-    const node = tw.nodes[nodeIndex];
-    auto tree = viewBelowBlock(tw, nodeIndex);
-    auto frames = layout(tree);
-    auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
-
-    auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, padPx, y);
-    paint(canvas, ops);
-
-    // Re-highlight the query signature (its `Slot.code` run), clearing to the page
-    // background first so the flat widget glyphs don't double-strike.
-    if (node.type == NodeType.query)
-        foreach (ref op; ops)
-            if (op.kind == OpKind.textRun && op.slot == Slot.code)
-            {
-                const sx = padPx + op.rect.x * cellW;
-                const sy = y + op.rect.y * cellH;
-                DrawRectangle(cast(int) sx, cast(int) sy, op.rect.width * cellW, cellH, rl(pageBg));
-                SmallBuffer!HighlightEvent sig;
-                highlightSignature(cache, node.text, sig);
-                drawStyledRuns(fonts, buf, node.text, sig[], sx, sy, theme, pageFg);
-                break;
-            }
-
-    return frames[tree.root].rect.height;
 }
 
 /// The floating hover popup: a bordered box with the re-highlighted type
