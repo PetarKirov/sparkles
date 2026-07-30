@@ -1488,29 +1488,112 @@ TipData tipForTemplate(TemplateExp te)
     return TipData(kind, tip);
 }
 
-const(char)* docForSymbol(Dsymbol var)
+/**
+The doc comment that belongs to `var`, following the two indirections that
+separate a symbol from the declaration its documentation was written on
+(spec `DOC4`).
+
+$(UL
+$(LI $(B Template desugaring.) An eponymous member's comment lives on its
+    `TemplateDeclaration`, and Phobos routinely nests one inside another —
+    `template map(fun...) { auto map(Range)(Range r) … }` — so the instance a
+    call site resolves to is two hops from the documented declaration.)
+$(LI $(B Aliases.) A selective import (`import std.algorithm : map;`) makes an
+    `AliasDeclaration` that carries no comment of its own; the docs are the
+    target's.)
+)
+
+Only these links are walked — never a plain enclosing scope, which would hand
+a local variable the docs of the function it sits in.
+*/
+string docForSymbol(Dsymbol var)
 {
-    if (var.comment)
-        return var.comment;
-    if (var.parent)
+    // Bounded: alias chains and nested eponymous templates are both short in
+    // practice, and a cycle here would wedge the whole analysis.
+    enum maxHops = 8;
+
+    // Collected innermost-first as the walk climbs, emitted outermost-first.
+    // A member and its template each hold half of the documentation — Phobos
+    // keeps `map`'s prose on `template map(fun...)` and its `Params:`/
+    // `Returns:` on the eponymous `map(Range)` inside — and
+    // `dmd.doc.emitComment` emits both, so stopping at the first comment found
+    // showed half the docs.
+    const(char)[][] found;
+
+    static string joinOutermostFirst(const(char)[][] parts)
     {
-        const(char)* docForTemplateDeclaration(Dsymbol s)
-        {
-            if (s)
-                if (auto td = s.isTemplateDeclaration())
-                    if (td.comment && td.onemember)
-                        return td.comment;
+        if (parts.length == 0)
             return null;
+        string joined;
+        foreach_reverse (p; parts)
+        {
+            if (joined.length)
+                joined ~= "\n\n";
+            joined ~= p.idup;
+        }
+        return joined;
+    }
+
+    static const(char)[] commentOf(Dsymbol s)
+        => s !is null && s.comment ? s.comment[0 .. strlen(s.comment)] : null;
+
+    // `onemember` is upstream's guard against handing an arbitrary member its
+    // template's docs. It is null whenever the body holds anything else —
+    // Phobos's `template map(fun...)` has a local `import` — so an eponymous
+    // member (same identifier as the template) qualifies too: the comment was
+    // written for exactly that declaration.
+    static bool documents(TemplateDeclaration td, Dsymbol from)
+        => td !is null && td.comment !is null &&
+            (td.onemember !is null ||
+                (from !is null && from.ident !is null && from.ident is td.ident));
+
+    auto sym = var;
+    if (auto c = commentOf(sym))
+        found ~= c;
+
+    foreach (_; 0 .. maxHops)
+    {
+        if (sym is null)
+            break;
+
+        if (auto ad = sym.isAliasDeclaration())
+        {
+            auto target = ad.aliassym !is null ? ad.aliassym : ad.toAlias();
+            if (target !is null && target !is sym)
+            {
+                sym = target;
+                if (auto c = commentOf(sym))
+                    found ~= c;
+                continue;
+            }
         }
 
-        if (auto doc = docForTemplateDeclaration(var.parent))
-            return doc;
+        auto parent = sym.parent;
+        if (parent is null)
+            break;
 
-        if (auto ti = var.parent.isTemplateInstance())
-            if (auto doc = docForTemplateDeclaration(ti.tempdecl))
-                return doc;
+        // Only template links are followed. A plain enclosing scope would
+        // hand a local variable the docs of the function it sits in.
+        if (auto td = parent.isTemplateDeclaration())
+        {
+            if (documents(td, sym))
+                found ~= commentOf(td);
+            sym = td;
+            continue;
+        }
+        if (auto ti = parent.isTemplateInstance())
+        {
+            auto td = ti.tempdecl !is null ? ti.tempdecl.isTemplateDeclaration() : null;
+            if (documents(td, sym))
+                found ~= commentOf(td);
+            // The eponymous member of a nested template: step to the inner
+            // declaration and let the next hop look at *its* template.
+            sym = td !is null ? cast(Dsymbol) td : cast(Dsymbol) ti;
+            continue;
+        }
+        break;
     }
-    return null;
+    return joinOutermostFirst(found);
 }
 
 string rootObjectToString(RootObject obj)
@@ -1542,7 +1625,7 @@ string rootObjectToString(RootObject obj)
 TipData tipDataForObject(RootObject obj)
 {
     TipData tip;
-    const(char)* doc;
+    string doc;
     Dsymbol docSym;
 
     if (auto t = obj.isType())
@@ -1625,8 +1708,8 @@ TipData tipDataForObject(RootObject obj)
     }
     // append doc; the symbol is kept even without one (the facade resolves a
     // parameter's docs from its enclosing function's Params: section)
-    if (doc)
-        tip.doc = cast(string)doc[0..strlen(doc)];
+    if (doc.length)
+        tip.doc = doc;
     if (docSym !is null)
         tip.symbol = docSym;
     return tip;
@@ -2500,7 +2583,7 @@ extern(C++) class TipCollectVisitor : IdentifierTypesVisitor
 
         auto tip = tipForDeclaration(var);
         if (auto doc = docForSymbol(var))
-            tip.doc = cast(string)doc[0..strlen(doc)];
+            tip.doc = doc;
         tip.symbol = var;
         declTips[cast(void*) var] = tip;
         return tip;
@@ -3664,13 +3747,14 @@ version (unittest)
 @("visitor.findTip.druntimeSymbols")
 @system unittest
 {
-    // Resolving out of the analyzed file and into druntime. (Upstream matches
-    // these by prefix because Visual D analyzes against a Phobos whose
-    // `object.d` is ddoc-commented; ours resolves the same symbols exactly.)
+    // Resolving out of the analyzed file and into druntime. Matched by prefix,
+    // like upstream: `object.d` is ddoc-commented and imports now retain their
+    // comments (`DOC4`), so each tip carries druntime's documentation after
+    // the signature.
     withAnalysis(classSource, (m) {
-        checkTip(m, 12, 20, "(class) `object.Exception`");
-        checkTip(m, 12, 30, "(local variable) `object.Exception e`");
-        checkTip(m, 12, 46, "(field) `string object.Throwable.msg`");
+        checkTip(m, 12, 20, "(class) `object.Exception`...");
+        checkTip(m, 12, 30, "(local variable) `object.Exception e`...");
+        checkTip(m, 12, 46, "(field) `string object.Throwable.msg`...");
     });
 }
 
@@ -3690,17 +3774,54 @@ version (unittest)
 @("visitor.findTip.importedPackageAndModule")
 @system unittest
 {
+    // Prefix matches from the module down: `core.cpuid` and the symbols a
+    // selective import aliases are all documented in druntime, and `DOC4`
+    // surfaces those comments on the hover.
     withAnalysis(enumSource, (m) {
         checkTip(m, 7, 16, "(package) `core`");
-        checkTip(m, 7, 21, "(module) `core.cpuid`");
+        checkTip(m, 7, 21, "(module) `core.cpuid`...");
         checkTip(m, 7, 29, "(alias) `test.cpu_vendor = string core.cpuid.vendor()"
-            ~ " pure nothrow @nogc @property @trusted`");
+            ~ " pure nothrow @nogc @property @trusted`...");
         checkTip(m, 7, 42, "(alias) `test.cpu_vendor = string core.cpuid.vendor()"
-            ~ " pure nothrow @nogc @property @trusted`");
+            ~ " pure nothrow @nogc @property @trusted`...");
         checkTip(m, 7, 50, "(alias) `test.processor = string core.cpuid.processor()"
-            ~ " pure nothrow @nogc @property @trusted`");
+            ~ " pure nothrow @nogc @property @trusted`...");
         checkTip(m, 10, 20, "`string core.cpuid.vendor() pure nothrow @nogc"
-            ~ " @property @trusted`");
+            ~ " @property @trusted`...");
+    });
+}
+
+@("visitor.docForSymbol.importedSymbolsCarryTheirDocs")
+@system unittest
+{
+    // `DOC4`: DMD loads imports with `doDocComment = 0`, which drops every
+    // comment outside the root module — `Analyzer` overrides that. Each of
+    // these positions used to answer with a signature and nothing else.
+    import std.algorithm.searching : canFind;
+
+    enum src = q{
+        import std.algorithm.iteration : map;         // Line 2
+        auto squares(int[] xs)
+        {
+            return xs.map!(x => x * x);               // Line 5
+        }
+    };
+
+    withAnalysis(src, (m) {
+        // the module of a plain import, the selectively-imported name, and
+        // the call site that instantiates it
+        assert(m.tipAt(2, 30).doc.canFind("iteration"), "module ddoc");
+
+        const sel = m.tipAt(2, 42);
+        assert(sel.doc.canFind("homonym function"), "selective import ddoc");
+
+        // The call site resolves to the eponymous member *inside*
+        // `template map(fun...)`: the prose lives on the template, the
+        // `Params:`/`Returns:` on the member, and both belong on the hover.
+        const call = m.tipAt(5, 23);
+        assert(call.doc.canFind("homonym function"), "template prose at the call site");
+        assert(call.tags.canFind!(t => t.length > 1 && t[0] == "returns"),
+            "the member's Returns: section");
     });
 }
 

@@ -93,18 +93,22 @@ struct Analyzer
 
         _analyzed = true;
 
-        if (virtualModules.length)
+        // Always installed, virtual modules or not: the handler's fallback
+        // loads imports with `doDocComment = 1`, where DMD's own default is 0
+        // (`Module.load`). That flag is what makes the lexer attach doc
+        // comments to declarations, so without it *nothing* outside the root
+        // module has a `.comment` — hovering `import std.stdio;`, a selective
+        // import, or a Phobos call site showed a type and no documentation
+        // (spec `DOC4`).
+        auto provided = virtualModules.dup;
+        Module.loadModuleHandler = (const ref loc, packages, ident)
         {
-            auto provided = virtualModules.dup;
-            Module.loadModuleHandler = (const ref loc, packages, ident)
-            {
-                if (packages.length == 0)
-                    foreach (vm; provided)
-                        if (moduleBaseName(vm.filename) == ident.toString)
-                            return parseModule(vm.filename, vm.source).module_;
-                return Module.loadFromFile(loc, packages, ident, 1, 0);
-            };
-        }
+            if (packages.length == 0)
+                foreach (vm; provided)
+                    if (moduleBaseName(vm.filename) == ident.toString)
+                        return parseModule(vm.filename, vm.source).module_;
+            return Module.loadFromFile(loc, packages, ident, 1, 0);
+        };
 
         auto parsed = parseModule(filename, source);
         // parseModule stops short of Module.resolvePackage, leaving the

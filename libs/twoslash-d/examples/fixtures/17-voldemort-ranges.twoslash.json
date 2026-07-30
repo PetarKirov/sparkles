@@ -21,6 +21,7 @@
         },
         {
             "character": 11,
+            "docs": "Ditto",
             "length": 4,
             "line": 3,
             "start": 87,
@@ -37,17 +38,59 @@
         },
         {
             "character": 19,
+            "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call ``map`!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.",
             "length": 3,
             "line": 3,
             "start": 95,
+            "tags": [
+                [
+                    "param",
+                    "fun one or more transformation functions"
+                ],
+                [
+                    "see",
+                    "[Map (higher-order function)](http://en.wikipedia.org/wiki/Map_(higher-order_function))"
+                ],
+                [
+                    "param",
+                    "r an input range"
+                ],
+                [
+                    "returns",
+                    "A range with each fun applied to all the elements. If there is more than one\n        fun, the element type will be `Tuple` containing one element for each fun."
+                ]
+            ],
             "text": "sample.evenSquares.MapResult!(__lambda_L7_C25, Result) sample.evenSquares.map!(std.range.iota!(int, int).Result)(std.range.iota!(int, int).Result r) pure nothrow @nogc @safe",
             "type": "hover"
         },
         {
             "character": 36,
+            "docs": "``filter`!(predicate)(`range`)` returns a new `range` containing only elements `x` in ``range`` for\nwhich `predicate(x)` returns `true`.\n\nThe predicate is passed to `unaryFun`, and can be either a string, or\nany callable that can be executed via `pred(element)`.",
             "length": 6,
             "line": 3,
             "start": 112,
+            "tags": [
+                [
+                    "param",
+                    "predicate Function to apply to each element of `range`"
+                ],
+                [
+                    "returns",
+                    "An input `range` that contains the filtered elements. If ``range`` is at least a forward `range`, the return value of ``filter``\n    will also be a forward `range`."
+                ],
+                [
+                    "see",
+                    "[Filter (higher-order function)](http://en.wikipedia.org/wiki/Filter_(higher-order_function)),\n    `filterBidirectional`"
+                ],
+                [
+                    "param",
+                    "range An input `range` of elements"
+                ],
+                [
+                    "returns",
+                    "A `range` containing only elements `x` in ``range`` for\n        which `predicate(x)` returns `true`."
+                ]
+            ],
             "text": "sample.evenSquares.FilterResult!(__lambda_L7_C45, MapResult!(__lambda_L7_C25, Result)) sample.evenSquares.filter!(sample.evenSquares.MapResult!(__lambda_L7_C25, Result))(sample.evenSquares.MapResult!(__lambda_L7_C25, Result) range) pure nothrow @nogc @safe",
             "type": "hover"
         },

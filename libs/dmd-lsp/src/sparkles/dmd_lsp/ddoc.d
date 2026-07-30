@@ -53,6 +53,12 @@ struct DdocRendered
 private enum char rowSep = '\x03';
 private enum char idSep = '\x02';
 
+/// Brackets the `MREF` recovery macro emits around a module path, so
+/// `joinModulePaths` can splice `std, algorithm` back into `std.algorithm`
+/// (the macro engine has no way to join its arguments).
+private enum char pathOpen = '\x05';
+private enum char pathClose = '\x06';
+
 /**
 Renders `sym`'s doc comment. `sc` may be null — a global scope for the
 symbol's module is created on demand (analysis must have run; call inside a
@@ -352,6 +358,10 @@ private void defineMacros(ref MacroTable t) @safe pure nothrow
     t.define("TD", " $0 |");
     t.define("TH_ALIGN", " $+ |");
     t.define("TD_ALIGN", " $+ |");
+    // dlang.org's no-wrap cells, used by every Phobos module summary table.
+    t.define("TDNW", " $0 |");
+    t.define("THNW", " $0 |");
+    t.define("TDNW2", " $0 |");
     t.define("DL", "\n$0\n");
     t.define("DT", "\n**$0**\n");
     t.define("DD", "\n: $0\n");
@@ -376,11 +386,24 @@ private void defineMacros(ref MacroTable t) @safe pure nothrow
 
     // --- dlang.org shim vocabulary (never let real-world docs go blank)
     t.define("LREF", "`$0`");
-    t.define("MREF", "`$0`");
+    // A module path, one package per argument: marked for `joinModulePaths`,
+    // since a macro body cannot join `std, algorithm` into `std.algorithm`.
+    t.define("MREF", pathOpen ~ "$0" ~ pathClose);
     t.define("REF", "`$1`");
     t.define("REF1", "`$1`");
     t.define("MREF_ALTTEXT", "$1");
     t.define("LREF_ALTTEXT", "$1");
+    t.define("REF_ALTTEXT", "$1");
+
+    // Page furniture that carries no documentation: dlang.org's quick-index
+    // script, its wrapper div, and the summary table's caption argument.
+    // Left undefined these dump JavaScript and a CSS class name into the
+    // first line of every Phobos module tooltip.
+    t.define("SCRIPT", "");
+    t.define("DIVC", "$+");
+    t.define("DIVID", "$+");
+    t.define("BOOKTABLE", "\n$+\n");
+    t.define("T2", "| $1 | $+ |\n");
     t.define("HTTP", "[$+](http://$1)");
     t.define("HTTPS", "[$+](https://$1)");
     t.define("WEB", "[$+](https://$1)");
@@ -411,7 +434,7 @@ private string cleanupMarkdown(string s) @safe pure
     import std.array : array, join;
     import std.string : stripRight;
 
-    s = stripSentinels(s);
+    s = joinModulePaths(stripSentinels(s));
     auto lines = s.splitter('\n').map!(l => l.stripRight("\r").stripRight).array;
     // Fold runs of blank lines; drop the blank between consecutive list
     // items (the LI macro's newlines would render every list loose) and the
@@ -438,6 +461,59 @@ private string cleanupMarkdown(string s) @safe pure
 
 /// Removes the macro expander's 0xFF escape sentinels — each 0xFF and the
 /// byte after it — exactly as `gendocfile`'s output pass does.
+/**
+Rewrites each `MREF`-marked span into a dotted module path in code ticks:
+`$(MREF std, algorithm, iteration)` reaches here as the argument list
+`std, algorithm, iteration` between `pathOpen`/`pathClose` and leaves as
+`` `std.algorithm.iteration` ``. Unterminated markers are dropped rather than
+shown — a half-expanded macro is never useful text.
+*/
+private string joinModulePaths(string s) @safe pure
+{
+    import std.algorithm.iteration : joiner, map, splitter;
+    import std.array : appender;
+    import std.string : strip;
+
+    if (s.length == 0)
+        return s;
+
+    auto o = appender!string;
+    size_t i = 0;
+    while (i < s.length)
+    {
+        if (s[i] != pathOpen)
+        {
+            o ~= s[i];
+            i++;
+            continue;
+        }
+
+        size_t end = i + 1;
+        while (end < s.length && s[end] != pathClose)
+            end++;
+        if (end >= s.length)
+            break; // unterminated: drop the marker and everything after it
+
+        auto parts = s[i + 1 .. end].splitter(',').map!strip;
+        o ~= '`';
+        o ~= parts.joiner(".");
+        o ~= '`';
+        i = end + 1;
+    }
+    return o[];
+}
+
+@("dmd_lsp.ddoc.joinModulePaths")
+@safe pure unittest
+{
+    assert(joinModulePaths("see " ~ pathOpen ~ "std, algorithm" ~ pathClose ~ ".")
+        == "see `std.algorithm`.");
+    assert(joinModulePaths(pathOpen ~ "std, algorithm, iteration" ~ pathClose)
+        == "`std.algorithm.iteration`");
+    assert(joinModulePaths("plain text") == "plain text");
+    assert(joinModulePaths("half " ~ pathOpen ~ "std, algorithm") == "half ");
+}
+
 private string stripSentinels(string s) @safe pure nothrow
 {
     auto o = new char[](0);

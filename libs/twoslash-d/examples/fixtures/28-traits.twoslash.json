@@ -105,6 +105,7 @@
         },
         {
             "character": 15,
+            "docs": "Get the type of the return value from a function,\n a pointer to function, a delegate, a struct\n with an opCall, a pointer to a struct with an opCall,\n or a class with an `opCall`. Please note that ref\n is not part of a type, but the attribute of the function\n (see template `functionAttributes`).\n\nTo reduce template instantiations, consider instead using\n `typeof(() { return func(args); } ())` if the argument types are known or\n `static if (is(typeof(func) Ret == return))` if only that basic test is needed.",
             "length": 10,
             "line": 10,
             "start": 207,
