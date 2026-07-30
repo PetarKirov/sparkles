@@ -321,11 +321,14 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     line(code[start .. $]);
             }
             const body_ = b.container(WidgetKind.column, rows);
+            // Padded on every side so a cell backend's box-glyph perimeter
+            // never overwrites content; rounded corners (╭…╯ on cells).
             Widget panel = Widget(kind: WidgetKind.panel, children: [body_],
                 slot: Slot.surface, paintBackground: true, stretch: true,
-                padding: Insets.symmetric(0, 1), hitId: opt.hitId,
+                padding: Insets(1, 2, 1, 2), hitId: opt.hitId,
                 decoration: Decoration(borderWidth: Insets.all(1),
-                    borderStyle: BorderStyle.solid, borderSlot: Slot.border));
+                    borderStyle: BorderStyle.solid, borderSlot: Slot.border,
+                    borderRadius: 4));
             if (!opt.theme.present)
                 return b.add(panel);
 

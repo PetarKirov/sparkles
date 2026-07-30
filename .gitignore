@@ -76,4 +76,5 @@ bazel-*
 # Compiled output of the single-file QA capture tool (dub run --single)
 /apps/hue/tools/capture-modes
 /apps/hue/tools/capture-goldens
+/apps/hue/tools/preview_widget
 /apps/hue/tools/dub.selections.json
