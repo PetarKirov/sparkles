@@ -1107,6 +1107,20 @@ unittest
     write(buildPath(root, "keep.d"), "int k;\n");
     write(buildPath(root, "noise.log"), "");
     write(buildPath(root, "build", "keep.log"), "");
+    // A REAL repo whose .gitignore matches the hand-seeded map below:
+    // rebuild() kicks the async status refresh, and when it lands mid-test
+    // it must CONFIRM the seeded state, not clobber it (a non-repo root
+    // yields an empty map and made this test flaky).
+    {
+        import std.process : execute;
+
+        write(buildPath(root, ".gitignore"), "build/\n");
+        try
+            execute(["git", "init", "-q", root]);
+        catch (Exception)
+        {
+        }
+    }
 
     static immutable Theme dark = builtinDark;
     ExplorerTui x;
