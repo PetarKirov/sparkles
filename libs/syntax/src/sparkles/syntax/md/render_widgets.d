@@ -365,23 +365,81 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
 
         case table:
         {
-            // Slice 1: rows as gutter-separated text (the track-sizer view —
-            // LAY9 — replaces this; totality first).
-            auto rows = new uint[](0);
+            import sparkles.ui.geometry : cellsOf;
+            import sparkles.ui.tracks : resolveTracks, TrackSpec;
+            import sparkles.ui.widget : Alignment;
+
+            // The LAY9 track sizer: measure every cell, resolve auto tracks,
+            // lay each row as fixed-width aligned cells. The delimiter row's
+            // ColAlign drives per-column alignment; the header row is bold.
+            size_t cols;
             foreach (ref const row; blk.children)
-            {
-                TextSpan[] spans;
+                if (row.children.length > cols)
+                    cols = row.children.length;
+            if (cols == 0)
+                return b.container(WidgetKind.column, null);
+
+            // Cell spans (built once) + per-column content maxima.
+            auto cellSpans = new TextSpan[][](blk.children.length * cols);
+            auto content = new int[](cols);
+            foreach (ri, ref const row; blk.children)
                 foreach (ci, ref const cell; row.children)
                 {
-                    if (ci)
-                        spans ~= TextSpan("  ", opt.proseSlot, opt.baseStyle);
-                    inlinesToSpans(cell.inlines, src, opt.baseStyle,
-                        opt.proseSlot, spans,
-                        opt.theme.present ? &opt.theme : null);
+                    TextSpan[] spans;
+                    TextStyle style = opt.baseStyle;
+                    style.bold = ri == 0; // the header row
+                    inlinesToSpans(cell.inlines, src, style, opt.proseSlot,
+                        spans, opt.theme.present ? &opt.theme : null);
+                    cellSpans[ri * cols + ci] = spans;
+                    int w;
+                    foreach (ref s; spans)
+                        w += cast(int) cellsOf(s.text);
+                    if (w > content[ci])
+                        content[ci] = w;
                 }
-                rows ~= proseRow(b, spans, opt);
+
+            auto tracks = new TrackSpec[](cols);
+            tracks[] = TrackSpec.auto_;
+            const widths = resolveTracks(tracks, content, 0, 2);
+
+            auto rows = new uint[](0);
+            foreach (ri; 0 .. blk.children.length)
+            {
+                auto cells = new uint[](0);
+                foreach (ci; 0 .. cols)
+                {
+                    auto spans = cellSpans[ri * cols + ci];
+                    if (!spans.length)
+                        spans = [TextSpan(" ", opt.proseSlot, opt.baseStyle)];
+                    Widget cellW = Widget(kind: WidgetKind.rich, spans: spans,
+                        hitId: opt.hitId, slot: opt.proseSlot,
+                        textStyle: opt.baseStyle);
+                    const a = ci < blk.aligns.length ? blk.aligns[ci]
+                        : ColAlign.none;
+                    // Alignment via a fixed-width single-child column (LAY8).
+                    const inner = b.add(cellW);
+                    Widget colW = Widget(kind: WidgetKind.column,
+                        children: [inner], width: SizeSpec.fixed(widths[ci]),
+                        alignX: a == ColAlign.right ? Alignment.end
+                            : a == ColAlign.center ? Alignment.center
+                            : Alignment.start);
+                    cells ~= b.add(colW);
+                }
+                rows ~= b.container(WidgetKind.row, cells, gap: 2);
             }
-            return b.container(WidgetKind.column, rows);
+            const grid = b.container(WidgetKind.column, rows);
+            // A perimeter border panel (inner grid rules are a later fidelity
+            // step — the cell backends draw full boxes, not single sides).
+            Widget panel = Widget(kind: WidgetKind.panel, children: [grid],
+                padding: Insets.all(1), hitId: opt.hitId,
+                decoration: Decoration(borderWidth: Insets.all(1),
+                    borderStyle: BorderStyle.solid, borderSlot: Slot.border));
+            if (opt.theme.present)
+            {
+                panel.borderOverride = opt.theme.ruleFg;
+                panel.hasBorderOverride = true;
+            }
+            return b.add(panel);
         }
 
         case listItem, tableRow, tableCell:
@@ -987,6 +1045,49 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
             sawMarkerLeak = true; // the stripped marker must NOT render
     }
     assert(sawTitle && sawBody && !sawMarkerLeak);
+}
+
+@("md.render_widgets.tableTracksAndAlignment")
+@safe unittest
+{
+    import sparkles.ui.layout : layout;
+
+    // | name | n |   with n right-aligned; "worker" is the widest name.
+    const src = "name n worker 10 x 5";
+    static MdBlock cell(size_t a, size_t b2)
+        => MdBlock(kind: MdBlockKind.tableCell,
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(a, b2))]);
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.table,
+            aligns: [ColAlign.left, ColAlign.right], children: [
+                MdBlock(kind: MdBlockKind.tableRow, children: [cell(0, 4), cell(5, 6)]),
+                MdBlock(kind: MdBlockKind.tableRow, children: [cell(7, 13), cell(14, 16)]),
+                MdBlock(kind: MdBlockKind.tableRow, children: [cell(17, 18), cell(19, 20)]),
+            ]),
+    ]), src);
+
+    auto tree = viewMarkdown(doc);
+    auto frames = layout(tree);
+    auto ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0x1e, 0x1e, 0x1e));
+
+    // Track widths: col0 = "worker" (6), col1 = "10" (2). The right-aligned
+    // "5" sits flush right in its 2-cell track; rows share column origins.
+    import sparkles.base.term_style : TextAttr;
+
+    int col5x = -1, col10x = -1;
+    bool headerBold;
+    foreach (ref op; ops)
+    {
+        if (op.text == "5")
+            col5x = op.rect.x;
+        if (op.text == "10")
+            col10x = op.rect.x;
+        if (op.text == "name" && (op.visual.styleBits & TextAttr.bold.bits))
+            headerBold = true;
+    }
+    assert(headerBold);
+    assert(col10x >= 0 && col5x == col10x + 1); // "5" right-aligned over "10"
 }
 
 @("md.render_widgets.depthBudgetDegradesToPlainText")
