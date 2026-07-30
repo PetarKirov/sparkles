@@ -49,6 +49,10 @@ struct CliParams
     bool serve;
 }
 
+// `dub test` builds this package as a library and takes its `main` from the
+// generated `dub_test_root` (see the unittest configuration in dub.sdl), so
+// the CLI entry point steps aside for that build.
+version (unittest) {} else
 int main(string[] args)
 {
     auto argv = args;
