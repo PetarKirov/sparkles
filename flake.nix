@@ -56,6 +56,7 @@
         inputs.git-hooks-nix.flakeModule
         ./nix/d-toolchain.nix
         ./nix/packages/all.nix
+        ./nix/packages/android
         ./nix/packages/build-d-wasm-module.nix
         ./nix/packages/build-sparkles-app.nix
         ./nix/packages/default.nix
