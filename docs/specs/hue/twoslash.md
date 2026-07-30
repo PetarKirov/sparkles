@@ -201,6 +201,14 @@ in **behind the proven node-model seam** (no renderer change).
 > below as the requirement of record** (`DMD1` → `COR1`, `DMD2`/`DMD3` →
 > `BLD*`/`TIP*`, `DMD4` → its non-goals). The rows are kept for traceability
 > from the hue surface.
+>
+> Opening a **real `.d` file** in hue — types and doc comments over a project's
+> own source, rather than over a prepared sample — is specified there too, as
+> [`PRJ12`–`PRJ16`](../dmd-lsp/project.md#viewer-surface-prj12-prj16). Note the
+> shape it forces: hue must not link `sparkles:dmd-lsp`, because
+> DMD-as-a-library allows one analysis per process and a viewer is long-lived,
+> so live analysis is a `twoslash-extract` subprocess feeding the overlay that
+> already exists.
 
 | ID   | Requirement                                                                                                                                                                                                                                 | Status                 | Traces to                                                 |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------- |
