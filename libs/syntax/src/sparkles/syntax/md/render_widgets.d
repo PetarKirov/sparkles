@@ -188,7 +188,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         s.fg = accent;
                         s.hasFg = true;
                     }
-                auto w = richWidget(spans, opt);
+                auto w = richWidget(spans, opt, leaderHang(spans[0]));
                 w.stretch = true;
                 w.paintBackground = true;
                 w.bgOverride = mix(opt.theme.pageBg, accent, 0.12);
@@ -265,7 +265,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     : (item.children.length ? item.children[0].inlines : null);
                 inlinesToSpans(inls, src, opt.baseStyle, opt.proseSlot, spans,
                     opt.theme.present ? &opt.theme : null);
-                rows ~= proseRow(b, spans, opt);
+                rows ~= proseRow(b, spans, opt, leaderHang(leader));
                 // Nested blocks (a sub-list, a nested paragraph) after the first.
                 bool first = true;
                 foreach (ref const c; item.children)
@@ -452,21 +452,33 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
     }
 }
 
-// One wrapping rich run with the view's width maximum (LAY10).
-private Widget richWidget(TextSpan[] spans, MdViewOptions opt)
+// One wrapping rich run with the view's width maximum (LAY10). `hang` > 0
+// indents wrapped continuations (a leader's width — bullet, heading icon,
+// callout icon — so they align under the text, not under the marker).
+private Widget richWidget(TextSpan[] spans, MdViewOptions opt, int hang = 0)
 {
     if (!spans.length)
         spans = [TextSpan(" ", opt.proseSlot, opt.baseStyle)];
     Widget w = Widget(kind: WidgetKind.rich, spans: spans, hitId: opt.hitId,
-        slot: opt.proseSlot, wrap: TextWrap.greedy, textStyle: opt.baseStyle);
+        slot: opt.proseSlot, wrap: TextWrap.greedy, textStyle: opt.baseStyle,
+        hangIndent: hang);
     if (opt.maxWidth > 0)
         w.width.max = opt.maxWidth;
     return w;
 }
 
 /// ditto
-private uint proseRow(ref Builder b, TextSpan[] spans, MdViewOptions opt)
-    => b.add(richWidget(spans, opt));
+private uint proseRow(ref Builder b, TextSpan[] spans, MdViewOptions opt,
+    int hang = 0)
+    => b.add(richWidget(spans, opt, hang));
+
+// The hang for a leader span: its own column width.
+private int leaderHang(in TextSpan leader) @safe
+{
+    import sparkles.ui.geometry : cellsOf;
+
+    return cast(int) cellsOf(leader.text);
+}
 
 private TextStyle codeStyle(MdViewOptions opt)
 {

@@ -87,6 +87,9 @@ struct Widget
     /// How the `text` run breaks into lines when its allocated width is
     /// narrower than its content (`none` keeps it a single line).
     TextWrap wrap;
+    /// Wrapped continuation lines indent by this many cells (a leader's hang —
+    /// list items align under their text, not under the bullet).
+    int hangIndent;
     dchar glyph;             /// `glyph` payload
     LineStyle lineStyle;     /// `line` stroke style
     Point lineTo;            /// `line` end, relative to the node origin

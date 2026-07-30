@@ -106,9 +106,9 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
 
             const inner = rect.deflate(node.padding);
 
-            void emitSpanRow(scope const TextSpan[] spans, int y)
+            void emitSpanRow(scope const TextSpan[] spans, int y, int xOff = 0)
             {
-                int x = inner.x;
+                int x = inner.x + xOff;
                 foreach (ref span; spans)
                 {
                     const slot = span.slot == Slot.inherit ? node.slot : span.slot;
@@ -132,7 +132,8 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
 
             if (frames[idx].spanLines.length)
                 foreach (li, line; frames[idx].spanLines)
-                    emitSpanRow(line, inner.y + cast(int) li);
+                    emitSpanRow(line, inner.y + cast(int) li,
+                        li ? node.hangIndent : 0);
             else
                 emitSpanRow(node.spans, inner.y);
             break;
