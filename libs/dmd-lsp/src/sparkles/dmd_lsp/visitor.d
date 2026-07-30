@@ -34,6 +34,13 @@ $(LIST
         is untouched).
     * `findTipData` has no upstream counterpart: it is `findTip`'s query with
         the structured `TipData` returned instead of the rendered string.
+    * `IdentifierTypesVisitor` was lifted out of `findIdentifierTypes` to
+        module scope, and its recording sites funnel through one overridable
+        `record` seam that also carries the object a tip query would resolve
+        at that position. The base class ignores it, so `findIdentifierTypes`
+        is unchanged; $(REF collectTips, sparkles,dmd_lsp,visitor) — also not
+        upstream — overrides the seam to answer "tip every identifier" in one
+        walk instead of one walk per identifier.
 )
 
 Everything else is ported, including the three functions that only serve
@@ -1187,6 +1194,10 @@ extern(C++) class FindTipVisitor : FindASTVisitor
 {
     string tip;
 
+    /// Not upstream: `findTipData` wants the node, not the rendering, and
+    /// `tipForObject` is the expensive half. Clearing this skips it.
+    bool renderTip = true;
+
     alias visit = FindASTVisitor.visit;
 
     this(const(char*) filename, int startLine, int startIndex, int endLine, int endIndex)
@@ -1212,7 +1223,8 @@ extern(C++) class FindTipVisitor : FindASTVisitor
         found = obj;
         if (obj)
         {
-            tip = tipForObject(obj);
+            if (renderTip)
+                tip = tipForObject(obj);
             stop = true;
         }
     }
@@ -1661,6 +1673,7 @@ TipData findTipData(Module mod, int startLine, int startIndex, int endLine, int 
 
     auto filename = locFilename(mod);
     scope FindTipVisitor ftv = new FindTipVisitor(filename, startLine, startIndex, endLine, endIndex);
+    ftv.renderTip = false; // the string form is discarded here; don't build it
     mod.accept(ftv);
 
     return ftv.found ? tipDataForObject(ftv.found) : TipData.init;
@@ -1799,351 +1812,675 @@ struct IdTypePos
 
 alias FindIdentifierTypesResult = IdTypePos[][const(char)[]];
 
-FindIdentifierTypesResult findIdentifierTypes(Module mod)
+/**
+The identifier-classification walk behind `findIdentifierTypes`.
+
+$(B Deviation:) upstream nests this class inside `findIdentifierTypes`. It is
+lifted to module scope here so `TipCollectVisitor` can derive from it, and its
+~25 recording sites were funnelled through one overridable seam, `record`,
+which each site now also hands the $(I object) $(REF FindASTVisitor,
+sparkles,dmd_lsp,visitor) would have resolved at that position (`null` where
+there is no counterpart). The base class ignores that object and behaves
+exactly as upstream, so `findIdentifierTypes`' result is unchanged.
+*/
+extern(C++) class IdentifierTypesVisitor : ASTVisitor
 {
-    extern(C++) class IdentifierTypesVisitor : ASTVisitor
+    FindIdentifierTypesResult idTypes;
+    const(char)* filename;
+
+    alias visit = ASTVisitor.visit;
+
+    extern(D)
+    final void addTypePos(const(char)[] ident, int type, int line, int col)
     {
-        FindIdentifierTypesResult idTypes;
-        const(char)* filename;
-
-        alias visit = ASTVisitor.visit;
-
-        extern(D)
-        final void addTypePos(const(char)[] ident, int type, int line, int col)
+        if (line <= 0)
+            return; // not visible
+        if (auto pid = ident in idTypes)
         {
-            if (line <= 0)
-                return; // not visible
-            if (auto pid = ident in idTypes)
+            // merge sorted
+            import std.range;
+            auto a = assumeSorted!"a.line < b.line || (a.line == b.line && a.col < b.col)"(*pid);
+            auto itp = IdTypePos(type, line, col);
+            auto sections = a.trisect(itp);
+            if (!sections[1].empty)
+            {} // do not overwrite identical location
+            else if (!sections[2].empty && sections[2][0].type == type) // upperbound
+                sections[2][0] = itp; // extend lowest location
+            else if (sections[0].empty || sections[0][$-1].type != type) // lowerbound
+                // insert new entry if last lower location is different type
+                *pid = (*pid)[0..sections[0].length] ~ itp ~ (*pid)[sections[0].length..$];
+        }
+        else
+            idTypes[ident] = [IdTypePos(type, line, col)];
+    }
+
+    /**
+    The one place every recording site funnels through (not upstream).
+
+    `obj` is what a positional tip query at `loc` would have resolved to —
+    see the class docs. The base class records the classification only, which
+    is what upstream does inline at each site.
+    */
+    protected void record(ref const Loc loc, Identifier ident, int type, RootObject obj)
+    {
+        addTypePos(ident.toString(), type, loc.linnum, loc.charnum);
+    }
+
+    void addIdent(ref const Loc loc, Identifier ident, int type, RootObject obj = null)
+    {
+        if (ident && inFile(loc, filename))
+            record(loc, ident, type, obj);
+    }
+
+    void addIdentByType(ref const Loc loc, Identifier ident, Type t, RootObject obj = null)
+    {
+        if (ident && t && inFile(loc, filename))
+        {
+            int type = TypeReferenceKind.Unknown;
+            switch (t.ty)
             {
-                // merge sorted
-                import std.range;
-                auto a = assumeSorted!"a.line < b.line || (a.line == b.line && a.col < b.col)"(*pid);
-                auto itp = IdTypePos(type, line, col);
-                auto sections = a.trisect(itp);
-                if (!sections[1].empty)
-                {} // do not overwrite identical location
-                else if (!sections[2].empty && sections[2][0].type == type) // upperbound
-                    sections[2][0] = itp; // extend lowest location
-                else if (sections[0].empty || sections[0][$-1].type != type) // lowerbound
-                    // insert new entry if last lower location is different type
-                    *pid = (*pid)[0..sections[0].length] ~ itp ~ (*pid)[sections[0].length..$];
+                case Tstruct:   type = TypeReferenceKind.Struct; break;
+                //case Tunion:  type = TypeReferenceKind.Union; break;
+                case Tclass:    type = TypeReferenceKind.Class; break;
+                case Tenum:     type = TypeReferenceKind.Enum; break;
+                default: break;
             }
+            if (type != TypeReferenceKind.Unknown)
+                record(loc, ident, type, obj);
+        }
+    }
+
+    // `mod` (not upstream) is the module the packages qualify, so each package
+    // identifier can carry the `Package` FindASTVisitor.visitPackages resolves
+    // it to — that walk pairs the *last* package with `mod`'s parent and works
+    // outwards, while the recording order stays upstream's (first to last).
+    extern(D) void addPackages(IdentifierAtLoc[] packages, Dsymbol mod = null)
+    {
+        if (packages)
+            for (size_t p; p < packages.length; p++)
+            {
+                Package pkg = mod && mod.parent ? mod.parent.isPackage() : null;
+                foreach (_; p .. packages.length - 1)
+                    pkg = pkg && pkg.parent ? pkg.parent.isPackage() : null;
+                addIdent(packages[p].loc, packages[p].ident, TypeReferenceKind.Package, pkg);
+            }
+    }
+
+    void addDeclaration(ref const Loc loc, Declaration decl, RootObject obj = null)
+    {
+        auto ident = decl.ident;
+        if (auto func = decl.isFuncDeclaration())
+        {
+            if (func.isFuncLiteralDeclaration())
+                return; // ignore generated identifiers
+            auto p = decl.toParent2;
+            if (p && p.isAggregateDeclaration)
+                addIdent(loc, ident, TypeReferenceKind.Method, obj);
             else
-                idTypes[ident] = [IdTypePos(type, line, col)];
+                addIdent(loc, ident, TypeReferenceKind.Function, obj);
         }
-
-        void addIdent(ref const Loc loc, Identifier ident, int type)
+        else if (decl.isParameter())
+            addIdent(loc, ident, TypeReferenceKind.ParameterVariable, obj);
+        else if (decl.isEnumMember())
+            addIdent(loc, ident, TypeReferenceKind.EnumValue, obj);
+        else if (decl.storage_class & STC.manifest)
+            addIdent(loc, ident, TypeReferenceKind.Constant, obj);
+        else if (auto ad = decl.isAliasDeclaration())
         {
-            if (ident && inFile(loc, filename))
-                addTypePos(ident.toString(), type, loc.linnum, loc.charnum);
-        }
-
-        void addIdentByType(ref const Loc loc, Identifier ident, Type t)
-        {
-            if (ident && t && inFile(loc, filename))
-            {
-                int type = TypeReferenceKind.Unknown;
-                switch (t.ty)
-                {
-                    case Tstruct:   type = TypeReferenceKind.Struct; break;
-                    //case Tunion:  type = TypeReferenceKind.Union; break;
-                    case Tclass:    type = TypeReferenceKind.Class; break;
-                    case Tenum:     type = TypeReferenceKind.Enum; break;
-                    default: break;
-                }
-                if (type != TypeReferenceKind.Unknown)
-                    addTypePos(ident.toString(), type, loc.linnum, loc.charnum);
-            }
-        }
-
-        extern(D) void addPackages(IdentifierAtLoc[] packages)
-        {
-            if (packages)
-                for (size_t p; p < packages.length; p++)
-                    addIdent(packages[p].loc, packages[p].ident, TypeReferenceKind.Package);
-        }
-
-        void addDeclaration(ref const Loc loc, Declaration decl)
-        {
-            auto ident = decl.ident;
-            if (auto func = decl.isFuncDeclaration())
-            {
-                if (func.isFuncLiteralDeclaration())
-                    return; // ignore generated identifiers
-                auto p = decl.toParent2;
-                if (p && p.isAggregateDeclaration)
-                    addIdent(loc, ident, TypeReferenceKind.Method);
-                else
-                    addIdent(loc, ident, TypeReferenceKind.Function);
-            }
-            else if (decl.isParameter())
-                addIdent(loc, ident, TypeReferenceKind.ParameterVariable);
-            else if (decl.isEnumMember())
-                addIdent(loc, ident, TypeReferenceKind.EnumValue);
-            else if (decl.storage_class & STC.manifest)
-                addIdent(loc, ident, TypeReferenceKind.Constant);
-            else if (auto ad = decl.isAliasDeclaration())
-            {
-                if (isUnnamedSelectiveImportAlias(ad) && !ad.aliassym && ad.type)
-                    addIdentByType(loc, ident, ad.type);
-                else
-                    addIdent(loc, ident, TypeReferenceKind.Alias);
-            }
-            else if (decl.isField())
-                addIdent(loc, ident, TypeReferenceKind.MemberVariable);
-            else if (!decl.isDataseg() && !decl.isCodeseg())
-                addIdent(loc, ident, TypeReferenceKind.LocalVariable);
-            else if (decl.isThreadlocal())
-                addIdent(loc, ident, TypeReferenceKind.TLSVariable);
-            else if (decl.type && decl.type.isShared())
-                addIdent(loc, ident, TypeReferenceKind.SharedVariable);
+            if (isUnnamedSelectiveImportAlias(ad) && !ad.aliassym && ad.type)
+                addIdentByType(loc, ident, ad.type, obj);
             else
-                addIdent(loc, ident, TypeReferenceKind.GSharedVariable);
+                addIdent(loc, ident, TypeReferenceKind.Alias, obj);
         }
+        else if (decl.isField())
+            addIdent(loc, ident, TypeReferenceKind.MemberVariable, obj);
+        else if (!decl.isDataseg() && !decl.isCodeseg())
+            addIdent(loc, ident, TypeReferenceKind.LocalVariable, obj);
+        else if (decl.isThreadlocal())
+            addIdent(loc, ident, TypeReferenceKind.TLSVariable, obj);
+        else if (decl.type && decl.type.isShared())
+            addIdent(loc, ident, TypeReferenceKind.SharedVariable, obj);
+        else
+            addIdent(loc, ident, TypeReferenceKind.GSharedVariable, obj);
+    }
 
-        override void visit(TypeQualified tid)
+    override void visit(TypeQualified tid)
+    {
+        foreach (i, id; tid.idents)
         {
-            foreach (i, id; tid.idents)
+            RootObject obj = id;
+            if (obj.dyncast() == DYNCAST.identifier)
             {
-                RootObject obj = id;
-                if (obj.dyncast() == DYNCAST.identifier)
-                {
-                    auto ident = cast(Identifier)obj;
-                    if (tid.parentScopes.length > i + 1)
-                        addObject(id.loc, tid.parentScopes[i + 1]);
-                }
+                auto ident = cast(Identifier)obj;
+                if (tid.parentScopes.length > i + 1)
+                    addObject(id.loc, tid.parentScopes[i + 1]);
             }
-            super.visit(tid);
         }
+        super.visit(tid);
+    }
 
-        override void visit(TypeIdentifier tid)
+    override void visit(TypeIdentifier tid)
+    {
+        while (tid.copiedFrom)
         {
-            while (tid.copiedFrom)
-            {
-                if (tid.parentScopes.length > 0)
-                    break;
-                tid = tid.copiedFrom;
-            }
             if (tid.parentScopes.length > 0)
-                addObject(tid.loc, tid.parentScopes[0]);
-            super.visit(tid);
+                break;
+            tid = tid.copiedFrom;
         }
+        if (tid.parentScopes.length > 0)
+            addObject(tid.loc, tid.parentScopes[0]);
+        super.visit(tid);
+    }
 
-        override void visit(TypeInstance tid)
+    override void visit(TypeInstance tid)
+    {
+        if (!tid.tempinst)
+            return;
+        if (tid.parentScopes.length > 0)
+            addObject(tid.loc, tid.parentScopes[0]);
+        super.visit(tid);
+    }
+
+    void addObject(ref const Loc loc, RootObject obj)
+    {
+        if (auto t = obj.isType())
+            visitType(t);
+        else if (auto s = obj.isDsymbol())
         {
-            if (!tid.tempinst)
-                return;
-            if (tid.parentScopes.length > 0)
-                addObject(tid.loc, tid.parentScopes[0]);
-            super.visit(tid);
+            if (auto imp = s.isImport())
+                if (imp.mod)
+                    s = imp.mod;
+            // the tip query resolves the unsubstituted object (and repeats
+            // the Import -> Module step itself), so `obj`, not `s`
+            addSymbol(loc, s, obj);
         }
+        else if (auto e = obj.isExpression())
+            e.accept(this);
+    }
 
-        void addObject(ref const Loc loc, RootObject obj)
+    void addSymbol(ref const Loc loc, Dsymbol sym, RootObject obj = null)
+    {
+        if (auto decl = sym.isDeclaration())
+            addDeclaration(loc, decl, obj);
+        else if (sym.isUnionDeclaration())
+            addIdent(loc, sym.ident, TypeReferenceKind.Union, obj);
+        else if (sym.isStructDeclaration())
+            addIdent(loc, sym.ident, TypeReferenceKind.Struct, obj);
+        else if (sym.isInterfaceDeclaration())
+            addIdent(loc, sym.ident, TypeReferenceKind.Interface, obj);
+        else if (sym.isClassDeclaration())
+            addIdent(loc, sym.ident, TypeReferenceKind.Class, obj);
+        else if (sym.isEnumDeclaration())
+            addIdent(loc, sym.ident, TypeReferenceKind.Enum, obj);
+        else if (sym.isModule())
+            addIdent(loc, sym.ident, TypeReferenceKind.Module, obj);
+        else if (sym.isPackage())
+            addIdent(loc, sym.ident, TypeReferenceKind.Package, obj);
+        else if (sym.isTemplateDeclaration())
+            addIdent(loc, sym.ident, TypeReferenceKind.Template, obj);
+        else
+            addIdent(loc, sym.ident, TypeReferenceKind.Variable, obj);
+    }
+
+    override void visit(Dsymbol sym)
+    {
+        addSymbol(sym.loc, sym, sym);
+    }
+
+    override void visitParameter(Parameter sym, Declaration decl)
+    {
+        super.visitParameter(sym, decl);
+        addIdent(sym.ident.loc, sym.ident, TypeReferenceKind.ParameterVariable,
+            decl ? decl : cast(RootObject) sym);
+    }
+
+    override void visit(Module mod)
+    {
+        if (mod.md)
         {
-            if (auto t = obj.isType())
-                visitType(t);
-            else if (auto s = obj.isDsymbol())
-            {
-                if (auto imp = s.isImport())
-                    if (imp.mod)
-                        s = imp.mod;
-                addSymbol(loc, s);
-            }
-            else if (auto e = obj.isExpression())
-                e.accept(this);
+            addPackages(mod.md.packages, mod);
+            addIdent(mod.md.loc, mod.md.id, TypeReferenceKind.Module, mod);
         }
+        visit(cast(Package)mod);
+    }
 
-        void addSymbol(ref const Loc loc, Dsymbol sym)
+    override void visit(Import imp)
+    {
+        addPackages(imp.packages, imp.mod);
+
+        addIdent(imp.loc, imp.id, TypeReferenceKind.Module, imp.mod);
+
+        for (int n = 0; n < imp.names.length; n++)
         {
-            if (auto decl = sym.isDeclaration())
-                addDeclaration(loc, decl);
-            else if (sym.isUnionDeclaration())
-                addIdent(loc, sym.ident, TypeReferenceKind.Union);
-            else if (sym.isStructDeclaration())
-                addIdent(loc, sym.ident, TypeReferenceKind.Struct);
-            else if (sym.isInterfaceDeclaration())
-                addIdent(loc, sym.ident, TypeReferenceKind.Interface);
-            else if (sym.isClassDeclaration())
-                addIdent(loc, sym.ident, TypeReferenceKind.Class);
-            else if (sym.isEnumDeclaration())
-                addIdent(loc, sym.ident, TypeReferenceKind.Enum);
-            else if (sym.isModule())
-                addIdent(loc, sym.ident, TypeReferenceKind.Module);
-            else if (sym.isPackage())
-                addIdent(loc, sym.ident, TypeReferenceKind.Package);
-            else if (sym.isTemplateDeclaration())
-                addIdent(loc, sym.ident, TypeReferenceKind.Template);
+            // the tip query resolves both the imported name and its alias to
+            // the selective-import AliasDeclaration
+            RootObject decl = n < imp.aliasdecls.length ? imp.aliasdecls[n] : null;
+            if (n < imp.aliasdecls.length && imp.aliasdecls[n].aliassym)
+                addSymbol(imp.names[n].loc, imp.aliasdecls[n].aliassym, decl);
+            else if (n < imp.aliasdecls.length && imp.aliasdecls[n].type)
+                addIdentByType(imp.names[n].loc, imp.names[n].ident, imp.aliasdecls[n].type, decl);
             else
-                addIdent(loc, sym.ident, TypeReferenceKind.Variable);
+                addIdent(imp.names[n].loc, imp.names[n].ident, TypeReferenceKind.Alias, decl);
+            if (imp.aliases[n].ident && n < imp.aliasdecls.length)
+                addIdent(imp.aliases[n].loc, imp.aliases[n].ident, TypeReferenceKind.Alias, decl);
         }
+        // symbol has ident of first package, so don't forward
+    }
 
-        override void visit(Dsymbol sym)
+    override void visit(DebugCondition cond)
+    {
+        addIdent(cond.loc, cond.ident, TypeReferenceKind.VersionIdentifier, cond);
+    }
+
+    override void visit(VersionCondition cond)
+    {
+        addIdent(cond.loc, cond.ident, TypeReferenceKind.VersionIdentifier, cond);
+    }
+
+    override void visit(SymbolExp expr)
+    {
+        if (expr.var && expr.var.ident)
+            addDeclaration(expr.loc, expr.var, expr);
+        super.visit(expr);
+    }
+
+    void addIdentExp(Expression expr, Type t)
+    {
+        if (auto ie = expr.isIdentifierExp())
         {
-            addSymbol(sym.loc, sym);
+            addIdentByType(ie.loc, ie.ident, t, identifierExpObject(ie));
         }
-
-        override void visitParameter(Parameter sym, Declaration decl)
+        else if (auto die = expr.isDotIdExp())
         {
-            super.visitParameter(sym, decl);
-            addIdent(sym.ident.loc, sym.ident, TypeReferenceKind.ParameterVariable);
+            addIdentByType(die.ident.loc, die.ident, t, dotIdExpObject(die));
         }
+    }
 
-        override void visit(Module mod)
+    void addOriginal(Expression expr, Type t)
+    {
+        for (auto ce = expr.isCommaExp(); ce; ce = expr.isCommaExp())
         {
-            if (mod.md)
-            {
-                addPackages(mod.md.packages);
-                addIdent(mod.md.loc, mod.md.id, TypeReferenceKind.Module);
-            }
-            visit(cast(Package)mod);
+            addIdentExp(ce.e1, t);
+            expr = ce.e2;
         }
+        addIdentExp(expr, t);
+    }
 
-        override void visit(Import imp)
-        {
-            addPackages(imp.packages);
+    override void visit(TypeExp expr)
+    {
+        if (expr.original && expr.type)
+            addOriginal(expr.original, expr.type);
 
-            addIdent(imp.loc, imp.id, TypeReferenceKind.Module);
+        super.visit(expr);
+    }
 
-            for (int n = 0; n < imp.names.length; n++)
-            {
-                if (n < imp.aliasdecls.length && imp.aliasdecls[n].aliassym)
-                    addSymbol(imp.names[n].loc, imp.aliasdecls[n].aliassym);
-                else if (n < imp.aliasdecls.length && imp.aliasdecls[n].type)
-                    addIdentByType(imp.names[n].loc, imp.names[n].ident, imp.aliasdecls[n].type);
-                else
-                    addIdent(imp.names[n].loc, imp.names[n].ident, TypeReferenceKind.Alias);
-                if (imp.aliases[n].ident && n < imp.aliasdecls.length)
-                    addIdent(imp.aliases[n].loc, imp.aliases[n].ident, TypeReferenceKind.Alias);
-            }
-            // symbol has ident of first package, so don't forward
-        }
-
-        override void visit(DebugCondition cond)
-        {
-            addIdent(cond.loc, cond.ident, TypeReferenceKind.VersionIdentifier);
-        }
-
-        override void visit(VersionCondition cond)
-        {
-            addIdent(cond.loc, cond.ident, TypeReferenceKind.VersionIdentifier);
-        }
-
-        override void visit(SymbolExp expr)
-        {
-            if (expr.var && expr.var.ident)
-                addDeclaration(expr.loc, expr.var);
-            super.visit(expr);
-        }
-
-        void addIdentExp(Expression expr, Type t)
-        {
-            if (auto ie = expr.isIdentifierExp())
-            {
-                addIdentByType(ie.loc, ie.ident, t);
-            }
-            else if (auto die = expr.isDotIdExp())
-            {
-                addIdentByType(die.ident.loc, die.ident, t);
-            }
-        }
-
-        void addOriginal(Expression expr, Type t)
-        {
-            for (auto ce = expr.isCommaExp(); ce; ce = expr.isCommaExp())
-            {
-                addIdentExp(ce.e1, t);
-                expr = ce.e2;
-            }
-            addIdentExp(expr, t);
-        }
-
-        override void visit(TypeExp expr)
-        {
-            if (expr.original && expr.type)
-                addOriginal(expr.original, expr.type);
-
-            super.visit(expr);
-        }
-
-        override void visit(IdentifierExp expr)
-        {
-            if (expr.resolvedTo)
-                if (auto se = expr.resolvedTo.isScopeExp())
-                    addSymbol(expr.loc, se.sds);
+    override void visit(IdentifierExp expr)
+    {
+        if (expr.resolvedTo)
+            if (auto se = expr.resolvedTo.isScopeExp())
+                addSymbol(expr.loc, se.sds, identifierExpObject(expr));
 
 //            if (expr.type)
 //                addIdentByType(expr.loc, expr.ident, expr.type);
 //            else if (expr.original && expr.original.type)
 //                addIdentByType(expr.loc, expr.ident, expr.original.type);
 //            else
-                super.visit(expr);
-        }
+            super.visit(expr);
+    }
 
-        override void visit(DotIdExp expr)
+    override void visit(DotIdExp expr)
+    {
+        auto orig = expr.resolvedTo;
+        if (orig && orig.type && orig.isConstantExpr())
+            addIdent(expr.identloc, expr.ident, TypeReferenceKind.Constant,
+                dotIdExpObject(expr));
+        else if (orig && orig.type &&
+                (orig.isArrayLengthExp() || orig.isAALenCall() || (expr.ident == Id.ptr && orig.isCastExp())))
+            addIdent(expr.identloc, expr.ident, TypeReferenceKind.MemberVariable,
+                dotIdExpObject(expr));
+        else
+            super.visit(expr);
+    }
+
+    override void visit(DotVarExp dve)
+    {
+        if (dve.var && dve.var.ident)
+            addDeclaration(dve.varloc.filename ? dve.varloc : dve.loc, dve.var, dve);
+        super.visit(dve);
+    }
+
+    override void visit(EnumDeclaration ed)
+    {
+        addIdent(ed.loc, ed.ident, TypeReferenceKind.Enum, ed);
+        super.visit(ed);
+    }
+
+    override void visit(FuncDeclaration decl)
+    {
+        super.visit(decl);
+
+        if (decl.originalType)
         {
-            auto orig = expr.resolvedTo;
-            if (orig && orig.type && orig.isConstantExpr())
-                addIdent(expr.identloc, expr.ident, TypeReferenceKind.Constant);
-            else if (orig && orig.type &&
-                    (orig.isArrayLengthExp() || orig.isAALenCall() || (expr.ident == Id.ptr && orig.isCastExp())))
-                addIdent(expr.identloc, expr.ident, TypeReferenceKind.MemberVariable);
-            else
-                super.visit(expr);
-        }
-
-        override void visit(DotVarExp dve)
-        {
-            if (dve.var && dve.var.ident)
-                addDeclaration(dve.varloc.filename ? dve.varloc : dve.loc, dve.var);
-            super.visit(dve);
-        }
-
-        override void visit(EnumDeclaration ed)
-        {
-            addIdent(ed.loc, ed.ident, TypeReferenceKind.Enum);
-            super.visit(ed);
-        }
-
-        override void visit(FuncDeclaration decl)
-        {
-            super.visit(decl);
-
-            if (decl.originalType)
-            {
-                auto ot = decl.originalType ? decl.originalType.isTypeFunction() : null;
-                visitType(ot ? ot.nextOf() : null); // the return type
-            }
-        }
-
-        override void visit(AggregateDeclaration ad)
-        {
-            if (ad.isInterfaceDeclaration)
-                addIdent(ad.loc, ad.ident, TypeReferenceKind.Interface);
-            else if (ad.isClassDeclaration)
-                addIdent(ad.loc, ad.ident, TypeReferenceKind.Class);
-            else if (ad.isUnionDeclaration)
-                addIdent(ad.loc, ad.ident, TypeReferenceKind.Union);
-            else
-                addIdent(ad.loc, ad.ident, TypeReferenceKind.Struct);
-            super.visit(ad);
-        }
-
-        override void visit(AliasDeclaration ad)
-        {
-            // the alias identifier can be both before and after the aliased type,
-            //  but we rely on so ascending locations in addTypePos
-            // as a work around, add the declared identifier before and after
-            //  by processing it twice
-            super.visit(ad);
-            super.visit(ad);
+            auto ot = decl.originalType ? decl.originalType.isTypeFunction() : null;
+            visitType(ot ? ot.nextOf() : null); // the return type
         }
     }
 
+    override void visit(AggregateDeclaration ad)
+    {
+        if (ad.isInterfaceDeclaration)
+            addIdent(ad.loc, ad.ident, TypeReferenceKind.Interface, ad);
+        else if (ad.isClassDeclaration)
+            addIdent(ad.loc, ad.ident, TypeReferenceKind.Class, ad);
+        else if (ad.isUnionDeclaration)
+            addIdent(ad.loc, ad.ident, TypeReferenceKind.Union, ad);
+        else
+            addIdent(ad.loc, ad.ident, TypeReferenceKind.Struct, ad);
+        super.visit(ad);
+    }
+
+    override void visit(AliasDeclaration ad)
+    {
+        // the alias identifier can be both before and after the aliased type,
+        //  but we rely on so ascending locations in addTypePos
+        // as a work around, add the declared identifier before and after
+        //  by processing it twice
+        super.visit(ad);
+        super.visit(ad);
+    }
+}
+
+// The object a tip query resolves an expression to, mirroring
+// FindASTVisitor.foundExpr (not upstream; used by the recording sites above).
+private RootObject directExpObject(Expression expr)
+{
+    if (auto se = expr.isScopeExp())
+        return se.sds;
+    if (auto ve = expr.isVarExp())
+        return ve.var;
+    if (auto te = expr.isTypeExp())
+        return te.type;
+    return null;
+}
+
+/// ditto, for FindASTVisitor.foundResolved (unwrapping comma expressions).
+private RootObject resolvedExpObject(Expression expr)
+{
+    if (!expr)
+        return null;
+    CommaExp ce;
+    while ((ce = expr.isCommaExp()) !is null)
+    {
+        if (auto obj = directExpObject(ce.e1))
+            return obj;
+        expr = ce.e2;
+    }
+    return directExpObject(expr);
+}
+
+/// ditto, for FindASTVisitor.visit(IdentifierExp).
+private RootObject identifierExpObject(IdentifierExp expr)
+{
+    // A leading `.` — module-scope lookup — parses as an `IdentifierExp` with
+    // an empty spelling, which covers no column, so the query's extent test
+    // can never match it. (The identifier walk still records the resolved
+    // module's name there, which is why this is checked here and not in
+    // `record`: by then the spelling is the module's, not the source's.)
+    if (expr.ident is null || expr.ident.toString().length == 0)
+        return null;
+    return expr.type ? cast(RootObject) expr.type : resolvedExpObject(expr.resolvedTo);
+}
+
+/// ditto, for FindASTVisitor.visit(DotIdExp).
+private RootObject dotIdExpObject(DotIdExp de)
+    => !de.type && de.resolvedTo && !de.resolvedTo.isErrorExp()
+        ? resolvedExpObject(de.resolvedTo)
+        : de;
+
+FindIdentifierTypesResult findIdentifierTypes(Module mod)
+{
     scope IdentifierTypesVisitor itv = new IdentifierTypesVisitor;
     itv.filename = locFilename(mod);
     mod.accept(itv);
 
     return itv.idTypes;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Not upstream: the batch counterpart of findTipData. See collectTips.
+
+/// One identifier occurrence and the tip resolved for it. Unlike
+/// `IdTypePos`, this is per-occurrence, not run-length.
+struct TipOccurrence
+{
+    /// 1-based line, as `Loc` spells it.
+    int line;
+
+    /// 1-based column of the identifier's first character.
+    int col;
+
+    /// What `findTipData` at that position resolves (modulo the caveats on
+    /// `collectTips`).
+    TipData tip;
+}
+
+/**
+Every identifier occurrence in `mod` with its tip, from a $(I single) AST
+walk (sparkles extension, no upstream counterpart).
+
+`findTipData` answers one position per full-module walk, which makes
+"tip every identifier" quadratic. This rides `IdentifierTypesVisitor` — whose
+recording sites already coincide with the identifier occurrences a positional
+query resolves — and renders each site's object through a memoizing wrapper
+over `tipDataForObject`, so a symbol used a thousand times is formatted once.
+
+$(B Not a drop-in replacement for a per-position `findTipData` sweep.) Two
+kinds of difference remain, both measured against a full sweep of dmd's own
+`expressionsem.d` (37,537 occurrences, 32 of them — 0.09% — divergent):
+
+$(LIST
+    * $(B Under-coverage, by design.) Positions where the identifier walk
+        records nothing, or has no object to resolve, are simply absent — as
+        are the ones this deliberately suppresses to match the query's
+        stop-at-first-match order (see `TipCollectVisitor`). A caller wanting
+        every position falls back to `findTipData` for the ones missing here,
+        which is what makes the difference invisible in the pipeline.
+    * $(B Residual disagreement, ~0.1%.) Where a compiler-generated node
+        shares a source location with the identifier the user wrote, the two
+        walks reach different nodes: a lowered `foreach` tips as its loop
+        variable here and as the generated `__limit` under a positional
+        query, an `a[i]` rewritten to `opIndex` tips as `i` here and as the
+        operator overload there, and a `cast(T)`'s type name tips as `T` here
+        and as nothing there. The parity unittests pin every shape that has
+        been reconciled; these are the ones that have not.
+)
+
+The size/alignment suffix is off for the whole walk (`addsize: false`).
+
+The result is sorted by line, then column; each position appears once (the
+deliberate double visit of an `AliasDeclaration` collapses to one entry).
+*/
+TipOccurrence[] collectTips(Module mod)
+{
+    const oldSize = showSizeAndAlignment;
+    showSizeAndAlignment = false;
+    scope(exit) showSizeAndAlignment = oldSize;
+
+    scope TipCollectVisitor tcv = new TipCollectVisitor;
+    tcv.filename = locFilename(mod);
+    mod.accept(tcv);
+
+    auto occurrences = tcv.occurrences;
+    occurrences.sort!((a, b) => a.line != b.line ? a.line < b.line : a.col < b.col);
+    return occurrences;
+}
+
+/// The walk behind `collectTips`: `IdentifierTypesVisitor` with the
+/// classification bookkeeping replaced by tip rendering.
+extern(C++) class TipCollectVisitor : IdentifierTypesVisitor
+{
+    TipOccurrence[] occurrences;
+
+    alias visit = IdentifierTypesVisitor.visit;
+
+    // FindASTVisitor's ForStatement override replaces ASTVisitor's, dropping
+    // its explicit descent into the condition and increment expressions — so
+    // a positional query resolves nothing inside `for (…; i < n; i++)`, and
+    // neither may we. (A lowered `foreach` puts the loop variable's location
+    // on generated nodes there, so this is not a rare corner.)
+    override void visit(ForStatement fs)
+    {
+        visit(cast(Statement)fs);
+    }
+
+    // Template instances are reached from their declaration, never as a
+    // member of the scope they were instantiated into — FindASTVisitor's
+    // member loop skips them, so positions inside an instantiated body
+    // resolve to nothing there and must stay unrecorded here.
+    override void visit(TemplateInstance) {}
+
+    // ... and that declaration-driven walk takes the instantiations first,
+    // so a position covered by both an uninstantiated member and its
+    // instantiation tips as the latter (`test.ST!int`, not `test.ST(T)`).
+    // Occurrences are first-come, so mirror the order too.
+    override void visit(TemplateDeclaration td)
+    {
+        auto instances = cast(TemplateInstance[TemplateInstanceBox])td.instances;
+        foreach(ti; instances)
+            visit(cast(ScopeDsymbol)ti);
+
+        visit(cast(ScopeDsymbol)td);
+    }
+
+    // Keyed by the AST node the tip is rendered from; a module's identifiers
+    // resolve to far fewer distinct symbols/types than they have occurrences.
+    private TipData[void*] declTips;
+    private TipData[void*] symbolTips;
+    private TipData[void*] typeTips;
+    private int[2][][int] claimed;
+
+    protected override void record(ref const Loc loc, Identifier ident, int type, RootObject obj)
+    {
+        if (obj is null || loc.linnum <= 0)
+            return;
+
+        // A positional query matches a whole identifier extent, not just its
+        // start (`FindASTVisitor.matchIdentifier`), and stops at the first
+        // node that covers the position. So an occurrence claims the columns
+        // its spelling covers, and a later one starting inside an earlier
+        // claim is dropped: at that column the query answers with the
+        // earlier node, which we cannot report from here. (A rewritten
+        // operator is the case in point — `a + b`'s `DotVarExp` sits on the
+        // `+` and covers the next seven columns as `opBinary`.) An empty
+        // spelling — an anonymous symbol, a `static assert` — covers no
+        // column at all and can never be matched.
+        const length = cast(int) ident.toString().length;
+        if (length == 0)
+            return;
+        const int[2] extent = [cast(int) loc.charnum, cast(int) loc.charnum + length];
+        if (auto line = loc.linnum in claimed)
+        {
+            foreach (span; *line)
+                if (loc.charnum >= span[0] && loc.charnum < span[1])
+                    return;
+            *line ~= extent;
+        }
+        else
+            claimed[loc.linnum] = [extent];
+
+        occurrences ~= TipOccurrence(loc.linnum, loc.charnum, tipFor(obj));
+    }
+
+    /**
+    `tipDataForObject` with its two hot paths memoized.
+
+    The dispatch below mirrors that function branch for branch — keep the two
+    in step. Only the branches whose result depends solely on a symbol or a
+    type are cached; a `DotIdExp`'s tip embeds its receiver expression and a
+    parameter's is cheap, so both render per site.
+    */
+    extern(D) final TipData tipFor(RootObject obj)
+    {
+        if (auto t = obj.isType())
+            return withCode(typeTip(t.mutableOf().unSharedOf()), obj);
+
+        if (auto e = obj.isExpression())
+        {
+            switch (e.op)
+            {
+                case EXP.variable:
+                case EXP.symbolOffset:
+                    return withCode(declTip((cast(SymbolExp)e).var), obj);
+                case EXP.dotVariable:
+                    return withCode(declTip((cast(DotVarExp)e).var), obj);
+                case EXP.dotIdentifier:
+                    auto die = e.isDotIdExp();
+                    if (die.resolvedTo && die.resolvedTo.type)
+                        return tipDataForObject(obj);
+                    goto default;
+                case EXP.template_:
+                    return tipDataForObject(obj);
+                default:
+                    return withCode(e.type ? typeTip(e.type) : TipData.init, obj);
+            }
+        }
+
+        if (auto s = obj.isDsymbol())
+            return symbolTip(s);
+
+        return tipDataForObject(obj); // parameters, conditions, …
+    }
+
+    // tipDataForObject's closing "if the branch produced no code, spell the
+    // object out" step, which the cached branches skip.
+    extern(D) private static TipData withCode(TipData tip, RootObject obj)
+    {
+        if (!tip.code.length)
+            tip.code = rootObjectToString(obj);
+        return tip;
+    }
+
+    // tipDataForObject's EXP.variable / EXP.symbolOffset / EXP.dotVariable
+    // branches, which share one shape: the declaration plus its docs.
+    extern(D) private TipData declTip(Declaration var)
+    {
+        if (var is null)
+            return TipData.init;
+        if (auto cached = cast(void*) var in declTips)
+            return *cached;
+
+        auto tip = tipForDeclaration(var);
+        if (auto doc = docForSymbol(var))
+            tip.doc = cast(string)doc[0..strlen(doc)];
+        tip.symbol = var;
+        declTips[cast(void*) var] = tip;
+        return tip;
+    }
+
+    // tipDataForObject's whole Dsymbol branch (import substitution, selective
+    // import aliases and all), which depends on nothing but the symbol.
+    extern(D) private TipData symbolTip(Dsymbol sym)
+    {
+        if (auto cached = cast(void*) sym in symbolTips)
+            return *cached;
+
+        auto tip = tipDataForObject(sym);
+        symbolTips[cast(void*) sym] = tip;
+        return tip;
+    }
+
+    // Keyed by the type as passed to tipForType: the Type branch normalizes
+    // through mutableOf/unSharedOf (which dmd interns) before calling, the
+    // fallback expression branch does not.
+    extern(D) private TipData typeTip(Type t)
+    {
+        if (auto cached = cast(void*) t in typeTips)
+            return *cached;
+
+        auto tip = tipForType(t);
+        typeTips[cast(void*) t] = tip;
+        return tip;
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -3187,6 +3524,42 @@ version (unittest)
             int n = add(p.x, 1);
         }
     };
+
+    // No upstream equivalent: the three shapes where the identifier walk and
+    // a positional query disagree unless `collectTips` mirrors
+    // `FindASTVisitor` — a rewritten operator (whose `opBinary` extent
+    // swallows the columns it precedes), a template aggregate (whose
+    // instantiation outranks its declaration) and a lambda instantiated
+    // inside another template (whose body a positional query never reaches).
+    private enum rewriteSource = q{                   // Line 1
+        import std.algorithm.iteration : map;
+        import std.range : iota;
+        struct Vec2                                   // Line 4
+        {
+            double x, y;
+            Vec2 opBinary(string op)(Vec2 rhs) const
+                => Vec2(mixin("x " ~ op ~ " rhs.x"), mixin("y " ~ op ~ " rhs.y"));
+        }
+        auto sum = Vec2(1, 2) + Vec2(3, 4);           // Line 10
+        auto squares(int n) { return iota(n).map!(x => x * x); }
+    };
+
+    // No upstream equivalent: two more positions the identifier walk records
+    // but a positional query cannot answer — a `for` condition/increment
+    // (which `FindASTVisitor` does not descend into, and which a lowered
+    // `foreach` fills with the loop variable's location) and a module-scope
+    // `.name` lookup (an `IdentifierExp` whose empty spelling covers no
+    // column, though the walk records the resolved module's name there).
+    private enum loweredSource = q{                   // Line 1
+        void log(int value) { }
+        void run(int[] xs)
+        {
+            for (size_t i = 0; i < xs.length; i++)    // Line 5
+                .log(xs[i]);
+            foreach (v; 0 .. xs.length)
+                .log(cast(int) v);
+        }
+    };
 }
 
 @("visitor.findTip.structMembers")
@@ -3387,6 +3760,68 @@ version (unittest)
     withAnalysis(structSource, (m) {
         assert(!m.definitionAt(2, 15).found);   // the space before `S`
     });
+}
+
+@("visitor.collectTips.perOccurrence")
+@system unittest
+{
+    import std.conv : text;
+
+    withAnalysis(structSource, (m) {
+        auto tips = collectTips(m.module_);
+
+        // Per occurrence, not run-length: `S` is one `IdentSpan` (see
+        // `visitor.findIdentifierTypes.classification`) but five tips — its
+        // declaration plus every use.
+        int[2][] atS;
+        foreach (o; tips)
+            if (o.tip.code == "test.S")
+                atS ~= [o.line, o.col];
+        assert(atS == [[2, 16], [10, 13], [13, 17], [15, 26], [16, 26]], atS.text);
+
+        // Ascending, one entry per position (the AliasDeclaration double
+        // visit and the like collapse).
+        foreach (i; 1 .. tips.length)
+            assert(tips[i - 1].line < tips[i].line
+                || (tips[i - 1].line == tips[i].line && tips[i - 1].col < tips[i].col),
+                text(tips[i - 1], " then ", tips[i]));
+    });
+}
+
+@("visitor.collectTips.matchesFindTipData")
+@system unittest
+{
+    // The parity probe the batch pipeline rests on: at every position the
+    // collector reports, its cached rendering must equal what a fresh
+    // single-position walk resolves. Cheap here (small module, ~20 walks) and
+    // far stronger than sampling.
+    static void checkParity(string source, string file = __FILE__, size_t line = __LINE__)
+    {
+        import std.conv : text;
+
+        withAnalysis(source, (m) {
+            auto tips = collectTips(m.module_);
+            assert(tips.length, "no occurrences collected");
+            foreach (o; tips)
+            {
+                const one = findTipData(m.module_, o.line, o.col, o.line, o.col + 1,
+                    addsize: false);
+                assert(o.tip.kind == one.kind && o.tip.code == one.code
+                    && o.tip.doc == one.doc && o.tip.symbol is one.symbol,
+                    text("at ", o.line, ":", o.col, "\n  collected: ", o.tip,
+                        "\n  findTipData: ", one, "\n  (from ", file, ":", line, ")"));
+            }
+        });
+    }
+
+    checkParity(structSource);
+    checkParity(classSource);
+    checkParity(enumSource);
+    checkParity(constantSource);
+    checkParity(templateSource);
+    checkParity(docSource);
+    checkParity(rewriteSource);
+    checkParity(loweredSource);
 }
 
 @("visitor.findIdentifierTypes.classification")
