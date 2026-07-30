@@ -1,7 +1,7 @@
 // hue's terminal document viewer — the `workspace` split's right pane (and the
-// whole screen when the explorer is hidden). The markdown preview renders
-// through the composable widget view; the raw view wraps highlighted source
-// (`buildRawPlines` → `PreviewLine[]`). Painted into a `sparkles.tui.Grid`
+// whole screen when the explorer is hidden). Every view — the markdown
+// preview, the twoslash overlay, and the raw highlighted source — renders
+// through the composable widget pipeline. Painted into a `sparkles.tui.Grid`
 // at the pane's origin; the workspace's `Terminal` cell-diffs each frame.
 //
 // Covers scrolling, a raw/preview toggle, live theme cycling, a cell scrollbar,
@@ -21,6 +21,7 @@ import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 import sparkles.syntax.md.render_widgets : foldableSpans, MdViewOptions,
     MdViewTheme, viewMarkdown;
+import sparkles.syntax.render.widgets : viewCodeDocument;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : NodeType, TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslashDocument;
@@ -43,8 +44,7 @@ import sparkles.ui_tui : paintGrid;
 
 import ansi_model : Attr, BackgroundMode;
 import document : hueFenceRenderer;
-import gui_preview : BandKind, buildRawPlines, PreviewLine, PreviewModel,
-    quoteBarColors, quoteBarCycle;
+import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor fallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
@@ -85,9 +85,9 @@ private bool containsIC(scope const(char)[] hay, scope const(char)[] needle) @sa
 }
 
 /// The scrolling viewer state: the document (markdown model or raw source), the
-/// theme list, and the current scroll / theme / view-mode. Laid out once per
-/// theme / width / view change into `plines`; each frame culls a viewport slice
-/// and paints it into a cell grid.
+/// theme list, and the current scroll / theme / view-mode. The active view's
+/// widget tree is laid out once per theme / width / view change; each frame
+/// paints its precomputed ops into a cell grid with a scroll offset.
 struct PreviewTui
 {
     string title;
@@ -111,19 +111,16 @@ struct PreviewTui
     /// workspace places the viewer right of the explorer. Pointer events are
     /// translated to pane-local coordinates by the caller.
     int originX;
-    private PreviewLine[] plines;   // laid out for (themeIdx, width, showPreview)
     private ResolvedTheme theme;
     private RgbColor pageFg, pageBg, gutterFg;
     private RgbColor[quoteBarCycle] bars;
     private RgbColor sbTrack, sbThumb; // scrollbar track / thumb (theme-tinted)
 
     // Incremental search (`/`): `searching` is input mode; `qbuf[0 .. qlen]` is
-    // the query, reused by `n`/`N`. `scratch` concatenates a line's run text for
-    // substring matching.
+    // the query, reused by `n`/`N`.
     private bool searching;
     private char[256] qbuf;
     private size_t qlen;
-    private SmallBuffer!(char, 4096) scratch;
 
     // Selection (mouse drag) → OSC 52 copy: the shared STM3 machine over
     // visual line indices ("no selection" is a mode, not -1); `selBg` tints
@@ -201,15 +198,9 @@ struct PreviewTui
         return clip[];
     }
 
-    // The decorated views render through the widget tree — the markdown
-    // preview and the twoslash document alike; raw source keeps the
-    // styled-line path (Tab toggles).
-    private bool usingWidgets() const @safe pure nothrow @nogc
-        => showPreview && (model.present || tw.code.length != 0);
-
     /// Visual line count of the active view — the scroll/selection/search space.
     private long lineCount() const @safe pure nothrow @nogc
-        => usingWidgets ? cast(long) mdRows.length : cast(long) plines.length;
+        => cast(long) mdRows.length;
 
     /// Rebuild the laid-out lines for the current theme / width / view mode (GC;
     /// run on a theme, resize, or toggle change — never per frame).
@@ -225,20 +216,32 @@ struct PreviewTui
         sbTrack = mix(pageBg, linkC, 0.22);
         sbThumb = mix(pageBg, linkC, 0.5);
         selBg = mix(pageBg, linkC, 0.4);
-        // Lay out to one column narrower — the last column holds the scrollbar.
-        const w = width < 9 ? 8 : width - 1;
-        if (usingWidgets)
-            rebuildMd();
-        else
-            plines = buildRawPlines(source, events, theme, pageFg, pageBg, w);
+        rebuildMd();
         clampTop();
     }
 
-    // Rebuild the markdown widget pipeline: view → layout → display list, plus
-    // the derived row index (search/selection) and hit targets (fence copy).
+    // Rebuild the active view's widget pipeline: view → layout → display
+    // list, plus the derived row index (search/selection) and hit targets
+    // (fence copy). Lays out one column narrower — the last column holds the
+    // scrollbar.
     private void rebuildMd() @system
     {
         const w = width < 9 ? 8 : width - 1;
+        if (!showPreview || (!model.present && !tw.code.length))
+        {
+            // The raw view: the highlighted source as the same widget
+            // pipeline (one painter for every view kind).
+            mdTree = viewCodeDocument(source, events, &theme, pageFg);
+            mdFrames = layout(mdTree, Constraints(maxW: w));
+            mdOps = buildDisplayList(mdTree, mdFrames,
+                themes[themeIdx].effectivePalette, pageFg, pageBg);
+            mdRows = documentRows(mdTree, mdFrames);
+            mdTargets = null;
+            mdFences.length = 0;
+            foldable = null;
+            hoverNodes.length = 0;
+            return;
+        }
         if (tw.code.length)
         {
             // A twoslash document: the whole-document widget view (code as
@@ -325,30 +328,15 @@ struct PreviewTui
         {
             if (i < 0 || i >= lineCount)
                 continue;
-            if (usingWidgets)
-            {
-                // The aggregated identity channel: one source range per row.
-                const r = mdRows[cast(size_t) i];
-                if (r.srcStart == size_t.max)
-                    continue; // decoration-only row (band, border, rule)
-                any = true;
-                if (r.srcStart < a)
-                    a = r.srcStart;
-                if (r.srcEnd > b)
-                    b = r.srcEnd;
-                continue;
-            }
-            foreach (ref r; plines[cast(size_t) i].runs)
-            {
-                if (r.srcStart == size_t.max)
-                    continue; // a synthetic decoration run (gutter / bullet / box)
-                any = true;
-                if (r.srcStart < a)
-                    a = r.srcStart;
-                const e = r.srcStart + r.text.length;
-                if (e > b)
-                    b = e;
-            }
+            // The aggregated identity channel: one source range per row.
+            const r = mdRows[cast(size_t) i];
+            if (r.srcStart == size_t.max)
+                continue; // decoration-only row (band, border, rule)
+            any = true;
+            if (r.srcStart < a)
+                a = r.srcStart;
+            if (r.srcEnd > b)
+                b = r.srcEnd;
         }
         if (!any || a >= b || b > source.length)
         {
@@ -372,19 +360,10 @@ struct PreviewTui
         clipReady = true;
     }
 
-    // Does visual line `i` contain the query (case-insensitive)? The markdown
-    // view searches the aggregated row text; the raw view concatenates runs.
+    // Does visual line `i` contain the query (case-insensitive)? Every view
+    // searches the aggregated row text.
     private bool lineMatches(size_t i) @safe
-    {
-        if (qlen == 0)
-            return false;
-        if (usingWidgets)
-            return containsIC(mdRows[i].text, query);
-        scratch.clear();
-        foreach (ref r; plines[i].runs)
-            scratch.put(r.text);
-        return containsIC(scratch[], query);
-    }
+        => qlen != 0 && containsIC(mdRows[i].text, query);
 
     // The nearest matching line from `from` in the given direction (wrapping);
     // scrolls it to the top when found.
@@ -438,24 +417,8 @@ struct PreviewTui
             cast(ushort) height, cellStyle(pageFg, true, pageBg, 0));
         paintHeader(g);
 
-        if (usingWidgets)
-        {
-            paintMarkdown(g);
-            paintHoverPopup(g);
-        }
-        else
-        {
-            const rows = bodyRows();
-            const first = cast(size_t) top;
-            const last = first + rows > plines.length ? plines.length
-                : first + rows;
-            ushort y = 1;
-            foreach (i; first .. last)
-            {
-                paintLine(g, y, plines[i], sel.contains(cast(long) i));
-                ++y;
-            }
-        }
+        paintMarkdown(g);
+        paintHoverPopup(g);
         paintScrollbar(g);
         paintStatus(g);
     }
@@ -545,38 +508,6 @@ struct PreviewTui
         paintBar(g, y, [line], null, null, b);
     }
 
-    // Paint one laid-out preview line into grid row `y`: the row-fill background
-    // (selection / heading band / page), then quote bars, the leader, and runs.
-    private void paintLine(ref Grid g, ushort y, in PreviewLine pl, bool sel) @system
-    {
-        const fillBg = sel ? selBg : (pl.band == BandKind.heading ? pl.bandBg : pageBg);
-        const right = cast(ushort)(originX + width < g.cols
-            ? originX + width : g.cols);
-        g.fill(cast(ushort) originX, y, cast(ushort)(right - originX),
-            cellStyle(pageFg, true, fillBg, 0));
-
-        ushort x = cast(ushort)(originX
-            + (pl.indentCols > 0 ? pl.indentCols : 0));
-        foreach (d; 0 .. pl.quoteDepth)
-        {
-            const barFg = pl.hasBarFg ? pl.barFg : bars[d % quoteBarCycle];
-            if (x < right)
-                x = g.putText(x, y, "│", cellStyle(barFg, true, fillBg, 0));
-            if (x < right)
-                ++x; // the 2-column bar spacing (already fillBg from the row fill)
-        }
-        if (pl.leader.length && x < right)
-            x = g.putText(x, y, pl.leader,
-                cellStyle(pl.hasLeaderFg ? pl.leaderFg : gutterFg, true, fillBg, 0));
-        foreach (ref r; pl.runs)
-        {
-            if (x >= right)
-                break;
-            const rbg = sel ? selBg : (r.hasBg ? r.bg : fillBg);
-            x = g.putText(x, y, r.text, cellStyle(r.fg, true, rbg, r.attrs));
-        }
-    }
-
     // A cell scrollbar in the last column across the body rows, sized/positioned
     // to the visible fraction. Only shown when the document overflows the viewport.
     private void paintScrollbar(ref Grid g) @system
@@ -617,8 +548,6 @@ struct PreviewTui
     // foldable one (`FLD5`'s za, over the row's source identity).
     private void toggleFold() @system
     {
-        if (!usingWidgets)
-            return;
         const rowIdx = sel.active ? sel.lo : top;
         if (rowIdx < 0 || rowIdx >= cast(long) mdRows.length
             || mdRows[cast(size_t) rowIdx].srcStart == size_t.max)
@@ -657,8 +586,7 @@ struct PreviewTui
         if (copiedFenceSrc != size_t.max)
         {
             copiedFenceSrc = size_t.max; // the ✔ flash lasts until the next event
-            if (usingWidgets)
-                rebuildMd();
+            rebuildMd();
         }
         if (searching)
             return handleSearch(e);
@@ -754,7 +682,7 @@ struct PreviewTui
                 // body's source offset. Otherwise start (press) or extend
                 // (drag) a line selection.
                 const line = top + (e.pos.y - 1);
-                if (usingWidgets && e.action == PointerAction.press
+                if (showPreview && e.action == PointerAction.press
                     && tw.code.length)
                 {
                     const off = sourceOffsetAt(mdTree, mdFrames,
@@ -775,7 +703,7 @@ struct PreviewTui
                         return true;
                     }
                 }
-                if (usingWidgets && e.action == PointerAction.press)
+                if (e.action == PointerAction.press)
                 {
                     const p = Point(e.pos.x, cast(int) line);
                     foreach_reverse (ref const t; mdTargets)
