@@ -29,6 +29,31 @@ private TextStyle specStyle(in StyleSpec spec) pure nothrow @nogc
         italic: (spec.attrs & TextAttr.italic) != TextAttr.none,
         strikethrough: (spec.attrs & TextAttr.strikethrough) != TextAttr.none);
 
+/// The vim `listchars` vocabulary for `CodeViewOptions.listWhitespace`.
+struct WhitespaceGlyphs
+{
+    string space = "\u00B7"; /// `·` — every space
+    string tab = "\u2192";   /// `→` — a tab's first column (the rest fills)
+    string trail = "\u00B7"; /// `·` — trailing whitespace
+    string nbsp = "\u2423";  /// `␣` — a no-break space
+}
+
+/// The raw code view's presentation options.
+struct CodeViewOptions
+{
+    TextWrap wrap = TextWrap.greedy;
+    const(Span)[] foldedRegions;  /// collapsed regions (`FLD`)
+    size_t foldHitBase;           /// unfold hit-id base (0 = not clickable)
+    /// Tab stops: a tab advances to the next multiple of this many columns.
+    int tabWidth = 4;
+    /// vim's `list`: render whitespace visibly with `glyphs`, in
+    /// `whitespaceFg` (when set) so the marks read as chrome, not content.
+    bool listWhitespace;
+    WhitespaceGlyphs glyphs;
+    RgbColor whitespaceFg;
+    bool hasWhitespaceFg;
+}
+
 /**
 Builds the whole highlighted `source` as one widget tree: a column of rich
 rows, one per source line, each span resolved against `theme` (foreground,
@@ -48,9 +73,150 @@ with a non-zero `foldHitBase`, the unfold hit id `foldHitBase + span.start`
 */
 WidgetTree viewCodeDocument(const(char)[] source,
     const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
-    RgbColor pageFg, TextWrap wrap = TextWrap.greedy,
-    const(Span)[] foldedRegions = null, size_t foldHitBase = 0)
+    RgbColor pageFg, CodeViewOptions opt = CodeViewOptions())
 {
+    const foldedRegions = opt.foldedRegions;
+    const foldHitBase = opt.foldHitBase;
+    const wrap = opt.wrap;
+
+    // Tab expansion + the vim `list` glyphs: rewrite a line's spans so a
+    // tab becomes a `noBreak` fill span reaching the next tab stop (its
+    // identity stays the tab's single byte), and — when listing — spaces,
+    // trailing runs and no-break spaces become their glyphs in the
+    // whitespace color. Lines without any of that pass through untouched.
+    TextSpan[] expandLine(TextSpan[] line, size_t lineStart, size_t lineStop)
+    {
+        const(char)[] lineText = lineStart < lineStop
+            ? source[lineStart .. lineStop] : null;
+        bool needs;
+        foreach (char ch; lineText)
+            if (ch == '\t'
+                || (opt.listWhitespace && (ch == ' ' || ch == '\xc2')))
+            {
+                needs = true;
+                break;
+            }
+        if (!needs)
+            return line;
+
+        // Where the line's trailing-whitespace run begins (a source byte).
+        size_t trailAt = lineStop;
+        while (trailAt > lineStart)
+        {
+            const ch = source[trailAt - 1];
+            if (ch != ' ' && ch != '\t')
+                break;
+            --trailAt;
+        }
+
+        static void appendFill(ref char[] buf, string glyph, int n)
+        {
+            foreach (_; 0 .. n)
+                buf ~= glyph;
+        }
+
+        TextSpan whitespaceSpan(ref const TextSpan src_, const(char)[] text,
+            size_t srcStart, size_t srcEnd)
+        {
+            TextSpan w = src_;
+            w.text = text;
+            w.noBreak = true;
+            w.srcStart = srcStart;
+            w.srcEnd = srcEnd;
+            if (opt.listWhitespace && opt.hasWhitespaceFg)
+            {
+                w.fg = opt.whitespaceFg;
+                w.hasFg = true;
+            }
+            return w;
+        }
+
+        import sparkles.ui.geometry : cellsOf;
+
+        TextSpan[] outSpans;
+        int col = 0;
+        foreach (ref const sp; line)
+        {
+            const t = sp.text;
+            size_t seg = 0;
+
+            void flush(size_t end)
+            {
+                if (end <= seg)
+                    return;
+                TextSpan piece = sp;
+                piece.text = t[seg .. end];
+                if (piece.srcStart != size_t.max)
+                {
+                    piece.srcStart += seg;
+                    piece.srcEnd = piece.srcStart + (end - seg);
+                }
+                outSpans ~= piece;
+                col += cast(int) cellsOf(piece.text);
+            }
+
+            size_t i = 0;
+            while (i < t.length)
+            {
+                const srcByte = sp.srcStart != size_t.max
+                    ? sp.srcStart + i : size_t.max;
+                if (t[i] == '\t')
+                {
+                    flush(i);
+                    const fill = opt.tabWidth > 0
+                        ? opt.tabWidth - (col % opt.tabWidth) : 1;
+                    char[] txt;
+                    if (opt.listWhitespace)
+                    {
+                        txt ~= srcByte != size_t.max && srcByte >= trailAt
+                            ? opt.glyphs.trail : opt.glyphs.tab;
+                        appendFill(txt, " ", fill - 1);
+                    }
+                    else
+                        appendFill(txt, " ", fill);
+                    outSpans ~= whitespaceSpan(sp, txt, srcByte,
+                        srcByte == size_t.max ? size_t.max : srcByte + 1);
+                    col += fill;
+                    seg = ++i;
+                    continue;
+                }
+                if (opt.listWhitespace && t[i] == ' ')
+                {
+                    flush(i);
+                    size_t j = i;
+                    char[] txt;
+                    while (j < t.length && t[j] == ' ')
+                    {
+                        const b = sp.srcStart != size_t.max
+                            ? sp.srcStart + j : size_t.max;
+                        txt ~= b != size_t.max && b >= trailAt
+                            ? opt.glyphs.trail : opt.glyphs.space;
+                        ++j;
+                    }
+                    outSpans ~= whitespaceSpan(sp, txt, srcByte,
+                        srcByte == size_t.max ? size_t.max
+                            : srcByte + (j - i));
+                    col += cast(int)(j - i);
+                    seg = i = j;
+                    continue;
+                }
+                if (opt.listWhitespace && t[i] == '\xc2'
+                    && i + 1 < t.length && t[i + 1] == '\xa0')
+                {
+                    flush(i);
+                    outSpans ~= whitespaceSpan(sp, opt.glyphs.nbsp, srcByte,
+                        srcByte == size_t.max ? size_t.max : srcByte + 2);
+                    ++col;
+                    seg = (i += 2);
+                    continue;
+                }
+                ++i;
+            }
+            flush(t.length);
+        }
+        return outSpans;
+    }
+
     // Line starts, with `lineCount` semantics: a trailing newline does not
     // open an extra line; an empty source has none.
     size_t[] starts;
@@ -120,7 +286,9 @@ WidgetTree viewCodeDocument(const(char)[] source,
         auto spans = blank
             ? [TextSpan(" ", Slot.code,
                 srcStart: starts[li], srcEnd: starts[li])]
-            : byLine[li];
+            : expandLine(byLine[li], starts[li],
+                lineEnd(li) > starts[li] && source[lineEnd(li) - 1] == '\n'
+                    ? lineEnd(li) - 1 : lineEnd(li));
         // Indentation survives wrapping as a `noBreak` prefix span: the
         // breaker treats leading spaces as droppable glue (prose semantics),
         // but a noBreak span is a token that the first word joins — so the
@@ -232,8 +400,8 @@ WidgetTree viewCodeDocument(const(char)[] source,
     // Fold the whole function (bytes 0..34 — through the closing brace).
     enum hitBase = size_t.max / 4 * 3 + 1;
     auto tree = viewCodeDocument(src, ev, (() @trusted => &rt)(),
-        RgbColor(0xcc, 0xcc, 0xcc), TextWrap.greedy,
-        [Span(0, 34)], hitBase);
+        RgbColor(0xcc, 0xcc, 0xcc), CodeViewOptions(
+            foldedRegions: [Span(0, 34)], foldHitBase: hitBase));
     auto frames = layout(tree);
     auto rows = documentRows(tree, frames);
 
@@ -251,4 +419,52 @@ WidgetTree viewCodeDocument(const(char)[] source,
         if (t.hitId == hitBase + 0)
             sawHit = true;
     assert(sawHit, "unfold hit id");
+}
+
+@("render.widgets.viewCodeDocument.tabStopsAndListWhitespace")
+@safe unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.theme : resolveTheme;
+    import sparkles.syntax.themes : builtinDark;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : documentRows;
+
+    // A tab-indented line, a mid-line tab, a trailing space, an NBSP.
+    const src = "\tx\na\tb  \nn n\n";
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+    const ev = [HighlightEvent.sourceSpan(0, src.length)];
+
+    // Default: tabs expand to 4-column stops (identity = the tab's byte).
+    auto plain = viewCodeDocument(src, ev, (() @trusted => &rt)(),
+        RgbColor(0xcc, 0xcc, 0xcc));
+    auto rows = documentRows(plain, layout(plain));
+    assert(rows[0].text == "    x", rows[0].text);
+    // Stop at col 4; the breaker consumes the trailing glue (plain mode).
+    assert(rows[1].text == "a   b", rows[1].text);
+    bool sawTabIdentity;
+    foreach (ref const w; plain.nodes)
+        foreach (ref const s2; w.spans)
+            if (s2.text == "    " && s2.srcStart == 0 && s2.srcEnd == 1)
+                sawTabIdentity = true;
+    assert(sawTabIdentity, "the fill span carries the tab's single byte");
+
+    // list mode: → for tabs, · for spaces (trailing included), ␣ for NBSP,
+    // all in the whitespace color.
+    auto listed = viewCodeDocument(src, ev, (() @trusted => &rt)(),
+        RgbColor(0xcc, 0xcc, 0xcc), CodeViewOptions(listWhitespace: true,
+            whitespaceFg: RgbColor(0x60, 0x60, 0x60), hasWhitespaceFg: true));
+    auto lrows = documentRows(listed, layout(listed));
+    assert(lrows[0].text == "→   x", lrows[0].text);
+    assert(lrows[1].text == "a→  b··", lrows[1].text);
+    assert(lrows[2].text == "n␣n", lrows[2].text);
+    bool sawWsFg;
+    foreach (ref const w; listed.nodes)
+        foreach (ref const s2; w.spans)
+            if (s2.text.startsWith("→") && s2.hasFg
+                && s2.fg == RgbColor(0x60, 0x60, 0x60))
+                sawWsFg = true;
+    assert(sawWsFg, "whitespace glyphs take the whitespace color");
 }

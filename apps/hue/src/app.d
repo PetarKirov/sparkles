@@ -53,6 +53,12 @@ struct CliParams
     @CliOption("tree-width", "Explorer pane width in cells (default 32).")
     int treeWidth = 32;
 
+    @CliOption("tab-width", "Tab stops in the raw source view: a tab advances to the next multiple of this many columns.")
+    int tabWidth = 4;
+
+    @CliOption("list-whitespace", "Render whitespace visibly in the raw view, vim's 'list' style: tabs as '→', spaces and trailing runs as '·', no-break spaces as '␣'.")
+    bool listWhitespace;
+
     @CliOption("gui", "Force the raylib GPU window (requires the 'gui' build configuration). With neither --gui nor --no-gui, hue opens the window automatically when a display is available and falls back to the terminal otherwise.")
     bool gui;
 
@@ -392,7 +398,8 @@ int main(string[] args)
                             d.preview, d.twoslash, d.lang);
                     },
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
-                    &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth);
+                    &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
+                    cli.tabWidth, cli.listWhitespace);
             }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
@@ -554,7 +561,8 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             WorkspaceDoc(doc.title, doc.source, doc.events, doc.preview,
                 doc.twoslash, doc.lang),
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
-            &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth);
+            &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
+            cli.tabWidth, cli.listWhitespace);
     }
     else
     {
@@ -597,7 +605,8 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             doc.path, startInTree: treeRoot.length != 0, treeRoot,
             FontSet.FaceOverrides(cli.fontBold, cli.fontItalic,
                 cli.fontBoldItalic), doc.lang,
-            cli.include.dup, cli.exclude.dup, cli.treeWidth);
+            cli.include.dup, cli.exclude.dup, cli.treeWidth,
+            cli.tabWidth, cli.listWhitespace);
     }
     else
     {

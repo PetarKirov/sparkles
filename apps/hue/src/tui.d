@@ -21,7 +21,7 @@ import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 import sparkles.syntax.md.render_widgets : foldableSpans, MdViewOptions,
     MdViewTheme, viewMarkdown;
-import sparkles.syntax.render.widgets : viewCodeDocument;
+import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : NodeType, TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslashDocument;
@@ -103,6 +103,9 @@ struct PreviewTui
     immutable(Theme)[] themes;
     BackgroundMode background;      // (kept for the caller; the viewer paints full-bg)
     ColorDepth depth;               // (unused: the cell renderer emits truecolor)
+
+    int tabWidth = 4;               // tab stops in the raw view
+    bool listWhitespace;            // vim `list` whitespace glyphs
 
     private size_t themeIdx;
     private long top;               // first visible visual line
@@ -245,7 +248,10 @@ struct PreviewTui
                 if (!folds.isOpen(sp.start))
                     closed ~= sp;
             mdTree = viewCodeDocument(source, events, &theme, pageFg,
-                TextWrap.greedy, closed, foldHitBase);
+                CodeViewOptions(foldedRegions: closed,
+                    foldHitBase: foldHitBase, tabWidth: tabWidth,
+                    listWhitespace: listWhitespace,
+                    whitespaceFg: gutterFg, hasWhitespaceFg: true));
             mdFrames = layout(mdTree, Constraints(maxW: w));
             mdOps = buildDisplayList(mdTree, mdFrames,
                 themes[themeIdx].effectivePalette, pageFg, pageBg);
