@@ -199,6 +199,11 @@ int runGui(
     // PNG, and exits — the golden-frame harness the syntax spec's totality and
     // M5's byte-identical-render checks rely on (skipTest-gated when headless).
     const shotPath = environment.get("HUE_GUI_SCREENSHOT", "");
+    // HUE_GUI_FLASH=1: alternate the clear color every ~0.5 s and skip the
+    // pane fill — a ghosting discriminator. If the background flashes
+    // everywhere but stale text rides on top, the ghost is DRAWN each frame;
+    // any region that does NOT flash is not being cleared/presented.
+    const flashDebug = environment.get("HUE_GUI_FLASH", "").length != 0;
     // HUE_GUI_SCREENSHOT_FRAME=<n> delays the capture (default 20) so a QA
     // harness can drive synthetic input first.
     int shotFrame = 20;
@@ -1195,11 +1200,17 @@ int runGui(
         // exactly the "documents ghost over each other" failure. Start every
         // frame from a clean state so the clear always covers the window.
         EndScissorMode();
-        ClearBackground(rl(pageBg));
-        // Panes own their background: an explicit fill over the document
-        // region every frame, so its pixels never depend on the clear alone
-        // (the tree pane and header already fill their own rects).
-        DrawRectangle(treePx(), 0, screenW - treePx(), screenH, rl(pageBg));
+        if (flashDebug)
+            ClearBackground((frame / 30) % 2 == 0
+                ? Color(70, 20, 20, 255) : Color(20, 20, 70, 255));
+        else
+        {
+            ClearBackground(rl(pageBg));
+            // Panes own their background: an explicit fill over the document
+            // region every frame, so its pixels never depend on the clear
+            // alone (the tree pane and header fill their own rects).
+            DrawRectangle(treePx(), 0, screenW - treePx(), screenH, rl(pageBg));
+        }
 
         // One-cell background padding on the left, the scrollbar gutter on the
         // right, plus the optional line-number gutter; text starts at `contentX`.
@@ -1738,13 +1749,14 @@ int runGui(
         // after EndDrawing so the reupload never lands mid-frame.
         fonts.flushPending();
 
+        ++frame;
         if (shotPath.length)
         {
             // Warm up for a number of frames before capturing: the glyph atlas
             // uploads over the first frames, and under a headless GL context the
             // framebuffer swap lags the draw, so an early TakeScreenshot grabs a
             // black frame. ~20 frames is reliably past both.
-            if (++frame == shotFrame)
+            if (frame == shotFrame)
                 TakeScreenshot(shotPath.toStringz);
             if (frame >= shotFrame + 1)
                 break;
