@@ -64,6 +64,11 @@ void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
                 // tokens horizontally).
                 import raylib.rlgl;
 
+                // Reserve batch space BEFORE emitting vertices (what
+                // DrawTexturePro does): without it, a full batch flushes
+                // mid-quad and re-emits stale vertex-buffer content — the
+                // PREVIOUS frame's glyph quads ghosting over the current one.
+                rlCheckRenderBatchLimit(4);
                 const shTop = slant * (slantBase - dst.y);
                 const shBot = slant * (slantBase - (dst.y + dst.height));
                 const tw = cast(float) font.texture.width;

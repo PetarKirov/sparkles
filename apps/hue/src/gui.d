@@ -1193,6 +1193,10 @@ int runGui(
         // frame from a clean state so the clear always covers the window.
         EndScissorMode();
         ClearBackground(rl(pageBg));
+        // Panes own their background: an explicit fill over the document
+        // region every frame, so its pixels never depend on the clear alone
+        // (the tree pane and header already fill their own rects).
+        DrawRectangle(treePx(), 0, screenW - treePx(), screenH, rl(pageBg));
 
         // One-cell background padding on the left, the scrollbar gutter on the
         // right, plus the optional line-number gutter; text starts at `contentX`.
