@@ -271,6 +271,18 @@ private bool buildConfig(in CliParams cli, string samplePath,
     // `--import` prepends to the environment default rather than replacing it.
     if (config.importPaths.length)
         config.importPaths ~= AnalyzerConfig().effectiveImportPaths;
+
+    // Reject an environment that cannot analyze *before* touching the frontend:
+    // its own answer to a missing `object.d` is `fatal()`, which under the
+    // collecting diagnostic sink exits 1 with nothing printed at all — and a
+    // caller spawning this as an oracle (hue) then sees only a status code.
+    import sparkles.dmd_lsp.options : runtimeSourcesProblem;
+
+    if (const problem = runtimeSourcesProblem(config.effectiveImportPaths))
+    {
+        stderr.writeln("error: ", problem);
+        return false;
+    }
     return true;
 }
 

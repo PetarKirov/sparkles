@@ -46,9 +46,19 @@ struct Analyzer
 
     @disable this(this);
 
+    /**
+    Throws: `Exception` when the configured import paths cannot support an
+    analysis (no druntime `object.d`). Checked here, before the lock: the
+    frontend's own reaction is `fatal()` — a silent `exit(1)` under a
+    collecting sink, which would also never release the lock.
+    */
     this(AnalyzerConfig config) @system
     {
         import sparkles.dmd_lsp.init_ : dmdGlobalsLock, initAnalyzer;
+        import sparkles.dmd_lsp.options : runtimeSourcesProblem;
+
+        if (const problem = runtimeSourcesProblem(config.effectiveImportPaths))
+            throw new Exception(problem);
 
         dmdGlobalsLock.lock();
         _config = config;
