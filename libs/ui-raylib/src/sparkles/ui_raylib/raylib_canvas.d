@@ -73,6 +73,54 @@ struct RaylibCanvas
     private float px(int cx) const @safe pure nothrow @nogc => originX + cx * cellW;
     private float py(int cy) const @safe pure nothrow @nogc => originY + cy * cellH;
 
+    /// The optional clipping pair of the canvas concept: a GL scissor per
+    /// pushed rect (cell coordinates → pixels), stacked so nested viewports
+    /// restore the enclosing one — widget content never bleeds past its rect.
+    private Rect[] clips;
+
+    void pushClip(in Rect r) scope @system
+    {
+        clips ~= r;
+        applyScissor();
+    }
+
+    /// ditto
+    void popClip() scope @system
+    {
+        if (clips.length)
+            clips = clips[0 .. $ - 1];
+        applyScissor();
+    }
+
+    private void applyScissor() scope @system
+    {
+        EndScissorMode();
+        if (!clips.length)
+            return;
+        // The display list pushes pre-intersected effective rects, so the top
+        // of the stack is the active region — but an axis-only viewport
+        // (`clipX` without `clipY`) leaves the other axis UNBOUNDED (huge
+        // sentinels), so clamp to the window before pixel math or the
+        // scissor arithmetic overflows.
+        const r = clips[$ - 1];
+        const sw = cast(float) GetScreenWidth();
+        const sh = cast(float) GetScreenHeight();
+        static float cl(float v, float lo, float hi) pure nothrow @nogc @safe
+            => v < lo ? lo : (v > hi ? hi : v);
+        // Long math throughout: the sentinel cell coords overflow `int` when
+        // multiplied by the cell size (px()/py() are fine for real cells).
+        const x0 = cl(originX + cast(long) r.x * cast(float) cellW, 0, sw);
+        const y0 = cl(originY + cast(long) r.y * cast(float) cellH, 0, sh);
+        const x1 = cl(originX + (cast(long) r.x + r.width) * cast(float) cellW, 0, sw);
+        const y1 = cl(originY + (cast(long) r.y + r.height) * cast(float) cellH, 0, sh);
+        if (x1 <= x0 || y1 <= y0)
+            BeginScissorMode(0, 0, 0, 0); // fully clipped away
+        else
+            BeginScissorMode(cast(int) x0, cast(int) y0,
+                cast(int)(x1 - x0), cast(int)(y1 - y0));
+
+    }
+
     /// Paints a box: drop shadow (behind), background fill (rounded when
     /// `borderRadius`), border (per-side, dotted/solid), and a popup arrow —
     /// each gated on the resolved `Visual`. A plain filled cell is the common

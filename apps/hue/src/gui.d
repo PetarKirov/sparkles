@@ -616,6 +616,7 @@ int runGui(
 
     Scrollbar sb;
     Scrollbar treeSb; // the tree pane's — same behavior, its own state
+    float wheelAccum = 0; // fractional wheel deltas accumulate to whole rows
 
     // Fullscreen (F11): a manual borderless toggle. raylib's
     // ToggleBorderlessWindowed forces the primary monitor and, on some
@@ -749,8 +750,11 @@ int runGui(
         const screenW = GetScreenWidth();
         const screenH = GetScreenHeight();
         const visibleRows = screenH / cellH;
-        // With a set header bar, the tree pane starts under it.
+        // With a set header bar, BOTH panes start under it (nothing hides
+        // beneath the bar any more); the panes are docRows tall.
         const treeTopRows = set !is null && !set.empty ? 1 : 0;
+        const docRows = visibleRows - treeTopRows;
+        const docY0 = treeTopRows * cellH;
 
 
         // Reflow (both views wrap) when the window width in columns changes — but
@@ -768,7 +772,7 @@ int runGui(
         // The active view's visual-line space (scroll/selection/search).
         const mdActive = showPreview && (curPreview.present || curTw.code.length);
         const total = mdActive ? mdRows.length : plines.length;
-        const maxTop = total > visibleRows ? cast(long)(total - visibleRows) : 0;
+        const maxTop = total > docRows ? cast(long)(total - docRows) : 0;
 
         // F11 toggles borderless fullscreen on the window's current monitor;
         // active in any input mode. Reflow-on-resize keeps working because the
@@ -929,13 +933,21 @@ int runGui(
                     top = maxTop;
             }
             // The wheel scrolls the pane under the cursor (tree or document).
+            // High-resolution wheels deliver FRACTIONAL deltas; accumulate to
+            // whole rows so gentle scrolling is never truncated to nothing.
             const wheel = GetMouseWheelMove();
             if (wheel != 0)
             {
-                if (treeVisible && GetMousePosition().x < treeCols * cellW)
-                    tree.scrollBy(cast(long)(-wheel * 3));
-                else
-                    top -= cast(long)(wheel * 3);
+                wheelAccum += wheel * 3;
+                const steps = cast(long) wheelAccum;
+                if (steps != 0)
+                {
+                    wheelAccum -= steps;
+                    if (treeVisible && GetMousePosition().x < treeCols * cellW)
+                        tree.scrollBy(-steps);
+                    else
+                        top -= steps;
+                }
             }
             if (pressed(KeyboardKey.KEY_PAGE_DOWN))
                 top += visibleRows;
@@ -1065,11 +1077,13 @@ int runGui(
             const float sbMaxW = hoverW;
             if (maxTop > 0)
             {
-                const trackH = cast(float) screenH;
-                const g = thumbGeometry(total, visibleRows, top, maxTop, screenH);
+                const trackH = cast(float)(screenH - docY0);
+                const g = thumbGeometry(total, docRows, top, maxTop,
+                    screenH - docY0);
                 const pos = GetMousePosition();
                 const hoverTrack = pos.x >= screenW - sbMaxW;
-                const hoverThumb = hoverTrack && pos.y >= g.y && pos.y <= g.y + g.h;
+                const hoverThumb = hoverTrack && pos.y >= docY0 + g.y
+                    && pos.y <= docY0 + g.y + g.h;
                 sb.isHovered = hoverTrack || sb.isDragging;
                 sb.targetWidth = sb.isHovered ? hoverW : idleW;
 
@@ -1082,7 +1096,7 @@ int runGui(
                         sb.dragStartOffset = top;
                     }
                     else // click on the track: center the viewport on the click
-                        top = cast(long)(pos.y / trackH * total) - visibleRows / 2;
+                        top = cast(long)((pos.y - docY0) / trackH * total) - docRows / 2;
                 }
                 if (sb.isDragging)
                 {
@@ -1181,22 +1195,28 @@ int runGui(
             // raylib canvas, offset by the scroll position and culled to the
             // viewport rows (raylib clips px; the cull skips dead draw calls).
             auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
-                gutterPx, cast(float)(-top * cellH));
+                gutterPx, cast(float)(docY0 - top * cellH));
+            // The pane's base clip: content (an unwrappable code line inside
+            // a fence, a wide table) never bleeds past the pane or under the
+            // header — the same rule the tree pane follows.
+            canvas.pushClip(Rect(0, cast(int) top,
+                (screenW - rightPad - gutterPx) / cellW, docRows));
             foreach (ref op; mdOps)
             {
                 const oy = op.rect.y;
                 if (op.kind != OpKind.pushClip && op.kind != OpKind.popClip
-                    && (oy + op.rect.height <= top || oy > top + visibleRows))
+                    && (oy + op.rect.height <= top || oy > top + docRows))
                     continue;
                 paint(canvas, (&op)[0 .. 1]);
             }
+            canvas.popClip();
 
             // Source line numbers in the gutter — from the row's source range
             // (first visual row of each source line only).
             if (gcols > 0)
             {
                 size_t prevLine = size_t.max;
-                foreach (row; 0 .. visibleRows)
+                foreach (row; 0 .. docRows)
                 {
                     const vi = topLine + row;
                     if (vi >= mdRows.length)
@@ -1210,14 +1230,18 @@ int runGui(
                     const s = cstrOf(buf, uintToBuf(ln + 1));
                     drawText(fonts, s,
                         gutterPx - (s.length + 1) * cast(float) cellW,
-                        row * cast(float) cellH, TextStyle(0), rl(gutterFg));
+                        docY0 + row * cast(float) cellH, TextStyle(0), rl(gutterFg));
                 }
             }
         }
         else
-            drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
+            // The raw view under the same pane clip (long lines don't wrap).
+            BeginScissorMode(treePx(), docY0,
+                screenW - rightPad - treePx(), screenH - docY0);
+            drawPreview(fonts, plines, topLine, docRows, cellW, cellH,
                 pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf,
-                treePx());
+                treePx(), docY0);
+            EndScissorMode();
 
         copiedFlash = copiedFlash.stepped(frameMs(), copiedCfg);
         // The ✔ glyph lives in the widget tree: rebuild when the flash ends so
@@ -1239,7 +1263,7 @@ int runGui(
         {
             const mp = GetMousePosition();
             const dp = Point(cast(int)((mp.x - gutterPx) / cellW),
-                cast(int)(top + cast(long)(mp.y / cellH)));
+                cast(int)(top + cast(long)((mp.y - docY0) / cellH)));
             if (mp.x >= gutterPx && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
                 foreach_reverse (ref const tgt; mdTargets)
                 {
@@ -1287,7 +1311,7 @@ int runGui(
             if (mdActive)
             {
                 const cx = cast(int)((mx - gutterPx) / cellW);
-                const cy = top + cast(long)(my / cellH);
+                const cy = top + cast(long)((my - docY0) / cellH);
                 if (mx < gutterPx || cy < 0 || cy >= cast(long) mdRows.length)
                     return h;
                 const p = Point(cx, cast(int) cy);
@@ -1328,7 +1352,7 @@ int runGui(
                 }
                 return h;
             }
-            const row = cast(int)(my / cellH);
+            const row = cast(int)((my - docY0) / cellH);
             if (row < 0 || topLine + row >= plines.length)
                 return h;
             const pl = plines[topLine + row];
@@ -1412,9 +1436,10 @@ int runGui(
         // (0 = the content origin, i.e. after `gutterPx`).
         void tintRow(long screenRow, int xStartCol, int xEndCol)
         {
-            if (screenRow < 0 || screenRow >= visibleRows || xEndCol <= xStartCol)
+            if (screenRow < 0 || screenRow >= docRows || xEndCol <= xStartCol)
                 return;
-            DrawRectangle(gutterPx + xStartCol * cellW, cast(int)(screenRow * cellH),
+            DrawRectangle(gutterPx + xStartCol * cellW,
+                cast(int)(docY0 + screenRow * cellH),
                 (xEndCol - xStartCol) * cellW, cellH, alpha(quoteBars[1], 80));
         }
         // Tint a source byte range on the widget path: the toolkit derives the
@@ -1435,7 +1460,7 @@ int runGui(
                 // span with source identity inside [smin, smax) tints.
                 tintSrcRange(smin, smax);
             else
-                foreach (row; 0 .. visibleRows)
+                foreach (row; 0 .. docRows)
                 {
                     const vi = topLine + row;
                     if (vi >= plines.length)
@@ -1489,7 +1514,7 @@ int runGui(
         // wrapColOffset (the current match brighter).
         if (!showPreview)
             foreach (i, m; matches)
-                foreach (row; 0 .. visibleRows)
+                foreach (row; 0 .. docRows)
                 {
                     const vi = topLine + row;
                     if (vi >= plines.length)
@@ -1503,7 +1528,8 @@ int runGui(
                     const vc = cast(int) m.col - off;
                     const remain = off + rowCols - cast(int) m.col;
                     const cols = cast(int) m.cols < remain ? cast(int) m.cols : remain;
-                    DrawRectangle(gutterPx + vc * cellW, cast(int)(row * cellH),
+                    DrawRectangle(gutterPx + vc * cellW,
+                        cast(int)(docY0 + row * cellH),
                         cols * cellW, cellH, i == curMatch ? currentMatchTint : matchTint);
                     break; // the match starts on this visual row
                 }
@@ -1520,7 +1546,7 @@ int runGui(
             {
                 const off = sourceOffsetAt(mdTree, mdFrames,
                     Point(cast(int)((mp.x - gutterPx) / cellW),
-                        cast(int)(top + cast(long)(mp.y / cellH))));
+                        cast(int)(top + cast(long)((mp.y - docY0) / cellH))));
                 if (off >= 0)
                     foreach (ni, ref const n; curTw.nodes)
                         if (n.type == NodeType.hover && off >= cast(long) n.start
@@ -1564,7 +1590,7 @@ int runGui(
                 {
                     const r = rects[0];
                     const hx = gutterPx + r.x * cellW;
-                    const hy = cast(int)((r.y - top) * cellH);
+                    const hy = cast(int)(docY0 + (r.y - top) * cellH);
                     const hw = r.width * cellW;
                     const uy = hy + cellH - 2;
                     const uc = Color(pageFg.r, pageFg.g, pageFg.b,
@@ -1636,15 +1662,16 @@ int runGui(
         // or dragging. Colors follow the theme's muted gutter tone.
         if (maxTop > 0)
         {
-            const g = thumbGeometry(total, visibleRows, top, maxTop, screenH);
+            const g = thumbGeometry(total, docRows, top, maxTop, screenH - docY0);
             const w = sb.currentWidth;
             const x = screenW - w;
             // Distinct link-tinted chrome (the gutter behind it is empty page bg):
             // a subtle full-height track on hover, a brighter thumb on top.
             if (sb.isHovered || sb.isDragging)
-                DrawRectangle(cast(int) x, 0, cast(int) w, screenH, rl(scrollbarTrack));
-            DrawRectangle(cast(int) x, cast(int) g.y, cast(int) w, cast(int) g.h,
-                rl(scrollbarThumb));
+                DrawRectangle(cast(int) x, docY0, cast(int) w, screenH - docY0,
+                    rl(scrollbarTrack));
+            DrawRectangle(cast(int) x, cast(int)(docY0 + g.y), cast(int) w,
+                cast(int) g.h, rl(scrollbarThumb));
         }
 
         // A header bar when navigating a document set (`GNV2`): the entry name and
@@ -1724,6 +1751,7 @@ private void drawPreview(
     int gutterCols,
     ref SmallBuffer!(char, 4096) buf,
     int paneX = 0,
+    int y0 = 0,
 ) @system
 {
     const screenW = GetScreenWidth();
@@ -1738,7 +1766,7 @@ private void drawPreview(
         if (li >= plines.length)
             break;
         const pl = plines[li];
-        const y = row * cast(float) cellH;
+        const y = y0 + row * cast(float) cellH;
 
         // Band behind the line (code panel / header / table / heading), inset to
         // the padded content column so the padding stays page-background.
