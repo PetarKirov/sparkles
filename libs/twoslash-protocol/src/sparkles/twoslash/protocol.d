@@ -23,7 +23,7 @@ renderer `final switch` on `type`. See $(MREF sparkles,twoslash,ingest).
 */
 module sparkles.twoslash.protocol;
 
-import sparkles.wired.policy : WireOptional;
+import sparkles.wired.policy : WireOptional, WireSkip;
 
 /**
 The twoslash node kinds.
@@ -100,6 +100,24 @@ struct TwoslashReturn
 {
     string code;   /// the trimmed display source (notation already stripped)
     Node[] nodes;  /// the flat decoration list
+
+    /// Highlighting language of `code` (`"d"`, `"typescript"`, …). Empty means
+    /// the TypeScript legacy — every payload predating this field. Renderers
+    /// go through $(LREF effectiveLanguage), never this field directly.
+    /// `whenDefault`: an unset field encodes to no key at all, so re-encoded
+    /// legacy payloads keep their reference shape (plain strings are never
+    /// "empty" under wired's `whenEmpty`, which only covers `Nullable`-likes).
+    @WireOptional(WireSkip.whenDefault) string language;
+
+    /// Coordinate system of every node's `start`/`length`: `"utf-8"` (byte
+    /// offsets into `code` — what D producers emit and what renderers consume)
+    /// or empty/`"utf-16"` (the TypeScript legacy; ingest normalizes it, see
+    /// $(REF utf16ToUtf8Offsets, sparkles,twoslash,ingest)).
+    @WireOptional(WireSkip.whenDefault) string offsetEncoding;
+
+    /// The language to highlight `code` (and popup signatures) as.
+    string effectiveLanguage() const @safe pure nothrow @nogc
+        => language.length ? language : "typescript";
 }
 
 @("protocol.Node.end")
@@ -118,4 +136,13 @@ unittest
     // The lowercase spelling is load-bearing (it is the wire representation).
     assert(NodeType.hover.stringof == "hover");
     static assert(NodeType.max == NodeType.tag);
+}
+
+@("protocol.TwoslashReturn.effectiveLanguage")
+@safe pure nothrow @nogc
+unittest
+{
+    // Absent language means the TypeScript legacy; set means itself.
+    assert(TwoslashReturn().effectiveLanguage == "typescript");
+    assert(TwoslashReturn(language: "d").effectiveLanguage == "d");
 }

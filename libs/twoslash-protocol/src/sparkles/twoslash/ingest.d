@@ -24,11 +24,13 @@ import sparkles.wired.json : fromJSON, JsonResult, readJSONFile;
 import sparkles.twoslash.protocol : TwoslashReturn;
 
 /// Decodes an already-parsed `TwoslashReturn` JSON object, normalizing node
-/// offsets to UTF-8 bytes (see $(LREF utf16ToUtf8Offsets)).
+/// offsets to UTF-8 bytes (see $(LREF utf16ToUtf8Offsets)). A payload that
+/// declares `offsetEncoding: "utf-8"` (a D-native producer) is already in
+/// byte offsets and passes through untouched.
 JsonResult!TwoslashReturn fromTwoslashJson(JSONValue root)
 {
     auto res = fromJSON!TwoslashReturn(root);
-    if (!res.hasError)
+    if (!res.hasError && res.value.offsetEncoding != "utf-8")
         utf16ToUtf8Offsets(res.value);
     return res;
 }
@@ -62,7 +64,7 @@ JsonResult!TwoslashReturn parseTwoslash(scope const(char)[] json)
 JsonResult!TwoslashReturn loadTwoslashFile(string path)
 {
     auto res = readJSONFile!TwoslashReturn(path);
-    if (!res.hasError)
+    if (!res.hasError && res.value.offsetEncoding != "utf-8")
         utf16ToUtf8Offsets(res.value);
     return res;
 }
@@ -79,7 +81,10 @@ drift by the extra UTF-8 bytes.
 Pure-ASCII `code` is a fixed point (byte offset == UTF-16 offset), so the common
 case is unchanged. Astral characters count as two UTF-16 units, matching TS; a
 `character` column is a display column already (≈ UTF-16 for BMP), so it is left
-as-is. Idempotent only on ASCII — call exactly once, at ingest.
+as-is. Idempotent only on ASCII — call exactly once, at ingest, and only for
+payloads that do not declare `offsetEncoding: "utf-8"` (a byte-offset-native
+producer run through this would corrupt every offset after the first non-ASCII
+character).
 */
 void utf16ToUtf8Offsets(ref TwoslashReturn tw) @safe
 {
@@ -221,6 +226,50 @@ unittest
         `{ "type": "hover", "start": 6, "length": 1, "line": 0, "character": 6, "text": "t" } ] }`).value;
     assert(ascii.nodes[0].start == 6 && ascii.nodes[0].length == 1);
     assert(ascii.code[ascii.nodes[0].start .. ascii.nodes[0].end] == "y");
+}
+
+@("ingest.parseTwoslash.utf8PassThrough")
+unittest
+{
+    // A D-native producer emits byte offsets and declares them. The same
+    // em-dash sample as above, but `start` is already the byte offset 15 —
+    // running the UTF-16 remap over it would corrupt it (the exact bug the
+    // declaration exists to prevent).
+    const json = `{
+        "code": "// — x\nconst y = x",
+        "language": "d",
+        "offsetEncoding": "utf-8",
+        "nodes": [
+            { "type": "hover", "start": 15, "length": 1, "line": 1, "character": 6,
+                "text": "string y" }
+        ]
+    }`;
+    const tw = parseTwoslash(json).value;
+    assert(tw.effectiveLanguage == "d");
+    assert(tw.nodes[0].start == 15); // untouched
+    assert(tw.code[tw.nodes[0].start .. tw.nodes[0].end] == "y");
+}
+
+@("ingest.encode.legacyShapeUnchanged")
+unittest
+{
+    // Encoding a legacy payload must not grow the new optional keys: absent
+    // language/offsetEncoding stay absent (WireSkip.whenDefault), so re-encoded
+    // TS fixtures keep their exact reference shape.
+    import std.json : parseJSON;
+    import sparkles.wired.json : toJSON;
+
+    // wired encodes to text now, so the shape assertions parse it back.
+    const tw = parseTwoslash(`{ "code": "x", "nodes": [] }`).value;
+    const obj = parseJSON(toJSON(tw).value[]).object;
+    assert("language" !in obj);
+    assert("offsetEncoding" !in obj);
+
+    // And a declared payload round-trips its declaration.
+    const d = parseJSON(toJSON(TwoslashReturn(code: "x", language: "d",
+        offsetEncoding: "utf-8")).value[]).object;
+    assert(d["language"].str == "d");
+    assert(d["offsetEncoding"].str == "utf-8");
 }
 
 @("ingest.parseTwoslash.invalidJson")
