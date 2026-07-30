@@ -47,7 +47,7 @@ enum NodeType : ubyte
 struct Completion
 {
     string name;              /// the inserted text
-    @WireOptional() string kind; /// TS symbol kind (`"method"`, `"property"`, …)
+    @WireOptional(WireSkip.whenDefault) string kind; /// TS symbol kind (`"method"`, `"property"`, …)
 }
 
 /**
@@ -75,28 +75,28 @@ struct Node
     /// `--serve`). Renderers still mark the span (the discoverability
     /// underline) but suppress the empty popup; a live consumer fills the
     /// content in on demand.
-    @WireOptional() string text;
+    @WireOptional(WireSkip.whenDefault) string text;
     /// hover/query attached JSDoc description, if any.
-    @WireOptional() string docs;
+    @WireOptional(WireSkip.whenDefault) string docs;
     /// hover/query JSDoc tags: each inner array is `[name, text?]` (the wire
     /// shape `[name, text][]`; e.g. `["param", "value - the wrapped object"]`).
     /// The name is bare (no leading `@`); the renderer prepends it.
-    @WireOptional() string[][] tags;
+    @WireOptional(WireSkip.whenDefault) string[][] tags;
 
     /// error level: `"error"` (default) | `"warning"` | `"suggestion"` | `"message"`.
-    @WireOptional() string level;
+    @WireOptional(WireSkip.whenDefault) string level;
     /// error diagnostic code (0 when absent).
-    @WireOptional() int code;
+    @WireOptional(WireSkip.whenDefault) int code;
     /// error identifier.
-    @WireOptional() string id;
+    @WireOptional(WireSkip.whenDefault) string id;
 
     /// completion candidates.
-    @WireOptional() Completion[] completions;
+    @WireOptional(WireSkip.whenDefault) Completion[] completions;
     /// the letters already typed before the caret (for filtering).
-    @WireOptional() string completionsPrefix;
+    @WireOptional(WireSkip.whenDefault) string completionsPrefix;
 
     /// tag name (the word after `// @`).
-    @WireOptional() string name;
+    @WireOptional(WireSkip.whenDefault) string name;
 
     /// Exclusive end offset into `code`.
     size_t end() const @safe pure nothrow @nogc => start + length;
