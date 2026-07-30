@@ -285,7 +285,11 @@ struct ViewerModel
 
         // Gutter fold markers: the row each foldable region begins on.
         // Both lists are ordered by source position, so one two-pointer
-        // pass suffices; same-row nested starts keep the outermost.
+        // pass suffices; same-row nested starts keep the outermost. The
+        // marker lands on the FIRST identity-carrying row at-or-after the
+        // region's start that still lies inside it — a markdown section
+        // starts at `##` while its heading row's identity starts after the
+        // marker text, and a fence's opening line renders as a header row.
         foldMarkers = null;
         size_t ri = 0;
         foreach (sp; foldable)
@@ -294,7 +298,7 @@ struct ViewerModel
                 || rows[ri].srcEnd <= sp.start))
                 ++ri;
             if (ri < rows.length && rows[ri].srcStart != size_t.max
-                && sp.start >= rows[ri].srcStart && sp.start < rows[ri].srcEnd
+                && rows[ri].srcStart < sp.end
                 && (!foldMarkers.length || foldMarkers[$ - 1].row != ri))
                 foldMarkers ~= FoldMarker(ri, sp.start, folds.isOpen(sp.start));
         }

@@ -497,7 +497,12 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 lbl = lbl ~ "  " ~ (opt.copiedFence == blk.codeBody.start
                     ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon);
             }
-            Widget header = Widget(kind: WidgetKind.text, text: lbl,
+            // The header row carries the fence's opening line as identity
+            // (gutter fold markers + block-granular selection anchor here).
+            Widget header = Widget(kind: WidgetKind.rich, spans: [
+                    TextSpan(lbl, Slot.code, codeStyle(opt),
+                        srcStart: blk.span.start,
+                        srcEnd: blk.codeBody.start)],
                 slot: Slot.code, hitId: headerHit, stretch: true,
                 paintBackground: true, padding: Insets.symmetric(0, 1),
                 textStyle: codeStyle(opt),
@@ -1164,7 +1169,7 @@ version (unittest)
     MdViewOptions opt = {theme: vt};
     auto c = renderDoc(doc, opt);
 
-    bool sawIcon, sawBand, sawCheck, sawHeader;
+    bool sawIcon, sawBand, sawCheck, sawHeader, sawHeaderBand;
     const glyphs = MdViewGlyphs.init;
     foreach (ref op; c.ops)
     {
@@ -1178,11 +1183,14 @@ version (unittest)
         if (op.kind == OpKind.textRun && op.text == glyphs.checkedBox
             && op.visual.fg == vt.accentGreen)
             sawCheck = true;
-        if (op.kind == OpKind.textRun && op.text == langIcon("d") ~ " d"
-            && op.visual.bg == vt.codeHeaderBg)
+        // The header is a rich run now (it carries the fence's opening-line
+        // identity); its band is the widget's own fill in codeHeaderBg.
+        if (op.kind == OpKind.textRun && op.text == langIcon("d") ~ " d")
             sawHeader = true;
+        if (op.kind == OpKind.fillRect && op.visual.bg == vt.codeHeaderBg)
+            sawHeaderBand = true;
     }
-    assert(sawIcon && sawBand && sawCheck && sawHeader);
+    assert(sawIcon && sawBand && sawCheck && sawHeader && sawHeaderBand);
 }
 
 private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
