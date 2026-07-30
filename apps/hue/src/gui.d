@@ -911,7 +911,17 @@ int runGui(
                 else if (pressed(KeyboardKey.KEY_M))
                     vm.setAllFolds(true);
                 else
+                {
                     consumed = false;
+                    // z1–z9: fold to nesting level (vim's foldlevel).
+                    foreach (n; 0 .. 9)
+                        if (pressed(KeyboardKey.KEY_ONE + n))
+                        {
+                            vm.foldToLevel(n + 1);
+                            consumed = true;
+                            break;
+                        }
+                }
                 if (consumed)
                     foldSeqFrames = 0;
             }

@@ -472,6 +472,27 @@ struct ViewerModel
         rebuild();
     }
 
+    /// `z1`–`z9`: fold to nesting level (vim's foldlevel) — regions nested
+    /// `level` deep or deeper fold, shallower ones open. `level` 0 folds
+    /// everything (`zM`); a level past the deepest nesting opens all (`zR`).
+    void foldToLevel(int level)
+    {
+        folds = DisclosureState!size_t(true);
+        // Depth via an enclosing-ends stack: the regions are source-ordered
+        // and properly nested, so the stack depth at each region's start is
+        // its nesting level.
+        size_t[] ends;
+        foreach (sp; foldable)
+        {
+            while (ends.length && ends[$ - 1] <= sp.start)
+                ends = ends[0 .. $ - 1];
+            if (cast(int) ends.length >= level)
+                folds = folds.closed(sp.start);
+            ends ~= sp.end;
+        }
+        rebuild();
+    }
+
     /// `FLD6`: unfolds every folded region containing byte `off` (a search
     /// or goto target inside a fold becomes visible before the jump).
     /// Returns true (and rebuilds) when anything opened.
@@ -606,4 +627,19 @@ struct ViewerModel
     // zR restores everything.
     vm.setAllFolds(false);
     assert(vm.rows.length == openRows);
+
+    // z1 (foldlevel 1): the top-level function stays open, its nested
+    // regions (the body block and deeper) fold; z9 opens everything.
+    vm.foldToLevel(1);
+    assert(vm.rows.length < openRows && vm.rows.length > 2,
+        "nested regions folded, the top level open");
+    vm.foldToLevel(9);
+    assert(vm.rows.length == openRows);
+    // z0-equivalent: level 0 folds every region (zM).
+    vm.foldToLevel(0);
+    bool topFolded;
+    foreach (ref const fm; vm.foldMarkers)
+        if (fm.row == 0 && !fm.open)
+            topFolded = true;
+    assert(topFolded, "level 0 folds the top-level region");
 }
