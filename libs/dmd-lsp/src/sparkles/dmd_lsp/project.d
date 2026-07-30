@@ -188,7 +188,20 @@ DubProject describeDubProject(string startPath, DubQuery query = DubQuery.init) 
     {
         // dub's own progress/diagnostics stay on stderr, where a CLI shows
         // them and a GUI ignores them; only the settings line is captured.
-        const res = execute(argv, null, Config.stderrPassThrough);
+        auto res = execute(argv, null, Config.stderrPassThrough);
+
+        // One retry, because a failure here is not always a property of the
+        // project: the pinned dmd fork declares the same `preGenerateCommand`
+        // in each of its four subpackages, all writing one shared
+        // `generated/dub-gen/config` under `~/.dub/packages`. Two of them
+        // running close enough together race on it — "Failed to remove file
+        // …: No such file or directory" — and dub exits 2 for the whole
+        // describe. Reproducible with plain concurrent `dub describe` calls,
+        // outside any of our code. A root that genuinely has nothing to
+        // describe fails the retry too and falls through unchanged.
+        if (res.status != 0)
+            res = execute(argv, null, Config.stderrPassThrough);
+
         if (res.status != 0)
         {
             // A root package with `targetType "none"` (dmd) or without any
@@ -762,10 +775,14 @@ private string[] splitArgs(scope const(char)[] line) @safe pure
     if (!onPath("dub"))
         skipOrThrow("dub is not on PATH");
 
-    clearDubProjectCache();
     DubProject first, again, other;
+    // The cache clears belong inside the same critical section as the
+    // queries: a clear from a concurrently running dub test would otherwise
+    // land between these two lookups, turning the second into the very
+    // concurrent `dub describe` this lock exists to prevent.
     synchronized (dubTestSync)
     {
+        clearDubProjectCache();
         first = dubProjectFor(here);
         again = dubProjectFor(here);
         // A different query is a different cache entry, not a stale hit.
@@ -776,8 +793,11 @@ private string[] splitArgs(scope const(char)[] line) @safe pure
     assert(first.analyzer.versionIds == again.analyzer.versionIds);
     assert(other.query.buildType == "unittest");
 
-    clearDubProjectCache();
-    assert(dubProjectFor("/nonexistent/file.d").found == false);
+    synchronized (dubTestSync)
+    {
+        clearDubProjectCache();
+        assert(dubProjectFor("/nonexistent/file.d").found == false);
+    }
 }
 
 version (unittest)
@@ -909,13 +929,14 @@ version (unittest)
         ~ "    sourcePaths \"src\"\n    importPaths \"src\"\n}\n");
     t.put("src/core_mod.d", "module core_mod;\nint x;\n");
 
-    clearDubProjectCache();
-    scope (exit) clearDubProjectCache();
-
     const file = t.root.buildPath("src", "core_mod.d");
     DubProject proj;
     synchronized (dubTestSync)
+    {
+        clearDubProjectCache();
+        scope (exit) clearDubProjectCache();
         proj = dubProjectFor(file);
+    }
     assert(proj.found);
     assert(proj.usable, proj.error);
     assert(proj.subpackage == "core", proj.subpackage);
@@ -948,12 +969,11 @@ version (unittest)
     t.put("libs/thing/src/thing_mod.d", "module thing_mod;\nint y;\n");
     t.put("stray.d", "module stray;\n");
 
-    clearDubProjectCache();
-    scope (exit) clearDubProjectCache();
-
     DubProject inner, stray;
     synchronized (dubTestSync)
     {
+        clearDubProjectCache();
+        scope (exit) clearDubProjectCache();
         inner = dubProjectFor(t.root.buildPath("libs", "thing", "src", "thing_mod.d"));
         stray = dubProjectFor(t.root.buildPath("stray.d"));
     }
