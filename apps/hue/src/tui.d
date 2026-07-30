@@ -452,11 +452,20 @@ struct PreviewTui
     {
         if (hoverSel < 0 || hoverSel >= cast(int) hoverNodes.length)
             return;
+        import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
+        import sparkles.twoslash.render_widgets : signatureSpans;
+        import sparkles.ui.widget : TextSpan;
+
         const n = tw.nodes[hoverNodes[hoverSel]];
         auto rs = selectionRects(mdTree, mdFrames, n.start, n.start + n.length);
         if (!rs.length)
             return;
-        auto tree = viewHoverPopup(tw, hoverNodes[hoverSel]);
+        // With a grammar cache the signature renders as resolved-color spans
+        // inside the widget model (the same mapping the GUI uses).
+        TextSpan[] sig = cache !is null
+            ? signatureSpans(*cache, (() @trusted => &theme)(), pageFg,
+                withoutQuickinfoPrefix(n.text)) : null;
+        auto tree = viewHoverPopup(tw, hoverNodes[hoverSel], sig);
         auto frames = layout(tree);
         auto ops = buildDisplayList(tree, frames,
             defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg, pageBg);
