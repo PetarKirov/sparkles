@@ -73,6 +73,16 @@ struct MdViewOptions
     /// feedback state lives in the app, the view stays a pure function of it.
     size_t copiedFence = size_t.max;
 
+    /// Span starts (`MdBlock.span.start`) of folded regions — each renders
+    /// as a one-row placeholder (first source line + a `⋯ N lines` chip)
+    /// carrying the whole region's source identity, so selection/copy over a
+    /// fold still yields the folded source (`FLD` under `D1`: a fold is a
+    /// subtree swapped for a placeholder, so it nests correctly).
+    size_t[] foldedSpans;
+    /// Non-zero makes fold placeholders click targets:
+    /// `hitId = foldHitBase + span.start` (unfold on click).
+    size_t foldHitBase = 0;
+
     /// Non-zero stamps every table cell wrapper with
     /// `key = tableKeyBase + cell.span.start` — source-anchored identity an
     /// interactive backend resolves back to the document's cell structure
@@ -164,15 +174,115 @@ uint viewMarkdownInto(ref Builder b, const MdDoc doc,
     MdViewOptions opt = MdViewOptions.init)
     => blocksColumn(b, doc.root.children, doc.source, opt);
 
-// One column of blocks with a blank line's worth of gap between them.
+// One column of blocks with a blank line's worth of gap between them. A
+// folded block collapses to its placeholder; a folded HEADING folds its whole
+// section (the sibling run up to the next heading of the same or higher level).
 private uint blocksColumn(ref Builder b, in MdBlock[] blocks,
     const(char)[] src, MdViewOptions opt, int listDepth = 0,
     int quoteDepth = 0)
 {
+    import std.algorithm.searching : canFind;
+
     auto rows = new uint[](0);
-    foreach (ref const blk; blocks)
-        rows ~= viewBlock(b, blk, src, opt, listDepth, quoteDepth);
+    for (size_t i = 0; i < blocks.length; ++i)
+    {
+        if (opt.foldedSpans.canFind(blocks[i].span.start))
+        {
+            size_t srcEnd = blocks[i].span.end;
+            if (blocks[i].kind == MdBlockKind.heading)
+                while (i + 1 < blocks.length
+                    && !(blocks[i + 1].kind == MdBlockKind.heading
+                        && blocks[i + 1].level <= blocks[i].level))
+                {
+                    ++i;
+                    srcEnd = blocks[i].span.end;
+                }
+            rows ~= foldPlaceholder(b, blocks[i].span.start, srcEnd, src, opt);
+            continue;
+        }
+        rows ~= viewBlock(b, blocks[i], src, opt, listDepth, quoteDepth);
+    }
     return b.container(WidgetKind.column, rows, gap: 1);
+}
+
+// A folded region's one-row stand-in: `▸ <first source line> ⋯ N lines`,
+// carrying the whole region's source identity (selection copies the fold).
+private uint foldPlaceholder(ref Builder b, size_t start, size_t end,
+    const(char)[] src, MdViewOptions opt)
+{
+    import sparkles.base.text.writers : writeInteger;
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    const clampedEnd = end > src.length ? src.length : end;
+    const body_ = src[start .. clampedEnd];
+    size_t firstLen = body_.length;
+    size_t lines = 1;
+    foreach (i, ch; body_)
+        if (ch == '\n')
+        {
+            if (lines == 1)
+                firstLen = i;
+            ++lines;
+        }
+
+    SmallBuffer!(char, 32) n;
+    writeInteger(n, lines);
+    TextSpan[] spans = [
+        TextSpan("▸ ", opt.proseSlot, opt.baseStyle, noBreak: true),
+        TextSpan(body_[0 .. firstLen], opt.proseSlot, opt.baseStyle,
+            noBreak: true, srcStart: start, srcEnd: clampedEnd),
+        TextSpan("  ⋯ " ~ n[].idup ~ " lines", Slot.gutter, opt.baseStyle,
+            noBreak: true),
+    ];
+    Widget w = Widget(kind: WidgetKind.rich, spans: spans,
+        slot: opt.proseSlot, textStyle: opt.baseStyle,
+        hitId: opt.foldHitBase != 0 ? opt.foldHitBase + start : opt.hitId);
+    return b.add(w);
+}
+
+/**
+The markdown fold-range provider (`FSR3`): the foldable regions of `doc` as
+source byte spans, document order — heading sections (heading start → the end
+of the sibling run before the next same-or-higher heading), fenced code,
+block quotes, lists, and tables. Spans are the fold keys (the same
+source-anchored identity the copy targets use), consumed by
+$(REF DisclosureState, sparkles,ui,state) + `MdViewOptions.foldedSpans`.
+*/
+Span[] foldableSpans(const MdDoc doc) @safe
+{
+    Span[] spans;
+
+    void walk(in MdBlock[] blocks)
+    {
+        for (size_t i = 0; i < blocks.length; ++i)
+        {
+            final switch (blocks[i].kind) with (MdBlockKind)
+            {
+                case heading:
+                {
+                    size_t end = blocks[i].span.end;
+                    size_t j = i + 1;
+                    while (j < blocks.length
+                        && !(blocks[j].kind == heading
+                            && blocks[j].level <= blocks[i].level))
+                        end = blocks[j++].span.end;
+                    if (j > i + 1) // an empty section has nothing to fold
+                        spans ~= Span(blocks[i].span.start, end);
+                    break;
+                }
+                case codeFence, blockQuote, list, table:
+                    spans ~= blocks[i].span;
+                    break;
+                case document, paragraph, listItem, tableRow, tableCell,
+                    thematicBreak, htmlBlock:
+                    break;
+            }
+            walk(blocks[i].children);
+        }
+    }
+
+    walk(doc.root.children);
+    return spans;
 }
 
 private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
@@ -1251,4 +1361,52 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
     foreach (ref op; ops)
         sawRaw |= op.text == "deep";
     assert(sawRaw);
+}
+
+@("md.render_widgets.folding.providerAndPlaceholder")
+@safe unittest
+{
+    import sparkles.ui.widget : WidgetKind;
+
+    // "# Title\n\npara\n\n```d\na\nb\n```" — the provider yields the heading
+    // SECTION (title through fence) and the fence itself.
+    const src = "# Title\n\npara\n\n```d\na\nb\n```";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.heading, level: 1, span: Span(0, 7), inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(2, 7))]),
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(9, 13), inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(9, 13))]),
+        MdBlock(kind: MdBlockKind.codeFence, infoLang: "d",
+            span: Span(15, src.length), codeBody: Span(20, 24)),
+    ]), src);
+
+    const folds = foldableSpans(doc);
+    assert(folds == [Span(0, src.length), Span(15, src.length)]);
+
+    // Folding the fence: its panel is gone; a placeholder row carries the
+    // whole region's identity and the unfold hit id.
+    MdViewOptions opt = {foldedSpans: [15UL], foldHitBase: 1 << 20};
+    auto tree = viewMarkdown(doc, opt);
+    bool sawPlaceholder, sawPanel;
+    foreach (ref const n; tree.nodes)
+    {
+        if (n.kind == WidgetKind.rich && n.hitId == (1 << 20) + 15)
+            foreach (ref const s; n.spans)
+                if (s.srcStart == 15 && s.srcEnd == src.length
+                    && s.text == "```d")
+                    sawPlaceholder = true;
+        if (n.kind == WidgetKind.panel)
+            sawPanel = true;
+    }
+    assert(sawPlaceholder && !sawPanel);
+
+    // Folding the heading folds its whole SECTION: one placeholder row for
+    // the sibling run, nothing else.
+    MdViewOptions opt2 = {foldedSpans: [0UL]};
+    auto t2 = viewMarkdown(doc, opt2);
+    size_t rich;
+    foreach (ref const n; t2.nodes)
+        if (n.kind == WidgetKind.rich)
+            ++rich;
+    assert(rich == 1, "the folded section renders as exactly one row");
 }
