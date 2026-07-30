@@ -1142,13 +1142,16 @@ int runGui(
             canvas.popClip();
 
             // Fold markers in the pane's left padding column (FLD5): ▾ on
-            // an open region's first row, ▸ on a folded one; click toggles.
+            // an open region's first row; click toggles. A FOLDED region
+            // draws no column marker — its placeholder row already leads
+            // with the ▸ affordance, and doubling it up reads as noise (the
+            // blank column cell still accepts the unfold click).
             foreach (ref const fm; vm.foldMarkers)
             {
-                if (fm.row < topLine || fm.row >= topLine + docRows)
+                if (!fm.open || fm.row < topLine
+                    || fm.row >= topLine + docRows)
                     continue;
-                const g2 = cstrOf(buf, fm.open ? "▾" : "▸");
-                drawText(fonts, g2, cast(float)(treePx() + 2),
+                drawText(fonts, cstrOf(buf, "▾"), cast(float)(treePx() + 2),
                     docY0 + (fm.row - topLine) * cast(float) cellH,
                     TextStyle(0), rl(vm.gutterFg));
             }
@@ -1302,7 +1305,13 @@ int runGui(
             const mp = GetMousePosition();
             const overSb = mp.x >= screenW - scrollbarGutter();
             const overTree = treeVisible && mp.x < treeCols * cellW;
-            if (overTree && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+            // The pane's scrollbar strip is NOT a row: without this gate a
+            // scrollbar click also row-selects, and a double click "re-hits"
+            // the row under the cursor and opens it.
+            const overTreeSb = overTree && treeMaxTop > 0
+                && mp.x >= treeCols * cellW - scrollbarGutter();
+            if (overTree && !overTreeSb
+                && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
             {
                 treeFocused = true;
                 const row = tree.top
