@@ -107,6 +107,14 @@ void drawText(ref FontSet fonts, scope const(char)[] str, float x, float y,
     while (i < str.length)
     {
         const cp = cast(int) decode!(Yes.useReplacementDchar)(str, i);
+        // A control codepoint (a tab in source, a stray C0) is a blank
+        // cell, not the font's missing-glyph box — one column, matching the
+        // v1 width metric (tab counts as one).
+        if (cp < 0x20 || cp == 0x7f)
+        {
+            ++col;
+            continue;
+        }
         const gxCol = x + col * cellW;
         // Box-drawing glyphs are rendered procedurally so their arms fill the cell
         // and connect across neighbouring cells (fonts leave gaps); anything the
