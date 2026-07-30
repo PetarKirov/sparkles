@@ -42,9 +42,11 @@ $(REF paint, sparkles,ui,interp,immediate)) keeps the borrowed-`Grid` canvas
 the whole path stays `@safe` under dip1000.
 */
 void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
-    int originX = 0, int originY = 0)
+    int originX = 0, int originY = 0, Rect clip = Rect.init)
 {
     auto canvas = GridCanvas(&grid, pageBg, originX, originY);
+    if (!clip.empty)
+        canvas.pushClip(clip); // an outer viewport in canvas cell coordinates
     foreach (ref op; ops)
     {
         final switch (op.kind) with (OpKind)
@@ -85,14 +87,20 @@ struct GridCanvas
     int originY = 0; /// grid row of cell y = 0
 
     /// The active clip stack in canvas cell coordinates (empty = unclipped).
-    /// The display list pushes *effective* rects, so only the top gates writes.
+    /// The display list pushes *effective* (pre-intersected) rects, but an
+    /// externally pushed base viewport (`paintGrid`'s `clip`) is not folded
+    /// into them, so a write must satisfy every entry.
     private Rect[] clips;
 
     private bool inBounds(int x, int y) const scope pure nothrow @nogc
     {
         const gx = originX + x, gy = originY + y;
-        return grid !is null && gx >= 0 && gx < grid.cols && gy >= 0 && gy < grid.rows
-            && (clips.length == 0 || clips[$ - 1].contains(Point(x, y)));
+        if (grid is null || gx < 0 || gx >= grid.cols || gy < 0 || gy >= grid.rows)
+            return false;
+        foreach (ref const c; clips)
+            if (!c.contains(Point(x, y)))
+                return false;
+        return true;
     }
 
     /// The optional `sparkles:ui` clipping pair: cell writes outside the

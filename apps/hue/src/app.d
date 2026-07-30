@@ -32,7 +32,7 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_caps : isTerminal, StdStream;
 
 import ansi_model : BackgroundMode, backgroundOptions;
-import document : ContentKind, Document, DocumentPipeline;
+import document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
 import source_set : SourceSet;
 import table_select : TableCopyFormat;
 
@@ -522,6 +522,7 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             source: doc.source,
             events: doc.events,
             model: doc.preview,
+            cache: &cache,
             labels: labels,
             names: themeSet.names,
             themes: themeSet.themes,
@@ -721,39 +722,6 @@ int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
 /// Build the markdown preview model, supplying the off-screen-VT ansi-fence
 /// decoder only on a GUI-enabled build (`gui_ansi.decodeAnsi` pulls
 /// sparkles:ghostty). Without it — the terminal / HTML paths and the `no-gui`
-
-/**
-The fence renderer for hue's markdown widget view: ` ```ansi ` fences carry
-pre-styled terminal output — without an off-screen VT (the `no-gui` build and
-these static sinks) their SGR is stripped to plain text; every other language
-goes through the shared injection-aware highlighter.
-*/
-private auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
-    RgbColor pageFg) @system
-{
-    import gui_preview : stripSgr;
-    import sparkles.syntax.md.render_widgets : highlightedFenceRenderer;
-    import sparkles.ui.widget : TextSpan;
-
-    auto highlight = highlightedFenceRenderer(cache, theme, pageFg);
-    return delegate TextSpan[][] (const(char)[] lang, const(char)[] body_) @trusted {
-        if (lang != "ansi")
-            return highlight(lang, body_);
-        // Strip SGR, one plain span per line.
-        const plain = stripSgr(body_);
-        TextSpan[][] lines;
-        size_t start = 0;
-        foreach (i, char c; plain)
-            if (c == '\n')
-            {
-                lines ~= [TextSpan(plain[start .. i], fg: pageFg, hasFg: true)];
-                start = i + 1;
-            }
-        if (start < plain.length)
-            lines ~= [TextSpan(plain[start .. $], fg: pageFg, hasFg: true)];
-        return lines;
-    };
-}
 
 /// The column width the terminal markdown preview wraps to: the terminal width
 /// (capped for prose readability), or 80 when it can't be detected (piped).

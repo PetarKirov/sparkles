@@ -19,23 +19,30 @@ import sparkles.base.text.writers : writeInteger;
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
     resolveTheme, RgbColor, Theme, toRgb;
 
+import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
+import sparkles.syntax.md.render_widgets : MdViewOptions, MdViewTheme,
+    viewMarkdown;
+import sparkles.syntax.ts.injection : TsConfigCache;
+
 import sparkles.tui : Cell, CellStyle, Color, Grid, PosixEvents, Terminal,
     TerminalOptions, TextAttr, UnderlineStyle;
 import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
+import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.display_list : buildDisplayList;
-import sparkles.ui.geometry : SizeSpec;
-import sparkles.ui.layout : layout;
-import sparkles.ui.state : scrollbarThumb, ScrollState, Selection;
+import sparkles.ui.geometry : Constraints, Point, Rect, SizeSpec;
+import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.state : DocRow, documentRows, HoverTarget, hoverTargets,
+    scrollbarThumb, ScrollState, Selection;
 import sparkles.ui.style : Slot;
-import sparkles.ui.widget : Builder, Widget, WidgetKind;
+import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_tui : paintGrid;
 
 import ansi_model : Attr, BackgroundMode;
-import gui_preview : BandKind, buildRawPlines, layoutPreview, PreviewLine,
-    PreviewModel, quoteBarColors, quoteBarCycle;
-import gui_text : columnWidth;
+import document : hueFenceRenderer;
+import gui_preview : BandKind, buildRawPlines, PreviewLine, PreviewModel,
+    quoteBarColors, quoteBarCycle;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor fallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
@@ -85,6 +92,8 @@ struct PreviewTui
     const(char)[] source;
     const(HighlightEvent)[] events;
     PreviewModel model;             // present ⇒ a markdown file (preview available)
+    TsConfigCache* cache;           // fence highlighting for the widget markdown
+                                    // path (null ⇒ plain fence bodies)
     LabelSet labels;
     const(string)[] names;          // theme names, parallel to `themes`
     immutable(Theme)[] themes;
@@ -118,11 +127,35 @@ struct PreviewTui
     private SmallBuffer!char clip;
     private bool clipReady;
 
-    // Copy-button feedback: the fence/table just copied shows a ✔ until the next
-    // event (the loop is event-driven, so there is no timed flash). -1 ⇒ none.
-    private int copiedFence = -1, copiedTable = -1;
+    // The widget markdown path (M10): the preview is one laid-out widget tree,
+    // painted from precomputed ops with a scroll offset. `mdRows` (the identity
+    // channel aggregated per visual row) drives search and selection; the hit
+    // targets carry the fences' source-anchored copy identity.
+    private WidgetTree mdTree;
+    private Frame[] mdFrames;
+    private DrawOp[] mdOps;
+    private DocRow[] mdRows;
+    private HoverTarget[] mdTargets;
+    private Span[] mdFences;        // codeFence body spans, resolved on copy
+
+    // Copy feedback: the just-copied fence's body start (its header shows the
+    // ✔ glyph) until the next event — the loop is event-driven, no timed flash.
+    private size_t copiedFenceSrc = size_t.max;
+
+    // Fence hit ids live above this base: `hitId - fenceHitBase` is the fence
+    // body's source byte offset (source-anchored identity, no counters).
+    private enum size_t fenceHitBase = size_t.max / 2 + 1;
 
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
+
+    // The markdown preview renders through the widget tree; raw source (and
+    // non-markdown files) keep the styled-line path.
+    private bool usingWidgets() const @safe pure nothrow @nogc
+        => showPreview && model.present;
+
+    /// Visual line count of the active view — the scroll/selection/search space.
+    private long lineCount() const @safe pure nothrow @nogc
+        => usingWidgets ? cast(long) mdRows.length : cast(long) plines.length;
 
     /// Rebuild the laid-out lines for the current theme / width / view mode (GC;
     /// run on a theme, resize, or toggle change — never per frame).
@@ -140,11 +173,41 @@ struct PreviewTui
         selBg = mix(pageBg, linkC, 0.4);
         // Lay out to one column narrower — the last column holds the scrollbar.
         const w = width < 9 ? 8 : width - 1;
-        if (showPreview && model.present)
-            plines = layoutPreview(model, theme, pageFg, pageBg, w);
+        if (usingWidgets)
+            rebuildMd();
         else
             plines = buildRawPlines(source, events, theme, pageFg, pageBg, w);
         clampTop();
+    }
+
+    // Rebuild the markdown widget pipeline: view → layout → display list, plus
+    // the derived row index (search/selection) and hit targets (fence copy).
+    private void rebuildMd() @system
+    {
+        const w = width < 9 ? 8 : width - 1;
+        MdViewOptions opt = {
+            theme: MdViewTheme.derive(theme, pageFg, pageBg),
+            fenceHitBase: fenceHitBase,
+            copiedFence: copiedFenceSrc,
+        };
+        if (cache !is null)
+            opt.fenceRenderer = hueFenceRenderer(cache, &theme, pageFg);
+        mdTree = viewMarkdown(model.doc, opt);
+        mdFrames = layout(mdTree, Constraints(maxW: w));
+        mdOps = buildDisplayList(mdTree, mdFrames,
+            themes[themeIdx].effectivePalette, pageFg, pageBg);
+        mdRows = documentRows(mdTree, mdFrames);
+        mdTargets = hoverTargets(mdTree, mdFrames);
+        mdFences.length = 0;
+        collectFences(model.doc.root, mdFences);
+    }
+
+    private static void collectFences(in MdBlock b, ref Span[] fences) @safe
+    {
+        if (b.kind == MdBlockKind.codeFence)
+            fences ~= b.codeBody;
+        foreach (ref const c; b.children)
+            collectFences(c, fences);
     }
 
     private int bodyRows() const @safe pure nothrow @nogc
@@ -152,7 +215,7 @@ struct PreviewTui
 
     private long maxTop() const @safe pure nothrow @nogc
     {
-        const over = cast(long) plines.length - bodyRows();
+        const over = lineCount - bodyRows();
         return over > 0 ? over : 0;
     }
 
@@ -166,7 +229,7 @@ struct PreviewTui
     {
         if (!sel.active)
             return;
-        const last = cast(long) plines.length - 1;
+        const last = lineCount - 1;
         long clamp(long v) => v > last ? last : (v < 0 ? 0 : v);
         sel = Selection!long(true, clamp(sel.anchor), clamp(sel.focus));
     }
@@ -177,15 +240,28 @@ struct PreviewTui
     // via OSC 52. Clears the selection.
     private void copySelection() @system
     {
-        if (!sel.active || plines.length == 0)
+        if (!sel.active || lineCount == 0)
             return;
         const lo = sel.lo, hi = sel.hi;
         size_t a = size_t.max, b;
         bool any;
         foreach (i; lo .. hi + 1)
         {
-            if (i < 0 || i >= cast(long) plines.length)
+            if (i < 0 || i >= lineCount)
                 continue;
+            if (usingWidgets)
+            {
+                // The aggregated identity channel: one source range per row.
+                const r = mdRows[cast(size_t) i];
+                if (r.srcStart == size_t.max)
+                    continue; // decoration-only row (band, border, rule)
+                any = true;
+                if (r.srcStart < a)
+                    a = r.srcStart;
+                if (r.srcEnd > b)
+                    b = r.srcEnd;
+                continue;
+            }
             foreach (ref r; plines[cast(size_t) i].runs)
             {
                 if (r.srcStart == size_t.max)
@@ -220,25 +296,14 @@ struct PreviewTui
         clipReady = true;
     }
 
-    // Column of a line's copy button (code header / table top border) — the middle
-    // of the border's 3-space cutout, `lineCols-3` from the content origin. -1 when
-    // the line has no button.
-    private int copyButtonCol(in PreviewLine pl) @safe
-    {
-        if (pl.copyFence < 0 && pl.copyTable < 0)
-            return -1;
-        int start = pl.quoteDepth * 2 + pl.indentCols + cast(int) columnWidth(pl.leader);
-        int cols;
-        foreach (ref r; pl.runs)
-            cols += cast(int) columnWidth(r.text);
-        return start + cols - 3;
-    }
-
-    // Does visual line `i` contain the query (case-insensitive, across runs)?
+    // Does visual line `i` contain the query (case-insensitive)? The markdown
+    // view searches the aggregated row text; the raw view concatenates runs.
     private bool lineMatches(size_t i) @safe
     {
         if (qlen == 0)
             return false;
+        if (usingWidgets)
+            return containsIC(mdRows[i].text, query);
         scratch.clear();
         foreach (ref r; plines[i].runs)
             scratch.put(r.text);
@@ -249,7 +314,7 @@ struct PreviewTui
     // scrolls it to the top when found.
     private void jumpMatch(long from, bool forward) @safe
     {
-        const n = cast(long) plines.length;
+        const n = lineCount;
         if (n == 0 || qlen == 0)
             return;
         foreach (step; 0 .. n)
@@ -274,17 +339,45 @@ struct PreviewTui
         g.clearTo(cellStyle(pageFg, true, pageBg, 0));
         paintHeader(g);
 
-        const rows = bodyRows();
-        const first = cast(size_t) top;
-        const last = first + rows > plines.length ? plines.length : first + rows;
-        ushort y = 1;
-        foreach (i; first .. last)
+        if (usingWidgets)
+            paintMarkdown(g);
+        else
         {
-            paintLine(g, y, plines[i], sel.contains(cast(long) i));
-            ++y;
+            const rows = bodyRows();
+            const first = cast(size_t) top;
+            const last = first + rows > plines.length ? plines.length
+                : first + rows;
+            ushort y = 1;
+            foreach (i; first .. last)
+            {
+                paintLine(g, y, plines[i], sel.contains(cast(long) i));
+                ++y;
+            }
         }
         paintScrollbar(g);
         paintStatus(g);
+    }
+
+    // Paint the markdown widget tree's precomputed ops with a scroll offset:
+    // ops are in document cell coordinates, the viewport shows doc rows
+    // `top .. top+rows` at grid rows `1 ..`, and the base clip keeps the body
+    // out of the chrome rows. Selection tints the painted rows in place.
+    private void paintMarkdown(ref Grid g) @system
+    {
+        const rows = bodyRows();
+        paintGrid(g, pageBg, mdOps, 0, cast(int)(1 - top),
+            Rect(0, cast(int) top, width, rows));
+        if (!sel.active)
+            return;
+        const selFill = Color.fromRgb(selBg);
+        foreach (i; sel.lo .. sel.hi + 1)
+        {
+            const gy = 1 + i - top;
+            if (gy < 1 || gy > rows)
+                continue;
+            foreach (x; 0 .. (width > 1 ? width - 1 : 0))
+                g[cast(ushort) x, cast(ushort) gy].style.bg = selFill;
+        }
     }
 
     // Paint a one-row chrome bar (the shared WGT17 headerBar view) at grid row
@@ -314,7 +407,7 @@ struct PreviewTui
             names[themeIdx], " (", themeIdx + 1, "/", names.length, ")  ·  ",
             (showPreview && model.present) ? "preview" : "raw")));
         const pos = b.add(Widget(kind: WidgetKind.text,
-            text: text(top + 1, "/", plines.length), slot: Slot.gutter));
+            text: text(top + 1, "/", lineCount), slot: Slot.gutter));
         paintBar(g, 0, [name], [mid], [pos], b);
     }
 
@@ -357,18 +450,6 @@ struct PreviewTui
             const rbg = sel ? selBg : (r.hasBg ? r.bg : fillBg);
             x = g.putText(x, y, r.text, cellStyle(r.fg, true, rbg, r.attrs));
         }
-
-        // Copy button in the border cutout (code header / table top border),
-        // preserving the cutout cell's background.
-        const bcol = copyButtonCol(pl);
-        if (bcol >= 0 && bcol < g.cols)
-        {
-            const copied = (pl.copyFence >= 0 && pl.copyFence == copiedFence)
-                || (pl.copyTable >= 0 && pl.copyTable == copiedTable);
-            auto st = cellStyle(copied ? bars[2] : gutterFg, false, RgbColor.init, 0);
-            st.bg = g[cast(ushort) bcol, y].style.bg;
-            g.putText(cast(ushort) bcol, y, copied ? "\U0000F00C" : "\U0000F0C5", st); //  /
-        }
     }
 
     // A cell scrollbar in the last column across the body rows, sized/positioned
@@ -376,10 +457,10 @@ struct PreviewTui
     private void paintScrollbar(ref Grid g) @system
     {
         const rows = bodyRows();
-        if (cast(long) plines.length <= rows || g.cols < 2)
+        if (lineCount <= rows || g.cols < 2)
             return;
         // The one thumb formula (STM2) — the GUI renders the same geometry.
-        const thumb = scrollbarThumb(plines.length, rows, top, rows);
+        const thumb = scrollbarThumb(cast(size_t) lineCount, rows, top, rows);
 
         const col = cast(ushort)(g.cols - 1);
         foreach (r; 0 .. rows)
@@ -392,29 +473,29 @@ struct PreviewTui
 
     // ── Input ────────────────────────────────────────────────────────────────
 
-    // Copy a copy-button's target to the clipboard (OSC 52): a code fence copies
-    // its raw body, a table its raw markdown source. Sets the ✔ marker.
-    private void copyButton(in PreviewLine pl) @system
+    // Copy a fence's raw body to the clipboard (OSC 52), resolved from its
+    // source-anchored hit id, and rebuild so its header shows the ✔ glyph.
+    private void copyFenceAt(size_t bodyStart) @system
     {
-        if (pl.copyFence >= 0 && pl.copyFence < cast(int) model.fences.length)
-        {
-            writeClipboard(model.fences[pl.copyFence].body);
-            copiedFence = pl.copyFence;
-            copiedTable = -1;
-        }
-        else if (pl.copyTable >= 0 && pl.selSrcStart != size_t.max
-            && pl.selSrcEnd <= source.length)
-        {
-            writeClipboard(source[pl.selSrcStart .. pl.selSrcEnd]);
-            copiedTable = pl.copyTable;
-            copiedFence = -1;
-        }
+        foreach (sp; mdFences)
+            if (sp.start == bodyStart && sp.end <= source.length)
+            {
+                writeClipboard(source[sp.start .. sp.end]);
+                copiedFenceSrc = bodyStart;
+                rebuildMd();
+                return;
+            }
     }
 
     // Apply an event; returns false to quit.
     private bool handle(in Event e) @system
     {
-        copiedFence = copiedTable = -1; // the ✔ flash lasts until the next event
+        if (copiedFenceSrc != size_t.max)
+        {
+            copiedFenceSrc = size_t.max; // the ✔ flash lasts until the next event
+            if (usingWidgets)
+                rebuildMd();
+        }
         if (searching)
             return handleSearch(e);
         return e.match!(
@@ -487,24 +568,27 @@ struct PreviewTui
                 // The STM2 inverse mapping: thumb-aware, so a drag lands the
                 // thumb's leading edge where the pointer is.
                 top = ScrollState(top)
-                    .draggedTo(e.pos.y - 1, plines.length, rows, rows).offset;
+                    .draggedTo(e.pos.y - 1, cast(size_t) lineCount, rows, rows)
+                    .offset;
                 clampTop();
             }
             else
             {
-                // Body — a click on a copy button copies (and doesn't select);
-                // otherwise start (press) or extend (drag) a line selection.
+                // Body — a click on a fence header band copies its body (and
+                // doesn't select): the hit targets are in document cell
+                // coordinates, topmost last, and a fence's id encodes its
+                // body's source offset. Otherwise start (press) or extend
+                // (drag) a line selection.
                 const line = top + (e.pos.y - 1);
-                if (e.action == PointerAction.press && line >= 0
-                    && line < cast(long) plines.length)
+                if (usingWidgets && e.action == PointerAction.press)
                 {
-                    const pl = plines[cast(size_t) line];
-                    const bcol = copyButtonCol(pl);
-                    if (bcol >= 0 && e.pos.x == bcol)
-                    {
-                        copyButton(pl);
-                        return true;
-                    }
+                    const p = Point(e.pos.x, cast(int) line);
+                    foreach_reverse (ref const t; mdTargets)
+                        if (t.hitId >= fenceHitBase && t.rect.contains(p))
+                        {
+                            copyFenceAt(t.hitId - fenceHitBase);
+                            return true;
+                        }
                 }
                 sel = e.action == PointerAction.press
                     ? Selection!long.started(line) : sel.extended(line);
@@ -647,49 +731,93 @@ unittest
     assert(row(2).canFind("world"), row(2));  // second source line
 }
 
-@("tui.paint.copyButton")
+@("tui.paint.markdownWidgets.fenceCopy")
 @system
 unittest
 {
-    import sparkles.syntax : builtinDark, ColAlign, MdBlock, MdBlockKind, MdDoc,
+    import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
         MdInline, MdInlineKind, Span, LabelSet;
     import std.algorithm.searching : canFind;
 
-    // A hand-built 2×2 table model (no grammar needed) rendered in preview mode.
-    static immutable src = "a b c d";
-    static MdBlock cell(size_t a, size_t b)
-        => MdBlock(kind: MdBlockKind.tableCell,
-            inlines: [MdInline(kind: MdInlineKind.text, span: Span(a, b))]);
-    auto tbl = MdBlock(kind: MdBlockKind.table, span: Span(0, src.length),
-        aligns: [ColAlign.left, ColAlign.left], children: [
-            MdBlock(kind: MdBlockKind.tableRow, children: [cell(0, 1), cell(2, 3)]),
-            MdBlock(kind: MdBlockKind.tableRow, children: [cell(4, 5), cell(6, 7)]),
-        ]);
+    // A markdown model with one paragraph and one fence, rendered in preview
+    // mode through the widget tree (no grammar / no highlight cache needed).
+    static immutable src = "hello there\nlet x = 1\nlet y = 2";
+    auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.paragraph, inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(0, 11))]),
+        MdBlock(kind: MdBlockKind.codeFence, infoLang: "d",
+            codeBody: Span(12, src.length)),
+    ]), src);
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
     PreviewTui t;
     t.title = "t.md";
     t.source = src;
-    t.model = PreviewModel(present: true, doc: MdDoc(
-        MdBlock(kind: MdBlockKind.document, children: [tbl]), src));
+    t.model = PreviewModel(present: true, doc: doc);
     t.labels = LabelSet.standard();
     t.names = names[];
     t.themes = themes[];
     t.width = 40;
-    t.height = 10;
+    t.height = 12;
     t.showPreview = true;
     t.relayout();
 
     Grid g;
-    g.resize(40, 10);
+    g.resize(40, 12);
     t.paint(g);
 
-    // The whole-table copy button () is painted in the top border's cutout.
-    bool found;
-    foreach (y; 0 .. g.rows)
+    string row(ushort y)
+    {
+        string s;
         foreach (x; 0 .. g.cols)
-            if (g[cast(ushort) x, cast(ushort) y].grapheme == "\U0000F0C5")
-                found = true;
-    assert(found, "table copy button not painted in the TUI");
+            s ~= g[cast(ushort) x, y].grapheme;
+        return s;
+    }
+
+    // Prose, the fence header's copy affordance (), and the fence body all
+    // render through the widget path.
+    assert(row(1).canFind("hello there"), row(1));
+    int hdrY = -1;
+    foreach (y; 0 .. g.rows)
+        if (row(cast(ushort) y).canFind("\U0000F0C5"))
+            hdrY = y;
+    assert(hdrY > 0, "fence header copy affordance not painted");
+    bool sawBody;
+    foreach (y; 0 .. g.rows)
+        if (row(cast(ushort) y).canFind("let x = 1"))
+            sawBody = true;
+    assert(sawBody, "fence body not painted");
+
+    // Search runs over the aggregated row text; a match scrolls to its row
+    // (shrink the viewport so the document overflows and the jump sticks).
+    t.qbuf[0 .. 5] = "y = 2";
+    t.qlen = 5;
+    t.height = 5;
+    t.jumpMatch(0, true);
+    assert(t.top > 0, "search did not jump to the fence's second line");
+    t.top = 0;
+    t.qlen = 0;
+    t.height = 12;
+
+    // A click on the header band copies the fence body (OSC 52) and flips the
+    // affordance to the ✔ glyph until the next event.
+    const clicked = t.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(2, hdrY))));
+    assert(clicked && t.clipReady);
+    import std.base64 : Base64;
+    assert((cast(string) t.clip[]).canFind(
+        Base64.encode(cast(const(ubyte)[]) src[12 .. $])));
+    t.paint(g);
+    assert(row(cast(ushort) hdrY).canFind("\U0000F00C"),
+        "copied feedback glyph not shown");
+
+    // Drag-selecting the paragraph row and pressing `y` copies its source.
+    t.clipReady = false;
+    t.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(1, 1))));
+    t.copySelection();
+    assert(t.clipReady);
+    assert((cast(string) t.clip[]).canFind(
+        Base64.encode(cast(const(ubyte)[]) src[0 .. 11])));
 }
