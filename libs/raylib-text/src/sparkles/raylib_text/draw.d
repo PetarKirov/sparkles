@@ -20,8 +20,7 @@ but avoids both `GetGlyphIndex`'s linear scan and `DrawTextEx`'s per-call UTF-8
 re-decode. The caller owns layout and backgrounds.
 */
 void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
-    float x, float y, int fontSize, Color tint,
-    float slant = 0, float slantBase = 0) @system nothrow @nogc
+    float x, float y, int fontSize, Color tint) @system nothrow @nogc
 {
     const font = lf.font;
     const float scale = font.baseSize > 0 ? cast(float) fontSize / font.baseSize : 1.0f;
@@ -53,41 +52,7 @@ void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
                 y + font.glyphs[idx].offsetY * scale,
                 rec.width * scale,
                 rec.height * scale);
-            if (slant == 0)
-                DrawTexturePro(font.texture, src, dst, Vector2(0, 0), 0.0f, tint);
-            else
-            {
-                // A fake italic is a SHEAR, not a translation: the glyph's
-                // top edge leans right, its baseline stays on the grid (a
-                // translated glyph reads as the token having moved — themes
-                // that italicize different labels then appear to shift
-                // tokens horizontally).
-                import raylib.rlgl;
-
-                // Reserve batch space BEFORE emitting vertices (what
-                // DrawTexturePro does): without it, a full batch flushes
-                // mid-quad and re-emits stale vertex-buffer content — the
-                // PREVIOUS frame's glyph quads ghosting over the current one.
-                rlCheckRenderBatchLimit(4);
-                const shTop = slant * (slantBase - dst.y);
-                const shBot = slant * (slantBase - (dst.y + dst.height));
-                const tw = cast(float) font.texture.width;
-                const th = cast(float) font.texture.height;
-                rlSetTexture(font.texture.id);
-                rlBegin(RL_QUADS);
-                rlColor4ub(tint.r, tint.g, tint.b, tint.a);
-                rlNormal3f(0, 0, 1);
-                rlTexCoord2f(src.x / tw, src.y / th);
-                rlVertex2f(dst.x + shTop, dst.y);
-                rlTexCoord2f(src.x / tw, (src.y + src.height) / th);
-                rlVertex2f(dst.x + shBot, dst.y + dst.height);
-                rlTexCoord2f((src.x + src.width) / tw, (src.y + src.height) / th);
-                rlVertex2f(dst.x + dst.width + shBot, dst.y + dst.height);
-                rlTexCoord2f((src.x + src.width) / tw, src.y / th);
-                rlVertex2f(dst.x + dst.width + shTop, dst.y);
-                rlEnd();
-                rlSetTexture(0);
-            }
+            DrawTexturePro(font.texture, src, dst, Vector2(0, 0), 0.0f, tint);
         }
 
         const adv = font.glyphs[idx].advanceX;
@@ -153,14 +118,14 @@ void drawText(ref FontSet fonts, scope const(char)[] str, float x, float y,
         }
         bool fakeBold, fakeItalic;
         auto face = fonts.resolveFace(cp, bold, italic, fakeBold, fakeItalic);
-        // A missing italic face renders as a sheared regular glyph — never a
-        // horizontal shift, which would break the grid (tokens italic in one
-        // theme but not another appeared to move between themes).
-        const slant = fakeItalic ? 0.2f : 0.0f;
+        // A missing italic face renders the upright regular — never a
+        // synthetic slant or shift, which breaks the grid (tokens italic in
+        // one theme but not another appeared to move between themes). Use
+        // --font-italic / --font-bold-italic to supply real faces.
         const uint[1] one = [cast(uint) cp];
-        drawGrapheme(*face, one[], gxCol, y, size, fg, slant, y + cellH);
+        drawGrapheme(*face, one[], gxCol, y, size, fg);
         if (fakeBold)
-            drawGrapheme(*face, one[], gxCol + 1, y, size, fg, slant, y + cellH);
+            drawGrapheme(*face, one[], gxCol + 1, y, size, fg);
         ++col;
     }
 

@@ -96,8 +96,17 @@ struct FontSet
     Returns `false` (leaving the caller to error out) only if the primary can't be
     resolved or loaded. Must run after `InitWindow`. `@system`, GC-allocating.
     */
+    /// Explicit per-style face selection (ghostty's `font-family-bold` /
+    /// `-italic` / `-bold-italic`): a family name, fontconfig pattern, or
+    /// file path per styled face; empty = auto-detect from the primary.
+    static struct FaceOverrides
+    {
+        string bold, italic, boldItalic;
+    }
+
     static bool tryLoad(string nameOrPath, int fontSizePx, out FontSet fs,
-        string[] codepointMapOpt = null) @system
+        string[] codepointMapOpt = null,
+        FaceOverrides faces = FaceOverrides.init) @system
     {
         import std.file : exists;
         import std.process : execute;
@@ -125,6 +134,11 @@ struct FontSet
         if (!fs.primary.present)
             return false;
 
+        // Explicit per-style faces first (they win); the same-family scan
+        // then fills only the still-empty slots.
+        fs.loadFaceOverride(fs.fontBold, faces.bold, "bold");
+        fs.loadFaceOverride(fs.fontItalic, faces.italic, "italic");
+        fs.loadFaceOverride(fs.fontBoldItalic, faces.boldItalic, "bold:italic");
         // Real bold/italic/bold-italic faces of the same family.
         fs.loadStyleVariants(fontPath);
         // Optional --font-codepoint-map fonts.
@@ -240,12 +254,12 @@ struct FontSet
         fakeBold = false;
         fakeItalic = false;
 
-        // font-codepoint-map overrides everything for its codepoints; mapped fonts
-        // carry no styled variants, so bold/italic on them is faked.
+        // font-codepoint-map overrides everything for its codepoints; mapped
+        // fonts carry no styled variants — bold double-strikes, italic
+        // renders upright (a synthetic slant/shift breaks the grid).
         if (auto mapped = lookupCodepointMap(cp))
         {
             fakeBold = bold;
-            fakeItalic = italic;
             return mapped;
         }
 
@@ -273,16 +287,19 @@ struct FontSet
 
     private StyledFace pickStyledFace(bool bold, bool italic) @system nothrow @nogc
     {
+        // No fake italic anywhere: a missing italic face renders the upright
+        // regular (a synthetic slant/shift breaks grid alignment and made
+        // tokens appear to move between themes). Bold still double-strikes.
         if (bold && italic)
         {
             if (fontBoldItalic.present) return StyledFace(&fontBoldItalic, false, false);
-            if (fontItalic.present)     return StyledFace(&fontItalic, true, false);  // real italic, fake bold
-            if (fontBold.present)       return StyledFace(&fontBold, false, true);    // real bold, fake italic
-            return StyledFace(&primary, true, true);
+            if (fontItalic.present)     return StyledFace(&fontItalic, true, false); // real italic, fake bold
+            if (fontBold.present)       return StyledFace(&fontBold, false, false);  // real bold, upright
+            return StyledFace(&primary, true, false);
         }
         if (italic)
             return fontItalic.present ? StyledFace(&fontItalic, false, false)
-                : StyledFace(&primary, false, true);
+                : StyledFace(&primary, false, false);
         if (bold)
             return fontBold.present ? StyledFace(&fontBold, false, false)
                 : StyledFace(&primary, true, false);
@@ -346,6 +363,30 @@ struct FontSet
         }
     }
 
+    // Load one explicitly-selected styled face: a file path directly, else a
+    // fontconfig pattern (`<spec>:style` when the spec names no style).
+    private void loadFaceOverride(ref LoadedFont target, string spec,
+        string style) @system
+    {
+        import std.file : exists;
+        import std.process : execute;
+        import std.string : strip;
+        import std.algorithm.searching : canFind;
+
+        if (spec.length == 0)
+            return;
+        string path = spec;
+        if (!path.exists)
+        {
+            const pattern = spec.canFind(':') ? spec : spec ~ ":" ~ style;
+            auto res = execute(["fc-match", "-f", "%{file}", pattern]);
+            if (res.status != 0 || res.output.strip.length == 0)
+                return;
+            path = res.output.strip.idup;
+        }
+        loadVariantFile(target, path, fontSize_, requestedCps[]);
+    }
+
     // Resolve/load the bold/italic/bold-italic faces of the SAME family as the
     // primary by scanning the primary's directory with fc-scan and matching on
     // family + weight + slant (works even for fonts fontconfig hasn't registered).
@@ -391,9 +432,12 @@ struct FontSet
             else if (w == 200 && sl != pSlant) { if (boldItalicPath.length == 0) boldItalicPath = file.idup; }
         }
 
-        loadVariantFile(fontBold, boldPath, fontSize_, requestedCps[]);
-        loadVariantFile(fontItalic, italicPath, fontSize_, requestedCps[]);
-        loadVariantFile(fontBoldItalic, boldItalicPath, fontSize_, requestedCps[]);
+        if (!fontBold.present)
+            loadVariantFile(fontBold, boldPath, fontSize_, requestedCps[]);
+        if (!fontItalic.present)
+            loadVariantFile(fontItalic, italicPath, fontSize_, requestedCps[]);
+        if (!fontBoldItalic.present)
+            loadVariantFile(fontBoldItalic, boldItalicPath, fontSize_, requestedCps[]);
     }
 
     // Parse `--font-codepoint-map` entries (`<ranges>=<family>`) and load each

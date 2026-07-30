@@ -187,6 +187,7 @@ int runGui(
     string docPath = null,               // on-disk path (reveal in the tree)
     bool startInTree = false,            // a directory target opens in the tree
     string treeRoot = null,              // explorer root (default: docPath's dir)
+    FontSet.FaceOverrides faces = FontSet.FaceOverrides.init, // per-style fonts
 ) @system
 {
     import std.stdio : stderr;
@@ -242,7 +243,7 @@ int runGui(
     // LoadFontEx uploads a GPU texture, so the FontSet must load after InitWindow.
     // `fontName` may be a path, a family, or a fontconfig preference list.
     FontSet fonts;
-    if (!FontSet.tryLoad(fontName, fontSizePx, fonts))
+    if (!FontSet.tryLoad(fontName, fontSizePx, fonts, null, faces))
     {
         stderr.writeln("hue --gui: could not load a font from '", fontName,
             "' (is fontconfig available?)");
