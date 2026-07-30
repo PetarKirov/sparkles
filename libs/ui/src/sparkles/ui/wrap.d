@@ -47,6 +47,15 @@ struct TextSpan
     RgbColor fg;
     /// ditto
     bool hasFg;
+    /// The source byte range this span's text came from (`size_t.max` start =
+    /// synthetic — an icon, bullet, or gutter). The $(B identity channel):
+    /// selection, search jumps and copy map screen content back to the source
+    /// through it, the same discipline as the old model's per-run `srcStart`.
+    /// Normalized prose keeps its original span, so offsets are span-granular
+    /// there and byte-exact for source-sliced content (code).
+    size_t srcStart = size_t.max;
+    /// ditto
+    size_t srcEnd;
 }
 
 /// How a text widget breaks into lines (the `LAY10` strategy seam). `none`
@@ -421,6 +430,16 @@ if (is(typeof(measure("")) : int))
         else
         {
             auto s = cast() spans[f.span];
+            // A sliced fragment keeps its source identity: shift srcStart by
+            // the fragment's offset within the span (approximate for
+            // normalized prose, exact for source-sliced code).
+            if (s.srcStart != size_t.max)
+            {
+                const off = sliceOffset(spans[f.span].text, f.text);
+                s.srcStart += off;
+                if (s.srcEnd > s.srcStart + f.text.length)
+                    s.srcEnd = s.srcStart + f.text.length;
+            }
             s.text = f.text;
             cur ~= s;
         }
@@ -475,6 +494,11 @@ if (is(typeof(measure("")) : int))
     flush();
     return lines;
 }
+
+// Byte offset of slice `b` within its parent slice `a` (same buffer).
+private size_t sliceOffset(scope const(char)[] a, scope const(char)[] b)
+    @trusted pure nothrow @nogc
+    => b.ptr >= a.ptr ? cast(size_t)(b.ptr - a.ptr) : 0;
 
 // `b` starts exactly where `a` ends (slices of one buffer).
 private bool isContiguous(scope const(char)[] a, scope const(char)[] b)
