@@ -1571,13 +1571,12 @@ TipData tipDataForObject(RootObject obj)
     {
         tip.code = rootObjectToString(obj);
     }
-    // append doc
+    // append doc; the symbol is kept even without one (the facade resolves a
+    // parameter's docs from its enclosing function's Params: section)
     if (doc)
-    {
         tip.doc = cast(string)doc[0..strlen(doc)];
-        if (docSym !is null)
-            tip.symbol = docSym;
-    }
+    if (docSym !is null)
+        tip.symbol = docSym;
     return tip;
 }
 

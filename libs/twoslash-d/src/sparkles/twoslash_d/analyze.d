@@ -72,7 +72,8 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
             start: word.offset,
             length: word.text.length,
             text: tipText(tip),
-            docs: tip.doc);
+            docs: tip.doc,
+            tags: tip.tags.toMutableTags);
     }
 
     // --- `^?` queries: same oracle, persisted below the line.
@@ -94,7 +95,8 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
             start: anchor,
             length: identifierLengthAt(notation.fullSource, anchor),
             text: tipText(tip),
-            docs: tip.doc);
+            docs: tip.doc,
+            tags: tip.tags.toMutableTags);
     }
 
     // --- diagnostics → error nodes (D has no stable numeric codes: `code`
@@ -162,6 +164,14 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
         language: "d",
         offsetEncoding: "utf-8");
     return result;
+}
+
+private string[][] toMutableTags(in string[][] tags) @safe pure
+{
+    string[][] copy;
+    foreach (t; tags)
+        copy ~= t.dup;
+    return copy;
 }
 
 /// The popup signature in the reference shape: `(kind) code` — the same
