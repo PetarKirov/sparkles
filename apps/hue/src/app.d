@@ -336,6 +336,20 @@ int main(string[] args)
 
     initLogger(LogLevel.warning); // hue only emits degradation warnings
 
+    // The Android boot preamble: reroute logs to logcat (stderr goes nowhere
+    // in a NativeActivity), re-enable the HUE_GUI_* debug hooks from the
+    // on-device env file, and materialize the APK asset bundle (fonts,
+    // grammar queries, sample docs) into the data dir.
+    version (Android)
+    {
+        import android_glue : extractAssetsIfNeeded, installLogcatSink, loadDebugEnv;
+
+        installLogcatSink(LogLevel.info);
+        loadDebugEnv();
+        if (!extractAssetsIfNeeded())
+            warning(i"hue: asset bundle missing — plain text, built-in document only");
+    }
+
     if (cli.listOverlays)
     {
         import std.stdio : writeln;

@@ -1,0 +1,101 @@
+/**
+Pure path and parsing helpers for the Android bootstrap. Kept free of version
+gates so `dub test :hue` exercises them on any host; the platform-bound half
+(`GetAndroidApp`, logcat, the `AAssetManager` extraction) lives in
+`android_glue.d` under `version (Android)`.
+
+The extracted-asset layout under the app's internal data dir mirrors the APK
+`assets/` tree the nix build assembles (see nix/packages/android/hue.nix):
+`fonts/` (with `.charset` sidecars), `grammars/<lang>/queries/*.scm`, `docs/`
+sample documents, plus the `assets-ready` marker holding the bundle hash of
+the last completed extraction.
+*/
+module android_paths;
+
+import std.path : buildPath;
+import std.string : indexOf, splitLines, startsWith, strip;
+
+/// The extracted font directory (`FontSet.FontSources` scans it first).
+string fontsDir(string dataDir) @safe pure nothrow => buildPath(dataDir, "fonts");
+
+/// The grammar-query root (`GrammarRegistry` reads `<root>/<lang>/queries/`).
+string grammarQueriesRoot(string dataDir) @safe pure nothrow => buildPath(dataDir, "grammars");
+
+/// The sample documents the explorer roots at.
+string docsDir(string dataDir) @safe pure nothrow => buildPath(dataDir, "docs");
+
+/// The extraction marker: holds the bundle hash of the last completed extraction.
+string assetsReadyPath(string dataDir) @safe pure nothrow => buildPath(dataDir, "assets-ready");
+
+/// The on-device debug-environment file (see `parseDebugEnv`).
+string debugEnvPath(string dataDir) @safe pure nothrow => buildPath(dataDir, "hue-debug.env");
+
+@("android_paths.layout")
+@safe pure unittest
+{
+    assert(fontsDir("/data/app") == "/data/app/fonts");
+    assert(grammarQueriesRoot("/data/app") == "/data/app/grammars");
+    assert(docsDir("/data/app") == "/data/app/docs");
+    assert(assetsReadyPath("/data/app") == "/data/app/assets-ready");
+    assert(debugEnvPath("/data/app") == "/data/app/hue-debug.env");
+}
+
+/// One parsed `KEY=VALUE` line of the debug-environment file.
+struct EnvPair
+{
+    string key, value;
+}
+
+/**
+Parse `KEY=VALUE` lines — the on-device stand-in for shell environment
+variables (an activity has no shell; the file is pushed via
+`adb shell run-as dev.sparkles.hue`), re-enabling the `HUE_GUI_*` golden and
+debug hooks. `#` comments and blank lines are skipped, the first `=` splits,
+key and value are trimmed. Pairs return in file order.
+*/
+EnvPair[] parseDebugEnv(const(char)[] text) @safe pure
+{
+    EnvPair[] result;
+    foreach (line; text.splitLines)
+    {
+        const s = line.strip;
+        if (s.length == 0 || s.startsWith("#"))
+            continue;
+        const eq = s.indexOf('=');
+        if (eq <= 0)
+            continue;
+        result ~= EnvPair(s[0 .. eq].strip.idup, s[eq + 1 .. $].strip.idup);
+    }
+    return result;
+}
+
+@("android_paths.parseDebugEnv")
+@safe pure unittest
+{
+    const pairs = parseDebugEnv(
+        "# golden capture\nHUE_GUI_SCREENSHOT=shot.png\n\n" ~
+        "  HUE_GUI_FONTSIZE = 18 \n=nokey\nnovalue\nHUE_GUI_TOP=3\n");
+    assert(pairs.length == 3);
+    assert(pairs[0] == EnvPair("HUE_GUI_SCREENSHOT", "shot.png"));
+    assert(pairs[1] == EnvPair("HUE_GUI_FONTSIZE", "18"));
+    assert(pairs[2] == EnvPair("HUE_GUI_TOP", "3"));
+    assert(parseDebugEnv("").length == 0);
+}
+
+/// `true` when the on-device marker matches the APK's bundle hash
+/// (whitespace-insensitively) — the extracted assets are current and
+/// extraction can be skipped. Empty hashes never match.
+bool assetsUpToDate(const(char)[] markerText, const(char)[] bundleHash) @safe pure
+{
+    const m = markerText.strip;
+    return m.length != 0 && m == bundleHash.strip;
+}
+
+@("android_paths.assetsUpToDate")
+@safe pure unittest
+{
+    assert(assetsUpToDate("abc123\n", "abc123"));
+    assert(!assetsUpToDate("abc123", "def456"));
+    assert(!assetsUpToDate("", ""));
+    assert(!assetsUpToDate("\n", "\n"));
+}
