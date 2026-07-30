@@ -20,8 +20,8 @@ import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
     resolveTheme, RgbColor, Theme, toRgb;
 
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
-import sparkles.syntax.md.render_widgets : MdViewOptions, MdViewTheme,
-    viewMarkdown;
+import sparkles.syntax.md.render_widgets : foldableSpans, MdViewOptions,
+    MdViewTheme, viewMarkdown;
 import sparkles.syntax.ts.injection : TsConfigCache;
 
 import sparkles.tui : Cell, CellStyle, Color, Grid, PosixEvents, Terminal,
@@ -33,8 +33,8 @@ import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.state : DocRow, documentRows, HoverTarget, hoverTargets,
-    scrollbarThumb, ScrollState, Selection;
+import sparkles.ui.state : DisclosureState, DocRow, documentRows, HoverTarget,
+    hoverTargets, scrollbarThumb, ScrollState, Selection;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_tui : paintGrid;
@@ -146,6 +146,16 @@ struct PreviewTui
     // body's source byte offset (source-anchored identity, no counters).
     private enum size_t fenceHitBase = size_t.max / 2 + 1;
 
+    // Fold placeholders live above this (disjoint) base; `hitId - foldHitBase`
+    // is the folded region's span start — the fold key (`FLD2`/`STM5`).
+    private enum size_t foldHitBase = size_t.max / 4 * 3 + 1;
+
+    // Content folding (`FLD`): the one disclosure machine, keyed by source
+    // span start (default open; the exceptions are the folded regions), plus
+    // the document's foldable spans (the `FSR3` provider).
+    private DisclosureState!size_t folds = DisclosureState!size_t(true);
+    private Span[] foldable;
+
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
 
     // The markdown preview renders through the widget tree; raw source (and
@@ -189,7 +199,10 @@ struct PreviewTui
             theme: MdViewTheme.derive(theme, pageFg, pageBg),
             fenceHitBase: fenceHitBase,
             copiedFence: copiedFenceSrc,
+            foldedSpans: folds.exceptions,
+            foldHitBase: foldHitBase,
         };
+        foldable = foldableSpans(model.doc);
         if (cache !is null)
             opt.fenceRenderer = hueFenceRenderer(cache, &theme, pageFg);
         mdTree = viewMarkdown(model.doc, opt);
@@ -419,7 +432,7 @@ struct PreviewTui
         auto b = Builder();
         const line = b.add(Widget(kind: WidgetKind.text,
             text: searching ? text("/", query, "▏")
-                : "scroll ↑↓/PgUp/PgDn · ←→ theme · Tab raw/preview · / search · drag+y copy · q quit",
+                : "scroll ↑↓ · ←→ theme · Tab raw/preview · / search · z fold · drag+y copy · q quit",
             slot: searching ? Slot.inherit : Slot.gutter));
         paintBar(g, y, [line], null, null, b);
     }
@@ -487,6 +500,45 @@ struct PreviewTui
             }
     }
 
+    // `z`: toggle the innermost fold at the selection (else the top row) —
+    // unfold the innermost folded region containing it, or fold the innermost
+    // foldable one (`FLD5`'s za, over the row's source identity).
+    private void toggleFold() @system
+    {
+        if (!usingWidgets)
+            return;
+        const rowIdx = sel.active ? sel.lo : top;
+        if (rowIdx < 0 || rowIdx >= cast(long) mdRows.length
+            || mdRows[cast(size_t) rowIdx].srcStart == size_t.max)
+            return;
+        const off = mdRows[cast(size_t) rowIdx].srcStart;
+
+        size_t best = size_t.max;
+        size_t bestLen = size_t.max;
+        // Prefer unfolding the innermost folded region containing `off`…
+        foreach (sp; foldable)
+            if (!folds.isOpen(sp.start) && off >= sp.start && off < sp.end
+                && sp.end - sp.start < bestLen)
+            {
+                best = sp.start;
+                bestLen = sp.end - sp.start;
+            }
+        // …else fold the innermost foldable one.
+        if (best == size_t.max)
+            foreach (sp; foldable)
+                if (folds.isOpen(sp.start) && off >= sp.start && off < sp.end
+                    && sp.end - sp.start < bestLen)
+                {
+                    best = sp.start;
+                    bestLen = sp.end - sp.start;
+                }
+        if (best == size_t.max)
+            return;
+        folds = folds.toggled(best);
+        rebuildMd();
+        clampTop();
+    }
+
     // Apply an event; returns false to quit.
     private bool handle(in Event e) @system
     {
@@ -547,6 +599,7 @@ struct PreviewTui
                     case 'n': jumpMatch(top + 1, true); break;
                     case 'N': jumpMatch(top - 1, false); break;
                     case 'y': copySelection(); break;
+                    case 'z': toggleFold(); break;
                     default: break;
                 }
                 break;
@@ -584,11 +637,19 @@ struct PreviewTui
                 {
                     const p = Point(e.pos.x, cast(int) line);
                     foreach_reverse (ref const t; mdTargets)
+                    {
+                        if (t.hitId >= foldHitBase && t.rect.contains(p))
+                        {
+                            folds = folds.toggled(t.hitId - foldHitBase);
+                            rebuildMd();
+                            return true;
+                        }
                         if (t.hitId >= fenceHitBase && t.rect.contains(p))
                         {
                             copyFenceAt(t.hitId - fenceHitBase);
                             return true;
                         }
+                    }
                 }
                 sel = e.action == PointerAction.press
                     ? Selection!long.started(line) : sel.extended(line);
@@ -820,4 +881,59 @@ unittest
     assert(t.clipReady);
     assert((cast(string) t.clip[]).canFind(
         Base64.encode(cast(const(ubyte)[]) src[0 .. 11])));
+}
+
+@("tui.fold.zTogglesInnermostRegion")
+@system
+unittest
+{
+    import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
+        MdInline, MdInlineKind, Span, LabelSet;
+
+    // A paragraph + a 3-line fence; folding at the fence collapses it to one
+    // placeholder row, and toggling again restores it.
+    static immutable src = "hello there\n```d\na\nb\nc\n```";
+    auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(0, 11), inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(0, 11))]),
+        MdBlock(kind: MdBlockKind.codeFence, infoLang: "d",
+            span: Span(12, src.length), codeBody: Span(17, 23)),
+    ]), src);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.title = "t.md";
+    t.source = src;
+    t.model = PreviewModel(present: true, doc: doc);
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 14;
+    t.showPreview = true;
+    t.relayout();
+
+    const openRows = t.mdRows.length;
+    assert(openRows > 4, "fence body rows expected");
+
+    // Select a row inside the fence body and fold ('z').
+    long bodyRow = -1;
+    foreach (i, r; t.mdRows)
+        if (r.srcStart >= 17 && r.srcStart != size_t.max && r.srcEnd <= 23)
+            bodyRow = i;
+    assert(bodyRow > 0);
+    t.sel = Selection!long.started(bodyRow);
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
+    assert(t.mdRows.length < openRows, "the fold collapsed the fence");
+
+    // The placeholder row carries the region's identity; 'z' on it unfolds.
+    long ph = -1;
+    foreach (i, r; t.mdRows)
+        if (r.srcStart == 12)
+            ph = i;
+    assert(ph >= 0, "placeholder row with the fold's source identity");
+    t.sel = Selection!long.started(ph);
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
+    assert(t.mdRows.length == openRows, "the fold reopened");
 }
