@@ -1124,6 +1124,12 @@ int runGui(
         // padding, and the line-number gutter.
         const gutterPx = treePx() + padX + gcols * cellW;
 
+        // The gutter strip (the fold column + line numbers) sits on its own
+        // theme-derived band, visually distinct from the document.
+        if (!flashDebug)
+            DrawRectangle(treePx(), docY0, gutterPx - treePx(),
+                screenH - docY0, rl(vm.gutterBg));
+
         // The one painter: the active tree's precomputed ops through the
         // raylib canvas, offset by the scroll position and culled to the
         // viewport rows (raylib clips px; the cull skips dead draw calls).
@@ -1145,17 +1151,17 @@ int runGui(
             }
             canvas.popClip();
 
-            // Fold markers in the pane's left padding column (FLD5): ▾ on
-            // an open region's first row; click toggles. A FOLDED region
-            // draws no column marker — its placeholder row already leads
-            // with the ▸ affordance, and doubling it up reads as noise (the
-            // blank column cell still accepts the unfold click).
+            // Fold markers in the gutter's fold column (FLD5): ▾ on an
+            // open region's first row, ▸ on a folded one's placeholder;
+            // click toggles. The placeholder itself renders unobstructed —
+            // its inline marker is disabled (inlineFoldMarker: false), so
+            // the column is the one fold affordance.
             foreach (ref const fm; vm.foldMarkers)
             {
-                if (!fm.open || fm.row < topLine
-                    || fm.row >= topLine + docRows)
+                if (fm.row < topLine || fm.row >= topLine + docRows)
                     continue;
-                drawText(fonts, cstrOf(buf, "▾"), cast(float)(treePx() + 2),
+                drawText(fonts, cstrOf(buf, fm.open ? "▾" : "▸"),
+                    cast(float)(treePx() + 2),
                     docY0 + (fm.row - topLine) * cast(float) cellH,
                     TextStyle(0), rl(vm.gutterFg));
             }

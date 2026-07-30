@@ -83,6 +83,11 @@ struct MdViewOptions
     /// `hitId = foldHitBase + span.start` (unfold on click).
     size_t foldHitBase = 0;
 
+    /// The placeholder's leading `▸ ` marker. A host with a gutter fold
+    /// column (the GUI) disables it — the column carries the affordance,
+    /// and the placeholder shows unobstructed content.
+    bool inlineFoldMarker = true;
+
     /// Non-zero stamps every table cell wrapper with
     /// `key = tableKeyBase + cell.span.start` — source-anchored identity an
     /// interactive backend resolves back to the document's cell structure
@@ -227,13 +232,13 @@ private uint foldPlaceholder(ref Builder b, size_t start, size_t end,
 
     SmallBuffer!(char, 32) n;
     writeInteger(n, lines);
-    TextSpan[] spans = [
-        TextSpan("▸ ", opt.proseSlot, opt.baseStyle, noBreak: true),
-        TextSpan(body_[0 .. firstLen], opt.proseSlot, opt.baseStyle,
-            noBreak: true, srcStart: start, srcEnd: clampedEnd),
-        TextSpan("  ⋯ " ~ n[].idup ~ " lines", Slot.gutter, opt.baseStyle,
-            noBreak: true),
-    ];
+    TextSpan[] spans;
+    if (opt.inlineFoldMarker)
+        spans ~= TextSpan("▸ ", opt.proseSlot, opt.baseStyle, noBreak: true);
+    spans ~= TextSpan(body_[0 .. firstLen], opt.proseSlot, opt.baseStyle,
+        noBreak: true, srcStart: start, srcEnd: clampedEnd);
+    spans ~= TextSpan("  ⋯ " ~ n[].idup ~ " lines", Slot.gutter,
+        opt.baseStyle, noBreak: true);
     Widget w = Widget(kind: WidgetKind.rich, spans: spans,
         slot: opt.proseSlot, textStyle: opt.baseStyle,
         hitId: opt.foldHitBase != 0 ? opt.foldHitBase + start : opt.hitId);

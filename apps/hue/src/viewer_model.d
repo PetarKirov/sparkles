@@ -122,6 +122,7 @@ struct ViewerModel
     size_t themeIdx;
     ResolvedTheme current;
     RgbColor pageFg, pageBg, gutterFg;
+    RgbColor gutterBg;              /// the gutter strip's theme-derived band
     RgbColor[quoteBarCycle] quoteBars;
     RgbColor sbTrack, sbThumb;      /// link-tinted scrollbar chrome
 
@@ -187,6 +188,7 @@ struct ViewerModel
         pageFg = toRgb(current.defaults.fg, hardFallbackFg);
         pageBg = toRgb(current.defaults.bg, hardFallbackBg);
         gutterFg = mix(pageFg, pageBg, 0.5); // muted line numbers
+        gutterBg = mix(pageBg, pageFg, 0.08); // the gutter's distinct band
         quoteBars = quoteBarColors(current, pageFg, pageBg);
         // Scrollbar chrome: tint toward the theme's link color so the hover
         // track and thumb read as a distinct hue against the grayscale bands.
@@ -244,7 +246,8 @@ struct ViewerModel
                 CodeViewOptions(foldedRegions: closed,
                     foldHitBase: foldHitBase, tabWidth: tabWidth,
                     listWhitespace: listWhitespace,
-                    whitespaceFg: gutterFg, hasWhitespaceFg: true));
+                    whitespaceFg: gutterFg, hasWhitespaceFg: true,
+                    inlineFoldMarker: false)); // the GUI's fold column
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
                 themes[themeIdx].effectivePalette, pageFg, pageBg);
@@ -262,6 +265,7 @@ struct ViewerModel
             fenceRenderer: fenceRenderer(),
             foldedSpans: folds.exceptions,
             foldHitBase: foldHitBase,
+            inlineFoldMarker: false, // the GUI's fold column carries the ▸
         };
         foldable = foldableSpans(preview.doc);
         tree = viewMarkdown(preview.doc, opt);
@@ -618,8 +622,8 @@ struct ViewerModel
     assert(vm.rows.length < openRows);
     bool sawPlaceholder;
     foreach (ref const r; vm.rows)
-        if (r.text.canFind("lines") && r.text.canFind("▸"))
-            sawPlaceholder = true;
+        if (r.text.canFind("lines") && !r.text.canFind("▸"))
+            sawPlaceholder = true; // unobstructed: the ▸ lives in the gutter
     assert(sawPlaceholder, "fold placeholder rendered");
 
     // The folded region's marker flips to ▸ on the placeholder row.
