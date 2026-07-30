@@ -282,6 +282,11 @@ private void writePopup(Writer)(ref Writer w, in ResolvedTheme theme,
     ref TsConfigCache cache, scope const(char)[] language, in Node node,
     in TwoslashHtmlOptions options) @system
 {
+    // A lazy span (see the protocol's lazy convention) keeps its underline
+    // but gets no popup chrome — there is nothing to show.
+    if (!node.text.length && !node.docs.length && !node.tags.length)
+        return;
+
     put(w, `<span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div>`);
     put(w, `<code class="twoslash-popup-code">`);
     const text = options.stripQuickinfoPrefix ? withoutQuickinfoPrefix(node.text) : node.text;

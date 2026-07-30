@@ -38,6 +38,15 @@ struct CliParams
 
     @CliOption("quiet", "Suppress per-file progress output.")
     bool quiet;
+
+    @CliOption("lazy", "Emit hover nodes as bare spans without type/doc content (the lazy convention: underlines render, content resolves elsewhere). Queries/errors/completions stay eager.")
+    bool lazyHovers;
+
+    @CliOption("stdout", "Write the payload as one compact JSON line on stdout instead of a file.")
+    bool toStdout;
+
+    @CliOption("serve", "Oracle mode: analyze once, print the lazy payload as line 1 on stdout, then answer `{tip: <nodeIndex>}` JSON-line requests on stdin with the node's resolved content until EOF (spec EXT7).")
+    bool serve;
 }
 
 int main(string[] args)
@@ -67,7 +76,88 @@ int main(string[] args)
         return 2;
     }
 
+    if (cli.serve)
+    {
+        if (target.isDir)
+        {
+            stderr.writeln("error: --serve takes a single .d file");
+            return 2;
+        }
+        return runServe(cli, target);
+    }
     return target.isDir ? runDirectory(cli, target) : runFile(cli, target, cli.outPath);
+}
+
+/**
+The resident oracle (`--serve`): one analysis held alive for the process
+(`EXT2`), the lazy payload on stdout line 1, then a JSON-lines request loop —
+`{"tip": <nodeIndex>}` → `{"node": <i>, "text": …, "docs": …, "tags": […]}` —
+until stdin closes. Malformed requests answer `{"error": …}` and the loop
+continues; hue drives this through `ResidentProcess`.
+*/
+private int runServe(in CliParams cli, string samplePath)
+{
+    import std.file : readText;
+    import std.json : JSONType, JSONValue, parseJSON;
+    import std.stdio : stdin, stdout;
+
+    import sparkles.dmd_lsp.api : AnalyzerConfig;
+    import sparkles.twoslash_d.analyze : LiveTwoslash;
+    import sparkles.twoslash_d.emit : declareDPayload;
+    import sparkles.wired.json : toJSON;
+
+    AnalyzerConfig config;
+    if (!buildConfig(cli, samplePath, config))
+        return 1;
+
+    auto live = LiveTwoslash.start(samplePath, readText(samplePath), config);
+    scope (exit) live.shutdown();
+    foreach (w; live.result.warnings)
+        stderr.writeln("warning: ", samplePath, ": ", w);
+
+    declareDPayload(live.result.payload);
+    auto payloadJson = toJSON(live.result.payload);
+    if (payloadJson.hasError)
+    {
+        stderr.writeln("error: ", payloadJson.error.toString());
+        return 1;
+    }
+    stdout.writeln(payloadJson.value[]);
+    stdout.flush();
+
+    foreach (line; stdin.byLineCopy)
+    {
+        JSONValue reply;
+        try
+        {
+            const req = parseJSON(line);
+            const tipReq = "tip" in req;
+            if (tipReq is null || tipReq.type != JSONType.integer)
+                throw new Exception("expected {\"tip\": <nodeIndex>}");
+            const idx = cast(size_t) tipReq.integer;
+            const tip = live.tipForNode(idx);
+
+            reply["node"] = JSONValue(idx);
+            reply["text"] = JSONValue(tip.found
+                ? (tip.kind.length ? "(" ~ tip.kind ~ ") " ~ tip.code : tip.code)
+                : "");
+            reply["docs"] = JSONValue(tip.doc);
+            JSONValue[] tags;
+            foreach (t; tip.tags)
+            {
+                JSONValue[] pair;
+                foreach (part; t)
+                    pair ~= JSONValue(part);
+                tags ~= JSONValue(pair);
+            }
+            reply["tags"] = JSONValue(tags);
+        }
+        catch (Exception e)
+            reply = JSONValue(["error": JSONValue(e.msg)]);
+        stdout.writeln(reply.toString);
+        stdout.flush();
+    }
+    return 0;
 }
 
 /// Directory target: one child process per sample (`EXT2`) — the analysis
@@ -141,20 +231,11 @@ private int runFile(in CliParams cli, string samplePath, string outPath)
         outPath = samplePath.setExtension("twoslash.json");
 
     const source = readText(samplePath);
-    auto config = AnalyzerConfig(
-        importPaths: cli.importPaths.dup,
-        dflags: cli.dflags.splitter(' ').filter!(f => f.length).array);
-
-    // `--dub` (PRJ5): the enclosing project's settings, appended behind any
-    // explicit `--import`/`--dflags` so those keep priority.
-    if (cli.dub && !applyDubContext(cli, samplePath, config))
+    AnalyzerConfig config;
+    if (!buildConfig(cli, samplePath, config))
         return 1;
 
-    // `--import` prepends to the environment default rather than replacing it.
-    if (config.importPaths.length)
-        config.importPaths ~= AnalyzerConfig().effectiveImportPaths;
-
-    auto result = analyzeTwoslash(samplePath, source, config);
+    auto result = analyzeTwoslash(samplePath, source, config, cli.lazyHovers);
     foreach (w; result.warnings)
         stderr.writeln("warning: ", samplePath, ": ", w);
 
@@ -163,6 +244,34 @@ private int runFile(in CliParams cli, string samplePath, string outPath)
     return cli.verify
         ? verifyPayload(cli, samplePath, outPath, result.payload)
         : writePayload(cli, samplePath, outPath, result.payload);
+}
+
+/**
+Assembles the analysis configuration one way for every mode: explicit
+`--import`/`--dflags` first, then (with `--dub`) the enclosing project's
+settings, then the environment's druntime/phobos tail.
+*/
+private bool buildConfig(in CliParams cli, string samplePath,
+    out AnalyzerConfig config)
+{
+    import std.algorithm.iteration : filter, splitter;
+    import std.array : array;
+
+    import sparkles.dmd_lsp.api : AnalyzerConfig;
+
+    config = AnalyzerConfig(
+        importPaths: cli.importPaths.dup,
+        dflags: cli.dflags.splitter(' ').filter!(f => f.length).array);
+
+    // `--dub` (PRJ5): the enclosing project's settings, appended behind any
+    // explicit `--import`/`--dflags` so those keep priority.
+    if (cli.dub && !applyDubContext(cli, samplePath, config))
+        return false;
+
+    // `--import` prepends to the environment default rather than replacing it.
+    if (config.importPaths.length)
+        config.importPaths ~= AnalyzerConfig().effectiveImportPaths;
+    return true;
 }
 
 /**
@@ -210,6 +319,23 @@ private bool applyDubContext(in CliParams cli, string samplePath,
 private int writePayload(P)(in CliParams cli, string samplePath, string outPath, P payload)
 {
     import sparkles.twoslash_d.emit : writeTwoslashFile;
+
+    if (cli.toStdout)
+    {
+        import std.stdio : stdout;
+
+        import sparkles.wired.json : toJSON;
+
+        auto j = toJSON(payload);
+        if (j.hasError)
+        {
+            stderr.writeln("error: ", j.error.toString());
+            return 1;
+        }
+        stdout.writeln(j.value[]);
+        stdout.flush();
+        return 0;
+    }
 
     auto written = writeTwoslashFile(payload, outPath);
     if (written.hasError)

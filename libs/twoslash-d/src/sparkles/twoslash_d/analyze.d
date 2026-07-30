@@ -20,7 +20,7 @@ module sparkles.twoslash_d.analyze;
 
 import sparkles.base.text.lineindex : LineIndex;
 
-import sparkles.dmd_lsp.api : Analyzer, AnalyzerConfig, DiagKind, Tip;
+import sparkles.dmd_lsp.api : AnalyzedModule, Analyzer, AnalyzerConfig, DiagKind, Tip;
 
 import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
 
@@ -40,33 +40,135 @@ struct AnalyzeResult
 /// in batch use (`EXT2`); `baseConfig`'s paths/flags merge with the sample's
 /// `@import:`/`@dflags:` directives.
 AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
-    AnalyzerConfig baseConfig = AnalyzerConfig()) @system
+    AnalyzerConfig baseConfig = AnalyzerConfig(), bool lazyHovers = false) @system
 {
-    auto notation = parseNotation(annotatedSource);
+    auto prep = prepare(filename, annotatedSource, baseConfig);
+    auto analyzer = Analyzer(prep.config);
+    auto analyzed = analyzer.analyze(prep.entryName, prep.entrySource, prep.extra);
+    return buildNodes(analyzed, prep, lazyHovers);
+}
 
-    auto config = baseConfig;
-    config.importPaths = config.effectiveImportPaths ~ notation.importPaths;
-    config.dflags ~= notation.dflags;
+/**
+A resident analysis session for live viewing: analyze once (`EXT2` — one
+analysis per process), publish a lazy payload immediately (spans-only hovers:
+underlines render at once), then resolve individual hovers on demand at
+single-position cost (~4 ms). The `--serve` oracle and hue's live overlay
+are its consumers. Heap-allocate via `start` — the underlying `Analyzer`
+holds the process-wide DMD session for the object's whole lifetime;
+`shutdown` (or destruction) releases it.
+*/
+struct LiveTwoslash
+{
+    /// The lazy result (hover spans without content; queries, errors,
+    /// completions, and tags fully resolved).
+    AnalyzeResult result;
 
-    // Multi-file samples (`@filename:`): the last segment is the entry
-    // module; earlier segments resolve through its imports as in-memory
-    // virtual modules. A single-file sample is the degenerate one-segment
-    // case covering the whole source.
+    private Analyzer* _analyzer;
+    private AnalyzedModule _analyzed;
+    private Prepared _prep;
+    private LineIndex _entryIndex;
+
+    @disable this(this);
+
+    /// Analyzes `source` and builds the lazy payload.
+    static LiveTwoslash* start(string filename, string source,
+        AnalyzerConfig baseConfig = AnalyzerConfig()) @system
+    {
+        auto live = new LiveTwoslash;
+        live._prep = prepare(filename, source, baseConfig);
+        live._analyzer = new Analyzer(live._prep.config);
+        live._analyzed = live._analyzer.analyze(
+            live._prep.entryName, live._prep.entrySource, live._prep.extra);
+        live._entryIndex = LineIndex(live._prep.entrySource);
+        live.result = buildNodes(live._analyzed, live._prep, lazyHovers: true);
+        return live;
+    }
+
+    /// Resolves one payload node's tip content (hover or query index into
+    /// `payload.nodes`). `Tip.init` when the node has no resolvable content.
+    Tip tipForNode(size_t index) @system
+    {
+        if (_analyzer is null || index >= result.payload.nodes.length)
+            return Tip.init;
+        const n = result.payload.nodes[index];
+        const full = _prep.notation.mapToFull(n.start);
+        if (full < _prep.entryStart || full >= _prep.entryEnd)
+            return Tip.init;
+        const pos = _entryIndex.lineColAt(full - _prep.entryStart);
+        return _analyzed.tipAt(cast(uint) pos.line + 1, cast(uint) pos.column + 1);
+    }
+
+    /// Releases the DMD session (idempotent).
+    void shutdown() @system
+    {
+        if (_analyzer is null)
+            return;
+        destroy(*_analyzer);
+        _analyzer = null;
+    }
+
+    ~this() @system
+    {
+        shutdown();
+    }
+}
+
+/// The compiler-free front half of the pipeline: notation, config merge, and
+/// the multi-file segmentation (`@filename:` — the last segment is the entry
+/// module; earlier segments resolve through its imports as in-memory virtual
+/// modules; a single-file sample is the degenerate one-segment case).
+private struct Prepared
+{
     import sparkles.dmd_lsp.api : VirtualModule;
 
-    const files = notation.files;
-    const entryName = files.length ? files[$ - 1].name : filename;
-    const entryStart = files.length ? files[$ - 1].contentStart : 0;
-    const entryEnd = files.length ? files[$ - 1].contentEnd
-        : notation.fullSource.length;
-    const entrySource = notation.fullSource[entryStart .. entryEnd];
+    ParsedNotation notation;
+    AnalyzerConfig config;
+    string entryName;
+    size_t entryStart;
+    size_t entryEnd;
+    string entrySource;
     VirtualModule[] extra;
-    foreach (f; files.length ? files[0 .. $ - 1] : null)
-        extra ~= VirtualModule(f.name,
-            notation.fullSource[f.contentStart .. f.contentEnd]);
+}
 
-    auto analyzer = Analyzer(config);
-    auto analyzed = analyzer.analyze(entryName, entrySource, extra);
+private Prepared prepare(string filename, string annotatedSource,
+    AnalyzerConfig baseConfig) @system
+{
+    import sparkles.dmd_lsp.api : VirtualModule;
+
+    Prepared prep;
+    prep.notation = parseNotation(annotatedSource);
+
+    prep.config = baseConfig;
+    prep.config.importPaths = prep.config.effectiveImportPaths
+        ~ prep.notation.importPaths;
+    prep.config.dflags ~= prep.notation.dflags;
+
+    const files = prep.notation.files;
+    prep.entryName = files.length ? files[$ - 1].name : filename;
+    prep.entryStart = files.length ? files[$ - 1].contentStart : 0;
+    prep.entryEnd = files.length ? files[$ - 1].contentEnd
+        : prep.notation.fullSource.length;
+    prep.entrySource = prep.notation.fullSource[prep.entryStart .. prep.entryEnd];
+    foreach (f; files.length ? files[0 .. $ - 1] : null)
+        prep.extra ~= VirtualModule(f.name,
+            prep.notation.fullSource[f.contentStart .. f.contentEnd]);
+    return prep;
+}
+
+/// The node-building back half over a live analysis. `lazyHovers` emits
+/// hover nodes as bare spans (empty `text`/`docs` — the documented lazy
+/// convention): underlines render, content resolves on demand
+/// (`LiveTwoslash.tipForNode`). Queries, completions, errors, and tags stay
+/// eager in every mode — they are few and always visible.
+private AnalyzeResult buildNodes(ref AnalyzedModule analyzed, ref Prepared prep,
+    bool lazyHovers) @system
+{
+    auto notation = prep.notation;
+    const entryName = prep.entryName;
+    const entryStart = prep.entryStart;
+    const entryEnd = prep.entryEnd;
+    const entrySource = prep.entrySource;
+    const files = notation.files;
 
     // Oracle coordinates are local to the entry segment; node offsets are
     // global (`fullSource`) — `entryStart` is the shift between them.
@@ -83,10 +185,11 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
     // One walk for all of them: `tipAt` costs a full-module AST walk per
     // call, which on a large file is minutes. `allTips` answers most
     // positions from a single walk; the rest fall back below, so coverage is
-    // unchanged either way.
+    // unchanged either way. Lazy mode skips tip content entirely.
     Tip[ulong] batchTips;
-    foreach (ref hit; analyzed.allTips)
-        batchTips[posKey(hit.line, hit.col)] = hit.tip;
+    if (!lazyHovers)
+        foreach (ref hit; analyzed.allTips)
+            batchTips[posKey(hit.line, hit.col)] = hit.tip;
 
     foreach (word; identifierOccurrences(notation.fullSource))
     {
@@ -96,6 +199,14 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
         // own modules; per-file oracles are follow-up work).
         if (word.offset < entryStart || word.offset >= entryEnd)
             continue;
+        if (lazyHovers)
+        {
+            nodes ~= Node(
+                type: NodeType.hover,
+                start: word.offset,
+                length: word.text.length);
+            continue;
+        }
         const pos = entryIndex.lineColAt(word.offset - entryStart);
         const line = cast(uint) pos.line + 1, col = cast(uint) pos.column + 1;
         const batched = posKey(line, col) in batchTips;
@@ -646,4 +757,42 @@ version (unittest) private AnalyzerConfig gatedConfig() @system
     // The anchor sits inside helper.d's segment (line 2, 0-based, of the
     // display: the marker line is line 0).
     assert(err.line == 2, "unexpected error line");
+}
+
+@("analyze.LiveTwoslash.lazyPayloadAndOnDemandTips")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    auto live = LiveTwoslash.start("sample.d", "module sample;\n"
+        ~ "/// Doubles.\n"
+        ~ "int twice(int x) => x * 2;\n"
+        ~ "auto answer = twice(21);\n"
+        ~ "//     ^?\n",
+        gatedConfig());
+    scope (exit) live.shutdown();
+
+    const tw = live.result.payload;
+    size_t hoverIdx = size_t.max;
+    bool sawEagerQuery;
+    foreach (i, ref nd; tw.nodes)
+    {
+        if (nd.type == NodeType.hover)
+        {
+            // Lazy convention: spans only, no content.
+            assert(nd.text.length == 0 && nd.docs.length == 0);
+            if (tw.code[nd.start .. nd.start + nd.length] == "twice")
+                hoverIdx = i;
+        }
+        if (nd.type == NodeType.query && nd.text.canFind("int"))
+            sawEagerQuery = true;
+    }
+    assert(hoverIdx != size_t.max, "no hover span for `twice`");
+    assert(sawEagerQuery, "queries must stay eager in lazy mode");
+
+    // On-demand resolution carries the full content, ddoc included.
+    const tip = live.tipForNode(hoverIdx);
+    assert(tip.found);
+    assert(tip.code.canFind("twice"), tip.code);
+    assert(tip.doc.canFind("Doubles"), tip.doc);
 }
