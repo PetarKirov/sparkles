@@ -237,6 +237,13 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
     return b.container(WidgetKind.column, rowIds);
 }
 
+// dmd separate-compilation hole: a consumer's `-unittest -allinst` root build
+// sees the unittest-only `TreeData!string` instance below, emits its TypeInfo,
+// but culls `Node.__init` (non-zero: the `uint.max` links) as owned by this
+// module — which a plain library build never instantiates. Anchoring the
+// instance here makes the library carry the initializer the TypeInfo needs.
+private immutable TreeData!string.Node _dmdEmissionAnchor;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
