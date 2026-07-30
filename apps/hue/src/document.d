@@ -19,7 +19,7 @@ import std.string : chompPrefix;
 import sparkles.base.logger : warning;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
-    highlightInjected, TsConfigCache;
+    highlightInjected, ResolvedTheme, RgbColor, TsConfigCache;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
 import gui_preview : PreviewModel;
@@ -160,4 +160,37 @@ struct DocumentPipeline
     assert(rawP.detect("notes.md") == ContentKind.code);
     DocumentPipeline mdP = { forceMarkdown: true };
     assert(mdP.detect("README") == ContentKind.markdown);
+}
+
+/**
+The fence renderer for hue's markdown widget view: ` ```ansi ` fences carry
+pre-styled terminal output — without an off-screen VT (the `no-gui` build and
+these static sinks) their SGR is stripped to plain text; every other language
+goes through the shared injection-aware highlighter.
+*/
+auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
+    RgbColor pageFg) @system
+{
+    import gui_preview : stripSgr;
+    import sparkles.syntax.md.render_widgets : highlightedFenceRenderer;
+    import sparkles.ui.widget : TextSpan;
+
+    auto highlight = highlightedFenceRenderer(cache, theme, pageFg);
+    return delegate TextSpan[][] (const(char)[] lang, const(char)[] body_) @trusted {
+        if (lang != "ansi")
+            return highlight(lang, body_);
+        // Strip SGR, one plain span per line.
+        const plain = stripSgr(body_);
+        TextSpan[][] lines;
+        size_t start = 0;
+        foreach (i, char c; plain)
+            if (c == '\n')
+            {
+                lines ~= [TextSpan(plain[start .. i], fg: pageFg, hasFg: true)];
+                start = i + 1;
+            }
+        if (start < plain.length)
+            lines ~= [TextSpan(plain[start .. $], fg: pageFg, hasFg: true)];
+        return lines;
+    };
 }

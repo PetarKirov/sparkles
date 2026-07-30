@@ -426,7 +426,14 @@ if (is(typeof(measure("")) : int))
             && &spans[f.span].text[0] <= &f.text[0]
             && cur[$ - 1].slot == spans[f.span].slot
             && isContiguous(cur[$ - 1].text, f.text))
+        {
             cur[$ - 1].text = joinSlices(cur[$ - 1].text, f.text);
+            // The joined slice covers more source: extend the identity too
+            // (contiguous slices ⇒ end = start + length).
+            if (cur[$ - 1].srcStart != size_t.max)
+                cur[$ - 1].srcEnd = cur[$ - 1].srcStart
+                    + cur[$ - 1].text.length;
+        }
         else
         {
             auto s = cast() spans[f.span];
