@@ -153,6 +153,7 @@ struct LiveTypesSession
     }
 
     private ResidentProcess _proc;
+    private string _samplePath = "<file.d>"; // only for the failure notice
     private State _state;
     private string _reason;
     private TwoslashReturn _payload;
@@ -185,8 +186,11 @@ struct LiveTypesSession
         }
         // `--quiet` is load-bearing: without it `--dub` writes its project
         // summary to STDOUT, ahead of the payload, and line 1 is no longer JSON.
-        return startWith([bin, filePath, "--dub", "--serve", "--quiet"],
+        auto s = startWith([bin, filePath, "--dub", "--serve", "--quiet"],
             reason, silenceChildStderr);
+        if (s !is null)
+            s._samplePath = filePath;
+        return s;
     }
 
     /// ditto — with an explicit command line (the seam a test drives a scripted
@@ -232,10 +236,15 @@ struct LiveTypesSession
         {
             import std.conv : text;
 
+            // The no-payload case is where a misconfigured environment lands
+            // (no druntime sources ⇒ the extractor refuses before analyzing).
+            // It says why on *its* stderr, which the alt screen has pointed at
+            // /dev/null, so name the command that will repeat the reason.
             fail(_payloadReady
                 ? text("twoslash-extract exited (status ", _proc.status, ")")
                 : text("twoslash-extract exited before producing a payload ",
-                    "(status ", _proc.status, ")"));
+                    "(status ", _proc.status, ") — run `twoslash-extract ",
+                    _samplePath, " --dub --serve` to see why"));
         }
     }
 
