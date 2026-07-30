@@ -15,6 +15,7 @@ interleave in the arena.
 */
 module sparkles.ui.widget;
 
+import sparkles.base.term_color : RgbColor;
 import sparkles.ui.canvas : LineStyle;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.style : Decoration, Slot, TextStyle;
@@ -116,6 +117,23 @@ struct Widget
     bool clipY;
 
     bool paintBackground;    /// fill `slot`'s background (box/panel/popup)
+
+    /// The theme's syntax channel at node level (the widget twin of
+    /// `TextSpan.fg`): $(B resolved) colors that bypass slot resolution, for
+    /// document-derived chrome — heading bands, code panels, callout accents —
+    /// whose colors come from the content's resolved theme, not the palette.
+    /// Each is gated by its flag; `bgOverride` fills only with `paintBackground`.
+    RgbColor fgOverride;
+    /// ditto
+    bool hasFgOverride;
+    /// ditto
+    RgbColor bgOverride;
+    /// ditto
+    bool hasBgOverride;
+    /// ditto — recolors the `decoration` border
+    RgbColor borderOverride;
+    /// ditto
+    bool hasBorderOverride;
     /// In a `column`, widen to the column's content width (cross-axis stretch —
     /// full-width section dividers); the child's descendants stay left-aligned.
     bool stretch;

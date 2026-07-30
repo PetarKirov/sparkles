@@ -67,7 +67,17 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
     in Palette pal, in RgbColor pageFg, in RgbColor pageBg)
 {
     const node = tree.nodes[idx];
-    const vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg, pageBg);
+    auto vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg, pageBg);
+    // The node-level syntax channel (the widget twin of `TextSpan.fg`).
+    if (node.hasFgOverride)
+        vis.fg = node.fgOverride;
+    if (node.hasBgOverride)
+    {
+        vis.bg = node.bgOverride;
+        vis.hasBg = true;
+    }
+    if (node.hasBorderOverride)
+        vis.border.color = node.borderOverride;
 
     final switch (node.kind) with (WidgetKind)
     {
