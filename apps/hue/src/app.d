@@ -572,7 +572,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             themeSet.themes, themeSet.idx, doc.preview, cli.font, cli.fontSize,
             cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
             cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
-            docSet, docSet !is null ? &loadDoc : null);
+            docSet, docSet !is null ? &loadDoc : null, &cache);
     }
     else
     {

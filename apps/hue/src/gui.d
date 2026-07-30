@@ -30,13 +30,18 @@ import sparkles.raylib_text : TextStyle, FontSet, drawText;
 import gui_text : columnWidth, lineCount, Match, buildLineStarts, findMatches;
 
 // Markdown-preview model + layout (raylib-free) and the ANSI attribute bits.
-import gui_preview : PreviewModel, PreviewLine, PreviewRun, BandKind, PreviewDoc,
-    TableView, flattenPreview, wrapPreview, buildRawPlines, quoteBarColors,
-    quoteBarCycle, stripSgr;
-import gui_ansi : Attr;
+import gui_preview : PreviewModel, PreviewLine, BandKind,
+    buildRawPlines, quoteBarColors, quoteBarCycle, stripSgr;
+import gui_ansi : Attr, decodeAnsi;
 
-// 2D table grid selection (TBL): the screen↔cell map + pure region/serialize logic.
-import sparkles.ui.components.table : GridHit, CellSpan;
+// The composable markdown view (M10): the preview is one widget tree; the
+// identity channel + keyed cells drive selection/search/copy.
+import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
+import sparkles.syntax.md.render_widgets : highlightedFenceRenderer,
+    MdViewOptions, MdViewTheme, viewMarkdown;
+
+// 2D table grid selection (TBL): pure region/serialize logic over grid hits.
+import sparkles.ui.components.table : GridHit;
 import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
@@ -57,11 +62,14 @@ import sparkles.twoslash.render_widgets : viewHoverPopup;
 // error/warn/tag/highlight colors this backend used to hand-copy as literals, and
 // the widget views drive the hover popup (so the GUI matches the TUI/HTML chrome).
 import sparkles.ui.style : defaultTwoslashPalette, Palette, resolveSlot,
-    schemeForBackground, Slot, Visual;
-import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.canvas : LineStyle, OpKind;
-import sparkles.ui.layout : layout;
-import sparkles.ui.state : scrollbarThumb, Timeline;
+    schemeForBackground, Slot, UiTextStyle = TextStyle, Visual;
+import sparkles.ui.geometry : Constraints, Point, Rect;
+import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
+import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.state : DocRow, documentRows, HoverTarget, hoverTargets,
+    KeyedRect, keyedRects, scrollbarThumb, selectionRects, sourceOffsetAt,
+    Timeline;
+import sparkles.ui.widget : TextSpan, WidgetTree;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : RaylibCanvas, rlBg;
@@ -168,6 +176,7 @@ int runGui(
     TableCopyFormat tableCopy = TableCopyFormat.tsv, // --table-copy (TBL2/CLI11)
     SourceSet* set = null,               // the document set to navigate (GNV1)
     DocLoader loadDoc = null,            // loads a set entry (supplied by app.d)
+    TsConfigCache* tsCache = null,       // fence highlighting for the widget view
 ) @system
 {
     import std.stdio : stderr;
@@ -245,8 +254,28 @@ int runGui(
         showPreview = false;
     else if (environment.get("HUE_GUI_PREVIEW", "") == "1")
         showPreview = curPreview.present;
-    PreviewLine[] plines;
-    TableView[] tables; // per-table screen↔cell maps for 2D selection (TBL); markdown preview only
+    PreviewLine[] plines; // the raw (highlighted-source) view's wrapped lines
+
+    // The markdown widget pipeline (M10): the preview is one laid-out tree.
+    // `mdRows` (per-visual-row text + source range) and the keyed cell rects
+    // are the identity channel the interactions run on.
+    WidgetTree mdTree;
+    Frame[] mdFrames;
+    DrawOp[] mdOps;
+    DocRow[] mdRows;
+    HoverTarget[] mdTargets;
+    KeyedRect[] mdCells;
+    // Document structure resolved once per document: fence bodies (for the
+    // copy affordance) and table cells in document order.
+    static struct MdFence { Span body; bool isAnsi; }
+    static struct MdCell { int table; size_t row, col; Span span; }
+    MdFence[] mdFences;
+    MdCell[] mdCellList;
+    size_t copiedFenceSrc = size_t.max; // body start of the just-copied fence
+    // Source-anchored identity bases (see the markdown view's options).
+    enum size_t fenceHitBase = size_t.max / 2 + 1;
+    enum size_t tableKeyBase = 1;
+
     int lastWidthCols = -1;
     // Resize debounce: during a drag the column count changes almost every frame,
     // so re-wrap only once the width has held steady for a few frames — the drag
@@ -256,11 +285,6 @@ int runGui(
     int prevWidthCols = -1;
     int resizeSettle;
     enum resizeSettleFrames = 4; // ~66 ms at 60 FPS
-    // The width-independent flattened preview, cached per theme. A resize / font-
-    // size change / gutter toggle only re-wraps this (`relayout`), never re-flattens
-    // it (`reflatten`) — flattening (inline layout, prose tokenization, code
-    // highlighting) is the expensive part and depends only on the model + theme.
-    PreviewDoc flatDoc;
 
     // The live theme state: ←/→ browse `themes`, re-resolving and repainting —
     // the GPU counterpart of hue's terminal Previewer.
@@ -289,32 +313,98 @@ int runGui(
         return w < 8 ? 8 : w;
     }
 
-    // Rebuild the width-independent flattened preview (model + theme dependent).
-    // Called on theme change and at startup — NOT on resize.
-    void reflatten()
+    // Fence renderer for the widget view: ` ```ansi ` fences decode through
+    // the off-screen VT into resolved-color spans (fg + bg + attrs); every
+    // other language goes through the shared injection-aware highlighter.
+    TextSpan[][] delegate(const(char)[], const(char)[]) @safe mdFenceRenderer()
     {
-        if (curPreview.present)
-            flatDoc = flattenPreview(curPreview, current, pageFg, pageBg);
+        auto highlight = tsCache !is null
+            ? highlightedFenceRenderer(tsCache, &current, pageFg) : null;
+        return delegate TextSpan[][] (const(char)[] lang, const(char)[] body_)
+            @trusted {
+            if (lang != "ansi")
+                return highlight !is null ? highlight(lang, body_) : null;
+            TextSpan[][] lines;
+            foreach (ref ln; decodeAnsi(body_))
+            {
+                TextSpan[] spans;
+                foreach (ref sp; ln.spans)
+                    spans ~= TextSpan(sp.text,
+                        textStyle: attrsToTextStyle(sp.attrs),
+                        fg: sp.fgDefault ? pageFg : sp.fg, hasFg: true,
+                        bg: sp.bg, hasBg: !sp.bgDefault);
+                lines ~= spans;
+            }
+            return lines;
+        };
     }
 
-    // Both views are wrapped visual-line lists (`PreviewLine[]`) so long lines
-    // reflow on resize and line numbers track the source (physical) line. The
-    // markdown preview re-wraps the cached `flatDoc` (the resize hot path); the raw
-    // view wraps the highlighted source directly.
+    // Rebuild the markdown widget pipeline (theme/width/document dependent):
+    // view → layout → display list, plus the derived row index, hit targets
+    // and keyed cell rects, and the document's fence/cell structure.
+    void rebuildMd()
+    {
+        MdViewOptions opt = {
+            theme: MdViewTheme.derive(current, pageFg, pageBg),
+            fenceHitBase: fenceHitBase,
+            tableKeyBase: tableKeyBase,
+            copiedFence: copiedFenceSrc,
+            fenceRenderer: mdFenceRenderer(),
+        };
+        mdTree = viewMarkdown(curPreview.doc, opt);
+        mdFrames = layout(mdTree, Constraints(maxW: lastWidthCols));
+        mdOps = buildDisplayList(mdTree, mdFrames,
+            themes[themeIdx].effectivePalette, pageFg, pageBg);
+        mdRows = documentRows(mdTree, mdFrames);
+        mdTargets = hoverTargets(mdTree, mdFrames);
+        mdCells = keyedRects(mdTree, mdFrames);
+
+        mdFences.length = 0;
+        mdCellList.length = 0;
+        int tableIdx = -1;
+        void collect(in MdBlock blk)
+        {
+            if (blk.kind == MdBlockKind.codeFence)
+                mdFences ~= MdFence(blk.codeBody, blk.infoLang == "ansi");
+            if (blk.kind == MdBlockKind.table)
+            {
+                ++tableIdx;
+                foreach (ri, ref const row; blk.children)
+                    foreach (ci, ref const cell; row.children)
+                        mdCellList ~= MdCell(tableIdx, ri, ci, cell.span);
+            }
+            foreach (ref const c; blk.children)
+                collect(c);
+        }
+        collect(curPreview.doc.root);
+    }
+
+    // A table's grid dimensions from the collected cell list.
+    static struct Dims { size_t rows, cols; }
+    static Dims tableDims(in MdCell[] cells, int table)
+    {
+        Dims d;
+        foreach (ref const mc; cells)
+            if (mc.table == table)
+            {
+                if (mc.row + 1 > d.rows)
+                    d.rows = mc.row + 1;
+                if (mc.col + 1 > d.cols)
+                    d.cols = mc.col + 1;
+            }
+        return d;
+    }
+
+    // Both views reflow on resize. The markdown preview lays its widget tree
+    // out to the new width; the raw view wraps the highlighted source into
+    // visual lines (`PreviewLine[]`) so line numbers track the source line.
     void relayout()
     {
         lastWidthCols = widthCols();
         if (showPreview && curPreview.present)
-        {
-            auto wp = wrapPreview(flatDoc, lastWidthCols, codeLineNumbers);
-            plines = wp.lines;
-            tables = wp.tables;
-        }
+            rebuildMd();
         else
-        {
             plines = buildRawPlines(curSource, curEvents, current, pageFg, pageBg, lastWidthCols);
-            tables = null; // the raw view has no table maps
-        }
     }
 
     void applyTheme(size_t i)
@@ -332,7 +422,6 @@ int runGui(
         scrollbarThumb = mix(pageBg, linkC, 0.5);
         SetWindowTitle(text("hue — ", title, " — ", names[i],
             " (", i + 1, "/", names.length, ")").toStringz);
-        reflatten(); // theme colors change → re-flatten, then re-wrap
         relayout();  // preview colors follow the theme
     }
 
@@ -387,10 +476,7 @@ int runGui(
         curMatch = 0;
         mode = Mode.normal;
 
-        // The flattened preview is width-independent but model+theme dependent, so
-        // a new document must re-flatten before the width-only re-wrap.
-        reflatten();
-        lastWidthCols = -1; // force the re-wrap even at an unchanged width
+        lastWidthCols = -1; // force the re-layout even at an unchanged width
         relayout();
         SetWindowTitle(("hue — " ~ curName).toStringz);
         return true;
@@ -456,11 +542,10 @@ int runGui(
     bool isFullscreen;
     int savedX, savedY, savedW, savedH;
 
-    // Code-block copy button: the fence just copied + the STM6 timeline for
-    // the brief "copied" checkmark feedback.
-    int copiedFence = -1;
-    int copiedTable = -1;
+    // Code-block copy button: the STM6 timeline for the brief "copied"
+    // checkmark feedback (the copied fence itself is `copiedFenceSrc`).
     Timeline copiedFlash;
+    bool copiedShown; // the ✔ glyph is in the tree; rebuild when the flash ends
 
     // Mouse selection has two regimes (a drag stays in the one it starts in, TBL4):
     //  • text  (SEL): a source byte range [selMin, selMax). Prose/code map a click
@@ -498,13 +583,22 @@ int runGui(
             auto txt = source[cast(size_t) selMin() .. cast(size_t) selMax()];
             SetClipboardText((ansiStrip ? stripSgr(txt) : txt).toStringz);
         }
-        else if (regime == Regime.table && selTable >= 0 && selTable < tables.length)
+        else if (regime == Regime.table && selTable >= 0)
         {
-            const tv = tables[selTable];
+            // Cell content = its raw source slice (through the cell spans the
+            // document walk collected — the same identity the tint uses).
+            const dims = tableDims(mdCellList, selTable);
             const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
-                tv.map.numRows, tv.map.numCols);
-            const txt = serializeTable(reg,
-                (size_t r, size_t c) => tv.map.cellText(r, c), tableFmt);
+                dims.rows, dims.cols);
+            const(char)[] cellText(size_t r, size_t c)
+            {
+                foreach (ref const mc; mdCellList)
+                    if (mc.table == selTable && mc.row == r && mc.col == c
+                        && mc.span.end <= source.length)
+                        return source[mc.span.start .. mc.span.end];
+                return "";
+            }
+            const txt = serializeTable(reg, &cellText, tableFmt);
             if (txt.length)
                 SetClipboardText(txt.toStringz);
         }
@@ -605,7 +699,9 @@ int runGui(
                 relayout();
         }
         prevWidthCols = wc;
-        const total = plines.length;
+        // The active view's visual-line space (scroll/selection/search).
+        const mdActive = showPreview && curPreview.present;
+        const total = mdActive ? mdRows.length : plines.length;
         const maxTop = total > visibleRows ? cast(long)(total - visibleRows) : 0;
 
         // F11 toggles borderless fullscreen on the window's current monitor;
@@ -874,115 +970,155 @@ int runGui(
         const gcols = gutterCols();
         const gutterPx = padX + gcols * cellW; // == contentX (text column start)
 
-        // Both views draw through the same wrapped-line painter (bands/leaders are
-        // absent from raw lines, so it just paints runs + the line-number gutter).
-        drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
-            pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf);
+        if (mdActive)
+        {
+            // The widget path: paint the tree's precomputed ops through the
+            // raylib canvas, offset by the scroll position and culled to the
+            // viewport rows (raylib clips px; the cull skips dead draw calls).
+            auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+                gutterPx, cast(float)(-top * cellH));
+            foreach (ref op; mdOps)
+            {
+                const oy = op.rect.y;
+                if (op.kind != OpKind.pushClip && op.kind != OpKind.popClip
+                    && (oy + op.rect.height <= top || oy > top + visibleRows))
+                    continue;
+                paint(canvas, (&op)[0 .. 1]);
+            }
+
+            // Source line numbers in the gutter — from the row's source range
+            // (first visual row of each source line only).
+            if (gcols > 0)
+            {
+                size_t prevLine = size_t.max;
+                foreach (row; 0 .. visibleRows)
+                {
+                    const vi = topLine + row;
+                    if (vi >= mdRows.length)
+                        break;
+                    if (mdRows[vi].srcStart == size_t.max)
+                        continue;
+                    const ln = srcLineOf(lineStarts, mdRows[vi].srcStart);
+                    if (ln == prevLine)
+                        continue;
+                    prevLine = ln;
+                    const s = cstrOf(buf, uintToBuf(ln + 1));
+                    drawText(fonts, s,
+                        gutterPx - (s.length + 1) * cast(float) cellW,
+                        row * cast(float) cellH, TextStyle(0), rl(gutterFg));
+                }
+            }
+        }
+        else
+            drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
+                pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf);
 
         copiedFlash = copiedFlash.stepped(frameMs(), copiedCfg);
+        // The ✔ glyph lives in the widget tree: rebuild when the flash ends so
+        // the header reverts to the copy affordance.
+        if (copiedShown && !copiedFlash.visible)
+        {
+            copiedShown = false;
+            copiedFenceSrc = size_t.max;
+            if (mdActive)
+                rebuildMd();
+        }
 
         bool copyClicked; // a click landing on a copy button is not a selection
 
-        // Copy-to-clipboard button in a code-header row's cutout — and, the same
-        // way, a whole-table copy button in a table's top-border cutout. Both sit
-        // in the right-side cutout (the middle of the three-space gap, `lineCols-3`,
-        // a space on each side) and flip to a checkmark for ~1.2s on click.
-        if (showPreview)
+        // The fence copy affordance: the header band is the hit target (its
+        // source-anchored id resolves the fence body); a click copies and the
+        // ✔ glyph — part of the widget tree — holds for the flash duration.
+        if (mdActive)
         {
             const mp = GetMousePosition();
-            foreach (row; 0 .. visibleRows)
-            {
-                const vi = topLine + row;
-                if (vi >= plines.length)
-                    break;
-                const pl = plines[vi];
-                const isCode = pl.band == BandKind.codeHeader && pl.copyFence >= 0;
-                const isTable = pl.copyTable >= 0;
-                if (!isCode && !isTable)
-                    continue;
-                const iconX = gutterPx + (runStartCells(pl) + lineCols(pl) - 3) * cellW;
-                const iy = row * cellH;
-                const hovered = mp.x >= iconX && mp.x < iconX + cellW
-                    && mp.y >= iy && mp.y < iy + cellH;
-                const clicked = hovered && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT);
-                bool copied;
-                if (isCode)
-                {
-                    if (clicked && pl.copyFence < cast(int) preview.fences.length)
+            const dp = Point(cast(int)((mp.x - gutterPx) / cellW),
+                cast(int)(top + cast(long)(mp.y / cellH)));
+            if (mp.x >= gutterPx && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                foreach_reverse (ref const tgt; mdTargets)
+                    if (tgt.hitId >= fenceHitBase && tgt.rect.contains(dp))
                     {
-                        auto fbody = preview.fences[pl.copyFence].body;
-                        // Match the selection copy mode: strip SGR from an ANSI fence.
-                        const txt = (ansiStrip && preview.fences[pl.copyFence].isAnsi)
-                            ? stripSgr(fbody) : fbody;
-                        SetClipboardText(txt.toStringz);
-                        copiedFence = pl.copyFence;
-                        copiedTable = -1;
-                        copiedFlash = Timeline.triggered(copiedCfg);
-                        copyClicked = true;
+                        const bodyStart = tgt.hitId - fenceHitBase;
+                        foreach (ref const f; mdFences)
+                            if (f.body.start == bodyStart
+                                && f.body.end <= source.length)
+                            {
+                                auto fbody = source[f.body.start .. f.body.end];
+                                // Match the selection copy mode (SEL7).
+                                const txt = (ansiStrip && f.isAnsi)
+                                    ? stripSgr(fbody) : fbody;
+                                SetClipboardText(txt.toStringz);
+                                copiedFenceSrc = bodyStart;
+                                copiedFlash = Timeline.triggered(copiedCfg);
+                                copiedShown = true;
+                                copyClicked = true;
+                                rebuildMd(); // the header now shows the ✔
+                                break;
+                            }
+                        break;
                     }
-                    copied = pl.copyFence == copiedFence && copiedFlash.visible;
-                }
-                else // whole-table copy: the raw markdown source (like the code button)
-                {
-                    if (clicked && pl.selSrcStart != size_t.max
-                        && pl.selSrcEnd <= source.length)
-                    {
-                        SetClipboardText(source[pl.selSrcStart .. pl.selSrcEnd].toStringz);
-                        copiedTable = pl.copyTable;
-                        copiedFence = -1;
-                        copiedFlash = Timeline.triggered(copiedCfg);
-                        copyClicked = true;
-                    }
-                    copied = pl.copyTable == copiedTable && copiedFlash.visible;
-                }
-                const icon = copied ? "\U0000F00C" : "\U0000F0C5"; //  /
-                const col = copied ? quoteBars[2] : (hovered ? pageFg : gutterFg);
-                drawText(fonts, cstrOf(buf, icon), iconX, iy, TextStyle(0), rl(col));
-            }
         }
 
         // Mouse selection (both views). `hitAt` classifies the cursor: over a
-        // table → a grid cell (`TBL`); else a source byte span (`SEL`) — a char
-        // point for prose/code, or an ANSI body line's whole fence-body span
-        // (`SEL6`, block-granular).
+        // table → a grid cell (`TBL`); else a source byte span (`SEL`) — a
+        // char point for prose/code (through the identity channel on the
+        // widget path), or a decoration row's whole source span.
         struct Hit { bool ok, table; long lo, hi; int tableIdx; GridHit cell; }
         Hit hitAt(float mx, float my)
         {
             Hit h;
             if (my < 0)
                 return h;
+            if (mdActive)
+            {
+                const cx = cast(int)((mx - gutterPx) / cellW);
+                const cy = top + cast(long)(my / cellH);
+                if (mx < gutterPx || cy < 0 || cy >= cast(long) mdRows.length)
+                    return h;
+                const p = Point(cx, cast(int) cy);
+                const off = sourceOffsetAt(mdTree, mdFrames, p);
+                // Inside a keyed table cell: a grid hit (2-D regime anchor),
+                // with the char offset relative to the cell's source span.
+                foreach (ref const kr; mdCells)
+                    if (kr.rect.contains(p))
+                    {
+                        const cellStart = kr.key - tableKeyBase;
+                        foreach (mi, ref const mc; mdCellList)
+                            if (mc.span.start == cellStart)
+                            {
+                                h.table = true;
+                                h.tableIdx = mc.table;
+                                h.cell = GridHit(mc.row, mc.col,
+                                    off >= cast(long) cellStart
+                                        ? cast(size_t)(off - cellStart) : 0);
+                                h.lo = h.hi = off >= 0 ? off : cast(long) cellStart;
+                                h.ok = true;
+                                return h;
+                            }
+                        break;
+                    }
+                if (off >= 0) // char-precise content
+                {
+                    h.ok = true;
+                    h.lo = h.hi = off;
+                    return h;
+                }
+                // Decoration under the cursor (band/border/pre-styled ANSI):
+                // fall back to the row's whole source span (block-granular).
+                if (mdRows[cast(size_t) cy].srcStart != size_t.max)
+                {
+                    h.ok = true;
+                    h.lo = cast(long) mdRows[cast(size_t) cy].srcStart;
+                    h.hi = cast(long) mdRows[cast(size_t) cy].srcEnd;
+                }
+                return h;
+            }
             const row = cast(int)(my / cellH);
             if (row < 0 || topLine + row >= plines.length)
                 return h;
             const pl = plines[topLine + row];
             const rx = gutterPx + runStartCells(pl) * cellW;
             const x = mx <= rx ? 0 : cast(int)((mx - rx) / cellW);
-            // A table line yields both a grid cell (for a drag that STARTS here →
-            // the 2D regime) and the table's whole source span (for a text-regime
-            // drag that merely CROSSES it, TBL4).
-            if (pl.tableIndex >= 0 && pl.tableIndex < tables.length)
-            {
-                const tv = tables[pl.tableIndex];
-                auto gh = tv.map.hit(cast(size_t)((topLine + row) - tv.firstLine), cast(size_t) x);
-                if (!gh.isNull)
-                {
-                    h.table = true;
-                    h.tableIdx = pl.tableIndex;
-                    h.cell = gh.get;
-                    // Char-level source offset for a text-regime drag crossing the
-                    // table: the cell's source start + the char within it.
-                    h.lo = h.hi = cast(long)(tv.cellSrc[gh.get.row][gh.get.col] + gh.get.charInCell);
-                    h.ok = true;
-                    return h;
-                }
-            }
-            if (pl.selSrcStart != size_t.max) // table border/gutter → block span (fallback)
-            {
-                h.lo = cast(long) pl.selSrcStart;
-                h.hi = cast(long) pl.selSrcEnd;
-                h.ok = true;
-                return h;
-            }
             const o = srcOffsetAtCol(pl, x);
             if (o >= 0)
             {
@@ -1048,76 +1184,71 @@ int runGui(
             DrawRectangle(gutterPx + xStartCol * cellW, cast(int)(screenRow * cellH),
                 (xEndCol - xStartCol) * cellW, cellH, alpha(quoteBars[1], 80));
         }
-        // A cell/char span from a table map → its on-screen rect (its content
-        // columns sit after the table line's own indent/quote gutter).
-        void tintTableSpan(in TableView tv, CellSpan sp)
+        // Tint a source byte range on the widget path: the toolkit derives the
+        // char-precise rects (document cell coordinates) once for any backend.
+        void tintSrcRange(long lo, long hi)
         {
-            const startCol = runStartCells(plines[tv.firstLine]);
-            tintRow(cast(long)(tv.firstLine + sp.line) - topLine,
-                startCol + cast(int) sp.xStart, startCol + cast(int) sp.xEnd);
+            if (hi <= lo)
+                return;
+            foreach (r; selectionRects(mdTree, mdFrames,
+                cast(size_t) lo, cast(size_t) hi))
+                tintRow(r.y - top, r.x, r.x + r.width);
         }
         if (regime == Regime.text && selMax() > selMin())
         {
             const smin = selMin(), smax = selMax();
-            foreach (row; 0 .. visibleRows)
-            {
-                const vi = topLine + row;
-                if (vi >= plines.length)
-                    break;
-                const pl = plines[vi];
-                if (pl.tableIndex >= 0)
-                    continue; // tables tinted per-cell below
-                const startCol = runStartCells(pl);
-                int c;
-                foreach (r; pl.runs)
-                {
-                    const rc = cast(int) columnWidth(r.text);
-                    if (r.srcStart != size_t.max)
-                    {
-                        const rStart = cast(long) r.srcStart;
-                        const rEnd = rStart + cast(long) r.text.length;
-                        if (rEnd > smin && rStart < smax)
-                        {
-                            const bStart = (smin > rStart ? smin : rStart) - rStart;
-                            const bEnd = (smax < rEnd ? smax : rEnd) - rStart;
-                            const colStart = cast(int) columnWidth(r.text[0 .. bStart]);
-                            const colEnd = cast(int) columnWidth(r.text[0 .. bEnd]);
-                            tintRow(row, startCol + c + colStart, startCol + c + colEnd);
-                        }
-                    }
-                    c += rc;
-                }
-            }
-            // Tables the text selection crosses: tint the covered part of each
-            // cell — character-precise (clip to [smin, smax) within the cell), so
-            // a selection ending mid-cell highlights only up to that character.
-            foreach (ref tv; tables)
-                foreach (rr; 0 .. tv.map.numRows)
-                    foreach (cc; 0 .. tv.map.numCols)
-                    {
-                        const cLo = cast(long) tv.cellSrc[rr][cc];
-                        const cHi = cLo + cast(long) tv.map.cellText(rr, cc).length;
-                        if (cHi <= smin || cLo >= smax)
-                            continue;
-                        const lo = cast(size_t)((smin > cLo ? smin : cLo) - cLo);
-                        const hi = cast(size_t)((smax < cHi ? smax : cHi) - cLo);
-                        foreach (sp; tv.map.charSpans(rr, cc, lo, hi))
-                            tintTableSpan(tv, sp);
-                    }
-        }
-        else if (regime == Regime.table && selTable >= 0 && selTable < tables.length)
-        {
-            const tv = tables[selTable];
-            const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
-                tv.map.numRows, tv.map.numCols);
-            if (reg.subCell)
-                foreach (sp; tv.map.charSpans(reg.row, reg.col, reg.charLo, reg.charHi))
-                    tintTableSpan(tv, sp);
+            if (mdActive)
+                // One pass covers prose, code and table cells alike — every
+                // span with source identity inside [smin, smax) tints.
+                tintSrcRange(smin, smax);
             else
-                foreach (rr; reg.rowLo .. reg.rowHi + 1)
-                    foreach (cc; reg.colLo .. reg.colHi + 1)
-                        foreach (sp; tv.map.cellSpans(rr, cc))
-                            tintTableSpan(tv, sp);
+                foreach (row; 0 .. visibleRows)
+                {
+                    const vi = topLine + row;
+                    if (vi >= plines.length)
+                        break;
+                    const pl = plines[vi];
+                    const startCol = runStartCells(pl);
+                    int c;
+                    foreach (r; pl.runs)
+                    {
+                        const rc = cast(int) columnWidth(r.text);
+                        if (r.srcStart != size_t.max)
+                        {
+                            const rStart = cast(long) r.srcStart;
+                            const rEnd = rStart + cast(long) r.text.length;
+                            if (rEnd > smin && rStart < smax)
+                            {
+                                const bStart = (smin > rStart ? smin : rStart) - rStart;
+                                const bEnd = (smax < rEnd ? smax : rEnd) - rStart;
+                                const colStart = cast(int) columnWidth(r.text[0 .. bStart]);
+                                const colEnd = cast(int) columnWidth(r.text[0 .. bEnd]);
+                                tintRow(row, startCol + c + colStart, startCol + c + colEnd);
+                            }
+                        }
+                        c += rc;
+                    }
+                }
+        }
+        else if (mdActive && regime == Regime.table && selTable >= 0)
+        {
+            const dims = tableDims(mdCellList, selTable);
+            const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
+                dims.rows, dims.cols);
+            foreach (ref const mc; mdCellList)
+            {
+                if (mc.table != selTable)
+                    continue;
+                if (reg.subCell)
+                {
+                    if (mc.row == reg.row && mc.col == reg.col)
+                        tintSrcRange(cast(long)(mc.span.start + reg.charLo),
+                            cast(long)(mc.span.start + reg.charHi));
+                }
+                else if (mc.row >= reg.rowLo && mc.row <= reg.rowHi
+                    && mc.col >= reg.colLo && mc.col <= reg.colHi)
+                    tintSrcRange(cast(long) mc.span.start, cast(long) mc.span.end);
+            }
         }
 
         // Search-match overlay (raw view only): translucent tint over each visible
@@ -1298,6 +1429,38 @@ private void drawPreview(
             x += wpx;
         }
     }
+}
+
+/// The source (physical) line containing byte `off` — a binary search over the
+/// line-start offsets (the preview gutter's row → line number mapping).
+private size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
+    @safe pure nothrow @nogc
+{
+    size_t lo = 0, hi = lineStarts.length;
+    while (lo + 1 < hi)
+    {
+        const mid = (lo + hi) / 2;
+        if (lineStarts[mid] <= off)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+/// Maps `gui_ansi.Attr` bits onto the toolkit's per-span text chrome — the
+/// decoded-ANSI fence renderer stamps these on its resolved-color spans.
+private UiTextStyle attrsToTextStyle(ubyte attrs) pure nothrow @nogc @safe
+{
+    import sparkles.base.term_style : UStyle = UnderlineStyle;
+
+    UiTextStyle t;
+    t.bold = (attrs & Attr.bold) != 0;
+    t.italic = (attrs & Attr.italic) != 0;
+    t.strikethrough = (attrs & Attr.strikethrough) != 0;
+    if (attrs & Attr.underline)
+        t.underline = UStyle.single;
+    return t;
 }
 
 /// Maps `gui_ansi.Attr` bits (used by the preview model) onto raylib-text's
