@@ -36,7 +36,8 @@
         version = pkgs.raylib.version;
         src = pkgs.raylib.src;
 
-        # Upstream 5.5 never resizes on Android: APP_CMD_CONFIG_CHANGED is an
+        # Upstream raylib — the 6.0 line, verified identical in the released 6.0
+        # tag — never resizes on Android: APP_CMD_CONFIG_CHANGED is an
         # empty stub ("Check screen orientation here!"), APP_CMD_WINDOW_RESIZED
         # is unhandled, and the pause/resume rebind pins the buffer geometry to
         # the old size — so an in-place rotation keeps rendering the stale

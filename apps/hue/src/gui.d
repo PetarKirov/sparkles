@@ -583,15 +583,19 @@ int runGui(
     long selMax() => anchorHi > headHi ? anchorHi : headHi;
 
     // The one clipboard seam. raylib's Android SetClipboardText is an
-    // unimplemented no-op (a real one needs a JNI ClipboardManager bridge —
-    // a self-contained follow-up); log instead of silently dropping.
+    // unimplemented no-op, so Android goes through the JNI ClipboardManager
+    // bridge instead (android_glue.setClipboardTextZ).
     void copyToClipboard(const(char)* z)
     {
         version (Android)
         {
-            import sparkles.base.logger : info;
+            import android_glue : setClipboardTextZ;
+            import sparkles.base.logger : info, warning;
 
-            info(i"copy: clipboard unavailable on this build");
+            if (setClipboardTextZ(z))
+                info(i"copy: copied to the system clipboard");
+            else
+                warning(i"copy: JNI clipboard bridge failed");
         }
         else
             SetClipboardText(z);
