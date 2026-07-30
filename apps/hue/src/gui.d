@@ -48,21 +48,20 @@ import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTab
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
 // through StyleSpec.fg/bg (never named here).
 import sparkles.syntax : HighlightEvent, LabelId, LabelSet, Theme, StyleSpec, TextAttr, UnderlineStyle,
-    ResolvedTheme, resolveTheme, byStyledLine, byStyledSpan, RgbColor, toRgb;
+    ResolvedTheme, RgbColor, toRgb;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : mix;
 
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
-import sparkles.twoslash.overlay : BelowBlock, errIsWarning, highlightSignature,
-    InlineDecoration, planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
+import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
 import sparkles.twoslash.render_widgets : viewHoverPopup;
 
 // The shared visual language: the twoslash palette is the single source for the
 // error/warn/tag/highlight colors this backend used to hand-copy as literals, and
 // the widget views drive the hover popup (so the GUI matches the TUI/HTML chrome).
-import sparkles.ui.style : defaultTwoslashPalette, Palette, resolveSlot,
-    schemeForBackground, Slot, UiTextStyle = TextStyle, Visual;
+import sparkles.ui.style : defaultTwoslashPalette, Palette,
+    schemeForBackground, Slot;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : layout;
@@ -70,7 +69,7 @@ import sparkles.ui.state : scrollbarThumb, selectionRects, sourceOffsetAt,
     Timeline;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
-import sparkles.ui_raylib : RaylibCanvas, rlBg;
+import sparkles.ui_raylib : RaylibCanvas;
 
 // The multi-document set the twoslash view navigates with `[`/`]` (`GNV1`), plus
 // the two entry points a navigation reload needs.
@@ -1520,63 +1519,28 @@ private ThumbGeometry thumbGeometry(size_t total, int visibleRows, long top,
 private Color alpha(RgbColor c, ubyte a) pure nothrow @nogc @trusted
     => Color(c.r, c.g, c.b, a);
 
-/// Draws styled text `text` (highlighted into `ev`) run-by-run starting at
-/// `(x, y)`; returns the ending pen x. Used for popup / query type signatures.
-private float drawStyledRuns(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
-    scope const(char)[] text, const(HighlightEvent)[] ev, float x, float y,
-    in ResolvedTheme theme, RgbColor fallbackFg) @system
-{
-    const cellW = fonts.cellW();
-    float cx = x;
-    foreach (sp; byStyledSpan(ev))
-    {
-        const run = text[sp.start .. sp.end];
-        if (run.length == 0)
-            continue;
-        const spec = theme[sp.label];
-        drawText(fonts, cstrOf(buf, run), cx, y, mapStyle(spec), rl(toRgb(spec.fg, fallbackFg)));
-        cx += columnWidth(run) * cellW;
-    }
-    return cx;
-}
-
-/// The floating hover popup: a bordered box with the re-highlighted type
-/// signature and (if present) the docs, anchored at `(x, y)`.
 /// The floating hover popup, built from the shared `viewHoverPopup` widget view
 /// (surface panel + docs + `@param` chips — the same chrome as the TUI/HTML) and
-/// painted through `RaylibCanvas`. The type signature (row 0) is a single
-/// `Slot.code` run in the widget model, so it is overpainted with the per-token
-/// re-highlighted signature — the one thing the widget model leaves to the painter.
+/// painted through `RaylibCanvas`. The type signature renders as resolved
+/// syntax-colored spans (`signatureSpans`) inside the widget model itself, so
+/// nothing overpaints the toolkit's output.
 private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     in TwoslashReturn tw, size_t nodeIndex, float x, float y, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg) @system
 {
+    import sparkles.twoslash.render_widgets : signatureSpans;
+
     // Render JSDoc docs as markdown (bold/italic/code/links/lists/fences), via the
     // grammar registry — falls back to plain lines without it.
-    auto tree = viewHoverPopup(tw, nodeIndex, cache.registry);
+    auto sig = signatureSpans(cache, (() @trusted => &theme)(), pageFg,
+        withoutQuickinfoPrefix(tw.nodes[nodeIndex].text));
+    auto tree = viewHoverPopup(tw, nodeIndex, cache.registry, sig);
     auto frames = layout(tree);
     auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
     auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, x, y);
     paint(canvas, ops);
-
-    // Overpaint the signature row with the re-highlighted signature (same text
-    // and cell position the widget reserved), clearing its `Slot.code` glyphs
-    // back to the surface first so nothing double-strikes.
-    const sigText = withoutQuickinfoPrefix(tw.nodes[nodeIndex].text);
-    const surf = resolveSlot(pal, Slot.surface, pageFg, pageBg);
-    foreach (ref op; ops)
-        if (op.kind == OpKind.textRun)
-        {
-            const sx = x + op.rect.x * cellW;
-            const sy = y + op.rect.y * cellH;
-            DrawRectangle(cast(int) sx, cast(int) sy, op.rect.width * cellW, cellH, rlBg(surf));
-            SmallBuffer!HighlightEvent sig;
-            highlightSignature(cache, sigText, sig);
-            drawStyledRuns(fonts, buf, sigText, sig[], sx, sy, theme, pageFg);
-            break;
-        }
 
     // The popup's on-screen rect (px), for the caller's pointer hysteresis.
     const box = frames[tree.root].rect;
@@ -1646,24 +1610,6 @@ private const(char)[] cstrOf(ref SmallBuffer!(char, 4096) buf, scope const(char)
     buf ~= s;
     buf ~= '\0';
     return buf[][0 .. $ - 1];
-}
-
-/// Translates sparkles:syntax's backend-neutral `TermStyle` attributes into the
-/// renderer's `TextStyle`. On the shaped `TermStyle`, underline is a first-class
-/// `UnderlineStyle` field (bit-3 of `attrs` is strikethrough). The terminal will
-/// translate `GhosttyStyle` the same way onto the shared library type in M5.
-TextStyle mapStyle(in StyleSpec spec) pure nothrow @nogc @safe
-{
-    TextStyle t;
-    if (spec.attrs.has(TextAttr.bold))
-        t.bits |= TextStyle.bold;
-    if (spec.attrs.has(TextAttr.italic))
-        t.bits |= TextStyle.italic;
-    if (spec.attrs.has(TextAttr.strikethrough))
-        t.bits |= TextStyle.strikethrough;
-    if (spec.underline != UnderlineStyle.none)
-        t.bits |= TextStyle.underline;
-    return t;
 }
 
 /// An RGB triple as a raylib color (fully opaque).

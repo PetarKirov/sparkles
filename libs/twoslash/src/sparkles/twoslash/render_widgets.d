@@ -82,6 +82,33 @@ private Decoration accentDeco(Slot slot) pure nothrow @nogc
     );
 
 /**
+A type signature as resolved syntax-colored spans (`WGT6`): with a grammar
+cache the widget model carries the per-token color itself, so no backend
+overpaints the toolkit's output to re-highlight it — the hover popup and the
+`^?` query line share this one mapping.
+*/
+TextSpan[] signatureSpans(ref TsConfigCache cache,
+    scope const(ResolvedTheme)* theme, RgbColor pageFg,
+    const(char)[] sig) @system
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.syntax.event : byStyledSpan;
+
+    if (!sig.length)
+        return null;
+    SmallBuffer!HighlightEvent ev;
+    highlightSignature(cache, sig, ev);
+    TextSpan[] spans;
+    foreach (sp; byStyledSpan(ev[]))
+    {
+        const spec = (*theme)[sp.label];
+        spans ~= TextSpan(sig[sp.start .. sp.end], Slot.code,
+            TextStyle.init, fg: toRgb(spec.fg, pageFg), hasFg: true);
+    }
+    return spans;
+}
+
+/**
 The $(B whole) twoslash document as one widget tree (the `D11` composition
 target): every source line is a rich run of resolved-color spans (the theme's
 syntax channel, with the identity channel's byte offsets), inline decorations
@@ -106,23 +133,8 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
     // syntax-colored spans — the widget model carries the color, so no backend
     // overpaints the toolkit's output to re-highlight it (`WGT6`).
     TextSpan[] sigSpans(const Node n) @trusted
-    {
-        if (cache is null || n.type != NodeType.query || !n.text.length)
-            return null;
-        import sparkles.base.smallbuffer : SmallBuffer;
-        import sparkles.syntax.event : byStyledSpan;
-
-        SmallBuffer!HighlightEvent ev;
-        highlightSignature(*cache, n.text, ev);
-        TextSpan[] spans;
-        foreach (sp; byStyledSpan(ev[]))
-        {
-            const spec = (*theme)[sp.label];
-            spans ~= TextSpan(n.text[sp.start .. sp.end], Slot.code,
-                TextStyle.init, fg: toRgb(spec.fg, pageFg), hasFg: true);
-        }
-        return spans;
-    }
+        => cache is null || n.type != NodeType.query ? null
+            : signatureSpans(*cache, theme, pageFg, n.text);
 
     // Styled runs bucketed per source line, as identity-carrying spans.
     size_t total = 1;
@@ -319,7 +331,8 @@ Builds a floating hover/query popup for node `nodeIndex` of `tw`: a `popup` pane
 `docs`, and any `@tag`s. The caller positions it (anchored above/below the
 hovered token) — the tree is laid out at the origin.
 */
-WidgetTree viewHoverPopup(const TwoslashReturn tw, size_t nodeIndex)
+WidgetTree viewHoverPopup(const TwoslashReturn tw, size_t nodeIndex,
+    TextSpan[] sigSpans = null)
 in (nodeIndex < tw.nodes.length)
 {
     auto b = Builder();
@@ -332,7 +345,7 @@ in (nodeIndex < tw.nodes.length)
     uint[] tagRows;
     foreach (ref const string[] tag; node.tags)
         tagRows ~= buildPopupTag(b, tag, hit);
-    return finishHoverPopup(b, node, hit, docsRows, tagRows);
+    return finishHoverPopup(b, node, hit, docsRows, tagRows, sigSpans);
 }
 
 /**
@@ -343,7 +356,7 @@ HTML backend uses. Falls back to plain newline-split lines when the markdown
 grammars are unavailable, so docs never vanish. `@system` (the tree-sitter parse).
 */
 WidgetTree viewHoverPopup(const TwoslashReturn tw, size_t nodeIndex,
-    ref GrammarRegistry registry) @system
+    ref GrammarRegistry registry, TextSpan[] sigSpans = null) @system
 in (nodeIndex < tw.nodes.length)
 {
     auto b = Builder();
@@ -353,7 +366,7 @@ in (nodeIndex < tw.nodes.length)
     uint[] tagRows;
     foreach (ref const string[] tag; node.tags)
         tagRows ~= buildPopupTagMd(b, registry, tag, hit);
-    return finishHoverPopup(b, node, hit, docsRows, tagRows);
+    return finishHoverPopup(b, node, hit, docsRows, tagRows, sigSpans);
 }
 
 /// Assembles the popup shell shared by both `viewHoverPopup` overloads: three
@@ -363,12 +376,19 @@ in (nodeIndex < tw.nodes.length)
 /// inside the floating surface (border/radius/shadow/arrow). The popup carries no
 /// horizontal padding so the dividers reach the edges; each section pads its own.
 private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
-    uint[] docsRows, uint[] tagRows)
+    uint[] docsRows, uint[] tagRows, TextSpan[] sigSpans = null)
 {
-    // Signature (CSS `.twoslash-popup-code`): the code face at 1em.
-    const sig = b.add(Widget(kind: WidgetKind.text,
-        text: withoutQuickinfoPrefix(node.text), slot: Slot.code, hitId: hit,
-        textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.codeFontScale)));
+    // Signature (CSS `.twoslash-popup-code`): the code face at 1em — as
+    // resolved syntax-colored spans when the caller supplied them
+    // (signatureSpans), so no backend re-highlights over the painted popup.
+    const sigStyle = TextStyle(fontRole: FontRole.code,
+        fontScale: M.codeFontScale);
+    const sig = sigSpans.length
+        ? b.add(Widget(kind: WidgetKind.rich, spans: sigSpans, slot: Slot.code,
+            hitId: hit, textStyle: sigStyle))
+        : b.add(Widget(kind: WidgetKind.text,
+            text: withoutQuickinfoPrefix(node.text), slot: Slot.code,
+            hitId: hit, textStyle: sigStyle));
 
     uint[] sections = [popupSection(b, [sig], divider: false)];
     if (docsRows.length)
