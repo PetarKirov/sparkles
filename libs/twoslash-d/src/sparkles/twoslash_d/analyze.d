@@ -46,10 +46,29 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
     config.importPaths = config.effectiveImportPaths ~ notation.importPaths;
     config.dflags ~= notation.dflags;
 
-    auto analyzer = Analyzer(config);
-    auto analyzed = analyzer.analyze(filename, notation.fullSource);
+    // Multi-file samples (`@filename:`): the last segment is the entry
+    // module; earlier segments resolve through its imports as in-memory
+    // virtual modules. A single-file sample is the degenerate one-segment
+    // case covering the whole source.
+    import sparkles.dmd_lsp.api : VirtualModule;
 
-    const fullIndex = LineIndex(notation.fullSource);
+    const files = notation.files;
+    const entryName = files.length ? files[$ - 1].name : filename;
+    const entryStart = files.length ? files[$ - 1].contentStart : 0;
+    const entryEnd = files.length ? files[$ - 1].contentEnd
+        : notation.fullSource.length;
+    const entrySource = notation.fullSource[entryStart .. entryEnd];
+    VirtualModule[] extra;
+    foreach (f; files.length ? files[0 .. $ - 1] : null)
+        extra ~= VirtualModule(f.name,
+            notation.fullSource[f.contentStart .. f.contentEnd]);
+
+    auto analyzer = Analyzer(config);
+    auto analyzed = analyzer.analyze(entryName, entrySource, extra);
+
+    // Oracle coordinates are local to the entry segment; node offsets are
+    // global (`fullSource`) — `entryStart` is the shift between them.
+    const entryIndex = LineIndex(entrySource);
 
     AnalyzeResult result;
     Node[] nodes;
@@ -63,7 +82,11 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
     {
         if (word.text !in knownIdents)
             continue;
-        const pos = fullIndex.lineColAt(word.offset);
+        // Only the entry segment is tippable (aux virtual files have their
+        // own modules; per-file oracles are follow-up work).
+        if (word.offset < entryStart || word.offset >= entryEnd)
+            continue;
+        const pos = entryIndex.lineColAt(word.offset - entryStart);
         const tip = analyzed.tipAt(cast(uint) pos.line + 1, cast(uint) pos.column + 1);
         if (!tip.found)
             continue;
@@ -79,7 +102,13 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
     // --- `^?` queries: same oracle, persisted below the line.
     foreach (q; notation.queries)
     {
-        const pos = fullIndex.lineColAt(q.offset);
+        if (q.offset < entryStart || q.offset >= entryEnd)
+        {
+            result.warnings ~= "query at offset " ~ q.offset.toStr
+                ~ " lies outside the entry file — skipped";
+            continue;
+        }
+        const pos = entryIndex.lineColAt(q.offset - entryStart);
         const tip = analyzed.tipAt(cast(uint) pos.line + 1, cast(uint) pos.column + 1);
         if (!tip.found)
         {
@@ -104,13 +133,31 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
     size_t errIndex;
     foreach (d; analyzed.diagnostics)
     {
-        if (d.pos.filename != filename)
+        // Resolve the diagnostic's file to its segment (entry or a virtual
+        // aux file); anything else is outside the sample.
+        size_t segBase = size_t.max;
+        LineIndex segIndex;
+        if (d.pos.filename == entryName)
+        {
+            segBase = entryStart;
+            segIndex = LineIndex(entrySource);
+        }
+        else
+            foreach (f; files.length ? files[0 .. $ - 1] : null)
+                if (d.pos.filename == f.name)
+                {
+                    segBase = f.contentStart;
+                    segIndex = LineIndex(
+                        notation.fullSource[f.contentStart .. f.contentEnd]);
+                    break;
+                }
+        if (segBase == size_t.max)
         {
             result.warnings ~= "diagnostic outside the sample ("
                 ~ d.pos.filename ~ "): " ~ d.message;
             continue;
         }
-        const start = fullIndex.offsetOfDmd(d.pos.line, d.pos.column);
+        const start = segBase + segIndex.offsetOfDmd(d.pos.line, d.pos.column);
         auto node = Node(
             type: NodeType.error,
             start: start,
@@ -131,11 +178,17 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
     {
         import sparkles.twoslash.protocol : Completion;
 
+        if (c.offset < entryStart || c.offset >= entryEnd)
+        {
+            result.warnings ~= "completion at offset " ~ c.offset.toStr
+                ~ " lies outside the entry file — skipped";
+            continue;
+        }
         const prefixStart = identifierStartAt(notation.fullSource,
             c.offset ? c.offset - 1 : 0);
         const prefix = prefixStart < c.offset
             ? notation.fullSource[prefixStart .. c.offset] : "";
-        const pos = fullIndex.lineColAt(c.offset);
+        const pos = entryIndex.lineColAt(c.offset - entryStart);
         auto items = analyzed.completionsAt(
             cast(uint) pos.line + 1, cast(uint) pos.column + 1, prefix.idup);
         if (!items.length)
@@ -505,4 +558,76 @@ version (unittest) private AnalyzerConfig gatedConfig() @system
         if (c.name == "alphabet") sawAlphabet = true;
     }
     assert(sawAlpha && sawAlphabet, node.completions.length.toStr);
+}
+
+@("analyze.analyzeTwoslash.multiFile")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // Two virtual files: the entry (last) imports the helper; the helper's
+    // symbol resolves through the in-memory module and the entry's query
+    // shows its type. Marker lines stay in the display.
+    auto r = analyzeTwoslash("sample.d",
+        "// @filename: helper.d\n"
+        ~ "module helper;\n"
+        ~ "/// The lucky constant.\n"
+        ~ "enum lucky = 7;\n"
+        ~ "// @filename: app.d\n"
+        ~ "module app;\n"
+        ~ "import helper;\n"
+        ~ "auto value = lucky * 6;\n"
+        ~ "//    ^?\n",
+        gatedConfig());
+
+    const tw = r.payload;
+    assert(tw.code.canFind("// @filename: helper.d"), tw.code);
+
+    size_t queryIdx = size_t.max;
+    foreach (i, ref nd; tw.nodes)
+        if (nd.type == NodeType.query)
+            queryIdx = i;
+    assert(queryIdx != size_t.max, "no query node");
+    const q = tw.nodes[queryIdx];
+    assert(tw.code[q.start .. q.start + q.length] == "value");
+    assert(q.text.canFind("int"), q.text);
+
+    // A hover on `lucky` in the entry file carries the helper's ddoc across
+    // the module boundary.
+    bool sawLuckyDocs;
+    foreach (ref nd; tw.nodes)
+        // Auto-emphasis backticks the in-scope symbol: "The `lucky` constant."
+        if (nd.type == NodeType.hover
+            && tw.code[nd.start .. nd.start + nd.length] == "lucky"
+            && nd.docs.canFind("The `lucky` constant."))
+            sawLuckyDocs = true;
+    assert(sawLuckyDocs);
+}
+
+@("analyze.analyzeTwoslash.multiFileAuxError")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // A diagnostic inside the helper file anchors within the helper's own
+    // display segment, not the entry's.
+    auto r = analyzeTwoslash("sample.d",
+        "// @filename: helper.d\n"
+        ~ "module helper;\n"
+        ~ "int bad = \"oops\";\n"
+        ~ "// @filename: app.d\n"
+        ~ "module app;\n"
+        ~ "import helper;\n",
+        gatedConfig());
+
+    size_t errIdx = size_t.max;
+    foreach (i, ref nd; r.payload.nodes)
+        if (nd.type == NodeType.error)
+            errIdx = i;
+    assert(errIdx != size_t.max, "no error node");
+    const err = r.payload.nodes[errIdx];
+    assert(err.text.canFind("cannot implicitly convert"), err.text);
+    // The anchor sits inside helper.d's segment (line 2, 0-based, of the
+    // display: the marker line is line 0).
+    assert(err.line == 2, "unexpected error line");
 }
