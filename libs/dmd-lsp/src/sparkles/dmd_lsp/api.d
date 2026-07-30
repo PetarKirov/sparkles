@@ -23,6 +23,7 @@ public import sparkles.dmd_lsp.support : TypeReferenceKind;
 import sparkles.dmd_lsp.diag : DiagnosticSink;
 
 import dmd.dmodule : Module;
+import dmd.dsymbol : Dsymbol;
 
 /**
 One semantic analysis session (single-use; see the module docs).
@@ -135,22 +136,78 @@ struct AnalyzedModule
     */
     Tip tipAt(uint line, uint col) @system
     {
-        import std.string : strip;
-
         import sparkles.dmd_lsp.ddoc : renderDdocText;
         import sparkles.dmd_lsp.visitor : findTipData;
 
         auto data = findTipData(module_, line, col, line, col + 1, addsize: false);
+        return composeTip(data,
+            (string comment, Dsymbol sym) => renderDdocText(comment, sym));
+    }
+
+    /**
+    Every identifier occurrence in the module with its tip, from one AST walk.
+
+    The batch counterpart of `tipAt`, for the "hover every identifier" pass:
+    `tipAt` costs a full-module walk $(I per query), so a large module spends
+    minutes answering itself. This shares one walk, one tip rendering per
+    distinct symbol, and one DDoc rendering per distinct documented symbol.
+
+    Coverage is a subset of what a `tipAt` sweep would find — see
+    $(REF collectTips, sparkles,dmd_lsp,visitor) — so a caller that needs
+    every position should fall back to `tipAt` for the ones missing here.
+    Positions that resolve to nothing are omitted.
+    */
+    TipHit[] allTips() @system
+    {
+        import sparkles.dmd_lsp.ddoc : DdocRendered, renderDdocText;
+        import sparkles.dmd_lsp.visitor : collectTips;
+
+        // DDoc rendering is the other per-occurrence cost: one documented
+        // symbol used a hundred times rendered its comment a hundred times.
+        static struct DocKey
+        {
+            const(void)* symbol;
+            const(char)* comment;
+            size_t length;
+        }
+
+        DdocRendered[DocKey] rendered;
+        auto render = (string comment, Dsymbol sym)
+        {
+            const key = DocKey(cast(const(void)*) sym, comment.ptr, comment.length);
+            if (auto memoized = key in rendered)
+                return *memoized;
+            auto doc = renderDdocText(comment, sym);
+            rendered[key] = doc;
+            return doc;
+        };
+
+        TipHit[] hits;
+        foreach (ref occurrence; collectTips(module_))
+        {
+            auto tip = composeTip(occurrence.tip, render);
+            if (tip.found)
+                hits ~= TipHit(cast(uint) occurrence.line, cast(uint) occurrence.col, tip);
+        }
+        return hits;
+    }
+
+    // tipAt's rendering half, shared with allTips: `render` is the plain DDoc
+    // renderer for a single query and a memoizing one for the batch walk.
+    private Tip composeTip(TipDataT, Render)(auto ref TipDataT data, scope Render render) @system
+    {
+        import std.string : strip;
+
         if (data.doc.length && data.symbol !is null)
         {
             // Real DDoc rendering (sections -> chips, macros -> CommonMark).
-            auto rendered = renderDdocText(data.doc, data.symbol);
+            auto doc = render(data.doc, data.symbol);
             return Tip(kind: data.kind, code: data.code,
-                doc: rendered.docs, tags: rendered.tags);
+                doc: doc.docs, tags: doc.tags);
         }
         if (data.kind == "parameter" && data.symbol !is null)
         {
-            auto tip = parameterTip(data);
+            auto tip = parameterTip(data, render);
             if (tip.found)
                 return tip;
         }
@@ -197,11 +254,11 @@ struct AnalyzedModule
 
     // A parameter inherits its docs from the enclosing function's `Params:`
     // row (the JSDoc/twoslash reference does exactly this for `@param`).
-    private Tip parameterTip(TipDataT)(ref TipDataT data) @system
+    private Tip parameterTip(TipDataT, Render)(auto ref TipDataT data, scope Render render) @system
     {
         import core.stdc.string : strlen;
 
-        import sparkles.dmd_lsp.ddoc : paramDocFor, renderDdocText;
+        import sparkles.dmd_lsp.ddoc : paramDocFor;
 
         auto fn = data.symbol.parent;
         while (fn !is null && fn.isFuncDeclaration() is null
@@ -211,7 +268,7 @@ struct AnalyzedModule
             return Tip.init;
 
         const comment = fn.comment[0 .. strlen(fn.comment)].idup;
-        auto rendered = renderDdocText(comment, fn);
+        auto rendered = render(comment, fn);
         const name = data.symbol.ident.toString.idup;
         const doc = paramDocFor(rendered, name);
         if (doc is null)
@@ -293,6 +350,19 @@ struct Tip
     bool found() const @safe pure nothrow @nogc => kind.length != 0 || code.length != 0;
 }
 
+/// One resolved tooltip and where it applies. See `AnalyzedModule.allTips`.
+struct TipHit
+{
+    /// 1-based line, as the oracle's positions are spelled.
+    uint line;
+
+    /// 1-based column of the identifier's first character.
+    uint col;
+
+    /// What `AnalyzedModule.tipAt` answers at that position.
+    Tip tip;
+}
+
 /// One identifier-classification transition. See the run-length semantics on
 /// `AnalyzedModule.identifierSpans`.
 struct IdentSpan
@@ -349,6 +419,51 @@ struct DefinitionPos
     });
     assert(!result.hasErrors);
     assert(result.module_ !is null);
+}
+
+@("dmd_lsp.api.allTips.agreesWithTipAt")
+@system unittest
+{
+    import std.conv : text;
+
+    import sparkles.dmd_lsp.testing : withAnalysis;
+
+    // Every position the batch walk reports must render exactly what a
+    // single `tipAt` query renders there, DDoc memoization included.
+    withAnalysis(q{                                   // Line 1
+        /// Doubles a number.
+        /// Params:
+        ///     x = the number to double
+        int twice(int x) => x * 2;                    // Line 5
+        void use()
+        {
+            auto a = twice(1);
+            auto b = twice(2);
+        }                                             // Line 10
+    }, (m) {
+        auto hits = m.allTips;
+        assert(hits.length, "no tips collected");
+
+        bool sawDocs, sawParam;
+        foreach (hit; hits)
+        {
+            const one = m.tipAt(hit.line, hit.col);
+            assert(hit.tip == one, text("at ", hit.line, ":", hit.col,
+                "\n  allTips: ", hit.tip, "\n  tipAt:   ", one));
+            if (hit.tip.doc == "Doubles a number.")
+                sawDocs = true;                        // rendered, not raw DDoc
+            if (hit.tip.kind == "parameter" && hit.tip.doc == "the number to double")
+                sawParam = true;                       // the Params: row hover
+        }
+        assert(sawDocs && sawParam);
+
+        // `twice` is one symbol but three occurrences (declaration + two calls).
+        size_t twiceCount;
+        foreach (hit; hits)
+            if (hit.tip.code == "int test.twice(int x)")
+                twiceCount++;
+        assert(twiceCount == 3, twiceCount.text);
+    });
 }
 
 /// An in-memory file the entry module's imports can resolve to (matched by

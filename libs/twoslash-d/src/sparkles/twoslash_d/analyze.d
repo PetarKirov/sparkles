@@ -11,8 +11,10 @@ resolve `line`/`character` against `displayCode`.
 Hover enumeration walks the source's identifier occurrences (a tiny lexical
 scan that skips comments and string literals) filtered by the semantic
 classification (`identifierSpans` names every real identifier, which keeps
-keywords and stray comment words out without a keyword table), querying the
-type oracle per occurrence — the TS-twoslash "hover every identifier" shape.
+keywords and stray comment words out without a keyword table), matching each
+against the oracle's one-walk tip table (`allTips`) and falling back to a
+positional `tipAt` query for the few positions that table does not carry —
+the TS-twoslash "hover every identifier" shape.
 */
 module sparkles.twoslash_d.analyze;
 
@@ -78,6 +80,14 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
     foreach (span; analyzed.identifierSpans)
         knownIdents[span.ident] = true;
 
+    // One walk for all of them: `tipAt` costs a full-module AST walk per
+    // call, which on a large file is minutes. `allTips` answers most
+    // positions from a single walk; the rest fall back below, so coverage is
+    // unchanged either way.
+    Tip[ulong] batchTips;
+    foreach (ref hit; analyzed.allTips)
+        batchTips[posKey(hit.line, hit.col)] = hit.tip;
+
     foreach (word; identifierOccurrences(notation.fullSource))
     {
         if (word.text !in knownIdents)
@@ -87,7 +97,9 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
         if (word.offset < entryStart || word.offset >= entryEnd)
             continue;
         const pos = entryIndex.lineColAt(word.offset - entryStart);
-        const tip = analyzed.tipAt(cast(uint) pos.line + 1, cast(uint) pos.column + 1);
+        const line = cast(uint) pos.line + 1, col = cast(uint) pos.column + 1;
+        const batched = posKey(line, col) in batchTips;
+        const tip = batched ? *batched : analyzed.tipAt(line, col);
         if (!tip.found)
             continue;
         nodes ~= Node(
@@ -256,6 +268,10 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
         offsetEncoding: "utf-8");
     return result;
 }
+
+/// One 1-based oracle position as a lookup key.
+private ulong posKey(uint line, uint col) @safe pure nothrow @nogc
+    => (cast(ulong) line << 32) | col;
 
 private string[][] toMutableTags(in string[][] tags) @safe pure
 {
