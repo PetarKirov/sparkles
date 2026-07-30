@@ -71,6 +71,15 @@ struct CliParams
     @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
     string font = defaultGuiFont;
 
+    @CliOption("font-bold", "--gui bold face: a family, fontconfig pattern, or font file (default: the --font family's bold variant).")
+    string fontBold;
+
+    @CliOption("font-italic", "--gui italic face: a family, fontconfig pattern, or font file (default: the --font family's italic variant; absent, italic text renders upright — hue never fakes a slant).")
+    string fontItalic;
+
+    @CliOption("font-bold-italic", "--gui bold-italic face (default: the --font family's bold-italic variant).")
+    string fontBoldItalic;
+
     @CliOption("font-size", "--gui font size in points (like the terminal).")
     int fontSize = 14;
 
@@ -558,6 +567,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
     version (HueGui)
     {
         import gui : LoadedDoc, runGui;
+        import sparkles.raylib_text : FontSet;
 
         // The document loader the viewer calls when navigating a set (`GNV1`):
         // the one pipeline again — the GUI never duplicates it. A twoslash
@@ -574,7 +584,9 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
             cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
             docSet, &loadDoc, &cache, doc.twoslash,
-            doc.path, startInTree: treeRoot.length != 0, treeRoot);
+            doc.path, startInTree: treeRoot.length != 0, treeRoot,
+            FontSet.FaceOverrides(cli.fontBold, cli.fontItalic,
+                cli.fontBoldItalic));
     }
     else
     {
