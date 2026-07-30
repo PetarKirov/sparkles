@@ -241,26 +241,57 @@ int runGui(
     // hands us; everything bridged lands at trace level (silent by default).
     SetTraceLogCallback(&raylibTraceLog);
 
-    InitWindow(800, 600, ("hue — " ~ title).toStringz);
+    // Android: 0×0 = the native surface resolution (a non-zero size is NOT
+    // ignored there — raylib letterboxes it onto the screen); the surface is
+    // the app, so no resizable state and no cell-sizing either.
+    version (Android)
+        InitWindow(0, 0, ("hue — " ~ title).toStringz);
+    else
+        InitWindow(800, 600, ("hue — " ~ title).toStringz);
     scope (exit) CloseWindow();
-    SetWindowState(ConfigFlags.FLAG_WINDOW_RESIZABLE);
+    version (Android) {}
+    else
+        SetWindowState(ConfigFlags.FLAG_WINDOW_RESIZABLE);
     SetTargetFPS(60);
     SetExitKey(KeyboardKey.KEY_NULL); // arrow/close-button handling only (M3 adds keys)
 
     // LoadFontEx uploads a GPU texture, so the FontSet must load after InitWindow.
     // `fontName` may be a path, a family, or a fontconfig preference list.
+    // Android resolves against the extracted asset fonts + /system/fonts (no
+    // fontconfig), and scales the point size by the panel density — 14 pt is
+    // unreadable on a 400-dpi screen. HUE_GUI_FONTSIZE (applied by the caller)
+    // stays the deterministic override for goldens.
+    FontSet.FontSources fontSrc;
+    version (Android)
+    {
+        import android_glue : androidDataDir;
+        import android_paths : fontsDir;
+
+        fontSrc = FontSet.FontSources([fontsDir(androidDataDir()), "/system/fonts"],
+            useFontconfig: false);
+        const dpiScale = GetWindowScaleDPI().x;
+        if (dpiScale > 1 && environment.get("HUE_GUI_FONTSIZE", "").length == 0)
+            fontSizePx = cast(int) (fontSizePx * (dpiScale > 4 ? 4 : dpiScale));
+    }
     FontSet fonts;
-    if (!FontSet.tryLoad(fontName, fontSizePx, fonts, null, faces))
+    if (!FontSet.tryLoad(fontName, fontSizePx, fonts, null, faces, fontSrc))
     {
         stderr.writeln("hue --gui: could not load a font from '", fontName,
             "' (is fontconfig available?)");
+        version (Android)
+        {
+            import sparkles.base.logger : error;
+
+            error(i"hue: no font resolved from '$(fontName)'");
+        }
         return 1;
     }
     scope (exit) fonts.unload();
 
     // `--window-width`/`--window-height` are in cells (like apps/terminal); size
     // the window to the loaded cell metrics.
-    if (windowWidth > 0 && windowHeight > 0)
+    version (Android) {}
+    else if (windowWidth > 0 && windowHeight > 0)
         SetWindowSize(windowWidth * fonts.cellW(), windowHeight * fonts.cellH());
 
     // The viewer's Whole (PRN1 / the C1 diagnosis): one value owns the
