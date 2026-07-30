@@ -2,11 +2,12 @@
 // GUI, built on `sparkles:tui` (raw mode, SGR-1006 mouse, retained-grid diff loop)
 // and the shared `sparkles:ui` paint model (via `sparkles:ui-tui`'s GridCanvas).
 //
-// The code is rendered directly into the cell grid with its syntax-theme colors
-// (per-token, not a widget concern); the twoslash overlay — highlight tints, error
-// undercurls, below-line meta blocks, and the selected token's hover popup — is
-// composited on top through the ui pipeline. Selection: Tab / arrows cycle the
-// hover tokens, a mouse click picks one, its popup composites over the code.
+// The whole document — code lines as resolved-color spans, highlight tints,
+// error undercurls, and below-line meta blocks — is ONE widget tree
+// (viewTwoslashDocument), painted with a scroll offset; only the selected
+// token's hover popup composites on top per frame. Selection: Tab / arrows
+// cycle the hover tokens, a mouse click picks one (hit-tested against the
+// tokens' identity-channel rects).
 //
 // Posix-only (the raw-mode loop is). Reached from `runTwoslashMode` when stdout is
 // an interactive tty and neither `--gui` nor `--html` was given; a pipe/redirect
@@ -22,40 +23,33 @@ import sparkles.tui.input : EndOfInput, Event, Key, KeyEvent, match,
 import sparkles.tui.terminal : TerminalOptions;
 
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.base.text.width : codepointWidth;
 import sparkles.base.term_caps : TermSize;
 
-import sparkles.twoslash.overlay : errIsWarning, InlineDecoration, planTwoslash, TwoslashPlan;
+import sparkles.twoslash.overlay : planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
-import sparkles.twoslash.render_widgets : viewBelowBlock, viewHoverPopup;
+import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslashDocument;
 
-import sparkles.syntax : byStyledLine, HighlightEvent, LabelId, LabelSet,
-    ResolvedTheme, RgbColor, StyledLineSpan, toRgb;
+import sparkles.syntax : HighlightEvent, LabelSet,
+    ResolvedTheme, RgbColor, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 import sparkles.twoslash.ingest : loadTwoslashFile;
 import source_set : SourceSet;
 
-import sparkles.ui.canvas : LineStyle;
+import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Point, Rect, Size;
-import sparkles.ui.layout : layout;
-import sparkles.ui.style : defaultTwoslashPalette, Palette, resolveSlot,
-    schemeForBackground, Slot, Visual;
+import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.state : selectionRects;
+import sparkles.ui.style : defaultTwoslashPalette, Palette,
+    schemeForBackground, Slot;
 import sparkles.ui.widget : WidgetTree;
 
 import sparkles.base.term_color : Color;
 
-import sparkles.ui_tui : GridCanvas, paintGrid;
+import sparkles.ui_tui : paintGrid;
 
 private enum padCols = 1; // left margin, matching the GUI's twoslashPadCells
-
-/// A styled run within one source line (absolute byte offsets into `code`).
-private struct Run
-{
-    size_t start, end;
-    LabelId label;
-}
 
 /**
 Runs the interactive terminal twoslash overlay for `tw` (its `code` already
@@ -75,13 +69,10 @@ int runTuiTwoslash(
     app.name = title;
     app.set = set;
     app.cache = &cache;
+    app.events = events;
     if (set !is null && !set.empty)
         app.summary = set.current.summary;
-
-    // Per-line styled runs (theme colors), materialized once — the code is static
-    // (a set navigation rebuilds them; see `loadSelected`).
-    foreach (ls; byStyledLine(tw.code, events))
-        app.runsByLine[ls.line] ~= Run(ls.span.start, ls.span.end, ls.span.label);
+    app.rebuildView();
 
     runApp(&app.render, &app.handle);
     return 0;
@@ -106,8 +97,9 @@ string captureTuiFrameHtml(
 ) @system
 {
     auto app = TwoslashTui(&tw, theme);
-    foreach (ls; byStyledLine(tw.code, events))
-        app.runsByLine[ls.line] ~= Run(ls.span.start, ls.span.end, ls.span.label);
+    app.cache = &cache;
+    app.events = events;
+    app.rebuildView();
     app.selIdx = selIdx;
 
     Grid g;
@@ -201,11 +193,15 @@ private struct TwoslashTui
     TwoslashPlan plan;
     Palette pal;
     RgbColor pageFg, pageBg;
-    size_t lineTotal;
+    const(HighlightEvent)[] events;
 
-    Run[][] runsByLine;
+    // The whole document as one laid-out widget tree (viewTwoslashDocument),
+    // rebuilt per payload; painted each frame with the scroll offset.
+    WidgetTree tree;
+    Frame[] frames;
+    DrawOp[] ops;
     size_t[] selectable;  // node indices with a hover popup, in plan order
-    Rect[] targetRects;   // this frame's on-screen rect per selectable (for the mouse)
+    Rect[] targetRects;   // per-selectable token rect in DOCUMENT cell coords
 
     int scrollRow;
     int selIdx = -1;      // index into `selectable`, or -1 for none
@@ -230,123 +226,47 @@ private struct TwoslashTui
         // Pick the popup surface/docs shade to match the theme (dark bg ⇒ dark
         // surface), so the signature stays readable — the QA-surfaced contrast fix.
         pal = defaultTwoslashPalette(schemeForBackground(pageBg));
-        lineTotal = 1;
-        foreach (c; t.code)
-            if (c == '\n')
-                ++lineTotal;
-        runsByLine = new Run[][](lineTotal);
         foreach (ref const d; plan.inlineDecorations)
             if (d.kind == NodeType.hover)
                 selectable ~= d.node;
     }
 
+    /// Rebuilds the document tree + its derived geometry (per payload/theme;
+    /// call after `events`/`cache` are set). Token rects come from the
+    /// identity channel, so the pointer hit-test needs no per-frame capture.
+    void rebuildView() @system
+    {
+        tree = viewTwoslashDocument(tw, events, &theme, pageFg, cache);
+        frames = layout(tree);
+        ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
+        targetRects = new Rect[](selectable.length);
+        foreach (i, ni; selectable)
+        {
+            const n = tw.nodes[ni];
+            auto rs = selectionRects(tree, frames, n.start, n.start + n.length);
+            if (rs.length)
+                targetRects[i] = rs[0];
+        }
+    }
+
     /// The cell style for a syntax label: the theme's `StyleSpec` (a `TermStyle`,
-    /// same as `CellStyle`) with unset fore/background resolved to the page colors.
-    private CellStyle codeStyle(LabelId label) const scope
-    {
-        CellStyle st = theme[label];
-        if (!st.fg.isSet)
-            st.fg = Color.fromRgb(pageFg);
-        if (!st.bg.isSet)
-            st.bg = Color.fromRgb(pageBg);
-        return st;
-    }
-
-    /// Display-column width of `code[a .. b]`.
-    private int spanCols(size_t a, size_t b) const scope
-    {
-        import std.utf : byDchar;
-
-        int cols;
-        foreach (dchar cp; tw.code[a .. b].byDchar)
-            cols += codepointWidth(cp) < 0 ? 1 : codepointWidth(cp);
-        return cols;
-    }
-
-    /// Paints one whole frame into `grid`.
+    /// Paints one whole frame into `grid`: the document's precomputed ops at
+    /// the scroll offset, then the selected token's popup composited on top.
     void render(ref Grid grid, TermSize sz) @system
     {
-        const code = tw.code;
         CellStyle pageStyle;
         pageStyle.fg = Color.fromRgb(pageFg);
         pageStyle.bg = Color.fromRgb(pageBg);
         grid.clearTo(pageStyle);
 
-        targetRects.length = 0;
-        Rect selRect;
-        bool haveSel;
+        paintGrid(grid, pageBg, ops, padCols, -scrollRow);
 
-        const errVis = resolveSlot(pal, Slot.error, pageFg, pageBg);
-        const warnVis = resolveSlot(pal, Slot.warn, pageFg, pageBg);
-        const hlVis = resolveSlot(pal, Slot.highlight, pageFg, pageBg);
-        auto canvas = GridCanvas(&grid, pageBg);
-
-        int y = -scrollRow;
-        foreach (line; 0 .. lineTotal)
+        if (selIdx >= 0 && selIdx < cast(int) targetRects.length)
         {
-            // 1. Code runs (theme-colored) directly into the grid.
-            if (y >= 0 && y < grid.rows)
-            {
-                int x = padCols;
-                foreach (ref const r; runsByLine[line])
-                {
-                    if (r.end <= r.start || x >= grid.cols)
-                        continue;
-                    x = grid.putText(cast(ushort) x, cast(ushort) y,
-                        code[r.start .. r.end], codeStyle(r.label));
-                }
-            }
-
-            // 2. Inline decorations on this line: tint / undercurl / hover rects.
-            foreach (ref const d; plan.inlineDecorations)
-            {
-                if (d.line != line)
-                    continue;
-                const dx = padCols + cast(int) d.character;
-                const dcols = spanCols(d.start, d.end);
-                const rect = Rect(dx, y, dcols, 1);
-                final switch (d.kind)
-                {
-                    case NodeType.highlight:
-                        canvas.fillRect(rect, hlVis);
-                        break;
-                    case NodeType.error:
-                        canvas.line(Point(dx, y), Point(dx + dcols, y),
-                            errIsWarning(tw.nodes[d.node].level) ? warnVis : errVis,
-                            LineStyle.wavy);
-                        break;
-                    case NodeType.hover:
-                        const s = indexOfSelectable(d.node);
-                        if (s >= 0)
-                        {
-                            if (targetRects.length <= s)
-                                targetRects.length = s + 1;
-                            targetRects[s] = rect;
-                            if (s == selIdx)
-                            {
-                                selRect = rect;
-                                haveSel = true;
-                            }
-                        }
-                        break;
-                    case NodeType.query:
-                    case NodeType.completion:
-                    case NodeType.tag:
-                        break;
-                }
-            }
-            ++y;
-
-            // 3. Below-line meta blocks (error message, ^?, completions, @tag).
-            foreach (ref const b; plan.belowBlocks)
-                if (b.line == line)
-                    y += paintTree(grid, viewBelowBlock(tw, b.node), padCols, y);
-        }
-
-        // 4. The selected hover token's popup, composited last (on top of code).
-        if (haveSel)
+            const r = targetRects[selIdx];
             paintTree(grid, viewHoverPopup(tw, selectable[selIdx]),
-                selRect.x, selRect.y + 1);
+                padCols + r.x, r.y - scrollRow + 1);
+        }
 
         drawStatus(grid);
     }
@@ -405,18 +325,13 @@ private struct TwoslashTui
 
         twPtr = owned;
         plan = planTwoslash(*owned);
-        lineTotal = 1;
-        foreach (c; owned.code)
-            if (c == '\n')
-                ++lineTotal;
-        runsByLine = new Run[][](lineTotal);
-        foreach (ls; byStyledLine(owned.code, ev[]))
-            runsByLine[ls.line] ~= Run(ls.span.start, ls.span.end, ls.span.label);
+        events = ev[].dup;
 
         selectable = null;
         foreach (ref const d; plan.inlineDecorations)
             if (d.kind == NodeType.hover)
                 selectable ~= d.node;
+        rebuildView();
 
         name = entry.name;
         summary = entry.summary;
@@ -491,9 +406,11 @@ private struct TwoslashTui
     {
         if (ev.action != PointerAction.press)
             return;
-        // The decoder already delivers the toolkit's 0-based cells.
+        // The decoder delivers 0-based screen cells; the rects are document
+        // cells — shift by the left pad and the scroll offset.
+        const p = Point(ev.pos.x - padCols, ev.pos.y + scrollRow);
         foreach (i, ref const rect; targetRects)
-            if (rect.contains(Point(ev.pos.x, ev.pos.y)))
+            if (rect.contains(p))
             {
                 selIdx = cast(int) i;
                 return;
@@ -511,11 +428,4 @@ private struct TwoslashTui
             : ((selIdx + step) % n + n) % n;
     }
 
-    private int indexOfSelectable(size_t node) const scope
-    {
-        foreach (i, s; selectable)
-            if (s == node)
-                return cast(int) i;
-        return -1;
-    }
 }
