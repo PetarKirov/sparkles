@@ -102,3 +102,11 @@ apps/hue/twoslash
 # window-system-integration surveys) rather than all of x.org, since
 # www.x.org/wiki/ (uno-platform.md) does not redirect through the broken host.
 ^https?://([^/]+\.)?x\.org/releases/
+
+# nick-black.com's MediaWiki (/dankwiki/) returns HTTP 500 (verified directly with
+# curl on 2026-07-31, both locally and in CI), and the site root 301-redirects
+# into it — a real upstream outage, not checker flakiness. Scoped to the wiki +
+# the bare root; the static htp-notcurses.pdf on the same host still serves 200
+# and stays checked. Cited from research/tui-libraries/notcurses.md.
+^https?://nick-black\.com/$
+^https?://nick-black\.com/dankwiki/
