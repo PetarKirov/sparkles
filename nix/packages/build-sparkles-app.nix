@@ -156,6 +156,14 @@
             # All sparkles nix packages share the one Nix-format lockfile.
             dubLock = args.dubLock or (fromRoot "nix/dub-lock.json");
 
+            # Which dub build type the app is compiled with (the build hook's
+            # own knob, surfaced here so callers set it as an argument and get
+            # a default they can read). `release` suits an ordinary CLI; an
+            # app whose dependencies rely on their own assertions wants a type
+            # that keeps them — `sparkles:dmd-lsp`'s `checked` (`BLD6`), which
+            # the twoslash-extract package selects.
+            dubBuildType = args.dubBuildType or "release";
+
             src = args.src or (sourceFor srcDirs);
             sourceRoot = args.sourceRoot or "${finalAttrs.src.name}/apps/${finalAttrs.pname}";
 

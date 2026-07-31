@@ -32,6 +32,16 @@
         pname = "twoslash-extract";
         version = "0.1.0";
 
+        # Optimized, with the DMD frontend's own assertions left in (`BLD6`).
+        # `release` compiles them out, which is how an incomplete fork table
+        # crashed every locally built binary while this one carried on with a
+        # null `TypeInfo` — a fork that has drifted should say so. It costs
+        # ~3% of analysis time and, since the fixup phase strips the debug
+        # info the build type asks for, 0.1 MiB of binary (6.6 vs 6.5) and
+        # nothing at all in the closure. Assert messages carry their own
+        # `file:line`, so they stay readable after that strip.
+        dubBuildType = "checked";
+
         # `dmd:frontend`'s pre-generate step (`config.d`) shells out to
         # `git describe` for the compiler version string. It falls back to the
         # checked-in VERSION file when git *fails*, but throws outright when
