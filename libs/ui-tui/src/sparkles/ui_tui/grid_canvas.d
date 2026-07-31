@@ -30,7 +30,7 @@ import sparkles.ui.interp.cells : blend;
 import sparkles.ui.style : BorderStyle, Visual;
 
 import sparkles.base.term_color : Color, RgbColor, toRgb;
-import sparkles.base.term_style : UnderlineStyle;
+import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
 @safe:
 
@@ -266,6 +266,10 @@ struct GridCanvas
         auto c = &cell(x, y);
         auto st = c.style; // keep bg / underline already composited here
         st.fg = Color.fromRgb(v.fg);
+        // The resolved text chrome: bold / italic / strikethrough travel as
+        // packed `TextAttr` bits — dropping them here silently un-bolds
+        // every widget-pipeline text run in the TUI.
+        st.attrs = TextAttr(cast(ubyte) v.styleBits);
         if (v.hasBg)
             st.bg = Color.fromRgb(blend(cellBg(st), v.bg, v.bgAlpha));
         c.setCodepoint(cp, w, st);
