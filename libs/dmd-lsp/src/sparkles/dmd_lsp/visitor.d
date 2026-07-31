@@ -324,6 +324,22 @@ extern(C++) class ASTVisitor : StoppableVisitor
         super.visit(tn);
     }
 
+    override void visit(TypeFunction tf)
+    {
+        // Not upstream. A function type's parameters hang off its parameter
+        // list, not the `next` chain `TypeNext` follows, so this walk reached
+        // only the return type. `visit(FuncDeclaration)` compensates for a
+        // declared function, but a function type written anywhere else had no
+        // tips at all on the identifiers inside it: hovering `S`, `s` or `n`
+        // in `alias F = void function(in S s, int n);` answered nothing while
+        // the same spellings resolved everywhere else in the file.
+        if (auto params = tf.parameterList.parameters)
+            foreach (p; *params)
+                if (!stop && p !is null)
+                    p.accept(this);
+        visit(cast(TypeNext) tf);
+    }
+
     override void visit(TypeTypeof t)
     {
         visitExpression(t.exp);
@@ -3822,6 +3838,25 @@ version (unittest)
         assert(call.doc.canFind("homonym function"), "template prose at the call site");
         assert(call.tags.canFind!(t => t.length > 1 && t[0] == "returns"),
             "the member's Returns: section");
+    });
+}
+
+@("visitor.findTip.aliasFunctionTypeParameters")
+@system unittest
+{
+    // A function type's identifiers are as pointable as any others. The walk
+    // used to follow only the `next` chain, so everything inside the
+    // parentheses answered nothing while the same spellings resolved
+    // elsewhere in the file — an underline with no tooltip behind it.
+    enum src = "module test;\n"
+        ~ "struct S { int x; }\n"
+        ~ "alias F = void function(in S s, int n);\n";
+
+    withAnalysis(src, (m) {
+        checkTip(m, 3, 7, "(alias) `test.F = void function(in test.S s, int n)`");
+        checkTip(m, 3, 28, "(struct) `test.S`");
+        checkTip(m, 3, 30, "(parameter) `const(test.S) s`");
+        checkTip(m, 3, 37, "(parameter) `int n`");
     });
 }
 
