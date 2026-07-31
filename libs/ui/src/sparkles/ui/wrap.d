@@ -420,16 +420,19 @@ if (is(typeof(measure("")) : int))
     TextSpan[][] lines;
     TextSpan[] cur;
     int curW;
+    size_t lastSpan = size_t.max; // the span cur's last slice came from
     size_t pendingGlue = size_t.max; // index into frags of glue awaiting content
 
     void append(size_t fi)
     {
         const f = frags[fi];
         const w = measure(f.text);
-        // Merge into the previous slice when it continues the same span.
-        if (cur.length && cur[$ - 1].text.length
-            && &spans[f.span].text[0] <= &f.text[0]
-            && cur[$ - 1].slot == spans[f.span].slot
+        // Merge into the previous slice only when it continues the $(I same)
+        // span. Contiguity alone is not enough: a highlighted code line is
+        // adjacent same-slot spans slicing one buffer, and merging across
+        // the span boundary would paint the whole run in the first span's
+        // colors (each span carries its own resolved fg/bg/attrs).
+        if (cur.length && lastSpan == f.span && cur[$ - 1].text.length
             && isContiguous(cur[$ - 1].text, f.text))
         {
             cur[$ - 1].text = joinSlices(cur[$ - 1].text, f.text);
@@ -455,6 +458,7 @@ if (is(typeof(measure("")) : int))
             s.text = f.text;
             cur ~= s;
         }
+        lastSpan = f.span;
         curW += w;
     }
 
@@ -463,6 +467,7 @@ if (is(typeof(measure("")) : int))
         lines ~= cur;
         cur = null;
         curW = 0;
+        lastSpan = size_t.max;
         pendingGlue = size_t.max;
     }
 
@@ -544,6 +549,38 @@ private const(char)[] joinSlices(return scope const(char)[] a,
     assert(lines[0][0].text == "use the " && lines[0][1].text == "run");
     assert(lines[0][1].paintBackground);          // the pill's style survives
     assert(lines[1][0].text == "helper today");   // merged back into one slice
+}
+
+@("ui.wrap.spans.adjacentSpansKeepTheirColors")
+@safe pure nothrow unittest
+{
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.geometry : cellsOf;
+
+    static int cols2(scope const(char)[] s) @safe pure nothrow @nogc
+        => cast(int) cellsOf(s);
+
+    // A highlighted code line: same-slot spans slicing one contiguous
+    // buffer, each with its own resolved color. They must survive wrapping
+    // as separate slices — merging would repaint the run in the first
+    // span's color (the raw-view "syntax highlighting lost" regression).
+    static immutable src = "return true;";
+    const spans = [
+        TextSpan(src[0 .. 6], Slot.code, fg: RgbColor(0xff, 0, 0),
+            hasFg: true, srcStart: 0, srcEnd: 6),
+        TextSpan(src[6 .. 7], Slot.code, srcStart: 6, srcEnd: 7),
+        TextSpan(src[7 .. 11], Slot.code, fg: RgbColor(0, 0xff, 0),
+            hasFg: true, srcStart: 7, srcEnd: 11),
+        TextSpan(src[11 .. 12], Slot.code, srcStart: 11, srcEnd: 12),
+    ];
+    const lines = wrapSpans(spans, 80, &cols2);
+    assert(lines.length == 1);
+    assert(lines[0].length == 4);
+    assert(lines[0][0].text == "return" && lines[0][0].fg == RgbColor(0xff, 0, 0));
+    assert(lines[0][2].text == "true" && lines[0][2].fg == RgbColor(0, 0xff, 0));
+    assert(lines[0][3].text == ";" && !lines[0][3].hasFg);
+    // The identity channel survives per slice.
+    assert(lines[0][2].srcStart == 7 && lines[0][2].srcEnd == 11);
 }
 
 @("ui.wrap.spans.punctuationHugsThePill")
