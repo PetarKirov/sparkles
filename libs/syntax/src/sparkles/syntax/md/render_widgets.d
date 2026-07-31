@@ -193,16 +193,25 @@ private uint blocksColumn(ref Builder b, in MdBlock[] blocks,
     {
         if (opt.foldedSpans.canFind(blocks[i].span.start))
         {
+            // Capture the folded block's identity BEFORE the sibling scan
+            // advances `i`: re-reading blocks[i] inside the loop compared
+            // every next heading against the just-consumed block (usually a
+            // level-0 paragraph), so the scan swallowed the rest of the
+            // document — and the placeholder then carried the LAST consumed
+            // block's start as its unfold key, so the fold could never be
+            // reopened.
+            const foldStart = blocks[i].span.start;
+            const foldLevel = blocks[i].level;
             size_t srcEnd = blocks[i].span.end;
             if (blocks[i].kind == MdBlockKind.heading)
                 while (i + 1 < blocks.length
                     && !(blocks[i + 1].kind == MdBlockKind.heading
-                        && blocks[i + 1].level <= blocks[i].level))
+                        && blocks[i + 1].level <= foldLevel))
                 {
                     ++i;
                     srcEnd = blocks[i].span.end;
                 }
-            rows ~= foldPlaceholder(b, blocks[i].span.start, srcEnd, src, opt);
+            rows ~= foldPlaceholder(b, foldStart, srcEnd, src, opt);
             continue;
         }
         rows ~= viewBlock(b, blocks[i], src, opt, listDepth, quoteDepth);
@@ -1422,4 +1431,63 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
         if (n.kind == WidgetKind.rich)
             ++rich;
     assert(rich == 1, "the folded section renders as exactly one row");
+}
+
+@("md.render_widgets.foldedHeadingSectionStopsAtTheNextPeer")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.ui.state : documentRows, hoverTargets;
+    import sparkles.ui.layout : layout;
+
+    // H2 A, its paragraph, a NESTED H3 with a paragraph, then a peer H2 C:
+    // folding A must swallow through the H3 subsection and stop before C —
+    // and the placeholder's unfold key must be A's start, not the last
+    // consumed block's (the regression: the sibling scan re-read the level
+    // and the start from the block it had just consumed).
+    const src = "## A\n\nbody a\n\n### B\n\nbody b\n\n## C\n\nbody c\n";
+    auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.heading, level: 2, span: Span(0, 4),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(3, 4))]),
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(6, 12),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(6, 12))]),
+        MdBlock(kind: MdBlockKind.heading, level: 3, span: Span(14, 19),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(18, 19))]),
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(21, 27),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(21, 27))]),
+        MdBlock(kind: MdBlockKind.heading, level: 2, span: Span(29, 33),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(32, 33))]),
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(35, 41),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(35, 41))]),
+    ]), src);
+
+    enum hitBase = 1UL << 40;
+    MdViewOptions opt = {foldedSpans: [0UL], foldHitBase: hitBase};
+    auto tree = viewMarkdown(doc, opt);
+    auto frames = layout(tree);
+    auto rows = documentRows(tree, frames);
+
+    // The placeholder spans A through B's body only; C and its body render.
+    bool sawPlaceholder, sawC, sawBodyC, sawBodyA;
+    foreach (ref const r; rows)
+    {
+        if (r.text.canFind("lines") && r.srcStart == 0 && r.srcEnd == 27)
+            sawPlaceholder = true;
+        if (r.text.canFind("C"))
+            sawC = true;
+        if (r.text.canFind("body c"))
+            sawBodyC = true;
+        if (r.text.canFind("body a"))
+            sawBodyA = true;
+    }
+    assert(sawPlaceholder, "the placeholder covers exactly the section");
+    assert(sawC && sawBodyC, "the peer section survives");
+    assert(!sawBodyA, "the folded body is gone");
+
+    // The unfold key is the FOLDED heading's start.
+    bool sawKey;
+    foreach (ref const t; hoverTargets(tree, frames))
+        if (t.hitId == hitBase + 0)
+            sawKey = true;
+    assert(sawKey, "the placeholder unfolds the folded section");
 }
