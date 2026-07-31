@@ -27,7 +27,7 @@ import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Rect;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.state : DisclosureState, DocRow, documentRows, HoverTarget,
+import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, HoverTarget,
     hoverTargets, KeyedRect, keyedRects, selectionRects;
 import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground,
     TextStyle;
@@ -139,6 +139,10 @@ struct ViewerModel
     size_t copiedFenceSrc = size_t.max; /// body start of the just-copied fence
     DisclosureState!size_t folds = DisclosureState!size_t(true);
     Span[] foldable;
+    /// Horizontal overflow (IXB2): the widest laid-out right edge in doc
+    /// cells, and the horizontal bar's machine (offset in cells).
+    int contentCols;
+    ScrollbarState hsb = ScrollbarState(ScrollAxis.horizontal);
     FoldMarker[] foldMarkers;       /// gutter markers, derived with the rows
     int widthCols = -1;             /// the width the pipeline is laid out for
 
@@ -179,6 +183,10 @@ struct ViewerModel
         folds = DisclosureState!size_t(true);
         rebuild();
     }
+
+    /// Whether the horizontal bar is live (content wider than the pane).
+    bool hOverflows() const @safe pure nothrow @nogc
+        => contentCols > widthCols && widthCols > 2;
 
     /// Resolves theme `i` (colors + quote bars + scrollbar tint) and rebuilds
     /// the pipeline so the view follows.
@@ -281,6 +289,16 @@ struct ViewerModel
 
     private void derive(bool withTargets)
     {
+        // The widest laid-out right edge: frames of nowrap content (fence
+        // lines, table rows) extend past the pane; layout keeps their
+        // natural width and the pane clips (clipX) — exactly what the
+        // horizontal bar must reach (IXB2).
+        contentCols = 0;
+        foreach (ref const f; frames)
+            if (f.rect.x + f.rect.width > contentCols)
+                contentCols = f.rect.x + f.rect.width;
+        if (cast(long) contentCols <= widthCols)
+            hsb = hsb.scrolledTo(0);
         rows = documentRows(tree, frames);
         targets = withTargets ? hoverTargets(tree, frames) : null;
         rebuildMatchRects();
