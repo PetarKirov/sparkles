@@ -39,6 +39,10 @@ struct TerminalOptions
     bool altScreen = true;   /// switch to the alternate screen buffer
     bool hideCursor = true;  /// hide the cursor for the session
     bool mouse = true;       /// enable SGR mouse reporting (press + drag + wheel)
+    /// With `mouse`: any-event tracking (1003) instead of drag-only (1002),
+    /// so bare motion reports too (hover affordances — a divider's resize
+    /// cursor). Costs one input event per pointer move.
+    bool motion;
 }
 
 /// A raw-mode, alt-screen terminal session. Move-only; owns the restore.
@@ -91,7 +95,7 @@ struct Terminal
             writeEscapeSeq!(CtlSeq.hideCursor)(s);
         writeEscapeSeq!(DecMode.autowrap, false)(s); // a full-width cell must not wrap/scroll
         if (opts.mouse)
-            writeMouseTracking(s, true); // SGR mouse: click + drag + wheel
+            writeMouseTracking(s, true, opts.motion); // SGR mouse: click + drag + wheel
         writeAll(outFd, s[]);
         return t;
     }
@@ -114,7 +118,7 @@ struct Terminal
 
         SmallBuffer!char s;
         if (_opts.mouse)
-            writeMouseTracking(s, false);
+            writeMouseTracking(s, false, _opts.motion);
         writeEscapeSeq!(DecMode.autowrap, true)(s); // autowrap on
         if (_opts.hideCursor)
             writeEscapeSeq!(CtlSeq.showCursor)(s);

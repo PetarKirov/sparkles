@@ -133,11 +133,26 @@ void writeEscapeSeq(DecMode mode, bool set, Writer)(ref Writer w)
 }
 
 /// Enable/disable SGR mouse reporting — button press/release (1000), drag (1002),
-/// and the SGR extended coordinate encoding (1006) — in a single `put`. The
-/// composite mode string is a compile-time constant selected by `on`.
-void writeMouseTracking(Writer)(ref Writer w, bool on)
+/// and the SGR extended coordinate encoding (1006) — in a single `put`. With
+/// `motion`, any-event tracking (1003) replaces 1002, so bare pointer motion
+/// reports too (hover affordances — e.g. a resize cursor over a divider).
+void writeMouseTracking(Writer)(ref Writer w, bool on, bool motion = false)
 {
-    put(w, on ? "\x1b[?1000;1002;1006h" : "\x1b[?1000;1002;1006l");
+    if (motion)
+        put(w, on ? "\x1b[?1000;1003;1006h" : "\x1b[?1000;1003;1006l");
+    else
+        put(w, on ? "\x1b[?1000;1002;1006h" : "\x1b[?1000;1002;1006l");
+}
+
+/// Set the terminal's pointer shape (xterm OSC 22; kitty, ghostty, wezterm
+/// and foot honor it, others ignore it): a CSS cursor keyword — `default`,
+/// `ew-resize`, `pointer`, `text`, … An empty/`default` shape restores the
+/// terminal's own choice.
+void writePointerShape(Writer)(ref Writer w, scope const(char)[] shape)
+{
+    put(w, "\x1b]22;");
+    put(w, shape);
+    put(w, "\x1b\\");
 }
 
 // ---------------------------------------------------------------------------
@@ -229,4 +244,12 @@ unittest
     b.clear();
     writeMouseTracking(b, false);
     assert(b[] == "\x1b[?1000;1002;1006l");
+    b.clear();
+    writeMouseTracking(b, true, motion: true);
+    assert(b[] == "\x1b[?1000;1003;1006h");
+
+    // Pointer shape (OSC 22).
+    b.clear();
+    writePointerShape(b, "ew-resize");
+    assert(b[] == "\x1b]22;ew-resize\x1b\\");
 }

@@ -19,7 +19,8 @@ import std.path : dirName;
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
     Theme, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
-import sparkles.tui : CellStyle, Color, Grid, PosixEvents, Terminal;
+import sparkles.tui : CellStyle, Color, Grid, PosixEvents, Terminal,
+    TerminalOptions;
 import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.geometry : Point;
@@ -75,6 +76,22 @@ struct WorkspaceTui
     private bool pointerDown;
     private bool pointerOnTree;
 
+    // Divider hover: over the divider column (or mid divider-drag) the
+    // terminal pointer becomes `ew-resize` (OSC 22); leaving restores
+    // `default`. The loop drains `takeCursorShape` after each event and
+    // writes it out of band — only transitions emit.
+    private bool resizeCursor;
+    private const(char)[] pendingCursor;
+
+    /// The pointer-shape sequence to write to the terminal, if the hover
+    /// state changed since the last take (empty otherwise).
+    const(char)[] takeCursorShape() return @safe pure nothrow @nogc
+    {
+        const s = pendingCursor;
+        pendingCursor = null;
+        return s;
+    }
+
     /// Recomputes the pane geometry for the current terminal size.
     void arrange(int w, int h) @system
     {
@@ -99,13 +116,21 @@ struct WorkspaceTui
         page.bg = Color.fromRgb(pageBg);
         g.clearTo(page);
 
+        // Focus indication: the focused pane's header renders accented, the
+        // other muted; with the tree hidden the viewer is always focused
+        // (the standalone look).
+        tree.focused = treeFocused;
+        viewer.focused = !treeFocused || !treeVisible;
+
         if (treeVisible)
         {
             tree.paint(g);
             // The divider: a full-height │ rule between the panes, tinted
-            // toward the focused side's chrome.
+            // toward the focused side — the tree's accent when the tree
+            // holds focus, the muted chrome color otherwise.
             CellStyle div = page;
-            div.fg = Color.fromRgb(toRgb(tree.theme.defaults.fg, pageFg));
+            div.fg = Color.fromRgb(treeFocused
+                ? tree.accent : toRgb(tree.theme.defaults.fg, pageFg));
             foreach (y; 0 .. g.rows)
                 g.putText(cast(ushort) tree.width, cast(ushort) y, "│", div);
         }
@@ -175,6 +200,19 @@ struct WorkspaceTui
     /// Applies one event; returns false to quit.
     bool handle(in Event e) @system
     {
+        // Divider hover (observes only — never consumes): the resize cursor
+        // shows over the divider column and stays for the whole drag.
+        e.match!((in PointerEvent p) {
+            const want = treeVisible
+                && (split.dragging || p.pos.x == tree.width);
+            if (want != resizeCursor)
+            {
+                resizeCursor = want;
+                pendingCursor = want
+                    ? "\x1b]22;ew-resize\x1b\\" : "\x1b]22;default\x1b\\";
+            }
+        }, (_) {});
+
         // The wheel scrolls the pane under the CURSOR, not the focused one —
         // both ways: over the tree it scrolls the tree, anywhere else it goes
         // to the viewer (whose wheel arm is position-blind), so a focused
@@ -365,7 +403,9 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     else if (!isDir && target.length)
         w.openDoc(target);
 
-    auto term = Terminal.open();
+    // Any-event tracking (1003): bare pointer motion reports too, so the
+    // divider can show a hover resize cursor.
+    auto term = Terminal.open(TerminalOptions(motion: true));
     if (!term.active)
         return 1;
     scope (exit) term.close();
@@ -386,6 +426,9 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         const clip = w.viewer.takeClipboard();
         if (clip.length)
             term.writeRaw(clip); // OSC 52 clipboard write (out of band)
+        const shape = w.takeCursorShape();
+        if (shape.length)
+            term.writeRaw(shape); // OSC 22 pointer shape (out of band)
 
         // While a git-status refresh is in flight, wait in short slices so
         // the finished snapshot paints without requiring a keypress; with
@@ -629,6 +672,62 @@ unittest
     assert(!w.treeFocused, "a drag never steals focus");
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(5, 5)))));
+}
+
+@("workspace.chrome.hoverCursorAndFocusIndication")
+@system
+unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    const root = buildPath(tempDir(), "hue-workspace-chrome-test");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, "a.d"), "int a;\n");
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    WorkspaceTui w;
+    w.tree.root = root;
+    w.tree.themeValue = &themes[0];
+    w.tree.theme = resolveTheme(themes[0], LabelSet.standard());
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = LabelSet.standard();
+    w.treeVisible = true;
+    w.treeFocused = true;
+    w.tree.rebuild();
+    w.arrange(100, 12);
+
+    // OSC 22 divider hover: entering emits ew-resize, leaving restores the
+    // default, and no-transition motion emits nothing.
+    const div = w.tree.width;
+    assert(w.handle(Event(PointerEvent(action: PointerAction.move,
+        pos: Point(div, 4)))));
+    assert(w.takeCursorShape() == "\x1b]22;ew-resize\x1b\\");
+    assert(w.handle(Event(PointerEvent(action: PointerAction.move,
+        pos: Point(div, 6)))));
+    assert(w.takeCursorShape().length == 0, "no transition, no write");
+    assert(w.handle(Event(PointerEvent(action: PointerAction.move,
+        pos: Point(60, 6)))));
+    assert(w.takeCursorShape() == "\x1b]22;default\x1b\\");
+
+    // Focus indication: paint stamps the focused pane; the hidden-tree
+    // viewer is always focused (the standalone look).
+    Grid g;
+    g.resize(100, 12);
+    w.paint(g);
+    assert(w.tree.focused && !w.viewer.focused);
+    w.treeFocused = false;
+    w.paint(g);
+    assert(!w.tree.focused && w.viewer.focused);
+    w.treeVisible = false;
+    w.treeFocused = true; // stale focus flag must not defeat the fallback
+    w.arrange(100, 12);
+    w.paint(g);
+    assert(w.viewer.focused, "a lone viewer is always focused");
 }
 
 @("workspace.wheel.scrollsThePaneUnderTheCursor")
