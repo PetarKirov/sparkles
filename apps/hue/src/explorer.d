@@ -31,7 +31,7 @@ import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.layout : layout;
 import sparkles.ui.state : DisclosureState, scrollbarThumb, ScrollState;
-import sparkles.ui.style : Slot;
+import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 import sparkles.ui_tui : paintGrid;
 
@@ -439,6 +439,12 @@ struct ExplorerTui
 
     /// Scrolls the viewport by `dy` rows (the wheel), leaving the cursor
     /// where it is; the next cursor move re-snaps the view to it.
+    /// Whether pane-local `(x, y)` sits on the live scrollbar column — the
+    /// workspace's pointer-shape hover check.
+    bool overScrollbar(int x, int y) const @safe pure nothrow @nogc
+        => cast(long) rows.length > bodyRows && x == width - 1
+            && y >= 1 && y <= bodyRows;
+
     void scrollBy(long dy) @safe pure nothrow @nogc
     {
         top += dy;
@@ -475,12 +481,13 @@ struct ExplorerTui
         // viewport-sliced (guides are per-row, so slicing is safe).
         auto b = Builder();
         const name = b.add(Widget(kind: WidgetKind.text, text: root,
-            slot: focused ? Slot.chromeAccent : Slot.gutter));
+            slot: focused ? Slot.chromeAccent : Slot.gutter,
+            textStyle: TextStyle(bold: focused)));
         import std.conv : text;
         const pos = b.add(Widget(kind: WidgetKind.text,
             text: text(rows.length ? sel + 1 : 0, "/", rows.length),
             slot: Slot.gutter));
-        const hdr = headerBar(b, [name], null, [pos]);
+        const hdr = headerBar(b, [name], null, [pos], focused);
 
         const first = cast(size_t) top;
         const last = first + bodyRows > rows.length ? rows.length

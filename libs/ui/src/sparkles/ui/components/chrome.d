@@ -76,14 +76,16 @@ leading, center and trailing segment groups separated by `grow` spacers — the
 spelling `LAY8` prescribes for distribution. Any of the groups may be empty.
 */
 uint headerBar(ref Builder b, uint[] leading, uint[] center = null,
-    uint[] trailing = null)
+    uint[] trailing = null, bool focused = false)
 {
     const s1 = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
     const s2 = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
     return b.add(Widget(
         kind: WidgetKind.row,
         children: leading ~ s1 ~ center ~ s2 ~ trailing,
-        slot: Slot.chrome,
+        // A focused pane's bar renders on the accented band, so the pane
+        // holding the input focus is visible at a glance.
+        slot: focused ? Slot.chromeFocused : Slot.chrome,
         paintBackground: true,
         stretch: true, // span the parent column edge-to-edge
         padding: Insets.symmetric(0, 1),

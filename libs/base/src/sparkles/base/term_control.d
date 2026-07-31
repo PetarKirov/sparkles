@@ -41,12 +41,30 @@ enum CtlSeq : string
 enum DecMode : ushort
 {
     autowrap       = 7,    /// Autowrap (DECAWM); reset so a full-width last cell can't wrap.
+    mouseButtons   = 1000, /// Mouse button press/release reporting.
+    mouseDrag      = 1002, /// Mouse motion reporting while a button is held.
+    mouseAnyMotion = 1003, /// Mouse motion reporting regardless of buttons (hover).
+    mouseSgr       = 1006, /// SGR extended mouse coordinate encoding.
     altScreen      = 1049, /// Alternate screen buffer.
     bracketedPaste = 2004, /// Bracketed paste.
     syncOutput     = 2026, /// Synchronized output (atomic frame flush).
     unicodeCore    = 2027, /// Grapheme-cluster width handling.
     colorScheme    = 2031, /// Light/dark color-scheme update reports.
     inBandResize   = 2048, /// In-band resize notifications.
+}
+
+/// Terminal pointer shapes (xterm OSC 22, the CSS `cursor` keywords —
+/// kitty, ghostty, wezterm and foot honor them, others ignore the OSC).
+/// `default_` restores the terminal's own pointer.
+enum PointerShape : string
+{
+    default_ = "default",   /// the terminal's normal pointer
+    text     = "text",      /// the I-beam over selectable text
+    pointer  = "pointer",   /// the link hand
+    ewResize = "ew-resize", /// horizontal resize (a vertical divider)
+    nsResize = "ns-resize", /// vertical resize (a horizontal divider)
+    grab     = "grab",      /// an open hand (draggable content)
+    grabbing = "grabbing",  /// a closed hand (a drag in progress)
 }
 
 // Every writer below emits nothing for a zero argument: CSI treats a missing/0
@@ -132,22 +150,55 @@ void writeEscapeSeq(DecMode mode, bool set, Writer)(ref Writer w)
     put(w, seq);
 }
 
-/// Enable/disable SGR mouse reporting — button press/release (1000), drag (1002),
-/// and the SGR extended coordinate encoding (1006) — in a single `put`. With
-/// `motion`, any-event tracking (1003) replaces 1002, so bare pointer motion
+/// Emit several DEC private modes as one composite set/reset
+/// (`CSI ? m1;m2;… h|l`), CTFE-collapsed into a single `put` — the composed
+/// counterpart of the one-mode overload above.
+void writeEscapeSeq(DecMode[] modes, bool set, Writer)(ref Writer w)
+if (modes.length > 0)
+{
+    enum string seq = () {
+        import std.conv : to;
+
+        string s = "\x1b[?";
+        foreach (i, m; modes)
+            s ~= (i ? ";" : "") ~ (cast(uint) m).to!string;
+        return s ~ (set ? "h" : "l");
+    }();
+    put(w, seq);
+}
+
+/// Emit an xterm OSC 22 pointer-shape set, CTFE-collapsed into a single
+/// `put` (see $(LREF PointerShape); unsupporting terminals ignore the OSC).
+void writeEscapeSeq(PointerShape shape, Writer)(ref Writer w)
+{
+    enum string seq = "\x1b]22;" ~ cast(string) shape ~ "\x1b\\";
+    put(w, seq);
+}
+
+/// Enable/disable SGR mouse reporting — button press/release, drag motion,
+/// and the SGR extended coordinate encoding — in a single `put`. With
+/// `motion`, any-event tracking replaces drag-only, so bare pointer motion
 /// reports too (hover affordances — e.g. a resize cursor over a divider).
 void writeMouseTracking(Writer)(ref Writer w, bool on, bool motion = false)
 {
-    if (motion)
-        put(w, on ? "\x1b[?1000;1003;1006h" : "\x1b[?1000;1003;1006l");
+    with (DecMode) if (motion)
+    {
+        if (on)
+            writeEscapeSeq!([mouseButtons, mouseAnyMotion, mouseSgr], true)(w);
+        else
+            writeEscapeSeq!([mouseButtons, mouseAnyMotion, mouseSgr], false)(w);
+    }
     else
-        put(w, on ? "\x1b[?1000;1002;1006h" : "\x1b[?1000;1002;1006l");
+    {
+        if (on)
+            writeEscapeSeq!([mouseButtons, mouseDrag, mouseSgr], true)(w);
+        else
+            writeEscapeSeq!([mouseButtons, mouseDrag, mouseSgr], false)(w);
+    }
 }
 
-/// Set the terminal's pointer shape (xterm OSC 22; kitty, ghostty, wezterm
-/// and foot honor it, others ignore it): a CSS cursor keyword — `default`,
-/// `ew-resize`, `pointer`, `text`, … An empty/`default` shape restores the
-/// terminal's own choice.
+/// Set the terminal's pointer shape from a runtime keyword (the CTFE
+/// $(LREF writeEscapeSeq) overload covers the static spellings).
 void writePointerShape(Writer)(ref Writer w, scope const(char)[] shape)
 {
     put(w, "\x1b]22;");
@@ -247,9 +298,15 @@ unittest
     b.clear();
     writeMouseTracking(b, true, motion: true);
     assert(b[] == "\x1b[?1000;1003;1006h");
-
-    // Pointer shape (OSC 22).
     b.clear();
-    writePointerShape(b, "ew-resize");
+    writeEscapeSeq!([DecMode.mouseButtons, DecMode.mouseSgr], true)(b);
+    assert(b[] == "\x1b[?1000;1006h");
+
+    // Pointer shape (OSC 22): the CTFE enum spelling and the runtime one.
+    b.clear();
+    writeEscapeSeq!(PointerShape.ewResize)(b);
     assert(b[] == "\x1b]22;ew-resize\x1b\\");
+    b.clear();
+    writePointerShape(b, "ns-resize");
+    assert(b[] == "\x1b]22;ns-resize\x1b\\");
 }
