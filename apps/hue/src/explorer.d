@@ -542,7 +542,7 @@ struct ExplorerTui
         auto wt = tb.finish(tb.add(colW));
         paintGrid(g, pageBg, buildDisplayList(wt, layout(wt),
             themeValue.effectivePalette, pageFg, pageBg),
-            -hx, 1, Rect(hx, 0, width - 1 - hx, bodyRows));
+            -hx, 1, Rect(hx, 0, width - 1, bodyRows));
 
         // The horizontal bar, one row above the status bar, when live —
         // the SAME component/machine as the vertical bar (IXB2).

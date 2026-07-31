@@ -23,7 +23,7 @@ import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewTwoslashDocument;
 
-import sparkles.ui.canvas : DrawOp;
+import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Rect;
 import sparkles.ui.layout : Frame, layout;
@@ -292,14 +292,16 @@ struct ViewerModel
 
     private void derive(bool withTargets)
     {
-        // The widest laid-out right edge: frames of nowrap content (fence
-        // lines, table rows) extend past the pane; layout keeps their
-        // natural width and the pane clips (clipX) — exactly what the
-        // horizontal bar must reach (IXB2).
+        // The widest painted right edge: TEXT ops carry their natural
+        // extent even where the pane clips them (a fence line, a table row
+        // — emitSpanRow advances past the clamp and the scissor crops), so
+        // the display list, not the frames, knows what the horizontal bar
+        // must reach (IXB2).
         contentCols = 0;
-        foreach (ref const f; frames)
-            if (f.rect.x + f.rect.width > contentCols)
-                contentCols = f.rect.x + f.rect.width;
+        foreach (ref const op; ops)
+            if ((op.kind == OpKind.textRun || op.kind == OpKind.glyph)
+                && op.rect.x + op.rect.width > contentCols)
+                contentCols = op.rect.x + op.rect.width;
         if (cast(long) contentCols <= widthCols)
             hsb = hsb.scrolledTo(0);
         rows = documentRows(tree, frames);

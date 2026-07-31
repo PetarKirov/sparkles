@@ -207,9 +207,12 @@ struct WorkspaceTui
         // the pointer strays; the scrollbars are vertical → ns-resize.
         e.match!((in PointerEvent p) {
             const grabbed = split.dragging || viewer.sb.dragging
-                || tree.sb.dragging;
+                || tree.sb.dragging || viewer.vm.hsb.dragging
+                || tree.hsb.dragging;
             PointerShape want;
             if (split.dragging)
+                want = PointerShape.ewResize;
+            else if (viewer.vm.hsb.dragging || tree.hsb.dragging)
                 want = PointerShape.ewResize;
             else if (viewer.sb.dragging || tree.sb.dragging)
                 want = PointerShape.nsResize;

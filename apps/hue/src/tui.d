@@ -385,8 +385,25 @@ struct PreviewTui
     private void paintMarkdown(ref Grid g) @system
     {
         const rows = bodyRows();
-        paintGrid(g, pageBg, mdOps, originX, cast(int)(1 - top),
-            Rect(0, cast(int) top, width, rows));
+        const hx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
+        paintGrid(g, pageBg, mdOps, originX - hx, cast(int)(1 - top),
+            Rect(hx, cast(int) top, width - 1, rows));
+
+        // The horizontal bar (IXB2): the last body row, when wide content
+        // (a fence line, a table) clips — the same component/machine as
+        // the vertical bar, horizontal axis.
+        if (vm.hOverflows())
+        {
+            import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+
+            auto hb = Builder();
+            const bar = scrollbar(hb, vm.hsb, vm.contentCols, vm.widthCols,
+                width - 1, ScrollbarGlyphs('━', '─'));
+            auto hbt = hb.finish(bar);
+            paintGrid(g, pageBg, buildDisplayList(hbt, layout(hbt),
+                themes[themeIdx].effectivePalette, pageFg, pageBg),
+                originX, height - 2);
+        }
         if (!sel.active)
             return;
         const selFill = Color.fromRgb(selBg);
@@ -649,6 +666,21 @@ struct PreviewTui
             && e.action == PointerAction.release)
         {
             sb = sb.released();
+            vm.hsb = vm.hsb.released();
+            return true;
+        }
+        // The horizontal bar (IXB2): its row is the last body row; the
+        // grab owns the pointer, like every scrollbar grab.
+        if (e.button == PointerButton.left
+            && ((e.action == PointerAction.press && vm.hOverflows()
+                    && e.pos.y == rows && e.pos.x >= 0 && e.pos.x < width - 1)
+                || (e.action == PointerAction.drag && vm.hsb.dragging)))
+        {
+            vm.hsb = e.action == PointerAction.press && !vm.hsb.dragging
+                ? vm.hsb.pressed(e.pos.x, vm.contentCols, vm.widthCols,
+                    width - 1)
+                : vm.hsb.dragged(e.pos.x, vm.contentCols, vm.widthCols,
+                    width - 1);
             return true;
         }
         // A scrollbar grab OWNS the pointer: the press must land on the
@@ -684,11 +716,14 @@ struct PreviewTui
             // body's source offset. Otherwise start (press) or extend
             // (drag) a line selection.
             const line = top + (e.pos.y - 1);
+            // Content hits live in the (possibly) horizontally scrolled
+            // space — the paint shifts left by the bar's offset (IXB2).
+            const hx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
             if (showPreview && e.action == PointerAction.press
                 && tw.code.length)
             {
                 const off = sourceOffsetAt(mdTree, mdFrames,
-                    Point(e.pos.x, cast(int) line));
+                    Point(e.pos.x + hx, cast(int) line));
                 if (off >= 0)
                     foreach (i, ni; hoverNodes)
                         if (off >= cast(long) tw.nodes[ni].start
@@ -707,7 +742,7 @@ struct PreviewTui
             }
             if (e.action == PointerAction.press)
             {
-                const p = Point(e.pos.x, cast(int) line);
+                const p = Point(e.pos.x + hx, cast(int) line);
                 foreach_reverse (ref const t; mdTargets)
                 {
                     if (t.hitId >= foldHitBase && t.rect.contains(p))
@@ -860,6 +895,53 @@ unittest
         action: PointerAction.drag, pos: Point(59, 3)))));
     assert(t.sel.active && t.sel.lo != t.sel.hi, "the selection extended");
     assert(t.top == topBefore, "a selection drag never scrolls the thumb");
+}
+
+@("tui.pointer.horizontalBarScrollsWideContent")
+@system
+unittest
+{
+    import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
+        MdInline, MdInlineKind, Span, LabelSet;
+
+    // A fence whose one code line is 120 cells wide in a 40-column pane:
+    // fence lines never wrap, so the laid-out frames extend past the pane
+    // and the model reports horizontal overflow (IXB2).
+    string src = "wide\n";
+    foreach (i; 0 .. 120)
+        src ~= "x";
+    auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.paragraph, inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(0, 4))]),
+        MdBlock(kind: MdBlockKind.codeFence, infoLang: "",
+            codeBody: Span(5, src.length)),
+    ]), src);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 8; // bodyRows = 6; the h-bar row is y == 6
+    t.relayout();
+    t.setDocument("wide.md", src, null, PreviewModel(present: true, doc: doc),
+        startPreview: true);
+    assert(t.vm.hOverflows(), "the 120-cell fence line overflows the pane");
+
+    // A press on the bar's row grabs it; the drag scrolls the columns and
+    // owns the pointer; release ends the grab.
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(2, 6)))));
+    assert(t.vm.hsb.dragging);
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(30, 3)))));
+    assert(t.vm.hsb.offset > 0, "the drag scrolled the columns");
+    assert(!t.selection.active, "a bar grab never selects text");
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(30, 3)))));
+    assert(!t.vm.hsb.dragging);
 }
 
 @("tui.paint.markdownWidgets.fenceCopy")
