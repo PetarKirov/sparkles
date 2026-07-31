@@ -189,6 +189,10 @@ struct PreviewTui
     /// explorer pane when ←/→ cycles the theme (`XPL5`).
     size_t themeIndex() const @safe pure nothrow @nogc => themeIdx;
 
+    /// The active line selection, read-only — the workspace (and its tests)
+    /// observe it to verify pointer-capture routing.
+    Selection!long selection() const @safe pure nothrow @nogc => sel;
+
     /// Sets the pane size in cells (the workspace arranges; `relayout` after).
     void resize(int w, int h) @safe pure nothrow @nogc
     {

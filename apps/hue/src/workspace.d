@@ -69,6 +69,12 @@ struct WorkspaceTui
     SplitState split = SplitState(32);
     private enum minTreeCols = 12;
 
+    // Pointer capture: the pane that took the press owns every drag until
+    // release, so a grab (a scrollbar thumb, a selection) never leaks into
+    // the neighbouring pane when the drag crosses the divider.
+    private bool pointerDown;
+    private bool pointerOnTree;
+
     /// Recomputes the pane geometry for the current terminal size.
     void arrange(int w, int h) @system
     {
@@ -256,19 +262,29 @@ struct WorkspaceTui
                 return true;
         }
 
-        // Pointer events pick their pane by position (click-to-focus) and
-        // arrive pane-local; everything else goes to the focused pane.
+        // Pointer events pick their pane by position on PRESS (click-to-
+        // focus) and arrive pane-local; the press captures the pointer, so
+        // drags stay with the owning pane across the divider until release.
+        // Everything else goes to the focused pane.
         bool toTree = treeFocused;
         Event ev = e;
         e.match!((in PointerEvent p) {
-            toTree = treeVisible && p.pos.x < tree.width;
+            if (p.action == PointerAction.press || !pointerDown)
+            {
+                pointerOnTree = treeVisible && p.pos.x < tree.width;
+                pointerDown = p.action != PointerAction.release;
+                if (p.action == PointerAction.press)
+                    treeFocused = pointerOnTree;
+            }
+            else if (p.action == PointerAction.release)
+                pointerDown = false;
+            toTree = pointerOnTree;
             if (!toTree && viewer.originX > 0)
             {
                 PointerEvent q = p;
                 q.pos = Point(p.pos.x - viewer.originX, p.pos.y);
                 ev = Event(q);
             }
-            treeFocused = toTree;
         }, (_) {});
 
         if (toTree && treeVisible)
@@ -540,6 +556,79 @@ unittest
     assert(w.tree.width == 50, "clamped at half the screen");
     w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(99, 4))));
+}
+
+@("workspace.pointerCapture.grabsStayWithTheirPane")
+@system
+unittest
+{
+    import std.conv : text;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    // Enough files that the tree overflows its pane (its scrollbar is live)
+    // and a long document in the viewer.
+    const root = buildPath(tempDir(), "hue-workspace-capture-test");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    foreach (i; 0 .. 20)
+        write(buildPath(root, text("f", i, ".d")), "int x;\n");
+    string src;
+    foreach (i; 0 .. 40)
+        src ~= "int line;\n";
+    write(buildPath(root, "long.d"), src);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    WorkspaceTui w;
+    w.loadDoc = delegate WorkspaceDoc(string path) @system {
+        import std.file : readText;
+        import std.path : baseName;
+
+        const s = readText(path);
+        return WorkspaceDoc(baseName(path), s,
+            [HighlightEvent.sourceSpan(0, s.length)], PreviewModel.init);
+    };
+    w.tree.root = root;
+    w.tree.themeValue = &themes[0];
+    w.tree.theme = resolveTheme(themes[0], LabelSet.standard());
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = LabelSet.standard();
+    w.treeVisible = true;
+    w.tree.rebuild();
+    w.arrange(100, 12);
+    w.openDoc(buildPath(root, "long.d"));
+    assert(cast(long) w.tree.rows.length > w.tree.bodyRows);
+
+    // A grab on the tree's scrollbar stays with the tree when the drag
+    // crosses the divider into the document pane — no text selection.
+    const sbCol = w.tree.width - 1;
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(sbCol, 2)))));
+    assert(w.tree.sbDragging);
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(60, 6)))));
+    assert(w.tree.sbDragging, "the tree kept the grab across the divider");
+    assert(!w.viewer.selection.active, "no text selection from a tree-owned drag");
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(60, 6)))));
+    assert(!w.tree.sbDragging);
+
+    // Symmetrically: a selection started in the document keeps extending
+    // when the drag crosses into the tree pane — and never steals focus.
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(60, 2)))));
+    assert(w.viewer.selection.active);
+    assert(!w.treeFocused, "the press focused the viewer");
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(5, 5)))));
+    assert(w.viewer.selection.active && w.viewer.selection.lo != w.viewer.selection.hi,
+        "the selection extended across the divider");
+    assert(!w.treeFocused, "a drag never steals focus");
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(5, 5)))));
 }
 
 @("workspace.wheel.scrollsThePaneUnderTheCursor")
