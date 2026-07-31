@@ -151,3 +151,7 @@
 # times out for GitHub Actions' shared IPs (22 errors in one CI run; live +
 # 200 locally). Same class as cs.cmu.edu / vis.csail.mit.edu above.
 ^https?://(www\.)?cl\.cam\.ac\.uk/
+# parsing.stereobooster.com (the GLL/parsing-algorithms explainer site, cited in
+# the parsing survey) times out for GitHub Actions' shared IPs (200 locally).
+# Same class as cs.cmu.edu / vis.csail.mit.edu above.
+^https?://parsing\.stereobooster\.com/
