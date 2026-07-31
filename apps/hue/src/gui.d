@@ -61,7 +61,8 @@ import sparkles.twoslash.render_widgets : viewHoverPopup;
 // error/warn/tag/highlight colors this backend used to hand-copy as literals, and
 // the widget views drive the hover popup (so the GUI matches the TUI/HTML chrome).
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
-    schemeForBackground, Slot;
+    schemeForBackground, Slot, UiTextStyle = TextStyle;
+import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : layout;
@@ -550,6 +551,39 @@ int runGui(
     // M all-fold).
     int foldSeqFrames;
 
+    // A pane's header bar through the SHARED chrome component (the same
+    // headerBar + Slot.chromeFocused + bold title the TUI paints): built
+    // fresh per frame, painted at pixel (x, y) spanning widthCols cells.
+    void drawChromeBar(int x, int y, int widthCols_, string title_,
+        string center, string trailing, bool focused)
+    {
+        import sparkles.ui.geometry : SizeSpec;
+        import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+        auto b = Builder();
+        const name = b.add(Widget(kind: WidgetKind.text, text: title_,
+            slot: focused ? Slot.chromeAccent : Slot.gutter,
+            textStyle: UiTextStyle(bold: focused)));
+        uint[] mid;
+        if (center.length)
+            mid ~= b.add(Widget(kind: WidgetKind.text, text: center,
+                slot: Slot.gutter));
+        uint[] tail;
+        if (trailing.length)
+            tail ~= b.add(Widget(kind: WidgetKind.text, text: trailing,
+                slot: Slot.gutter));
+        const bar = headerBar(b, [name], mid, tail, focused);
+        Widget colW = Widget(kind: WidgetKind.column, children: [bar],
+            width: SizeSpec.fixed(widthCols_));
+        auto wt = b.finish(b.add(colW));
+        auto ops = buildDisplayList(wt, layout(wt),
+            themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
+        auto c = RaylibCanvas(&fonts, &buf, fonts.cellW(), fonts.cellH(),
+            x, y);
+        paint(c, ops);
+    }
+
+
     int frame = 0;
     while (!WindowShouldClose())
     {
@@ -561,8 +595,11 @@ int runGui(
         // With a set header bar, BOTH panes start under it (nothing hides
         // beneath the bar any more); the panes are docRows tall.
         const treeTopRows = set !is null && !set.empty ? 1 : 0;
-        const docRows = visibleRows - treeTopRows;
-        const docY0 = treeTopRows * cellH;
+        // Each pane renders the shared headerBar chrome on its first row
+        // (title + focus indication — the same component the TUI paints).
+        const docRows = visibleRows - treeTopRows - 1;
+        const docY0 = (treeTopRows + 1) * cellH;
+        const hdrY = treeTopRows * cellH;
 
 
         // Reflow (both views wrap) when the window width in columns changes — but
@@ -962,14 +999,13 @@ int runGui(
         // The pane divider (STM8): hovering it shows the resize cursor; a
         // grab drags the split live. The drag owns the pointer, so nothing
         // below starts a selection or a scrollbar drag mid-resize.
+        bool divZone;
         if (treeVisible)
         {
             const mp = GetMousePosition();
             const divX = treeCols * cellW + cellW / 2;
             const zone = mp.x >= divX - 4 && mp.x <= divX + 4;
-            SetMouseCursor(zone || split.dragging
-                ? MouseCursor.MOUSE_CURSOR_RESIZE_EW
-                : MouseCursor.MOUSE_CURSOR_DEFAULT);
+            divZone = zone;
             if (zone && !split.dragging
                 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
                 split = split.started(cast(int)(mp.x / cellW));
@@ -984,7 +1020,7 @@ int runGui(
             }
         }
         else
-            SetMouseCursor(MouseCursor.MOUSE_CURSOR_DEFAULT);
+            divZone = false;
 
         // Interactive scrollbar (hover-expand + thumb drag + track click),
         // adapted from apps/terminal's ScrollbarState. Runs every frame so the
@@ -1040,14 +1076,14 @@ int runGui(
         // The tree pane's scrollbar — the SAME hover-expand behavior as the
         // document's (one affordance, two panes): animated width, faint track
         // on hover, draggable thumb, track click centers.
-        tree.height = visibleRows - treeTopRows;
+        tree.height = visibleRows - treeTopRows - 1; // − the header row
         const treePaneRows = tree.bodyRows;
         const treeMaxTop = cast(long) tree.rows.length - treePaneRows;
         if (treeVisible && treeMaxTop > 0 && treePaneRows > 0)
         {
             const float hoverW = cast(float) scrollbarGutter();
             const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
-            const trackTop = treeTopRows * cellH;
+            const trackTop = (treeTopRows + 1) * cellH;
             const trackH = screenH - trackTop;
             const tg = thumbGeometry(tree.rows.length, treePaneRows, tree.top,
                 treeMaxTop, trackH);
@@ -1096,6 +1132,23 @@ int runGui(
             treeSb.isDragging = false;
         }
 
+        // The one pointer-shape decision (mirrors the TUI workspace): live
+        // grabs outrank hover — a scrollbar drag straying over the divider
+        // stays ns-resize, a divider drag stays ew-resize — then hover by
+        // orientation, else the default arrow.
+        {
+            auto want = MouseCursor.MOUSE_CURSOR_DEFAULT;
+            if (split.dragging)
+                want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
+            else if (sb.isDragging || treeSb.isDragging)
+                want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
+            else if (divZone)
+                want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
+            else if (sb.isHovered || treeSb.isHovered)
+                want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
+            SetMouseCursor(want);
+        }
+
         vm.top = vm.top < 0 ? 0 : (vm.top > maxTop ? maxTop : vm.top);
         const topLine = cast(size_t) vm.top;
 
@@ -1131,6 +1184,19 @@ int runGui(
         if (!flashDebug)
             DrawRectangle(treePx(), docY0, gutterPx - treePx(),
                 screenH - docY0, rl(vm.gutterBg));
+
+        // The document pane's header — the SHARED chrome (headerBar +
+        // Slot.chromeFocused + bold title), same look as the TUI's.
+        {
+            import std.conv : text;
+
+            drawChromeBar(treePx(), hdrY, (screenW - treePx()) / cellW,
+                vm.title,
+                text(names[vm.themeIdx], " · ",
+                    vm.showPreview ? "preview" : "raw"),
+                text(vm.top + 1, "/", total),
+                focused: !treeFocused || !treeVisible);
+        }
 
         // The one painter: the active tree's precomputed ops through the
         // raylib canvas, offset by the scroll position and culled to the
@@ -1327,7 +1393,7 @@ int runGui(
             {
                 treeFocused = true;
                 const row = tree.top
-                    + cast(long)((mp.y - treeTopRows * cellH) / cellH);
+                    + cast(long)((mp.y - (treeTopRows + 1) * cellH) / cellH);
                 if (row >= 0 && row < cast(long) tree.rows.length)
                 {
                     const again = row == tree.sel;
@@ -1525,12 +1591,25 @@ int runGui(
             tree.rebuild(); // a finished async git refresh paints this frame
         if (treeVisible)
         {
-            tree.height = visibleRows - treeTopRows;
+            tree.height = visibleRows - treeTopRows - 1; // − the header row
             tree.scrollBy(0); // bounds only — never yank the view to the cursor
             DrawRectangle(0, 0, treeCols * cellW, screenH,
                 rl(mix(vm.pageBg, vm.pageFg, 0.03)));
             DrawRectangle(treeCols * cellW + cellW / 2, 0, 1, screenH,
                 rl(vm.gutterFg));
+
+            // The explorer pane's header — the shared chrome, focused when
+            // the tree holds the input focus.
+            {
+                import std.conv : text;
+                import std.path : baseName;
+
+                drawChromeBar(0, hdrY, treeCols, baseName(tree.root),
+                    null,
+                    text(tree.rows.length ? tree.sel + 1 : 0, "/",
+                        tree.rows.length),
+                    focused: treeFocused);
+            }
 
             import sparkles.ui.geometry : SizeSpec;
             import sparkles.ui.widget : Builder, Widget, WidgetKind;
@@ -1550,7 +1629,7 @@ int runGui(
             auto tOps = buildDisplayList(wt, layout(wt),
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
             auto tCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
-                0, cast(float)(treeTopRows * cellH));
+                0, cast(float)((treeTopRows + 1) * cellH));
             paint(tCanvas, tOps);
 
             // The live-filter input line, pinned to the pane's bottom row
@@ -1572,7 +1651,7 @@ int runGui(
             // track as the document's, in the pane's theme tint.
             if (treeMaxTop > 0 && treePaneRows > 0)
             {
-                const trackTop = treeTopRows * cellH;
+                const trackTop = (treeTopRows + 1) * cellH;
                 const trackH = screenH - trackTop;
                 const tg = thumbGeometry(tree.rows.length, treePaneRows,
                     tree.top, treeMaxTop, trackH);
