@@ -29,7 +29,7 @@
         },
         {
             "character": 39,
-            "docs": "Calculates the absolute value of a number.\n\n### Limitations\n\nWhen `x` is a signed integral equal to `Num.min` the value of `x` will be returned instead.\n     Note for 2's complement; `-Num.min` (= `Num.max + 1`) is not representable due to overflow.",
+            "docs": "Calculates the absolute value of a number.\n\n### Limitations\n\nWhen `x` is a signed integral equal to `Num.min` the value of `x` will be returned instead.\nNote for 2's complement; `-Num.min` (= `Num.max + 1`) is not representable due to overflow.",
             "length": 3,
             "line": 1,
             "start": 93,
@@ -44,7 +44,7 @@
                 ],
                 [
                     "returns",
-                    "The absolute value of the number. If floating-point or integral,\n     the return type will be the same as the input."
+                    "The absolute value of the number. If floating-point or integral,\nthe return type will be the same as the input."
                 ]
             ],
             "text": "double std.math.algebraic.abs!double(double x) pure nothrow @nogc @safe",

@@ -56,7 +56,7 @@
                 ],
                 [
                     "returns",
-                    "A range with each fun applied to all the elements. If there is more than one\n        fun, the element type will be `Tuple` containing one element for each fun."
+                    "A range with each fun applied to all the elements. If there is more than one\nfun, the element type will be `Tuple` containing one element for each fun."
                 ]
             ],
             "text": "sample.squares.MapResult!(__lambda_L6_C25, Result) sample.squares.map!(std.range.iota!(int, int).Result)(std.range.iota!(int, int).Result r) pure nothrow @nogc @safe",

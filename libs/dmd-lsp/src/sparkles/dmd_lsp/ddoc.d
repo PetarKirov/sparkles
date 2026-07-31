@@ -179,9 +179,16 @@ DdocRendered renderDdocText(string comment, Dsymbol sym, Scope* sc = null) @syst
         }
     }
 
+    import std.algorithm.searching : endsWith;
     import std.string : strip;
 
     result.docs = docs[].idup.strip;
+    // A closing fence needs its newline: `strip` would leave the document
+    // ending on the fence marker itself, which the markdown parser then reads
+    // as part of the code rather than the end of it — the stray ``` that
+    // showed up inside `core.time.Duration`'s Examples block.
+    if (result.docs.endsWith("```"))
+        result.docs ~= "\n";
     return result;
 }
 
@@ -431,16 +438,36 @@ private void defineMacros(ref MacroTable t) @safe pure nothrow
 private string cleanupMarkdown(string s) @safe pure
 {
     import std.algorithm.iteration : map, splitter;
+    import std.algorithm.searching : startsWith;
     import std.array : array, join;
-    import std.string : stripRight;
+    import std.string : stripLeft, stripRight;
 
     s = joinModulePaths(stripSentinels(s));
     auto lines = s.splitter('\n').map!(l => l.stripRight("\r").stripRight).array;
+
+    // DDoc has no indented-code convention — its code blocks are `---`
+    // sections, which reach here already fenced — so the leading whitespace on
+    // a continuation line is the author indenting under `/**`, purely
+    // cosmetic. CommonMark disagrees: four of those spaces after a blank line
+    // is an indented code block, which is how `core.time.dur`'s third
+    // paragraph turned into an empty box in the tooltip and its text vanished.
+    // Strip it, but never inside a fence, where indentation is the code's own.
+    {
+        bool inFence = false;
+        foreach (ref l; lines)
+        {
+            if (l.stripLeft.startsWith("```"))
+            {
+                inFence = !inFence;
+                continue;
+            }
+            if (!inFence)
+                l = l.stripLeft;
+        }
+    }
     // Fold runs of blank lines; drop the blank between consecutive list
     // items (the LI macro's newlines would render every list loose) and the
     // blank a code-block macro leaves before its closing fence.
-    import std.algorithm.searching : startsWith;
-
     string[] folded;
     bool prevBlank = false;
     foreach (i, l; lines)
@@ -501,6 +528,20 @@ private string joinModulePaths(string s) @safe pure
         i = end + 1;
     }
     return o[];
+}
+
+@("dmd_lsp.ddoc.cleanupMarkdown.unindentsProseKeepsCode")
+@safe pure unittest
+{
+    // The `core.time.dur` shape: a continuation paragraph indented under
+    // `/**`. Left alone, CommonMark reads it as an indented code block and the
+    // tooltip shows an empty box instead of the text.
+    assert(cleanupMarkdown("Summary.\n\n    The possible values are:")
+        == "Summary.\n\nThe possible values are:");
+
+    // Inside a fence the indentation is the code's own and must survive.
+    assert(cleanupMarkdown("```d\n    auto x = 1;\n```")
+        == "```d\n    auto x = 1;\n```");
 }
 
 @("dmd_lsp.ddoc.joinModulePaths")
@@ -691,9 +732,11 @@ version (unittest)
         ~ "---\n"
         ~ "*/\n"
         ~ "int k;\n", 14, 5);
+    // The trailing newline after the closing fence is deliberate: without it
+    // a markdown parser reads the fence marker as part of the code.
     assert(tip.doc == "# Heading\n\n- one\n- two\n\n"
         ~ "with *em* and **strong** and snake_case_name stays.\n\n"
-        ~ "```d\nauto x = 1;\n```", tip.doc);
+        ~ "```d\nauto x = 1;\n```\n", tip.doc);
 }
 
 @("ddoc.render.dlangShims")

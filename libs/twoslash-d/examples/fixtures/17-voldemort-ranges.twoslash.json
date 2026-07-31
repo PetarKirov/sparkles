@@ -57,7 +57,7 @@
                 ],
                 [
                     "returns",
-                    "A range with each fun applied to all the elements. If there is more than one\n        fun, the element type will be `Tuple` containing one element for each fun."
+                    "A range with each fun applied to all the elements. If there is more than one\nfun, the element type will be `Tuple` containing one element for each fun."
                 ]
             ],
             "text": "sample.evenSquares.MapResult!(__lambda_L7_C25, Result) sample.evenSquares.map!(std.range.iota!(int, int).Result)(std.range.iota!(int, int).Result r) pure nothrow @nogc @safe",
@@ -76,11 +76,11 @@
                 ],
                 [
                     "returns",
-                    "An input `range` that contains the filtered elements. If ``range`` is at least a forward `range`, the return value of ``filter``\n    will also be a forward `range`."
+                    "An input `range` that contains the filtered elements. If ``range`` is at least a forward `range`, the return value of ``filter``\nwill also be a forward `range`."
                 ],
                 [
                     "see",
-                    "[Filter (higher-order function)](http://en.wikipedia.org/wiki/Filter_(higher-order_function)),\n    `filterBidirectional`"
+                    "[Filter (higher-order function)](http://en.wikipedia.org/wiki/Filter_(higher-order_function)),\n`filterBidirectional`"
                 ],
                 [
                     "param",
@@ -88,7 +88,7 @@
                 ],
                 [
                     "returns",
-                    "A `range` containing only elements `x` in ``range`` for\n        which `predicate(x)` returns `true`."
+                    "A `range` containing only elements `x` in ``range`` for\nwhich `predicate(x)` returns `true`."
                 ]
             ],
             "text": "sample.evenSquares.FilterResult!(__lambda_L7_C45, MapResult!(__lambda_L7_C25, Result)) sample.evenSquares.filter!(sample.evenSquares.MapResult!(__lambda_L7_C25, Result))(sample.evenSquares.MapResult!(__lambda_L7_C25, Result) range) pure nothrow @nogc @safe",

@@ -56,11 +56,11 @@
                 ],
                 [
                     "returns",
-                    "An input `range` that contains the filtered elements. If ``range`` is at least a forward `range`, the return value of ``filter``\n    will also be a forward `range`."
+                    "An input `range` that contains the filtered elements. If ``range`` is at least a forward `range`, the return value of ``filter``\nwill also be a forward `range`."
                 ],
                 [
                     "see",
-                    "[Filter (higher-order function)](http://en.wikipedia.org/wiki/Filter_(higher-order_function)),\n    `filterBidirectional`"
+                    "[Filter (higher-order function)](http://en.wikipedia.org/wiki/Filter_(higher-order_function)),\n`filterBidirectional`"
                 ],
                 [
                     "param",
@@ -68,7 +68,7 @@
                 ],
                 [
                     "returns",
-                    "A `range` containing only elements `x` in ``range`` for\n        which `predicate(x)` returns `true`."
+                    "A `range` containing only elements `x` in ``range`` for\nwhich `predicate(x)` returns `true`."
                 ]
             ],
             "text": "sample.scaled.FilterResult!(__lambda_L7_C34, int[]) sample.scaled.filter!(int[])(int[] range) pure nothrow @nogc @safe",
@@ -119,7 +119,7 @@
                 ],
                 [
                     "returns",
-                    "A range with each fun applied to all the elements. If there is more than one\n        fun, the element type will be `Tuple` containing one element for each fun."
+                    "A range with each fun applied to all the elements. If there is more than one\nfun, the element type will be `Tuple` containing one element for each fun."
                 ]
             ],
             "text": "sample.scaled.MapResult!(__lambda_L8_C30, FilterResult!(__lambda_L7_C34, int[])) sample.scaled.map!(sample.scaled.FilterResult!(__lambda_L7_C34, int[]))(sample.scaled.FilterResult!(__lambda_L7_C34, int[]) r) pure nothrow @nogc @safe",
@@ -135,7 +135,7 @@
         },
         {
             "character": 19,
-            "docs": "Allocates an `array` and initializes it with copies of the elements\n of range ``r``.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
+            "docs": "Allocates an `array` and initializes it with copies of the elements\nof range ``r``.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
             "length": 5,
             "line": 5,
             "start": 208,
@@ -154,7 +154,7 @@
         },
         {
             "character": 19,
-            "docs": "Allocates an `array` and initializes it with copies of the elements\n of range ``r``.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
+            "docs": "Allocates an `array` and initializes it with copies of the elements\nof range ``r``.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
             "length": 5,
             "line": 5,
             "start": 208,
