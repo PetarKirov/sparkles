@@ -15,7 +15,7 @@ importPaths "src"
 // package (and its dependents) compile the dmd.* module interfaces with the
 // same declarations the library was built with.
 dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
-    version="5ab681e9d742543272770153540d6f868c429c98"
+    version="75cc02845a556547f74d2a5381037bb7c0ac9a59"
 
 // DMD emits the reference to `Edition`'s TypeInfo initializer into dmd:lexer
 // while the definition lives in dmd:frontend, and dub lists the archives
