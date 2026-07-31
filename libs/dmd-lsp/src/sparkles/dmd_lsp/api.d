@@ -21,6 +21,7 @@ public import sparkles.dmd_lsp.options : AnalyzerConfig;
 public import sparkles.dmd_lsp.support : TypeReferenceKind;
 
 import sparkles.dmd_lsp.diag : DiagnosticSink;
+import sparkles.dmd_lsp.visitor : TipOccurrence;
 
 import dmd.dmodule : Module;
 import dmd.dsymbol : Dsymbol;
@@ -134,6 +135,10 @@ struct AnalyzedModule
     /// `errorSupplemental` chains attached as `notes` (spec `COR3`).
     Diagnostic[] diagnostics;
 
+    // The batch walk's raw result, kept for `tipSites`/`resolveTipSite`.
+    private TipOccurrence[] _occurrences;
+    private bool _walked;
+
     bool hasErrors() const @safe pure nothrow @nogc
     {
         foreach (ref d; diagnostics)
@@ -204,6 +209,56 @@ struct AnalyzedModule
                 hits ~= TipHit(cast(uint) occurrence.line, cast(uint) occurrence.col, tip);
         }
         return hits;
+    }
+
+    /**
+    Where the batch walk has something to say, with the content left
+    unresolved — `allTips` split in half so a caller can decide $(I whether) a
+    position has a tooltip long before paying to render one (spec `EXT7`).
+
+    The lazy `--serve` payload is built from this: a hover span it emits is a
+    span `resolveTipSite` can answer, so the viewer never underlines a token
+    whose popup would turn out empty. Resolving through the same walk also
+    keeps the two in agreement, which a position query cannot promise — see
+    the residual disagreements on $(REF collectTips, sparkles,dmd_lsp,visitor).
+
+    The walk runs once and is cached for `resolveTipSite`.
+    */
+    TipSite[] tipSites() @system
+    {
+        ensureOccurrences();
+
+        TipSite[] sites;
+        foreach (i, ref occurrence; _occurrences)
+            if (occurrence.tip.kind.length || occurrence.tip.code.length)
+                sites ~= TipSite(cast(uint) occurrence.line, cast(uint) occurrence.col, i);
+        return sites;
+    }
+
+    /**
+    Resolves one `tipSites` entry, rendering its DDoc — the half `tipSites`
+    deferred. `index` is `TipSite.index`; out-of-range answers `Tip.init`.
+    */
+    Tip resolveTipSite(size_t index) @system
+    {
+        import sparkles.dmd_lsp.ddoc : renderDdocText;
+
+        ensureOccurrences();
+        if (index >= _occurrences.length)
+            return Tip.init;
+        return composeTip(_occurrences[index].tip,
+            (string comment, Dsymbol sym) => renderDdocText(comment, sym));
+    }
+
+    private void ensureOccurrences() @system
+    {
+        import sparkles.dmd_lsp.visitor : collectTips;
+
+        if (!_walked)
+        {
+            _occurrences = collectTips(module_);
+            _walked = true;
+        }
     }
 
     // tipAt's rendering half, shared with allTips: `render` is the plain DDoc
@@ -375,6 +430,20 @@ struct TipHit
 
     /// What `AnalyzedModule.tipAt` answers at that position.
     Tip tip;
+}
+
+/// A position the batch walk can answer, before its content is resolved.
+/// See `AnalyzedModule.tipSites`.
+struct TipSite
+{
+    /// 1-based line.
+    uint line;
+
+    /// 1-based column of the identifier's first character.
+    uint col;
+
+    /// Hand back to `AnalyzedModule.resolveTipSite` for the content.
+    size_t index;
 }
 
 /// One identifier-classification transition. See the run-length semantics on

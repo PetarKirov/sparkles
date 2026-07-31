@@ -45,7 +45,8 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
     auto prep = prepare(filename, annotatedSource, baseConfig);
     auto analyzer = Analyzer(prep.config);
     auto analyzed = analyzer.analyze(prep.entryName, prep.entrySource, prep.extra);
-    return buildNodes(analyzed, prep, lazyHovers);
+    size_t[size_t] unused;
+    return buildNodes(analyzed, prep, lazyHovers, unused);
 }
 
 /**
@@ -67,6 +68,7 @@ struct LiveTwoslash
     private AnalyzedModule _analyzed;
     private Prepared _prep;
     private LineIndex _entryIndex;
+    private size_t[size_t] _siteOfNode;
 
     @disable this(this);
 
@@ -80,7 +82,8 @@ struct LiveTwoslash
         live._analyzed = live._analyzer.analyze(
             live._prep.entryName, live._prep.entrySource, live._prep.extra);
         live._entryIndex = LineIndex(live._prep.entrySource);
-        live.result = buildNodes(live._analyzed, live._prep, lazyHovers: true);
+        live.result = buildNodes(live._analyzed, live._prep, lazyHovers: true,
+            live._siteOfNode);
         return live;
     }
 
@@ -90,6 +93,14 @@ struct LiveTwoslash
     {
         if (_analyzer is null || index >= result.payload.nodes.length)
             return Tip.init;
+
+        // A lazy hover answers from the walk that emitted its span. Going back
+        // through a position query instead would disagree with that walk in
+        // the shapes it cannot reach (an alias's function-type parameters, for
+        // one) and answer nothing, leaving an underline with no popup.
+        if (auto site = index in _siteOfNode)
+            return _analyzed.resolveTipSite(*site);
+
         const n = result.payload.nodes[index];
         const full = _prep.notation.mapToFull(n.start);
         if (full < _prep.entryStart || full >= _prep.entryEnd)
@@ -161,7 +172,7 @@ private Prepared prepare(string filename, string annotatedSource,
 /// (`LiveTwoslash.tipForNode`). Queries, completions, errors, and tags stay
 /// eager in every mode — they are few and always visible.
 private AnalyzeResult buildNodes(ref AnalyzedModule analyzed, ref Prepared prep,
-    bool lazyHovers) @system
+    bool lazyHovers, out size_t[size_t] siteOfNode) @system
 {
     auto notation = prep.notation;
     const entryName = prep.entryName;
@@ -191,6 +202,16 @@ private AnalyzeResult buildNodes(ref AnalyzedModule analyzed, ref Prepared prep,
         foreach (ref hit; analyzed.allTips)
             batchTips[posKey(hit.line, hit.col)] = hit.tip;
 
+    // Lazy mode asks the same walk *where* it has something to say, without
+    // paying to render it. Emitting a span the oracle cannot answer is what
+    // put a twoslash underline under `CoreLogEntry` in an alias's function
+    // type with no popup behind it: the lexical scan finds the identifier,
+    // but a position query into a type's parameter list resolves nothing.
+    size_t[ulong] siteAt;
+    if (lazyHovers)
+        foreach (ref site; analyzed.tipSites)
+            siteAt[posKey(site.line, site.col)] = site.index;
+
     foreach (word; identifierOccurrences(notation.fullSource))
     {
         if (word.text !in knownIdents)
@@ -199,16 +220,25 @@ private AnalyzeResult buildNodes(ref AnalyzedModule analyzed, ref Prepared prep,
         // own modules; per-file oracles are follow-up work).
         if (word.offset < entryStart || word.offset >= entryEnd)
             continue;
+        const pos = entryIndex.lineColAt(word.offset - entryStart);
+        const line = cast(uint) pos.line + 1, col = cast(uint) pos.column + 1;
         if (lazyHovers)
         {
+            // Note the walk's site when it has one: answering from the same
+            // walk that classified the identifier keeps the span and its
+            // content in agreement, and costs a lookup instead of the
+            // full-module walk a position query repeats per request. Spans
+            // without a site stay — a position query reaches shapes the walk
+            // does not (`collectTips`' documented under-coverage), and
+            // `tipForNode` falls back to it.
+            if (auto site = posKey(line, col) in siteAt)
+                siteOfNode[nodes.length] = *site;
             nodes ~= Node(
                 type: NodeType.hover,
                 start: word.offset,
                 length: word.text.length);
             continue;
         }
-        const pos = entryIndex.lineColAt(word.offset - entryStart);
-        const line = cast(uint) pos.line + 1, col = cast(uint) pos.column + 1;
         const batched = posKey(line, col) in batchTips;
         const tip = batched ? *batched : analyzed.tipAt(line, col);
         if (!tip.found)
