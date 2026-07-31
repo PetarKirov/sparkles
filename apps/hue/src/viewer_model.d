@@ -118,6 +118,9 @@ struct ViewerModel
     int tabWidth = 4;               /// tab stops in the raw view (--tab-width)
     bool listWhitespace;            /// vim `list` (--list-whitespace)
     bool codeLineNumbers = true;    /// in-panel fence numbers ('c' toggles)
+    /// Fold placeholders keep their inline `▸ ` prefix — the TUI's one fold
+    /// affordance; the GUI leaves this false (its gutter column carries it).
+    bool inlineFoldMarker;
 
     // ── theme-resolved values ───────────────────────────────────────────────
     size_t themeIdx;
@@ -256,7 +259,7 @@ struct ViewerModel
                     foldHitBase: foldHitBase, tabWidth: tabWidth,
                     listWhitespace: listWhitespace,
                     whitespaceFg: gutterFg, hasWhitespaceFg: true,
-                    inlineFoldMarker: false)); // the GUI's fold column
+                    inlineFoldMarker: inlineFoldMarker));
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
                 themes[themeIdx].effectivePalette, pageFg, pageBg);
@@ -274,7 +277,7 @@ struct ViewerModel
             fenceRenderer: fenceRenderer(),
             foldedSpans: folds.exceptions,
             foldHitBase: foldHitBase,
-            inlineFoldMarker: false, // the GUI's fold column carries the ▸
+            inlineFoldMarker: inlineFoldMarker,
             codeLineNumbers: codeLineNumbers,
         };
         foldable = foldableSpans(preview.doc);
