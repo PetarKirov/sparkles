@@ -303,6 +303,11 @@ private struct Extractor
         }
         if (firstChild(n, "code_fence_content", body))
             b.codeBody = extent(body);
+        else
+            // An `indented_code_block` has no `code_fence_content` child — its
+            // content is the block itself. Without this it rendered as an empty
+            // box with the text dropped on the floor.
+            b.codeBody = b.span;
         return b;
     }
 

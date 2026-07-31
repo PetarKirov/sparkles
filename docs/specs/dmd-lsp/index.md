@@ -116,6 +116,8 @@ DMD dependency; Track B needs the fork pin.
 | L23       | —     | Always-on hover underlines (`Slot.hoverUnderline`)                                          | full (`12038f7e`)                                                      |
 | L24       | —     | Slim node encoding (eager 10.1 MB/767 KB gz, lazy 6.7 MB/465 KB gz)                         | full (`08eacbb1`)                                                      |
 | L25       | —     | hue live D types (`PRJ12`–`PRJ16`, hue `LIV*`)                                              | full (`d3d1d7a8`)                                                      |
+| L26       | B     | Imported-symbol ddoc (`DOC4`) + fork `+ls.3` (complete `typeInfoExp`)                       | full                                                                   |
+| L27       | —     | Tooltip markdown defects: ddoc indentation read as code, unterminated fence                 | full                                                                   |
 
 Issue #124's D3 (completions, references) and D4 (JSON-RPC LSP server) are
 follow-on milestones behind the same core.
