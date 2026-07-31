@@ -423,7 +423,11 @@ int main(string[] args)
     try
         doc = target.length
             ? pipeline.load(target, forceTwoslash)
-            : pipeline.fromSource("app.d", "app.d", import("app.d"), "d");
+            // The built-in self-view carries NO path — it is not a file. A
+            // synthetic "app.d" here made the explorer's reveal() re-root to
+            // dirname("app.d") == "." at startup (XPF3), clobbering the real
+            // tree root (on Android: the unreadable "/" → an empty tree).
+            : pipeline.fromSource("", "app.d", import("app.d"), "d");
     catch (Exception e)
     {
         stderr.writeln("hue: ", e.msg);
