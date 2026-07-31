@@ -36,6 +36,9 @@ struct CliParams
     @CliOption("verify", "Re-extract and diff against the existing payload instead of writing; exit 1 on drift (the golden-fixture guard).")
     bool verify;
 
+    @CliOption("unittest", "Analyze `unittest` bodies too (implies the `unittest` version identifier), so a viewer explains test code as well as the code under test. Off by default: the golden corpus is analyzed exactly as written.")
+    bool unittests;
+
     @CliOption("quiet", "Suppress per-file progress output.")
     bool quiet;
 
@@ -272,6 +275,9 @@ private bool buildConfig(in CliParams cli, string samplePath,
     if (cli.dub && !applyDubContext(cli, samplePath, config))
         return false;
 
+    if (cli.unittests)
+        config.dflags ~= "-unittest";
+
     // `--import` prepends to the environment default rather than replacing it.
     if (config.importPaths.length)
         config.importPaths ~= AnalyzerConfig().effectiveImportPaths;
@@ -309,13 +315,18 @@ private bool applyDubContext(in CliParams cli, string samplePath,
 
     if (!proj.found)
     {
-        stderr.writeln("error: --dub: no dub.sdl/dub.json above ", samplePath);
-        return false;
+        stderr.writeln("warning: --dub: no dub.sdl/dub.json above ", samplePath,
+            " — analyzing with the environment defaults");
+        return true;
     }
     if (!proj.usable)
     {
-        stderr.writeln("error: --dub: ", proj.error);
-        return false;
+        // Degrade, never abort (`PRJ15`): without the project's import paths
+        // the analysis is poorer, but a viewer that shows nothing at all is
+        // worse than one that shows what the environment defaults resolve.
+        stderr.writeln("warning: --dub: ", proj.error,
+            " — analyzing with the environment defaults");
+        return true;
     }
 
     config.importPaths ~= proj.analyzer.importPaths;

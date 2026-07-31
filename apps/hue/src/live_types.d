@@ -186,8 +186,13 @@ struct LiveTypesSession
         }
         // `--quiet` is load-bearing: without it `--dub` writes its project
         // summary to STDOUT, ahead of the payload, and line 1 is no longer JSON.
-        auto s = startWith([bin, filePath, "--dub", "--serve", "--quiet"],
-            reason, silenceChildStderr);
+        // `--unittest` is what makes a `unittest` block's identifiers resolve:
+        // the spans come from a lexical scan of the whole file, but DMD only
+        // analyzes those bodies when unittests are on, so without it roughly a
+        // quarter of this repo's hover spans underlined a token the oracle
+        // could not answer.
+        auto s = startWith([bin, filePath, "--dub", "--serve", "--quiet",
+            "--unittest"], reason, silenceChildStderr);
         if (s !is null)
             s._samplePath = filePath;
         return s;
