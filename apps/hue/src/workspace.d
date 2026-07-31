@@ -206,12 +206,12 @@ struct WorkspaceTui
         // hover, so the shape holds through the whole drag no matter where
         // the pointer strays; the scrollbars are vertical → ns-resize.
         e.match!((in PointerEvent p) {
-            const grabbed = split.dragging || viewer.sbDragging
-                || tree.sbDragging;
+            const grabbed = split.dragging || viewer.sb.dragging
+                || tree.sb.dragging;
             PointerShape want;
             if (split.dragging)
                 want = PointerShape.ewResize;
-            else if (viewer.sbDragging || tree.sbDragging)
+            else if (viewer.sb.dragging || tree.sb.dragging)
                 want = PointerShape.nsResize;
             else if (treeVisible && p.pos.x == tree.width)
                 want = PointerShape.ewResize;
@@ -668,14 +668,14 @@ unittest
     const sbCol = w.tree.width - 1;
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(sbCol, 2)))));
-    assert(w.tree.sbDragging);
+    assert(w.tree.sb.dragging);
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(60, 6)))));
-    assert(w.tree.sbDragging, "the tree kept the grab across the divider");
+    assert(w.tree.sb.dragging, "the tree kept the grab across the divider");
     assert(!w.viewer.selection.active, "no text selection from a tree-owned drag");
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(60, 6)))));
-    assert(!w.tree.sbDragging);
+    assert(!w.tree.sb.dragging);
 
     // Symmetrically: a selection started in the document keeps extending
     // when the drag crosses into the tree pane — and never steals focus.
@@ -751,7 +751,7 @@ unittest
     assert(w.takeCursorShape() == "\x1b]22;ns-resize\x1b\\");
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(99, 4)))));
-    assert(w.viewer.sbDragging);
+    assert(w.viewer.sb.dragging);
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(60, 6)))));
     // Mid-grab drags RE-ASSERT the held shape (never default): terminals /

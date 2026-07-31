@@ -26,6 +26,7 @@ $(LIST
 */
 module sparkles.ui.state;
 
+import sparkles.base.term_control : PointerShape;
 import sparkles.input : PointerAction, PointerEvent;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
@@ -644,6 +645,118 @@ unittest
 }
 
 // ── Selection (STM3) ─────────────────────────────────────────────────────────
+
+
+/// Which way a scrollbar runs — the track coordinate's axis. Decides the
+/// resize pointer shape and which pane extent the bar scrolls.
+enum ScrollAxis : ubyte
+{
+    vertical,   /// the usual right-edge bar (`ns-resize`)
+    horizontal, /// a bottom-edge bar for clipped-wide content (`ew-resize`)
+}
+
+/**
+The whole scrollbar as one machine (`STM9`, `IXB1`): geometry (`STM2`),
+the grab-relative interaction (a press on the handle grabs in place, on the
+track jumps; drags move relative to the grab; the grab owns the pointer
+until release), hover, and the wanted pointer shape — axis-aware, so a
+vertical and a horizontal bar run the same logic in every backend.
+
+Positions are track-relative units along the bar's axis (cells or px — the
+machine is unit-agnostic like `SplitState`). External scrolls (wheel, keys)
+keep the machine in sync by assigning `offset` through $(LREF scrolledTo).
+*/
+struct ScrollbarState
+{
+    ScrollAxis axis;
+    long offset;   /// first visible content unit (the pane reads this back)
+    bool dragging; /// a live grab owns the pointer until `released`
+    bool hovered;  /// the pointer sits on the bar (hover chrome / shape)
+    private int grab; // pointer offset within the grabbed thumb
+
+@safe pure nothrow @nogc:
+
+    /// A press at `trackPos`: on the thumb it grabs in place, on the track
+    /// it jumps the leading edge there; either way the grab begins.
+    ScrollbarState pressed(int trackPos, long content, long viewport,
+        int track) const
+    {
+        int g;
+        const next = ScrollState(offset)
+            .pressedAt(trackPos, content, viewport, track, g);
+        return ScrollbarState(axis, next.offset, true, hovered, g);
+    }
+
+    /// A drag while grabbed: the thumb follows relative to the grab point,
+    /// wherever the pointer strays. A no-op unless dragging.
+    ScrollbarState dragged(int trackPos, long content, long viewport,
+        int track) const
+    {
+        if (!dragging)
+            return this;
+        const next = ScrollState(offset)
+            .draggedTo(trackPos, content, viewport, track, grab);
+        return ScrollbarState(axis, next.offset, true, hovered, grab);
+    }
+
+    /// Released: the offset stays, the grab ends.
+    ScrollbarState released() const
+        => ScrollbarState(axis, offset, false, hovered);
+
+    /// Hover state from a hit test (the bar's own rect, backend-measured).
+    ScrollbarState hoveredNow(bool over) const
+        => ScrollbarState(axis, offset, dragging, over, grab);
+
+    /// An external scroll (wheel, keys, a reveal) moved the pane.
+    ScrollbarState scrolledTo(long offset_) const
+        => ScrollbarState(axis, offset_, dragging, hovered, grab);
+
+    /// The thumb for a `track`-unit-long bar (STM2's one formula).
+    ThumbGeometry thumb(long content, long viewport, int track,
+        int minExtent = 1) const
+        => scrollbarThumb(content, viewport, offset, track, minExtent);
+
+    /// The pointer shape this bar wants while hovered or grabbed: the
+    /// resize shape along its axis; `default_` when idle. A live grab
+    /// outranks hover — hosts re-assert it every drag (terminals may reset
+    /// the pointer when a drag starts).
+    PointerShape shape() const
+        => dragging || hovered
+            ? (axis == ScrollAxis.vertical
+                ? PointerShape.nsResize : PointerShape.ewResize)
+            : PointerShape.default_;
+}
+
+@("ui.state.scrollbarState.grabDragReleaseAndShape")
+@safe pure nothrow @nogc
+unittest
+{
+    // 40 units in a 10-unit viewport, 10-cell track: thumb [3, 5) at 12.
+    auto sb = ScrollbarState(ScrollAxis.vertical, 12);
+    assert(sb.shape == PointerShape.default_);
+
+    // A press on the handle grabs in place; the drag moves grab-relative.
+    sb = sb.pressed(4, 40, 10, 10);
+    assert(sb.dragging && sb.offset == 12);
+    assert(sb.shape == PointerShape.nsResize);
+    sb = sb.dragged(5, 40, 10, 10);
+    assert(sb.offset == 15);
+    sb = sb.released();
+    assert(!sb.dragging && sb.offset == 15);
+
+    // A track press jumps the leading edge to the pointer.
+    sb = sb.pressed(0, 40, 10, 10);
+    assert(sb.offset == 0);
+    sb = sb.released();
+
+    // Drags without a grab are no-ops; a horizontal bar wants ew-resize.
+    assert(sb.dragged(9, 40, 10, 10) == sb);
+    auto hb = ScrollbarState(ScrollAxis.horizontal).hoveredNow(true);
+    assert(hb.shape == PointerShape.ewResize);
+
+    // External scrolls keep the machine in sync.
+    assert(sb.scrolledTo(30).thumb(40, 10, 10).start == 8);
+}
 
 /**
 A selection as one Regular value (`STM3`): an `anchor` (where it started) and a
