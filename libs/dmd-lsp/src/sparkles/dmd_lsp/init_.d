@@ -82,6 +82,7 @@ common analysis-relevant switches.
 */
 void applyDflags(scope const string[] dflags) @system
 {
+    import dmd.cond : VersionCondition;
     import dmd.globals : FeatureState, global;
 
     foreach (flag; dflags)
@@ -125,7 +126,14 @@ void applyDflags(scope const string[] dflags) @system
                 global.params.useGC = false;
                 break;
             case "-unittest":
+                // The driver does both (`mars.d`): analyze unittest bodies
+                // *and* predefine the `unittest` version identifier. Setting
+                // only the parameter analyzes bodies whose
+                // `version (unittest)` imports never came in — a file that
+                // guards its test-only imports that way (the repo idiom) then
+                // reports every one of them as an undefined identifier.
                 global.params.useUnitTests = true;
+                VersionCondition.addPredefinedGlobalIdent("unittest");
                 break;
             case "-debug":
                 global.params.debugEnabled = true;

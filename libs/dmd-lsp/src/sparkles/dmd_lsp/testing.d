@@ -188,6 +188,20 @@ void checkTip(AnalyzedModule m, uint line, uint col, string expected,
     });
 }
 
+@("dmd_lsp.testing.checkErrors.unittestDflagPredefinesTheVersion")
+@system unittest
+{
+    // `-unittest` is two things in the driver: analyze `unittest` bodies and
+    // predefine the `unittest` version. Doing only the first analyzes bodies
+    // whose `version (unittest)` imports never arrived, so every test-only
+    // import reads as an undefined identifier.
+    checkErrors(q{
+        module test;
+        version (unittest) import std.range : iota;
+        unittest { auto r = iota(3); }
+    }, null, dflags: ["-unittest"]);
+}
+
 @("dmd_lsp.testing.checkErrors.dflagsReachAnalysis")
 @system unittest
 {
