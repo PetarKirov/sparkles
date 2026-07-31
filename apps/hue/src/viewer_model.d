@@ -117,6 +117,7 @@ struct ViewerModel
     bool showPreview;               /// decorated view vs raw source (Tab)
     int tabWidth = 4;               /// tab stops in the raw view (--tab-width)
     bool listWhitespace;            /// vim `list` (--list-whitespace)
+    bool codeLineNumbers = true;    /// in-panel fence numbers ('c' toggles)
 
     // ── theme-resolved values ───────────────────────────────────────────────
     size_t themeIdx;
@@ -266,6 +267,7 @@ struct ViewerModel
             foldedSpans: folds.exceptions,
             foldHitBase: foldHitBase,
             inlineFoldMarker: false, // the GUI's fold column carries the ▸
+            codeLineNumbers: codeLineNumbers,
         };
         foldable = foldableSpans(preview.doc);
         tree = viewMarkdown(preview.doc, opt);
