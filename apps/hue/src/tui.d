@@ -123,6 +123,11 @@ struct PreviewTui
     private RgbColor[quoteBarCycle] bars;
     private RgbColor sbTrack, sbThumb; // scrollbar track / thumb (theme-tinted)
 
+    /// Whether this pane holds the workspace focus (a standalone viewer is
+    /// always focused). The header title renders accented when focused,
+    /// muted otherwise — the at-a-glance focus indicator.
+    bool focused = true;
+
     // Incremental search (`/`): `searching` is input mode; `qbuf[0 .. qlen]` is
     // the query, reused by `n`/`N`.
     private bool searching;
@@ -524,7 +529,7 @@ struct PreviewTui
 
         auto b = Builder();
         const name = b.add(Widget(kind: WidgetKind.text, text: title,
-            slot: Slot.chromeAccent));
+            slot: focused ? Slot.chromeAccent : Slot.gutter));
         const mid = b.add(Widget(kind: WidgetKind.text, text: text(
             names[themeIdx], " (", themeIdx + 1, "/", names.length, ")  ·  ",
             (showPreview && model.present) ? "preview" : "raw")));

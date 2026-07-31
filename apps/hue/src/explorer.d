@@ -141,6 +141,9 @@ struct ExplorerTui
     /// drag, and the thumb all share one scroll space.
     int chromeRows = 2;
 
+    /// Whether this pane holds the workspace focus — the header title
+    /// renders accented when focused, muted otherwise (like the viewer's).
+    bool focused;
     bool searching;
     bool sbDragging; // a scrollbar grab owns the pointer until release
     int sbGrab;      // pointer offset within the grabbed thumb
@@ -472,7 +475,7 @@ struct ExplorerTui
         // viewport-sliced (guides are per-row, so slicing is safe).
         auto b = Builder();
         const name = b.add(Widget(kind: WidgetKind.text, text: root,
-            slot: Slot.chromeAccent));
+            slot: focused ? Slot.chromeAccent : Slot.gutter));
         import std.conv : text;
         const pos = b.add(Widget(kind: WidgetKind.text,
             text: text(rows.length ? sel + 1 : 0, "/", rows.length),
@@ -1198,7 +1201,20 @@ unittest
     if (root.exists)
         rmdirRecurse(root);
     mkdirRecurse(buildPath(root, "build"));
-    scope (exit) rmdirRecurse(root);
+    // The async git-status refresh may hold a transient `.git/index.lock`
+    // while teardown iterates — retry once after it settles.
+    scope (exit)
+    {
+        import core.thread : Thread;
+        import core.time : msecs;
+        import std.exception : collectException;
+
+        if (collectException(rmdirRecurse(root)) !is null)
+        {
+            Thread.sleep(200.msecs);
+            collectException(rmdirRecurse(root));
+        }
+    }
     write(buildPath(root, ".env"), "");
     write(buildPath(root, "keep.d"), "int k;\n");
     write(buildPath(root, "noise.log"), "");
