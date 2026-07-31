@@ -441,8 +441,10 @@ int runGui(
     }
 
     Scrollbar sb;
-    Scrollbar treeSb; // the tree pane's — same behavior, its own state
-    float wheelAccum = 0; // fractional wheel deltas accumulate to whole rows
+    Scrollbar treeSb;       // the tree pane's — same behavior, its own state
+    Scrollbar treeHSb;      // the tree's horizontal bar (height animates; the
+                            // drag itself lives in the shared hsb machine)
+    float wheelAccum = 0;   // fractional wheel deltas accumulate to whole rows
 
     // Fullscreen (F11): a manual borderless toggle. raylib's
     // ToggleBorderlessWindowed forces the primary monitor and, on some
@@ -1146,6 +1148,8 @@ int runGui(
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
             else if (divZone)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
+            else if (treeHSb.isHovered)
+                want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
             else if (sb.isHovered || treeSb.isHovered)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
             SetMouseCursor(want);
@@ -1390,9 +1394,18 @@ int runGui(
             // the row under the cursor and opens it.
             const overTreeSb = overTree && treeMaxTop > 0
                 && mp.x >= treeCols * cellW - scrollbarGutter();
-            // The tree's horizontal bar (IXB2): bottom row of the pane.
-            const overHBar = overTree && tree.hOverflows() && !tree.searching
-                && mp.y >= screenH - cellH;
+            // The tree's horizontal bar (IXB2): the pane's bottom edge,
+            // with the SAME hover-expand animation as the vertical bars
+            // (the drag itself runs the shared STM9 machine).
+            const float hHoverH = cast(float) scrollbarGutter();
+            const float hIdleH = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
+            const hLive = tree.hOverflows() && !tree.searching;
+            const overHBar = hLive && overTree
+                && mp.y >= screenH - (treeHSb.isHovered ? hHoverH : hIdleH) - 4;
+            treeHSb.isHovered = hLive && (overHBar || tree.hsb.dragging);
+            treeHSb.targetWidth = treeHSb.isHovered ? hHoverH : hIdleH;
+            treeHSb.currentWidth += (treeHSb.targetWidth
+                - treeHSb.currentWidth) * 15.0f * GetFrameTime();
             if (overHBar
                 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
                 tree.hsb = tree.hsb.pressed(cast(int)(mp.x / cellW),
@@ -1653,24 +1666,23 @@ int runGui(
             paint(tCanvas, tOps);
             tCanvas.popClip();
 
-            // The horizontal bar (IXB2): the pane's bottom row, the same
-            // component/machine as the TUI's (hidden while the filter line
-            // owns that row).
+            // The horizontal bar (IXB2): the pane's bottom edge — the same
+            // animated-height thumb + hover track as the vertical bars, in
+            // the pane's theme tint; the offset comes from the STM9 machine
+            // (hidden while the filter line owns the row).
             if (tree.hOverflows() && !tree.searching)
             {
-                import sparkles.ui.components.chrome : scrollbar,
-                    ScrollbarGlyphs;
-                import sparkles.ui.widget : Builder;
-
-                auto hb = Builder();
-                const hbar = scrollbar(hb, tree.hsb, tree.contentCols,
-                    treeCols - 1, treeCols - 1, ScrollbarGlyphs('━', '─'));
-                auto hbt = hb.finish(hbar);
-                auto hCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
-                    0, cast(float)(screenH - cellH));
-                paint(hCanvas, buildDisplayList(hbt, layout(hbt),
-                    themes[vm.themeIdx].effectivePalette, vm.pageFg,
-                    vm.pageBg));
+                const trackW = treeCols * cellW;
+                const hOff = cast(long) tree.contentCols - (treeCols - 1);
+                const hg = thumbGeometry(tree.contentCols, treeCols - 1,
+                    tree.hsb.offset, hOff, trackW);
+                const h = treeHSb.currentWidth;
+                const y = screenH - h;
+                if (treeHSb.isHovered || tree.hsb.dragging)
+                    DrawRectangle(0, cast(int) y, trackW, cast(int) h,
+                        rl(tree.sbTrack));
+                DrawRectangle(cast(int) hg.y, cast(int) y, cast(int) hg.h,
+                    cast(int) h, rl(tree.sbThumb));
             }
 
             // The live-filter input line, pinned to the pane's bottom row
