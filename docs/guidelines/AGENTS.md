@@ -190,7 +190,20 @@ dub test :core-cli -- -t 1          # single-threaded
 
 # Test a sub-package in another worktree without cd:
 dub --root /path/to/worktree test :core-cli
+
+# Anything linking the DMD frontend (dmd-lsp, twoslash-d, twoslash-extract):
+# optimized *with* assertions — ~2x a debug build, ~3% off release.
+dub build :twoslash-extract -b checked
 ```
+
+> [!IMPORTANT]
+> For `sparkles:dmd-lsp` and its dependents, prefer **`-b checked`** over both
+> the default `debug` and `release`. The DMD frontend is assert-heavy by
+> design: `release` compiles those checks out — which is how a fork bug that
+> crashed every `dub build` binary stayed invisible in the flake-built one for
+> a while — and plain `debug` costs about double the analysis time for no
+> extra checking. `checked` is `optimize` + `inline` + `debugInfo`, no
+> `releaseMode`.
 
 `nix develop -c <cmd>` also works but is slower and can trigger a rebuild of the
 `ci` package; reserve it for entering the shell or for reproducing CI exactly.

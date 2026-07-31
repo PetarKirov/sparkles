@@ -30,6 +30,13 @@ lflags "--undefined=_D3dmd8astenums7Edition6__initZ" platform="linux-dmd"
 // dmd.* frontend sources this package imports (and, under -allinst, template
 // instantiations pulled from them) are not dip1000-clean — see BLD4.
 
+// Optimized with assertions kept (`BLD6`) — the build to use for anything
+// linking the DMD frontend, which relies on its asserts to catch a fork that
+// has drifted. See `apps/twoslash-extract/dub.sdl` for the measurements.
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+
 configuration "library" {
     targetType "library"
 }
