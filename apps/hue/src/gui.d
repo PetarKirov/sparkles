@@ -1140,6 +1140,8 @@ int runGui(
             auto want = MouseCursor.MOUSE_CURSOR_DEFAULT;
             if (split.dragging)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
+            else if (tree.hsb.dragging)
+                want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
             else if (sb.isDragging || treeSb.isDragging)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
             else if (divZone)
@@ -1388,7 +1390,22 @@ int runGui(
             // the row under the cursor and opens it.
             const overTreeSb = overTree && treeMaxTop > 0
                 && mp.x >= treeCols * cellW - scrollbarGutter();
-            if (overTree && !overTreeSb
+            // The tree's horizontal bar (IXB2): bottom row of the pane.
+            const overHBar = overTree && tree.hOverflows() && !tree.searching
+                && mp.y >= screenH - cellH;
+            if (overHBar
+                && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                tree.hsb = tree.hsb.pressed(cast(int)(mp.x / cellW),
+                    tree.contentCols, treeCols - 1, treeCols - 1);
+            else if (tree.hsb.dragging)
+            {
+                if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+                    tree.hsb = tree.hsb.released();
+                else
+                    tree.hsb = tree.hsb.dragged(cast(int)(mp.x / cellW),
+                        tree.contentCols, treeCols - 1, treeCols - 1);
+            }
+            if (overTree && !overTreeSb && !overHBar && !tree.hsb.dragging
                 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
             {
                 treeFocused = true;
@@ -1592,6 +1609,7 @@ int runGui(
         if (treeVisible)
         {
             tree.height = visibleRows - treeTopRows - 1; // − the header row
+            tree.width = treeCols; // the shared overflow check uses it
             tree.scrollBy(0); // bounds only — never yank the view to the cursor
             DrawRectangle(0, 0, treeCols * cellW, screenH,
                 rl(mix(vm.pageBg, vm.pageFg, 0.03)));
@@ -1628,9 +1646,32 @@ int runGui(
             auto wt = tb.finish(tb.add(paneW));
             auto tOps = buildDisplayList(wt, layout(wt),
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
+            const thx = tree.hOverflows() ? cast(int) tree.hsb.offset : 0;
             auto tCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
-                0, cast(float)((treeTopRows + 1) * cellH));
+                cast(float)(-thx * cellW), cast(float)((treeTopRows + 1) * cellH));
+            tCanvas.pushClip(Rect(thx, 0, treeCols - thx, tree.bodyRows));
             paint(tCanvas, tOps);
+            tCanvas.popClip();
+
+            // The horizontal bar (IXB2): the pane's bottom row, the same
+            // component/machine as the TUI's (hidden while the filter line
+            // owns that row).
+            if (tree.hOverflows() && !tree.searching)
+            {
+                import sparkles.ui.components.chrome : scrollbar,
+                    ScrollbarGlyphs;
+                import sparkles.ui.widget : Builder;
+
+                auto hb = Builder();
+                const hbar = scrollbar(hb, tree.hsb, tree.contentCols,
+                    treeCols - 1, treeCols - 1, ScrollbarGlyphs('━', '─'));
+                auto hbt = hb.finish(hbar);
+                auto hCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+                    0, cast(float)(screenH - cellH));
+                paint(hCanvas, buildDisplayList(hbt, layout(hbt),
+                    themes[vm.themeIdx].effectivePalette, vm.pageFg,
+                    vm.pageBg));
+            }
 
             // The live-filter input line, pinned to the pane's bottom row
             // (the GUI pane has no status bar; the TUI shows it there).
