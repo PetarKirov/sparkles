@@ -48,6 +48,7 @@ the _decision_.
 | [Input](./input.md)                               | the abstract event vocabulary, the tier-0/1/2 capability ladder, and the backend adapter contracts                                                                                           |
 | [State machines](./state-machines.md)             | presentation-free behavior: scrollbar, selection, hover, focus, disclosure, timeline                                                                                                         |
 | [Backends](./backends.md)                         | the `isCanvas` seam, the shipped targets, per-backend declared capabilities, and forward-compatibility rules for additional GPU backends                                                     |
+| [Interaction review](./interaction-review.md)     | the 2026-07-31 audit of every pointer/keyboard behavior: where it lives (toolkit vs `apps/hue`), the GUI/TUI divergences, and the Phase B redesign scope (`IXR`/`IXB`)                       |
 | [Migration](./migration.md)                       | absorbing `core-cli`'s UI components and porting `apps/hue` onto the toolkit — the milestone plan                                                                                            |
 
 ## The three levels
