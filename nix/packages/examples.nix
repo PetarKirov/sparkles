@@ -14,19 +14,30 @@
           "dub.selections.json"
         ];
 
-      # Enumerate every standalone `.d` example across all libs as a flat
-      # list of absolute paths (matching `libs/*/examples/**.d`). The
-      # `fs.maybeMissing` lifts each potential `examples/` dir into a
-      # fileset that's empty when the dir is absent (so libs without
-      # examples just contribute nothing), and the final intersection
-      # with `*.d` files under `libs` filters out non-`.d` siblings such
-      # as the shared `views/**/*.txt` string-import assets.
+      # Enumerate every standalone `.d` example across all libs as a flat list
+      # of absolute paths — `libs/*/examples/*.d`, the $(I direct) children
+      # only. A nested tree under `examples/` is input data, not a program to
+      # build: `libs/twoslash-d/examples/src/*.d` are analyzer samples the
+      # extractor reads (with their `fixtures/` payloads beside them), and
+      # globbing recursively had `.#all` trying to `dub --single` all 36 of
+      # them — each failing, since they are not single-file dub scripts.
+      exampleFilesIn =
+        libName:
+        let
+          dir = fromRoot "libs/${libName}/examples";
+        in
+        if !builtins.pathExists dir then
+          [ ]
+        else
+          lib.pipe (builtins.readDir dir) [
+            (lib.filterAttrs (file: type: type == "regular" && lib.hasSuffix ".d" file))
+            (lib.mapAttrsToList (file: _: dir + "/${file}"))
+          ];
+
       allExampleFiles = lib.pipe (builtins.readDir (fromRoot "libs")) [
         (lib.filterAttrs (_: type: type == "directory"))
-        (lib.mapAttrsToList (name: _: fs.maybeMissing (fromRoot "libs/${name}/examples")))
-        fs.unions
-        (fs.intersection (fs.fileFilter (file: file.hasExt "d") (fromRoot "libs")))
-        fs.toList
+        (lib.mapAttrsToList (name: _: exampleFilesIn name))
+        lib.concatLists
       ];
 
       # Every lib's `src/` tree, as one fileset. An example may `dependency` on
