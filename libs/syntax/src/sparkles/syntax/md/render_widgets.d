@@ -88,6 +88,10 @@ struct MdViewOptions
     /// and the placeholder shows unobstructed content.
     bool inlineFoldMarker = true;
 
+    /// In-panel fence line numbers (`COD`): each code-fence body line gets
+    /// a muted 1-based number gutter inside the panel.
+    bool codeLineNumbers;
+
     /// Non-zero stamps every table cell wrapper with
     /// `key = tableKeyBase + cell.span.start` — source-anchored identity an
     /// interactive backend resolves back to the document's cell structure
@@ -200,6 +204,7 @@ private uint blocksColumn(ref Builder b, in MdBlock[] blocks,
             // document — and the placeholder then carried the LAST consumed
             // block's start as its unfold key, so the fold could never be
             // reopened.
+            const foldIdx = i;
             const foldStart = blocks[i].span.start;
             const foldLevel = blocks[i].level;
             size_t srcEnd = blocks[i].span.end;
@@ -211,7 +216,8 @@ private uint blocksColumn(ref Builder b, in MdBlock[] blocks,
                     ++i;
                     srcEnd = blocks[i].span.end;
                 }
-            rows ~= foldPlaceholder(b, foldStart, srcEnd, src, opt);
+            rows ~= collapsedFace(b, blocks[foldIdx], foldStart, srcEnd, src,
+                opt, listDepth, quoteDepth);
             continue;
         }
         rows ~= viewBlock(b, blocks[i], src, opt, listDepth, quoteDepth);
@@ -297,6 +303,99 @@ Span[] foldableSpans(const MdDoc doc) @safe
 
     walk(doc.root.children);
     return spans;
+}
+
+// The collapsed face of a folded region (`FLD3`): the block keeps its
+// styled look — a heading its icon/accent/band, a themed fence its header
+// band — with the `⋯ N lines` chip appended; the face is the unfold click
+// target and its last identity span stretches over the whole region, so
+// selection-copy of a fold yields the folded source. Blocks without a
+// styled one-row face keep the raw-first-line placeholder.
+private uint collapsedFace(ref Builder b, ref const MdBlock blk,
+    size_t start, size_t end, const(char)[] src, MdViewOptions opt,
+    int listDepth, int quoteDepth)
+{
+    const clampedEnd = end > src.length ? src.length : end;
+    const foldHit = opt.foldHitBase != 0 ? opt.foldHitBase + start : opt.hitId;
+
+    uint styledFace(Widget w)
+    {
+        import sparkles.ui.wrap : TextWrap;
+
+        w.hitId = foldHit;
+        // A face never wraps: the wrap engine re-derives sliced fragments'
+        // srcEnd, which would clip the region identity back to the text.
+        w.wrap = TextWrap.none;
+        w.spans ~= TextSpan("  " ~ foldChip(src, start, clampedEnd),
+            Slot.gutter, opt.baseStyle, noBreak: true);
+        foreach_reverse (ref sp; w.spans)
+            if (sp.srcStart != size_t.max)
+            {
+                sp.srcEnd = clampedEnd; // block-granular region identity
+                break;
+            }
+        return b.add(w);
+    }
+
+    if (blk.kind == MdBlockKind.heading && opt.theme.present)
+    {
+        // Render the heading through its normal case, then re-shape the
+        // produced rich node into the face (chip + hit id + identity).
+        const id = viewBlock(b, blk, src, opt, listDepth, quoteDepth);
+        Widget w = b.nodes[id];
+        b.nodes = b.nodes[0 .. id]; // reclaim; styledFace re-adds
+        return styledFace(w);
+    }
+    if (blk.kind == MdBlockKind.codeFence && opt.theme.present)
+        return styledFace(themedFenceHeader(blk, opt));
+
+    return foldPlaceholder(b, start, end, src, opt);
+}
+
+// The `⋯ N lines` chip text for a folded region.
+private string foldChip(const(char)[] src, size_t start, size_t end) @safe
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeInteger;
+
+    size_t lines = 1;
+    foreach (char ch; src[start .. end])
+        if (ch == '\n')
+            ++lines;
+    SmallBuffer!(char, 32) n;
+    writeInteger(n, lines);
+    return "\u22EF " ~ n[].idup ~ " lines";
+}
+
+// The themed fence header band: devicon + language label (+ copy glyph
+// when a fence hit base is set), carrying the fence's opening line as
+// identity — shared by the open panel and the collapsed face.
+private Widget themedFenceHeader(ref const MdBlock blk, MdViewOptions opt)
+{
+    const icon = langIcon(blk.infoLang);
+    const(char)[] lbl = (icon.length ? icon ~ " " : "")
+        ~ (blk.infoLang.length ? blk.infoLang : "code");
+    if (blk.label.length)
+        lbl = lbl ~ " " ~ blk.label;
+    // With a fence hit base the whole band is a copy target, its identity
+    // anchored at the body's source position; the glyph is the affordance,
+    // the copied state comes from the app.
+    size_t headerHit = opt.hitId;
+    if (opt.fenceHitBase != 0)
+    {
+        headerHit = opt.fenceHitBase + blk.codeBody.start;
+        lbl = lbl ~ "  " ~ (opt.copiedFence == blk.codeBody.start
+            ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon);
+    }
+    return Widget(kind: WidgetKind.rich, spans: [
+            TextSpan(lbl, Slot.code, codeStyle(opt),
+                srcStart: blk.span.start,
+                srcEnd: blk.codeBody.start)],
+        slot: Slot.code, hitId: headerHit, stretch: true,
+        paintBackground: true, padding: Insets.symmetric(0, 1),
+        textStyle: codeStyle(opt),
+        bgOverride: opt.theme.codeHeaderBg, hasBgOverride: true,
+        fgOverride: opt.theme.codeFg, hasFgOverride: true);
 }
 
 private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
@@ -435,9 +534,35 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             TextSpan[][] styled;
             if (opt.fenceRenderer !is null)
                 styled = opt.fenceRenderer(blk.infoLang, code);
+
+            // The in-panel number gutter (COD): 1-based, right-aligned over
+            // the body's digit width, muted, synthetic (no identity).
+            size_t bodyLines = 1;
+            foreach (char c; code)
+                if (c == '\n')
+                    ++bodyLines;
+            int numW;
+            for (auto n = bodyLines; n; n /= 10)
+                ++numW;
+            TextSpan numberSpan(size_t lineNo) @safe
+            {
+                import sparkles.base.smallbuffer : SmallBuffer;
+                import sparkles.base.text.writers : writeInteger;
+
+                SmallBuffer!(char, 24) t;
+                writeInteger(t, lineNo);
+                char[] cell;
+                foreach (_; t[].length .. numW)
+                    cell ~= ' ';
+                cell ~= t[];
+                cell ~= ' ';
+                return TextSpan(cell.idup, Slot.gutter, codeStyle(opt),
+                    noBreak: true);
+            }
+
             if (styled.length)
             {
-                foreach (line; styled)
+                foreach (li, line; styled)
                 {
                     // Renderer offsets are body-relative; anchor them to the
                     // fence body's source position (the identity channel).
@@ -447,9 +572,11 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                             s.srcStart += blk.codeBody.start;
                             s.srcEnd += blk.codeBody.start;
                         }
-                    rows ~= b.add(Widget(kind: WidgetKind.rich,
-                        spans: line.length ? line
-                            : [TextSpan(" ", Slot.code, codeStyle(opt))],
+                    auto spans = line.length ? line
+                        : [TextSpan(" ", Slot.code, codeStyle(opt))];
+                    if (opt.codeLineNumbers)
+                        spans = numberSpan(li + 1) ~ spans;
+                    rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
                         slot: Slot.code, hitId: opt.hitId,
                         textStyle: codeStyle(opt)));
                 }
@@ -457,12 +584,16 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             else
             {
                 size_t start = 0;
+                size_t lineNo = 0;
                 void line(const(char)[] t, size_t at) @safe
                 {
-                    rows ~= b.add(Widget(kind: WidgetKind.rich, spans: [
+                    auto spans = [
                         TextSpan(t.length ? t : " ", Slot.code, codeStyle(opt),
                             srcStart: blk.codeBody.start + at,
-                            srcEnd: blk.codeBody.start + at + t.length)],
+                            srcEnd: blk.codeBody.start + at + t.length)];
+                    if (opt.codeLineNumbers)
+                        spans = numberSpan(++lineNo) ~ spans;
+                    rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
                         slot: Slot.code, hitId: opt.hitId,
                         textStyle: codeStyle(opt)));
                 }
@@ -491,33 +622,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             // Themed: a language-label header band over the tinted panel.
             panel.bgOverride = opt.theme.codePanelBg;
             panel.hasBgOverride = true;
-            const icon = langIcon(blk.infoLang);
-            const(char)[] lbl = (icon.length ? icon ~ " " : "")
-                ~ (blk.infoLang.length ? blk.infoLang : "code");
-            if (blk.label.length)
-                lbl = lbl ~ " " ~ blk.label;
-            // With a fence hit base the whole band is a copy target, its
-            // identity anchored at the body's source position; the glyph is
-            // the affordance, the copied state comes from the app.
-            size_t headerHit = opt.hitId;
-            if (opt.fenceHitBase != 0)
-            {
-                headerHit = opt.fenceHitBase + blk.codeBody.start;
-                lbl = lbl ~ "  " ~ (opt.copiedFence == blk.codeBody.start
-                    ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon);
-            }
-            // The header row carries the fence's opening line as identity
-            // (gutter fold markers + block-granular selection anchor here).
-            Widget header = Widget(kind: WidgetKind.rich, spans: [
-                    TextSpan(lbl, Slot.code, codeStyle(opt),
-                        srcStart: blk.span.start,
-                        srcEnd: blk.codeBody.start)],
-                slot: Slot.code, hitId: headerHit, stretch: true,
-                paintBackground: true, padding: Insets.symmetric(0, 1),
-                textStyle: codeStyle(opt),
-                bgOverride: opt.theme.codeHeaderBg, hasBgOverride: true,
-                fgOverride: opt.theme.codeFg, hasFgOverride: true);
-            const hdr = b.add(header);
+            const hdr = b.add(themedFenceHeader(blk, opt));
             const pnl = b.add(panel);
             return b.container(WidgetKind.column, [hdr, pnl]);
         }

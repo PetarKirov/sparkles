@@ -273,6 +273,7 @@ int runGui(
     vm.themeIdx = startIdx;
     vm.tabWidth = tabWidth < 1 ? 1 : tabWidth;
     vm.listWhitespace = listWhitespace;
+    vm.codeLineNumbers = codeLineNumbers;
 
     // Resize debounce: during a drag the column count changes almost every frame,
     // so re-wrap only once the width has held steady for a few frames — the drag
@@ -884,6 +885,7 @@ int runGui(
                 && pressed(KeyboardKey.KEY_C))
             {
                 codeLineNumbers = !codeLineNumbers;
+                vm.codeLineNumbers = codeLineNumbers;
                 vm.widthCols = -1;
                 relayout();
             }

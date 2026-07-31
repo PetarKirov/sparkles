@@ -106,6 +106,7 @@ struct PreviewTui
 
     int tabWidth = 4;               // tab stops in the raw view
     bool listWhitespace;            // vim `list` whitespace glyphs
+    bool codeLineNumbers = true;    // in-panel fence numbers
 
     private size_t themeIdx;
     private long top;               // first visible visual line
@@ -286,6 +287,7 @@ struct PreviewTui
             copiedFence: copiedFenceSrc,
             foldedSpans: folds.exceptions,
             foldHitBase: foldHitBase,
+            codeLineNumbers: codeLineNumbers,
         };
         foldable = foldableSpans(model.doc);
         if (cache !is null)
