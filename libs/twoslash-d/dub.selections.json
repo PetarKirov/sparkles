@@ -7,7 +7,7 @@
 		"silly": "1.1.1",
 		"dmd": {
 			"repository": "git+https://github.com/PetarKirov/dmd.git",
-			"version": "5ab681e9d742543272770153540d6f868c429c98"
+			"version": "75cc02845a556547f74d2a5381037bb7c0ac9a59"
 		}
 	}
 }
