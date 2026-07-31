@@ -36,6 +36,7 @@ import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : DisclosureState, DocRow, documentRows, HoverTarget,
+    ScrollbarState,
     hoverTargets, scrollbarThumb, ScrollState, Selection, selectionRects,
     sourceOffsetAt;
 import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot,
@@ -111,9 +112,9 @@ struct PreviewTui
 
     private size_t themeIdx;
     private long top;               // first visible visual line
-    bool sbDragging;                // a scrollbar grab owns the pointer
-                                    // (the workspace's pointer-shape check)
-    private int sbGrab;             // pointer offset within the grabbed thumb
+    /// The scrollbar as one machine (STM9): grab/hover/shape — the
+    /// workspace reads `sb.dragging`/`sb.shape` for capture and pointers.
+    ScrollbarState sb;
     private bool showPreview;       // preview vs raw source (Tab)
     private int width, height;      // pane size in cells
     /// Grid column of the pane's left edge — 0 when full-screen; the split
@@ -784,7 +785,7 @@ struct PreviewTui
         if (e.button == PointerButton.left
             && e.action == PointerAction.release)
         {
-            sbDragging = false;
+            sb = sb.released();
             return true;
         }
         // A scrollbar grab OWNS the pointer: the press must land on the
@@ -795,18 +796,17 @@ struct PreviewTui
         if (e.button == PointerButton.left
             && ((e.action == PointerAction.press && e.pos.x == width - 1
                     && e.pos.y >= 1 && e.pos.y <= rows)
-                || (e.action == PointerAction.drag && sbDragging)))
+                || (e.action == PointerAction.drag && sb.dragging)))
         {
-            // The STM2 inverse mapping, grab-relative: a press on the
-            // handle grabs it in place (never jumps), a press on the track
-            // jumps the leading edge to the pointer, and drags move the
-            // thumb relative to the grab point.
-            top = e.action == PointerAction.press && !sbDragging
-                ? ScrollState(top).pressedAt(e.pos.y - 1,
-                    cast(size_t) lineCount, rows, rows, sbGrab).offset
-                : ScrollState(top).draggedTo(e.pos.y - 1,
-                    cast(size_t) lineCount, rows, rows, sbGrab).offset;
-            sbDragging = true;
+            // The one scrollbar machine (STM9): a press on the handle grabs
+            // in place, on the track it jumps; drags move grab-relative and
+            // own the pointer until release.
+            sb = e.action == PointerAction.press && !sb.dragging
+                ? sb.scrolledTo(top).pressed(e.pos.y - 1,
+                    cast(size_t) lineCount, rows, rows)
+                : sb.scrolledTo(top).dragged(e.pos.y - 1,
+                    cast(size_t) lineCount, rows, rows);
+            top = sb.offset;
             clampTop();
             return true;
         }
@@ -974,7 +974,7 @@ unittest
     // A press on the scrollbar column grabs the thumb...
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(59, 3)))));
-    assert(t.sbDragging);
+    assert(t.sb.dragging);
     const grabbed = t.top;
     assert(!t.sel.active, "a scrollbar press never starts a selection");
 
@@ -985,7 +985,7 @@ unittest
     assert(!t.sel.active, "a scrollbar drag never selects text");
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(10, 4)))));
-    assert(!t.sbDragging);
+    assert(!t.sb.dragging);
 
     // Symmetrically: a selection drag crossing the scrollbar column keeps
     // selecting and never jumps the scroll.

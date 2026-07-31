@@ -14,7 +14,7 @@ module sparkles.ui.components.chrome;
 import std.conv : text;
 
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
-import sparkles.ui.state : ScrollState, scrollbarThumb;
+import sparkles.ui.state : ScrollAxis, ScrollbarState, ScrollState, scrollbarThumb;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind;
 
@@ -68,6 +68,27 @@ uint scrollbar(ref Builder b, long content, long viewport, long offset,
         ));
     }
     return b.container(WidgetKind.column, cells);
+}
+
+/// ditto — driven by the whole machine (`STM9`/`IXB1`): the state carries
+/// the offset and the axis picks the container (a column for a vertical
+/// bar, a row for a horizontal one; pass row glyphs like `━`/`─` for it).
+uint scrollbar(ref Builder b, in ScrollbarState sb, long content,
+    long viewport, int track, in ScrollbarGlyphs glyphs = ScrollbarGlyphs.init)
+{
+    const thumb = sb.thumb(content, viewport, track);
+    auto cells = new uint[](track > 0 ? track : 0);
+    foreach (i; 0 .. cells.length)
+    {
+        const inThumb = i >= thumb.start && i < thumb.start + thumb.extent;
+        cells[i] = b.add(Widget(
+            kind: WidgetKind.glyph,
+            glyph: inThumb ? glyphs.thumb : glyphs.track,
+            slot: inThumb ? Slot.thumb : Slot.track,
+        ));
+    }
+    return b.container(sb.axis == ScrollAxis.vertical
+        ? WidgetKind.column : WidgetKind.row, cells);
 }
 
 /**
