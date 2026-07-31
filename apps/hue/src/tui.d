@@ -16,12 +16,9 @@ import sparkles.base.term_color : mix;
 import sparkles.base.text.writers : writeInteger;
 
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
-    resolveTheme, RgbColor, Theme, toRgb;
+    RgbColor, Theme, toRgb;
 
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
-import sparkles.syntax.md.render_widgets : foldableSpans, MdViewOptions,
-    MdViewTheme, viewMarkdown;
-import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : NodeType, TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslashDocument;
@@ -35,18 +32,16 @@ import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.state : DisclosureState, DocRow, documentRows, HoverTarget,
-    ScrollbarState,
-    hoverTargets, scrollbarThumb, ScrollState, Selection, selectionRects,
-    sourceOffsetAt;
+import sparkles.ui.state : DisclosureState, DocRow, HoverTarget,
+    ScrollbarState, scrollbarThumb, Selection, selectionRects, sourceOffsetAt;
 import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot,
     TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_tui : paintGrid;
 
 import ansi_model : Attr, BackgroundMode;
-import document : hueFenceRenderer;
-import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
+import viewer_model : ViewerModel;
+import gui_preview : PreviewModel;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor fallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
@@ -92,39 +87,24 @@ private bool containsIC(scope const(char)[] hay, scope const(char)[] needle) @sa
 /// paints its precomputed ops into a cell grid with a scroll offset.
 struct PreviewTui
 {
-    string title;
-    const(char)[] source;
-    const(HighlightEvent)[] events;
-    string lang;                    // canonical language (CST fold provider)
-    PreviewModel model;             // present ⇒ a markdown file (preview available)
-    TwoslashReturn tw;              // non-empty code ⇒ a twoslash document
-    TsConfigCache* cache;           // fence highlighting for the widget markdown
-                                    // path (null ⇒ plain fence bodies)
-    LabelSet labels;
-    const(string)[] names;          // theme names, parallel to `themes`
-    immutable(Theme)[] themes;
+    /// The one document-pane Whole (`IXB5`): document, theme-resolved
+    /// colors, the widget pipeline, folds, scroll and search live in the
+    /// SAME model the GUI drives — this pane keeps only what is genuinely
+    /// terminal-shaped (grid painting, key decode, OSC 52, the scrollbar
+    /// machines, the search input buffer).
+    ViewerModel vm;
+
     BackgroundMode background;      // (kept for the caller; the viewer paints full-bg)
     ColorDepth depth;               // (unused: the cell renderer emits truecolor)
 
-    int tabWidth = 4;               // tab stops in the raw view
-    bool listWhitespace;            // vim `list` whitespace glyphs
-    bool codeLineNumbers = true;    // in-panel fence numbers
-
-    private size_t themeIdx;
-    private long top;               // first visible visual line
     /// The scrollbar as one machine (STM9): grab/hover/shape — the
     /// workspace reads `sb.dragging`/`sb.shape` for capture and pointers.
     ScrollbarState sb;
-    private bool showPreview;       // preview vs raw source (Tab)
     private int width, height;      // pane size in cells
     /// Grid column of the pane's left edge — 0 when full-screen; the split
     /// workspace places the viewer right of the explorer. Pointer events are
     /// translated to pane-local coordinates by the caller.
     int originX;
-    private ResolvedTheme theme;
-    private RgbColor pageFg, pageBg, gutterFg;
-    private RgbColor[quoteBarCycle] bars;
-    private RgbColor sbTrack, sbThumb; // scrollbar track / thumb (theme-tinted)
 
     /// Whether this pane holds the workspace focus (a standalone viewer is
     /// always focused). The header title renders accented when focused,
@@ -132,55 +112,61 @@ struct PreviewTui
     bool focused = true;
 
     // Incremental search (`/`): `searching` is input mode; `qbuf[0 .. qlen]` is
-    // the query, reused by `n`/`N`.
+    // the query, reused by `n`/`N` (one line editor pending — IXB6).
     private bool searching;
     private char[256] qbuf;
     private size_t qlen;
 
     // Selection (mouse drag) → OSC 52 copy: the shared STM3 machine over
-    // visual line indices ("no selection" is a mode, not -1); `selBg` tints
-    // the selected lines. `clip` holds a pending OSC 52 sequence that the
-    // loop flushes after a copy.
+    // visual line indices; `selBg` tints the selected lines. `clip` holds a
+    // pending OSC 52 sequence that the loop flushes after a copy.
     private Selection!long sel;
     private RgbColor selBg;
     private SmallBuffer!char clip;
     private bool clipReady;
 
-    // The widget markdown path (M10): the preview is one laid-out widget tree,
-    // painted from precomputed ops with a scroll offset. `mdRows` (the identity
-    // channel aggregated per visual row) drives search and selection; the hit
-    // targets carry the fences' source-anchored copy identity.
-    private WidgetTree mdTree;
-    private Frame[] mdFrames;
-    private DrawOp[] mdOps;
-    private DocRow[] mdRows;
-    private HoverTarget[] mdTargets;
-    private Span[] mdFences;        // codeFence body spans, resolved on copy
-
-    // Copy feedback: the just-copied fence's body start (its header shows the
-    // ✔ glyph) until the next event — the loop is event-driven, no timed flash.
-    private size_t copiedFenceSrc = size_t.max;
-
-    // Fence hit ids live above this base: `hitId - fenceHitBase` is the fence
-    // body's source byte offset (source-anchored identity, no counters).
-    private enum size_t fenceHitBase = size_t.max / 2 + 1;
-
-    // Fold placeholders live above this (disjoint) base; `hitId - foldHitBase`
-    // is the folded region's span start — the fold key (`FLD2`/`STM5`).
-    private enum size_t foldHitBase = size_t.max / 4 * 3 + 1;
-
-    // Content folding (`FLD`): the one disclosure machine, keyed by source
-    // span start (default open; the exceptions are the folded regions), plus
-    // the document's foldable spans (the `FSR3` provider) and the pending
-    // 'z' of the vim fold sequences (za/zz, zc, zo, zR, zM).
-    private DisclosureState!size_t folds = DisclosureState!size_t(true);
-    private Span[] foldable;
+    // The pending 'z' of the vim fold sequences (za/zz, zc, zo, zR, zM).
     private char zPending;
 
     // Twoslash hover popups in the pane: the hover-typed node indices (for
     // `p` cycling) and the selected one (-1 = none; click toggles).
     private size_t[] hoverNodes;
     private int hoverSel = -1;
+
+    // ── the model's vocabulary, forwarded (IXB5) ─────────────────────────────
+    // The old field names keep working for the methods below and every host
+    // and test; the storage is the model's — one copy, no disagreement.
+    ref inout(string) title() inout return @safe pure nothrow @nogc => vm.title;
+    ref inout(const(char)[]) source() inout return @safe pure nothrow @nogc => vm.source;
+    ref inout(const(HighlightEvent)[]) events() inout return @safe pure nothrow @nogc => vm.events;
+    ref inout(string) lang() inout return @safe pure nothrow @nogc => vm.lang;
+    ref inout(PreviewModel) model() inout return @safe pure nothrow @nogc => vm.preview;
+    ref inout(TwoslashReturn) tw() inout return @safe pure nothrow @nogc => vm.tw;
+    ref inout(TsConfigCache*) cache() inout return @safe pure nothrow @nogc => vm.cache;
+    ref inout(LabelSet) labels() inout return @safe pure nothrow @nogc => vm.labels;
+    ref inout(const(string)[]) names() inout return @safe pure nothrow @nogc => vm.names;
+    ref inout(immutable(Theme)[]) themes() inout return @safe pure nothrow @nogc => vm.themes;
+    ref inout(int) tabWidth() inout return @safe pure nothrow @nogc => vm.tabWidth;
+    ref inout(bool) listWhitespace() inout return @safe pure nothrow @nogc => vm.listWhitespace;
+    ref inout(bool) codeLineNumbers() inout return @safe pure nothrow @nogc => vm.codeLineNumbers;
+
+    private ref inout(size_t) themeIdx() inout return @safe pure nothrow @nogc => vm.themeIdx;
+    private ref inout(long) top() inout return @safe pure nothrow @nogc => vm.top;
+    private ref inout(bool) showPreview() inout return @safe pure nothrow @nogc => vm.showPreview;
+    private ref inout(ResolvedTheme) theme() inout return @safe pure nothrow @nogc => vm.current;
+    private RgbColor pageFg() const @safe pure nothrow @nogc => vm.pageFg;
+    private RgbColor pageBg() const @safe pure nothrow @nogc => vm.pageBg;
+    private RgbColor gutterFg() const @safe pure nothrow @nogc => vm.gutterFg;
+    private RgbColor sbTrack() const @safe pure nothrow @nogc => vm.sbTrack;
+    private RgbColor sbThumb() const @safe pure nothrow @nogc => vm.sbThumb;
+    private ref const(WidgetTree) mdTree() const return @safe pure nothrow @nogc => vm.tree;
+    private const(Frame)[] mdFrames() const @safe pure nothrow @nogc => vm.frames;
+    private const(DrawOp)[] mdOps() const @safe pure nothrow @nogc => vm.ops;
+    private const(DocRow)[] mdRows() const @safe pure nothrow @nogc => vm.rows;
+    private const(HoverTarget)[] mdTargets() const @safe pure nothrow @nogc => vm.targets;
+    private alias FoldOp = ViewerModel.FoldOp;
+    private enum size_t fenceHitBase = ViewerModel.fenceHitBase;
+    private enum size_t foldHitBase = ViewerModel.foldHitBase;
 
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
 
@@ -230,104 +216,29 @@ struct PreviewTui
         => cast(long) mdRows.length;
 
     /// Rebuild the laid-out lines for the current theme / width / view mode (GC;
-    /// run on a theme, resize, or toggle change — never per frame).
+    /// run on a theme, resize, or toggle change — never per frame). One column
+    /// narrower than the pane — the last column holds the scrollbar.
     void relayout() @system
     {
-        theme = resolveTheme(themes[themeIdx], labels);
-        pageFg = toRgb(theme.defaults.fg, fallbackFg);
-        pageBg = toRgb(theme.defaults.bg, fallbackBg);
-        gutterFg = mix(pageFg, pageBg, 0.5); // muted leader / decorations
-        bars = quoteBarColors(theme, pageFg, pageBg);
-        // Scrollbar chrome + selection: tint toward the theme link color (gui.d).
+        vm.inlineFoldMarker = true; // the placeholder ▸ is the TUI affordance
+        vm.widthCols = width < 9 ? 8 : width - 1;
+        vm.applyTheme(themeIdx);
+        // Selection tint: toward the theme link color, like the scrollbars.
         const linkC = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
-        sbTrack = mix(pageBg, linkC, 0.22);
-        sbThumb = mix(pageBg, linkC, 0.5);
         selBg = mix(pageBg, linkC, 0.4);
-        rebuildMd();
+        refreshHover();
         clampTop();
     }
 
-    // Rebuild the active view's widget pipeline: view → layout → display
-    // list, plus the derived row index (search/selection) and hit targets
-    // (fence copy). Lays out one column narrower — the last column holds the
-    // scrollbar.
-    private void rebuildMd() @system
+    // The twoslash hover-typed node indices (for `p` cycling) follow the
+    // document; the model owns everything else the rebuild derives.
+    private void refreshHover() @safe pure nothrow
     {
-        const w = width < 9 ? 8 : width - 1;
-        if (!showPreview || (!model.present && !tw.code.length))
-        {
-            // The raw view: the highlighted source as the same widget
-            // pipeline (one painter for every view kind). Fold ranges come
-            // from the CST provider (FSR1/FSR2) when a grammar is known.
-            import sparkles.syntax.ts.folds : foldableSpansCst;
-            import sparkles.ui.wrap : TextWrap;
-
-            foldable = cache !is null && lang.length
-                ? foldableSpansCst(*cache, lang, source) : null;
-            Span[] closed;
-            foreach (sp; foldable)
-                if (!folds.isOpen(sp.start))
-                    closed ~= sp;
-            mdTree = viewCodeDocument(source, events, &theme, pageFg,
-                CodeViewOptions(foldedRegions: closed,
-                    foldHitBase: foldHitBase, tabWidth: tabWidth,
-                    listWhitespace: listWhitespace,
-                    whitespaceFg: gutterFg, hasWhitespaceFg: true));
-            mdFrames = layout(mdTree, Constraints(maxW: w));
-            mdOps = buildDisplayList(mdTree, mdFrames,
-                themes[themeIdx].effectivePalette, pageFg, pageBg);
-            mdRows = documentRows(mdTree, mdFrames);
-            mdTargets = hoverTargets(mdTree, mdFrames);
-            mdFences.length = 0;
-            hoverNodes.length = 0;
-            return;
-        }
-        if (tw.code.length)
-        {
-            // A twoslash document: the whole-document widget view (code as
-            // resolved spans + fused decorations + interleaved blocks).
-            mdTree = viewTwoslashDocument(tw, events, &theme, pageFg, cache);
-            mdFrames = layout(mdTree, Constraints(maxW: w));
-            mdOps = buildDisplayList(mdTree, mdFrames,
-                defaultTwoslashPalette(schemeForBackground(pageBg)),
-                pageFg, pageBg);
-            mdRows = documentRows(mdTree, mdFrames);
-            mdTargets = hoverTargets(mdTree, mdFrames);
-            mdFences.length = 0;
-            foldable = null;
-            hoverNodes.length = 0;
+        hoverNodes.length = 0;
+        if (tw.code.length && showPreview)
             foreach (ni, ref const n; tw.nodes)
                 if (n.type == NodeType.hover)
                     hoverNodes ~= ni;
-            return;
-        }
-        MdViewOptions opt = {
-            theme: MdViewTheme.derive(theme, pageFg, pageBg),
-            fenceHitBase: fenceHitBase,
-            copiedFence: copiedFenceSrc,
-            foldedSpans: folds.exceptions,
-            foldHitBase: foldHitBase,
-            codeLineNumbers: codeLineNumbers,
-        };
-        foldable = foldableSpans(model.doc);
-        if (cache !is null)
-            opt.fenceRenderer = hueFenceRenderer(cache, &theme, pageFg);
-        mdTree = viewMarkdown(model.doc, opt);
-        mdFrames = layout(mdTree, Constraints(maxW: w));
-        mdOps = buildDisplayList(mdTree, mdFrames,
-            themes[themeIdx].effectivePalette, pageFg, pageBg);
-        mdRows = documentRows(mdTree, mdFrames);
-        mdTargets = hoverTargets(mdTree, mdFrames);
-        mdFences.length = 0;
-        collectFences(model.doc.root, mdFences);
-    }
-
-    private static void collectFences(in MdBlock b, ref Span[] fences) @safe
-    {
-        if (b.kind == MdBlockKind.codeFence)
-            fences ~= b.codeBody;
-        foreach (ref const c; b.children)
-            collectFences(c, fences);
     }
 
     private int bodyRows() const @safe pure nothrow @nogc
@@ -434,21 +345,22 @@ struct PreviewTui
         bool startPreview, TwoslashReturn tw_ = TwoslashReturn.init,
         string lang_ = null) @system
     {
-        title = title_;
-        source = source_;
-        events = events_;
-        model = model_;
-        tw = tw_;
-        lang = lang_;
         hoverSel = -1;
-        showPreview = startPreview && (model.present || tw.code.length != 0);
-        top = 0;
         sel = Selection!long.cleared;
         searching = false;
         qlen = 0;
-        copiedFenceSrc = size_t.max;
-        folds = DisclosureState!size_t(true);
-        relayout();
+        vm.inlineFoldMarker = true;
+        vm.widthCols = width < 9 ? 8 : width - 1;
+        if (vm.current.labels.length == 0 && themes.length)
+            vm.applyTheme(themeIdx); // first document: resolve the theme once
+        vm.setDocument(title_, null, source_, events_, model_, tw_, lang_);
+        if (!startPreview && vm.showPreview)
+        {
+            vm.showPreview = false;
+            vm.rebuild();
+        }
+        refreshHover();
+        clampTop();
     }
 
     /// Paint the whole frame into `g` (immediate mode). The library diffs it
@@ -506,7 +418,7 @@ struct PreviewTui
         // With a grammar cache the signature renders as resolved-color spans
         // inside the widget model (the same mapping the GUI uses).
         TextSpan[] sig = cache !is null
-            ? signatureSpans(*cache, (() @trusted => &theme)(), pageFg,
+            ? signatureSpans(*cache, (() @trusted => &vm.current)(), pageFg,
                 withoutQuickinfoPrefix(n.text)) : null;
         auto tree = viewHoverPopup(tw, hoverNodes[hoverSel], sig);
         auto frames = layout(tree);
@@ -586,95 +498,46 @@ struct PreviewTui
     // source-anchored hit id, and rebuild so its header shows the ✔ glyph.
     private void copyFenceAt(size_t bodyStart) @system
     {
-        foreach (sp; mdFences)
-            if (sp.start == bodyStart && sp.end <= source.length)
+        foreach (ref const f; vm.fences)
+            if (f.body.start == bodyStart && f.body.end <= source.length)
             {
-                writeClipboard(source[sp.start .. sp.end]);
-                copiedFenceSrc = bodyStart;
-                rebuildMd();
+                writeClipboard(source[f.body.start .. f.body.end]);
+                vm.markCopied(bodyStart);
                 return;
             }
     }
 
-    /// The fold family's directed op (`FLD5`, mirroring the GUI's).
-    enum FoldOp : ubyte
-    {
-        toggle, /// `za`/`zz`: unfold the innermost folded region, else fold
-        close,  /// `zc`: fold the innermost still-open foldable region
-        open,   /// `zo`: unfold the innermost folded region
-    }
-
     // Applies `op` at the selection (else the top row), over the row's
-    // source identity.
+    // source identity — the model owns the innermost-region policy (FLD5).
     private void foldAt(FoldOp op) @system
     {
         const rowIdx = sel.active ? sel.lo : top;
         if (rowIdx < 0 || rowIdx >= cast(long) mdRows.length
             || mdRows[cast(size_t) rowIdx].srcStart == size_t.max)
             return;
-        const off = mdRows[cast(size_t) rowIdx].srcStart;
-
-        size_t innermost(bool wantOpen)
-        {
-            size_t best = size_t.max, bestLen = size_t.max;
-            foreach (sp; foldable)
-                if (folds.isOpen(sp.start) == wantOpen && off >= sp.start
-                    && off < sp.end && sp.end - sp.start < bestLen)
-                {
-                    best = sp.start;
-                    bestLen = sp.end - sp.start;
-                }
-            return best;
-        }
-
-        size_t best = op == FoldOp.close ? innermost(true) : innermost(false);
-        if (best == size_t.max && op == FoldOp.toggle)
-            best = innermost(true);
-        if (best == size_t.max)
-            return;
-        folds = folds.toggled(best);
-        rebuildMd();
+        vm.foldAt(cast(long) mdRows[cast(size_t) rowIdx].srcStart, op);
         clampTop();
     }
 
     // `zR` / `zM`: open every fold, or fold every foldable region.
     private void setAllFolds(bool folded) @system
     {
-        folds = DisclosureState!size_t(true);
-        if (folded)
-            foreach (sp; foldable)
-                folds = folds.closed(sp.start);
-        rebuildMd();
+        vm.setAllFolds(folded);
         clampTop();
     }
 
-    // `z1`–`z9`: fold to nesting level (vim's foldlevel) — regions nested
-    // `level` deep or deeper fold, shallower ones open. Depth via an
-    // enclosing-ends stack over the source-ordered, properly nested regions.
+    // `z1`-`z9`: fold to nesting level (vim's foldlevel).
     private void foldToLevel(int level) @system
     {
-        folds = DisclosureState!size_t(true);
-        size_t[] ends;
-        foreach (sp; foldable)
-        {
-            while (ends.length && ends[$ - 1] <= sp.start)
-                ends = ends[0 .. $ - 1];
-            if (cast(int) ends.length >= level)
-                folds = folds.closed(sp.start);
-            ends ~= sp.end;
-        }
-        rebuildMd();
+        vm.foldToLevel(level);
         clampTop();
     }
 
     /// Apply an event; returns false to quit.
     bool handle(in Event e) @system
     {
-        if (copiedFenceSrc != size_t.max)
-        {
-            copiedFenceSrc = size_t.max; // the ✔ flash lasts until the next event
-            rebuildMd();
-        }
+        if (vm.copiedFenceSrc != size_t.max)
+            vm.clearCopied(); // the copy flash lasts until the next event
         if (searching)
             return handleSearch(e);
         return e.match!(
@@ -849,8 +712,8 @@ struct PreviewTui
                 {
                     if (t.hitId >= foldHitBase && t.rect.contains(p))
                     {
-                        folds = folds.toggled(t.hitId - foldHitBase);
-                        rebuildMd();
+                        vm.folds = vm.folds.toggled(t.hitId - foldHitBase);
+                        vm.rebuild();
                         return true;
                     }
                     if (t.hitId >= fenceHitBase && t.rect.contains(p))
