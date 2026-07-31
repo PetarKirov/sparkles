@@ -352,6 +352,12 @@ int runGui(
     tree.chromeRows = 0; // the GUI pane is all tree rows
     tree.root = treeRoot.length ? treeRoot
         : (docPath.length ? dirName(docPath) : ".");
+    version (Android)
+    {
+        import sparkles.base.logger : info;
+
+        info(i"tree.root = '$(tree.root)'");
+    }
     applyTheme(vm.themeIdx); // resolves the theme before the first document
     vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
         source, events, preview, twoslash, docLang);
