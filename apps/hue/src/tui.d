@@ -110,6 +110,7 @@ struct PreviewTui
 
     private size_t themeIdx;
     private long top;               // first visible visual line
+    private bool sbDragging;        // a scrollbar grab owns the pointer
     private bool showPreview;       // preview vs raw source (Tab)
     private int width, height;      // pane size in cells
     /// Grid column of the pane's left edge — 0 when full-screen; the split
@@ -761,71 +762,84 @@ struct PreviewTui
     private bool handlePointer(in PointerEvent e) @system
     {
         const rows = bodyRows();
+        if (e.button == PointerButton.left
+            && e.action == PointerAction.release)
+        {
+            sbDragging = false;
+            return true;
+        }
+        // A scrollbar grab OWNS the pointer: the press must land on the
+        // last column, but the drag tracks wherever the pointer strays
+        // (never falling into the selection branch) until release —
+        // and symmetrically, a selection drag crossing the last column
+        // never jumps the scroll.
+        if (e.button == PointerButton.left
+            && ((e.action == PointerAction.press && e.pos.x == width - 1
+                    && e.pos.y >= 1 && e.pos.y <= rows)
+                || (e.action == PointerAction.drag && sbDragging)))
+        {
+            sbDragging = true;
+            // The STM2 inverse mapping: thumb-aware, so a drag lands the
+            // thumb's leading edge where the pointer is.
+            top = ScrollState(top)
+                .draggedTo(e.pos.y - 1, cast(size_t) lineCount, rows, rows)
+                .offset;
+            clampTop();
+            return true;
+        }
         // 0-based cells: row 0 is the header, the body spans rows 1 .. rows.
         if (e.button == PointerButton.left
             && (e.action == PointerAction.press || e.action == PointerAction.drag)
             && e.pos.y >= 1 && e.pos.y <= rows)
         {
-            if (e.pos.x == width - 1) // the scrollbar column (last)
+            // Body — a click on a fence header band copies its body (and
+            // doesn't select): the hit targets are in document cell
+            // coordinates, topmost last, and a fence's id encodes its
+            // body's source offset. Otherwise start (press) or extend
+            // (drag) a line selection.
+            const line = top + (e.pos.y - 1);
+            if (showPreview && e.action == PointerAction.press
+                && tw.code.length)
             {
-                // The STM2 inverse mapping: thumb-aware, so a drag lands the
-                // thumb's leading edge where the pointer is.
-                top = ScrollState(top)
-                    .draggedTo(e.pos.y - 1, cast(size_t) lineCount, rows, rows)
-                    .offset;
-                clampTop();
-            }
-            else
-            {
-                // Body — a click on a fence header band copies its body (and
-                // doesn't select): the hit targets are in document cell
-                // coordinates, topmost last, and a fence's id encodes its
-                // body's source offset. Otherwise start (press) or extend
-                // (drag) a line selection.
-                const line = top + (e.pos.y - 1);
-                if (showPreview && e.action == PointerAction.press
-                    && tw.code.length)
+                const off = sourceOffsetAt(mdTree, mdFrames,
+                    Point(e.pos.x, cast(int) line));
+                if (off >= 0)
+                    foreach (i, ni; hoverNodes)
+                        if (off >= cast(long) tw.nodes[ni].start
+                            && off < cast(long)(tw.nodes[ni].start
+                                + tw.nodes[ni].length))
+                        {
+                            hoverSel = hoverSel == cast(int) i
+                                ? -1 : cast(int) i;
+                            return true;
+                        }
+                if (hoverSel >= 0)
                 {
-                    const off = sourceOffsetAt(mdTree, mdFrames,
-                        Point(e.pos.x, cast(int) line));
-                    if (off >= 0)
-                        foreach (i, ni; hoverNodes)
-                            if (off >= cast(long) tw.nodes[ni].start
-                                && off < cast(long)(tw.nodes[ni].start
-                                    + tw.nodes[ni].length))
-                            {
-                                hoverSel = hoverSel == cast(int) i
-                                    ? -1 : cast(int) i;
-                                return true;
-                            }
-                    if (hoverSel >= 0)
+                    hoverSel = -1; // a click elsewhere dismisses the popup
+                    return true;
+                }
+            }
+            if (e.action == PointerAction.press)
+            {
+                const p = Point(e.pos.x, cast(int) line);
+                foreach_reverse (ref const t; mdTargets)
+                {
+                    if (t.hitId >= foldHitBase && t.rect.contains(p))
                     {
-                        hoverSel = -1; // a click elsewhere dismisses the popup
+                        folds = folds.toggled(t.hitId - foldHitBase);
+                        rebuildMd();
+                        return true;
+                    }
+                    if (t.hitId >= fenceHitBase && t.rect.contains(p))
+                    {
+                        copyFenceAt(t.hitId - fenceHitBase);
                         return true;
                     }
                 }
-                if (e.action == PointerAction.press)
-                {
-                    const p = Point(e.pos.x, cast(int) line);
-                    foreach_reverse (ref const t; mdTargets)
-                    {
-                        if (t.hitId >= foldHitBase && t.rect.contains(p))
-                        {
-                            folds = folds.toggled(t.hitId - foldHitBase);
-                            rebuildMd();
-                            return true;
-                        }
-                        if (t.hitId >= fenceHitBase && t.rect.contains(p))
-                        {
-                            copyFenceAt(t.hitId - fenceHitBase);
-                            return true;
-                        }
-                    }
-                }
-                sel = e.action == PointerAction.press
-                    ? Selection!long.started(line) : sel.extended(line);
-                clampSel();
             }
+            sel = e.action == PointerAction.press
+                ? Selection!long.started(line) : sel.extended(line);
+            clampSel();
         }
         return true;
     }
@@ -908,6 +922,58 @@ unittest
     assert(row(0).canFind("raw"), row(0));    // header: view mode
     assert(row(1).canFind("hello"), row(1));  // first source line, painted into the grid
     assert(row(2).canFind("world"), row(2));  // second source line
+}
+
+@("tui.pointer.scrollbarGrabOwnsThePointer")
+@system
+unittest
+{
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+
+    string src;
+    foreach (i; 0 .. 40)
+        src ~= "line\n";
+    HighlightEvent[1] ev = [HighlightEvent.sourceSpan(0, src.length)];
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+
+    PreviewTui t;
+    t.title = "doc.d";
+    t.source = src;
+    t.events = ev[];
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 60;
+    t.height = 6; // bodyRows = 4
+    t.relayout();
+
+    // A press on the scrollbar column grabs the thumb...
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(59, 3)))));
+    assert(t.sbDragging);
+    const grabbed = t.top;
+    assert(!t.sel.active, "a scrollbar press never starts a selection");
+
+    // ...and the drag keeps scrolling even off the column — no selection.
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(10, 4)))));
+    assert(t.top > grabbed, "the drag kept scrolling off the column");
+    assert(!t.sel.active, "a scrollbar drag never selects text");
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(10, 4)))));
+    assert(!t.sbDragging);
+
+    // Symmetrically: a selection drag crossing the scrollbar column keeps
+    // selecting and never jumps the scroll.
+    const topBefore = t.top;
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(5, 2)))));
+    assert(t.sel.active);
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(59, 3)))));
+    assert(t.sel.active && t.sel.lo != t.sel.hi, "the selection extended");
+    assert(t.top == topBefore, "a selection drag never scrolls the thumb");
 }
 
 @("tui.paint.markdownWidgets.fenceCopy")
