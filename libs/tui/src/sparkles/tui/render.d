@@ -179,15 +179,31 @@ struct Screen
         if (r1 - r0 + 1 <= absD)
             return;
 
-        // Set the scroll region, scroll it, reset the region.
+        // Set the scroll region, scroll it, reset the region. Upward is SU
+        // (`CSI n S`). Downward is NOT SD (`CSI n T`): zellij silently
+        // ignores SD — probably because `CSI Ps;…(5 params) T` doubles as
+        // xterm's highlight-mouse-tracking hijack — which desyncs the
+        // retained mirror and freezes every row the diff then trusts.
+        // `IL` at the region's top row has the identical effect (VT102
+        // baseline, no ambiguity, verified in zellij/ghostty/xterm).
         put(w, "\x1b[");
         writeInteger(w, cast(uint)(r0 + 1));
         put(w, ';');
         writeInteger(w, cast(uint)(r1 + 1));
         put(w, 'r');
-        put(w, "\x1b[");
-        writeInteger(w, cast(uint) absD);
-        put(w, bestD > 0 ? 'S' : 'T'); // SU / SD
+        if (bestD > 0)
+        {
+            put(w, "\x1b[");
+            writeInteger(w, cast(uint) absD);
+            put(w, 'S'); // SU
+        }
+        else
+        {
+            writeCursorTo(w, cast(uint)(r0 + 1), 1); // IL needs the cursor in-region
+            put(w, "\x1b[");
+            writeInteger(w, cast(uint) absD);
+            put(w, 'L'); // IL == SD-by-n with the cursor on the region's top row
+        }
         put(w, "\x1b[r"); // reset the scroll region to full screen
 
         // Mirror the terminal's shift in the retained grid (blank the vacated
@@ -314,4 +330,41 @@ unittest
     assert(s.canFind("\x1b[2S"), s);              // scroll up by 2 (SU)
     assert(s.canFind("nA") && s.canFind("nB"), s); // only the exposed rows are drawn
     assert(!s.canFind("r2") && !s.canFind("r7"), s); // preserved rows are NOT re-emitted
+}
+
+@("render.screen.downwardScrollEmitsIlNotSd")
+@safe nothrow
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.tui.cell : CellStyle;
+    import std.algorithm.searching : canFind;
+
+    static immutable string[8] labels = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"];
+    Grid g;
+    g.resize(6, 8);
+    foreach (ushort y; 0 .. 8)
+        g.putText(0, y, labels[y], CellStyle.init);
+
+    Screen scr;
+    SmallBuffer!char full;
+    scr.render(g, full); // first frame — full paint
+
+    // Scroll the whole grid down by 2 (the viewer scrolling up) and expose
+    // two new rows at the top.
+    g.scrollRect(0, 0, 6, 8, 2, CellStyle.init);
+    g.putText(0, 0, "nA", CellStyle.init);
+    g.putText(0, 1, "nB", CellStyle.init);
+
+    SmallBuffer!char diff;
+    scr.render(g, diff);
+    const s = diff[];
+    // Downward must be IL at the region top, NEVER SD (`CSI n T`): zellij
+    // silently ignores SD, which desyncs the retained mirror and leaves
+    // frozen rows on screen (the scroll-up-under-zellij regression).
+    assert(s.canFind("\x1b[1;8r"), s);             // DECSTBM region rows 1..8
+    assert(s.canFind("\x1b[1;1H\x1b[2L"), s);      // cursor to region top + IL 2
+    assert(!s.canFind("\x1b[2T"), s);              // no SD
+    assert(s.canFind("nA") && s.canFind("nB"), s); // only the exposed rows are drawn
+    assert(!s.canFind("r2") && !s.canFind("r5"), s); // preserved rows are NOT re-emitted
 }
