@@ -22,14 +22,15 @@ import sparkles.syntax : LabelSet, ResolvedTheme, resolveTheme, RgbColor,
     Theme, toRgb;
 import sparkles.tui : CellStyle, Color, Grid;
 import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
-    match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
+    match, Point, PointerAction, PointerButton, PointerEvent, ResizeEvent,
+    WheelEvent;
 import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
     TreeGlyphs, treeView;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.layout : layout;
-import sparkles.ui.state : DisclosureState, scrollbarThumb;
+import sparkles.ui.state : DisclosureState, scrollbarThumb, ScrollState;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 import sparkles.ui_tui : paintGrid;
@@ -141,6 +142,7 @@ struct ExplorerTui
     int chromeRows = 2;
 
     bool searching;
+    bool sbDragging; // a scrollbar grab owns the pointer until release
     char[128] qbuf;
     size_t qlen;
 
@@ -538,8 +540,32 @@ struct ExplorerTui
                 return true;
             },
             (in PointerEvent p) {
-                if (p.button == PointerButton.left
-                    && p.action == PointerAction.press && p.pos.y >= 1
+                if (p.button != PointerButton.left)
+                    return true;
+                if (p.action == PointerAction.release)
+                {
+                    sbDragging = false;
+                    return true;
+                }
+                // The scrollbar column (last, only when the tree overflows):
+                // a press there grabs the thumb — it is never a row click —
+                // and the grab owns the pointer until release, wherever the
+                // drag strays (STM2's inverse mapping, like the viewer's).
+                const overflows = cast(long) rows.length > bodyRows;
+                if ((p.action == PointerAction.press && overflows
+                        && p.pos.x == width - 1 && p.pos.y >= 1
+                        && p.pos.y <= bodyRows)
+                    || (p.action == PointerAction.drag && sbDragging))
+                {
+                    sbDragging = true;
+                    top = ScrollState(top)
+                        .draggedTo(p.pos.y - 1, rows.length, bodyRows,
+                            bodyRows)
+                        .offset;
+                    scrollBy(0); // clamp top without moving the selection
+                    return true;
+                }
+                if (p.action == PointerAction.press && p.pos.y >= 1
                     && p.pos.y <= bodyRows)
                 {
                     const i = top + (p.pos.y - 1);
@@ -866,6 +892,56 @@ unittest
     assert(!x.activate());
     assert(x.picked.canFind("app.d"));
 }
+@("explorer.pointer.scrollbarGrabIsNotARowClick")
+@system
+unittest
+{
+    import std.conv : text;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    // Enough files to overflow the pane, so the scrollbar exists.
+    const root = buildPath(tempDir(), "hue-explorer-sb-test");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    foreach (i; 0 .. 12)
+        write(buildPath(root, text("f", i, ".d")), "int x;\n");
+
+    static immutable Theme dark = builtinDark;
+    ExplorerTui x;
+    x.root = root;
+    x.themeValue = &dark;
+    x.theme = resolveTheme(dark, LabelSet.standard());
+    x.width = 50;
+    x.height = 8; // bodyRows = 6 < 12 rows → the scrollbar is live
+    x.rebuild();
+    assert(cast(long) x.rows.length > x.bodyRows);
+
+    // A press on the scrollbar column grabs the thumb: the selection stays,
+    // nothing activates, and the view jumps by the STM2 inverse mapping.
+    assert(x.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(49, 2)))));
+    assert(x.sbDragging);
+    assert(x.sel == 0, "a scrollbar press never selects a row");
+    assert(x.top > 0, "the thumb jumped to the pointer");
+
+    // The drag owns the pointer even off the column — still no row clicks.
+    const grabbed = x.top;
+    assert(x.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(20, 6)))));
+    assert(x.top > grabbed && x.sel == 0);
+    assert(x.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(20, 6)))));
+    assert(!x.sbDragging);
+
+    // Off the scrollbar, a press is still a row click.
+    const want = x.top + 1;
+    assert(x.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(5, 2)))));
+    assert(x.sel == want, text(x.sel, " vs ", want));
+}
+
 @("explorer.currentDoc.rowBandAndAccent")
 @system
 unittest
