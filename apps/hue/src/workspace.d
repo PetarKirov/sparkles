@@ -169,15 +169,18 @@ struct WorkspaceTui
     /// Applies one event; returns false to quit.
     bool handle(in Event e) @system
     {
-        // The wheel scrolls the pane under the CURSOR, not the focused one.
+        // The wheel scrolls the pane under the CURSOR, not the focused one —
+        // both ways: over the tree it scrolls the tree, anywhere else it goes
+        // to the viewer (whose wheel arm is position-blind), so a focused
+        // tree never swallows a wheel spun over the document.
         {
             bool done;
             e.match!((in WheelEvent wv) {
                 if (treeVisible && wv.pos.x < tree.width)
-                {
                     tree.scrollBy(3 * wv.dy);
-                    done = true;
-                }
+                else
+                    viewer.handle(e);
+                done = true;
             }, (_) {});
             if (done)
                 return true;
@@ -537,4 +540,72 @@ unittest
     assert(w.tree.width == 50, "clamped at half the screen");
     w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(99, 4))));
+}
+
+@("workspace.wheel.scrollsThePaneUnderTheCursor")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    const root = buildPath(tempDir(), "hue-workspace-wheel-test");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    string src;
+    foreach (i; 0 .. 30)
+        src ~= "int line" ~ cast(char)('0' + i / 10) ~ cast(char)('0' + i % 10)
+            ~ ";\n";
+    write(buildPath(root, "long.d"), src);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    WorkspaceTui w;
+    w.loadDoc = delegate WorkspaceDoc(string path) @system {
+        import std.file : readText;
+        import std.path : baseName;
+
+        const s = readText(path);
+        return WorkspaceDoc(baseName(path), s,
+            [HighlightEvent.sourceSpan(0, s.length)], PreviewModel.init);
+    };
+    w.tree.root = root;
+    w.tree.themeValue = &themes[0];
+    w.tree.theme = resolveTheme(themes[0], LabelSet.standard());
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = LabelSet.standard();
+    w.treeVisible = true;
+    w.tree.rebuild();
+    w.arrange(100, 12);
+    w.openDoc(buildPath(root, "long.d"));
+
+    // The failing configuration: the TREE holds focus while the wheel spins
+    // over the DOCUMENT pane — the wheel must scroll the pane under the
+    // cursor, not be swallowed by the focused tree.
+    w.treeFocused = true;
+    Grid g;
+    g.resize(100, 12);
+    w.paint(g);
+    string row(ushort y)
+    {
+        string s;
+        foreach (x; 0 .. g.cols)
+            s ~= g[cast(ushort) x, y].grapheme;
+        return s;
+    }
+    assert(row(1)[w.viewer.originX .. $].canFind("int line00;"), row(1));
+
+    assert(w.handle(Event(WheelEvent(dy: 1, pos: Point(60, 5)))));
+    w.paint(g);
+    assert(row(1)[w.viewer.originX .. $].canFind("int line03;"),
+        "wheel over the document scrolled it despite tree focus: " ~ row(1));
+    assert(w.treeFocused, "the wheel does not steal focus");
+
+    // And back up.
+    assert(w.handle(Event(WheelEvent(dy: -1, pos: Point(60, 5)))));
+    w.paint(g);
+    assert(row(1)[w.viewer.originX .. $].canFind("int line00;"), row(1));
 }
