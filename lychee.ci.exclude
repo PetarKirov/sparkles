@@ -146,3 +146,8 @@
 # paper in manim/bluefish.md) times out under GitHub Actions' concurrency (live +
 # 200 locally). Surfaces on a cold lychee cache; same class as cs.cmu.edu above.
 ^https?://vis\.csail\.mit\.edu/
+# www.cl.cam.ac.uk (Cambridge Computer Laboratory techreports — Kennedy's
+# UCAM-CL-TR-391, cited across the units-of-measure theory pages) errors and
+# times out for GitHub Actions' shared IPs (22 errors in one CI run; live +
+# 200 locally). Same class as cs.cmu.edu / vis.csail.mit.edu above.
+^https?://(www\.)?cl\.cam\.ac\.uk/
