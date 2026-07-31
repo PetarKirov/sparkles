@@ -28,9 +28,9 @@ import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
     TreeGlyphs, treeView;
 import sparkles.ui.display_list : buildDisplayList;
-import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : layout;
-import sparkles.ui.state : DisclosureState, ScrollbarState, scrollbarThumb,
+import sparkles.ui.state : DisclosureState, ScrollAxis, ScrollbarState, scrollbarThumb,
     ScrollState;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
@@ -148,6 +148,10 @@ struct ExplorerTui
     bool searching;
     /// The scrollbar as one machine (STM9) — see the viewer's twin.
     ScrollbarState sb;
+    /// The horizontal bar (IXB2): live when a visible label overflows the
+    /// pane; scrolls the tree columns. Same machine, horizontal axis.
+    ScrollbarState hsb = ScrollbarState(ScrollAxis.horizontal);
+    int contentCols; // widest visible row, recomputed per rebuild
     char[128] qbuf;
     size_t qlen;
 
@@ -379,6 +383,7 @@ struct ExplorerTui
 
         rows = flatten(data, (uint i) @safe
             => qlen != 0 || open.isOpen(data.nodes[i].value.path));
+        measureContent();
         clamp();
     }
 
@@ -433,6 +438,27 @@ struct ExplorerTui
                 data.nodes[at].nextSibling = uint.max;
                 return;
             }
+    }
+
+    /// Whether the horizontal bar is live (content wider than the pane).
+    bool hOverflows() const @safe pure nothrow @nogc
+        => contentCols > width - 1 && width > 2;
+
+    /// Recomputes the widest visible row (icon + guides + label + badge).
+    private void measureContent() @safe
+    {
+        import sparkles.ui.geometry : cellsOf;
+
+        contentCols = 0;
+        foreach (ref const r; rows)
+        {
+            const e = &data.nodes[r.node].value;
+            const w = r.depth * 3 + 3 + cast(int) cellsOf(e.label)
+                + (e.badge.length ? 2 : 0);
+            if (w > contentCols)
+                contentCols = w;
+        }
+        hsb = hsb.scrolledTo(hsb.offset); // clamp happens at paint/drag
     }
 
     int bodyRows() const @safe pure nothrow @nogc
@@ -499,11 +525,39 @@ struct ExplorerTui
             (uint i) @safe => qlen != 0 || open.isOpen(data.nodes[i].value.path),
             selNode, explorerGlyphs, selBg, hasSelectionBg: true);
 
-        Widget colW = Widget(kind: WidgetKind.column, children: [hdr, tree],
+        // The header paints unshifted; the tree shifts left by the
+        // horizontal offset (IXB2) and clips to the pane.
+        const hx = hOverflows() ? cast(int) hsb.offset : 0;
+        Widget hdrCol = Widget(kind: WidgetKind.column, children: [hdr],
             width: SizeSpec.fixed(width));
-        auto wt = b.finish(b.add(colW));
-        paintGrid(g, pageBg, buildDisplayList(wt, layout(wt),
+        auto ht = b.finish(b.add(hdrCol));
+        paintGrid(g, pageBg, buildDisplayList(ht, layout(ht),
             themeValue.effectivePalette, pageFg, pageBg));
+        auto tb = Builder();
+        const tree2 = treeView(tb, data, rows[first .. last],
+            (uint i) @safe => qlen != 0 || open.isOpen(data.nodes[i].value.path),
+            selNode, explorerGlyphs, selBg, hasSelectionBg: true);
+        Widget colW = Widget(kind: WidgetKind.column, children: [tree2],
+            width: SizeSpec.fixed(width + hx));
+        auto wt = tb.finish(tb.add(colW));
+        paintGrid(g, pageBg, buildDisplayList(wt, layout(wt),
+            themeValue.effectivePalette, pageFg, pageBg),
+            -hx, 1, Rect(hx, 0, width - 1 - hx, bodyRows));
+
+        // The horizontal bar, one row above the status bar, when live —
+        // the SAME component/machine as the vertical bar (IXB2).
+        if (hOverflows() && height >= 4)
+        {
+            import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+
+            auto hb = Builder();
+            const bar2 = scrollbar(hb, hsb, contentCols, width - 1,
+                width - 1, ScrollbarGlyphs('━', '─'));
+            auto hbt = hb.finish(bar2);
+            paintGrid(g, pageBg, buildDisplayList(hbt, layout(hbt),
+                themeValue.effectivePalette, pageFg, pageBg),
+                0, height - 2);
+        }
 
         // The status bar pinned to the bottom row (its own one-row pipeline).
         auto sb = Builder();
@@ -557,6 +611,21 @@ struct ExplorerTui
                 if (p.action == PointerAction.release)
                 {
                     sb = sb.released();
+                    hsb = hsb.released();
+                    return true;
+                }
+                // The horizontal bar (IXB2): its row is one above the
+                // status bar; same grab-owns-the-pointer machine.
+                if ((p.action == PointerAction.press && hOverflows()
+                        && p.pos.y == height - 2 && p.pos.x >= 0
+                        && p.pos.x < width - 1)
+                    || (p.action == PointerAction.drag && hsb.dragging))
+                {
+                    hsb = p.action == PointerAction.press && !hsb.dragging
+                        ? hsb.pressed(p.pos.x, contentCols, width - 1,
+                            width - 1)
+                        : hsb.dragged(p.pos.x, contentCols, width - 1,
+                            width - 1);
                     return true;
                 }
                 // The scrollbar column (last, only when the tree overflows):
@@ -969,6 +1038,45 @@ unittest
     assert(x.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(5, 2)))));
     assert(x.sel == want, text(x.sel, " vs ", want));
+}
+
+@("explorer.pointer.horizontalBarScrollsClippedLabels")
+@system
+unittest
+{
+    import std.conv : text;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    const root = buildPath(tempDir(), "hue-explorer-hbar-test");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, "a-very-long-file-name-that-overflows-the-pane.d"),
+        "int x;\n");
+
+    static immutable Theme dark = builtinDark;
+    ExplorerTui x;
+    x.root = root;
+    x.themeValue = &dark;
+    x.theme = resolveTheme(dark, LabelSet.standard());
+    x.width = 20; // narrower than the label
+    x.height = 8;
+    x.rebuild();
+    assert(x.hOverflows(), text(x.contentCols, " vs ", x.width));
+
+    // A press on the horizontal bar's row grabs it (never a row click);
+    // dragging right scrolls the columns; release ends the grab.
+    assert(x.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(2, cast(int) x.height - 2)))));
+    assert(x.hsb.dragging);
+    assert(x.sel == 0, "the bar row is not a tree row");
+    assert(x.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(12, cast(int) x.height - 2)))));
+    assert(x.hsb.offset > 0, "the drag scrolled the columns");
+    assert(x.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(12, cast(int) x.height - 2)))));
+    assert(!x.hsb.dragging);
 }
 
 @("explorer.currentDoc.rowBandAndAccent")
