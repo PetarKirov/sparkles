@@ -14,6 +14,18 @@ dependency "sparkles:twoslash-d" path="../.."
 // Like sparkles:dmd-lsp / sparkles:twoslash-d: no -preview flags (the dmd
 // frontend dependency's headers are not dip1000-clean).
 
+// Optimized with assertions kept — deliberately no `releaseMode` (`BLD6`).
+// The DMD frontend this links is assert-heavy by design, and `-release`
+// turns its LanguageServer `Expression.copy()` check into silent undefined
+// behaviour: that is why a fork gap crashed a plain `dub build` binary while
+// the flake-built (release) one carried on. Measured on
+// `apps/hue/src/live_types.d --dub`: debug 2.00 s, checked 1.09 s, release
+// 1.06 s per analysis — the checks cost ~3%, so there is no reason to trade
+// them for speed. `dub build :twoslash-extract -b checked`.
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+
 configuration "application" {
     targetType "executable"
 }

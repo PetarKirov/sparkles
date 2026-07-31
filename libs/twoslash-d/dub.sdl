@@ -9,6 +9,13 @@ importPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
+// Optimized with assertions kept (`BLD6`) — the build to use for anything
+// linking the DMD frontend, which relies on its asserts to catch a fork that
+// has drifted. See `apps/twoslash-extract/dub.sdl` for the measurements.
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+
 configuration "library" {
     targetType "library"
     dependency "sparkles:base" path="../.."
