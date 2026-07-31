@@ -444,6 +444,7 @@ int runGui(
     Scrollbar treeSb;       // the tree pane's — same behavior, its own state
     Scrollbar treeHSb;      // the tree's horizontal bar (height animates; the
                             // drag itself lives in the shared hsb machine)
+    Scrollbar docHSb;       // the document pane's horizontal bar (ditto)
     float wheelAccum = 0;   // fractional wheel deltas accumulate to whole rows
 
     // Fullscreen (F11): a manual borderless toggle. raylib's
@@ -620,6 +621,7 @@ int runGui(
         // widget tree's rows, whichever view kind built it.
         const total = vm.rows.length;
         const maxTop = total > docRows ? cast(long)(total - docRows) : 0;
+        const dhx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
 
         // F11 toggles borderless fullscreen on the window's vm.current monitor;
         // active in any input mode. Reflow-on-resize keeps working because the
@@ -1142,13 +1144,13 @@ int runGui(
             auto want = MouseCursor.MOUSE_CURSOR_DEFAULT;
             if (split.dragging)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
-            else if (tree.hsb.dragging)
+            else if (tree.hsb.dragging || vm.hsb.dragging)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
             else if (sb.isDragging || treeSb.isDragging)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
             else if (divZone)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
-            else if (treeHSb.isHovered)
+            else if (treeHSb.isHovered || docHSb.isHovered)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
             else if (sb.isHovered || treeSb.isHovered)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
@@ -1209,11 +1211,12 @@ int runGui(
         // viewport rows (raylib clips px; the cull skips dead draw calls).
         {
             auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
-                gutterPx, cast(float)(docY0 - vm.top * cellH));
+                cast(float)(gutterPx - dhx * cellW),
+                cast(float)(docY0 - vm.top * cellH));
             // The pane's base clip: content (an unwrappable code line inside
             // a fence, a wide table) never bleeds past the pane or under the
             // header — the same rule the tree pane follows.
-            canvas.pushClip(Rect(0, cast(int) vm.top,
+            canvas.pushClip(Rect(dhx, cast(int) vm.top,
                 (screenW - rightPad - gutterPx) / cellW, docRows));
             foreach (ref op; vm.ops)
             {
@@ -1282,7 +1285,7 @@ int runGui(
         // (Views without hit targets — raw, twoslash — have an empty list.)
         {
             const mp = GetMousePosition();
-            const dp = Point(cast(int)((mp.x - gutterPx) / cellW),
+            const dp = Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
                 cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH)));
             // The fold column: a click on a marker toggles its region.
             if (mp.x >= treePx() && mp.x < treePx() + cellW
@@ -1342,7 +1345,7 @@ int runGui(
             Hit h;
             if (my < 0)
                 return h;
-            const cx = cast(int)((mx - gutterPx) / cellW);
+            const cx = cast(int)((mx - gutterPx) / cellW) + dhx;
             const cy = vm.top + cast(long)((my - docY0) / cellH);
             if (mx < gutterPx || cy < 0 || cy >= cast(long) vm.rows.length)
                 return h; // left of the content (tree/gutter) hits nothing
@@ -1394,6 +1397,33 @@ int runGui(
             // the row under the cursor and opens it.
             const overTreeSb = overTree && treeMaxTop > 0
                 && mp.x >= treeCols * cellW - scrollbarGutter();
+            // The document pane's horizontal bar (IXB2): same pattern.
+            {
+                const float hHoverH2 = cast(float) scrollbarGutter();
+                const float hIdleH2 = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
+                const live = vm.hOverflows() && mode == Mode.normal;
+                const over = live && mp.x >= gutterPx
+                    && mp.y >= screenH
+                        - (docHSb.isHovered ? hHoverH2 : hIdleH2) - 4;
+                docHSb.isHovered = live && (over || vm.hsb.dragging);
+                docHSb.targetWidth = docHSb.isHovered ? hHoverH2 : hIdleH2;
+                docHSb.currentWidth += (docHSb.targetWidth
+                    - docHSb.currentWidth) * 15.0f * GetFrameTime();
+                if (over && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                    vm.hsb = vm.hsb.pressed(
+                        cast(int)((mp.x - gutterPx) / cellW),
+                        vm.contentCols, vm.widthCols, vm.widthCols);
+                else if (vm.hsb.dragging)
+                {
+                    if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+                        vm.hsb = vm.hsb.released();
+                    else
+                        vm.hsb = vm.hsb.dragged(
+                            cast(int)((mp.x - gutterPx) / cellW),
+                            vm.contentCols, vm.widthCols, vm.widthCols);
+                }
+            }
+
             // The tree's horizontal bar (IXB2): the pane's bottom edge,
             // with the SAME hover-expand animation as the vertical bars
             // (the drag itself runs the shared STM9 machine).
@@ -1552,7 +1582,7 @@ int runGui(
             if (mp.x >= gutterPx)
             {
                 const off = sourceOffsetAt(vm.tree, vm.frames,
-                    Point(cast(int)((mp.x - gutterPx) / cellW),
+                    Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
                         cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH))));
                 if (off >= 0)
                     foreach (ni, ref const n; vm.tw.nodes)
@@ -1716,6 +1746,23 @@ int runGui(
                 DrawRectangle(cast(int) x, cast(int)(trackTop + tg.y),
                     cast(int) w, cast(int) tg.h, rl(tree.sbThumb));
             }
+        }
+
+        // The document pane's horizontal bar (IXB2), over its bottom edge.
+        if (vm.hOverflows() && mode == Mode.normal)
+        {
+            const trackX = gutterPx;
+            const trackW = screenW - gutterPx;
+            const hOff2 = cast(long) vm.contentCols - vm.widthCols;
+            const hg2 = thumbGeometry(vm.contentCols, vm.widthCols,
+                vm.hsb.offset, hOff2, trackW);
+            const hh = docHSb.currentWidth;
+            const hy = screenH - hh;
+            if (docHSb.isHovered || vm.hsb.dragging)
+                DrawRectangle(trackX, cast(int) hy, trackW, cast(int) hh,
+                    rl(vm.sbTrack));
+            DrawRectangle(trackX + cast(int) hg2.y, cast(int) hy,
+                cast(int) hg2.h, cast(int) hh, rl(vm.sbThumb));
         }
 
         // Scrollbar: an animated-width thumb, plus a faint track while hovered
