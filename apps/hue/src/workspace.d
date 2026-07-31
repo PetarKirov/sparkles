@@ -206,6 +206,8 @@ struct WorkspaceTui
         // hover, so the shape holds through the whole drag no matter where
         // the pointer strays; the scrollbars are vertical → ns-resize.
         e.match!((in PointerEvent p) {
+            const grabbed = split.dragging || viewer.sbDragging
+                || tree.sbDragging;
             PointerShape want;
             if (split.dragging)
                 want = PointerShape.ewResize;
@@ -218,7 +220,11 @@ struct WorkspaceTui
                 want = PointerShape.nsResize;
             else
                 want = PointerShape.default_;
-            if (want != curShape)
+            // Re-assert on every event while a grab is live: some terminals
+            // and multiplexers reset the pointer themselves when a drag
+            // starts, clobbering the OSC 22 shape — a repeated set is
+            // idempotent and a few bytes, so keep re-applying it.
+            if (want != curShape || (grabbed && p.action == PointerAction.drag))
             {
                 curShape = want;
                 pendingCursor = "\x1b]22;" ~ cast(string) want ~ "\x1b\\";
@@ -748,8 +754,11 @@ unittest
     assert(w.viewer.sbDragging);
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(60, 6)))));
-    assert(w.takeCursorShape().length == 0,
-        "the grab held the shape through the stray drag");
+    // Mid-grab drags RE-ASSERT the held shape (never default): terminals /
+    // multiplexers may reset the pointer on drag start, so the idempotent
+    // re-set keeps the resize shape pinned.
+    assert(w.takeCursorShape() == "\x1b]22;ns-resize\x1b\\",
+        "the grab re-asserts its shape through the stray drag");
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(60, 6)))));
     assert(w.handle(Event(PointerEvent(action: PointerAction.move,
@@ -763,6 +772,13 @@ unittest
     g.resize(100, 12);
     w.paint(g);
     assert(w.tree.focused && !w.viewer.focused);
+    // The focused pane's header title is BOLD on the accent band; the
+    // unfocused pane's is not (the at-a-glance indicator).
+    import sparkles.base.term_style : TextAttr;
+    assert(g[1, 0].style.attrs.has(TextAttr.bold),
+        "the focused tree title renders bold");
+    assert(!g[cast(ushort)(w.viewer.originX + 1), 0].style.attrs
+        .has(TextAttr.bold), "the unfocused viewer title stays regular");
     w.treeFocused = false;
     w.paint(g);
     assert(!w.tree.focused && w.viewer.focused);
