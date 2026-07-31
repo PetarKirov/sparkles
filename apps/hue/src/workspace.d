@@ -16,6 +16,7 @@ version (Posix):
 import core.time : msecs;
 import std.path : dirName;
 
+import sparkles.base.term_control : PointerShape;
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
     Theme, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -76,11 +77,12 @@ struct WorkspaceTui
     private bool pointerDown;
     private bool pointerOnTree;
 
-    // Divider hover: over the divider column (or mid divider-drag) the
-    // terminal pointer becomes `ew-resize` (OSC 22); leaving restores
-    // `default`. The loop drains `takeCursorShape` after each event and
-    // writes it out of band — only transitions emit.
-    private bool resizeCursor;
+    // Pointer shape (OSC 22): grab state first — an active divider or
+    // scrollbar grab HOLDS its shape until release, wherever the pointer
+    // strays — then hover (the divider column → ew-resize, a scrollbar
+    // column → ns-resize). The loop drains `takeCursorShape` after each
+    // event and writes it out of band — only transitions emit.
+    private PointerShape curShape = PointerShape.default_;
     private const(char)[] pendingCursor;
 
     /// The pointer-shape sequence to write to the terminal, if the hover
@@ -200,16 +202,26 @@ struct WorkspaceTui
     /// Applies one event; returns false to quit.
     bool handle(in Event e) @system
     {
-        // Divider hover (observes only — never consumes): the resize cursor
-        // shows over the divider column and stays for the whole drag.
+        // Pointer shape (observes only — never consumes). Grabs outrank
+        // hover, so the shape holds through the whole drag no matter where
+        // the pointer strays; the scrollbars are vertical → ns-resize.
         e.match!((in PointerEvent p) {
-            const want = treeVisible
-                && (split.dragging || p.pos.x == tree.width);
-            if (want != resizeCursor)
+            PointerShape want;
+            if (split.dragging)
+                want = PointerShape.ewResize;
+            else if (viewer.sbDragging || tree.sbDragging)
+                want = PointerShape.nsResize;
+            else if (treeVisible && p.pos.x == tree.width)
+                want = PointerShape.ewResize;
+            else if ((treeVisible && tree.overScrollbar(p.pos.x, p.pos.y))
+                || viewer.overScrollbar(p.pos.x - viewer.originX, p.pos.y))
+                want = PointerShape.nsResize;
+            else
+                want = PointerShape.default_;
+            if (want != curShape)
             {
-                resizeCursor = want;
-                pendingCursor = want
-                    ? "\x1b]22;ew-resize\x1b\\" : "\x1b]22;default\x1b\\";
+                curShape = want;
+                pendingCursor = "\x1b]22;" ~ cast(string) want ~ "\x1b\\";
             }
         }, (_) {});
 
@@ -685,11 +697,22 @@ unittest
     const root = buildPath(tempDir(), "hue-workspace-chrome-test");
     mkdirRecurse(root);
     scope (exit) rmdirRecurse(root);
-    write(buildPath(root, "a.d"), "int a;\n");
+    string src;
+    foreach (i; 0 .. 40)
+        src ~= "int line;\n";
+    write(buildPath(root, "long.d"), src);
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
     WorkspaceTui w;
+    w.loadDoc = delegate WorkspaceDoc(string path) @system {
+        import std.file : readText;
+        import std.path : baseName;
+
+        const s = readText(path);
+        return WorkspaceDoc(baseName(path), s,
+            [HighlightEvent.sourceSpan(0, s.length)], PreviewModel.init);
+    };
     w.tree.root = root;
     w.tree.themeValue = &themes[0];
     w.tree.theme = resolveTheme(themes[0], LabelSet.standard());
@@ -700,6 +723,7 @@ unittest
     w.treeFocused = true;
     w.tree.rebuild();
     w.arrange(100, 12);
+    w.openDoc(buildPath(root, "long.d"));
 
     // OSC 22 divider hover: entering emits ew-resize, leaving restores the
     // default, and no-transition motion emits nothing.
@@ -714,8 +738,27 @@ unittest
         pos: Point(60, 6)))));
     assert(w.takeCursorShape() == "\x1b]22;default\x1b\\");
 
+    // The viewer's scrollbar column hovers as ns-resize (vertical), and a
+    // grab HOLDS the shape wherever the drag strays — no revert mid-drag.
+    assert(w.handle(Event(PointerEvent(action: PointerAction.move,
+        pos: Point(99, 4)))));
+    assert(w.takeCursorShape() == "\x1b]22;ns-resize\x1b\\");
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(99, 4)))));
+    assert(w.viewer.sbDragging);
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(60, 6)))));
+    assert(w.takeCursorShape().length == 0,
+        "the grab held the shape through the stray drag");
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(60, 6)))));
+    assert(w.handle(Event(PointerEvent(action: PointerAction.move,
+        pos: Point(60, 6)))));
+    assert(w.takeCursorShape() == "\x1b]22;default\x1b\\");
+
     // Focus indication: paint stamps the focused pane; the hidden-tree
     // viewer is always focused (the standalone look).
+    w.treeFocused = true; // (openDoc handed focus to the viewer)
     Grid g;
     g.resize(100, 12);
     w.paint(g);

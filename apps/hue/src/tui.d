@@ -38,7 +38,8 @@ import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : DisclosureState, DocRow, documentRows, HoverTarget,
     hoverTargets, scrollbarThumb, ScrollState, Selection, selectionRects,
     sourceOffsetAt;
-import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot;
+import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot,
+    TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_tui : paintGrid;
 
@@ -110,7 +111,8 @@ struct PreviewTui
 
     private size_t themeIdx;
     private long top;               // first visible visual line
-    private bool sbDragging;        // a scrollbar grab owns the pointer
+    bool sbDragging;                // a scrollbar grab owns the pointer
+                                    // (the workspace's pointer-shape check)
     private int sbGrab;             // pointer offset within the grabbed thumb
     private bool showPreview;       // preview vs raw source (Tab)
     private int width, height;      // pane size in cells
@@ -198,6 +200,12 @@ struct PreviewTui
     /// The active line selection, read-only — the workspace (and its tests)
     /// observe it to verify pointer-capture routing.
     Selection!long selection() const @safe pure nothrow @nogc => sel;
+
+    /// Whether pane-local `(x, y)` sits on the live scrollbar column — the
+    /// workspace's pointer-shape hover check.
+    bool overScrollbar(int x, int y) const @safe pure nothrow @nogc
+        => lineCount > bodyRows && x == width - 1
+            && y >= 1 && y <= bodyRows;
 
     /// Sets the pane size in cells (the workspace arranges; `relayout` after).
     void resize(int w, int h) @safe pure nothrow @nogc
@@ -511,9 +519,9 @@ struct PreviewTui
     // `y` through the full widget pipeline: view → layout → display list →
     // the ui-tui GridCanvas. The slots resolve against the theme's palette.
     private void paintBar(ref Grid g, int y, uint[] leading, uint[] center,
-        uint[] trailing, ref Builder b) @system
+        uint[] trailing, ref Builder b, bool focusedBar = false) @system
     {
-        const bar = headerBar(b, leading, center, trailing);
+        const bar = headerBar(b, leading, center, trailing, focusedBar);
         Widget colW = Widget(kind: WidgetKind.column, children: [bar],
             width: SizeSpec.fixed(width));
         const col = b.add(colW);
@@ -529,13 +537,14 @@ struct PreviewTui
 
         auto b = Builder();
         const name = b.add(Widget(kind: WidgetKind.text, text: title,
-            slot: focused ? Slot.chromeAccent : Slot.gutter));
+            slot: focused ? Slot.chromeAccent : Slot.gutter,
+            textStyle: TextStyle(bold: focused)));
         const mid = b.add(Widget(kind: WidgetKind.text, text: text(
             names[themeIdx], " (", themeIdx + 1, "/", names.length, ")  ·  ",
             (showPreview && model.present) ? "preview" : "raw")));
         const pos = b.add(Widget(kind: WidgetKind.text,
             text: text(top + 1, "/", lineCount), slot: Slot.gutter));
-        paintBar(g, 0, [name], [mid], [pos], b);
+        paintBar(g, 0, [name], [mid], [pos], b, focused);
     }
 
     private void paintStatus(ref Grid g) @system

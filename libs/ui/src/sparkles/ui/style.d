@@ -61,6 +61,7 @@ enum Slot : ubyte
     track,           /// scrollbar track
     thumb,           /// scrollbar thumb
     selection,       /// selected-content tint (background only)
+    chromeFocused,   /// the focused pane's header band (accented background)
 }
 
 private enum slotCount = Slot.max + 1;
@@ -294,6 +295,10 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         // characters) are the theme's glyph channel.
         p.bg[chrome] = Color.fromRgb(0x7f, 0x7f, 0x7f);
         p.bgAlpha[chrome] = 0x20;
+        // The focused pane's header band: the accent, translucent — clearly
+        // apart from the neutral `chrome` band at a glance.
+        p.bg[chromeFocused] = Color.fromRgb(0x37, 0x72, 0xcf);
+        p.bgAlpha[chromeFocused] = 0x48;
         p.fg[chromeAccent] = Color.fromRgb(0x37, 0x72, 0xcf);
         p.fg[gutter] = Color.fromRgb(0x88, 0x88, 0x88);
         p.fg[track] = Color.fromRgb(0x88, 0x88, 0x88);
