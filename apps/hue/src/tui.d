@@ -111,6 +111,7 @@ struct PreviewTui
     private size_t themeIdx;
     private long top;               // first visible visual line
     private bool sbDragging;        // a scrollbar grab owns the pointer
+    private int sbGrab;             // pointer offset within the grabbed thumb
     private bool showPreview;       // preview vs raw source (Tab)
     private int width, height;      // pane size in cells
     /// Grid column of the pane's left edge — 0 when full-screen; the split
@@ -782,12 +783,16 @@ struct PreviewTui
                     && e.pos.y >= 1 && e.pos.y <= rows)
                 || (e.action == PointerAction.drag && sbDragging)))
         {
+            // The STM2 inverse mapping, grab-relative: a press on the
+            // handle grabs it in place (never jumps), a press on the track
+            // jumps the leading edge to the pointer, and drags move the
+            // thumb relative to the grab point.
+            top = e.action == PointerAction.press && !sbDragging
+                ? ScrollState(top).pressedAt(e.pos.y - 1,
+                    cast(size_t) lineCount, rows, rows, sbGrab).offset
+                : ScrollState(top).draggedTo(e.pos.y - 1,
+                    cast(size_t) lineCount, rows, rows, sbGrab).offset;
             sbDragging = true;
-            // The STM2 inverse mapping: thumb-aware, so a drag lands the
-            // thumb's leading edge where the pointer is.
-            top = ScrollState(top)
-                .draggedTo(e.pos.y - 1, cast(size_t) lineCount, rows, rows)
-                .offset;
             clampTop();
             return true;
         }

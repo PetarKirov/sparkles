@@ -143,6 +143,7 @@ struct ExplorerTui
 
     bool searching;
     bool sbDragging; // a scrollbar grab owns the pointer until release
+    int sbGrab;      // pointer offset within the grabbed thumb
     char[128] qbuf;
     size_t qlen;
 
@@ -557,11 +558,15 @@ struct ExplorerTui
                         && p.pos.y <= bodyRows)
                     || (p.action == PointerAction.drag && sbDragging))
                 {
+                    // Grab-relative (STM2): a press on the handle grabs in
+                    // place, on the track it jumps; drags move the thumb
+                    // relative to the grab point.
+                    top = p.action == PointerAction.press && !sbDragging
+                        ? ScrollState(top).pressedAt(p.pos.y - 1,
+                            rows.length, bodyRows, bodyRows, sbGrab).offset
+                        : ScrollState(top).draggedTo(p.pos.y - 1,
+                            rows.length, bodyRows, bodyRows, sbGrab).offset;
                     sbDragging = true;
-                    top = ScrollState(top)
-                        .draggedTo(p.pos.y - 1, rows.length, bodyRows,
-                            bodyRows)
-                        .offset;
                     scrollBy(0); // clamp top without moving the selection
                     return true;
                 }
@@ -918,22 +923,37 @@ unittest
     x.rebuild();
     assert(cast(long) x.rows.length > x.bodyRows);
 
-    // A press on the scrollbar column grabs the thumb: the selection stays,
-    // nothing activates, and the view jumps by the STM2 inverse mapping.
+    // A press on the TRACK (below the thumb) jumps: the selection stays,
+    // nothing activates, and the view lands by the STM2 inverse mapping.
     assert(x.handle(Event(PointerEvent(button: PointerButton.left,
-        action: PointerAction.press, pos: Point(49, 2)))));
+        action: PointerAction.press, pos: Point(49, 5)))));
     assert(x.sbDragging);
     assert(x.sel == 0, "a scrollbar press never selects a row");
-    assert(x.top > 0, "the thumb jumped to the pointer");
+    assert(x.top > 0, "a track press jumped to the pointer");
 
     // The drag owns the pointer even off the column — still no row clicks.
     const grabbed = x.top;
     assert(x.handle(Event(PointerEvent(button: PointerButton.left,
-        action: PointerAction.drag, pos: Point(20, 6)))));
-    assert(x.top > grabbed && x.sel == 0);
+        action: PointerAction.drag, pos: Point(20, 3)))));
+    assert(x.top < grabbed && x.sel == 0, "the drag kept scrolling off-column");
     assert(x.handle(Event(PointerEvent(button: PointerButton.left,
-        action: PointerAction.release, pos: Point(20, 6)))));
+        action: PointerAction.release, pos: Point(20, 3)))));
     assert(!x.sbDragging);
+
+    // A press ON the handle grabs it in place — no jump — and the drag
+    // then moves it relative to the grab point.
+    import sparkles.ui.state : scrollbarThumb;
+    const t0 = scrollbarThumb(x.rows.length, x.bodyRows, x.top, x.bodyRows);
+    const inThumb = cast(int) t0.start + (t0.extent > 1 ? 1 : 0);
+    const before = x.top;
+    assert(x.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(49, inThumb + 1)))));
+    assert(x.top == before, "a click on the handle must not move it");
+    assert(x.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(49, inThumb + 2)))));
+    assert(x.top > before, "the drag moved the thumb relative to the grab");
+    assert(x.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(49, inThumb + 2)))));
 
     // Off the scrollbar, a press is still a row click.
     const want = x.top + 1;

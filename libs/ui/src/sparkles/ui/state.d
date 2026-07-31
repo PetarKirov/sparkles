@@ -547,17 +547,39 @@ struct ScrollState
         return ScrollState(o);
     }
 
-    /// Jumped so the thumb's leading edge lands at `trackPos` — the inverse
-    /// mapping a click/drag on the scrollbar track needs.
-    ScrollState draggedTo(int trackPos, long content, long viewport, int track) const
+    /// Jumped so the thumb's leading edge lands at `trackPos - grab` — the
+    /// inverse mapping a click/drag on the scrollbar needs. `grab` is the
+    /// pointer's offset within the thumb from $(LREF pressedAt), so a drag
+    /// moves the thumb relative to where it was grabbed instead of snapping
+    /// its leading edge under the pointer.
+    ScrollState draggedTo(int trackPos, long content, long viewport,
+        int track, int grab = 0) const
     {
         const limit = maxOffset(content, viewport);
         const thumb = scrollbarThumb(content, viewport, offset, track);
         const span = track - thumb.extent;
         if (span <= 0 || limit == 0)
             return ScrollState(0);
-        auto p = trackPos < 0 ? 0 : (trackPos > span ? span : trackPos);
+        const at = trackPos - grab;
+        auto p = at < 0 ? 0 : (at > span ? span : at);
         return ScrollState(cast(long) p * limit / span);
+    }
+
+    /// A scrollbar press: $(B inside the thumb) it grabs in place — the
+    /// state is unchanged and `grab` receives the pointer's offset within
+    /// the thumb (a click on the handle must not move it); $(B on the
+    /// track) it jumps the thumb's leading edge to the pointer (`grab` 0).
+    ScrollState pressedAt(int trackPos, long content, long viewport,
+        int track, out int grab) const
+    {
+        const thumb = scrollbarThumb(content, viewport, offset, track);
+        if (trackPos >= thumb.start && trackPos < thumb.start + thumb.extent)
+        {
+            grab = trackPos - thumb.start;
+            return this;
+        }
+        grab = 0;
+        return draggedTo(trackPos, content, viewport, track);
     }
 }
 
@@ -597,6 +619,28 @@ unittest
     // Dragging the thumb to the top / bottom of a 10-cell track.
     assert(s.draggedTo(0, 100, 10, 10).offset == 0);
     assert(ScrollState(0).draggedTo(10, 100, 10, 10).offset == 90);
+}
+
+@("ui.state.scrollState.thumbPressGrabsInPlace")
+@safe pure nothrow @nogc
+unittest
+{
+    // 40 units in a 10-unit viewport on a 10-cell track: thumb extent
+    // 10*10/40 = 2, at offset 12 it starts at 12*8/30 = 3 → cells [3, 5).
+    const s = ScrollState(12);
+    int grab;
+
+    // A press INSIDE the thumb grabs in place — the offset must not move.
+    assert(s.pressedAt(4, 40, 10, 10, grab).offset == 12);
+    assert(grab == 1);
+    // The drag then moves the thumb relative to the grab point: one cell
+    // down lands the leading edge at 4 → 4*30/8 = 15.
+    assert(s.draggedTo(5, 40, 10, 10, grab).offset == 15);
+
+    // A press on the TRACK jumps the leading edge to the pointer.
+    assert(s.pressedAt(8, 40, 10, 10, grab).offset == 30);
+    assert(grab == 0);
+    assert(s.pressedAt(0, 40, 10, 10, grab).offset == 0);
 }
 
 // ── Selection (STM3) ─────────────────────────────────────────────────────────
