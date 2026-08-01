@@ -18,6 +18,7 @@ import sparkles.test_runner.capability : allCapabilities, BackendCapabilities,
 import sparkles.test_runner.ctfe_trace : CtfeTestCost;
 import sparkles.test_runner.metrics : MetricClass, MetricDescriptor;
 import sparkles.test_runner.model : Test, TestLocation, TestResult, Thrown;
+import sparkles.test_runner.workload : WorkloadWindow;
 
 /// Whether the `sparkles:ui` components are in the tested package's dependency
 /// closure. This package *does* depend on them, but `base`/`core-cli`/`test-utils`
@@ -661,6 +662,266 @@ package BenchTableModel[] buildBenchTables(in BenchStats[] rows, bool colored,
         models ~= BenchTableModel(title, cells, aligns);
     }
     return models;
+}
+
+/// Renders `@workload` windows as their own table — window totals and the
+/// wall-clock decomposition, deliberately separate from the per-iteration
+/// bench tables (a window's fields mean different things).
+string formatWorkloadTable(in WorkloadWindow[] rows, bool colored) @system
+{
+    auto model = buildWorkloadTable(rows, colored);
+    return renderCells(model.cells, model.aligns, headerRows: 1, title: model.title);
+}
+
+/// The workload table's model: `workload | reps | wall | cpu usr | cpu krn |
+/// runq | other`, then window-total columns for each source any row carries
+/// (perf, tier-0, syscalls, raw), then a dim `note` column when any window
+/// has a disclosure. An unattributable component is an em dash; scaled perf
+/// windows render `≈`-marked like the bench tables. No disk column until the
+/// PSI integral lands (M5) — an always-empty column is noise.
+package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colored) @system
+{
+    import std.algorithm.searching : canFind;
+    import std.conv : to;
+    import std.math : isNaN;
+    import sparkles.test_runner.metrics : isEstimatedScale, scaled;
+    import sparkles.test_runner.perf : ipc;
+    import sparkles.test_runner.raw : rawHeader;
+
+    const hasPerf = rows.canFind!(r => !r.perf.isNull);
+    const hasTier0 = rows.canFind!(r => !r.tier0.isNull);
+    const hasSyscalls = rows.canFind!(r => !r.syscalls.isNull);
+    const hasRaw = rows.canFind!(r => !r.raw.isNull);
+    const hasNote = rows.canFind!(r => r.wall.note.length > 0);
+
+    // Named syscall / raw selector columns come from the shared open groups,
+    // identical across rows — the first carrier defines them.
+    const(string)[] syscallNames;
+    const(string)[] rawSelectors;
+    foreach (ref r; rows)
+    {
+        if (syscallNames.length == 0 && !r.syscalls.isNull)
+            syscallNames = r.syscalls.get.named;
+        if (rawSelectors.length == 0 && !r.raw.isNull)
+            rawSelectors = r.raw.get.selectors;
+    }
+
+    string[] headers = ["workload", "reps", "wall", "cpu usr", "cpu krn",
+        "runq", "other"];
+    if (hasPerf)
+        headers ~= ["instr", "cycles", "ipc", "pg-flt"];
+    if (hasTier0)
+        headers ~= ["maj-flt", "rd-bytes", "wr-bytes"];
+    if (hasSyscalls)
+    {
+        headers ~= "syscalls";
+        foreach (name; syscallNames)
+            headers ~= "sc:" ~ name;
+    }
+    if (hasRaw)
+        foreach (sel; rawSelectors)
+            headers ~= rawHeader(sel);
+    if (hasNote)
+        headers ~= "note";
+
+    auto aligns = new Align[headers.length];
+    aligns[] = Align.decimal;
+    aligns[0] = Align.left;
+    aligns[1] = Align.right;
+    if (hasNote)
+        aligns[$ - 1] = Align.left;
+
+    static string durCell(double ns) @safe
+        => ns.isNaN ? "—" : benchNs(ns);
+
+    string[][] cells = [headers.dup];
+    foreach (ref r; rows)
+    {
+        if (r.error.length)
+        {
+            const message = r.skipped
+                ? render(colored, i"{yellow $(r.error)}")
+                : render(colored, i"{red $(r.error)}");
+            string[] errCols = [r.name, r.reps.to!string, message];
+            while (errCols.length < headers.length)
+                errCols ~= "—";
+            cells ~= errCols;
+            continue;
+        }
+
+        string[] cols = [
+            r.name,
+            r.reps.to!string,
+            durCell(double(r.wall.wallNs)),
+            durCell(r.wall.onCpuUserNs),
+            durCell(r.wall.onCpuKernelNs),
+            durCell(r.wall.offCpuRunqueueNs),
+            durCell(r.wall.offCpuOtherNs),
+        ];
+        if (hasPerf)
+        {
+            if (r.perf.isNull)
+                cols ~= ["—", "—", "—", "—"];
+            else
+            {
+                const p = r.perf.get;
+                const mark = isEstimatedScale(p.scale) && !p.instructions.isNaN
+                    ? "≈" : "";
+                static string est(string mark, double v) @safe
+                    => v.isNaN ? "—" : mark ~ scaled(v);
+                cols ~= [
+                    est(mark, p.instructions),
+                    est(mark, p.cycles),
+                    p.ipc.isNaN ? "—" : mark ~ fixedRatio(p.ipc),
+                    est(mark, p.pageFaults),
+                ];
+            }
+        }
+        if (hasTier0)
+        {
+            if (r.tier0.isNull)
+                cols ~= ["—", "—", "—"];
+            else
+            {
+                const t = r.tier0.get;
+                cols ~= [scaled(t.majflt), scaled(t.rdBytes), scaled(t.wrBytes)];
+            }
+        }
+        if (hasSyscalls)
+        {
+            if (r.syscalls.isNull)
+                foreach (_; 0 .. 1 + syscallNames.length)
+                    cols ~= "—";
+            else
+            {
+                const s = r.syscalls.get;
+                const mark = isEstimatedScale(s.scale) && !s.total.isNaN ? "≈" : "";
+                cols ~= s.total.isNaN ? "—" : mark ~ scaled(s.total);
+                foreach (i; 0 .. syscallNames.length)
+                    cols ~= i < s.counts.length && !s.counts[i].isNaN
+                        ? mark ~ scaled(s.counts[i]) : "—";
+            }
+        }
+        if (hasRaw)
+        {
+            if (r.raw.isNull)
+                foreach (_; 0 .. rawSelectors.length)
+                    cols ~= "—";
+            else
+            {
+                const w = r.raw.get;
+                const mark = isEstimatedScale(w.scale) ? "≈" : "";
+                foreach (i; 0 .. rawSelectors.length)
+                    cols ~= i < w.values.length && !w.values[i].isNaN
+                        ? mark ~ scaled(w.values[i]) : "—";
+            }
+        }
+        if (hasNote)
+            cols ~= r.wall.note.length
+                ? render(colored, i"{dim $(r.wall.note)}") : "";
+        cells ~= cols;
+    }
+
+    return BenchTableModel(render(colored, i"{bold workloads}"), cells, aligns);
+}
+
+/// A ratio with two decimals for the workload table (`ipc`); the caller
+/// handles nan.
+private string fixedRatio(double v) @safe
+{
+    import std.format : format;
+
+    return format!"%.2f"(v);
+}
+
+@("reporting.buildWorkloadTable.columnsAndDashes")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.typecons : nullable;
+    import sparkles.test_runner.perf : PerfStats;
+
+    WorkloadWindow plain;
+    plain.name = "ingest";
+    plain.reps = 2;
+    plain.wall.wallNs = 40_000_000;
+    plain.wall.onCpuUserNs = 30_000_000;
+    plain.wall.onCpuKernelNs = 4_000_000;
+    plain.wall.offCpuOtherNs = 6_000_000; // runqueue stays nan
+    plain.wall.note = "runqueue wait unattributed (schedstat unreadable) — included in other";
+
+    WorkloadWindow perfy;
+    perfy.name = "crunch";
+    perfy.reps = 1;
+    perfy.wall.wallNs = 10_000_000;
+    perfy.wall.onCpuUserNs = 9_000_000;
+    perfy.wall.onCpuKernelNs = 0;
+    perfy.wall.offCpuOtherNs = 1_000_000;
+    PerfStats p;
+    p.iters = 1;
+    p.cycles = 3.1e9;
+    p.instructions = 2.4e9;
+    p.pageFaults = 12;
+    perfy.perf = nullable(p);
+
+    const model = buildWorkloadTable([plain, perfy], false);
+    assert(model.cells[0][0 .. 7] == ["workload", "reps", "wall", "cpu usr",
+            "cpu krn", "runq", "other"]);
+    assert(model.cells[0].canFind("instr"));
+    assert(model.cells[0].canFind("note"));
+    assert(!model.cells[0].canFind("maj-flt"), "no tier-0 row → no tier-0 columns");
+
+    const r1 = model.cells[1];
+    assert(r1[0] == "ingest" && r1[1] == "2");
+    assert(r1[5] == "—", "an unattributable component is an em dash, never 0");
+    assert(r1[7] == "—", "no perf on this row");
+    assert(r1[$ - 1].canFind("runqueue"), "the disclosure rides the note column");
+
+    const r2 = model.cells[2];
+    assert(r2[7] == "2.40G", "window totals render SI-scaled");
+    assert(r2[9] == "0.77", "ipc over the window's totals");
+    assert(r2[$ - 1] == "", "no note on a clean window");
+}
+
+@("reporting.buildWorkloadTable.estimatesAndErrors")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import std.typecons : nullable;
+    import sparkles.test_runner.perf : PerfStats;
+
+    WorkloadWindow scaledWin;
+    scaledWin.name = "multiplexed";
+    scaledWin.reps = 1;
+    scaledWin.wall.wallNs = 5_000_000;
+    PerfStats p;
+    p.iters = 1;
+    p.instructions = 1e9;
+    p.cycles = 2e9;
+    p.scale = 0.5; // multiplexed ≥ 1 ms: labeled estimate
+    scaledWin.perf = nullable(p);
+
+    WorkloadWindow err;
+    err.name = "bad";
+    err.reps = 1;
+    err.error = "object.Exception: boom";
+
+    WorkloadWindow skipped;
+    skipped.name = "skippy";
+    skipped.reps = 1;
+    skipped.error = "no hardware";
+    skipped.skipped = true;
+
+    const model = buildWorkloadTable([scaledWin, err, skipped], false);
+    assert(model.cells[1][7].startsWith("≈"), "a scaled window is a labeled estimate");
+    assert(model.cells[2][2] == "object.Exception: boom");
+    assert(model.cells[2][3] == "—", "error rows pad with em dashes");
+    assert(model.cells[3][2] == "no hardware");
+
+    const rendered = formatWorkloadTable([scaledWin], false);
+    assert(rendered.canFind("workloads"), "the table carries its title");
 }
 
 /// Per-column visible content widths over a table's rows, header included
