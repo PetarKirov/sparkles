@@ -77,9 +77,9 @@ to `@benchmark`'s per-iteration statistics.
   `workloadWindow(name, dg)` measures only the closure (× reps); each call is
   one row in the `workloads` table. Outside `--bench` the closure runs
   exactly once, inertly.
-- `--perf` / `--syscalls` / `--metrics` select the same sources for windows;
-  results render as their own table and as the `windows` array in
-  `--bench-json`.
+- `--perf` / `--syscalls` / `--metrics` open the same sources for windows;
+  the table shows a fixed summary column set per source (full totals in
+  `--bench-json`'s `windows` array).
 - On Linux the decomposition is thread-scoped (the driving thread); rusage's
   user/kernel split is tick-sampled, so windows should be **long** (tens of
   milliseconds up) for the split to be signal rather than quantization.

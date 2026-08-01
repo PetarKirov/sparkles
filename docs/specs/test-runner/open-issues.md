@@ -166,6 +166,30 @@ section. The entry stays open only for (A), a finer
 `deterministic`/`advisory` tag on `MetricDescriptor`, if downstream tooling
 ever needs to key off it programmatically.
 
+## O13 — workload table column selection
+
+**Where:** SPEC §5.2, §8.2; `reporting.d` `buildWorkloadTable` (M4).
+
+The workloads table renders a **fixed summary column set** per open source
+(perf: instr/cycles/ipc/pg-flt; tier-0: maj-flt/rd-bytes/wr-bytes; syscalls
+
+- named; raw selectors), not catalog-driven columns: `WorkloadWindow` is not
+  `BenchStats`, so the `--metrics` catalog machinery (whose semantics are
+  per-iteration) doesn't apply directly. Consequences: a `--metrics=syscr`
+  run opens tier-0 for windows but shows different tier-0 columns than asked
+  for, without a warning — SPEC §5.2's "selectors are never silently dropped"
+  holds only for the bench tables. Every collected total does land in
+  `--bench-json`, and the docs say so.
+
+**Options:** (A) a window-side column model over the same catalog names
+(marking per-iteration-only metrics inapplicable); (B) keep the fixed
+summary set but warn when a `--metrics` selector names a column outside it;
+(C) status quo, documented.
+
+**Leaning:** (B) soon (cheap, honest), (A) when a real consumer needs
+window column control — likely alongside M5's PSI columns, which will grow
+the window column set anyway.
+
 ## Validation cross-references
 
 Findings from the wired-bench validation that are covered by shipped work or

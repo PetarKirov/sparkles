@@ -734,7 +734,12 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
     static string durCell(double ns) @safe
         => ns.isNaN ? "—" : benchNs(ns);
 
-    string[][] cells = [headers.dup];
+    // Header cells are bolded here like every other runner table —
+    // `renderCells` treats `headerRows` as separator geometry only.
+    auto headerCells = new string[headers.length];
+    foreach (i, h; headers)
+        headerCells[i] = render(colored, i"{bold $(h)}");
+    string[][] cells = [headerCells];
     foreach (ref r; rows)
     {
         if (r.error.length)
