@@ -45,6 +45,7 @@ _Information-oriented._ Lookup material for modules and symbols.
 
 - [API index](./reference/api.md)
 - [Base codecs](./reference/base-codecs.md)
+- [Percent-encoding](./reference/percent-encoding.md)
 
 ### Explanation
 

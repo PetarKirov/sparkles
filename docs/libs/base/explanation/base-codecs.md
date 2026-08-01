@@ -16,7 +16,14 @@ Two different things get called "base N", and the module keeps them apart:
   arbitrary-precision arithmetic — which is exactly why Base58/Base62
   (whole-integer codecs) are out of scope here.
 
-What the two layers genuinely share is the **digit vocabulary**: an
+A third family, **escape encodings**, lives in
+[`sparkles.base.text.percent`](../reference/percent-encoding.md): safe bytes
+pass through and the rest become `%XX`. It is not a codec in the
+regrouping sense at all — no bit boundaries move — but it shares this
+module's hex digit vocabulary (`base16`), which is why the two live next to
+each other rather than in one module.
+
+What the numeral and codec layers genuinely share is the **digit vocabulary**: an
 `Alphabet` (digit string, case folding, decode aliases, padding) and its
 CTFE reverse table (`makeDecodeTable`). The scalar `readInteger` /
 `writeInteger` draw their digits from the `alnum` alphabet sliced to the

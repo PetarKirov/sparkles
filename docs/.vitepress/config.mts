@@ -259,6 +259,14 @@ export default withMermaid(
                       text: 'API index',
                       link: '/libs/base/reference/api',
                     },
+                    {
+                      text: 'Base codecs',
+                      link: '/libs/base/reference/base-codecs',
+                    },
+                    {
+                      text: 'Percent-encoding',
+                      link: '/libs/base/reference/percent-encoding',
+                    },
                   ],
                 },
                 {
@@ -268,6 +276,10 @@ export default withMermaid(
                     {
                       text: 'The design',
                       link: '/libs/base/explanation/design',
+                    },
+                    {
+                      text: 'Base codecs: design notes',
+                      link: '/libs/base/explanation/base-codecs',
                     },
                   ],
                 },
