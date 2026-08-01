@@ -39,8 +39,8 @@ import std.typecons : Nullable;
 // UDA by type, not name).
 import sparkles.test_runner.attributes : workloadUda = workload;
 import sparkles.test_runner.bench : BenchConfig, CounterGroups, elapsedNs, errorCell;
-import sparkles.test_runner.capability : Capability, CapabilityAbsence,
-    CapabilityReport;
+import sparkles.test_runner.capability : BackendCapabilities, Capability,
+    CapabilityAbsence, CapabilityReport;
 import sparkles.test_runner.execution : executeTest, toThrown;
 import sparkles.test_runner.model : Test, TestResult, Thrown;
 import sparkles.test_runner.perf : PerfStats;
@@ -337,7 +337,12 @@ WallDecomposition assembleDecomposition(long wallNs,
     double other = double(wallNs) - attributed;
     if (other < 0)
     {
-        const budget = 10_000.0 + double(wallNs) / 100;
+        // The silent-clamp budget: rusage's utime/stime split is tick-sampled
+        // and rescaled to the task's runtime, so a window can over-read by up
+        // to a scheduler tick (1–4 ms at CONFIG_HZ 250–1000) plus 1 % skew —
+        // that much excess is quantization, not an anomaly worth a note. The
+        // model targets long windows, where a tick is noise.
+        const budget = 2_000_000.0 + double(wallNs) / 100;
         if (-other > budget)
             appendNote(d.note, "on-CPU + runqueue exceed wall by "
                 ~ microsString(-other) ~ " µs (clamped)");
@@ -440,9 +445,9 @@ unittest
     assert(d.note.canFind("exceed wall"));
     assert(d.note.canFind("(clamped)"));
 
-    // Sub-budget excess (µs quantization skew) clamps silently.
+    // Sub-budget excess (tick-sampled rusage smearing) clamps silently.
     WallReading c = a, e = b;
-    e.threadUserUs = 1_005; // 1.005 ms vs 1 ms wall: 5 µs — within budget
+    e.threadUserUs = 2_500; // 2.5 ms vs 1 ms wall: within the tick budget
     const quiet = assembleDecomposition(1_000_000, c, e, "thread");
     assert(quiet.offCpuOtherNs == 0);
     assert(!quiet.note.canFind("clamped"));
@@ -740,6 +745,41 @@ WorkloadOutcome runWorkload(Test test, ref CounterGroups counters,
         }
     }
     return WorkloadOutcome(ctx.windows, result);
+}
+
+/// Inserts the wall source's capability block among the counter backends
+/// (after `raw`, before `pfm`) for `--list-metrics`. The workload phase's
+/// source belongs in the capability report, but deliberately not in
+/// `CounterGroups`' fixed six-backend bench bundle — it has no counting
+/// pass to contribute there.
+// `const`, not `in`: dip1000's `scope` would forbid the `capabilities()`
+// member call on the parameter.
+BackendCapabilities[] withWallBlock(BackendCapabilities[] blocks, const WallSource wall)
+    @safe nothrow
+{
+    const entry = BackendCapabilities("wall", wall.capabilities);
+    foreach (i, ref b; blocks)
+        if (b.backend == "pfm")
+            return blocks[0 .. i] ~ entry ~ blocks[i .. $];
+    return blocks ~ entry;
+}
+
+@("workload.withWallBlock.insertsBeforePfm")
+@safe
+unittest
+{
+    auto blocks = CounterGroups.none.capabilities;
+    const withWall = withWallBlock(blocks, WallSource.tryOpen(true));
+    assert(withWall.length == blocks.length + 1);
+    assert(withWall[4].backend == "wall");
+    assert(withWall[5].backend == "pfm");
+    assert(withWall[6].backend == "harness");
+    version (Posix)
+    {
+        import sparkles.test_runner.capability : Capability, has;
+
+        assert(withWall[4].report.has(Capability.counting));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1055,12 +1095,18 @@ version (linux)
 }
 
 /// Dogfood: the runner's own `--bench` run measures this workload
-/// (whole-body window, two reps).
+/// (whole-body window, two reps). Deliberately ~15 ms per rep: the window
+/// model targets long windows — rusage's tick-sampled user/kernel split
+/// smears by up to a scheduler tick, which must be noise, not the signal.
 @("workload.demo")
 @workloadUda(reps: 2) @system
 unittest
 {
+    import core.time : MonoTime, msecs;
+
     static ulong sink;
-    foreach (i; 0 .. 100_000)
-        sink += i * i;
+    const t0 = MonoTime.currTime;
+    while (MonoTime.currTime - t0 < 15.msecs)
+        foreach (i; 0 .. 10_000)
+            sink += i * i;
 }

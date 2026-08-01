@@ -30,6 +30,7 @@ import sparkles.test_runner.filter : matchesFilter;
 import sparkles.test_runner.model : Test, TestResult;
 import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
     formatBenchTable, formatCapabilityBlock, formatCtfeFailedLine, formatCtfeLine,
+    formatWorkloadTable,
     formatMetricCatalog, formatResultLine, formatSummary, formatThrown,
     progressEnabled, RunTotals, TableGeometry;
 
@@ -741,7 +742,12 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             ~ syscallFamily(probe.syscalls.available);
         stdout.write(formatMetricCatalog(cat, colored));
         stdout.writeln;
-        stdout.write(formatCapabilityBlock(probe.capabilities, colored));
+        {
+            import sparkles.test_runner.workload : WallSource, withWallBlock;
+
+            stdout.write(formatCapabilityBlock(
+                withWallBlock(probe.capabilities, WallSource.tryOpen(true)), colored));
+        }
         stdout.writeln("client throughput/level metrics are defined per @benchmark and appear when present.");
         return UnitTestResult(0, 0, false, false);
     }
@@ -1076,8 +1082,62 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     flush();
     progress.clear();
 
+    // The @workload window phase (SPEC §4): measured after the bench groups,
+    // rendered as one plain table at the end. No live repaint during any
+    // window — for a handful of long single-pass windows the stderr spinner
+    // is disclosure enough, and keeping display I/O out of measurement is
+    // the model's point.
+    import sparkles.test_runner.workload : runWorkload, WallSource, WorkloadWindow;
+
+    auto workloadTests = tests.filter!(t => t.traits.isWorkload).array;
+    WorkloadWindow[] windows;
+    if (workloadTests.length)
+    {
+        auto wallSource = WallSource.tryOpen(true);
+        scope (exit)
+            wallSource.close();
+        // Disclose the degraded decomposition once per run, like the perf
+        // header notes: on such hosts every window's runqueue column is an
+        // em dash and its time lands in `other`.
+        if (wallSource.available && !wallSource.schedOk)
+            stderr.writeln("workload: runqueue wait unattributable (",
+                wallSource.schedReason, ") — its time lands in `other`");
+
+        progress = BenchProgress(total: workloadTests.length,
+            active: progressEnabled(options.noColors) && workloadTests.length > 0,
+            width: detectTerminalWidth(stderrStream: true));
+        foreach (test; workloadTests)
+        {
+            progress.tick(test.name);
+            auto outcome = runWorkload(test, counters, wallSource);
+            if (outcome.result.skipped)
+            {
+                progress.clear();
+                stdout.write(formatResultLine(outcome.result, colored,
+                    options.verbose), "\n");
+            }
+            else if (!outcome.result.succeeded)
+                reportFailure(outcome.result);
+            foreach (ref w; outcome.windows)
+            {
+                if (w.error.length && !w.skipped)
+                    errorRows++;
+                totalRows++;
+            }
+            windows ~= outcome.windows;
+        }
+        progress.clear();
+        if (windows.length)
+        {
+            if (!firstFlush)
+                stdout.write("\n"); // blank line between the bench tables and this one
+            stdout.write(formatWorkloadTable(windows, colored));
+            firstFlush = false;
+        }
+    }
+
     if (totalRows == 0 && !failed)
-        stdout.writeln("no @benchmark tests found");
+        stdout.writeln("no @benchmark or @workload tests found");
 
     if (options.benchJson.length)
     {
