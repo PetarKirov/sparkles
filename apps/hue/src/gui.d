@@ -701,10 +701,14 @@ int runGui(
         import gui_touch : TouchScroller;
 
         TouchScroller touch;
-        touch.slopPx = fonts.cellH() / 2.0f > 8 ? fonts.cellH() / 2.0f : 8;
         TouchScroller.Frame touchFrame;
         float touchAccumPx = 0;
         float prevPinchDist = 0;
+        // A pinch owns the pointer until EVERY finger lifts. Latching on the
+        // way out matters: dropping from two fingers to one would otherwise
+        // start a fresh gesture on the finger still down, and lifting that
+        // one would fire a tap.
+        bool pinching = false;
 
         // A tap is the touch spelling of a click; a long-press starts a
         // selection (drag-extends via the existing machinery).
@@ -733,30 +737,69 @@ int runGui(
         const docY0 = (treeTopRows + 1) * cellH;
         const hdrY = treeTopRows * cellH;
 
+        // Hoisted above the touch block on purpose: the Android toolbar's tap
+        // handler lives there and must obey the SAME gate as the toolbar's
+        // paint (which is `if (!inputMode)`), or the bar stays live while the
+        // '/' search line covers it. `mode` is not written between here and
+        // the block's old position, so this is a pure move.
+        const inputMode = mode != Mode.normal;
+
+        // The bottom band the Android toolbar owns while it is drawn. Both
+        // panes' horizontal scrollbars anchor above it, so one press cannot
+        // be consumed by two handlers: their zone (`screenH - hIdleH - 4`)
+        // otherwise sits INSIDE the toolbar row, they are evaluated first,
+        // and the toolbar is drawn last — so a tap on `◀ thm` both started an
+        // h-scroll drag and cycled the theme. (The general answer is IXB3's
+        // pointer ownership in the shared workspace shell; this is the local
+        // one until that lands.)
+        version (Android)
+            const int bottomChromeH = inputMode ? 0 : cellH;
+        else
+            const int bottomChromeH = 0;
+
         version (Android)
         {
-            // Two fingers = pinch zoom; the scroller sees an up so a pinch
-            // never scrolls or taps.
-            if (GetTouchPointCount() >= 2)
-            {
-                import std.math.algebraic : hypot;
+            // Slop is a physical radius, so it tracks the cell height: a
+            // pinch or Ctrl-± changes `fonts.cellH()`, and a slop computed
+            // once before the loop would misclassify drags after any zoom.
+            touch.slopPx = cellH / 2.0f > 8 ? cellH / 2.0f : 8;
 
-                const p0 = GetTouchPosition(0);
-                const p1 = GetTouchPosition(1);
-                const dist = hypot(p1.x - p0.x, p1.y - p0.y);
-                if (prevPinchDist > 0 && dist > prevPinchDist * 1.15f)
+            // Two fingers = pinch zoom. The scroller is CANCELLED, not fed a
+            // synthetic up: `update(down: false)` cannot tell a fake release
+            // from a real one, so it would resolve the in-flight gesture —
+            // firing a tap on the frame the second finger lands (delivering a
+            // toolbar action, fold toggle or tree activation mid-pinch), and
+            // letting any fling tail coast on while the font resizes.
+            const touchCount = GetTouchPointCount();
+            if (touchCount >= 2)
+                pinching = true;
+            else if (touchCount == 0)
+                pinching = false; // only a full lift ends it — see `pinching`
+
+            if (pinching)
+            {
+                if (touchCount >= 2)
                 {
-                    bumpFontSize(2);
-                    prevPinchDist = dist;
+                    import std.math.algebraic : hypot;
+
+                    const p0 = GetTouchPosition(0);
+                    const p1 = GetTouchPosition(1);
+                    const dist = hypot(p1.x - p0.x, p1.y - p0.y);
+                    if (prevPinchDist > 0 && dist > prevPinchDist * 1.15f)
+                    {
+                        bumpFontSize(2);
+                        prevPinchDist = dist;
+                    }
+                    else if (prevPinchDist > 0 && dist < prevPinchDist * 0.87f)
+                    {
+                        bumpFontSize(-2);
+                        prevPinchDist = dist;
+                    }
+                    else if (prevPinchDist == 0)
+                        prevPinchDist = dist;
                 }
-                else if (prevPinchDist > 0 && dist < prevPinchDist * 0.87f)
-                {
-                    bumpFontSize(-2);
-                    prevPinchDist = dist;
-                }
-                else if (prevPinchDist == 0)
-                    prevPinchDist = dist;
-                touchFrame = touch.update(false, 0, 0, GetFrameTime() * 1000);
+                touch.cancel();
+                touchFrame = TouchScroller.Frame.init;
             }
             else
             {
@@ -785,19 +828,26 @@ int runGui(
 
             // Bottom-row toolbar taps — the touch equivalents of the keyboard
             // essentials; a consumed tap never reaches the panes. Layout must
-            // match the draw block near the end of the loop.
-            if (touchFrame.tap && GetMousePosition().y >= screenH - cellH)
+            // match the draw block near the end of the loop, INCLUDING the
+            // `!inputMode` gate: while '/' or ':' owns the bottom row the bar
+            // is not drawn, so it must not be tappable either.
+            //
+            // Hit-test the gesture ANCHOR, not the live pointer: a tap is
+            // defined as a release within the slop radius of its press, and
+            // slop can exceed half a segment on a narrow screen — so the two
+            // can disagree about which segment was meant. The anchor is what
+            // the user aimed at.
+            if (touchFrame.tap && !inputMode && touchFrame.y >= screenH - cellH)
             {
-                import sparkles.base.logger : info;
-
-                const seg = cast(int)(GetMousePosition().x / (screenW / 5.0f));
-                info(i"toolbar: tap at $(cast(int) GetMousePosition().x),$(cast(int) GetMousePosition().y) → segment $(seg)");
+                const seg = cast(int)(touchFrame.x / (screenW / 5.0f));
                 switch (seg)
                 {
                     case 0: applyTheme(vm.themeIdx == 0 ? themes.length - 1 : vm.themeIdx - 1); break;
                     case 1: applyTheme(vm.themeIdx + 1 == themes.length ? 0 : vm.themeIdx + 1); break;
                     case 2: toggleView(); break;
                     case 3: toggleExplorer(); break;
+                    // 4, plus the single-pixel `x == screenW` case that
+                    // divides to exactly 5.
                     default:
                         lineNumbers = !lineNumbers;
                         vm.widthCols = -1;
@@ -867,7 +917,6 @@ int runGui(
             }
         }
 
-        const inputMode = mode != Mode.normal;
         if (treeFocused && tree.searching)
         {
             // The tree pane's live filter (broot mode): typed chars narrow
@@ -1464,12 +1513,13 @@ int runGui(
                 const float hIdleH2 = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
                 const live = vm.hOverflows() && mode == Mode.normal;
                 const over = live && mp.x >= gutterPx
-                    && mp.y >= screenH
-                        - (vm.hsb.hovered ? hHoverH2 : hIdleH2) - 4;
+                    && mp.y >= screenH - bottomChromeH
+                        - (vm.hsb.hovered ? hHoverH2 : hIdleH2) - 4
+                    && mp.y < screenH - bottomChromeH;
                 vm.hsb = vm.hsb.hoveredNow(live && (over || vm.hsb.dragging));
                 docHAnim.step(vm.hsb.hovered ? hHoverH2 : hIdleH2,
                     GetFrameTime());
-                if (over && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                if (over && clickPressed())
                     vm.hsb = vm.hsb.pressed(
                         cast(int)((mp.x - gutterPx) / cellW),
                         vm.contentCols, vm.widthCols, vm.widthCols);
@@ -1491,13 +1541,14 @@ int runGui(
             const float hIdleH = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
             const hLive = tree.hOverflows() && !tree.searching;
             const overHBar = hLive && overTree
-                && mp.y >= screenH - (tree.hsb.hovered ? hHoverH : hIdleH) - 4;
+                && mp.y >= screenH - bottomChromeH
+                    - (tree.hsb.hovered ? hHoverH : hIdleH) - 4
+                && mp.y < screenH - bottomChromeH;
             tree.hsb = tree.hsb.hoveredNow(
                 hLive && (overHBar || tree.hsb.dragging));
             treeHAnim.step(tree.hsb.hovered ? hHoverH : hIdleH,
                 GetFrameTime());
-            if (overHBar
-                && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+            if (overHBar && clickPressed())
                 tree.hsb = tree.hsb.pressed(cast(int)(mp.x / cellW),
                     tree.contentCols, treeCols - 1, treeCols - 1);
             else if (tree.hsb.dragging)
