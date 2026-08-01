@@ -762,6 +762,74 @@ unittest
 }
 
 /**
+One line editor for every query / filter / goto input (`STM10`, `IXB6`):
+a Regular value — the buffer plus whether the editor is capturing input —
+advanced by transformations. Hosts render `text` and their own caret;
+`typed` appends any printable codepoint (UTF-8-encoded), `erased` drops a
+whole codepoint (not a byte — a multibyte character never leaves a torn
+tail), `accepted` keeps the text and stops capturing, `cancelled` clears.
+*/
+struct LineEditState
+{
+    string text;
+    bool active; /// capturing keystrokes (the host routes keys here)
+
+@safe pure nothrow:
+
+    /// Begins a fresh input session.
+    LineEditState started() const => LineEditState("", true);
+
+    /// `c` appended (printable codepoints only; controls are ignored).
+    LineEditState typed(dchar c) const
+    {
+        import std.utf : encode, isValidDchar;
+
+        if (c < 0x20 || c == 0x7f || !isValidDchar(c))
+            return this;
+        char[4] buf;
+        size_t n;
+        try
+            n = encode(buf, c);
+        catch (Exception)
+            return this;
+        return LineEditState(text ~ buf[0 .. n].idup, active);
+    }
+
+    /// Backspace: the LAST CODEPOINT removed (UTF-8-aware).
+    LineEditState erased() const
+    {
+        auto t = text;
+        if (!t.length)
+            return this;
+        size_t e = t.length - 1;
+        while (e > 0 && (t[e] & 0xC0) == 0x80)
+            --e;
+        return LineEditState(t[0 .. e], active);
+    }
+
+    /// Enter: the text stays, capture ends.
+    LineEditState accepted() const => LineEditState(text, false);
+
+    /// Escape: cleared and closed.
+    LineEditState cancelled() const => LineEditState("", false);
+}
+
+@("ui.state.lineEdit.typeEraseAcceptCancel")
+@safe pure nothrow
+unittest
+{
+    auto e = LineEditState.init.started();
+    assert(e.active && e.text.length == 0);
+    e = e.typed('a').typed('é').typed('\n'); // the control is ignored
+    assert(e.text == "aé");
+    e = e.erased(); // é is two UTF-8 bytes — erased whole
+    assert(e.text == "a");
+    assert(e.accepted() == LineEditState("a", false));
+    assert(e.cancelled() == LineEditState("", false));
+    assert(LineEditState("", true).erased().text.length == 0);
+}
+
+/**
 The one pointer-shape decision (`IXB4`): what the terminal/window pointer
 should look like given the workspace's interaction state. Live grabs
 outrank hover — a divider drag holds `ew-resize` and a grabbed bar holds
