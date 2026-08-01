@@ -14,8 +14,21 @@
 #include <jni.h>
 #include <stddef.h>
 
+// `text` is UTF-16 (jchar) with an explicit length, NOT modified UTF-8.
+// NewStringUTF is specified over *modified* UTF-8, where an astral scalar
+// must arrive as a CESU-8 surrogate PAIR (two 3-byte sequences) rather than
+// the 4-byte sequence standard UTF-8 uses. hue copies arbitrary document
+// text, and the repo-embedded bundle alone has ~118 tracked files containing
+// astral characters — so a long-press-and-copy over an emoji handed
+// NewStringUTF input its contract forbids. Under CheckJNI (which
+// android:debuggable="true" force-enables) ART's checked path can AbortF on
+// an "illegal start byte", i.e. kill the process mid-gesture; without it,
+// older ART mis-decoded. NewString sidesteps the question entirely: it takes
+// UTF-16 units, which is what a Java String already is.
+//
 // Returns 0 on success, nonzero when any step of the JNI dance failed.
-int hue_android_set_clipboard(JavaVM *vm, jobject activity, const char *text)
+int hue_android_set_clipboard(
+    JavaVM *vm, jobject activity, const jchar *text, jsize textLen)
 {
     JNIEnv *env = NULL;
     if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK || env == NULL) return 1;
@@ -42,9 +55,13 @@ int hue_android_set_clipboard(JavaVM *vm, jobject activity, const char *text)
         "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;");
     if (newPlainText == NULL) goto done;
 
-    label = (*env)->NewStringUTF(env, "hue");
-    jtext = (*env)->NewStringUTF(env, text);
-    if (label == NULL || jtext == NULL) goto done;
+    // Checked one at a time: a NULL return leaves an OutOfMemoryError
+    // pending, and making the next JNI call with a pending exception is
+    // undefined per the spec (and an abort under CheckJNI).
+    label = (*env)->NewStringUTF(env, "hue");   // ASCII literal: UTF-8 is fine
+    if (label == NULL) goto done;
+    jtext = (*env)->NewString(env, text, textLen);
+    if (jtext == NULL) goto done;
     clip = (*env)->CallStaticObjectMethod(env, clipDataClass, newPlainText, label, jtext);
     if ((*env)->ExceptionCheck(env) || clip == NULL) goto done;
 
@@ -58,7 +75,16 @@ int hue_android_set_clipboard(JavaVM *vm, jobject activity, const char *text)
     rc = 0;
 
 done:
-    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    if ((*env)->ExceptionCheck(env))
+    {
+        // Describe before clearing: this writes the Java stack trace to
+        // logcat, which is the only diagnostic channel a NativeActivity has.
+        // Without it every failure — including the documented API<23
+        // "ClipboardManager wants a Looper thread" case — collapses into one
+        // undifferentiated "JNI clipboard bridge failed" warning D-side.
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+    }
     if (clip != NULL) (*env)->DeleteLocalRef(env, clip);
     if (clipboard != NULL) (*env)->DeleteLocalRef(env, clipboard);
     if (jtext != NULL) (*env)->DeleteLocalRef(env, jtext);

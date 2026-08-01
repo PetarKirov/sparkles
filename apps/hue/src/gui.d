@@ -584,22 +584,22 @@ int runGui(
     long selMax() => anchorHi > headHi ? anchorHi : headHi;
 
     // The one clipboard seam. raylib's Android SetClipboardText is an
-    // unimplemented no-op, so Android goes through the JNI ClipboardManager
-    // bridge instead (android_glue.setClipboardTextZ).
-    void copyToClipboard(const(char)* z)
+    // unimplemented no-op (a TRACELOG warning — see rcore_android.c), so
+    // Android goes through the JNI ClipboardManager bridge instead.
+    // Takes a slice: the Android side needs a length to transcode to UTF-16,
+    // and only the raylib path wants NUL termination.
+    void copyToClipboard(scope const(char)[] text)
     {
         version (Android)
         {
-            import android_glue : setClipboardTextZ;
-            import sparkles.base.logger : info, warning;
+            import android_glue : setClipboardText;
+            import sparkles.base.logger : warning;
 
-            if (setClipboardTextZ(z))
-                info(i"copy: copied to the system clipboard");
-            else
+            if (!setClipboardText(text))
                 warning(i"copy: JNI clipboard bridge failed");
         }
         else
-            SetClipboardText(z);
+            SetClipboardText(text.toStringz);
     }
 
     // Copy the current selection: a text range → `vm.source[min..max]`
@@ -613,7 +613,7 @@ int runGui(
         if (regime == Regime.text && selMax() > selMin() && selMax() <= vm.source.length)
         {
             auto txt = vm.source[cast(size_t) selMin() .. cast(size_t) selMax()];
-            copyToClipboard((ansiStrip ? stripSgr(txt) : txt).toStringz);
+            copyToClipboard(ansiStrip ? stripSgr(txt) : txt);
         }
         else if (regime == Regime.table && selTable >= 0)
         {
@@ -632,7 +632,7 @@ int runGui(
             }
             const txt = serializeTable(reg, &cellText, tableFmt);
             if (txt.length)
-                copyToClipboard(txt.toStringz);
+                copyToClipboard(txt);
         }
     }
 
@@ -1432,7 +1432,7 @@ int runGui(
                                 // Match the selection copy mode (SEL7).
                                 const txt = (ansiStrip && f.isAnsi)
                                     ? stripSgr(fbody) : fbody;
-                                copyToClipboard(txt.toStringz);
+                                copyToClipboard(txt);
                                 vm.copiedFenceSrc = bodyStart;
                                 copiedFlash = Timeline.triggered(copiedCfg);
                                 copiedShown = true;
