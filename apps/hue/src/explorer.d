@@ -30,8 +30,8 @@ import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : layout;
-import sparkles.ui.state : DisclosureState, ScrollAxis, ScrollbarState, scrollbarThumb,
-    ScrollState;
+import sparkles.ui.state : DisclosureState, LineEditState, ScrollAxis,
+    ScrollbarState, scrollbarThumb, ScrollState;
 import sparkles.ui.style : Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 import sparkles.ui_tui : paintGrid;
@@ -145,15 +145,15 @@ struct ExplorerTui
     /// Whether this pane holds the workspace focus — the header title
     /// renders accented when focused, muted otherwise (like the viewer's).
     bool focused;
-    bool searching;
+    /// The live filter's editor — the one line-edit machine (STM10);
+    /// `filter.active` IS filter mode.
+    LineEditState filter;
     /// The scrollbar as one machine (STM9) — see the viewer's twin.
     ScrollbarState sb;
     /// The horizontal bar (IXB2): live when a visible label overflows the
     /// pane; scrolls the tree columns. Same machine, horizontal axis.
     ScrollbarState hsb = ScrollbarState(ScrollAxis.horizontal);
     int contentCols; // widest visible row, recomputed per rebuild
-    char[128] qbuf;
-    size_t qlen;
 
     // Visibility toggles (XPF2), state shown in the status bar: dotfiles are
     // hidden by default; git-ignored entries are listed (dimmed) by default.
@@ -206,8 +206,8 @@ struct ExplorerTui
         clamp();
     }
 
-    private const(char)[] query() const return @safe pure nothrow @nogc
-        => qbuf[0 .. qlen];
+    private const(char)[] query() const @safe pure nothrow @nogc
+        => filter.text;
 
     /// The live-filter query (for a host that paints its own input line —
     /// the GUI pane has no status bar of its own).
@@ -217,44 +217,44 @@ struct ExplorerTui
     /// The pane is consuming typed text (the workspace must not steal keys).
     bool inputActive() const @safe pure nothrow @nogc => searching;
 
+    /// Whether filter mode is capturing keys (the machine's `active`).
+    bool searching() const @safe pure nothrow @nogc => filter.active;
+
     // ── The live filter, drivable by either backend's input ───────────────
     /// `/`: enter filter mode (broot's tree-as-search-result — XPL/TRV5).
     void filterStart() @system
     {
-        searching = true;
-        qlen = 0;
+        filter = filter.started();
         rebuild();
     }
 
     /// ditto — a typed character narrows per keystroke.
     void filterInput(dchar c) @system
     {
-        if (c >= 32 && c < 127 && qlen < qbuf.length)
-        {
-            qbuf[qlen++] = cast(char) c;
-            rebuild();
-        }
+        const next = filter.typed(c);
+        if (next == filter)
+            return;
+        filter = next;
+        rebuild();
     }
 
     /// ditto
     void filterBackspace() @system
     {
-        if (qlen)
-            --qlen;
+        filter = filter.erased();
         rebuild();
     }
 
     /// Enter keeps the filtered tree; Esc clears it.
-    void filterAccept() @safe pure nothrow @nogc
+    void filterAccept() @safe pure nothrow
     {
-        searching = false;
+        filter = filter.accepted();
     }
 
     /// ditto
     void filterCancel() @system
     {
-        searching = false;
-        qlen = 0;
+        filter = filter.cancelled();
         rebuild();
     }
 
@@ -332,7 +332,7 @@ struct ExplorerTui
             }
         }
 
-        if (qlen == 0)
+        if (filter.text.length == 0)
             addChildren(root, uint.max, true);
         else
             addFiltered(root, uint.max);
@@ -392,7 +392,7 @@ struct ExplorerTui
             }
 
         rows = flatten(data, (uint i) @safe
-            => qlen != 0 || open.isOpen(data.nodes[i].value.path));
+            => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path));
         measureContent();
         clamp();
     }
@@ -536,7 +536,7 @@ struct ExplorerTui
         const selNode = sel < cast(long) rows.length
             ? rows[cast(size_t) sel].node : uint.max;
         const tree = treeView(b, data, rows[first .. last],
-            (uint i) @safe => qlen != 0 || open.isOpen(data.nodes[i].value.path),
+            (uint i) @safe => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path),
             selNode, explorerGlyphs, selBg, hasSelectionBg: true);
 
         // The header paints unshifted; the tree shifts left by the
@@ -549,7 +549,7 @@ struct ExplorerTui
             palette, pageFg, pageBg));
         auto tb = Builder();
         const tree2 = treeView(tb, data, rows[first .. last],
-            (uint i) @safe => qlen != 0 || open.isOpen(data.nodes[i].value.path),
+            (uint i) @safe => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path),
             selNode, explorerGlyphs, selBg, hasSelectionBg: true);
         Widget colW = Widget(kind: WidgetKind.column, children: [tree2],
             width: SizeSpec.fixed(width + hx));
@@ -976,8 +976,7 @@ unittest
     assert(row(7).canFind("filter"), row(7)); // the status bar hints
 
     // The live filter: "app" keeps the match and the dir on the way to it.
-    x.qbuf[0 .. 3] = "app";
-    x.qlen = 3;
+    x.filter = LineEditState("app", true);
     x.rebuild();
     assert(x.rows.length == 2);
     assert(x.data.nodes[x.rows[0].node].value.name == "src");
