@@ -225,7 +225,7 @@ extracted); `false` (after a warning) leaves hue on its built-in degradations
 */
 bool extractAssetsIfNeeded() @trusted
 {
-    import std.file : exists, mkdirRecurse, readText, write;
+    import std.file : exists, mkdirRecurse, readText, rmdirRecurse, write;
     import std.path : buildPath, dirName;
 
     const dataDir = androidDataDir();
@@ -241,6 +241,23 @@ bool extractAssetsIfNeeded() @trusted
         if (marker.exists && assetsUpToDate(readText(marker), hash))
             return true;
     catch (Exception) { /* unreadable marker → re-extract */ }
+
+    // Reaching here means the bundle changed (or never landed), so the
+    // previous extraction's tree is stale. Remove it first: extraction only
+    // ever overwrote, never pruned, so switching between the sample build and
+    // the repo-embedded one left ~1.5k orphaned files behind and the explorer
+    // kept listing a repository the installed APK no longer carries.
+    //
+    // Only the directories the bundle owns — never the whole data dir, which
+    // also holds hue-debug.env and the marker.
+    foreach (owned; [fontsDir(dataDir), grammarQueriesRoot(dataDir), docsDir(dataDir)])
+    {
+        try
+            if (owned.exists)
+                rmdirRecurse(owned);
+        catch (Exception e)
+            warning(i"hue: could not clear stale assets in $(owned): $(e.msg)");
+    }
 
     const manifest = readAssetText("asset-manifest.txt");
     if (manifest is null)
