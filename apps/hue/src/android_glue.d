@@ -249,6 +249,11 @@ bool extractAssetsIfNeeded() @trusted
         return false;
     }
 
+    // Every listed asset must land before the marker is written. Skipping one
+    // and marking the bundle ready anyway made the degradation PERMANENT: the
+    // next launch sees a current marker, skips extraction, and the missing
+    // font face or query file never returns until the APK's hash changes.
+    bool allOk = true;
     try
     {
         foreach (line; manifest.splitLines)
@@ -256,24 +261,34 @@ bool extractAssetsIfNeeded() @trusted
             const rel = line.strip;
             if (rel.length == 0)
                 continue;
+            if (!isSafeAssetRel(rel))
+            {
+                warning(i"hue: refusing unsafe manifest entry: $(rel)");
+                allOk = false;
+                continue;
+            }
             auto bytes = readAssetBytes(rel);
             if (bytes is null)
             {
                 warning(i"hue: asset listed but unreadable: $(rel)");
+                allOk = false;
                 continue;
             }
             const dest = buildPath(dataDir, rel);
             mkdirRecurse(dest.dirName);
             write(dest, bytes);
         }
-        write(marker, hash);
+        if (allOk)
+            write(marker, hash);
+        else
+            warning(i"hue: incomplete asset extraction — will retry next launch");
     }
     catch (Exception e)
     {
         warning(i"hue: asset extraction failed: $(e.msg)");
         return false;
     }
-    return true;
+    return allOk;
 }
 
 // Read one asset fully; null when absent/unreadable.

@@ -375,6 +375,8 @@ int main(string[] args)
 
     initLogger(LogLevel.warning); // hue only emits degradation warnings
 
+    int rc; // the sink's status; also what the Android scope(exit) reports
+
     // The Android boot preamble: reroute logs to logcat (stderr goes nowhere
     // in a NativeActivity), re-enable the HUE_GUI_* debug hooks from the
     // on-device env file, and materialize the APK asset bundle (fonts,
@@ -382,8 +384,26 @@ int main(string[] args)
     version (Android)
     {
         import android_glue : extractAssetsIfNeeded, installLogcatSink, loadDebugEnv;
+        import core.stdc.stdlib : exit;
 
-        installLogcatSink(LogLevel.info);
+        // Android recreates an activity (rotation, task eviction) in the SAME
+        // process, calling android_main → main again, and a statically linked
+        // druntime cannot rt_init twice — it crashes on the new glue thread.
+        // So the process must end when main does.
+        //
+        // `scope (exit)` rather than a tail call: main has many early returns
+        // (--list-overlays, the CLI-error paths, a failed document load) and a
+        // tail-position exit silently misses every one of them. It also makes
+        // the JNI thread-attach safe by construction — the glue thread never
+        // unwinds far enough for ART's "exiting without DetachCurrentThread"
+        // check to fire.
+        //
+        // The status itself is not meaningful here: an early return leaves
+        // `rc` at 0, and nothing observes a NativeActivity's exit code anyway
+        // — the requirement is that the process ENDS, on every path.
+        scope (exit) exit(rc);
+
+        installLogcatSink(LogLevel.warning);
         loadDebugEnv();
         if (!extractAssetsIfNeeded())
             warning(i"hue: asset bundle missing — plain text, built-in document only");
@@ -501,7 +521,6 @@ int main(string[] args)
         return 1;
     }
 
-    int rc;
     final switch (backend)
     {
         case Backend.gui:
@@ -520,19 +539,7 @@ int main(string[] args)
             break;
     }
 
-    // Android may recreate the activity (rotation, task eviction) in the SAME
-    // process, calling android_main → main again — and a statically linked
-    // druntime cannot rt_init twice (it crashes on the new glue thread). Exit
-    // the process when the activity goes; Android spawns a fresh one for the
-    // next launch. The standard NativeActivity engine pattern.
-    version (Android)
-    {
-        import core.stdc.stdlib : exit;
-
-        exit(rc);
-    }
-
-    return rc;
+    return rc; // on Android the scope(exit) above ends the process first
 }
 
 // ── The four sinks — each a `final switch` over the document's kind ─────────
