@@ -28,6 +28,7 @@ import std.string : fromStringz, splitLines, strip, toStringz;
 import sparkles.base.logger : CoreLogEntry, CoreLogger, LogLevel, sharedCoreLog,
     warning;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.text.writers : writeInteger;
 
 import android_paths;
 
@@ -89,6 +90,14 @@ private __gshared string cachedDataDir;
 /// the root of the extracted asset bundle and all writable state.
 string androidDataDir() @trusted
 {
+    // @trusted covers the whole body, and it has to: reading or writing the
+    // `__gshared` cache is itself rejected in @safe, so there is no narrower
+    // region to wrap (the NDK deref is the lesser half).
+    //
+    // What makes it trustworthy is threading. Every hue call runs on the glue
+    // thread — native_app_glue spawns it, and the ANativeActivity callbacks
+    // that run on the Java UI thread never enter hue — and the value is
+    // compute-once and idempotent, so even a race would be benign.
     if (cachedDataDir.length == 0)
         cachedDataDir = GetAndroidApp().activity.internalDataPath.fromStringz.idup;
     return cachedDataDir;
@@ -138,25 +147,11 @@ private final class LogcatLogger : CoreLogger
         SmallBuffer!(char, 512) buf;
         buf ~= entry.file;
         buf ~= ':';
-        writeUint(buf, entry.line);
+        writeInteger(buf, entry.line);
         buf ~= ": ";
         buf ~= message;
         buf ~= '\0';
         (() @trusted => __android_log_write(prio, logTag.ptr, buf[].ptr))();
-    }
-
-    private static void writeUint(ref SmallBuffer!(char, 512) buf, ulong v)
-        @safe nothrow @nogc
-    {
-        char[20] tmp;
-        size_t i = tmp.length;
-        do
-        {
-            tmp[--i] = cast(char) ('0' + v % 10);
-            v /= 10;
-        }
-        while (v != 0);
-        buf ~= tmp[i .. $];
     }
 }
 
@@ -223,7 +218,7 @@ re-runs. Returns `true` when the assets are present (current or just
 extracted); `false` (after a warning) leaves hue on its built-in degradations
 — plain-text rendering, default document only.
 */
-bool extractAssetsIfNeeded() @trusted
+bool extractAssetsIfNeeded() @safe
 {
     import std.file : exists, mkdirRecurse, readText, rmdirRecurse, write;
     import std.path : buildPath, dirName;
@@ -332,8 +327,11 @@ private ubyte[] readAssetBytes(scope const(char)[] name) @trusted
     return buf;
 }
 
-private string readAssetText(scope const(char)[] name) @trusted
+private string readAssetText(scope const(char)[] name) @safe
 {
     auto bytes = readAssetBytes(name);
-    return bytes is null ? null : cast(string) bytes;
+    // `bytes` is freshly allocated by readAssetBytes and never escapes it, so
+    // this is the one place that knows the buffer is unaliased — the cast is
+    // the only unsafe operation in the function.
+    return bytes is null ? null : (() @trusted => cast(string) bytes)();
 }

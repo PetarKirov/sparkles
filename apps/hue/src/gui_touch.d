@@ -193,10 +193,12 @@ unittest
     {
         const f = t.update(true, 100, 400 - 30 * (i + 1), 16);
         total += f.scrollPx;
-        if (i > 0)
-            assert(f.dragging);
+        // Every frame drags, the first included: `dragging_` is set AND
+        // consumed in the same iteration, so no frame is spent crossing the
+        // slop threshold.
+        assert(f.dragging);
     }
-    assert(total > 100); // ≈ +150 px of forward scroll (minus the slop frame)
+    assert(total == 150); // exactly 5 × 30 px of forward scroll
 
     // Release at speed → fling continues in the same direction, decaying.
     auto f = t.update(false, 100, 250, 16);
@@ -211,6 +213,25 @@ unittest
         prev = f.scrollPx;
     }
     assert(f.scrollPx == 0); // decayed to a full stop
+}
+
+@("gui_touch.pressStopsARunningFling")
+@safe pure nothrow @nogc
+unittest
+{
+    // Touching the screen while content is coasting must stop it dead — the
+    // `velocity_ = 0` in the press branch. Otherwise the fling fights the new
+    // gesture.
+    TouchScroller t;
+    t.update(true, 10, 400, 16);
+    foreach (i; 0 .. 4)
+        t.update(true, 10, 400 - 30 * (i + 1), 16);
+    t.update(false, 10, 280, 16);
+    assert(t.update(false, 10, 280, 16).scrollPx > 0); // coasting
+
+    t.update(true, 10, 280, 16); // finger back down
+    // The press frame itself scrolls nothing, and no tail survives it.
+    assert(t.update(true, 10, 280, 16).scrollPx == 0);
 }
 
 @("gui_touch.longPressFiresOnceNoTapNoDrag")
