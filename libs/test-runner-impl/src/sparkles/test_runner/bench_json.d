@@ -16,6 +16,7 @@ module sparkles.test_runner.bench_json;
 
 import sparkles.test_runner.bench : BenchConfig, BenchStats;
 import sparkles.test_runner.metrics : catalog, rowCells;
+import sparkles.test_runner.workload : WorkloadWindow;
 
 /// Provenance and the effective measurement knobs stamped onto a report, so a
 /// committed baseline is self-describing (the budget it was measured under is
@@ -197,8 +198,16 @@ string jsonEscape(scope const(char)[] s) @safe pure
 /// metrics for these rows, so `metrics` keys match `--list-metrics` names.
 /// Schema 2 adds the optional per-row `estimatedMetrics` array naming the
 /// `metrics` keys whose values are multiplex-scaled estimates (absent =
-/// every metric exact).
-string benchReportJson(in BenchStats[] rows, in BenchMeta meta) @safe
+/// every metric exact), and — when `@workload` tests ran — a `windows`
+/// sibling array of window objects: wall decomposition fields (`null` =
+/// unattributable on this host, exactly the table's em dash) and one nested
+/// per-source totals object per attached source. Window values are window
+/// TOTALS with their own field names, deliberately never the per-iteration
+/// `metrics` catalog keys — reusing those names would quietly overload
+/// their semantics. A run without workloads emits no `windows` key and is
+/// byte-identical to the pre-window document.
+string benchReportJson(in BenchStats[] rows, in BenchMeta meta,
+    in WorkloadWindow[] windows = null) @safe
 {
     import std.algorithm.sorting : sort;
     import std.array : appender;
@@ -310,8 +319,110 @@ string benchReportJson(in BenchStats[] rows, in BenchMeta meta) @safe
         o ~= "      \"error\": \"" ~ jsonEscape(row.error) ~ "\"\n";
         o ~= "    }";
     }
-    o ~= rows.length ? "\n  ]\n" : "]\n";
-    o ~= "}\n";
+    o ~= rows.length ? "\n  ]" : "]";
+    if (windows.length)
+    {
+        o ~= ",\n  \"windows\": [";
+        foreach (wi, ref w; windows)
+        {
+            o ~= wi ? ",\n" : "\n";
+            o ~= windowJson(w);
+        }
+        o ~= "\n  ]";
+    }
+    o ~= "\n}\n";
+    return o[];
+}
+
+/// One `windows` element. Field order is fixed for byte-stable baselines;
+/// absent sources omit their keys (the `Nullable` contract), `nan`
+/// components emit `null`, and `skipped` appears only when `true`.
+private string windowJson(in WorkloadWindow w) @safe
+{
+    import std.array : appender;
+    import std.conv : to;
+
+    auto o = appender!string;
+    o ~= "    {\n";
+    o ~= "      \"name\": \"" ~ jsonEscape(w.name) ~ "\",\n";
+    o ~= "      \"reps\": " ~ w.reps.to!string ~ ",\n";
+    if (w.error.length)
+    {
+        o ~= "      \"wallNs\": null,\n";
+        if (w.skipped)
+            o ~= "      \"skipped\": true,\n";
+        o ~= "      \"error\": \"" ~ jsonEscape(w.error) ~ "\"\n";
+        o ~= "    }";
+        return o[];
+    }
+
+    o ~= "      \"wallNs\": " ~ w.wall.wallNs.to!string ~ ",\n";
+    o ~= "      \"scope\": \"" ~ jsonEscape(w.wall.scope_) ~ "\",\n";
+    o ~= "      \"onCpuUserNs\": " ~ jsonNumber(w.wall.onCpuUserNs) ~ ",\n";
+    o ~= "      \"onCpuKernelNs\": " ~ jsonNumber(w.wall.onCpuKernelNs) ~ ",\n";
+    o ~= "      \"offCpuRunqueueNs\": " ~ jsonNumber(w.wall.offCpuRunqueueNs) ~ ",\n";
+    o ~= "      \"offCpuDiskNs\": " ~ jsonNumber(w.wall.offCpuDiskNs) ~ ",\n";
+    o ~= "      \"offCpuOtherNs\": " ~ jsonNumber(w.wall.offCpuOtherNs) ~ ",\n";
+
+    if (!w.perf.isNull)
+    {
+        const p = w.perf.get;
+        o ~= "      \"perf\": { \"instructions\": " ~ jsonNumber(p.instructions)
+            ~ ", \"cycles\": " ~ jsonNumber(p.cycles)
+            ~ ", \"branches\": " ~ jsonNumber(p.branches)
+            ~ ", \"branchMisses\": " ~ jsonNumber(p.branchMisses)
+            ~ ", \"cacheReferences\": " ~ jsonNumber(p.cacheReferences)
+            ~ ", \"cacheMisses\": " ~ jsonNumber(p.cacheMisses)
+            ~ ", \"pageFaults\": " ~ jsonNumber(p.pageFaults)
+            ~ ", \"scale\": " ~ jsonNumber(p.scale)
+            ~ ", \"userOnly\": " ~ (p.userOnly ? "true" : "false") ~ " },\n";
+    }
+    if (!w.tier0.isNull)
+    {
+        const t = w.tier0.get;
+        o ~= "      \"tier0\": { \"minflt\": " ~ jsonNumber(t.minflt)
+            ~ ", \"majflt\": " ~ jsonNumber(t.majflt)
+            ~ ", \"volCs\": " ~ jsonNumber(t.volCs)
+            ~ ", \"involCs\": " ~ jsonNumber(t.involCs)
+            ~ ", \"syscr\": " ~ jsonNumber(t.syscr)
+            ~ ", \"syscw\": " ~ jsonNumber(t.syscw)
+            ~ ", \"rchar\": " ~ jsonNumber(t.rdChars)
+            ~ ", \"wchar\": " ~ jsonNumber(t.wrChars)
+            ~ ", \"readBytes\": " ~ jsonNumber(t.rdBytes)
+            ~ ", \"writeBytes\": " ~ jsonNumber(t.wrBytes) ~ " },\n";
+    }
+    if (!w.syscalls.isNull)
+    {
+        const s = w.syscalls.get;
+        o ~= "      \"syscalls\": { \"total\": " ~ jsonNumber(s.total)
+            ~ ", \"named\": {";
+        foreach (i, name; s.named)
+        {
+            o ~= i ? ", " : " ";
+            o ~= "\"" ~ jsonEscape(name) ~ "\": "
+                ~ jsonNumber(i < s.counts.length ? s.counts[i] : double.nan);
+        }
+        o ~= s.named.length ? " }" : "}";
+        o ~= ", \"scale\": " ~ jsonNumber(s.scale) ~ " },\n";
+    }
+    if (!w.raw.isNull)
+    {
+        const r = w.raw.get;
+        o ~= "      \"raw\": { \"events\": {";
+        foreach (i, sel; r.selectors)
+        {
+            o ~= i ? ", " : " ";
+            o ~= "\"" ~ jsonEscape(sel) ~ "\": "
+                ~ jsonNumber(i < r.values.length ? r.values[i] : double.nan);
+        }
+        o ~= r.selectors.length ? " }" : "}";
+        o ~= ", \"scale\": " ~ jsonNumber(r.scale) ~ " },\n";
+    }
+
+    if (w.wall.note.length)
+        o ~= "      \"note\": \"" ~ jsonEscape(w.wall.note) ~ "\",\n";
+    o ~= "      \"error\": \"\"\n";
+    o ~= "    }";
     return o[];
 }
 
@@ -507,4 +618,90 @@ unittest
         BenchMeta(date: "2026-07-12")));
     assert(doc["rows"][0]["countIterations"].integer == 7);
     assert("countIterations" !in doc["rows"][1], "no counting pass — no key");
+}
+
+@("benchJson.windows.roundTrip")
+@system
+unittest
+{
+    import std.json : JSONType, parseJSON;
+    import std.typecons : nullable;
+    import sparkles.test_runner.perf : PerfStats;
+    import sparkles.test_runner.syscalls : SyscallStats;
+
+    WorkloadWindow w;
+    w.name = "ingest";
+    w.reps = 2;
+    w.wall.wallNs = 41_235_678;
+    w.wall.scope_ = "thread";
+    w.wall.onCpuUserNs = 31_000_000;
+    w.wall.onCpuKernelNs = 4_000_000;
+    // runqueue stays nan (schedstat-less host) → null in the document
+    w.wall.offCpuOtherNs = 6_235_678;
+    w.wall.note = "runqueue wait unattributed (schedstat unreadable) — included in other";
+    PerfStats p;
+    p.iters = 1;
+    p.instructions = 2.41e9;
+    p.cycles = 3.1e9;
+    p.pageFaults = 12;
+    w.perf = nullable(p);
+    SyscallStats s;
+    s.iters = 1;
+    s.total = 1234;
+    s.named = ["read"];
+    s.counts = [600.0];
+    w.syscalls = nullable(s);
+
+    WorkloadWindow err;
+    err.name = "bad";
+    err.reps = 1;
+    err.error = "object.Exception: boom";
+
+    WorkloadWindow skipped;
+    skipped.name = "skippy";
+    skipped.reps = 1;
+    skipped.error = "no hardware";
+    skipped.skipped = true;
+
+    const doc = parseJSON(benchReportJson(null, BenchMeta(date: "2026-08-02"),
+        [w, err, skipped]));
+    assert(doc["schema"].integer == 2, "windows fold into unreleased schema 2");
+    const win = doc["windows"][0];
+    assert(win["name"].str == "ingest");
+    assert(win["reps"].integer == 2);
+    assert(win["wallNs"].integer == 41_235_678);
+    assert(win["scope"].str == "thread");
+    assert(win["onCpuUserNs"].integer == 31_000_000);
+    assert(win["offCpuRunqueueNs"].type == JSONType.null_,
+        "unattributable = null, exactly the table's em dash");
+    assert(win["offCpuDiskNs"].type == JSONType.null_, "PSI lands in M5");
+    assert(win["perf"]["instructions"].integer == 2_410_000_000,
+        "integral totals render as JSON integers");
+    assert(win["perf"]["scale"].integer == 1);
+    assert(win["syscalls"]["total"].integer == 1234);
+    assert(win["syscalls"]["named"]["read"].integer == 600);
+    assert("tier0" !in win, "an absent source omits its key");
+    assert("raw" !in win);
+    assert(win["note"].str.length > 0);
+    assert(win["error"].str == "");
+
+    const bad = doc["windows"][1];
+    assert(bad["wallNs"].type == JSONType.null_);
+    assert(bad["error"].str == "object.Exception: boom");
+    assert("skipped" !in bad);
+    assert(doc["windows"][2]["skipped"].boolean);
+}
+
+@("benchJson.windows.absentKeepsDocumentByteIdentical")
+@safe
+unittest
+{
+    // A run without workloads must stay byte-identical to the pre-window
+    // document — `windows` is a pure addition, not a schema perturbation.
+    BenchStats row;
+    row.name = "r";
+    row.iterations = 1;
+    const meta = BenchMeta(date: "2026-08-02");
+    assert(benchReportJson([row], meta) == benchReportJson([row], meta, null));
+    assert(benchReportJson(null, meta) == benchReportJson(null, meta, null));
 }

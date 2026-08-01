@@ -1155,7 +1155,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             meta.provenance = provenanceLines;
         }
         try
-            write(options.benchJson, benchReportJson(measured, meta));
+            write(options.benchJson, benchReportJson(measured, meta, windows));
         catch (Exception e)
         {
             stderr.writeln("--bench-json: cannot write '", options.benchJson,
