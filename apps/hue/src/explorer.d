@@ -32,7 +32,7 @@ import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : layout;
 import sparkles.ui.state : DisclosureState, ScrollAxis, ScrollbarState, scrollbarThumb,
     ScrollState;
-import sparkles.ui.style : Slot, TextStyle;
+import sparkles.ui.style : Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 import sparkles.ui_tui : paintGrid;
 
@@ -174,6 +174,10 @@ struct ExplorerTui
     // the open document's accent come from the theme, matching the viewer's
     // selection chrome. Recomputed by rebuild, so a theme change re-skins.
     RgbColor selBg, accent, currentBg, sbTrack, sbThumb;
+    /// The slot palette this pane's pipelines resolve against — the theme's
+    /// effective palette with the link-tinted `track`/`thumb` written in
+    /// (B-1, one color authority; the viewer model does the same).
+    Palette palette;
 
     /// Selects + reveals `path` (`XPL4`): every ancestor directory under the
     /// root is opened, the tree rebuilds, and the node's row is selected and
@@ -340,6 +344,12 @@ struct ExplorerTui
         currentBg = mix(pageBg, linkC, 0.16);
         sbTrack = mix(pageBg, linkC, 0.22);
         sbThumb = mix(pageBg, linkC, 0.5);
+        palette = themeValue !is null ? themeValue.effectivePalette
+            : Palette.init;
+        palette.fg[Slot.track] = Color.fromRgb(sbTrack);
+        palette.fgAlpha[Slot.track] = 0xFF;
+        palette.fg[Slot.thumb] = Color.fromRgb(sbThumb);
+        palette.fgAlpha[Slot.thumb] = 0xFF;
 
         // The open document keeps its highlight through rebuilds (XPL3).
         if (current.length)
@@ -532,7 +542,7 @@ struct ExplorerTui
             width: SizeSpec.fixed(width));
         auto ht = b.finish(b.add(hdrCol));
         paintGrid(g, pageBg, buildDisplayList(ht, layout(ht),
-            themeValue.effectivePalette, pageFg, pageBg));
+            palette, pageFg, pageBg));
         auto tb = Builder();
         const tree2 = treeView(tb, data, rows[first .. last],
             (uint i) @safe => qlen != 0 || open.isOpen(data.nodes[i].value.path),
@@ -541,7 +551,7 @@ struct ExplorerTui
             width: SizeSpec.fixed(width + hx));
         auto wt = tb.finish(tb.add(colW));
         paintGrid(g, pageBg, buildDisplayList(wt, layout(wt),
-            themeValue.effectivePalette, pageFg, pageBg),
+            palette, pageFg, pageBg),
             -hx, 1, Rect(hx, 0, width - 1, bodyRows));
 
         // The horizontal bar, one row above the status bar, when live —
@@ -555,7 +565,7 @@ struct ExplorerTui
                 width - 1, ScrollbarGlyphs('━', '─'));
             auto hbt = hb.finish(bar2);
             paintGrid(g, pageBg, buildDisplayList(hbt, layout(hbt),
-                themeValue.effectivePalette, pageFg, pageBg),
+                palette, pageFg, pageBg),
                 0, height - 2);
         }
 
@@ -572,24 +582,23 @@ struct ExplorerTui
             width: SizeSpec.fixed(width));
         auto bt = sb.finish(sb.add(barCol));
         paintGrid(g, pageBg, buildDisplayList(bt, layout(bt),
-            themeValue.effectivePalette, pageFg, pageBg),
+            palette, pageFg, pageBg),
             0, height > 0 ? height - 1 : 0);
 
         // Scrollbar in the pane's last column when the tree overflows —
-        // the one thumb formula (STM2), theme-tinted like the viewer's.
+        // the one component (WGT10) over the one machine (STM9), tinted by
+        // the palette's track/thumb entries (B-1).
         if (cast(long) rows.length > bodyRows && width >= 2
             && width <= g.cols)
         {
-            const thumb = scrollbarThumb(rows.length, bodyRows, top, bodyRows);
-            const col = cast(ushort)(width - 1);
-            foreach (r; 0 .. bodyRows)
-            {
-                const inThumb = r >= thumb.start && r < thumb.start + thumb.extent;
-                CellStyle st;
-                st.fg = Color.fromRgb(inThumb ? sbThumb : sbTrack);
-                st.bg = Color.fromRgb(pageBg);
-                g.putText(col, cast(ushort)(r + 1), inThumb ? "█" : "░", st);
-            }
+            import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+
+            auto vb = Builder();
+            const vbar = scrollbar(vb, this.sb.scrolledTo(top), rows.length,
+                bodyRows, bodyRows, ScrollbarGlyphs('█', '░'));
+            auto vbt = vb.finish(vbar);
+            paintGrid(g, pageBg, buildDisplayList(vbt, layout(vbt),
+                palette, pageFg, pageBg), width - 1, 1);
         }
     }
 

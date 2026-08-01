@@ -29,8 +29,9 @@ import sparkles.ui.geometry : Constraints, Rect;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, HoverTarget,
     hoverTargets, KeyedRect, keyedRects, selectionRects;
-import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground,
-    TextStyle;
+import sparkles.base.term_color : Color;
+import sparkles.ui.style : defaultTwoslashPalette, Palette,
+    schemeForBackground, Slot, TextStyle;
 import sparkles.ui.widget : TextSpan, WidgetTree;
 
 /// Sane concrete fallbacks when a theme leaves the page fore-/background unset
@@ -129,6 +130,11 @@ struct ViewerModel
     RgbColor gutterBg;              /// the gutter strip's theme-derived band
     RgbColor[quoteBarCycle] quoteBars;
     RgbColor sbTrack, sbThumb;      /// link-tinted scrollbar chrome
+    /// The slot palette every buildDisplayList call resolves against — the
+    /// theme's effective palette with the link-tinted `track`/`thumb`
+    /// entries written in, so the scrollbar COMPONENT paints the same
+    /// chrome the hosts used to hand-mix (B-1, one color authority).
+    Palette palette;
 
     // ── the widget pipeline (derived; rebuilt as one) ───────────────────────
     WidgetTree tree;
@@ -208,6 +214,11 @@ struct ViewerModel
             pageFg);
         sbTrack = mix(pageBg, linkC, 0.22);
         sbThumb = mix(pageBg, linkC, 0.5);
+        palette = themes[i].effectivePalette;
+        palette.fg[Slot.track] = Color.fromRgb(sbTrack);
+        palette.fgAlpha[Slot.track] = 0xFF;
+        palette.fg[Slot.thumb] = Color.fromRgb(sbThumb);
+        palette.fgAlpha[Slot.thumb] = 0xFF;
         rebuild();
     }
 
@@ -262,7 +273,7 @@ struct ViewerModel
                     inlineFoldMarker: inlineFoldMarker));
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
-                themes[themeIdx].effectivePalette, pageFg, pageBg);
+                palette, pageFg, pageBg);
             derive(withTargets: foldable.length != 0);
             cells = null;
             fences.length = 0;
@@ -284,7 +295,7 @@ struct ViewerModel
         tree = viewMarkdown(preview.doc, opt);
         frames = layout(tree, Constraints(maxW: widthCols));
         ops = buildDisplayList(tree, frames,
-            themes[themeIdx].effectivePalette, pageFg, pageBg);
+            palette, pageFg, pageBg);
         derive(withTargets: true);
         cells = keyedRects(tree, frames);
         collectStructure();
