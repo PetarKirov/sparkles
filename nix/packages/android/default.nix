@@ -56,5 +56,29 @@
         hue-apk-repo = config.packages.hue-apk-repo;
         hello-apk = config.packages.hello-apk;
       };
+
+      # The names this module owns, so nix/packages/all.nix can subtract them
+      # instead of guessing from the string "android". A heuristic guarding a
+      # multi-GB unfree closure leaks both ways: an Android output that does
+      # not happen to contain "android" joins the desktop aggregate (and gets
+      # built on macOS), and a *desktop* package that does is silently dropped
+      # from CI. Declaring the set makes both impossible.
+      #
+      # Keep in sync with the `packages.*` assignments across this directory —
+      # `all-android` itself included, since the desktop aggregate must not
+      # contain it either.
+      legacyPackages.androidPackageNames = [
+        "all-android"
+        "hello-apk"
+        "hue-android-assets"
+        "hue-apk"
+        "hue-apk-repo"
+        "libghostty-vt-android"
+        "libhello-android"
+        "libhue-android"
+        "raylib-android"
+        "tree-sitter-android"
+        "ts-grammars-android"
+      ];
     };
 }

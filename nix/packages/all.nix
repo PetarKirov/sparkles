@@ -6,11 +6,21 @@
       # The Android cross-compilation outputs (nix/packages/android/) live in
       # their own aggregate (`all-android`, built by the `nix-build-android`
       # CI job): they multiply the closure by gigabytes (dual-ABI druntimes,
-      # the NDK/SDK, the Maple font build) and pull the unfree Android SDK —
-      # neither belongs in the desktop cache aggregate. Recognized by naming
-      # convention: every android output carries "android" or "-apk" in its
-      # name.
-      isAndroid = name: lib.hasInfix "android" name || lib.hasInfix "-apk" name;
+      # the NDK/SDK) and pull the unfree Android SDK — neither belongs in the
+      # desktop cache aggregate.
+      #
+      # The android module DECLARES the names it owns rather than this file
+      # matching on the string "android". A heuristic leaked in both
+      # directions: an Android output not containing the word would join the
+      # desktop aggregate and get built on macOS, and a desktop package that
+      # did contain it would be silently dropped from CI. (The font build was
+      # the live example — it lived under nix/packages/android/ but is a plain
+      # cross-platform font package, and is now a first-class desktop output
+      # in nix/packages/fonts.nix.)
+      #
+      # `or [ ]` because the android module only defines its outputs on
+      # x86_64-linux; everywhere else there is nothing to subtract.
+      androidNames = config.legacyPackages.androidPackageNames or [ ];
     in
     {
       # Aggregate of every desktop derivation the `nix-build` CI job builds
@@ -22,12 +32,7 @@
         {
           devshell-full = config.devShells.full;
         }
-        // lib.filterAttrs (name: _: !(isAndroid name)) (
-          builtins.removeAttrs config.packages [
-            "all-desktop"
-            "all-android"
-          ]
-        )
+        // builtins.removeAttrs config.packages ([ "all-desktop" ] ++ androidNames)
         // lib.concatMapAttrs (
           libName: lib.mapAttrs' (exName: lib.nameValuePair "example-${libName}-${exName}")
         ) config.legacyPackages.examples

@@ -151,11 +151,10 @@
         };
       };
 
-      # Maple Mono NF CN — the on-device primary family: the custom build with
-      # frozen OpenType features (see ./maple-mono, adapted from the machine
-      # config's pkgs/maple-mono-custom). Uiua386 (nixpkgs) renders the Uiua
-      # glyph planes via the codepoint map in app.d (androidUiuaCodepointMap).
-      mapleMono = pkgs.callPackage ./maple-mono { };
+      # The font set is defined once, in nix/packages/fonts.nix, and shared
+      # with the desktop bundle — nothing about it is Android-specific.
+      fonts = config.legacyPackages.sparklesFonts;
+      mapleMono = fonts.maple-mono;
 
       # Attribution for everything third-party the APK ships. OFL (the fonts)
       # and Bitstream Vera (DejaVu) require the notice to accompany the fonts;
@@ -240,39 +239,18 @@
         name: stageDocs:
         pkgs.runCommand name
           {
-            nativeBuildInputs = [ pkgs.fontconfig ];
+            # No fontconfig: the shared bundle already ran fc-query to write
+            # the .charset sidecars.
           }
           ''
-            mkdir -p $out/fonts
+            # `runCommand` does not create $out — the builder must, and this
+            # copy is the first thing that touches it.
+            mkdir -p $out
 
-            # Primary family: FiraCode Nerd Font Mono (the head of hue's
-            # defaultGuiFont preference list; FiraCode ships no italics —
-            # italic text renders upright, same as the desktop default).
-            for f in FiraCodeNerdFontMono-Regular.ttf FiraCodeNerdFontMono-Bold.ttf; do
-              cp ${pkgs.nerd-fonts.fira-code}/share/fonts/truetype/NerdFonts/FiraCode/$f \
-                $out/fonts/
-            done
-            # Regular fallback with full styling: DejaVu Sans Mono.
-            for f in DejaVuSansMono.ttf DejaVuSansMono-Bold.ttf \
-                DejaVuSansMono-Oblique.ttf DejaVuSansMono-BoldOblique.ttf; do
-              cp ${pkgs.dejavu_fonts}/share/fonts/truetype/$f $out/fonts/
-            done
-
-            # Primary on-device family: Maple Mono NF CN, all four styled
-            # faces (the -Bold/-Italic/-BoldItalic siblings the fontconfig-free
-            # variant scan resolves), plus the Uiua386 codepoint-map font.
-            for f in ${mapleMono}/share/fonts/truetype/*.ttf; do
-              case "$(basename "$f")" in
-                *-Regular.ttf | *-Bold.ttf | *-Italic.ttf | *-BoldItalic.ttf)
-                  cp "$f" $out/fonts/
-                  ;;
-              esac
-            done
-            cp ${pkgs.uiua386}/share/fonts/truetype/Uiua386.ttf $out/fonts/
-
-            for font in $out/fonts/*.ttf; do
-              fc-query --format=%{charset} "$font" > "$font.charset"
-            done
+            # The shared bundle already carries every font plus its
+            # `.charset` sidecar (fc-query ran at ITS build time), so this is a
+            # copy, not a second recipe to keep in sync.
+            cp -rL ${fonts.fontBundle}/fonts $out/fonts
 
             # Grammar queries — the desktop bundle's normalized queries/ dirs
             # verbatim (parsers ship separately as native libs; the registry's
