@@ -110,3 +110,9 @@ apps/hue/twoslash
 # and stays checked. Cited from research/tui-libraries/notcurses.md.
 ^https?://nick-black\.com/$
 ^https?://nick-black\.com/dankwiki/
+
+# git.launchpad.net (cgit; a Launchpad commit cited in the docs) times out
+# locally and 500s in CI (verified with curl on 2026-08-02) — a real upstream
+# outage/chronic slowness, not checker flakiness. Same class as the x.org
+# entry above.
+^https?://git\.launchpad\.net/
