@@ -26,6 +26,7 @@ struct TestTraits
     bool isCtfe;
     bool isWasm;
     bool isBenchmark;
+    bool isWorkload;
 
     /// The test asserts it needs nothing linked from its own module, so the
     /// extracted `--better-c` / `--wasm` program leaves that module out
@@ -35,6 +36,10 @@ struct TestTraits
 
     /// Fixed benchmark iteration count; `0` auto-scales.
     uint benchIterations;
+
+    /// Workload window rep count; discovery clamps it to ≥ 1
+    /// (see `workload.reps`). Meaningful only when `isWorkload`.
+    uint workloadReps;
 
     /// The test's safety/purity attributes (`"@safe pure nothrow @nogc"`),
     /// re-applied to extracted `@betterC`/`@wasm` test functions.
