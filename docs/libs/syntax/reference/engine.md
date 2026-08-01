@@ -13,12 +13,22 @@ Grammars are compiled shared objects plus query files, supplied by the Nix
 each holding `<lang>/parser` and `<lang>/queries/*.scm`. First hit wins, so
 a local directory can shadow one grammar ahead of the bundle.
 
-| Symbol                                 | What it is                                                                    |
-| -------------------------------------- | ----------------------------------------------------------------------------- |
-| `GrammarRegistry.fromEnvironment()`    | registry over `$SPARKLES_TS_GRAMMAR_PATH`                                     |
-| `grammar(lang)`                        | dlopen + `tree_sitter_<lang>` + ABI window check, cached                      |
-| `queryText(lang, kind = "highlights")` | the query source, from the same entry as the parser                           |
-| `canonicalLanguage(label)`             | fence-tag/extension normalization (`ts` → `typescript`, `md` → `markdown`, …) |
+There is a second layout for targets where a parser is not a file you can
+point at. On Android the parsers ship as APK native libraries resolved by bare
+soname through the app's own linker namespace, with only the queries on disk —
+`fromSonames` selects that. A language label is refused unless it is
+`[a-z0-9_-]+`: the label reaches `dlopen`, which switches from soname lookup to
+_path_ resolution the moment a name contains a slash, and labels come from
+document fence tags.
+
+| Symbol                                 | What it is                                                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `GrammarRegistry.fromEnvironment()`    | registry over `$SPARKLES_TS_GRAMMAR_PATH`                                                               |
+| `GrammarRegistry.fromSonames(root)`    | soname layout: parsers via `dlopen("libtree_sitter_<lang>.so")`, queries under `<root>/<lang>/queries/` |
+| `grammar(lang)`                        | dlopen + `tree_sitter_<lang>` + ABI window check, cached                                                |
+| `queryText(lang, kind = "highlights")` | the query source, from the same entry as the parser (or from `<root>` in the soname layout)             |
+| `canonicalLanguage(label)`             | fence-tag/extension normalization (`ts` → `typescript`, `md` → `markdown`, …)                           |
+| `isPlainLanguageName(label)`           | the `[a-z0-9_-]+` guard both layouts apply before a label becomes a soname or a path component          |
 
 Every lookup returns a `TsExpected` — a missing grammar is an error value
 your code turns into plain-text output, never a crash.

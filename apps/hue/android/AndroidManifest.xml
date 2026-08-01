@@ -10,7 +10,8 @@
     which teaches raylib's Android backend to refresh its size-derived state
     on WINDOW_RESIZED/CONFIG_CHANGED — hue then reflows through its normal
     resize path with all state (scroll, document, theme) preserved. Stock
-    raylib 5.5 cannot do this; without the patch, keep orientation OUT of
+    Stock raylib cannot do this (verified through the released 6.0 tag, which
+    is what the flake pins); without the patch, keep orientation OUT of
     configChanges so a restart re-inits at the new size.
 
     extractNativeLibs="true": the grammar parser libraries are dlopen'd by
