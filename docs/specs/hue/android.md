@@ -1,0 +1,103 @@
+# hue on Android — requirements & architecture
+
+_**Status:** shipped v0 (emulator-verified; physical-device pass pending) ·
+**Date:** 2026-07-30 · **Scope:** the Android port of the GUI sink — `apps/hue`
+(`android_glue.d`, `android_paths.d`, `gui_touch.d`, the `version (Android)`
+gates), `libs/raylib-text` (`FontSources`), `libs/syntax`
+(`GrammarRegistry.fromSonames`), `nix/packages/android/`, `apps/hue/android/`._
+
+hue runs on Android as a pure `NativeActivity` APK — no Java, no DEX
+(`hasCode="false"`). raylib's `PLATFORM_ANDROID` backend
+(`android_native_app_glue` + EGL/GLES2) owns `android_main()` and calls the
+library's `main()`, so the whole desktop GUI — the `sparkles:ui` widget
+pipeline, `RaylibCanvas`, `FontSet`, tree-sitter highlighting, the markdown
+preview, ghostty ansi fences, the explorer, twoslash — carries over. The APK,
+and every native dependency in it, is built by nix (no Gradle): see
+`nix/packages/android/`.
+
+## Architecture decisions
+
+| Decision          | Choice                                                                                                                                                                                                                                  | Where                                                     |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Rendering backend | raylib cross-built for `PLATFORM_ANDROID` (static, per ABI); `RaylibCanvas` unchanged                                                                                                                                                   | `nix/packages/android/raylib.nix`                         |
+| ABIs              | `arm64-v8a` (devices) + `x86_64` (emulator); the dual-ABI `ldc-android` (dlang.nix) carries one ldc2.conf section per target                                                                                                            | `nix/packages/android/ndk.nix`, dlang.nix `feat/ldc-wasm` |
+| Entry / dispatch  | `main()` runs inside the activity: `pickBackend` answers `gui` unconditionally; TUI modules stay out of the module graph                                                                                                                | `apps/hue/src/app.d`                                      |
+| Font resolution   | fontconfig-free: `FontSet.FontSources` scans the extracted `fonts/` dir + `/system/fonts`; coverage from build-time `fc-query` `.charset` sidecars                                                                                      | `libs/raylib-text/…/font_set.d`                           |
+| Grammars          | parsers ship as `lib/<abi>/libtree_sitter_<lang_>.so`, dlopen'd by bare soname from the app's linker namespace (`GrammarRegistry.fromSonames`); queries are extracted assets                                                            | `libs/syntax/…/ts/registry.d`, `ts-grammars.nix`          |
+| Assets            | one `assets/` bundle (fonts + sidecars, grammar queries, sample docs), extracted by D over `AAssetManager` on first run, keyed by `bundle-hash`, driven by `asset-manifest.txt` (AAssetDir cannot list subdirectories)                  | `android_glue.d`, `nix/packages/android/hue.nix`          |
+| Lifecycle         | rotation restarts the activity (raylib 5.5 does not resize its surface in place), and `main()` exits the process when the activity ends — a statically linked druntime cannot `rt_init` twice in a reused process                       | manifests, `app.d`                                        |
+| Input             | `TouchScroller` (pure, host-tested): tap = click, drag = kinetic scroll + fling, long-press = selection, pinch = font zoom; a five-segment bottom toolbar covers the keyboard essentials; hardware keyboards keep every desktop binding | `apps/hue/src/gui_touch.d`, `gui.d`                       |
+| Logging           | a `CoreLogger` subclass writing to logcat tag `hue` (stderr goes nowhere in an activity)                                                                                                                                                | `android_glue.d`                                          |
+| Debug hooks       | `<dataDir>/hue-debug.env` (`KEY=VALUE`) loads into the environment at boot, re-enabling every `HUE_GUI_*` golden/screenshot hook on-device                                                                                              | `android_paths.d`, `android_glue.d`                       |
+
+## Requirements
+
+| ID   | Requirement                                                                                                                                               | Status                | Where                                       |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------- |
+| AND1 | `nix build .#hue-apk` produces an installable dual-ABI NativeActivity APK, fully nix-built (aapt2 + zipalign + apksigner, checked-in debug keystore)      | full                  | `nix/packages/android/{hue,build-apk}.nix`  |
+| AND2 | The GUI sink boots on-device with no CLI: built-in document, asset bundle extracted idempotently, logcat logging                                          | full (emulator)       | `app.d`, `android_glue.d`                   |
+| AND3 | Fonts resolve without fontconfig (bundled FiraCode Nerd Font Mono + DejaVu fallback; `/system/fonts` last), styled faces by the sibling naming convention | full                  | `font_set.d` `FontSources`                  |
+| AND4 | Syntax highlighting on-device: all bundled grammars as soname-dlopen'd native libs, queries from assets, plain-text degrade intact (totality)             | full (emulator)       | `registry.d` `fromSonames`                  |
+| AND5 | The markdown preview incl. ` ```ansi ` fences (libghostty-vt cross-built, `-Dsimd=false`) renders on-device                                               | full (emulator)       | `libghostty-vt.nix`, `gui_ansi.d`           |
+| AND6 | Touch: drag scroll + fling, tap = click, long-press selection, pinch zoom, toolbar for theme/view/tree/line-numbers, system back closes tree → exits      | full (pinch untested) | `gui_touch.d`, `gui.d`                      |
+| AND7 | Lifecycle: pause/resume identical frames; rotation relaunches cleanly at the new size                                                                     | full (emulator)       | manifests, `app.d` process-exit             |
+| AND8 | The explorer browses the extracted sample docs (markdown, D, twoslash) with file-type icons                                                               | full (emulator)       | `app.d` (Android tree root), `hue.nix` docs |
+| AND9 | On-device goldens: `hue-debug.env` + `HUE_GUI_SCREENSHOT` (data-dir-anchored) round-trip via `adb shell run-as`                                           | full                  | `gui.d`, `android_paths.d`                  |
+
+## Desktop-parity checklist
+
+Interaction parity is honest, not aspirational: **touch covers the reading
+workflows; full parity needs a (BT) keyboard**, whose events flow through
+raylib's Android input into every existing binding.
+
+| Desktop feature                      | On Android                                                                                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Scroll (wheel / j k / PgUp…)         | touch drag + fling; keyboard works                                                                           |
+| Theme cycling (← →)                  | toolbar `◀ thm` / `thm ▶`                                                                                    |
+| Raw ↔ preview (Tab)                  | toolbar `view`                                                                                               |
+| Explorer (e)                         | toolbar `tree`; back button closes                                                                           |
+| Line numbers (l)                     | toolbar `ln №`                                                                                               |
+| Font size (Ctrl-±)                   | pinch zoom                                                                                                   |
+| Click (fold chevrons, tree, buttons) | tap                                                                                                          |
+| Text/table selection (mouse drag)    | long-press, then drag                                                                                        |
+| Copy (Ctrl-C / copy buttons)         | **degraded**: raylib Android clipboard is a no-op → logged; a JNI `ClipboardManager` bridge is the follow-up |
+| Search `/`, goto `g`, copy-modes y/t | **keyboard-only** (no soft-keyboard IME through raylib)                                                      |
+| Set navigation `[` `]` `i`           | keyboard-only (explorer covers browsing)                                                                     |
+| Fullscreen F11                       | n/a — the surface is the screen                                                                              |
+| Hover popups (twoslash)              | tap a token (the pointer rests where the last tap landed)                                                    |
+| Window title                         | n/a                                                                                                          |
+
+## Build & run
+
+```console
+$ nix build .#hue-apk            # both ABIs + assets, signed
+$ nix develop .#android          # adb/aapt2 on PATH + helpers
+$ hue-emulator &                 # x86_64 API-35 AVD (created on first use)
+$ hue-adb-install result/hue.apk
+$ hue-logcat                     # tags: hue, raylib + crash channels
+```
+
+On-device goldens: write `HUE_GUI_*` lines to a file, push via
+`adb push … /data/local/tmp/ && adb shell run-as dev.sparkles.hue cp …
+files/hue-debug.env` (direct `run-as sh -c 'cat > …'` writes are
+SELinux-denied), relaunch, pull the PNG the same way.
+
+## Traps (each cost a debugging round)
+
+- `InitWindow(w, h)` is **not** ignored on Android: a non-zero size letterboxes
+  onto the surface. `InitWindow(0, 0)` = native resolution.
+- Final links need `-Wl,-u,ANativeActivity_onCreate` (glue object otherwise
+  unreferenced) and `-Wl,--wrap=fopen` (raylib's asset-manager fopen routing +
+  its `__real_fopen`), plus `-Wl,-z,max-page-size=16384` on **every** `.so`
+  (16 KB-page devices).
+- ImportC vs bionic: `-P-U__SIZEOF_INT128__` (kernel headers typedef
+  `__int128`); `android_native_app_glue.h` cannot be ImportC'd at all — the
+  glue structs are hand-mirrored in `android_glue.d`.
+- A statically linked druntime cannot `rt_init` twice: Android reuses the
+  process across activity recreations → exit the process when `main` returns.
+- `dub test`'s silence is not coverage: `version (Android)` code only compiles
+  under the cross triple — the nix `libhue-android` build is the type-check
+  (e.g. sparkles' loggers are IES-only; plain-string calls hid in gated code).
+- `builtinThemes` has alias keys (`catppuccinmocha` ≍ `catppuccin-mocha`):
+  theme-cycling one step can land on an identically-colored twin.
+- `run-as` needs `android:debuggable="true"` — debug-_signed_ is not enough.
