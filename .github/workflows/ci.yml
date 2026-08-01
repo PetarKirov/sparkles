@@ -250,3 +250,33 @@ jobs:
 
       - name: Build & push the Android APK closure
         run: nix build --print-build-logs .#all-android
+
+  # The single required check. Branch protection and the merge queue gate on
+  # job *names*, so without a fan-in every new job has to be added to that
+  # list by hand — and until someone does, it can fail while PRs merge green.
+  # Gate on `CI` instead and this stays true as jobs come and go.
+  #
+  # `if: always()` so the job still runs when a dependency failed (otherwise
+  # it would be skipped, which branch protection reads as "not failed").
+  # Skipped dependencies are tolerated; failed and cancelled ones are not.
+  ci:
+    name: CI
+    needs:
+      - test
+      - extracted-tests
+      - win32-example
+      - nix-build
+      - nix-build-android
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that every job succeeded or was skipped
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "dependency results: $results"
+          for r in $results; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::a required job reported '$r'"; exit 1 ;;
+            esac
+          done
