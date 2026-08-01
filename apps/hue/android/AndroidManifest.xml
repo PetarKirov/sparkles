@@ -17,17 +17,28 @@
     soname from the app's linker namespace; extracted real files also keep
     ndk-stack symbolization simple. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="dev.sparkles.hue"
-    android:versionCode="1"
-    android:versionName="0.1.0">
+    package="dev.sparkles.hue">
 
-    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <!-- No <uses-sdk> on purpose: aapt2's min/target-sdk-version flags only
+        apply as DEFAULTS when the manifest omits it, so declaring it here would
+        shadow them and let the APK claim an API level the native code was not
+        built against. nix/packages/android/{ndk,sdk}.nix are the source. -->
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
+    <!-- android:debuggable is NOT declared here: aapt2's debug-mode flag injects
+        it for debug builds (see nix/packages/android/build-apk.nix), so a release
+        APK simply does not carry it.
+
+        allowBackup="false": the app's private dir is where the APK's own asset
+        bundle is materialized, all of it re-derivable from the APK. Left at the
+        default (true) it would be uploaded to the user's Google Drive and
+        device-to-device transfers — pointless for the sample build, and for the
+        repo-embedded one ~29 MB that silently exceeds Auto Backup's 25 MB quota
+        and is dropped anyway. -->
     <application
         android:label="hue"
         android:hasCode="false"
-        android:debuggable="true"
+        android:allowBackup="false"
         android:extractNativeLibs="true">
         <activity
             android:name="android.app.NativeActivity"

@@ -33,7 +33,7 @@ insert_final_newline = unset
 # The Android debug signing keystore is a binary artifact, checked in so the
 # APK signature stays stable across rebuilds (see
 # nix/packages/android/build-apk.nix)
-[apps/hue/android/debug.keystore]
+[apps/hue/android/debug-only.keystore]
 charset = unset
 end_of_line = unset
 insert_final_newline = unset
