@@ -1,7 +1,9 @@
 # hue on Android — requirements & architecture
 
-_**Status:** shipped v0 — emulator-verified, and confirmed on a physical
-arm64 device (Xiaomi 11T Pro) · **Date:** 2026-08-02 · **Scope:** the Android
+_**Status:** shipped v0 — every requirement confirmed on a physical arm64
+device (Xiaomi 11T Pro), the emulator having been the development target. The
+one exception is pinch-zoom (`AND6`), which is host-tested but not yet
+exercised on hardware. · **Date:** 2026-08-02 · **Scope:** the Android
 port of the GUI sink — `apps/hue` (`android_glue.d`, `android_clipboard.d`,
 `android_paths.d`, `gui_touch.d`, the `version (Android)` gates),
 `libs/raylib-text` (`FontSources`), `libs/syntax`
@@ -39,9 +41,9 @@ and every native dependency in it, is built by nix (no Gradle): see
 | AND2  | The GUI sink boots on-device with no CLI: built-in document, asset bundle extracted idempotently, logcat logging                                                                                                                      | full (device)                                 | `app.d`, `android_glue.d`                   |
 | AND3  | Fonts resolve without fontconfig: Maple Mono NF CN primary (4 styled faces), FiraCode Nerd Font Mono + DejaVu fallbacks, `/system/fonts` last; styled faces by the sibling naming convention, fallbacks ranked so a Regular face wins | full                                          | `font_set.d` `FontSources`                  |
 | AND4  | Syntax highlighting on-device: all bundled grammars as soname-dlopen'd native libs, queries from assets, plain-text degrade intact (totality)                                                                                         | full (device)                                 | `registry.d` `fromSonames`                  |
-| AND5  | The markdown preview incl. ` ```ansi ` fences (libghostty-vt cross-built, `-Dsimd=false`) renders on-device                                                                                                                           | full (emulator)                               | `libghostty-vt.nix`, `gui_ansi.d`           |
+| AND5  | The markdown preview incl. ` ```ansi ` fences (libghostty-vt cross-built, `-Dsimd=false`) renders on-device                                                                                                                           | full (device)                                 | `libghostty-vt.nix`, `gui_ansi.d`           |
 | AND6  | Touch: drag scroll + fling, tap = click, long-press selection, pinch zoom, toolbar for theme/view/tree/line-numbers (and `copy` while a selection is live), system back closes tree → exits                                           | full (pinch: host-tested, on-device untested) | `gui_touch.d`, `gui.d`                      |
-| AND7  | Lifecycle: pause/resume identical frames; rotation resizes in place — same process, scroll/document/theme preserved, reflow at the new width                                                                                          | full (emulator)                               | raylib patch, manifests, `app.d`            |
+| AND7  | Lifecycle: pause/resume identical frames; rotation resizes in place — same process, scroll/document/theme preserved, reflow at the new width                                                                                          | full (device)                                 | raylib patch, manifests, `app.d`            |
 | AND8  | The explorer browses the extracted sample docs (markdown, D, twoslash) with file-type icons                                                                                                                                           | full (device)                                 | `app.d` (Android tree root), `hue.nix` docs |
 | AND9  | On-device goldens: `hue-debug.env` + `HUE_GUI_SCREENSHOT` (data-dir-anchored) round-trip via `adb shell run-as`                                                                                                                       | full                                          | `gui.d`, `android_paths.d`                  |
 | AND10 | `hue-apk-repo`: the whole tracked repository (sources, markdown, text aux; minus docs/.vitepress and binaries) embedded as the explorer browse surface — ~1.5k files, ~1 s first-run extraction                                       | full (device)                                 | `hue.nix` `repoDocsTree`                    |
@@ -117,7 +119,8 @@ SELinux-denied), relaunch, pull the PNG the same way.
 - Stock raylib (verified through the released 6.0 tag) never resizes on Android (empty `CONFIG_CHANGED` stub, no
   `WINDOW_RESIZED` case, resume path pins the old buffer geometry) — an
   in-place rotation keeps rendering the stale orientation, compositor-scaled.
-  `raylib-android-in-place-resize.patch` fixes it; without the patch, keep
+  `raylib-android-in-place-resize.patch` fixes it — confirmed on hardware, not
+  just the emulator (AND7); without the patch, keep
   orientation OUT of `configChanges` so a restart re-inits at the new size.
 - `dub test`'s silence is not coverage: `version (Android)` code only compiles
   under the cross triple — the nix `libhue-android` build is the type-check
