@@ -19,6 +19,32 @@ import std.experimental.allocator.mallocator : Mallocator;
 
 version (unittest) import std.range : iota;
 
+/// Whether `elements` aliases `region` — the guard the append paths use before
+/// an inline->heap transition can invalidate the source.
+///
+/// `std.array.overlap` *orders* two pointers, which CTFE rejects outright when
+/// they come from unrelated blocks ("the ordering of pointers to unrelated
+/// memory blocks is indeterminate"). That would make every compile-time append
+/// a compile error, so at CTFE this compares element *identity* instead: a
+/// source that aliases a buffer is a slice of that buffer's own storage, hence
+/// its first element is one of `region`'s. Runtime keeps `overlap`'s O(1) test.
+///
+/// Attributes infer: the address-of/identity work is `@safe`, and `overlap`
+/// carries its own.
+private bool aliasesRegion(T)(in T[] elements, in T[] region)
+{
+    if (elements.length == 0 || region.length == 0)
+        return false;
+    if (__ctfe)
+    {
+        foreach (i; 0 .. region.length)
+            if (&region[i] is &elements[0])
+                return true;
+        return false;
+    }
+    return elements.overlap(region).length != 0;
+}
+
 // Heap blocks carry a `ControlBlock` refcount prefix ahead of the element data.
 // These live at module scope (rather than nested in the struct) so that the
 // copy-on-write and `unique` instantiations of `SmallBuffer` share one
@@ -354,7 +380,7 @@ pure nothrow @nogc:
             // relocated) too, so we recover it from the grown block by its
             // offset rather than reading the now-stale `elements`.
             auto v = this.view();
-            const overlaps = elements.overlap(v).length != 0;
+            const overlaps = elements.aliasesRegion(v);
             const aliasStart = overlaps ? cast(size_t)(elements.ptr - v.ptr) : 0;
 
             T[] tail = ensureUniqueStorage(extraLen: n);
@@ -367,8 +393,7 @@ pure nothrow @nogc:
             // If the source aliases inline storage, preserve it before the union is
             // overwritten by the inline->heap transition.
             const overlapsInline = () @trusted {
-                return !onHeap &&
-                    elements.overlap(_inline[0 .. oldLen]).length;
+                return !onHeap && elements.aliasesRegion(_inline[0 .. oldLen]);
             }();
 
             // Fast path: the result stays inline (always uniquely owned) and the
@@ -397,7 +422,7 @@ pure nothrow @nogc:
             T[] retainedBlock;
             if (oldLen > N && newLen > _block.length
                 && ctrl().refCount == 1
-                && elements.overlap(cast(const(T)[]) _block).length)
+                && elements.aliasesRegion(cast(const(T)[]) _block))
             {
                 retainedBlock = _block;
                 ++ctrl().refCount;
@@ -1298,6 +1323,30 @@ unittest
     buf.put(empty);
     assert(buf.length == 1);
     assert(buf[0] == 1);
+}
+
+/// Appending is usable at compile time: the alias guard the append paths run
+/// before an inline->heap transition must not reach for `std.array.overlap`,
+/// whose pointer *ordering* CTFE rejects outright (see `aliasesRegion`). This
+/// pins the inline case — a CTFE `enum` forces evaluation through the
+/// interpreter, so a regression is a compile error, not a failed assert.
+@("SmallBuffer.ctfeAppend")
+@safe pure nothrow @nogc
+unittest
+{
+    static char[8] render()
+    {
+        char[8] out_ = 0;
+        SmallBuffer!(char, 16) buf;
+        buf ~= "ab";
+        buf.put("cd");
+        out_[0 .. buf.length] = buf[];
+        return out_;
+    }
+
+    enum ctfe = render();          // evaluated by the CTFE interpreter
+    assert(ctfe[0 .. 4] == "abcd");
+    assert(ctfe == render());      // and the runtime path agrees
 }
 
 @("SmallBuffer.capacity.powerOfTwoGrowth")
