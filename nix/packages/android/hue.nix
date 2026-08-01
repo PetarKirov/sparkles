@@ -310,11 +310,16 @@
           let
             grammarLibDir = "${config.packages.ts-grammars-android}/lib/${t.abi}";
           in
+          # The soname list comes from ts-grammars.nix as data, NOT from
+          # reading the built tree: `builtins.readDir` on a path carrying
+          # derivation context is import-from-derivation, and would force the
+          # entire grammar closure to build during evaluation (breaking
+          # `nix flake check`, which the desktop `test` job runs).
           lib.listToAttrs (
             map (so: {
               name = so;
               value = "${grammarLibDir}/${so}";
-            }) (builtins.attrNames (builtins.readDir grammarLibDir))
+            }) config.legacyPackages.tsGrammarsAndroid.sonames
           )
         );
       }) ndk.targets;

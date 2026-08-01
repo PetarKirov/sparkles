@@ -154,5 +154,17 @@
     in
     lib.optionalAttrs (system == "x86_64-linux") {
       packages.ts-grammars-android = ts-grammars-android;
+
+      # The soname set as *data*, so consumers never have to look inside the
+      # derivation to learn what it contains. `builtins.readDir` on a store
+      # path with derivation context is import-from-derivation: it forces the
+      # whole grammar closure (NDK + 27 cross-compiled parsers) to be REALISED
+      # during evaluation, which drags `nix flake check` — a pure-evaluation
+      # step in the 12-minute `test` job — into building the Android world.
+      # The names are computable, so compute them.
+      legacyPackages.tsGrammarsAndroid = {
+        inherit languages soname;
+        sonames = map soname languages;
+      };
     };
 }
