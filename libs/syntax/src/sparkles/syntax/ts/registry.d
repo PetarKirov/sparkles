@@ -133,7 +133,14 @@ struct GrammarRegistry
     /// by `dlopen(grammarSoname(lang))` through the dynamic linker;
     /// `queries/` live under `<queriesRoot>/<lang>/queries/`.
     static GrammarRegistry fromSonames(string queriesRoot) @safe pure nothrow
-        => GrammarRegistry([queriesRoot], null, _sonameLayout: true);
+    {
+        // Built field-by-field rather than as a literal: a literal has to pass
+        // `_cache` positionally as a `null` placeholder, and silently changes
+        // meaning if the fields are ever reordered.
+        GrammarRegistry r = GrammarRegistry([queriesRoot]);
+        r._sonameLayout = true;
+        return r;
+    }
 
     /// The search directories, in priority order.
     const(string)[] dirs() const @safe pure nothrow @nogc

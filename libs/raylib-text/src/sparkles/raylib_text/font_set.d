@@ -21,6 +21,7 @@ import raylib;
 import std.algorithm.iteration : filter, map;
 import std.algorithm.searching : canFind, endsWith;
 import std.string : indexOf, strip, split, toLower;
+import std.uni : icmp;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 
@@ -130,6 +131,14 @@ struct FontSet
         string[] dirs;
         bool useFontconfig = true;
     }
+
+    // The default is the entire guarantee that adding `FontSources` changed no
+    // desktop behaviour: every existing caller passes fewer arguments and so
+    // gets `FontSources.init`. A one-character edit here would silently move
+    // them all onto the directory scanner, so it is pinned rather than trusted.
+    static assert(FontSources.init.useFontconfig && FontSources.init.dirs is null,
+        "FontSources.init must stay the fontconfig path — it is what every "
+        ~ "pre-existing tryLoad caller resolves to.");
 
     static bool tryLoad(string nameOrPath, int fontSizePx, out FontSet fs,
         string[] codepointMapOpt = null,
@@ -610,7 +619,10 @@ struct FontSet
                 auto fields = res.output.strip.split("\t");
                 if (fields.length < 2)
                     continue;
-                path = fields[0].idup;
+                // No .idup: `execute().output` is a GC-owned string and
+                // `strip`/`split` return slices of it, so this already has
+                // process lifetime. (`toStringz` below copies again anyway.)
+                path = fields[0];
                 if (!fields[1].toLower.canFind(family.toLower))
                     continue; // fontconfig substituted a different family → not installed
             }
@@ -892,8 +904,14 @@ private void fontVariantPaths(string primaryPath,
     const dir = primaryPath.dirName;
     const ext = primaryPath.extension;
     string stem = primaryPath.baseName.stripExtension;
-    if (stem.toLower.endsWith("-regular"))
-        stem = stem[0 .. $ - "-Regular".length];
+    // Compared in place rather than `stem.toLower.endsWith(...)`: that would
+    // slice the ORIGINAL by the lowered string's length, and std.uni.toLower
+    // is not length-preserving in general (U+0130 expands). Unreachable for
+    // ASCII font names, but the assumption is free to remove.
+    enum regularSuffix = "-Regular";
+    if (stem.length >= regularSuffix.length
+        && icmp(stem[$ - regularSuffix.length .. $], regularSuffix) == 0)
+        stem = stem[0 .. $ - regularSuffix.length];
 
     string pick(scope string[] suffixes...) @safe
     {

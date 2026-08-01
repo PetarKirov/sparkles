@@ -706,6 +706,14 @@ int runGui(
 
         // A tap is the touch spelling of a click; a long-press starts a
         // selection (drag-extends via the existing machinery).
+        //
+        // KNOWN LIMITATION: a tap resolves on RELEASE, so the scrollbar thumb
+        // drags never engage on touch — `isDragging` is set and cleared in the
+        // same frame, because `IsMouseButtonReleased` is true then too. A tap
+        // in the track still jumps the viewport via the track-click branch.
+        // Fixing it needs a press-down seam distinct from "a tap happened",
+        // which is what the shared scrollbar component (IXB1) will provide;
+        // adding a second ad-hoc one here is what the component exists to stop.
         bool clickPressed() => touchFrame.tap;
         bool selectStartPressed() => touchFrame.longPress;
 
@@ -796,6 +804,11 @@ int runGui(
 
                     const p0 = GetTouchPosition(0);
                     const p1 = GetTouchPosition(1);
+                    // Fixed ±2 px steps: coarse, since the Android font size
+                    // is DPI-scaled (a 420 dpi panel puts it near 49 px, so a
+                    // step is ~4 %), and each one pays a full atlas rebuild.
+                    // A proportional step would feel better; left alone until
+                    // pinch has been exercised on hardware (AND6).
                     const dist = hypot(p1.x - p0.x, p1.y - p0.y);
                     if (prevPinchDist > 0 && dist > prevPinchDist * 1.15f)
                     {
