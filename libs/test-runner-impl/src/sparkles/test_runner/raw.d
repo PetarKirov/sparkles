@@ -100,8 +100,11 @@ struct RawStats
 version (linux)
 {
     import core.sys.linux.perf_event : perf_event_attr, perf_event_open,
-        perf_type_id, perf_event_read_format;
+        perf_type_id, perf_event_read_format,
+        PERF_EVENT_IOC_DISABLE, PERF_EVENT_IOC_ENABLE;
     import core.sys.posix.unistd : posixClose = close;
+
+    import sparkles.test_runner.perf_group : GroupSnapshot;
 
     /// The raw-event counter group (Linux). `tryOpen` once; `count` brackets
     /// one benchmark's timed body per iteration. With no events it degrades
@@ -243,34 +246,103 @@ version (linux)
         {
             import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
 
-            int leaderFd = -1;
-            foreach (fd; fds)
-                if (fd >= 0)
-                {
-                    leaderFd = fd;
-                    break;
-                }
+            const leader = leaderFd();
 
             RawStats s;
             s.iters = iters;
             s.selectors = selectors_;
             s.values = new double[](selectors_.length);
             s.values[] = double.nan;
-            if (leaderFd < 0)
+            if (leader < 0)
                 return s;
 
-            const base = bracketCountingPass(leaderFd, timed, between, iters);
+            const base = bracketCountingPass(leader, timed, between, iters);
 
             double[maxEvents] values;
-            if (!readScaledGroup(leaderFd, nOpen, iters, s.scale, values[], base))
+            if (!readScaledGroup(leader, nOpen, iters, s.scale, values[], base))
                 return s;
 
+            assignSlots(s, values[]);
+            return s;
+        }
+
+        /// The group leader: the first event the kernel accepted (`tryOpen`
+        /// grouped every later success under it); `-1` when none opened.
+        private int leaderFd() const @safe pure nothrow @nogc
+        {
+            foreach (fd; fds)
+                if (fd >= 0)
+                    return fd;
+            return -1;
+        }
+
+        /// Maps opened-counter slot values (fds order) back to selector
+        /// positions; a refused event stays nan.
+        private void assignSlots(ref RawStats s, scope const(double)[] values)
+            const @safe pure nothrow @nogc
+        {
             size_t slot;
             foreach (i; 0 .. selectors_.length)
                 if (fds[i] >= 0)
                     s.values[i] = values[slot++];
+        }
+
+        /// Enables/disables the group for window measurement — no `RESET`,
+        /// so edge snapshots stay cumulative (see `PerfGroup.enable`).
+        void enable() @safe
+        {
+            import sparkles.test_runner.perf_group : groupIoctl;
+
+            const leader = leaderFd();
+            if (leader >= 0)
+                groupIoctl(leader, PERF_EVENT_IOC_ENABLE);
+        }
+
+        /// ditto
+        void disable() @safe
+        {
+            import sparkles.test_runner.perf_group : groupIoctl;
+
+            const leader = leaderFd();
+            if (leader >= 0)
+                groupIoctl(leader, PERF_EVENT_IOC_DISABLE);
+        }
+
+        /// Captures one window-edge reading.
+        RawSnapshot snapshot() const @safe
+        {
+            import sparkles.test_runner.perf_group : snapshotGroup;
+
+            const leader = leaderFd();
+            return leader >= 0
+                ? RawSnapshot(snapshotGroup(leader, nOpen)) : RawSnapshot();
+        }
+
+        /// The raw-event deltas across one window, as window $(B totals)
+        /// (`iters = 1`).
+        RawStats windowStats(in RawSnapshot a, in RawSnapshot b)
+            const @safe pure nothrow
+        {
+            import sparkles.test_runner.perf_group : windowDeltas;
+
+            RawStats s;
+            s.iters = 1;
+            s.selectors = selectors_;
+            s.values = new double[](selectors_.length);
+            s.values[] = double.nan;
+
+            double[maxEvents] values;
+            if (!windowDeltas(a.g, b.g, s.scale, values[]))
+                return s;
+            assignSlots(s, values[]);
             return s;
         }
+    }
+
+    /// One cumulative window-edge reading of the raw-event group.
+    struct RawSnapshot
+    {
+        package GroupSnapshot g;
     }
 
     @("raw.RawGroup.countRetiredInstructions")
@@ -329,11 +401,23 @@ else
         static RawGroup tryOpen(bool, const(RawEvent)[]) @safe pure nothrow @nogc
             => RawGroup();
         void close() @safe pure nothrow @nogc {}
+        void enable() @safe pure nothrow @nogc {}
+        void disable() @safe pure nothrow @nogc {}
+        RawSnapshot snapshot() const @safe pure nothrow @nogc => RawSnapshot();
 
         RawStats count(Timed, Between)(scope Timed, scope Between, uint)
         {
             assert(false, "raw counters are Linux-only");
         }
+
+        RawStats windowStats(in RawSnapshot, in RawSnapshot)
+            const @safe pure nothrow @nogc
+            => assert(false, "raw counters are Linux-only");
+    }
+
+    /// Off Linux: an empty window-edge marker with the same name.
+    struct RawSnapshot
+    {
     }
 }
 
@@ -341,7 +425,7 @@ else
 // contract, including the optional named-columns primitive.
 static assert(isCounterBackend!RawGroup);
 static assert(hasNamedColumns!RawGroup);
-static assert(!hasSnapshot!RawGroup);
+static assert(hasSnapshot!RawGroup);
 
 @("raw.RawGroup.capabilities.notRequested")
 @safe

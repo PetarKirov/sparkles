@@ -343,6 +343,19 @@ version (linux)
             sum.wrChars = netOfCost(sum.wrChars, selfCost.wrChars);
             return sum;
         }
+
+        /// The tier-0 deltas across one window, as window $(B totals)
+        /// (`iters = 1`), net of a single bracket's calibrated snapshot cost.
+        Tier0Stats windowStats(in Tier0Reading a, in Tier0Reading b)
+            const @safe pure nothrow @nogc
+        {
+            auto s = deltaStats(a, b, 1);
+            s.syscr = netOfCost(s.syscr, selfCost.syscr);
+            s.syscw = netOfCost(s.syscw, selfCost.syscw);
+            s.rdChars = netOfCost(s.rdChars, selfCost.rdChars);
+            s.wrChars = netOfCost(s.wrChars, selfCost.wrChars);
+            return s;
+        }
     }
 
     /// A counter net of its calibrated per-bracket cost, clamped at zero;
@@ -493,6 +506,10 @@ else
         }
 
         Tier0Reading snapshot() @safe pure nothrow @nogc => Tier0Reading();
+
+        Tier0Stats windowStats(in Tier0Reading, in Tier0Reading)
+            const @safe pure nothrow @nogc
+            => assert(false, "Tier-0 counters are Linux-only");
     }
 }
 

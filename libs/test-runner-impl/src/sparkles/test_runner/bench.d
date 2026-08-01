@@ -420,6 +420,25 @@ struct CounterGroups
         raw.close();
     }
 
+    /// Enables the perf-family groups for window measurement (`@workload`):
+    /// counters run from here until `endWindows`, and window edges read them
+    /// cumulatively (no per-iteration ioctl bracket; tier-0 is snapshot-only
+    /// and needs no arming). See `sparkles.test_runner.workload`.
+    void beginWindows() @safe
+    {
+        perf.enable();
+        syscalls.enable();
+        raw.enable();
+    }
+
+    /// ditto
+    void endWindows() @safe
+    {
+        perf.disable();
+        syscalls.disable();
+        raw.disable();
+    }
+
     /// Runs each available source's counting pass over `timed`/`between` (the
     /// iteration count capped once) and fills `row`'s perf/tier0/syscall fields.
     void countInto(Timed, Between)(ref BenchStats row, scope Timed timed,
