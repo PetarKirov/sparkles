@@ -20,7 +20,7 @@
     }:
     let
       ndk = config.legacyPackages.androidNdk;
-      ldcAndroid = inputs.dlang-nix.packages.${system}.ldc-android or null;
+      ldcAndroid = inputs.dlang-nix.packages.${system}.ldc-android;
 
       raylibDZip = pkgs.fetchurl {
         name = "dub-raylib-d-6.0.1.zip";
@@ -63,7 +63,7 @@
               -L-Wl,-u,ANativeActivity_onCreate \
               -L-Wl,--wrap=fopen \
               -L-llog -L-landroid -L-lEGL -L-lGLESv2 -L-lOpenSLES -L-lm -L-ldl \
-              -L-Wl,-z,max-page-size=16384 \
+              -L${ndk.pageAlignFlags} \
               -of=libhello-${t.abi}.so
           '') (lib.attrValues ndk.targets)}
 

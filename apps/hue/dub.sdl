@@ -49,7 +49,13 @@ configuration "application" {
 // (inside the APK's NativeActivity) and calls this library's `main()`. dub
 // cannot drive the cross build (nix does, with a raw ldc2 invocation — see
 // nix/packages/android/); this configuration records the intent/import story
-// and lets a host toolchain type-check the closure: `dub build :hue -c android`.
+// and gives a host toolchain something to type-check: `dub build :hue -c android`.
+//
+// Be clear about how little that checks, though. On a host `version (Android)`
+// is false, so android_glue.d collapses to an empty module and NONE of the
+// Android code paths in app.d/gui.d are analysed — this builds the same module
+// set as `application`, emitted as a dynamicLibrary. The nix `libhue-android`
+// build is the only compiler that ever sees the gated code.
 // The Posix TUI modules (tui.d, workspace.d, twoslash_tui.d) stay in the
 // source set — on the Android *triple* the app never imports them
 // (`version (Android)` gates in app.d), so the module-graph-driven nix build

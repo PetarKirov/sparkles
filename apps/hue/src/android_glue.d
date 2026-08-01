@@ -331,6 +331,13 @@ private ubyte[] readAssetBytes(scope const(char)[] name) @trusted
     const len = AAsset_getLength64(asset);
     if (len < 0)
         return null;
+    // A zero-length asset would allocate a null-pointer empty slice, which the
+    // callers' `is null` test reads as "unreadable" — so it is rejected here
+    // explicitly rather than being silently conflated. No asset in the bundle
+    // is empty (the manifest is generated from real files), so this is a
+    // guard, not a live case.
+    if (len == 0)
+        return null;
     auto buf = new ubyte[cast(size_t) len];
     size_t got;
     while (got < buf.length)

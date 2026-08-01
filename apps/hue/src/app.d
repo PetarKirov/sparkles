@@ -345,22 +345,29 @@ private Backend pickBackend(in CliParams cli)
 {
     // Android: the library runs inside a NativeActivity — no tty, no argv, no
     // $DISPLAY. The window *is* the app; every other sink is meaningless.
+    //
+    // Note the heuristic below could not stand in for this: on Android
+    // `isTerminal` and `displayAvailable` are both false, which would answer
+    // `ansi`. The Android fact is not "no display" but "the surface IS the
+    // app" — a statement about the process model, which only hue can make.
     version (Android)
         return Backend.gui;
+    else
+    {
+        bool guiCompiledIn = false;
+        version (HueGui) guiCompiledIn = true;
 
-    bool guiCompiledIn = false;
-    version (HueGui) guiCompiledIn = true;
-
-    if (cli.gui)
-        return Backend.gui; // even without GUI support: the sink reports it
-    if (cli.html)
-        return Backend.html;
-    if (!cli.noGui && !cli.tui && guiCompiledIn
-        && isTerminal(StdStream.stdout) && displayAvailable())
-        return Backend.gui;
-    if (isTerminal(StdStream.stdin) && isTerminal(StdStream.stdout))
-        return Backend.tui;
-    return Backend.ansi;
+        if (cli.gui)
+            return Backend.gui; // even without GUI support: the sink reports it
+        if (cli.html)
+            return Backend.html;
+        if (!cli.noGui && !cli.tui && guiCompiledIn
+            && isTerminal(StdStream.stdout) && displayAvailable())
+            return Backend.gui;
+        if (isTerminal(StdStream.stdin) && isTerminal(StdStream.stdout))
+            return Backend.tui;
+        return Backend.ansi;
+    }
 }
 
 int main(string[] args)

@@ -166,9 +166,16 @@ in
             # apksigner would invalidate it.
             strip-nondeterminism --type zip base.apk
 
-            # -p page-aligns uncompressed shared objects inside the zip — the
-            # install-time mmap requirement; the .so files themselves carry
-            # max-page-size=16384 from their links (see ndk.nix).
+            # -p page-aligns *uncompressed* shared objects inside the zip. The
+            # libs above are deflated, so today this aligns nothing — which is
+            # correct, because extractNativeLibs="true" means nothing is mmap'd
+            # out of the APK in the first place; the 16 KB-page requirement is
+            # met by max-page-size on each link (ndk.nix).
+            #
+            # The trap to remember: flipping extractNativeLibs to "false" (the
+            # modern Play default) makes the alignment load-bearing, and this
+            # line would STILL be a no-op until `zip` also gets `-0` for
+            # lib/**/*.so. The APK would then fail to install on 16 KB devices.
             ${sdk.buildTools}/zipalign -p -f 4 base.apk aligned.apk
 
             ${sdk.buildTools}/apksigner sign \

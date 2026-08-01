@@ -12,6 +12,11 @@ on:
     branches:
       - main
 
+# Least privilege by default: no job here writes to the repository. The cachix
+# push authenticates with its own token, not GITHUB_TOKEN.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true

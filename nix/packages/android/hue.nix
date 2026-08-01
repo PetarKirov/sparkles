@@ -126,7 +126,7 @@
               -L-Wl,-u,ANativeActivity_onCreate \
               -L-Wl,--wrap=fopen \
               -L-llog -L-landroid -L-lEGL -L-lGLESv2 -L-lOpenSLES -L-lm -L-ldl \
-              -L-Wl,-z,max-page-size=16384 \
+              -L${ndk.pageAlignFlags} \
               -of=libhue-${t.abi}.so
           '') (lib.attrValues ndk.targets)}
 
@@ -269,7 +269,13 @@
 
             cp ${noticeFile} $out/NOTICE
 
-            (cd $out && find . -type f -printf '%P\n' | sort > asset-manifest.txt)
+            # The manifest lists itself (the redirect creates the empty file
+            # before `find` walks) and omits bundle-hash (written after). Both
+            # are what android_glue.d wants — it extracts every listed path and
+            # reads bundle-hash separately — but state it rather than leaving
+            # it as an accident of ordering.
+            (cd $out && find . -type f ! -name bundle-hash -printf '%P\n' \
+              | sort > asset-manifest.txt)
             (cd $out && find . -type f ! -name bundle-hash -print0 | sort -z \
               | xargs -0 sha256sum | sha256sum | cut -d' ' -f1 > bundle-hash)
           '';
