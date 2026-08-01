@@ -335,6 +335,7 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `-I`, `--import-path DIR`  | Extra import path for extraction/probe compiles (repeatable)                           |
 | `--include-import PATTERN` | Compile matching modules into `--better-c`/`--wasm` (repeatable)                       |
 | `--no-auto-include`        | Don't compile the extracted tests' own modules in                                      |
+| `--require-toolchain`      | Fail instead of skipping when `--better-c`/`--wasm` tooling is missing                 |
 | `--keep`                   | Keep generated program/probe files                                                     |
 | `-h`, `--help`             | Option summary                                                                         |
 

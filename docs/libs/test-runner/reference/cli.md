@@ -56,6 +56,7 @@ would fail. See
 | `-I`, `--import-path DIR`  | Extra import path (repeatable)                                   |
 | `--include-import PATTERN` | Compile matching imported modules in (`-i=PATTERN`; repeatable)  |
 | `--no-auto-include`        | Don't compile the extracted tests' own modules in                |
+| `--require-toolchain`      | Fail instead of skipping when an extracted mode's tools are gone |
 | `--keep`                   | Keep the generated program files and print their location        |
 
 ## Skipped tests
