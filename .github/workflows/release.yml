@@ -3,7 +3,7 @@ name: Release
 # Runs when a GitHub Release is published:
 #
 #   * pokes code.dlang.org to ingest the new tag immediately, and
-#   * builds `.#all`, pushes it to the binary cache, and pins the release
+#   * builds `.#all-desktop`, pushes it to the binary cache, and pins the release
 #     closure there so it survives cache garbage collection.
 on:
   # Trigger on a *published* GitHub Release, not a bare tag push. This leaves a
@@ -42,7 +42,7 @@ jobs:
             -X POST 'https://code.dlang.org/api/packages/sparkles/update' \
             --data-urlencode "secret=${SECRET}"
 
-  # Build `.#all` (the aggregate from nix/packages/all.nix: the full dev
+  # Build `.#all-desktop` (the aggregate from nix/packages/all.nix: the full dev
   # shell, every package, and every standalone example), push it to the binary
   # cache, and pin the closure under a stable per-system name so it survives
   # cache garbage collection. Cachix has no unpin command (the public API only
@@ -60,7 +60,7 @@ jobs:
           - runner: macos-latest
             system: aarch64-darwin
     runs-on: ${{ matrix.runner }}
-    # Usually cache hits (~2-4m); allow margin for a cold-cache `.#all` rebuild.
+    # Usually cache hits (~2-4m); allow margin for a cold-cache `.#all-desktop` rebuild.
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -86,7 +86,7 @@ jobs:
       # Usually all cache hits: CI's nix-build job already built and pushed
       # this commit's outputs before it reached main.
       - name: Build devShells.full, all packages, and all examples
-        run: nix build --print-build-logs .#all
+        run: nix build --print-build-logs .#all-desktop
 
       - name: Push & pin the release closure
         env:

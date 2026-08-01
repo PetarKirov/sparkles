@@ -109,7 +109,7 @@ A checklist. Each step assumes the toolchain from `nix develop` / `direnv`.
    Publishing the Release is what runs the
    [`release`](../../.github/workflows/release.yml)
    workflow that pings code.dlang.org for immediate ingestion and pins the
-   release's `.#all` closure on Cachix (see below). The
+   release's `.#all-desktop` closure on Cachix (see below). The
    window between pushing the tag and publishing the Release is your last chance
    to delete a mistaken tag — but treat it as best-effort, not a safety net (the
    registry can ingest a pushed tag on its own before you publish).
@@ -223,7 +223,7 @@ version="~>0.5.0"`).
 
 ## Pinning the release closure on Cachix
 
-Besides the registry ping, the `release` workflow builds `.#all` (the
+Besides the registry ping, the `release` workflow builds `.#all-desktop` (the
 aggregate from `nix/packages/all.nix`: the full dev shell, every package, and
 every standalone example) on each supported system, pushes it to the Cachix
 cache, and pins it under the stable name `latest-<system>` (e.g.
