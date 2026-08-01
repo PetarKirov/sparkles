@@ -176,7 +176,8 @@ jobs:
   # (the derivations are compiler-agnostic — they always build with ldc — so
   # this is independent of the `test` job's DC matrix). `.#all-desktop` is the
   # aggregate defined in nix/packages/all.nix: the full dev shell, every
-  # desktop package, and every standalone example.
+  # desktop package, and every standalone example. The Android closure builds
+  # in its own `nix-build-android` job below.
   nix-build:
     name: Nix build & push (${{ matrix.runner }})
     strategy:
@@ -214,3 +215,38 @@ jobs:
 
       - name: Run all runnable examples
         run: nix run .#run-all-examples
+
+  # The Android APK pipeline (nix/packages/android/): builds `.#all-android`
+  # — the repo-embedded hue APK, whose dependency chain covers the entire
+  # cross closure (dual-ABI druntimes via dlang.nix's ldc-android, the
+  # raylib/tree-sitter/libghostty-vt cross builds, every grammar parser, the
+  # Maple font build, and the aapt2/zipalign/apksigner assembly). Linux-only:
+  # the NDK/SDK ship prebuilt for x86_64-linux alone. The unfree Android SDK
+  # licence is accepted inside the scoped nixpkgs import
+  # (nix/packages/android/sdk.nix) — no env flags needed here.
+  nix-build-android:
+    name: Nix build & push (Android APK)
+    runs-on: ubuntu-latest
+    # From a warm cache this is minutes; a cold cache rebuilds the cross
+    # druntimes and the Maple font pipeline — give it real headroom.
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: true
+          nix-cache-key: nix-${{ runner.os }}-nixandroid-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-${{ runner.os }}-nixandroid-
+            nix-${{ runner.os }}-
+
+      - name: Build & push the Android APK closure
+        run: nix build --print-build-logs .#all-android
