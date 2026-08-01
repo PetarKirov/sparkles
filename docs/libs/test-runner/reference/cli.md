@@ -55,6 +55,7 @@ would fail. See
 | `--compiler DC`            | D compiler to use (default: `$DC`, then `ldc2`, `dmd` from PATH) |
 | `-I`, `--import-path DIR`  | Extra import path (repeatable)                                   |
 | `--include-import PATTERN` | Compile matching imported modules in (`-i=PATTERN`; repeatable)  |
+| `--no-auto-include`        | Don't compile the extracted tests' own modules in                |
 | `--keep`                   | Keep the generated program files and print their location        |
 
 ## Skipped tests

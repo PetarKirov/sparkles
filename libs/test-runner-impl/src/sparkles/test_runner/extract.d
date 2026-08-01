@@ -12,9 +12,13 @@
  * dlang's libdparse-based `tests_extractor`.
  *
  * Extracted tests `import` their module, so they can only reference its
- * $(B public) symbols, and only template/CTFE-able ones are usable without
- * linking the module in (the phobos `@betterC` test suite has the same
- * constraints).
+ * $(B public) symbols. By default the driver also compiles that module into
+ * the generated program (`-i=<module>`), so ordinary functions are reachable
+ * and not just templates; a test that opts out with
+ * `@betterC(selfContained: true)` keeps its module out entirely and is then
+ * limited to templates and CTFE-able code (the phobos `@betterC` suite's
+ * model, and what lets a module that cannot itself compile under `-betterC`
+ * still host such a test).
  *
  * This module also generates the `@ctfe` probe program (see
  * $(LREF generateCtfeProgram)), which involves no extraction at all: the
@@ -313,11 +317,13 @@ unittest
 }
 
 @("extract.braceCounting.betterC")
-@betterC @safe pure nothrow @nogc
+@betterC(selfContained: true) @safe pure nothrow @nogc
 unittest
 {
-    // Dogfoods @betterC end to end. Extracted tests can only link against
-    // templates, so this one is deliberately self-contained.
+    // Dogfoods @betterC end to end. `selfContained` keeps this module out of
+    // the extracted program — it imports Phobos and cannot compile under
+    // -betterC — so the test must stand on its own, which is the property
+    // being dogfooded.
     int depth;
     foreach (c; "{ { } }")
         depth += c == '{' ? 1 : c == '}' ? -1 : 0;

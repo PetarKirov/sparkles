@@ -116,9 +116,11 @@ unittest
 
 `@betterC` tests run normally under `dub test`; `--better-c` additionally
 extracts them into a standalone `-betterC` program (no GC, exceptions, or
-`TypeInfo`) and runs it. Extracted tests may reference the module's public
-templates/CTFE-able code by default; opt non-template modules in with
-`--include-import=<pattern>`. See [Write `@betterC` tests](./how-to/write-betterc-tests.md).
+`TypeInfo`) and runs it. The test's own module is compiled into that program
+by default, so a test can call its ordinary functions; opt further modules in
+with `--include-import=<pattern>`, or mark a test
+`@betterC(selfContained: true)` when its module cannot compile under
+`-betterC` at all. See [Write `@betterC` tests](./how-to/write-betterc-tests.md).
 
 ```d
 import sparkles.test_runner.attributes : betterC;
@@ -332,6 +334,7 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `--compiler DC`            | Compiler for `@ctfe`/`--better-c`/`--wasm` (`$DC`, then ldc2/dmd)                      |
 | `-I`, `--import-path DIR`  | Extra import path for extraction/probe compiles (repeatable)                           |
 | `--include-import PATTERN` | Compile matching modules into `--better-c`/`--wasm` (repeatable)                       |
+| `--no-auto-include`        | Don't compile the extracted tests' own modules in                                      |
 | `--keep`                   | Keep generated program/probe files                                                     |
 | `-h`, `--help`             | Option summary                                                                         |
 

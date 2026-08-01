@@ -12,8 +12,12 @@ The test is `-betterC`-compatible (no GC, exceptions, TypeInfo, druntime).
 
 - Runs normally under `dub test`.
 - `--better-c` extracts it into a standalone druntime-free program.
-- The body may only use the module's public symbols; templates/CTFE-able
-  code by default, plus modules opted in with `--include-import`.
+- The body may only use the module's public symbols. Its own module is
+  compiled in by default, so ordinary functions work; other modules are
+  opted in with `--include-import`.
+- `@betterC(selfContained: true)` keeps the module out entirely, limiting
+  the body to templates/CTFE-able code — which is what lets a module that
+  cannot compile under `-betterC` still host such a test.
 
 ## `@ctfe`
 

@@ -65,7 +65,18 @@ TestTraits testTraits(alias test)()
     traits.isCtfe = hasUDA!(test, ctfe);
     traits.isWasm = hasUDA!(test, wasm);
     static if (hasUDA!(test, betterC) || hasUDA!(test, wasm))
+    {
         traits.functionAttributes = functionAttributesOf!test;
+        // `@betterC` / `@wasm` attach the type; `@betterC(...)` a value —
+        // same shape as `@benchmark` below.
+        static foreach (marker; AliasSeq!(betterC, wasm))
+            static if (hasUDA!(test, marker))
+            {{
+                alias uda = Alias!(getUDAs!(test, marker)[0]);
+                static if (!is(uda))
+                    traits.selfContained |= uda.selfContained;
+            }}
+    }
     static if (hasUDA!(test, benchmark))
     {
         traits.isBenchmark = true;
@@ -138,10 +149,12 @@ Test[] discoverTests(Modules...)()
 version (unittest)
 {
     @("discovery.selfTest")
-    @betterC @safe pure nothrow @nogc
+    @betterC(selfContained: true) @safe pure nothrow @nogc
     unittest
     {
         // Discovered by the tests below via reflection on this module.
+        // `selfContained`: this module imports std.traits, so it cannot be
+        // compiled into the extracted -betterC program.
         assert(1 + 1 == 2);
     }
 
@@ -176,6 +189,11 @@ unittest
         assert(0, "discovery.selfTest not found");
     }();
     static assert(self.traits.isBetterC);
+    // `@betterC(selfContained: true)` attaches a value rather than the type;
+    // both spellings must still register as `@betterC`, and the field has to
+    // come through so the driver leaves this module out of the extracted
+    // program (it imports std.traits and cannot compile under -betterC).
+    static assert(self.traits.selfContained);
     static assert(!self.traits.isCtfe);
     static assert(self.location.file.length > 0);
     static assert(self.location.line > 0);
