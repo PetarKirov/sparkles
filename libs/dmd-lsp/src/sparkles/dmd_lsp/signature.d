@@ -28,9 +28,56 @@ import dmd.common.outbuffer : OutBuffer;
 import dmd.declaration : Declaration;
 import dmd.dtemplate : TemplateDeclaration;
 import dmd.func : FuncDeclaration;
+import dmd.expression : Expression;
 import dmd.hdrgen : HdrGenState, stcToBuffer, toCBuffer;
 import dmd.id : Id;
 import dmd.mtype : attributesApply, MODtoBuffer, Type, TypeFunction;
+import dmd.statement : Statement;
+
+/// Which of the four memory-safety states a function declares. `unspecified`
+/// is a symbol that cannot carry one at all (a variable that is not `@system`).
+enum SigTrust : ubyte { unspecified, system, trusted, safe }
+
+/// A run of the signature text the renderer lifts out and draws as a chip.
+/// The span covers the attribute word and the space that separates it, so
+/// deleting every span leaves no double space behind.
+struct EffectSpan
+{
+    uint offset; /// byte offset into the rendered signature
+    uint length; /// byte length, separator included
+}
+
+/// The four effect attributes, as data rather than as trailing words.
+struct Effects
+{
+    SigTrust trust;
+    bool isPure, isNothrow, isNogc;
+    EffectSpan[] spans; /// ascending, disjoint
+
+    /// Whether anything here is worth a chip row.
+    bool any() const @safe pure nothrow @nogc
+        => trust != SigTrust.unspecified || isPure || isNothrow || isNogc;
+}
+
+/// `in`/`out`, as written rather than as lowered.
+enum ContractKind : ubyte { in_, out_ }
+
+/// ditto
+struct Contract
+{
+    ContractKind kind;
+    string resultId; /// the `r` of `out (r; …)`; empty for `in` and `out (; …)`
+    string text;     /// the expression, or the whole block when `isBlock`
+    bool isBlock;    /// `in { … }` rather than `in (…)`
+}
+
+/// Everything the renderer needs about a signature that its text cannot say.
+struct SignatureInfo
+{
+    Effects effects;
+    Contract[] contracts;
+    string constraint; /// the body of a template's `if (…)`, empty when none
+}
 
 /**
 Renders `decl`'s signature exactly as the hover shows it today.
@@ -45,6 +92,17 @@ caller keeps its own fallback for that.
 */
 string renderSignature(Declaration decl, TemplateDeclaration td) @system
 {
+    SignatureInfo ignored;
+    return renderSignature(decl, td, ignored);
+}
+
+/// ditto, also reporting what the text alone cannot carry: the effect
+/// attributes (lifted out of the words), the `in`/`out` contracts (which live
+/// on the declaration, not on the type hdrgen renders) and a template's
+/// constraint.
+string renderSignature(Declaration decl, TemplateDeclaration td,
+    out SignatureInfo info) @system
+{
     auto tf = decl.type ? decl.type.isTypeFunction() : null;
     if (tf is null)
         return null;
@@ -57,10 +115,17 @@ string renderSignature(Declaration decl, TemplateDeclaration td) @system
     HdrGenState hgs = { ddoc: true, fullQual: true };
     OutBuffer buf;
 
+    readEffects(tf, info.effects);
+
     if (td !is null)
-        writePrefixFrame(tf, decl, td, buf, hgs);
+        writePrefixFrame(tf, decl, td, buf, hgs, info);
     else
-        writePostfixFrame(tf, decl, buf, hgs);
+        writePostfixFrame(tf, decl, buf, hgs, info);
+
+    if (auto fd = decl.isFuncDeclaration())
+        info.contracts = readContracts(fd, hgs);
+    if (td !is null && td.constraint !is null)
+        info.constraint = exprText(td.constraint, hgs);
 
     return cast(string) buf.extractSlice();
 }
@@ -72,7 +137,7 @@ The linkage prefix is deliberately absent — `hgs.ddoc` suppresses it upstream,
 and the tip has always been rendered with ddoc on.
 */
 private void writePostfixFrame(TypeFunction tf, Declaration decl,
-    ref OutBuffer buf, ref HdrGenState hgs) @system
+    ref OutBuffer buf, ref HdrGenState hgs, ref SignatureInfo info) @system
 {
     if (tf.next)
     {
@@ -93,7 +158,15 @@ private void writePostfixFrame(TypeFunction tf, Declaration decl,
         MODtoBuffer(buf, tf.mod);
     }
 
-    attributesApply(tf, (string str) { buf.put(' '); buf.put(str); });
+    // The separator belongs to the span: excising `" @safe"` whole is what
+    // keeps the remaining text from growing a double space.
+    attributesApply(tf, (string str) {
+        const at = cast(uint) buf.length;
+        buf.put(' ');
+        buf.put(str);
+        if (isEffectWord(str))
+            info.effects.spans ~= EffectSpan(at, cast(uint) buf.length - at);
+    });
 }
 
 /**
@@ -104,7 +177,8 @@ and a constructor drops both its return type and a leading `ref` — all of that
 is upstream's shape, mirrored so the two texts agree.
 */
 private void writePrefixFrame(TypeFunction tf, Declaration decl,
-    TemplateDeclaration td, ref OutBuffer buf, ref HdrGenState hgs) @system
+    TemplateDeclaration td, ref OutBuffer buf, ref HdrGenState hgs,
+    ref SignatureInfo info) @system
 {
     const ident = decl.getIdent();
 
@@ -113,8 +187,13 @@ private void writePrefixFrame(TypeFunction tf, Declaration decl,
             return;
         if (ident is Id.ctor && str == "ref")
             return;
+        const at = cast(uint) buf.length;
         buf.put(str);
         buf.put(' ');
+        // Prefix style puts the separator *after* the word, so the span runs
+        // the other way — still one contiguous excision.
+        if (isEffectWord(str))
+            info.effects.spans ~= EffectSpan(at, cast(uint) buf.length - at);
     });
 
     // A constructor/destructor/unittest prints no return type: upstream detects
@@ -215,12 +294,268 @@ private void writeParameterList(TypeFunction tf, ref OutBuffer buf,
     buf.put(')');
 }
 
+/// The four the user asked to see as chips. Everything else hdrgen emits in
+/// that run (`@property`, `ref`, `scope`, `return`) describes the type, not an
+/// effect, and stays in the text.
+private bool isEffectWord(scope const(char)[] w) @safe pure nothrow @nogc
+    => w == "pure" || w == "nothrow" || w == "@nogc"
+        || w == "@safe" || w == "@trusted" || w == "@system";
+
+/// Reads the effect attributes as data. `TRUSTformatSystem` is deliberate:
+/// with the default format `attributesApply` stays silent when `trust` is
+/// `TRUST.default_`, which is why an undecorated function has never shown
+/// `@system` — but "not memory-safe" is exactly what a chip should say.
+private void readEffects(TypeFunction tf, ref Effects e) @system
+{
+    import dmd.astenums : PURE, TRUST;
+
+    e.isPure = tf.purity != PURE.impure;
+    e.isNothrow = tf.isNothrow;
+    e.isNogc = tf.isNogc;
+    final switch (tf.trust)
+    {
+        case TRUST.default_:
+        case TRUST.system:  e.trust = SigTrust.system;  break;
+        case TRUST.trusted: e.trust = SigTrust.trusted; break;
+        case TRUST.safe:    e.trust = SigTrust.safe;    break;
+    }
+}
+
+/**
+The `in`/`out` contracts, as written.
+
+They never reached the signature before because they hang off
+`FuncDeclaration` while hdrgen renders the `TypeFunction`. Read the
+$(B unlowered) `frequires`/`fensures` — `frequire`/`fensure` are the generated
+blocks, which read as compiler output rather than as the source.
+
+The parser desugars `in (e)` into `assert(e)`, so unwrap it; upstream's
+`contractsToBuffer` asserts on that shape, but a tooltip would rather show the
+block than die on a form it did not expect.
+*/
+private Contract[] readContracts(FuncDeclaration fd, ref HdrGenState hgs) @system
+{
+    import dmd.expression : AssertExp;
+
+    Contract[] result;
+
+    if (auto reqs = fd.frequires)
+        foreach (st; *reqs)
+        {
+            if (st is null)
+                continue;
+            if (auto es = st.isExpStatement())
+                if (auto ae = es.exp ? es.exp.isAssertExp() : null)
+                {
+                    result ~= Contract(ContractKind.in_, null,
+                        exprText(ae.e1, hgs), false);
+                    continue;
+                }
+            result ~= Contract(ContractKind.in_, null, stmtText(st, hgs), true);
+        }
+
+    if (auto ens = fd.fensures)
+        foreach (e; *ens)
+        {
+            if (e.ensure is null)
+                continue;
+            const id = e.id ? e.id.toString().idup : null;
+            if (auto es = e.ensure.isExpStatement())
+                if (auto ae = es.exp ? es.exp.isAssertExp() : null)
+                {
+                    result ~= Contract(ContractKind.out_, id,
+                        exprText(ae.e1, hgs), false);
+                    continue;
+                }
+            result ~= Contract(ContractKind.out_, id, stmtText(e.ensure, hgs), true);
+        }
+
+    return result;
+}
+
+/// ditto
+private string exprText(Expression e, ref HdrGenState hgs) @system
+{
+    if (e is null)
+        return null;
+    OutBuffer b;
+    toCBuffer(e, b, hgs);
+    return cast(string) b.extractSlice();
+}
+
+/// ditto
+private string stmtText(Statement st, ref HdrGenState hgs) @system
+{
+    if (st is null)
+        return null;
+    OutBuffer b;
+    toCBuffer(st, b, hgs);
+    return cast(string) b.extractSlice();
+}
+
 /// The `const(char)*` hdrgen hands back, as a slice.
 private const(char)[] toDStr(const(char)* s) @system
 {
     import core.stdc.string : strlen;
 
     return s is null ? null : s[0 .. strlen(s)];
+}
+
+@("signature.readEffects.dataNotWords")
+@system unittest
+{
+    // The four effects come off the type, not out of the text — so a default
+    // argument that happens to spell one cannot forge it, and an undecorated
+    // function reports `@system` even though hdrgen stays silent about it.
+    import sparkles.dmd_lsp.testing : withAnalysis;
+
+    enum src = q{
+        module test;
+
+        int decorated(int x) pure nothrow @nogc @safe { return x; }
+        int bare(string s = "pure nothrow @nogc @safe") { return 0; }
+        int trusted(int x) @trusted { return x; }
+    };
+
+    withAnalysis(src, (m) {
+        SignatureInfo[string] byName;
+        string[string] textByName;
+        walkFunctions(m.module_, (Declaration decl, TemplateDeclaration td) {
+            SignatureInfo info;
+            const text = renderSignature(decl, td, info);
+            if (text is null)
+                return;
+            byName[decl.ident.toString().idup] = info;
+            textByName[decl.ident.toString().idup] = text;
+        });
+
+        const dec = byName["decorated"];
+        assert(dec.effects.isPure && dec.effects.isNothrow && dec.effects.isNogc);
+        assert(dec.effects.trust == SigTrust.safe);
+        assert(dec.effects.spans.length == 4, "one span per effect word");
+
+        const bare = byName["bare"];
+        assert(!bare.effects.isPure && !bare.effects.isNothrow && !bare.effects.isNogc,
+            "a string literal is not an attribute");
+        assert(bare.effects.trust == SigTrust.system, "undecorated is @system");
+        assert(bare.effects.spans.length == 0, textByName["bare"]);
+
+        assert(byName["trusted"].effects.trust == SigTrust.trusted);
+    });
+}
+
+@("signature.readEffects.spansAreExcisable")
+@system unittest
+{
+    // The renderer deletes these ranges and draws chips instead; doing so must
+    // leave text that still reads as a signature.
+    import std.algorithm.searching : canFind;
+    import std.string : strip;
+
+    import sparkles.dmd_lsp.testing : withAnalysis;
+
+    enum src = q{
+        module test;
+        int f(int x) pure nothrow @nogc @safe { return x; }
+    };
+
+    withAnalysis(src, (m) {
+        walkFunctions(m.module_, (Declaration decl, TemplateDeclaration td) {
+            SignatureInfo info;
+            const text = renderSignature(decl, td, info);
+            if (text is null || !info.effects.spans.length)
+                return;
+
+            // Excise back to front so earlier offsets stay valid.
+            string cut = text;
+            foreach_reverse (sp; info.effects.spans)
+                cut = cut[0 .. sp.offset] ~ cut[sp.offset + sp.length .. $];
+
+            assert(cut == "int test.f(int x)", cut);
+            assert(!cut.canFind("  "), "excision left a double space: " ~ cut);
+            assert(cut.strip == cut, "excision left an edge space: " ~ cut);
+        });
+    });
+}
+
+@("signature.readContracts.inOutAsWritten")
+@system unittest
+{
+    // Contracts hang off the declaration, not the type, which is why the
+    // signature never carried them.
+    import sparkles.dmd_lsp.testing : withAnalysis;
+
+    enum src = q{
+        module test;
+
+        int guarded(int x)
+        in (x > 0)
+        out (r; r > x)
+        {
+            return x + 1;
+        }
+
+        int blockForm(int x)
+        in { assert(x > 0); }
+        out { }
+        do { return x; }
+
+        int anonymousOut(int x) out (; true) { return x; }
+    };
+
+    withAnalysis(src, (m) {
+        SignatureInfo[string] byName;
+        walkFunctions(m.module_, (Declaration decl, TemplateDeclaration td) {
+            SignatureInfo info;
+            if (renderSignature(decl, td, info) !is null)
+                byName[decl.ident.toString().idup] = info;
+        });
+
+        const g = byName["guarded"];
+        assert(g.contracts.length == 2, "expected one in and one out");
+        assert(g.contracts[0].kind == ContractKind.in_);
+        assert(g.contracts[0].text == "x > 0", g.contracts[0].text);
+        assert(!g.contracts[0].isBlock);
+        assert(g.contracts[1].kind == ContractKind.out_);
+        assert(g.contracts[1].resultId == "r", g.contracts[1].resultId);
+        assert(g.contracts[1].text == "r > x", g.contracts[1].text);
+
+        assert(byName["blockForm"].contracts.length == 2);
+        assert(byName["blockForm"].contracts[0].isBlock, "in { … } is a block");
+
+        const a = byName["anonymousOut"];
+        assert(a.contracts.length == 1 && a.contracts[0].resultId.length == 0,
+            "out (; …) names no result");
+    });
+}
+
+@("signature.renderSignature.templateConstraint")
+@system unittest
+{
+    // The constraint is the one clause hdrgen already prints for a template
+    // *symbol*; for the function itself it lives on the TemplateDeclaration.
+    import std.algorithm.searching : canFind;
+
+    import sparkles.dmd_lsp.testing : withAnalysis;
+
+    enum src = q{
+        module test;
+        import std.traits : isIntegral;
+
+        T twice(T)(T x) if (isIntegral!T) { return x * 2; }
+    };
+
+    withAnalysis(src, (m) {
+        size_t seen;
+        walkFunctions(m.module_, (Declaration decl, TemplateDeclaration td) {
+            SignatureInfo info;
+            if (renderSignature(decl, td, info) is null || td is null)
+                return;
+            ++seen;
+            assert(info.constraint.canFind("isIntegral"), info.constraint);
+        });
+        assert(seen == 1, "the eponymous template was not reached");
+    });
 }
 
 @("signature.renderSignature.matchesHdrgen")

@@ -1410,6 +1410,12 @@ TipData tipForDeclaration(Declaration decl)
             kind = "__gshared global";
     }
 
+    // `@system` variables (D 2.100+) carry their marker as a storage class, not
+    // in the type, so nothing in the type printer above would ever show it —
+    // and "you may not touch this from @safe code" is the whole point of the
+    // annotation.
+    if (decl.storage_class & STC.system)
+        txt ~= "@system ";
     if (decl.type)
         txt ~= to!string(decl.type.toPrettyChars(true)) ~ " ";
     txt ~= to!string(fqn ? decl.toPrettyChars(fqn) : decl.toChars());
@@ -3838,6 +3844,22 @@ version (unittest)
         assert(call.doc.canFind("homonym function"), "template prose at the call site");
         assert(call.tags.canFind!(t => t.length > 1 && t[0] == "returns"),
             "the member's Returns: section");
+    });
+}
+
+@("visitor.findTip.systemVariableKeepsItsMarker")
+@system unittest
+{
+    // A `@system` variable's marker is a storage class, not part of its type,
+    // so the tip used to drop the one annotation that changes how the symbol
+    // may be used.
+    enum src = "module test;\n"
+        ~ "@system int unsafeGlobal;\n"
+        ~ "int plainGlobal;\n";
+
+    withAnalysis(src, (m) {
+        checkTip(m, 2, 13, "(thread local global) `@system int test.unsafeGlobal`");
+        checkTip(m, 3, 5, "(thread local global) `int test.plainGlobal`");
     });
 }
 
