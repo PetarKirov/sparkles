@@ -174,9 +174,9 @@ jobs:
 
   # Build the Nix outputs and push them to the binary cache, once per system
   # (the derivations are compiler-agnostic — they always build with ldc — so
-  # this is independent of the `test` job's DC matrix). `.#all` is the
+  # this is independent of the `test` job's DC matrix). `.#all-desktop` is the
   # aggregate defined in nix/packages/all.nix: the full dev shell, every
-  # package, and every standalone example.
+  # desktop package, and every standalone example.
   nix-build:
     name: Nix build & push (${{ matrix.runner }})
     strategy:
@@ -186,8 +186,8 @@ jobs:
           - ubuntu-latest
           - macos-latest
     runs-on: ${{ matrix.runner }}
-    # `.#all` builds the whole closure; normally 2-4m from cache, but a
-    # cold-cache rebuild (after a flake.lock bump) needs real margin.
+    # `.#all-desktop` builds the whole closure; normally 2-4m from cache, but
+    # a cold-cache rebuild (after a flake.lock bump) needs real margin.
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -210,7 +210,7 @@ jobs:
       # Built paths are pushed to the cache by the setup-nix action
       # (push-to-cache: true).
       - name: Build & push devShells.full, all packages, and all examples
-        run: nix build --print-build-logs .#all
+        run: nix build --print-build-logs .#all-desktop
 
       - name: Run all runnable examples
         run: nix run .#run-all-examples
