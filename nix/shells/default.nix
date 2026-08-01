@@ -92,6 +92,12 @@
             pkgs.mold
             # Documentation site
             pkgs.nodejs
+            # wasm-ld, for the test runner's `--wasm` mode: nixpkgs' LDC is
+            # built without -link-internally, so the wasm32 link needs an
+            # external linker. Without it the mode skips rather than runs
+            # (and `--require-toolchain` turns that skip into a failure).
+            # The wasm runtime it hands off to is `pkgs.nodejs` above.
+            pkgs.lld
             # CI helper (markdown examples, standalone examples, link maintenance)
             config.packages.ci
 
