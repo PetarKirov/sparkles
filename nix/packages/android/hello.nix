@@ -99,7 +99,6 @@
             "libhello.so" = "${libhello}/lib/${t.abi}/libhello.so";
           };
         }) ndk.targets;
-        keystore = ../../../apps/hue/android/debug.keystore;
         description = "hue Android M1 smoke-test APK (D + raylib NativeActivity)";
       };
     };

@@ -5,18 +5,21 @@
     before any hue code is involved. Same shape as ../AndroidManifest.xml,
     distinct package id so it can live beside the real app. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="dev.sparkles.hue.hello"
-    android:versionCode="1"
-    android:versionName="0.1.0">
+    package="dev.sparkles.hue.hello">
 
-    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <!-- versionCode/versionName and <uses-sdk> are injected by aapt2 from nix
+        (see ../AndroidManifest.xml for why they are not declared here). -->
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
     <application
         android:label="hue hello"
         android:hasCode="false"
-        android:debuggable="true"
+        android:allowBackup="false"
         android:extractNativeLibs="true">
+        <!-- configChanges deliberately omits orientation|screenSize: the smoke
+            test has no state worth preserving across a rotation, so letting the
+            activity restart is the simpler behaviour. hue's manifest declares
+            them because it carries the raylib in-place-resize patch. -->
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"
