@@ -1,0 +1,1066 @@
+/**
+ * The `@workload` window measurement model: one window, counter deltas.
+ *
+ * Where `@benchmark` runs a body many times and reports per-iteration
+ * statistics, a workload runs once (or a few reps) and reports what happened
+ * $(I across the window): every open counter source's delta between two edge
+ * snapshots, plus a wall-clock decomposition into on-CPU time (rusage),
+ * runqueue wait (schedstat), and a clamped residual. Sources are read
+ * cumulatively at the edges (no per-iteration ioctl bracket, no `RESET` —
+ * see `sparkles.test_runner.perf_group.GroupSnapshot`), so the driver's
+ * whole-body candidate window and in-body `workloadWindow` calls overlap
+ * freely in a single pass — a workload body is never re-run for counting,
+ * because it may be expensive or non-idempotent.
+ *
+ * Edge-snapshot nesting order (outer → inner): wall clock, wall source
+ * (rusage/schedstat), syscalls, raw, tier-0, perf — so the cycle counters
+ * see only the body, and each tier's window contains at most the inner
+ * tiers' edge reads (a handful of syscalls per edge, negligible at window
+ * granularity and disclosed here rather than hidden).
+ *
+ * Decomposition honesty: only runqueue wait (and, once M5 lands, PSI disk
+ * stall) are true per-cause durations; everything else off-CPU — locks,
+ * sleeps, page-cache misses without PSI — lands in `offCpuOtherNs`, which
+ * clamps at zero and says so in `note` rather than fabricating a cause.
+ * On Linux the decomposition is $(B thread-scoped) (`RUSAGE_THREAD` +
+ * `/proc/thread-self/schedstat` — the only scoping under which
+ * `wall = onCpu + runqueue + other` is arithmetically meaningful); the
+ * process-wide reading is captured too, purely to disclose CPU burned by
+ * other threads. Thread coverage caveats (counters follow clone inheritance,
+ * the decomposition follows the driving thread) match the bench modes.
+ */
+module sparkles.test_runner.workload;
+
+import std.math : isNaN;
+import std.typecons : Nullable;
+
+// The `workload` attribute struct shares its name with this module; the
+// rename keeps the dogfood test's UDA unambiguous (discovery matches the
+// UDA by type, not name).
+import sparkles.test_runner.attributes : workloadUda = workload;
+import sparkles.test_runner.bench : BenchConfig, CounterGroups, elapsedNs, errorCell;
+import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+    CapabilityReport;
+import sparkles.test_runner.execution : executeTest, toThrown;
+import sparkles.test_runner.model : Test, TestResult, Thrown;
+import sparkles.test_runner.perf : PerfStats;
+import sparkles.test_runner.raw : RawStats;
+import sparkles.test_runner.skip : TestSkipped;
+import sparkles.test_runner.syscalls : SyscallStats;
+import sparkles.test_runner.tier0 : Tier0Stats;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The wall source: rusage CPU times + schedstat runqueue wait
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One parsed `/proc/<tid>/schedstat` reading: three integers — cumulative
+/// on-CPU nanoseconds, cumulative runqueue-wait nanoseconds, timeslice count.
+struct SchedstatReading
+{
+    ulong onCpuNs;
+    ulong runqueueNs;
+    ulong timeslices;
+    bool ok; /// `false` = file unreadable or malformed
+}
+
+/// Parses a schedstat line (`"123456 78901 42\n"`); `ok` is `false` on any
+/// missing or non-numeric field.
+SchedstatReading parseSchedstat(scope const(char)[] content) @safe pure nothrow @nogc
+{
+    SchedstatReading r;
+    ulong[3] vals;
+    size_t i;
+    foreach (field; 0 .. 3)
+    {
+        while (i < content.length && (content[i] == ' ' || content[i] == '\t'))
+            i++;
+        if (i >= content.length || content[i] < '0' || content[i] > '9')
+            return r;
+        ulong v = 0;
+        while (i < content.length && content[i] >= '0' && content[i] <= '9')
+        {
+            v = v * 10 + (content[i] - '0');
+            i++;
+        }
+        vals[field] = v;
+    }
+    r.onCpuNs = vals[0];
+    r.runqueueNs = vals[1];
+    r.timeslices = vals[2];
+    r.ok = true;
+    return r;
+}
+
+@("workload.parseSchedstat")
+@safe pure nothrow @nogc
+unittest
+{
+    const r = parseSchedstat("123456789 5000000 321\n");
+    assert(r.ok);
+    assert(r.onCpuNs == 123_456_789);
+    assert(r.runqueueNs == 5_000_000);
+    assert(r.timeslices == 321);
+
+    assert(!parseSchedstat("").ok);
+    assert(!parseSchedstat("12 34").ok, "two fields are not a schedstat line");
+    assert(!parseSchedstat("a b c").ok);
+    assert(parseSchedstat("0 0 0").ok, "zeros are a valid fresh task");
+}
+
+/// One instant's cumulative CPU-time/scheduler reading. `-1` marks a failed
+/// `getrusage` call; the schedstat sub-reading carries its own `ok`.
+struct WallReading
+{
+    long threadUserUs = -1; /// `RUSAGE_THREAD` (Linux; -1 elsewhere)
+    long threadSysUs = -1;
+    long procUserUs = -1; /// `RUSAGE_SELF` — cross-thread disclosure only
+    long procSysUs = -1;
+    SchedstatReading sched;
+}
+
+version (linux)
+    private enum int rusageThread = 1; // RUSAGE_THREAD: stable Linux ABI, not in druntime
+
+/// The wall-decomposition source: snapshot-shaped like the counter tiers
+/// (`tryOpen`/`available`/`status`/`capabilities`/`close`/`snapshot`), but
+/// with no counting pass — it exists only for window edges.
+struct WallSource
+{
+    private bool enabled;
+    private bool schedOk_;
+    private string schedReason_;
+
+    private static immutable CapabilityAbsence[1] notRequestedAbsence = [
+        CapabilityAbsence(Capability.counting, "not requested"),
+    ];
+    private static immutable CapabilityAbsence[1] stubAbsence = [
+        CapabilityAbsence(Capability.counting, "getrusage unavailable (not POSIX)"),
+    ];
+
+    /// Whether the source was requested (rusage itself is assumed on POSIX).
+    bool available() const @safe pure nothrow @nogc
+    {
+        version (Posix)
+            return enabled;
+        else
+            return false;
+    }
+
+    /// Whether runqueue attribution is available on this host.
+    package bool schedOk() const @safe pure nothrow @nogc => schedOk_;
+
+    /// Why runqueue attribution is unavailable (empty when it works).
+    package string schedReason() const @safe pure nothrow @nogc => schedReason_;
+
+    /// The scoping of the decomposition this source supports.
+    string scopeName() const @safe pure nothrow @nogc
+    {
+        version (linux)
+            return "thread";
+        else version (Posix)
+            return "process";
+        else
+            return "none";
+    }
+
+    /// Human-readable availability, for a report header.
+    string status() const @safe pure nothrow
+    {
+        if (!available)
+        {
+            version (Posix)
+                return "unavailable (not requested)";
+            else
+                return "unavailable (getrusage unavailable — not POSIX)";
+        }
+        version (linux)
+            return schedOk_
+                ? "thread-scoped getrusage + schedstat"
+                : "thread-scoped getrusage; runqueue unattributed (" ~ schedReason_ ~ ")";
+        else
+            return "process-scoped getrusage; runqueue unattributed (not Linux)";
+    }
+
+    /// What this source can deliver: scalar counting of CPU/scheduler time.
+    /// Schedstat absence is deliberately NOT a `CapabilityAbsence` — the
+    /// report cannot hold `counting` as both present (rusage) and absent
+    /// (schedstat); the narrower fact surfaces via `status()`, one stderr
+    /// disclosure per run, and a per-window note instead.
+    CapabilityReport capabilities() const @safe nothrow
+    {
+        if (available)
+            return CapabilityReport(Capability.counting, null);
+        version (Posix)
+            return CapabilityReport(Capability.none, notRequestedAbsence[]);
+        else
+            return CapabilityReport(Capability.none, stubAbsence[]);
+    }
+
+    /// Opens the source unless disabled; probes schedstat readability once.
+    static WallSource tryOpen(bool enabled) @safe nothrow
+    {
+        WallSource w;
+        w.enabled = enabled;
+        if (!enabled)
+            return w;
+        version (linux)
+        {
+            char[128] buf = void;
+            w.schedOk_ = readThreadSchedstat(buf[]).ok;
+            w.schedReason_ = w.schedOk_
+                ? null : "/proc/thread-self/schedstat unreadable — CONFIG_SCHED_INFO=n or hardened /proc";
+        }
+        else
+        {
+            w.schedReason_ = "not Linux";
+        }
+        return w;
+    }
+
+    /// Releases nothing — the source holds no descriptors.
+    void close() @safe pure nothrow @nogc
+    {
+    }
+
+    /// Captures one window-edge reading.
+    WallReading snapshot() const @safe nothrow @nogc
+    {
+        WallReading r;
+        version (Posix)
+        {
+            import core.sys.posix.sys.resource : getrusage, rusage, RUSAGE_SELF;
+
+            rusage ru;
+            version (linux)
+            {
+                if ((() @trusted => getrusage(rusageThread, &ru))() == 0)
+                {
+                    r.threadUserUs = ru.ru_utime.tv_sec * 1_000_000L + ru.ru_utime.tv_usec;
+                    r.threadSysUs = ru.ru_stime.tv_sec * 1_000_000L + ru.ru_stime.tv_usec;
+                }
+            }
+            if ((() @trusted => getrusage(RUSAGE_SELF, &ru))() == 0)
+            {
+                r.procUserUs = ru.ru_utime.tv_sec * 1_000_000L + ru.ru_utime.tv_usec;
+                r.procSysUs = ru.ru_stime.tv_sec * 1_000_000L + ru.ru_stime.tv_usec;
+            }
+        }
+        version (linux)
+        {
+            if (schedOk_)
+            {
+                char[128] buf = void;
+                r.sched = readThreadSchedstat(buf[]);
+            }
+        }
+        return r;
+    }
+}
+
+version (linux)
+{
+    /// Reads the calling thread's schedstat (`/proc/thread-self/schedstat`,
+    /// 3.17+), falling back to `/proc/self/schedstat` (identical for the main
+    /// thread, where the workload phase runs).
+    private SchedstatReading readThreadSchedstat(scope char[] buf) @safe nothrow @nogc
+    {
+        import sparkles.test_runner.capability : readSmallFile;
+
+        auto r = parseSchedstat(readSmallFile("/proc/thread-self/schedstat", buf));
+        if (!r.ok)
+            r = parseSchedstat(readSmallFile("/proc/self/schedstat", buf));
+        return r;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The wall-clock decomposition
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Where one window's wall-clock time went. A `nan` component means
+/// $(I unattributable on this host) (its time is included in
+/// `offCpuOtherNs`, and `note` says so) — never a measured zero.
+struct WallDecomposition
+{
+    long wallNs; /// the window's wall-clock duration
+    double onCpuUserNs = double.nan; /// rusage user time (µs resolution)
+    double onCpuKernelNs = double.nan; /// rusage system time
+    double offCpuRunqueueNs = double.nan; /// schedstat runqueue wait
+    double offCpuDiskNs = double.nan; /// PSI io stall integral — lands in M5
+    double offCpuOtherNs = double.nan; /// clamped residual: locks, sleeps, the rest
+    string scope_; /// `"thread"` (Linux) or `"process"`
+    string note; /// clamp/absence/cross-thread disclosures, `"; "`-joined
+}
+
+/// Assembles the decomposition from a window's wall time and its two edge
+/// readings. Unattributable components contribute zero to the residual
+/// subtraction and append a note; the residual clamps at zero, noting the
+/// clamp when it discards more than the rusage quantization budget
+/// (10 µs + 1 % of wall). With `scope_ == "thread"`, process-minus-thread
+/// CPU above max(1 ms, 10 % of wall) is disclosed as other-thread CPU.
+WallDecomposition assembleDecomposition(long wallNs,
+    in WallReading before, in WallReading after, string scope_) @safe pure nothrow
+{
+    WallDecomposition d;
+    d.wallNs = wallNs;
+    d.scope_ = scope_;
+
+    double attributed = 0;
+
+    const thread = scope_ == "thread";
+    const userBefore = thread ? before.threadUserUs : before.procUserUs;
+    const userAfter = thread ? after.threadUserUs : after.procUserUs;
+    const sysBefore = thread ? before.threadSysUs : before.procSysUs;
+    const sysAfter = thread ? after.threadSysUs : after.procSysUs;
+
+    if (userBefore >= 0 && userAfter >= 0)
+    {
+        d.onCpuUserNs = double(userAfter - userBefore) * 1000;
+        d.onCpuKernelNs = double(sysAfter - sysBefore) * 1000;
+        attributed += d.onCpuUserNs + d.onCpuKernelNs;
+    }
+    else
+        appendNote(d.note, "on-CPU time unattributed (getrusage unavailable) — included in other");
+
+    if (before.sched.ok && after.sched.ok)
+    {
+        const rq = after.sched.runqueueNs >= before.sched.runqueueNs
+            ? after.sched.runqueueNs - before.sched.runqueueNs : 0;
+        d.offCpuRunqueueNs = double(rq);
+        attributed += d.offCpuRunqueueNs;
+    }
+    else
+        appendNote(d.note, "runqueue wait unattributed (schedstat unreadable) — included in other");
+
+    // offCpuDiskNs stays nan until the PSI stall integral lands (M5).
+
+    double other = double(wallNs) - attributed;
+    if (other < 0)
+    {
+        const budget = 10_000.0 + double(wallNs) / 100;
+        if (-other > budget)
+            appendNote(d.note, "on-CPU + runqueue exceed wall by "
+                ~ microsString(-other) ~ " µs (clamped)");
+        other = 0;
+    }
+    d.offCpuOtherNs = other;
+
+    // Cross-thread disclosure: the decomposition covers the driving thread;
+    // CPU burned elsewhere in the process is a fact worth printing, not an
+    // error.
+    if (thread && before.procUserUs >= 0 && after.procUserUs >= 0
+        && before.threadUserUs >= 0 && after.threadUserUs >= 0)
+    {
+        const procCpuUs = (after.procUserUs - before.procUserUs)
+            + (after.procSysUs - before.procSysUs);
+        const threadCpuUs = (after.threadUserUs - before.threadUserUs)
+            + (after.threadSysUs - before.threadSysUs);
+        const crossNs = double(procCpuUs - threadCpuUs) * 1000;
+        const threshold = wallNs / 10 > 1_000_000 ? double(wallNs) / 10 : 1_000_000.0;
+        if (crossNs > threshold)
+            appendNote(d.note, "process used " ~ microsString(crossNs)
+                ~ " µs CPU on other threads — decomposition covers the driving thread");
+    }
+    return d;
+}
+
+/// Joins disclosure notes with `"; "`.
+private void appendNote(ref string note, string add) @safe pure nothrow
+{
+    note = note.length ? note ~ "; " ~ add : add;
+}
+
+/// A nanosecond quantity as integral microseconds, for `nothrow` note text.
+private string microsString(double ns) @safe pure nothrow
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeInteger;
+
+    SmallBuffer!(char, 24) buf;
+    writeInteger(buf, cast(long)(ns / 1000));
+    return buf[].idup;
+}
+
+@("workload.assembleDecomposition.fullAttribution")
+@safe pure nothrow
+unittest
+{
+    WallReading a, b;
+    a.threadUserUs = 1_000;
+    a.threadSysUs = 500;
+    b.threadUserUs = 61_000; // +60 ms user
+    b.threadSysUs = 20_500; // +20 ms kernel
+    a.sched = SchedstatReading(onCpuNs: 0, runqueueNs: 1_000_000, timeslices: 1, ok: true);
+    b.sched = SchedstatReading(onCpuNs: 0, runqueueNs: 6_000_000, timeslices: 9, ok: true); // +5 ms
+
+    const d = assembleDecomposition(100_000_000, a, b, "thread");
+    assert(d.wallNs == 100_000_000);
+    assert(d.onCpuUserNs == 60_000_000.0);
+    assert(d.onCpuKernelNs == 20_000_000.0);
+    assert(d.offCpuRunqueueNs == 5_000_000.0);
+    assert(d.offCpuDiskNs.isNaN, "PSI lands in M5 — never fabricated");
+    assert(d.offCpuOtherNs == 15_000_000.0);
+    assert(d.scope_ == "thread");
+    assert(d.note.length == 0);
+}
+
+@("workload.assembleDecomposition.runqueueAbsent")
+@safe pure nothrow
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    WallReading a, b;
+    a.threadUserUs = 0;
+    a.threadSysUs = 0;
+    b.threadUserUs = 80_000; // 80 ms of a 100 ms wall
+    b.threadSysUs = 0;
+
+    const d = assembleDecomposition(100_000_000, a, b, "thread");
+    assert(d.offCpuRunqueueNs.isNaN);
+    assert(d.offCpuOtherNs == 20_000_000.0, "nan runqueue contributes zero");
+    assert(d.note.canFind("runqueue wait unattributed"));
+}
+
+@("workload.assembleDecomposition.clampAndNote")
+@safe pure nothrow
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    WallReading a, b;
+    a.threadUserUs = 0;
+    a.threadSysUs = 0;
+    b.threadUserUs = 5_000; // 5 ms CPU against a 1 ms wall: beyond quantization
+    b.threadSysUs = 0;
+    a.sched.ok = b.sched.ok = true;
+
+    const d = assembleDecomposition(1_000_000, a, b, "thread");
+    assert(d.offCpuOtherNs == 0, "the residual clamps, never goes negative");
+    assert(d.note.canFind("exceed wall"));
+    assert(d.note.canFind("(clamped)"));
+
+    // Sub-budget excess (µs quantization skew) clamps silently.
+    WallReading c = a, e = b;
+    e.threadUserUs = 1_005; // 1.005 ms vs 1 ms wall: 5 µs — within budget
+    const quiet = assembleDecomposition(1_000_000, c, e, "thread");
+    assert(quiet.offCpuOtherNs == 0);
+    assert(!quiet.note.canFind("clamped"));
+}
+
+@("workload.assembleDecomposition.processScopeAndCrossThread")
+@safe pure nothrow
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // Process scope reads the RUSAGE_SELF pair.
+    WallReading a, b;
+    a.procUserUs = 0;
+    a.procSysUs = 0;
+    b.procUserUs = 30_000;
+    b.procSysUs = 10_000;
+    const p = assembleDecomposition(100_000_000, a, b, "process");
+    assert(p.onCpuUserNs == 30_000_000.0);
+    assert(p.onCpuKernelNs == 10_000_000.0);
+    assert(p.scope_ == "process");
+
+    // Thread scope with heavy other-thread CPU discloses it.
+    WallReading c, e;
+    c.threadUserUs = c.threadSysUs = 0;
+    e.threadUserUs = 10_000; // thread: 10 ms
+    e.threadSysUs = 0;
+    c.procUserUs = c.procSysUs = 0;
+    e.procUserUs = 90_000; // process: 90 ms — 80 ms elsewhere
+    e.procSysUs = 0;
+    const t = assembleDecomposition(100_000_000, c, e, "thread");
+    assert(t.note.canFind("other threads"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Window results and the in-body primitive
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One measured window. Deliberately NOT `BenchStats`: its per-iteration
+/// timing fields would misrepresent a single window — counter stats here are
+/// window $(B totals) (`iters == 1`).
+struct WorkloadWindow
+{
+    string name;
+    uint reps; /// times the window content ran inside this window
+    WallDecomposition wall;
+    Nullable!PerfStats perf;
+    Nullable!Tier0Stats tier0;
+    Nullable!SyscallStats syscalls;
+    Nullable!RawStats raw;
+    string error; /// non-empty = error (or, with `skipped`, skip) row
+    bool skipped;
+}
+
+/// A workload test's windows plus its pass/fail/skip result.
+struct WorkloadOutcome
+{
+    WorkloadWindow[] windows;
+    TestResult result;
+}
+
+private struct WorkloadContext
+{
+    string testName;
+    uint reps;
+    CounterGroups* counters;
+    WallSource* wall;
+    WorkloadWindow[] windows;
+    uint anonCount;
+}
+
+/// The active workload measurement, when `runWorkload` is driving this
+/// thread's test body (mirrors `bench.d`'s `activeBenchContext`).
+private WorkloadContext* activeWorkloadContext;
+
+/// Measures `run` as one window: the window content runs `reps` times (from
+/// the `@workload` marker) between two edge snapshots of every open source.
+/// Outside a workload measurement (a normal run, a foreign runner, or a
+/// `@benchmark` context) the closure runs exactly once, inertly.
+///
+/// A `skipTest` inside the closure yields a yellow skipped window and the
+/// body continues; any other throw records an error window (earlier windows
+/// are kept) and propagates, failing the test.
+void workloadWindow(DG)(scope DG run)
+if (is(typeof(run()) == void))
+{
+    workloadWindow(null, run);
+}
+
+/// ditto, with an explicit window name (rendered as `<test>/<name>`).
+void workloadWindow(DG)(string name, scope DG run)
+if (is(typeof(run()) == void))
+{
+    auto ctx = activeWorkloadContext;
+    if (ctx is null)
+    {
+        run();
+        return;
+    }
+    string windowName;
+    if (name.length)
+        windowName = ctx.testName ~ "/" ~ name;
+    else
+    {
+        ctx.anonCount++;
+        windowName = ctx.anonCount == 1
+            ? ctx.testName : ctx.testName ~ "#" ~ uintString(ctx.anonCount);
+    }
+    measureWindow(ctx, windowName, run);
+}
+
+private string uintString(uint v) @safe pure nothrow
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeInteger;
+
+    SmallBuffer!(char, 12) buf;
+    writeInteger(buf, v);
+    return buf[].idup;
+}
+
+/// The edge snapshots of one window, in the fixed nesting order (outer →
+/// inner): wall clock, wall source, syscalls, raw, tier-0, perf.
+private struct WindowEdges
+{
+    long t0;
+    WallReading wall0;
+    // Snapshot types differ per platform; let the fields infer from the
+    // groups' snapshot() return types.
+    typeof(CounterGroups.init.syscalls.snapshot()) sys0;
+    typeof(CounterGroups.init.raw.snapshot()) raw0;
+    typeof(CounterGroups.init.tier0.snapshot()) tier00;
+    typeof(CounterGroups.init.perf.snapshot()) perf0;
+
+    static WindowEdges open(ref CounterGroups counters, ref WallSource wall) @safe
+    {
+        import core.time : MonoTime;
+
+        WindowEdges e;
+        e.t0 = MonoTime.currTime.ticks;
+        if (wall.available)
+            e.wall0 = wall.snapshot();
+        if (counters.syscalls.available)
+            e.sys0 = counters.syscalls.snapshot();
+        if (counters.raw.available)
+            e.raw0 = counters.raw.snapshot();
+        if (counters.tier0.available)
+            e.tier00 = counters.tier0.snapshot();
+        if (counters.perf.available)
+            e.perf0 = counters.perf.snapshot();
+        return e;
+    }
+
+    /// Takes the closing edges (inner → outer) and fills the window's stats.
+    /// Raw stats attach whenever events were requested — a fully-refused
+    /// group yields all-nan totals, keeping each selected column's em-dash
+    /// presence (the contract `countInto` honors).
+    void closeInto(ref WorkloadWindow w, ref CounterGroups counters,
+        ref WallSource wall) @safe
+    {
+        if (counters.perf.available)
+            w.perf = counters.perf.windowStats(perf0, counters.perf.snapshot());
+        if (counters.tier0.available)
+            w.tier0 = counters.tier0.windowStats(tier00, counters.tier0.snapshot());
+        if (counters.raw.available || counters.raw.names.length)
+            w.raw = counters.raw.windowStats(raw0, counters.raw.snapshot());
+        if (counters.syscalls.available)
+            w.syscalls = counters.syscalls.windowStats(sys0, counters.syscalls.snapshot());
+        const wall1 = wall.available ? wall.snapshot() : WallReading();
+        const wallNs = elapsedNs(t0);
+        w.wall = assembleDecomposition(wallNs, wall0, wall1, wall.scopeName);
+        if (!wall.available)
+            appendNote(w.wall.note, "decomposition unavailable (" ~ wall.status() ~ ")");
+        addScaleNotes(w);
+    }
+
+    /// One note per source whose window failed a scale gate — the delta was
+    /// rejected rather than reported as a number (never-scheduled, or
+    /// multiplexed with under 1 ms of PMU time).
+    private static void addScaleNotes(ref WorkloadWindow w) @safe pure nothrow
+    {
+        static void noteFor(ref string note, string source, double probe, double scale)
+        {
+            if (!probe.isNaN)
+                return;
+            if (scale == 0)
+                appendNote(note, source ~ ": group never scheduled across the window");
+            else if (scale < 1)
+                appendNote(note, source
+                    ~ ": multiplexed window under 1 ms PMU time — counts dropped");
+            // scale == 1 with nan values = read failure/never enabled; the
+            // em dash already says "unavailable" and there is no finer fact.
+        }
+
+        if (!w.perf.isNull)
+            noteFor(w.wall.note, "perf", w.perf.get.instructions, w.perf.get.scale);
+        if (!w.syscalls.isNull)
+            noteFor(w.wall.note, "syscalls", w.syscalls.get.total, w.syscalls.get.scale);
+    }
+}
+
+/// Measures one window around `run` (× `ctx.reps`) and appends it to the
+/// context.
+private void measureWindow(DG)(WorkloadContext* ctx, string name, scope DG run)
+{
+    auto w = WorkloadWindow(name: name, reps: ctx.reps);
+    auto edges = WindowEdges.open(*ctx.counters, *ctx.wall);
+    try
+    {
+        foreach (_; 0 .. ctx.reps)
+            run();
+    }
+    catch (TestSkipped s)
+    {
+        w.error = errorCell(s.message.idup);
+        w.skipped = true;
+        ctx.windows ~= w;
+        return;
+    }
+    catch (Throwable t)
+    {
+        // Record the error window (earlier windows are kept), then let the
+        // throw fail the test — the body cannot continue past an unwound
+        // closure.
+        const thrown = toThrown(t);
+        w.error = errorCell(thrown.length
+            ? thrown[0].type ~ ": " ~ thrown[0].message : "threw");
+        ctx.windows ~= w;
+        throw t;
+    }
+    edges.closeInto(w, *ctx.counters, *ctx.wall);
+    ctx.windows ~= w;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The driver
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Runs one `@workload` test in a single pass: the perf-family groups are
+/// armed once, a whole-body candidate window is opened, and the body runs
+/// once. A body that called `workloadWindow` keeps those windows (the
+/// candidate is discarded); a body that didn't runs its remaining
+/// `reps − 1` repetitions inside the still-open candidate, which closes as
+/// the single whole-body window — the body is never re-run for counting.
+package(sparkles.test_runner)
+WorkloadOutcome runWorkload(Test test, ref CounterGroups counters,
+    ref WallSource wall) @system
+{
+    const reps = test.traits.workloadReps ? test.traits.workloadReps : 1;
+
+    counters.beginWindows();
+    scope (exit)
+        counters.endWindows();
+
+    auto ctx = WorkloadContext(testName: test.name, reps: reps,
+        counters: &counters, wall: &wall);
+    activeWorkloadContext = &ctx;
+    scope (exit)
+        activeWorkloadContext = null;
+
+    auto edges = WindowEdges.open(counters, wall);
+    auto result = executeTest(test);
+
+    if (result.succeeded && ctx.windows.length == 0)
+    {
+        // Whole-body fallback: SPEC's "body × reps" — the remaining reps run
+        // inside the candidate window the first (already-measured) execution
+        // opened.
+        bool broke;
+        foreach (_; 1 .. reps)
+        {
+            try
+                test.ptr();
+            catch (TestSkipped s)
+            {
+                result.succeeded = false;
+                result.skipped = true;
+                result.skipReason = s.message.idup;
+                broke = true;
+                break;
+            }
+            catch (Throwable t)
+            {
+                result.succeeded = false;
+                result.thrown = toThrown(t); // re-throws OutOfMemoryError
+                broke = true;
+                break;
+            }
+        }
+        if (!broke)
+        {
+            auto w = WorkloadWindow(name: test.name, reps: reps);
+            edges.closeInto(w, counters, wall);
+            ctx.windows ~= w;
+        }
+    }
+    return WorkloadOutcome(ctx.windows, result);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+@("workload.workloadWindow.inertRunsOnce")
+@system // the active path catches TestSkipped/Throwable, so the template infers @system
+unittest
+{
+    // Outside a workload measurement the closure runs exactly once — not
+    // `reps` times — matching `benchIter`'s inert contract under foreign
+    // runners.
+    int calls;
+    workloadWindow(() { calls++; });
+    workloadWindow("named", () { calls++; });
+    assert(calls == 2);
+}
+
+@("workload.WallSource.snapshotMonotonic")
+@system
+unittest
+{
+    auto w = WallSource.tryOpen(true);
+    scope (exit)
+        w.close();
+    version (Posix)
+    {
+        assert(w.available);
+        const a = w.snapshot();
+        // Burn a little CPU so the second reading can only be ≥ the first.
+        static ulong sink;
+        foreach (i; 0 .. 100_000)
+            sink += i * i;
+        const b = w.snapshot();
+        version (linux)
+        {
+            assert(a.threadUserUs >= 0, "RUSAGE_THREAD reads on Linux");
+            assert(b.threadUserUs >= a.threadUserUs);
+        }
+        assert(a.procUserUs >= 0);
+        assert(b.procUserUs >= a.procUserUs);
+    }
+    else
+        assert(!w.available);
+
+    const off = WallSource.tryOpen(false);
+    assert(!off.available);
+    import sparkles.test_runner.capability : Capability, has;
+
+    assert(!off.capabilities.has(Capability.counting));
+}
+
+version (linux)
+{
+    @("workload.WallSource.schedstatProbe")
+    @system
+    unittest
+    {
+        // On a stock kernel thread-self schedstat parses; a hardened host
+        // reports the reason instead of failing.
+        auto w = WallSource.tryOpen(true);
+        import std.algorithm.searching : canFind;
+
+        if (w.schedOk)
+        {
+            const s = w.snapshot();
+            assert(s.sched.ok);
+            assert(w.status.canFind("schedstat"));
+        }
+        else
+            assert(w.schedReason.length, "an absent schedstat carries its reason");
+    }
+}
+
+@("workload.runWorkload.inBodyWindows")
+@system
+unittest
+{
+    import sparkles.test_runner.model : TestTraits;
+
+    static void body_()
+    {
+        static ulong sink;
+        workloadWindow("first", () { sink += 1; });
+        workloadWindow(() { sink += 1; });
+        workloadWindow(() { sink += 1; });
+    }
+
+    auto counters = CounterGroups.none;
+    auto wall = WallSource.tryOpen(true);
+    const outcome = runWorkload(
+        Test(fullName: "m.w", name: "demo", ptr: &body_,
+            traits: TestTraits(isWorkload: true, workloadReps: 2)),
+        counters, wall);
+
+    assert(outcome.result.succeeded);
+    assert(outcome.windows.length == 3, "the whole-body candidate is discarded");
+    assert(outcome.windows[0].name == "demo/first");
+    assert(outcome.windows[1].name == "demo");
+    assert(outcome.windows[2].name == "demo#2");
+    assert(outcome.windows[0].reps == 2);
+    assert(outcome.windows[0].wall.wallNs >= 0);
+    assert(outcome.windows[0].perf.isNull, "no counters requested → none attached");
+}
+
+@("workload.runWorkload.wholeBodyFallback")
+@system
+unittest
+{
+    import sparkles.test_runner.model : TestTraits;
+
+    static int bodyRuns;
+    bodyRuns = 0;
+    static void plain()
+    {
+        bodyRuns++;
+    }
+
+    auto counters = CounterGroups.none;
+    auto wall = WallSource.tryOpen(true);
+    const outcome = runWorkload(
+        Test(fullName: "m.p", name: "plain", ptr: &plain,
+            traits: TestTraits(isWorkload: true, workloadReps: 3)),
+        counters, wall);
+
+    assert(outcome.result.succeeded);
+    assert(bodyRuns == 3, "reps run in the same pass — the body is never re-run for counting");
+    assert(outcome.windows.length == 1);
+    assert(outcome.windows[0].name == "plain");
+    assert(outcome.windows[0].reps == 3);
+}
+
+@("workload.runWorkload.windowThrowKeepsEarlierWindows")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.test_runner.model : TestTraits;
+
+    static void thrower()
+    {
+        workloadWindow("ok", () {});
+        workloadWindow("bad", () { throw new Exception("boom"); });
+        assert(false, "unreachable — the window throw unwinds the body");
+    }
+
+    auto counters = CounterGroups.none;
+    auto wall = WallSource.tryOpen(true);
+    const outcome = runWorkload(
+        Test(fullName: "m.t", name: "t", ptr: &thrower,
+            traits: TestTraits(isWorkload: true, workloadReps: 1)),
+        counters, wall);
+
+    assert(!outcome.result.succeeded);
+    assert(outcome.result.thrown.length, "the throw fails the test with its trace");
+    assert(outcome.windows.length == 2, "the good window survives");
+    assert(outcome.windows[0].name == "t/ok" && outcome.windows[0].error.length == 0);
+    assert(outcome.windows[1].name == "t/bad");
+    assert(outcome.windows[1].error.canFind("boom"));
+    assert(!outcome.windows[1].skipped);
+}
+
+@("workload.runWorkload.windowSkipContinuesBody")
+@system
+unittest
+{
+    import sparkles.test_runner.model : TestTraits;
+    import sparkles.test_runner.skip : skipTest;
+
+    static void skipper()
+    {
+        workloadWindow("skippy", () { skipTest("no hardware"); });
+        workloadWindow("after", () {});
+    }
+
+    auto counters = CounterGroups.none;
+    auto wall = WallSource.tryOpen(true);
+    const outcome = runWorkload(
+        Test(fullName: "m.s", name: "s", ptr: &skipper,
+            traits: TestTraits(isWorkload: true, workloadReps: 1)),
+        counters, wall);
+
+    assert(outcome.result.succeeded, "a window-level skip does not fail the test");
+    assert(outcome.windows.length == 2);
+    assert(outcome.windows[0].skipped);
+    assert(outcome.windows[0].error == "no hardware");
+    assert(outcome.windows[1].error.length == 0, "the body continues past a skipped window");
+}
+
+@("workload.runWorkload.testLevelSkip")
+@system
+unittest
+{
+    import sparkles.test_runner.model : TestTraits;
+    import sparkles.test_runner.skip : skipTest;
+
+    static void skipAll()
+    {
+        skipTest("whole test skipped");
+    }
+
+    auto counters = CounterGroups.none;
+    auto wall = WallSource.tryOpen(true);
+    const outcome = runWorkload(
+        Test(fullName: "m.sa", name: "sa", ptr: &skipAll,
+            traits: TestTraits(isWorkload: true, workloadReps: 2)),
+        counters, wall);
+
+    assert(outcome.result.skipped);
+    assert(outcome.windows.length == 0, "no fabricated window for a skipped body");
+}
+
+version (linux)
+{
+    @("workload.decomposition.spinIsOnCpu")
+    @system
+    unittest
+    {
+        import core.time : MonoTime, msecs;
+        import sparkles.test_runner.model : TestTraits;
+
+        // The honesty pair, part 1: a pure spin's wall time is on-CPU time.
+        static void spin()
+        {
+            static ulong sink;
+            const t0 = MonoTime.currTime;
+            while (MonoTime.currTime - t0 < 30.msecs)
+                foreach (i; 0 .. 10_000)
+                    sink += i * i;
+        }
+
+        auto counters = CounterGroups.none;
+        auto wall = WallSource.tryOpen(true);
+        const outcome = runWorkload(
+            Test(fullName: "m.spin", name: "spin", ptr: &spin,
+                traits: TestTraits(isWorkload: true, workloadReps: 1)),
+            counters, wall);
+
+        const d = outcome.windows[0].wall;
+        assert(d.wallNs >= 25_000_000);
+        const onCpu = d.onCpuUserNs + d.onCpuKernelNs;
+        assert(onCpu > double(d.wallNs) * 0.5,
+            "a spin window is dominated by on-CPU time");
+    }
+
+    @("workload.decomposition.sleepIsOther")
+    @system
+    unittest
+    {
+        import core.thread : Thread;
+        import core.time : msecs;
+        import sparkles.test_runner.model : TestTraits;
+
+        // Part 2: sleep is neither on-CPU nor runqueue nor disk — it must
+        // land in the residual, never be attributed to a fabricated cause.
+        static void sleeper()
+        {
+            Thread.sleep(30.msecs);
+        }
+
+        auto counters = CounterGroups.none;
+        auto wall = WallSource.tryOpen(true);
+        const outcome = runWorkload(
+            Test(fullName: "m.sleep", name: "sleep", ptr: &sleeper,
+                traits: TestTraits(isWorkload: true, workloadReps: 1)),
+            counters, wall);
+
+        const d = outcome.windows[0].wall;
+        assert(d.wallNs >= 25_000_000);
+        assert(d.offCpuOtherNs > double(d.wallNs) * 0.5,
+            "sleep lands in the residual");
+        if (!d.offCpuRunqueueNs.isNaN)
+            assert(d.offCpuRunqueueNs < double(d.wallNs) * 0.5,
+                "sleep is not runqueue wait");
+    }
+
+    @("workload.runWorkload.perfWindowTotals")
+    @system
+    unittest
+    {
+        import sparkles.test_runner.model : TestTraits;
+        import sparkles.test_runner.skip : skipTest;
+
+        auto counters = CounterGroups.open(true, false, false, null);
+        scope (exit)
+            counters.close();
+        if (!counters.perf.available)
+            skipTest("hardware counters unavailable (perf_event_paranoid?)");
+
+        static void crunch()
+        {
+            static ulong sink;
+            foreach (i; 0 .. 500_000)
+                sink += i * i;
+        }
+
+        auto wall = WallSource.tryOpen(true);
+        const outcome = runWorkload(
+            Test(fullName: "m.c", name: "crunch", ptr: &crunch,
+                traits: TestTraits(isWorkload: true, workloadReps: 1)),
+            counters, wall);
+
+        assert(outcome.result.succeeded);
+        assert(!outcome.windows[0].perf.isNull, "an open perf group attaches window stats");
+        const p = outcome.windows[0].perf.get;
+        assert(p.iters == 1, "window stats are totals, not per-iteration");
+        if (p.instructions.isNaN)
+            skipTest("window was multiplexed below the reliability gate");
+        assert(p.instructions > 500_000,
+            "a 500k-iteration spin retires at least that many instructions");
+    }
+}
+
+/// Dogfood: the runner's own `--bench` run measures this workload
+/// (whole-body window, two reps).
+@("workload.demo")
+@workloadUda(reps: 2) @system
+unittest
+{
+    static ulong sink;
+    foreach (i; 0 .. 100_000)
+        sink += i * i;
+}

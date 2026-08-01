@@ -330,8 +330,9 @@ auto measure(DG)(scope DG run, in BenchConfig config)
 /// Nanoseconds elapsed since `startTicks` (a `MonoTime.currTime.ticks` value).
 /// Raw ticks, not `MonoTime` subtraction: the latter yields a `Duration`,
 /// whose hnsec storage quantizes every sample to a 100 ns grid — fatal to
-/// sub-microsecond per-call medians.
-private long elapsedNs(long startTicks) @safe nothrow @nogc
+/// sub-microsecond per-call medians. Shared with the workload window driver.
+package(sparkles.test_runner)
+long elapsedNs(long startTicks) @safe nothrow @nogc
 {
     import core.time : convClockFreq;
 

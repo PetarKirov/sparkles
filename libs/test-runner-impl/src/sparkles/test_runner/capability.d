@@ -306,7 +306,9 @@ version (linux)
     /// Reads a small pseudo-file into `buf` via raw `open`/`read`/`close`
     /// (`std.file` reports size 0 for /proc and some /sys entries). The path
     /// must be null-terminated; returns the filled slice (empty on failure).
-    private char[] readSmallFile(scope const(char)* path, return scope char[] buf) @safe nothrow @nogc
+    /// Shared with the workload wall source (`/proc/thread-self/schedstat`).
+    package(sparkles.test_runner)
+    char[] readSmallFile(scope const(char)* path, return scope char[] buf) @safe nothrow @nogc
     {
         import core.sys.posix.fcntl : open, O_RDONLY;
         import core.sys.posix.unistd : read, close;
