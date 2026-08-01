@@ -30,14 +30,31 @@
       ...
     }:
     lib.optionalAttrs (system == "x86_64-linux") {
-      # The Android CI aggregate (the `nix-build-android` job): just the
-      # repo-embedded APK — building it pulls the entire Android closure
-      # (dual-ABI druntimes, raylib/tree-sitter/ghostty cross builds, all
-      # grammar parsers, the Maple font build, the SDK tooling) as build
-      # dependencies, so one output covers the whole pipeline. Kept out of
+      # The Android CI aggregate (the `nix-build-android` job). Kept out of
       # `all-desktop` (see nix/packages/all.nix).
+      #
+      # `hue-apk-repo` alone would pull the entire cross closure (dual-ABI
+      # druntimes, raylib/tree-sitter/ghostty cross builds, all grammar
+      # parsers, the Maple font build, the SDK tooling), so it nearly covers
+      # the pipeline on its own — but "nearly" left three outputs with no CI
+      # coverage at all:
+      #
+      #   * `hue-apk` — the command AGENTS.md and docs/specs/hue/android.md
+      #     both name as THE way to build the port. It differs from the repo
+      #     variant only in its asset bundle, so covering it is one extra
+      #     aapt2+apksigner run…
+      #   * `hue-android-assets` — …which is what that bundle is: the sample
+      #     documents behind AND8, previously built by nothing.
+      #   * `hello-apk` — the M1 smoke test. It is the only artifact that
+      #     isolates "the D-on-Android spine works" (static druntime in a
+      #     .so, android_main → main, EGL bring-up, APK tooling) from "hue
+      #     works", which is exactly the bisect you want when the emulator
+      #     shows a black screen. Cheap once the closure is warm, and
+      #     building it is what stops it rotting.
       packages.all-android = pkgs.linkFarm "sparkles-all-android" {
+        hue-apk = config.packages.hue-apk;
         hue-apk-repo = config.packages.hue-apk-repo;
+        hello-apk = config.packages.hello-apk;
       };
     };
 }
