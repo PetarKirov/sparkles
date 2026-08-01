@@ -482,6 +482,10 @@ struct ExplorerTui
         => cast(long) rows.length > bodyRows && x == width - 1
             && y >= 1 && y <= bodyRows;
 
+    /// ditto for the horizontal bar's row (above the status bar, when live).
+    bool overHScrollbar(int x, int y) const @safe pure nothrow @nogc
+        => hOverflows() && y == height - 2 && x >= 0 && x < width - 1;
+
     void scrollBy(long dy) @safe pure nothrow @nogc
     {
         top += dy;
