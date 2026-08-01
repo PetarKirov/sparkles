@@ -116,6 +116,7 @@ in
           nativeBuildInputs = [
             pkgs.zip
             pkgs.jdk_headless # apksigner is a Java tool
+            pkgs.strip-nondeterminism
           ];
 
           buildPhase = ''
@@ -148,8 +149,22 @@ in
               ${lib.optionalString (renamePackage != null) "--rename-manifest-package ${renamePackage}"} \
               ${lib.optionalString (assetsDir != null) "-A ${assetsDir}"}
 
+            # `install` without -p stamps the destination with the CURRENT
+            # time, and zip records that mtime in every local file header — so
+            # the APK differed on every rebuild and `nix build --rebuild`
+            # reported the derivation as non-deterministic. Clamp to
+            # SOURCE_DATE_EPOCH (nixpkgs sets it to 1980-01-01, which is also
+            # zip's own floor, so nothing is silently rounded).
+            find apk -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
+
             # aapt2 has no flag for native libs; zip the lib/ tree in directly.
-            (cd apk && zip -q -r ../base.apk lib)
+            (cd apk && zip -q -r -X ../base.apk lib)
+
+            # Normalizes what neither of the above controls: aapt2's own entry
+            # timestamps, and zip's extra fields. Must run BEFORE signing — the
+            # v2 signature covers the whole archive, so rewriting entries after
+            # apksigner would invalidate it.
+            strip-nondeterminism --type zip base.apk
 
             # -p page-aligns uncompressed shared objects inside the zip — the
             # install-time mmap requirement; the .so files themselves carry
