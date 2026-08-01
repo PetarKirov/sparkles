@@ -348,7 +348,15 @@ private string windowJson(in WorkloadWindow w) @safe
     o ~= "      \"reps\": " ~ w.reps.to!string ~ ",\n";
     if (w.error.length)
     {
+        // Mirror the error-row shape: every always-present key stays
+        // present as null, so consumers can read windows position-blind.
         o ~= "      \"wallNs\": null,\n";
+        o ~= "      \"scope\": null,\n";
+        o ~= "      \"onCpuUserNs\": null,\n";
+        o ~= "      \"onCpuKernelNs\": null,\n";
+        o ~= "      \"offCpuRunqueueNs\": null,\n";
+        o ~= "      \"offCpuDiskNs\": null,\n";
+        o ~= "      \"offCpuOtherNs\": null,\n";
         if (w.skipped)
             o ~= "      \"skipped\": true,\n";
         o ~= "      \"error\": \"" ~ jsonEscape(w.error) ~ "\"\n";
@@ -687,6 +695,10 @@ unittest
 
     const bad = doc["windows"][1];
     assert(bad["wallNs"].type == JSONType.null_);
+    // The always-present keys mirror the error-row shape: null, not absent.
+    assert(bad["scope"].type == JSONType.null_);
+    assert(bad["onCpuUserNs"].type == JSONType.null_);
+    assert(bad["offCpuOtherNs"].type == JSONType.null_);
     assert(bad["error"].str == "object.Exception: boom");
     assert("skipped" !in bad);
     assert(doc["windows"][2]["skipped"].boolean);

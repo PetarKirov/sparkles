@@ -188,7 +188,8 @@ private auto parseInto(ref string[] args, ref RunnerOptions options)
             "List discovered tests without running them",
             &options.list,
         "bench",
-            "Run @benchmark tests instead of regular tests",
+            "Run @benchmark tests (ns/iter statistics) and @workload tests " ~
+            "(single-pass window deltas + wall decomposition) instead of regular tests",
             &options.bench,
         "perf",
             "With --bench: collect hardware performance counters per benchmark " ~
@@ -223,7 +224,8 @@ private auto parseInto(ref string[] args, ref RunnerOptions options)
             &options.groupBy,
         "bench-json",
             "With --bench: also write the results as JSON to the given file " ~
-            "(all rows in measurement order, incl. error rows, plus a meta block)",
+            "(all rows in measurement order, incl. error rows, plus a meta block " ~
+            "and, when @workload tests ran, a windows array)",
             &options.benchJson,
         "bench-min-time",
             "With --bench: per-case measurement budget in milliseconds — per-call " ~
@@ -745,8 +747,14 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         {
             import sparkles.test_runner.workload : WallSource, withWallBlock;
 
+            auto wallProbe = WallSource.tryOpen(true);
             stdout.write(formatCapabilityBlock(
-                withWallBlock(probe.capabilities, WallSource.tryOpen(true)), colored));
+                withWallBlock(probe.capabilities, wallProbe), colored));
+            // The block's ✓/✗ vocabulary can't carry "counting works but
+            // runqueue attribution doesn't" — say the narrower fact here.
+            if (wallProbe.available && !wallProbe.schedOk)
+                stdout.writeln("wall: runqueue attribution unavailable (",
+                    wallProbe.schedReason, ") — workload windows fold it into `other`");
         }
         stdout.writeln("client throughput/level metrics are defined per @benchmark and appear when present.");
         return UnitTestResult(0, 0, false, false);
@@ -1117,7 +1125,22 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
                     options.verbose), "\n");
             }
             else if (!outcome.result.succeeded)
-                reportFailure(outcome.result);
+            {
+                // A throw inside a window already produced an error row —
+                // count it once via the error-row path (bench parity) and
+                // print only the trace; a body failure outside any window
+                // has no row and goes through the full failure tally.
+                const hasErrorWindow = outcome.windows
+                    .canFind!(w => w.error.length && !w.skipped);
+                if (hasErrorWindow)
+                {
+                    progress.clear();
+                    foreach (thrown; outcome.result.thrown)
+                        stdout.write(formatThrown(thrown, colored, true));
+                }
+                else
+                    reportFailure(outcome.result);
+            }
             foreach (ref w; outcome.windows)
             {
                 if (w.error.length && !w.skipped)

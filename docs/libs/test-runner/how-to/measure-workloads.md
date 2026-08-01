@@ -32,9 +32,21 @@ dub test :yourpkg -- --bench --perf
 ```
 
 (Illustrative output. Workloads measure after the benchmark groups, in the
-same `--bench` run, sharing the same source selection: `--perf`,
-`--syscalls`, `--metrics=raw:…`/`pfm:…` columns all apply — as window
-**totals**, not per-iteration averages.)
+same `--bench` run, sharing the same source **selection**: `--perf`,
+`--syscalls`, `--metrics=raw:…`/`pfm:…` open the same sources for windows —
+reported as window **totals**, not per-iteration averages. The table shows a
+fixed summary column set per open source; every collected total lands in
+`--bench-json`, so a `--metrics` selector that names a column outside the
+summary set is still measured — look in the JSON.)
+
+One apparatus cost to know about: the window edges are read **nested**
+(perf innermost), so an outer source's window contains the inner sources'
+edge reads. The floor is small and deterministic — with `--perf` open, a
+zero-I/O workload reports about 2 `syscr` / 130 `rchar` in its tier-0
+totals (the perf group's two edge reads), and a `--syscalls` total carries
+roughly a dozen apparatus syscalls depending on which sources are open.
+Negligible against a real workload's counts at window granularity, but it
+is a floor, not zero — remember it when diffing near-zero baselines.
 
 ## The wall-clock decomposition
 

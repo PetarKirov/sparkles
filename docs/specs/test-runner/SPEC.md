@@ -158,7 +158,11 @@ residency-verify (target — M6) → assemble deltas`. Measurement is a
 (`GroupSnapshot`, no per-iteration bracket, no `RESET`), so a whole-body
 candidate window and in-body windows overlap freely and the body is never
 re-run for counting (it may be expensive or non-idempotent). Edge nesting,
-outer → inner: wall clock, wall source, syscalls, raw, tier-0, perf. A
+outer → inner: wall clock, wall source, syscalls, raw, tier-0, perf. The
+nesting means an outer source's window contains the inner sources' edge
+reads — a small, deterministic apparatus floor (≈2 `syscr` in tier-0 with
+perf open; ≈a dozen syscalls in the syscall total), disclosed in the
+how-to and never netted out (subtracting an estimate would fabricate). A
 window across which a group's enabled time never advanced reads `nan`,
 never zeros. The wall-clock decomposition reports `onCpuUser`/`onCpuKernel`
 (rusage), `offCpuRunqueue` (schedstat), `offCpuDisk` (PSI — target — M5),
