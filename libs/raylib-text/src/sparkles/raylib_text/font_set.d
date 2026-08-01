@@ -703,6 +703,10 @@ this once did, silently handed the decision to whichever absolute path sorted
 first: hue's `[<dataDir>/fonts, /system/fonts]` only worked because `/data`
 happens to precede `/system`.)
 */
+/// (Public deliberately: `apps/terminal --font-dir` resolves through it, so
+/// this is API, not an implementation detail. Its siblings —
+/// `fontVariantPaths`, `parseCharsetTokens` — stay private until something
+/// outside the module asks for them.)
 string resolveFontInDirs(const(char)[] nameOrList, const(string)[] dirs) @safe
 {
     import std.path : baseName, stripExtension;
@@ -879,7 +883,7 @@ primary face's path, the styled variants are `<Base>-Bold`, `-Italic` (or
 is the primary's stem minus a trailing `-Regular`. Nerd-Font and DejaVu
 releases both follow it. Out-params are `""` when the file does not exist.
 */
-void fontVariantPaths(string primaryPath,
+private void fontVariantPaths(string primaryPath,
     out string bold, out string italic, out string boldItalic) @safe
 {
     import std.file : exists;
@@ -937,7 +941,7 @@ void fontVariantPaths(string primaryPath,
 /// bare hex singletons — `fc-query --format=%{charset}` output, also the
 /// `<font>.charset` sidecar format) into the sorted lo/hi bound buffers.
 /// Malformed tokens are skipped, the rest kept.
-package void parseCharsetTokens(const(char)[] text,
+private void parseCharsetTokens(const(char)[] text,
     ref SmallBuffer!(int, 256, true) lo, ref SmallBuffer!(int, 256, true) hi) @safe
 {
     import std.conv : to;

@@ -708,6 +708,24 @@ int runGui(
         // selection (drag-extends via the existing machinery).
         bool clickPressed() => touchFrame.tap;
         bool selectStartPressed() => touchFrame.longPress;
+
+        // The bottom toolbar as ONE table, read by both the hit test and the
+        // paint, so the two cannot disagree about where a segment is. (The
+        // real fix is a shared actionBar component in sparkles:ui — this is
+        // the local version of the same invariant.)
+        enum toolbarSegments = 5;
+
+        // The last segment is context-sensitive: with a live selection there
+        // is otherwise NO touch route to copy it (a long-press-drag creates a
+        // selection, and Ctrl-C is the only caller of copySelection), which
+        // made the spec's "Copy … works" true only with a keyboard attached.
+        bool hasSelection() =>
+            (regime == Regime.text && selMax() > selMin()) ||
+            (regime == Regime.table && selTable >= 0);
+
+        string[toolbarSegments] toolbarLabels() => [
+            "◀ thm", "thm ▶", "view", "tree", hasSelection() ? "copy" : "ln №",
+        ];
     }
     else
     {
@@ -833,7 +851,7 @@ int runGui(
             // the user aimed at.
             if (touchFrame.tap && !inputMode && touchFrame.y >= screenH - cellH)
             {
-                const seg = cast(int)(touchFrame.x / (screenW / 5.0f));
+                const seg = cast(int)(touchFrame.x / (screenW / cast(float) toolbarSegments));
                 switch (seg)
                 {
                     case 0: applyTheme(vm.themeIdx == 0 ? themes.length - 1 : vm.themeIdx - 1); break;
@@ -843,9 +861,14 @@ int runGui(
                     // 4, plus the single-pixel `x == screenW` case that
                     // divides to exactly 5.
                     default:
-                        lineNumbers = !lineNumbers;
-                        vm.widthCols = -1;
-                        relayout();
+                        if (hasSelection())
+                            copySelection();
+                        else
+                        {
+                            lineNumbers = !lineNumbers;
+                            vm.widthCols = -1;
+                            relayout();
+                        }
                         break;
                 }
                 touchFrame.tap = false; // consumed
@@ -1983,14 +2006,19 @@ int runGui(
                 const tbY = screenH - cellH;
                 DrawRectangle(0, tbY, screenW, cellH, rl(mix(vm.pageBg, vm.pageFg, 0.12)));
                 DrawRectangle(0, tbY - 1, screenW, 1, rl(vm.gutterFg));
-                static immutable string[5] tbLabels = ["◀ thm", "thm ▶", "view", "tree", "ln №"];
-                const segW = screenW / 5.0f;
+                const tbLabels = toolbarLabels();
+                const segW = screenW / cast(float) toolbarSegments;
                 foreach (i, label; tbLabels)
                 {
                     if (i != 0)
                         DrawRectangle(cast(int)(segW * i), tbY + 2, 1, cellH - 4,
                             rl(vm.gutterFg));
-                    const lx = segW * i + (segW - label.length * cellW) / 2;
+                    // columnWidth, not `label.length`: the labels are UTF-8,
+                    // so "◀ thm" is 7 bytes / 5 columns and "ln №" 6 / 4 —
+                    // byte length made them ~40 % too wide and pushed three of
+                    // the five off-centre into the clamp below.
+                    const lw = cast(int) columnWidth(label) * cellW;
+                    const lx = segW * i + (segW - lw) / 2;
                     drawText(fonts, cstrOf(buf, label), lx < segW * i + 2 ? segW * i + 2 : lx,
                         cast(float) tbY, TextStyle(0), rl(vm.pageFg));
                 }
