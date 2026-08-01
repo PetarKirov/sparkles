@@ -163,18 +163,40 @@ private final class LogcatLogger : CoreLogger
 // ── clipboard ────────────────────────────────────────────────────────────────
 
 // The JNI bridge in apps/hue/android/clipboard_jni.c (compiled by the nix
-// cross build with the NDK clang and linked into libhue.so).
+// cross build with the NDK clang and linked into libhue.so). It takes UTF-16
+// with an explicit length — see the note there on why not `NewStringUTF`.
 private extern (C) int hue_android_set_clipboard(
-    void* vm, void* activity, const(char)* text) nothrow;
+    void* vm, void* activity, const(wchar)* text, int len) @system nothrow @nogc;
 
-/// Copy NUL-terminated text to the system clipboard through the activity's
-/// `ClipboardManager` — raylib's Android `SetClipboardText` is unimplemented,
-/// and `hasCode="false"` leaves no Java side to delegate to, so the JNI dance
-/// lives in `clipboard_jni.c`. Returns `false` when any JNI step failed.
-bool setClipboardTextZ(const(char)* textZ) @trusted nothrow
+/**
+Copy `text` to the system clipboard through the activity's `ClipboardManager`
+— raylib's Android `SetClipboardText` is an unimplemented no-op, and
+`hasCode="false"` leaves no Java side to delegate to, so the JNI dance lives
+in `clipboard_jni.c`.
+
+Takes a slice, not a `const(char)*`: a raw pointer made this an unchecked
+NUL-termination precondition laundered into `@safe` (any `@safe` caller may
+legally pass `someSlice.ptr`), and the bridge wants a length anyway. Returns
+`false` when any JNI step failed.
+*/
+bool setClipboardText(scope const(char)[] text) @safe nothrow
 {
-    auto activity = GetAndroidApp().activity;
-    return hue_android_set_clipboard(activity.vm, activity.clazz, textZ) == 0;
+    import std.utf : toUTF16;
+
+    try
+    {
+        // Java strings are UTF-16; transcoding here is what lets the bridge
+        // use NewString and sidestep modified-UTF-8 entirely (astral scalars
+        // — emoji in a copied selection — are the case that breaks).
+        const wstring utf16 = () @trusted { return text.toUTF16; }();
+        return (() @trusted {
+            auto activity = GetAndroidApp().activity;
+            return hue_android_set_clipboard(activity.vm, activity.clazz,
+                utf16.ptr, cast(int) utf16.length) == 0;
+        })();
+    }
+    catch (Exception)
+        return false; // invalid UTF in the selection → report the failure
 }
 
 // ── debug environment ────────────────────────────────────────────────────────
