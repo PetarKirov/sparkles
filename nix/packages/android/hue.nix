@@ -80,8 +80,11 @@
         "Have_bolts"
       ];
 
-      # The app closure + apps/hue/android (the JNI clipboard shim rides the
-      # fileset's .c filter; hello/main.d comes along unused).
+      # The app closure + apps/hue/android, which `sourceFor` turns into this
+      # derivation's src. The JNI bridge's ImportC shim (jni_c.c) lives there
+      # rather than under apps/hue/src precisely so dub never scans it — a
+      # desktop host has no NDK <jni.h> — and it is passed to ldc2 by explicit
+      # path below.
       srcDirs = sources.srcClosure "apps/hue" ++ [ "apps/hue/android" ];
 
       libhue = pkgs.stdenv.mkDerivation {
@@ -103,11 +106,6 @@
           '') dubDeps}
 
           ${lib.concatMapStrings (t: ''
-            # The JNI clipboard bridge — plain C compiled with the NDK clang
-            # (jni.h comes from its sysroot), linked into libhue.so below.
-            ${t.cc} -c apps/hue/android/clipboard_jni.c -O2 -fPIC \
-              -o clipboard_jni-${t.abi}.o
-
             ldc2 -mtriple=${t.triple} -relocation-model=pic -O2 \
               -preview=in -preview=dip1000 \
               ${toString (map (v: "-d-version=${v}") versions)} \
@@ -117,9 +115,10 @@
               -P-U__SIZEOF_INT128__ \
               -P-I${config.packages.tree-sitter-android}/include \
               -P-I${config.packages.libghostty-vt-android}/include \
+              -P-I${ndk.sysrootInclude} \
               -i \
               apps/hue/src/app.d \
-              clipboard_jni-${t.abi}.o \
+              apps/hue/android/jni_c.c \
               ${config.packages.raylib-android}/lib/${t.abi}/libraylib.a \
               ${config.packages.tree-sitter-android}/lib/${t.abi}/libtree-sitter.a \
               ${config.packages.libghostty-vt-android}/lib/${t.abi}/libghostty-vt.a \

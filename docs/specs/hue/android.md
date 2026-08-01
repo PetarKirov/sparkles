@@ -51,22 +51,22 @@ Interaction parity is honest, not aspirational: **touch covers the reading
 workflows; full parity needs a (BT) keyboard**, whose events flow through
 raylib's Android input into every existing binding.
 
-| Desktop feature                      | On Android                                                                                                                |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| Scroll (wheel / j k / PgUp…)         | touch drag + fling; keyboard works                                                                                        |
-| Theme cycling (← →)                  | toolbar `◀ thm` / `thm ▶`                                                                                                 |
-| Raw ↔ preview (Tab)                  | toolbar `view`                                                                                                            |
-| Explorer (e)                         | toolbar `tree`; back button closes                                                                                        |
-| Line numbers (l)                     | toolbar `ln №`                                                                                                            |
-| Font size (Ctrl-±)                   | pinch zoom                                                                                                                |
-| Click (fold chevrons, tree, buttons) | tap                                                                                                                       |
-| Text/table selection (mouse drag)    | long-press, then drag                                                                                                     |
-| Copy (Ctrl-C / copy buttons)         | works — the JNI `ClipboardManager` bridge (`apps/hue/android/clipboard_jni.c`; raylib's own Android clipboard is a no-op) |
-| Search `/`, goto `g`, copy-modes y/t | **keyboard-only** (no soft-keyboard IME through raylib)                                                                   |
-| Set navigation `[` `]` `i`           | keyboard-only (explorer covers browsing)                                                                                  |
-| Fullscreen F11                       | n/a — the surface is the screen                                                                                           |
-| Hover popups (twoslash)              | tap a token (the pointer rests where the last tap landed)                                                                 |
-| Window title                         | n/a                                                                                                                       |
+| Desktop feature                      | On Android                                                                                                                               |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Scroll (wheel / j k / PgUp…)         | touch drag + fling; keyboard works                                                                                                       |
+| Theme cycling (← →)                  | toolbar `◀ thm` / `thm ▶`                                                                                                                |
+| Raw ↔ preview (Tab)                  | toolbar `view`                                                                                                                           |
+| Explorer (e)                         | toolbar `tree`; back button closes                                                                                                       |
+| Line numbers (l)                     | toolbar `ln №`                                                                                                                           |
+| Font size (Ctrl-±)                   | pinch zoom                                                                                                                               |
+| Click (fold chevrons, tree, buttons) | tap                                                                                                                                      |
+| Text/table selection (mouse drag)    | long-press, then drag                                                                                                                    |
+| Copy (Ctrl-C / copy buttons)         | works — the JNI `ClipboardManager` bridge (`android_clipboard.d` over an ImportC'd `<jni.h>`; raylib's own Android clipboard is a no-op) |
+| Search `/`, goto `g`, copy-modes y/t | **keyboard-only** (no soft-keyboard IME through raylib)                                                                                  |
+| Set navigation `[` `]` `i`           | keyboard-only (explorer covers browsing)                                                                                                 |
+| Fullscreen F11                       | n/a — the surface is the screen                                                                                                          |
+| Hover popups (twoslash)              | tap a token (the pointer rests where the last tap landed)                                                                                |
+| Window title                         | n/a                                                                                                                                      |
 
 ## Build & run
 
@@ -93,7 +93,20 @@ SELinux-denied), relaunch, pull the PNG the same way.
   (16 KB-page devices).
 - ImportC vs bionic: `-P-U__SIZEOF_INT128__` (kernel headers typedef
   `__int128`); `android_native_app_glue.h` cannot be ImportC'd at all — the
-  glue structs are hand-mirrored in `android_glue.d`.
+  glue structs are hand-mirrored in `android_glue.d`. `<jni.h>` **can** be, and
+  is (`apps/hue/android/jni_c.c`), so the clipboard bridge is D rather than C —
+  ImportC's preprocessor is the _host_ cc, so the cross build points it at the
+  NDK sysroot with `-P-I${ndk.sysrootInclude}`.
+- JNI method calls go through the `…A` (`jvalue[]`) forms. This is a
+  _legibility_ choice, not an ABI requirement: LDC's `extern(C)` variadic
+  support on AArch64 was measured correct on both ABIs — verified by running
+  a mixed pointer/int/double/stack-spill matrix under `qemu-aarch64` against
+  an `aarch64-linux-android` C control (identical results), and by diffing
+  LDC's against clang's codegen, which is instruction-identical for
+  `aarch64-linux-gnu` (no shuffling; AAPCS64 passes variadic and fixed args
+  alike) _and_ for `arm64-apple-macos` (`stp x3, x4, [sp]` — Apple's
+  stack-passing rule, which LDC implements). The `jvalue[]` forms are simply
+  explicit about each argument's JNI type.
 - A statically linked druntime cannot `rt_init` twice: Android reuses the
   process across activity recreations → exit the process when `main` returns.
 - Stock raylib (verified through the released 6.0 tag) never resizes on Android (empty `CONFIG_CHANGED` stub, no
