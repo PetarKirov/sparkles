@@ -84,24 +84,40 @@ enum logTag = "hue";
 
 // ── data dir ─────────────────────────────────────────────────────────────────
 
-private __gshared string cachedDataDir;
+/**
+The app's private data directory (`ANativeActivity.internalDataPath`) — the
+root of the extracted asset bundle and all writable state.
 
-/// The app's private data directory (`ANativeActivity.internalDataPath`) —
-/// the root of the extracted asset bundle and all writable state.
-string androidDataDir() @trusted
+Resolved once, into `immutable`, by the module constructor below, so there is
+no mutable global and no lazy check: the value genuinely is a constant for the
+process, and now says so in the type. (Named for the `ANativeActivity` field
+it mirrors, so a local `dataDir` never shadows it.)
+*/
+private immutable string internalDataPath;
+
+/**
+Resolve the data dir at module-construction time.
+
+The ordering this depends on is exact, so it is worth writing down. raylib's
+`android_main` sets `platform.app` and only then calls `main()`
+(rcore_android.c: `platform.app = app;` immediately precedes the `main(…)`
+call), and LDC's generated C `main` enters `_d_run_main`, which runs `rt_init`
+— and therefore every module constructor — before the D `main` body. So
+`GetAndroidApp()` is already valid here, one step earlier than the "valid from
+`android_main` on" the module header states.
+
+A null `internalDataPath` is not a crash: `fromStringz(null)` is empty and
+`.idup` yields `""`, which every derived path already treats as unusable.
+*/
+shared static this() @trusted
 {
-    // @trusted covers the whole body, and it has to: reading or writing the
-    // `__gshared` cache is itself rejected in @safe, so there is no narrower
-    // region to wrap (the NDK deref is the lesser half).
-    //
-    // What makes it trustworthy is threading. Every hue call runs on the glue
-    // thread — native_app_glue spawns it, and the ANativeActivity callbacks
-    // that run on the Java UI thread never enter hue — and the value is
-    // compute-once and idempotent, so even a race would be benign.
-    if (cachedDataDir.length == 0)
-        cachedDataDir = GetAndroidApp().activity.internalDataPath.fromStringz.idup;
-    return cachedDataDir;
+    internalDataPath = GetAndroidApp().activity.internalDataPath.fromStringz.idup;
 }
+
+/// See $(LREF internalDataPath). Reading module-level `immutable` needs no
+/// trust, so unlike the `__gshared` cache this replaced, the accessor is fully
+/// `@safe` — and `nothrow @nogc` besides.
+string androidDataDir() @safe nothrow @nogc => internalDataPath;
 
 // ── logcat sink ──────────────────────────────────────────────────────────────
 
