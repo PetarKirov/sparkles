@@ -304,6 +304,7 @@ package. A module that imports them in a non-`unittest` build (e.g. `base`'s
 
 ```bash
 nix run .#ci -- --test --fail-fast       # dub test for every sub-package
+nix run .#ci -- --test-extracted         # --better-c/--wasm for every sub-package using them
 nix run .#ci -- --verify --files README.md   # verify markdown examples (see Examples below)
 nix run .#ci -- --check-vcs-urls         # audit all tracked markdown for unpinned GitHub URLs
 ```
