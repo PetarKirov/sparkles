@@ -194,6 +194,10 @@ struct PreviewTui
         => lineCount > bodyRows && x == width - 1
             && y >= 1 && y <= bodyRows;
 
+    /// ditto for the horizontal bar's row (the last body row, when live).
+    bool overHScrollbar(int x, int y) const @safe pure nothrow @nogc
+        => vm.hOverflows() && y == bodyRows && x >= 0 && x < width - 1;
+
     /// Sets the pane size in cells (the workspace arranges; `relayout` after).
     void resize(int w, int h) @safe pure nothrow @nogc
     {

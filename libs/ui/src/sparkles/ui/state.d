@@ -762,6 +762,58 @@ unittest
 }
 
 /**
+The one pointer-shape decision (`IXB4`): what the terminal/window pointer
+should look like given the workspace's interaction state. Live grabs
+outrank hover — a divider drag holds `ew-resize` and a grabbed bar holds
+its axis shape wherever the pointer strays — then divider hover, then any
+hovered bar's shape. Pass the bars in priority order (horizontal before
+vertical keeps `ew-resize` winning ties, matching both shipped hosts).
+
+Every host consumes this ONE function: the TUI writes the result as
+OSC 22 (re-asserting mid-grab — terminals may reset the pointer when a
+drag starts), the GUI maps it to the window cursor.
+*/
+PointerShape wantedPointerShape(in SplitState split, bool overDivider,
+    scope const(ScrollbarState)[] bars...) @safe pure nothrow @nogc
+{
+    if (split.dragging)
+        return PointerShape.ewResize;
+    foreach (ref const b; bars)
+        if (b.dragging)
+            return b.shape;
+    if (overDivider)
+        return PointerShape.ewResize;
+    foreach (ref const b; bars)
+        if (b.hovered)
+            return b.shape;
+    return PointerShape.default_;
+}
+
+@("ui.state.wantedPointerShape.priority")
+@safe pure nothrow @nogc
+unittest
+{
+    const idleV = ScrollbarState(ScrollAxis.vertical);
+    const idleH = ScrollbarState(ScrollAxis.horizontal);
+    const split = SplitState(32);
+
+    assert(wantedPointerShape(split, false, idleH, idleV)
+        == PointerShape.default_);
+    // A live divider drag outranks everything.
+    assert(wantedPointerShape(split.started(32), true,
+        idleH.hoveredNow(true), idleV) == PointerShape.ewResize);
+    // A grabbed bar outranks divider hover; its axis picks the shape.
+    const grabbedV = idleV.pressed(0, 100, 10, 10);
+    assert(wantedPointerShape(split, true, idleH, grabbedV)
+        == PointerShape.nsResize);
+    // Divider hover outranks bar hover; bar hover wins over idle.
+    assert(wantedPointerShape(split, true, idleH.hoveredNow(true), idleV)
+        == PointerShape.ewResize);
+    assert(wantedPointerShape(split, false, idleH, idleV.hoveredNow(true))
+        == PointerShape.nsResize);
+}
+
+/**
 A selection as one Regular value (`STM3`): an `anchor` (where it started) and a
 `focus` (where it is now) over any ordered position type — `long` line numbers,
 byte offsets, or a comparable (line, column) pair. "No selection" is a $(B mode)

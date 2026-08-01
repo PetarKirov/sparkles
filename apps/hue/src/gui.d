@@ -67,12 +67,12 @@ import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : layout;
 import sparkles.ui.state : ScrollAxis, ScrollbarState, scrollbarThumb,
-    selectionRects, sourceOffsetAt,
+    selectionRects, sourceOffsetAt, wantedPointerShape,
     SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : drawScrollbar, RaylibCanvas, ScrollbarAnim,
-    scrollbarLayout;
+    scrollbarLayout, toRaylibCursor;
 
 // The multi-document set the twoslash view navigates with `[`/`]` (`GNV1`), plus
 // the two entry points a navigation reload needs.
@@ -1109,22 +1109,10 @@ int runGui(
         // grabs outrank hover — a scrollbar drag straying over the divider
         // stays ns-resize, a divider drag stays ew-resize — then hover by
         // orientation, else the default arrow.
-        {
-            auto want = MouseCursor.MOUSE_CURSOR_DEFAULT;
-            if (split.dragging)
-                want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
-            else if (tree.hsb.dragging || vm.hsb.dragging)
-                want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
-            else if (docSb.dragging || treeVSb.dragging)
-                want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
-            else if (divZone)
-                want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
-            else if (tree.hsb.hovered || vm.hsb.hovered)
-                want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
-            else if (docSb.hovered || treeVSb.hovered)
-                want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
-            SetMouseCursor(want);
-        }
+        // The ONE shared decision (IXB4), mapped to the window cursor —
+        // the TUI writes the identical result as OSC 22.
+        SetMouseCursor(toRaylibCursor(wantedPointerShape(split, divZone,
+            vm.hsb, tree.hsb, docSb, treeVSb)));
 
         vm.top = vm.top < 0 ? 0 : (vm.top > maxTop ? maxTop : vm.top);
         const topLine = cast(size_t) vm.top;

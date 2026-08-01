@@ -13,9 +13,10 @@ cell component resolves — one color authority.
 */
 module sparkles.ui_raylib.scrollbar;
 
-import raylib : Color, DrawRectangle;
+import raylib : Color, DrawRectangle, MouseCursor;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.base.term_control : PointerShape;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.state : ScrollAxis, ScrollbarState;
 
@@ -115,4 +116,21 @@ unittest
         anim, 200, 100, Rect(0, 0, 100, 50));
     assert(h.live && h.track == Rect(0, 42, 100, 8));
     assert(!scrollbarLayout(st, anim, 90, 100, Rect(0, 0, 100, 50)).live);
+}
+
+/// The raylib spelling of a toolkit $(REF PointerShape, sparkles,base,
+/// term_control) — the GUI half of the pointer-shape seam (`IXB4`); the
+/// TUI writes the same shapes as OSC 22.
+MouseCursor toRaylibCursor(PointerShape shape) @safe pure nothrow @nogc
+{
+    final switch (shape) with (PointerShape)
+    {
+        case default_: return MouseCursor.MOUSE_CURSOR_DEFAULT;
+        case text:     return MouseCursor.MOUSE_CURSOR_IBEAM;
+        case pointer:  return MouseCursor.MOUSE_CURSOR_POINTING_HAND;
+        case ewResize: return MouseCursor.MOUSE_CURSOR_RESIZE_EW;
+        case nsResize: return MouseCursor.MOUSE_CURSOR_RESIZE_NS;
+        case grab:     return MouseCursor.MOUSE_CURSOR_RESIZE_ALL;
+        case grabbing: return MouseCursor.MOUSE_CURSOR_RESIZE_ALL;
+    }
 }

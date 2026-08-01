@@ -25,7 +25,7 @@ import sparkles.tui : CellStyle, Color, Grid, PosixEvents, Terminal,
 import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.geometry : Point;
-import sparkles.ui.state : SplitState;
+import sparkles.ui.state : SplitState, wantedPointerShape;
 import sparkles.ui.style : Slot;
 
 import ansi_model : BackgroundMode;
@@ -209,20 +209,20 @@ struct WorkspaceTui
             const grabbed = split.dragging || viewer.sb.dragging
                 || tree.sb.dragging || viewer.vm.hsb.dragging
                 || tree.hsb.dragging;
-            PointerShape want;
-            if (split.dragging)
-                want = PointerShape.ewResize;
-            else if (viewer.vm.hsb.dragging || tree.hsb.dragging)
-                want = PointerShape.ewResize;
-            else if (viewer.sb.dragging || tree.sb.dragging)
-                want = PointerShape.nsResize;
-            else if (treeVisible && p.pos.x == tree.width)
-                want = PointerShape.ewResize;
-            else if ((treeVisible && tree.overScrollbar(p.pos.x, p.pos.y))
-                || viewer.overScrollbar(p.pos.x - viewer.originX, p.pos.y))
-                want = PointerShape.nsResize;
-            else
-                want = PointerShape.default_;
+            // Hover lives on the machines; the ONE shared decision (IXB4)
+            // turns the grab/hover states into the wanted shape.
+            const vx = p.pos.x - viewer.originX;
+            viewer.sb = viewer.sb.hoveredNow(
+                viewer.overScrollbar(vx, p.pos.y));
+            viewer.vm.hsb = viewer.vm.hsb.hoveredNow(
+                viewer.overHScrollbar(vx, p.pos.y));
+            tree.sb = tree.sb.hoveredNow(
+                treeVisible && tree.overScrollbar(p.pos.x, p.pos.y));
+            tree.hsb = tree.hsb.hoveredNow(
+                treeVisible && tree.overHScrollbar(p.pos.x, p.pos.y));
+            const want = wantedPointerShape(split,
+                treeVisible && p.pos.x == tree.width,
+                viewer.vm.hsb, tree.hsb, viewer.sb, tree.sb);
             // Re-assert on every event while a grab is live: some terminals
             // and multiplexers reset the pointer themselves when a drag
             // starts, clobbering the OSC 22 shape — a repeated set is
