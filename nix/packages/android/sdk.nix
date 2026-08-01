@@ -1,6 +1,9 @@
-# Android SDK tooling for the nix-native APK pipeline: aapt2 + zipalign +
-# apksigner (build-tools), android.jar (platforms), adb (platform-tools), and
-# the emulator + an x86_64 system image for on-emulator testing.
+# Android SDK tooling for the nix-native APK pipeline, in two compositions:
+# a minimal *build* SDK (aapt2 + zipalign + apksigner from build-tools, plus
+# android.jar) that the APK assembly references, and a *dev* SDK that adds
+# adb, the emulator and an x86_64 system image for on-emulator testing.
+# Keeping them apart is what stops the multi-GB emulator closure becoming a
+# build input of every APK — see the note at the compositions below.
 #
 # This is the one place the repo touches `androidenv`, through a *scoped*
 # unfree nixpkgs import — the main `pkgs` stays licence-clean, matching the
@@ -25,7 +28,25 @@ in
         };
       };
 
-      sdk = androidPkgs.androidenv.composeAndroidPackages {
+      # Composed TWICE, deliberately.
+      #
+      # Tool paths are interpolated as strings, so every one of them carries
+      # its composition's derivation context: whatever that composition
+      # includes becomes a build input of everything that references a single
+      # binary from it. Assembling an APK needs three ~10 MB tools — aapt2,
+      # zipalign, apksigner — plus android.jar; taking them from an
+      # emulator-bearing composition would make the emulator (~1 GB) and the
+      # google_apis x86_64 system image (~2-3 GB) build inputs of every APK,
+      # downloaded and then *pushed to the binary cache* by CI, for a build
+      # phase that never runs either.
+      buildSdk = androidPkgs.androidenv.composeAndroidPackages {
+        platformVersions = [ platformVersion ];
+        buildToolsVersions = [ buildToolsVersion ];
+      };
+
+      # The interactive composition: adds the emulator and a system image to
+      # boot it against. Referenced only by nix/shells/android.nix.
+      devSdk = androidPkgs.androidenv.composeAndroidPackages {
         platformVersions = [ platformVersion ];
         buildToolsVersions = [ buildToolsVersion ];
         # (platform-tools — adb — are always included.)
@@ -35,22 +56,20 @@ in
         abiVersions = [ "x86_64" ];
       };
 
-      sdkRoot = "${sdk.androidsdk}/libexec/android-sdk";
+      buildSdkRoot = "${buildSdk.androidsdk}/libexec/android-sdk";
+      devSdkRoot = "${devSdk.androidsdk}/libexec/android-sdk";
     in
     lib.optionalAttrs (system == "x86_64-linux") {
       legacyPackages.androidSdk = {
-        inherit
-          androidPkgs
-          sdk
-          sdkRoot
-          platformVersion
-          ;
+        inherit platformVersion devSdkRoot;
+        # ── APK assembly (build-apk.nix): the minimal closure ──
         # aapt2, zipalign, apksigner.
-        buildTools = "${sdkRoot}/build-tools/${buildToolsVersion}";
+        buildTools = "${buildSdkRoot}/build-tools/${buildToolsVersion}";
         # The compile-time framework stubs `aapt2 link -I` resolves against.
-        androidJar = "${sdkRoot}/platforms/android-${platformVersion}/android.jar";
-        # adb.
-        platformTools = "${sdkRoot}/platform-tools";
+        androidJar = "${buildSdkRoot}/platforms/android-${platformVersion}/android.jar";
+        # ── Interactive only (nix/shells/android.nix) ──
+        # adb, from the same root as the emulator so one ANDROID_SDK_ROOT serves.
+        platformTools = "${devSdkRoot}/platform-tools";
       };
     };
 }
