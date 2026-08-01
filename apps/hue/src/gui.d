@@ -66,11 +66,13 @@ import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : layout;
-import sparkles.ui.state : scrollbarThumb, selectionRects, sourceOffsetAt,
+import sparkles.ui.state : ScrollAxis, ScrollbarState, scrollbarThumb,
+    selectionRects, sourceOffsetAt,
     SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
-import sparkles.ui_raylib : RaylibCanvas;
+import sparkles.ui_raylib : drawScrollbar, RaylibCanvas, ScrollbarAnim,
+    scrollbarLayout;
 
 // The multi-document set the twoslash view navigates with `[`/`]` (`GNV1`), plus
 // the two entry points a navigation reload needs.
@@ -440,11 +442,13 @@ int runGui(
             vm.top = vm.visualOfMatch(vm.matches[0]);
     }
 
-    Scrollbar sb;
-    Scrollbar treeSb;       // the tree pane's — same behavior, its own state
-    Scrollbar treeHSb;      // the tree's horizontal bar (height animates; the
-                            // drag itself lives in the shared hsb machine)
-    Scrollbar docHSb;       // the document pane's horizontal bar (ditto)
+    // The four bars run the ONE STM9 machine (B-1): the vertical machines
+    // live here in px track units (offsets sync from vm.top / tree.top per
+    // frame), the horizontal ones live on the models; the px hover-expand
+    // easings are ui_raylib.ScrollbarAnim, drawn by drawScrollbar.
+    ScrollbarState docSb;
+    ScrollbarState treeVSb;
+    ScrollbarAnim sbAnim, treeSbAnim, treeHAnim, docHAnim;
     float wheelAccum = 0;   // fractional wheel deltas accumulate to whole rows
 
     // Fullscreen (F11): a manual borderless toggle. raylib's
@@ -1026,55 +1030,41 @@ int runGui(
         else
             divZone = false;
 
-        // Interactive scrollbar (hover-expand + thumb drag + track click),
-        // adapted from apps/terminal's ScrollbarState. Runs every frame so the
-        // width animates even while a search is being typed.
+        // Interactive scrollbar (hover-expand + thumb grab + track jump):
+        // the ONE STM9 machine in px track units (a thumb press grabs in
+        // place, a track press jumps the leading edge — the shared
+        // semantics), with the hover-expand width eased per frame.
         {
             // Both widths scale with the font: the expanded (hover) handle equals
             // the reserved scrollbar gutter (1.5 cells) so it fills the gutter
             // without overlapping text; the idle rail is a thin ~⅓ cell.
             const float hoverW = cast(float) scrollbarGutter();
             const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
-            const float sbMaxW = hoverW;
+            docSb = docSb.scrolledTo(vm.top);
             if (maxTop > 0)
             {
-                const trackH = cast(float)(screenH - docY0);
-                const g = thumbGeometry(total, docRows, vm.top, maxTop,
-                    screenH - docY0);
+                const trackH = screenH - docY0;
                 const pos = GetMousePosition();
-                const hoverTrack = pos.x >= screenW - sbMaxW;
-                const hoverThumb = hoverTrack && pos.y >= docY0 + g.y
-                    && pos.y <= docY0 + g.y + g.h;
-                sb.isHovered = hoverTrack || sb.isDragging;
-                sb.targetWidth = sb.isHovered ? hoverW : idleW;
-
-                if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && hoverTrack)
-                {
-                    if (hoverThumb)
-                    {
-                        sb.isDragging = true;
-                        sb.dragStartY = pos.y;
-                        sb.dragStartOffset = vm.top;
-                    }
-                    else // click on the track: center the viewport on the click
-                        vm.top = cast(long)((pos.y - docY0) / trackH * total) - docRows / 2;
-                }
-                if (sb.isDragging)
+                const hoverTrack = pos.x >= screenW - hoverW;
+                docSb = docSb.hoveredNow(hoverTrack);
+                if (hoverTrack && !docSb.dragging
+                    && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                    docSb = docSb.pressed(cast(int)(pos.y - docY0),
+                        total, docRows, trackH, minExtent: 24);
+                else if (docSb.dragging)
                 {
                     if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
-                        sb.isDragging = false;
-                    else if (g.movable > 0)
-                        vm.top = sb.dragStartOffset
-                            + cast(long)((pos.y - sb.dragStartY) * maxTop / g.movable);
+                        docSb = docSb.released();
+                    else
+                        docSb = docSb.dragged(cast(int)(pos.y - docY0),
+                            total, docRows, trackH, minExtent: 24);
                 }
+                vm.top = docSb.offset;
             }
             else
-            {
-                sb.isHovered = false;
-                sb.targetWidth = idleW;
-            }
-            // Ease the width toward its target (vm.matches the terminal's 15/s rate).
-            sb.currentWidth += (sb.targetWidth - sb.currentWidth) * 15.0f * GetFrameTime();
+                docSb = docSb.hoveredNow(false).released();
+            sbAnim.step(docSb.hovered || docSb.dragging ? hoverW : idleW,
+                GetFrameTime());
         }
 
         // The tree pane's scrollbar — the SAME hover-expand behavior as the
@@ -1089,52 +1079,31 @@ int runGui(
             const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
             const trackTop = (treeTopRows + 1) * cellH;
             const trackH = screenH - trackTop;
-            const tg = thumbGeometry(tree.rows.length, treePaneRows, tree.top,
-                treeMaxTop, trackH);
             const pos = GetMousePosition();
             const edge = treeCols * cellW;
             const hoverTrack = pos.x >= edge - hoverW && pos.x < edge
                 && pos.y >= trackTop;
-            const hoverThumb = hoverTrack && pos.y >= trackTop + tg.y
-                && pos.y <= trackTop + tg.y + tg.h;
-            treeSb.isHovered = hoverTrack || treeSb.isDragging;
-            treeSb.targetWidth = treeSb.isHovered ? hoverW : idleW;
-
-            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && hoverTrack)
-            {
-                if (hoverThumb)
-                {
-                    treeSb.isDragging = true;
-                    treeSb.dragStartY = pos.y;
-                    treeSb.dragStartOffset = tree.top;
-                }
-                else // track click: center the pane on the click
-                {
-                    tree.top = cast(long)((pos.y - trackTop) / cast(float) trackH
-                        * tree.rows.length) - treePaneRows / 2;
-                    tree.scrollBy(0); // clamp
-                }
-            }
-            if (treeSb.isDragging)
+            treeVSb = treeVSb.scrolledTo(tree.top).hoveredNow(hoverTrack);
+            if (hoverTrack && !treeVSb.dragging
+                && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                treeVSb = treeVSb.pressed(cast(int)(pos.y - trackTop),
+                    tree.rows.length, treePaneRows, trackH, minExtent: 24);
+            else if (treeVSb.dragging)
             {
                 if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
-                    treeSb.isDragging = false;
-                else if (tg.movable > 0)
-                {
-                    tree.top = treeSb.dragStartOffset
-                        + cast(long)((pos.y - treeSb.dragStartY) * treeMaxTop
-                            / tg.movable);
-                    tree.scrollBy(0); // clamp
-                }
+                    treeVSb = treeVSb.released();
+                else
+                    treeVSb = treeVSb.dragged(cast(int)(pos.y - trackTop),
+                        tree.rows.length, treePaneRows, trackH,
+                        minExtent: 24);
             }
-            treeSb.currentWidth += (treeSb.targetWidth - treeSb.currentWidth)
-                * 15.0f * GetFrameTime();
+            tree.top = treeVSb.offset;
+            tree.scrollBy(0); // clamp
+            treeSbAnim.step(treeVSb.hovered || treeVSb.dragging
+                ? hoverW : idleW, GetFrameTime());
         }
         else
-        {
-            treeSb.isHovered = false;
-            treeSb.isDragging = false;
-        }
+            treeVSb = treeVSb.hoveredNow(false).released();
 
         // The one pointer-shape decision (mirrors the TUI workspace): live
         // grabs outrank hover — a scrollbar drag straying over the divider
@@ -1146,13 +1115,13 @@ int runGui(
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
             else if (tree.hsb.dragging || vm.hsb.dragging)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
-            else if (sb.isDragging || treeSb.isDragging)
+            else if (docSb.dragging || treeVSb.dragging)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
             else if (divZone)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
-            else if (treeHSb.isHovered || docHSb.isHovered)
+            else if (tree.hsb.hovered || vm.hsb.hovered)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_EW;
-            else if (sb.isHovered || treeSb.isHovered)
+            else if (docSb.hovered || treeVSb.hovered)
                 want = MouseCursor.MOUSE_CURSOR_RESIZE_NS;
             SetMouseCursor(want);
         }
@@ -1404,11 +1373,10 @@ int runGui(
                 const live = vm.hOverflows() && mode == Mode.normal;
                 const over = live && mp.x >= gutterPx
                     && mp.y >= screenH
-                        - (docHSb.isHovered ? hHoverH2 : hIdleH2) - 4;
-                docHSb.isHovered = live && (over || vm.hsb.dragging);
-                docHSb.targetWidth = docHSb.isHovered ? hHoverH2 : hIdleH2;
-                docHSb.currentWidth += (docHSb.targetWidth
-                    - docHSb.currentWidth) * 15.0f * GetFrameTime();
+                        - (vm.hsb.hovered ? hHoverH2 : hIdleH2) - 4;
+                vm.hsb = vm.hsb.hoveredNow(live && (over || vm.hsb.dragging));
+                docHAnim.step(vm.hsb.hovered ? hHoverH2 : hIdleH2,
+                    GetFrameTime());
                 if (over && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
                     vm.hsb = vm.hsb.pressed(
                         cast(int)((mp.x - gutterPx) / cellW),
@@ -1431,11 +1399,11 @@ int runGui(
             const float hIdleH = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
             const hLive = tree.hOverflows() && !tree.searching;
             const overHBar = hLive && overTree
-                && mp.y >= screenH - (treeHSb.isHovered ? hHoverH : hIdleH) - 4;
-            treeHSb.isHovered = hLive && (overHBar || tree.hsb.dragging);
-            treeHSb.targetWidth = treeHSb.isHovered ? hHoverH : hIdleH;
-            treeHSb.currentWidth += (treeHSb.targetWidth
-                - treeHSb.currentWidth) * 15.0f * GetFrameTime();
+                && mp.y >= screenH - (tree.hsb.hovered ? hHoverH : hIdleH) - 4;
+            tree.hsb = tree.hsb.hoveredNow(
+                hLive && (overHBar || tree.hsb.dragging));
+            treeHAnim.step(tree.hsb.hovered ? hHoverH : hIdleH,
+                GetFrameTime());
             if (overHBar
                 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
                 tree.hsb = tree.hsb.pressed(cast(int)(mp.x / cellW),
@@ -1469,8 +1437,8 @@ int runGui(
             const shiftMod = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
             const altMod = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
             if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && !overSb
-                && !overTree && !copyClicked && !treeSb.isDragging && !sb.isDragging
-                && !split.dragging)
+                && !overTree && !copyClicked && !treeVSb.dragging
+                && !docSb.dragging && !split.dragging)
             {
                 const h = hitAt(mp.x, mp.y);
                 selecting = h.ok;
@@ -1702,17 +1670,10 @@ int runGui(
             // (hidden while the filter line owns the row).
             if (tree.hOverflows() && !tree.searching)
             {
-                const trackW = treeCols * cellW;
-                const hOff = cast(long) tree.contentCols - (treeCols - 1);
-                const hg = thumbGeometry(tree.contentCols, treeCols - 1,
-                    tree.hsb.offset, hOff, trackW);
-                const h = treeHSb.currentWidth;
-                const y = screenH - h;
-                if (treeHSb.isHovered || tree.hsb.dragging)
-                    DrawRectangle(0, cast(int) y, trackW, cast(int) h,
-                        rl(tree.sbTrack));
-                DrawRectangle(cast(int) hg.y, cast(int) y, cast(int) hg.h,
-                    cast(int) h, rl(tree.sbThumb));
+                const l = scrollbarLayout(tree.hsb, treeHAnim,
+                    tree.contentCols, treeCols - 1,
+                    Rect(0, 0, treeCols * cellW, screenH));
+                drawScrollbar(l, tree.hsb, tree.sbTrack, tree.sbThumb);
             }
 
             // The live-filter input line, pinned to the pane's bottom row
@@ -1735,50 +1696,30 @@ int runGui(
             if (treeMaxTop > 0 && treePaneRows > 0)
             {
                 const trackTop = (treeTopRows + 1) * cellH;
-                const trackH = screenH - trackTop;
-                const tg = thumbGeometry(tree.rows.length, treePaneRows,
-                    tree.top, treeMaxTop, trackH);
-                const w = treeSb.currentWidth;
-                const x = treeCols * cellW - w;
-                if (treeSb.isHovered || treeSb.isDragging)
-                    DrawRectangle(cast(int) x, trackTop, cast(int) w,
-                        trackH, rl(tree.sbTrack));
-                DrawRectangle(cast(int) x, cast(int)(trackTop + tg.y),
-                    cast(int) w, cast(int) tg.h, rl(tree.sbThumb));
+                const l = scrollbarLayout(treeVSb.scrolledTo(tree.top),
+                    treeSbAnim, tree.rows.length, treePaneRows,
+                    Rect(0, trackTop, treeCols * cellW, screenH - trackTop));
+                drawScrollbar(l, treeVSb, tree.sbTrack, tree.sbThumb);
             }
         }
 
         // The document pane's horizontal bar (IXB2), over its bottom edge.
         if (vm.hOverflows() && mode == Mode.normal)
         {
-            const trackX = gutterPx;
-            const trackW = screenW - gutterPx;
-            const hOff2 = cast(long) vm.contentCols - vm.widthCols;
-            const hg2 = thumbGeometry(vm.contentCols, vm.widthCols,
-                vm.hsb.offset, hOff2, trackW);
-            const hh = docHSb.currentWidth;
-            const hy = screenH - hh;
-            if (docHSb.isHovered || vm.hsb.dragging)
-                DrawRectangle(trackX, cast(int) hy, trackW, cast(int) hh,
-                    rl(vm.sbTrack));
-            DrawRectangle(trackX + cast(int) hg2.y, cast(int) hy,
-                cast(int) hg2.h, cast(int) hh, rl(vm.sbThumb));
+            const l = scrollbarLayout(vm.hsb, docHAnim, vm.contentCols,
+                vm.widthCols, Rect(gutterPx, 0, screenW - gutterPx, screenH));
+            drawScrollbar(l, vm.hsb, vm.sbTrack, vm.sbThumb);
         }
 
         // Scrollbar: an animated-width thumb, plus a faint track while hovered
         // or dragging. Colors follow the theme's muted gutter tone.
         if (maxTop > 0)
         {
-            const g = thumbGeometry(total, docRows, vm.top, maxTop, screenH - docY0);
-            const w = sb.currentWidth;
-            const x = screenW - w;
-            // Distinct link-tinted chrome (the gutter behind it is empty page bg):
-            // a subtle full-height track on hover, a brighter thumb on vm.top.
-            if (sb.isHovered || sb.isDragging)
-                DrawRectangle(cast(int) x, docY0, cast(int) w, screenH - docY0,
-                    rl(vm.sbTrack));
-            DrawRectangle(cast(int) x, cast(int)(docY0 + g.y), cast(int) w,
-                cast(int) g.h, rl(vm.sbThumb));
+            // Distinct link-tinted chrome (the gutter behind it is empty page
+            // bg): a subtle full-height track on hover, a brighter thumb.
+            const l = scrollbarLayout(docSb.scrolledTo(vm.top), sbAnim,
+                total, docRows, Rect(0, docY0, screenW, screenH - docY0));
+            drawScrollbar(l, docSb, vm.sbTrack, vm.sbThumb);
         }
 
         // A header bar when navigating a document set (`GNV2`): the entry name and
@@ -1855,36 +1796,6 @@ private size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
             hi = mid;
     }
     return lo;
-}
-
-/// Animated, draggable scrollbar state (mirrors apps/terminal's ScrollbarState):
-/// `currentWidth` eases toward `targetWidth` (4 idle → 12 on hover/drag); a drag
-/// records the grab point so the thumb tracks the cursor.
-private struct Scrollbar
-{
-    float currentWidth = 4.0f;
-    float targetWidth = 4.0f;
-    bool isHovered;
-    bool isDragging;
-    float dragStartY = 0.0f;
-    long dragStartOffset = 0;
-}
-
-/// The scrollbar thumb's vertical geometry for the current viewport.
-private struct ThumbGeometry
-{
-    float y;       /// thumb top (px)
-    float h;       /// thumb height (px, min 24)
-    float movable; /// track travel available to the thumb (px)
-}
-
-/// ditto — the one STM2 formula (the TUI renders the same geometry), with the
-/// GUI's 24 px grabbable minimum; the float fields only carry the animation.
-private ThumbGeometry thumbGeometry(size_t total, int visibleRows, long top,
-    long maxTop, int screenH) pure nothrow @nogc @safe
-{
-    const g = scrollbarThumb(total, visibleRows, top, screenH, minExtent: 24);
-    return ThumbGeometry(g.start, g.extent, screenH - g.extent);
 }
 
 /// An RGB triple as a raylib color with an explicit alpha (for overlays).
