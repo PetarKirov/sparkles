@@ -379,13 +379,20 @@ the contracts.
 
 ### 8.1 Tables
 
-- Timing and metric columns align on the **decimal point**; consecutive
-  streamed tables share their column geometry (floors only widen during a
-  run). Grouped tables carry `benchmark: <group>` in the top border over an
-  `implementation` column.
+- The fixed value columns are `n` (samples, or `samples×iterations` when a case
+  batches), `median/iter` (with the ±median-absolute-deviation folded into the
+  same cell), `min`, and `max`, followed by the metric columns — retired
+  instructions first, as the exact, host-stable anchor (§6.3). `n` and the
+  merged `median/iter` are **right**-aligned (a trailing `±dev` leaves no shared
+  dot); `min`, `max`, and the metric columns align on the **decimal point**.
+  Consecutive streamed tables share their column geometry (floors only widen
+  during a run). Grouped tables carry `benchmark: <group>` in the top border
+  over an `implementation` column.
 - Unavailable cells render as an em dash. Multiplex-scaled estimates carry a
-  `≈` prefix (§6.3). Error rows carry the first line of the error in-table
-  (full traces print to the console) and sort last.
+  `≈` prefix (§6.3). A run containing an error or skip row grows a trailing
+  `notes` column — the first line of the message renders there, wrapped to a
+  fixed cap, leaving the row's numeric cells em dashes (full traces print to
+  the console); error rows sort last. An all-green run has no `notes` column.
 - Diagnostic-class output beyond columns (profiles, histograms — targets B5,
   B6, M9) renders as labeled blocks **below** the numeric table, never as
   throughput-lookalike columns.
