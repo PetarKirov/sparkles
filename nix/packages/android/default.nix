@@ -8,6 +8,7 @@
 # Everything in here is opt-in, x86_64-linux-only (the NDK/SDK ship prebuilt
 # for that host alone), and pulls *unfree* Android SDK components through a
 # scoped nixpkgs import — nothing in the default package set references it.
+{ lib, ... }:
 {
   imports = [
     ./build-apk.nix
@@ -20,4 +21,23 @@
     ./tree-sitter.nix
     ./ts-grammars.nix
   ];
+
+  perSystem =
+    {
+      config,
+      pkgs,
+      system,
+      ...
+    }:
+    lib.optionalAttrs (system == "x86_64-linux") {
+      # The Android CI aggregate (the `nix-build-android` job): just the
+      # repo-embedded APK — building it pulls the entire Android closure
+      # (dual-ABI druntimes, raylib/tree-sitter/ghostty cross builds, all
+      # grammar parsers, the Maple font build, the SDK tooling) as build
+      # dependencies, so one output covers the whole pipeline. Kept out of
+      # `all-desktop` (see nix/packages/all.nix).
+      packages.all-android = pkgs.linkFarm "sparkles-all-android" {
+        hue-apk-repo = config.packages.hue-apk-repo;
+      };
+    };
 }
