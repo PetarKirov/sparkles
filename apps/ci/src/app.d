@@ -19,6 +19,7 @@ Usage:
 nix run .#ci -- [--verify|--update] [--fail-fast] [--files GLOB|FILE...]
 nix run .#ci -- --example-files [--fail-fast] [--files GLOB|FILE...]
 nix run .#ci -- --test [--fail-fast]
+nix run .#ci -- --test-extracted [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
 nix run .#ci -- --check-vcs-urls [--files GLOB|FILE...]
 nix run .#ci -- [--log-level trace|info|warning|error]
@@ -32,6 +33,7 @@ $(LIST
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
     $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, and `docs/research/manim/examples/*.d`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
+    $(ITEM `--test-extracted` — run the test runner's `--better-c` and `--wasm` modes for each sub-package whose sources use the matching marker attribute, failing (rather than skipping) when a mode's toolchain is missing)
     $(ITEM `--files` — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
@@ -156,6 +158,9 @@ struct CliParams
     @CliOption(`t|test`, "Run dub test for each sub-package defined in the root dub.sdl.")
     bool test;
 
+    @CliOption(`test-extracted`, "Run the test runner's --better-c and --wasm modes for each sub-package that uses the matching marker attribute. Fails if a mode's toolchain is missing rather than skipping.")
+    bool testExtracted;
+
     @CliOption(`F|fail-fast`, "Stop on the first failing example and replay its output at the end.")
     bool failFast;
 
@@ -214,6 +219,7 @@ enum ProgramMode
     updateExamples,
     runExampleFiles,
     runDubTests,
+    runExtractedTests,
     checkReferenceLinks,
     fixReferenceLinks,
     checkCommitScope,
@@ -324,6 +330,9 @@ int main(string[] args)
     if (mode == ProgramMode.runDubTests)
         return runDubTestsMode(cli.failFast);
 
+    if (mode == ProgramMode.runExtractedTests)
+        return runExtractedTestsMode(cli.failFast);
+
     if (mode == ProgramMode.ciStats)
         return runCiStatsMode(cli);
 
@@ -395,6 +404,10 @@ private string validateCliMode(
     if (cli.test && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
 
+    if (cli.testExtracted && (cli.verify || cli.update || cli.exampleFiles || cli.test
+            || cli.dedupReferenceLinks || cli.fixReferenceLinks))
+        return "--test-extracted cannot be combined with other modes";
+
     if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.ciStats))
         return "--check-commit-scope cannot be combined with other modes";
 
@@ -427,6 +440,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
 
     if (cli.exampleFiles)
         return ProgramMode.runExampleFiles;
+
+    if (cli.testExtracted)
+        return ProgramMode.runExtractedTests;
 
     if (cli.test)
         return ProgramMode.runDubTests;
@@ -862,6 +878,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 break;
             case ProgramMode.runExampleFiles:
             case ProgramMode.runDubTests:
+            case ProgramMode.runExtractedTests:
                 rc = 1;
                 break;
             case ProgramMode.checkReferenceLinks:
@@ -1603,6 +1620,205 @@ private int runDubTestsMode(bool failFast)
     displaySummary(stoppedEarly ? processed : subPackages.length, failures);
     if (stoppedEarly)
         displayFailureReplay(failureReplay);
+    return failures > 0 ? 1 : 0;
+}
+
+/// Which of the test runner's extracted-test modes a sub-package opts into.
+struct ExtractedModes
+{
+    bool betterC; /// has at least one `@betterC` test
+    bool wasm;    /// has at least one `@wasm` test
+
+    bool any() const @safe pure nothrow @nogc => betterC || wasm;
+}
+
+/// The extracted-test modes a D source file opts into.
+///
+/// A deliberately shallow text scan, not a parse: the marker attributes are
+/// written literally at their use sites, so this has no false negatives —
+/// which is the direction that matters, since a missed module means a mode
+/// silently goes unexercised. False positives (the attribute named in a doc
+/// comment, as the runner's own modules do) merely run a mode that then
+/// reports "no tests found" and exits 0, so they cost a little time and
+/// nothing else.
+ExtractedModes extractedModesInSource(scope const(char)[] source) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    return ExtractedModes(
+        betterC: source.canFind("@betterC"),
+        wasm: source.canFind("@wasm"),
+    );
+}
+
+@("ci.extractedModesInSource")
+@safe pure nothrow
+unittest
+{
+    assert(extractedModesInSource("@betterC @safe unittest {}") == ExtractedModes(betterC: true));
+    assert(extractedModesInSource("@wasm @safe unittest {}") == ExtractedModes(wasm: true));
+    // The value form of the attribute is found the same way.
+    assert(extractedModesInSource("@betterC(selfContained: true)")
+        == ExtractedModes(betterC: true));
+    assert(extractedModesInSource("@wasm(selfContained: true) @betterC")
+        == ExtractedModes(betterC: true, wasm: true));
+
+    auto none = extractedModesInSource("@safe @nogc unittest {}");
+    assert(!none.any);
+    assert(!extractedModesInSource("").any);
+}
+
+/// Whether a sub-package's `dub.sdl` wires in `sparkles:test-runner`, by
+/// either recipe: a `dependency "sparkles:test-runner"` (the common path) or
+/// the cycle-safe `sourcePaths "../test-runner/src" …` source-include used by
+/// `base`, `core-cli`, and `test-utils`.
+///
+/// This gate is what keeps `--test-extracted` honest. Without the runner,
+/// `dub test :pkg -- --better-c` reaches druntime's default tester, which
+/// ignores the flag, runs the ordinary unittests and exits 0 — a green that
+/// means nothing. Better to leave such a package out than to report success
+/// for a mode that never ran.
+bool integratesTestRunner(scope const(char)[] dubConfig) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    return dubConfig.canFind("test-runner");
+}
+
+@("ci.integratesTestRunner")
+@safe pure nothrow
+unittest
+{
+    assert(integratesTestRunner(`    dependency "sparkles:test-runner" path="../.."`));
+    assert(integratesTestRunner(`    sourcePaths "../test-runner/src" "../test-runner-impl/src"`));
+    assert(!integratesTestRunner(`dependency "sparkles:base" path="../.."`));
+    assert(!integratesTestRunner(""));
+}
+
+/// The modes any `.d` file under `packagePath` opts into — empty for a
+/// package that does not integrate the runner (see $(LREF integratesTestRunner)).
+private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
+{
+    import std.file : dirEntries, readText, SpanMode;
+    import std.path : buildPath, extension;
+
+    const root = buildPath(repoRoot, packagePath);
+    ExtractedModes modes;
+    if (!root.exists)
+        return modes;
+
+    const dubConfig = buildPath(root, "dub.sdl");
+    if (!dubConfig.exists || !integratesTestRunner(dubConfig.readText))
+        return modes;
+    foreach (entry; dirEntries(root, SpanMode.depth))
+    {
+        if (!entry.isFile || entry.name.extension != ".d")
+            continue;
+        const found = extractedModesInSource(entry.name.readText);
+        modes.betterC |= found.betterC;
+        modes.wasm |= found.wasm;
+        if (modes.betterC && modes.wasm)
+            break; // nothing left to learn
+    }
+    return modes;
+}
+
+/// `--test-extracted`: run the test runner's `--better-c` and `--wasm` modes
+/// for every sub-package whose sources use the matching marker attribute.
+///
+/// These modes are not covered by `--test`: a `@betterC` test runs as an
+/// ordinary unittest there, and only `--better-c` additionally extracts it,
+/// compiles it without druntime, and runs the result — so a break in the
+/// extraction, the `-betterC` codegen, or the wasm cross-compile is invisible
+/// to `dub test`.
+///
+/// `--require-toolchain` is what makes this job meaningful: both modes
+/// normally $(I skip) when their toolchain is missing (no D compiler, no
+/// wasm-ld, no wasm runtime), which is right for a contributor's machine and
+/// exactly wrong here — without it a missing linker would leave this reporting
+/// success having run nothing.
+private int runExtractedTestsMode(bool failFast)
+{
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    {
+        error(i"Could not detect repository root");
+        return 1;
+    }
+
+    auto subPackages = parseSubPackages(repoRoot);
+    if (subPackages.length == 0)
+    {
+        error(i"No sub-packages found in dub.sdl");
+        return 1;
+    }
+
+    struct Job
+    {
+        string packagePath; /// repo-relative, e.g. `libs/base`
+        string packageName;
+        string flag; /// `--better-c` or `--wasm`
+    }
+
+    Job[] jobs;
+    foreach (pkg; subPackages)
+    {
+        const modes = extractedModesOf(repoRoot, pkg);
+        if (modes.betterC)
+            jobs ~= Job(pkg, pkg.baseName, "--better-c");
+        if (modes.wasm)
+            jobs ~= Job(pkg, pkg.baseName, "--wasm");
+    }
+
+    if (jobs.length == 0)
+    {
+        // Not a pass: the repo is supposed to have such tests, so an empty
+        // sweep means the scan (or the attributes) regressed.
+        error(i"No sub-package uses @betterC or @wasm — nothing to run");
+        return 1;
+    }
+
+    i"Running $(jobs.length) extracted-test mode(s)".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
+        .writeln("\n");
+
+    int failures = 0;
+    size_t processed = 0;
+    foreach (i, job; jobs)
+    {
+        const progress = i"[$(i + 1)/$(jobs.length)]".text;
+        const header = styledText(
+            i"{dim $(progress)} {cyan $(job.packageName)} {dim › dub test :$(job.packageName) -- $(job.flag)}");
+
+        mkdirRecurse(buildPath(repoRoot, job.packagePath, "build"));
+        auto cmd = ["dub", "--root", repoRoot, "test", ":" ~ job.packageName];
+        const dc = environment.get("DC", "");
+        if (dc.length)
+            cmd ~= "--compiler=" ~ dc;
+        // `--self-test` also covers the runner's own extracted tests, which are
+        // the ones exercising the `selfContained` opt-out.
+        cmd ~= ["--", job.flag, "--self-test", "--require-toolchain"];
+
+        auto result = executeLogged(cmd, job.flag ~ " " ~ job.packageName);
+        auto outputLines = result.output.lineSplitter.map!(l => l.to!string).array;
+        displayResultBox(outputLines, header, result.status == 0);
+
+        processed = i + 1;
+        if (result.status != 0)
+        {
+            failures++;
+            if (failFast)
+            {
+                writeln();
+                break;
+            }
+        }
+        writeln();
+    }
+
+    // After a fail-fast break the untried jobs never ran, so report what was
+    // actually attempted rather than the full list.
+    displaySummary(processed, failures);
     return failures > 0 ? 1 : 0;
 }
 
