@@ -71,7 +71,7 @@
         text = ''
           # Boots the x86_64 API-35 AVD (created on first run). AVD state
           # lives under ~/.android-sparkles, off the default ~/.android.
-          export ANDROID_SDK_ROOT=${androidSdk.sdkRoot}
+          export ANDROID_SDK_ROOT=${androidSdk.devSdkRoot}
           : "''${ANDROID_USER_HOME:=$HOME/.android-sparkles}"
           export ANDROID_USER_HOME
           export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
@@ -106,7 +106,7 @@
           export ANDROID_CC=${ndkClangBin}/aarch64-linux-android21-clang
           export ANDROID_CC_ARM64=${ndkClangBin}/aarch64-linux-android21-clang
           export ANDROID_CC_X86_64=${ndkClangBin}/x86_64-linux-android21-clang
-          export ANDROID_SDK_ROOT=${androidSdk.sdkRoot}
+          export ANDROID_SDK_ROOT=${androidSdk.devSdkRoot}
           export PATH=${ndkClangBin}:${androidSdk.platformTools}:${androidSdk.buildTools}:$PATH
         '';
       };
