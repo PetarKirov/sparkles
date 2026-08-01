@@ -11,7 +11,7 @@ module sparkles.test_runner.discovery;
 import std.meta : Alias, AliasSeq, staticMap;
 import std.traits : fullyQualifiedName, getUDAs, hasUDA;
 
-import sparkles.test_runner.attributes : benchmark, betterC, ctfe, wasm;
+import sparkles.test_runner.attributes : benchmark, betterC, ctfe, wasm, workload;
 import sparkles.test_runner.model : Test, TestLocation, TestTraits;
 
 /// The module containing `m`: `m` itself when it is a module, or its parent
@@ -84,6 +84,17 @@ TestTraits testTraits(alias test)()
         // `@benchmark` attaches the type; `@benchmark(...)` attaches a value.
         static if (!is(uda))
             traits.benchIterations = uda.iterations;
+    }
+    static if (hasUDA!(test, workload))
+    {
+        static assert(!hasUDA!(test, benchmark),
+            "`@benchmark` and `@workload` are exclusive measurement models: "
+            ~ fullyQualifiedName!test);
+        traits.isWorkload = true;
+        traits.workloadReps = 1;
+        alias wuda = Alias!(getUDAs!(test, workload)[0]);
+        static if (!is(wuda))
+            traits.workloadReps = wuda.reps ? wuda.reps : 1;
     }
     return traits;
 }
@@ -172,6 +183,40 @@ version (unittest)
             assert(__ctfe, "nested @ctfe test executed at runtime");
         }
     }
+}
+
+version (unittest)
+{
+    // `testTraits` accepts any annotated symbol; plain private functions keep
+    // these fixtures out of consumers' discovered-test lists (a real
+    // `@workload` unittest here would surface as a skipped test in every
+    // consumer's normal runs).
+    @workload(reps: 3) private void workloadRepsFixture() {}
+    @workload private void workloadBareFixture() {}
+    @workload(reps: 0) private void workloadZeroFixture() {}
+    @benchmark @workload private void benchmarkWorkloadClashFixture() {}
+}
+
+@("discovery.workloadTraits")
+@safe pure nothrow @nogc
+unittest
+{
+    enum reps3 = testTraits!workloadRepsFixture();
+    static assert(reps3.isWorkload);
+    static assert(reps3.workloadReps == 3);
+    static assert(!reps3.isBenchmark);
+
+    enum bare = testTraits!workloadBareFixture();
+    static assert(bare.isWorkload);
+    static assert(bare.workloadReps == 1);
+
+    // `reps: 0` is clamped at discovery so the driver never sees 0.
+    enum zero = testTraits!workloadZeroFixture();
+    static assert(zero.workloadReps == 1);
+
+    // The two measurement models are exclusive — combining the markers is a
+    // discovery-time error.
+    static assert(!__traits(compiles, testTraits!benchmarkWorkloadClashFixture()));
 }
 
 @("discovery.moduleTests")

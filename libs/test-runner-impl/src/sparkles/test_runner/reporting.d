@@ -368,6 +368,7 @@ struct RunTotals
     size_t skipped; /// tests that called `skipTest` — neither passed nor failed
     size_t ctfePassed;
     size_t benchSkipped;
+    size_t workloadSkipped;
 }
 
 /// The final summary line.
@@ -388,6 +389,9 @@ string formatSummary(in RunTotals totals, Duration elapsed, bool colored) @safe
     if (totals.benchSkipped)
         line ~= render(colored,
             i", {dim $(totals.benchSkipped) benchmarks (run with --bench)}");
+    if (totals.workloadSkipped)
+        line ~= render(colored,
+            i", {dim $(totals.workloadSkipped) workloads (run with --bench)}");
 
     line ~= render(colored, i" in $(duration)");
     return line;
@@ -406,6 +410,11 @@ unittest
         "Summary: 3 passed, 1 failed, 2 compile-time, 1 benchmarks (run with --bench) in 12.0ms");
     assert(formatSummary(RunTotals(passed: 3, failed: 0, skipped: 2), 12.msecs, false) ==
         "Summary: 3 passed, 0 failed, 2 skipped in 12.0ms");
+    assert(formatSummary(
+            RunTotals(passed: 1, failed: 0, benchSkipped: 2, workloadSkipped: 1),
+            12.msecs, false) ==
+        "Summary: 1 passed, 0 failed, 2 benchmarks (run with --bench), "
+        ~ "1 workloads (run with --bench) in 12.0ms");
 }
 
 @("formatResultLine.skipped")

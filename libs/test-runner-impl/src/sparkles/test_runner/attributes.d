@@ -86,6 +86,21 @@ struct benchmark
     uint iterations = 0;
 }
 
+/// Marks a `unittest` as a workload. Workloads are skipped in normal test
+/// runs and measured by `--bench` under the $(I window) model: the body runs
+/// once (or `reps` times inside one measured window), and the runner reports
+/// counter deltas across the window plus a wall-clock decomposition —
+/// rather than the per-iteration statistics of $(LREF benchmark). The two
+/// models are exclusive: a test cannot be both `@benchmark` and `@workload`.
+/// Use $(REF workloadWindow, sparkles,test_runner,workload) inside the test
+/// to measure only a part of the body.
+struct workload
+{
+    /// Times the window content runs inside the single measured window;
+    /// `0` is treated as `1`.
+    uint reps = 1;
+}
+
 @("attributes.selfContained.wasm")
 @wasm(selfContained: true) @betterC(selfContained: true) @safe pure nothrow @nogc
 unittest

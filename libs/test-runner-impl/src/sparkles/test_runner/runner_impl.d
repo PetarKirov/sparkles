@@ -544,6 +544,8 @@ private UnitTestResult listTests(Test[] tests, bool colored)
             markers ~= " @ctfe";
         if (test.traits.isBenchmark)
             markers ~= " @benchmark";
+        if (test.traits.isWorkload)
+            markers ~= " @workload";
         if (test.traits.isBetterC)
             markers ~= " @betterC";
         if (test.traits.isWasm)
@@ -568,14 +570,20 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     const started = MonoTime.currTime;
 
     foreach (test; tests)
-        if (!test.traits.isCtfe && test.traits.isBenchmark)
+    {
+        if (test.traits.isCtfe)
+            continue;
+        if (test.traits.isBenchmark)
             totals.benchSkipped++;
+        else if (test.traits.isWorkload)
+            totals.workloadSkipped++;
+    }
 
     runCtfeStage(tests.filter!(t => t.traits.isCtfe).array, tests,
         options, colored, width, totals);
 
     auto runnable = tests
-        .filter!(t => !t.traits.isCtfe && !t.traits.isBenchmark)
+        .filter!(t => !t.traits.isCtfe && !t.traits.isBenchmark && !t.traits.isWorkload)
         .array;
 
     shared size_t passed, failed, skipped;
