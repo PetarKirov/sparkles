@@ -72,8 +72,11 @@ unittest
 version (linux)
 {
     import core.sys.linux.perf_event : perf_event_attr, perf_event_open,
-        perf_type_id, perf_event_read_format;
+        perf_type_id, perf_event_read_format,
+        PERF_EVENT_IOC_DISABLE, PERF_EVENT_IOC_ENABLE;
     import core.sys.posix.unistd : posixClose = close;
+
+    import sparkles.test_runner.perf_group : GroupSnapshot;
 
     private enum maxNamed = 62; /// group read buffer is `double[1 + maxNamed]`
 
@@ -274,6 +277,73 @@ version (linux)
             }
             return s;
         }
+
+        /// Enables/disables the group for window measurement — no `RESET`,
+        /// so edge snapshots stay cumulative (see `PerfGroup.enable`).
+        void enable() @safe
+        {
+            import sparkles.test_runner.perf_group : groupIoctl;
+
+            if (opened)
+                groupIoctl(fds[0], PERF_EVENT_IOC_ENABLE);
+        }
+
+        /// ditto
+        void disable() @safe
+        {
+            import sparkles.test_runner.perf_group : groupIoctl;
+
+            if (opened)
+                groupIoctl(fds[0], PERF_EVENT_IOC_DISABLE);
+        }
+
+        /// Captures one window-edge reading.
+        SyscallSnapshot snapshot() const @safe
+        {
+            import sparkles.test_runner.perf_group : snapshotGroup;
+
+            return opened
+                ? SyscallSnapshot(snapshotGroup(fds[0], nOpen)) : SyscallSnapshot();
+        }
+
+        /// The syscall-count deltas across one window, as window $(B totals)
+        /// (`iters = 1`).
+        SyscallStats windowStats(in SyscallSnapshot a, in SyscallSnapshot b)
+            const @safe pure nothrow
+        {
+            import sparkles.test_runner.perf_group : windowDeltas;
+
+            SyscallStats s;
+            s.iters = 1;
+            s.named = names_;
+            s.counts = new double[](names_.length);
+            s.counts[] = double.nan;
+
+            double[1 + maxNamed] values;
+            if (!windowDeltas(a.g, b.g, s.scale, values[]))
+            {
+                s.total = double.nan;
+                return s;
+            }
+            size_t slot;
+            foreach (i, fd; fds)
+            {
+                if (fd < 0)
+                    continue;
+                const total = values[slot++];
+                if (i == 0)
+                    s.total = total;
+                else
+                    s.counts[i - 1] = total;
+            }
+            return s;
+        }
+    }
+
+    /// One cumulative window-edge reading of the syscall group.
+    struct SyscallSnapshot
+    {
+        package GroupSnapshot g;
     }
 
     @("syscalls.SyscallGroup.countGetpid")
@@ -324,11 +394,24 @@ else
         static SyscallGroup tryOpen(bool, const(string)[]) @safe pure nothrow @nogc
             => SyscallGroup();
         void close() @safe pure nothrow @nogc {}
+        void enable() @safe pure nothrow @nogc {}
+        void disable() @safe pure nothrow @nogc {}
+        SyscallSnapshot snapshot() const @safe pure nothrow @nogc
+            => SyscallSnapshot();
 
         SyscallStats count(Timed, Between)(scope Timed, scope Between, uint)
         {
             assert(false, "syscall counters are Linux-only");
         }
+
+        SyscallStats windowStats(in SyscallSnapshot, in SyscallSnapshot)
+            const @safe pure nothrow @nogc
+            => assert(false, "syscall counters are Linux-only");
+    }
+
+    /// Off Linux: an empty window-edge marker with the same name.
+    struct SyscallSnapshot
+    {
     }
 }
 
@@ -358,7 +441,7 @@ unittest
 // contract, including the optional named-columns primitive.
 static assert(isCounterBackend!SyscallGroup);
 static assert(hasNamedColumns!SyscallGroup);
-static assert(!hasSnapshot!SyscallGroup);
+static assert(hasSnapshot!SyscallGroup);
 
 @("syscalls.SyscallGroup.capabilities")
 @system

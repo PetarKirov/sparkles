@@ -62,8 +62,11 @@ struct PerfStats
 version (linux)
 {
     import core.sys.linux.perf_event : perf_event_attr, perf_event_open,
-        perf_type_id, perf_hw_id, perf_sw_ids, perf_event_read_format;
+        perf_type_id, perf_hw_id, perf_sw_ids, perf_event_read_format,
+        PERF_EVENT_IOC_DISABLE, PERF_EVENT_IOC_ENABLE;
     import core.sys.posix.unistd : posixClose = close;
+
+    import sparkles.test_runner.perf_group : GroupSnapshot;
 
     /// One counted event. `type`/`config` are `perf_event_attr` field types;
     /// the values come from the `perf_type_id` / `perf_hw_id` / `perf_sw_ids`
@@ -353,26 +356,96 @@ version (linux)
             double[events.length] values;
             if (!readScaledGroup(fds[0], nOpen, iters, s.scale, values[], base))
             {
-                s.cycles = s.instructions = s.branches = s.branchMisses
-                    = s.cacheReferences = s.cacheMisses = s.pageFaults = double.nan;
+                fillUnavailable(s);
                 return s;
             }
-
-            // Map opened-counter slots back to the fixed fields; a dropped event
-            // (e.g. the LLC pair under multiplexing) reads nan.
-            size_t slot;
-            double[events.length] perIter;
-            foreach (i; 0 .. events.length)
-                perIter[i] = fds[i] < 0 ? double.nan : values[slot++];
-            s.cycles = perIter[0];
-            s.instructions = perIter[1];
-            s.branches = perIter[2];
-            s.branchMisses = perIter[3];
-            s.cacheReferences = perIter[4];
-            s.cacheMisses = perIter[5];
-            s.pageFaults = perIter[6];
+            assignSlots(s, values[]);
             return s;
         }
+
+        /// Maps opened-counter slot values (fds order) back to the fixed
+        /// `PerfStats` fields; a dropped event (e.g. the LLC pair under
+        /// multiplexing) reads nan. Shared by the counting pass and the
+        /// window read so a future eighth event is one edit.
+        private void assignSlots(ref PerfStats s, scope const(double)[] values)
+            const @safe pure nothrow @nogc
+        {
+            size_t slot;
+            double[events.length] byEvent;
+            foreach (i; 0 .. events.length)
+                byEvent[i] = fds[i] < 0 ? double.nan : values[slot++];
+            s.cycles = byEvent[0];
+            s.instructions = byEvent[1];
+            s.branches = byEvent[2];
+            s.branchMisses = byEvent[3];
+            s.cacheReferences = byEvent[4];
+            s.cacheMisses = byEvent[5];
+            s.pageFaults = byEvent[6];
+        }
+
+        /// All counter fields to nan: a failed read/window is unavailable,
+        /// never zeros.
+        private static void fillUnavailable(ref PerfStats s) @safe pure nothrow @nogc
+        {
+            s.cycles = s.instructions = s.branches = s.branchMisses
+                = s.cacheReferences = s.cacheMisses = s.pageFaults = double.nan;
+        }
+
+        /// Enables/disables the whole group for window measurement — no
+        /// `RESET`, so edge snapshots stay cumulative and overlapping windows
+        /// (a whole-body candidate around in-body windows) compose freely.
+        void enable() @safe
+        {
+            import sparkles.test_runner.perf_group : groupIoctl;
+
+            if (opened)
+                groupIoctl(fds[0], PERF_EVENT_IOC_ENABLE);
+        }
+
+        /// ditto
+        void disable() @safe
+        {
+            import sparkles.test_runner.perf_group : groupIoctl;
+
+            if (opened)
+                groupIoctl(fds[0], PERF_EVENT_IOC_DISABLE);
+        }
+
+        /// Captures one window-edge reading; `ok == false` (inside) when the
+        /// group is closed or the read failed.
+        PerfSnapshot snapshot() const @safe
+        {
+            import sparkles.test_runner.perf_group : snapshotGroup;
+
+            return opened ? PerfSnapshot(snapshotGroup(fds[0], nOpen)) : PerfSnapshot();
+        }
+
+        /// The counter deltas across one window, as window $(B totals)
+        /// (`iters = 1`) — same gate vocabulary as the counting pass, plus
+        /// the never-enabled gate (`windowDeltas`).
+        PerfStats windowStats(in PerfSnapshot a, in PerfSnapshot b)
+            const @safe pure nothrow @nogc
+        {
+            import sparkles.test_runner.perf_group : windowDeltas;
+
+            PerfStats s;
+            s.iters = 1;
+            s.userOnly = userOnly;
+            double[events.length] values;
+            if (!windowDeltas(a.g, b.g, s.scale, values[]))
+            {
+                fillUnavailable(s);
+                return s;
+            }
+            assignSlots(s, values[]);
+            return s;
+        }
+    }
+
+    /// One cumulative window-edge reading of the perf group.
+    struct PerfSnapshot
+    {
+        package GroupSnapshot g;
     }
 }
 else
@@ -395,17 +468,31 @@ else
                 => CapabilityReport(Capability.none, stubAbsence[]);
             static PerfGroup tryOpen(bool, bool = false) => PerfGroup();
             void close() {}
+            void enable() {}
+            void disable() {}
+            PerfSnapshot snapshot() const => PerfSnapshot();
         }
 
         PerfStats count(Timed, Between)(scope Timed, scope Between, uint)
             => assert(false, "perf counters are Linux-only");
+
+        PerfStats windowStats(in PerfSnapshot, in PerfSnapshot)
+            const @safe pure nothrow @nogc
+            => assert(false, "perf counters are Linux-only");
+    }
+
+    /// Off Linux: an empty window-edge marker with the same name.
+    struct PerfSnapshot
+    {
     }
 }
 
 // Whichever body the platform built (real or stub) satisfies the backend
-// contract; the seam's compile-time tripwire.
+// contract, including the snapshot/delta window primitive; the seam's
+// compile-time tripwire.
 static assert(isCounterBackend!PerfGroup);
-static assert(!hasSnapshot!PerfGroup && !hasNamedColumns!PerfGroup);
+static assert(hasSnapshot!PerfGroup);
+static assert(!hasNamedColumns!PerfGroup);
 
 @("perf.PerfGroup.capabilities.notRequested")
 @safe
@@ -555,4 +642,50 @@ unittest
 
     if (!stats.instructions.isNaN)
         assert(stats.instructions > 10_000, "the group still measures after a throw");
+}
+
+@("perf.PerfGroup.windowStats.spinWindow")
+@system
+unittest
+{
+    // The window model: enable once, read cumulative edges, delta — no
+    // per-iteration bracket, no RESET. A spin window must retire
+    // instructions; a window across a disabled group must read nan (the
+    // never-enabled gate), never fabricated zeros.
+    auto g = PerfGroup.tryOpen(true);
+    scope (exit)
+        g.close();
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!g.available)
+        skipTest("hardware counters unavailable (perf_event_paranoid?)");
+
+    static ulong sink;
+    static void spin()
+    {
+        foreach (i; 0 .. 200_000)
+            sink += i * i;
+    }
+
+    // Disabled group (tryOpen leaves counters disarmed): enabled time does
+    // not advance across the window, so the deltas are not measurements.
+    const d0 = g.snapshot();
+    spin();
+    const d1 = g.snapshot();
+    import std.math : isNaN;
+
+    assert(g.windowStats(d0, d1).instructions.isNaN,
+        "a never-enabled window must not fabricate zeros");
+
+    g.enable();
+    scope (exit)
+        g.disable();
+    const a = g.snapshot();
+    spin();
+    const b = g.snapshot();
+    const s = g.windowStats(a, b);
+    assert(s.iters == 1);
+    if (s.instructions.isNaN)
+        skipTest("window was multiplexed below the reliability gate");
+    assert(s.instructions > 100_000, "a spin window retires instructions (totals, not per-iter)");
 }

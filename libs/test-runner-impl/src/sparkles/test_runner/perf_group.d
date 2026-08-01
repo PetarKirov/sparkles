@@ -189,6 +189,20 @@ version (linux)
         // (base = 0 → the delta is the cumulative time).
         const enabled = buf[1] >= base.enabled ? buf[1] - base.enabled : buf[1];
         const running = buf[2] >= base.running ? buf[2] - base.running : buf[2];
+        return scaleGroupValues(enabled, running, iters, buf[3 .. 3 + nOpen],
+            scale, values);
+    }
+
+    /// The gate/scale tail shared by the counting-pass read and the window
+    /// delta: applies the never-ran and unreliable-scale gates to a pass's (or
+    /// window's) enabled/running time deltas, then fills `values[0 .. raw.length]`
+    /// with the multiplex-corrected per-iteration projections of the raw
+    /// counts. `scale` contract as on `readScaledGroup`.
+    private bool scaleGroupValues(ulong enabled, ulong running, uint iters,
+        scope const(ulong)[] raw, ref double scale, scope double[] values)
+        @safe pure nothrow @nogc
+    in (values.length >= raw.length)
+    {
         if (groupNeverRan(enabled, running))
         {
             scale = 0;
@@ -205,8 +219,117 @@ version (linux)
         }
         const ratio = scaledRatio(enabled, running);
         scale = enabled > 0 ? round3(double(running) / double(enabled)) : 1.0;
-        foreach (k; 0 .. nOpen)
-            values[k] = projectPerIter(buf[3 + k], ratio, iters);
+        foreach (k, r; raw)
+            values[k] = projectPerIter(r, ratio, iters);
         return true;
+    }
+
+    /// One cumulative `PERF_FORMAT_GROUP` reading at a window edge — a pure
+    /// `read(2)`, no ioctl, no `RESET` — so an outer window candidate and
+    /// inner in-body windows can overlap freely: each computes its own deltas
+    /// between its own two edges.
+    package struct GroupSnapshot
+    {
+        ulong enabled;
+        ulong running;
+        ulong[maxCounters] values;
+        uint n; /// counters captured
+        bool ok; /// `false` = short/failed read
+    }
+
+    /// Captures a window-edge snapshot of the group led by `leaderFd`.
+    package GroupSnapshot snapshotGroup(int leaderFd, uint nOpen) @safe
+    in (nOpen <= maxCounters)
+    {
+        GroupSnapshot s;
+        ulong[3 + maxCounters] buf;
+        const want = cast(long)(ulong.sizeof * (3 + nOpen));
+        const got = (() @trusted => read(leaderFd, buf.ptr, buf.sizeof))();
+        if (got < want)
+            return s;
+        s.enabled = buf[1];
+        s.running = buf[2];
+        s.values[0 .. nOpen] = buf[3 .. 3 + nOpen];
+        s.n = nOpen;
+        s.ok = true;
+        return s;
+    }
+
+    /// Window deltas between two edge snapshots of one group: fills
+    /// `values[0 .. a.n]` with the window's multiplex-corrected $(B totals)
+    /// (`iters = 1`), sets `scale`, and returns `true` — same gate vocabulary
+    /// as `readScaledGroup`, plus one gate the pass path cannot hit: a window
+    /// across which the group's `enabled` time never advanced (the group was
+    /// never enabled) yields `false` with `values`/`scale` untouched — zero
+    /// deltas there would be fabricated counts, not measurements.
+    package bool windowDeltas(in GroupSnapshot a, in GroupSnapshot b,
+        ref double scale, scope double[] values) @safe pure nothrow @nogc
+    in (values.length >= a.n)
+    {
+        if (!a.ok || !b.ok || a.n != b.n)
+            return false;
+        const enabled = b.enabled >= a.enabled ? b.enabled - a.enabled : 0;
+        const running = b.running >= a.running ? b.running - a.running : 0;
+        if (enabled == 0)
+            return false;
+        // Counter values are monotonic between the edges (windows never
+        // RESET); saturate anyway so a misuse can't wrap to huge totals.
+        ulong[maxCounters] deltas;
+        foreach (k; 0 .. a.n)
+            deltas[k] = b.values[k] >= a.values[k] ? b.values[k] - a.values[k] : 0;
+        return scaleGroupValues(enabled, running, 1, deltas[0 .. a.n],
+            scale, values);
+    }
+
+    @("perf_group.windowDeltas.gates")
+    @safe pure nothrow @nogc
+    unittest
+    {
+        static GroupSnapshot edge(ulong enabled, ulong running,
+            ulong v0, ulong v1, bool ok = true)
+        {
+            GroupSnapshot s;
+            s.enabled = enabled;
+            s.running = running;
+            s.values[0] = v0;
+            s.values[1] = v1;
+            s.n = 2;
+            s.ok = ok;
+            return s;
+        }
+
+        double scale = 123;
+        double[2] vals = [-1, -1];
+
+        // Failed edge read → no result, nothing touched.
+        assert(!windowDeltas(edge(0, 0, 0, 0, false), edge(9, 9, 9, 9), scale, vals[]));
+        assert(scale == 123 && vals[0] == -1);
+
+        // Never enabled across the window → no result (zeros would be
+        // fabricated), nothing touched.
+        assert(!windowDeltas(edge(5000, 5000, 10, 20), edge(5000, 5000, 10, 20),
+                scale, vals[]));
+        assert(scale == 123 && vals[0] == -1);
+
+        // Enabled but never scheduled → the kernel's <not counted>: scale 0.
+        assert(!windowDeltas(edge(0, 0, 0, 0), edge(5000, 0, 0, 0), scale, vals[]));
+        assert(scale == 0 && vals[0] == -1);
+
+        // Multiplexed with under 1 ms of PMU time → unreliable: the true
+        // ratio is reported, the values are rejected.
+        scale = 123;
+        assert(!windowDeltas(edge(0, 0, 0, 0), edge(2_000_000, 580_000, 100, 200),
+                scale, vals[]));
+        assert(scale == 0.29 && vals[0] == -1);
+
+        // Clean window → totals, scale 1.
+        assert(windowDeltas(edge(1000, 1000, 10, 20), edge(2_001_000, 2_001_000, 110, 220),
+                scale, vals[]));
+        assert(scale == 1 && vals[0] == 100 && vals[1] == 200);
+
+        // Multiplexed ≥ 1 ms → scaled totals, labeled scale.
+        assert(windowDeltas(edge(0, 0, 0, 0), edge(4_000_000, 2_000_000, 100, 200),
+                scale, vals[]));
+        assert(scale == 0.5 && vals[0] == 200 && vals[1] == 400);
     }
 }
