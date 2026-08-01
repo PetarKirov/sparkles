@@ -23,15 +23,58 @@ module sparkles.syntax.ts.registry;
 import sparkles.tree_sitter.errors : TsError, TsErrorCode, TsExpected, tsErr, tsOk;
 import sparkles.tree_sitter.loader : Grammar, loadGrammar;
 
-/// The Android APK soname of a grammar: `libtree_sitter_<lang>.so` with `-`
-/// folded to `_` (matching the `tree_sitter_<lang_>` symbol convention; the
-/// nix side names the shipped libraries identically).
+/**
+The Android APK soname of a grammar: `libtree_sitter_<lang>.so` with `-`
+folded to `_` (matching the `tree_sitter_<lang_>` symbol convention; the nix
+side names the shipped libraries identically).
+
+Returns `""` for a name carrying anything outside `[a-z0-9_-]`, which the
+caller maps to `grammarNotFound`. That guard is what keeps the layout's
+premise true: the parser is resolved by $(I bare soname) through the app's
+linker namespace, and `dlopen` switches to path resolution the moment a name
+contains `/`. Language labels are not trusted input — a markdown fence's info
+string reaches here verbatim, because `canonicalLanguage` passes unknown
+labels through unchanged.
+*/
 string grammarSoname(scope const(char)[] languageName) @safe pure nothrow
 {
+    if (!isPlainLanguageName(languageName))
+        return null;
     auto s = new char[](languageName.length);
     foreach (i, char c; languageName)
         s[i] = c == '-' ? '_' : c;
     return "libtree_sitter_" ~ s ~ ".so";
+}
+
+/// `true` for a non-empty name of `[a-z0-9_-]` only — the shape
+/// `canonicalLanguage` produces, and the shape safe to splice into a soname
+/// or a path component. Everything else is refused rather than sanitized:
+/// a label that is not this is not a language this build ships.
+bool isPlainLanguageName(scope const(char)[] name) @safe pure nothrow @nogc
+{
+    if (name.length == 0)
+        return false;
+    foreach (char c; name)
+    {
+        const ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+            || c == '_' || c == '-';
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
+///
+@("ts.registry.isPlainLanguageName")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(isPlainLanguageName("markdown-inline"));
+    assert(isPlainLanguageName("c_sharp"));
+    assert(!isPlainLanguageName(""));
+    assert(!isPlainLanguageName("../etc"));
+    assert(!isPlainLanguageName("a/b"));
+    assert(!isPlainLanguageName("Uppercase"));
 }
 
 ///
@@ -42,6 +85,16 @@ unittest
     assert(grammarSoname("d") == "libtree_sitter_d.so");
     assert(grammarSoname("c-sharp") == "libtree_sitter_c_sharp.so");
     assert(grammarSoname("markdown-inline") == "libtree_sitter_markdown_inline.so");
+
+    // Anything that could turn a soname lookup into a path lookup, or name a
+    // library the APK never shipped, is refused outright.
+    assert(grammarSoname("../../../data/local/tmp/evil") is null);
+    assert(grammarSoname("foo/bar") is null);
+    assert(grammarSoname("foo.so") is null);
+    assert(grammarSoname("") is null);
+    // `canonicalLanguage` lowercases, so an uppercase label reaching here has
+    // bypassed it — refuse rather than guess.
+    assert(grammarSoname("D") is null);
 }
 
 /// See the module header.
@@ -102,16 +155,29 @@ struct GrammarRegistry
 
         if (_sonameLayout)
         {
+            // A name `grammarSoname` refuses never reaches dlopen: it would
+            // be a path, not a soname (see there). Same degrade as a missing
+            // grammar.
+            const soname = grammarSoname(languageName);
+            if (soname.length == 0)
+                return tsErr!Grammar(TsErrorCode.grammarNotFound);
             // No exists-gate (a bare soname is not a checkable path); the
             // dynamic linker's refusal IS the absence signal, so a failed
             // dlopen maps to the plain-text degrade, not an error surface.
-            auto loaded = loadGrammar(grammarSoname(languageName), languageName);
+            auto loaded = loadGrammar(soname, languageName);
             if (loaded.hasError && loaded.error.code == TsErrorCode.dlopenFailed)
                 return tsErr!Grammar(TsErrorCode.grammarNotFound);
             if (!loaded.hasError)
                 _cache[languageName.idup] = loaded.value;
             return loaded;
         }
+
+        // Same guard as the soname branch, for the same reason: the language
+        // name is document-controlled, and it is about to become a path
+        // component. Only saved today by needing a file literally named
+        // `parser` at the traversed location — not a property worth relying on.
+        if (!isPlainLanguageName(languageName))
+            return tsErr!Grammar(TsErrorCode.grammarNotFound);
 
         foreach (dir; _dirs)
         {
