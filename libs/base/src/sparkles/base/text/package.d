@@ -21,6 +21,7 @@ module sparkles.base.text;
 
 public import sparkles.base.text.writers;
 public import sparkles.base.text.base_codecs;
+public import sparkles.base.text.percent;
 public import sparkles.base.text.html;
 public import sparkles.base.text.readers;
 public import sparkles.base.text.enums;
