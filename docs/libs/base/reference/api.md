@@ -24,15 +24,23 @@ and `text`.
 
 ## `sparkles.base.text`
 
-The package re-exports `text.writers`, `text.readers`, `text.enums`, and
-`text.errors`.
+Importing the package pulls in every module below.
 
-| Module                       | Description                                                                                        |
-| ---------------------------- | -------------------------------------------------------------------------------------------------- |
-| `sparkles.base.text.writers` | Integer, float, duration, byte, hex (`writeHexByte`), escape, and value writers.                   |
-| `sparkles.base.text.readers` | Slice-advance parsers (`readInteger`, `readUntil`) plus hex predicates `isHexDigit` / `hexNibble`. |
-| `sparkles.base.text.enums`   | Enum text helpers such as `StringRepresentation`.                                                  |
-| `sparkles.base.text.errors`  | `ParseErrorCode`, `ParseError`, and `ParseExpected!T`.                                             |
+| Module                           | Description                                                                                                          |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `sparkles.base.text.writers`     | Integer (any radix 2–36), float, duration, byte, hex (`writeHexByte`), escape, and value writers.                    |
+| `sparkles.base.text.readers`     | Slice-advance parsers (`readInteger` at any radix 2–36, `readUntil`) plus hex predicates `isHexDigit` / `hexNibble`. |
+| `sparkles.base.text.base_codecs` | RFC 4648 Base16/32/64 and relatives, driven by an `Alphabet` value — see [Base codecs](./base-codecs.md).            |
+| `sparkles.base.text.percent`     | RFC 3986 percent-encoding and `x-www-form-urlencoded` — see [Percent-encoding](./percent-encoding.md).               |
+| `sparkles.base.text.enums`       | Enum text helpers such as `StringRepresentation`.                                                                    |
+| `sparkles.base.text.errors`      | `ParseErrorCode`, `ParseError`, and `ParseExpected!T`.                                                               |
+| `sparkles.base.text.case_style`  | `CaseStyle` and `convertCase` (camel/pascal/snake/kebab/…).                                                          |
+| `sparkles.base.text.html`        | HTML entity escaping.                                                                                                |
+| `sparkles.base.text.ansi`        | ANSI escape-sequence scanning.                                                                                       |
+| `sparkles.base.text.utf`         | `@nogc` UTF-8 decoding.                                                                                              |
+| `sparkles.base.text.grapheme`    | Grapheme-cluster segmentation.                                                                                       |
+| `sparkles.base.text.width`       | Terminal cell width, field alignment, and truncation.                                                                |
+| `sparkles.base.text.wrap`        | Style-aware prose wrapping by terminal cell width.                                                                   |
 
 ## `sparkles.base.term_style`
 
