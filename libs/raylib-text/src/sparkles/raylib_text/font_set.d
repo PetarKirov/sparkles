@@ -501,24 +501,43 @@ struct FontSet
             loadVariantFile(fontBoldItalic, boldItalicPath, fontSize_, requestedCps[]);
     }
 
-    // Fallback faces without fontconfig: the first Nerd-Font file in `dirs`
-    // that is not the primary, and the first family of a fixed common-mono
-    // preference list (the stand-in for `fc-match monospace -s`).
+    // Fallback faces without fontconfig: the best-ranked Nerd-Font file in
+    // `dirs` that is not the primary, and the first family of a fixed
+    // common-mono preference list (the stand-in for `fc-match monospace -s`).
     private void loadFallbacksFromDirs(string fontPath, const(string)[] dirs) @system
     {
         import std.string : toStringz;
 
+        // RANKED, not first-hit. `fontFilesInDirs` sorts within a directory,
+        // so taking the first Nerd-named file picked whatever sorted first —
+        // and with `FiraCodeNerdFontMono-{Bold,Regular}.ttf` both shipped,
+        // 'B' < 'R' meant every fallback icon glyph rendered BOLD. The
+        // fontconfig path cannot do this: `fc-match monospace -s` returns
+        // regular faces in preference order.
+        string bestNerd;
+        int bestNerdRank = int.max;
         foreach (path; fontFilesInDirs(dirs))
         {
             if (path == fontPath)
                 continue;
-            if ((path.canFind("NerdFont") || path.canFind("Nerd Font"))
-                && !nerdFallback.present)
+            if (!path.canFind("NerdFont") && !path.canFind("Nerd Font"))
+                continue;
+            // A fallback supplies glyphs the primary lacks, so it wants the
+            // plainest face available: an explicit Regular, else anything
+            // undecorated, else a styled face as a last resort.
+            const rank = isRegularFace(path) ? 0 : (isUndecoratedFace(path) ? 1 : 2);
+            if (rank < bestNerdRank)
             {
-                nerdFallback.pathZ = path.toStringz;
-                loadFontInto(nerdFallback, fontSize_, codepoints);
-                break;
+                bestNerd = path;
+                bestNerdRank = rank;
             }
+        }
+        // Keep trying on a failed load rather than giving up on the fallback
+        // entirely — the fontconfig loop re-tests `present` for this reason.
+        if (bestNerd.length != 0 && !nerdFallback.present)
+        {
+            nerdFallback.pathZ = bestNerd.toStringz;
+            loadFontInto(nerdFallback, fontSize_, codepoints);
         }
         const regular = resolveFontInDirs(
             "DejaVu Sans Mono,Roboto Mono,Droid Sans Mono,Liberation Mono,Cousine",
@@ -632,6 +651,13 @@ private string normalizeFontName(scope const(char)[] s) @safe pure
 
 /// The `.ttf`/`.otf` files under `dirs` (shallow, sorted per dir for
 /// determinism), scanned in order — earlier dirs win.
+///
+/// An unreadable or vanishing directory is skipped, not propagated:
+/// `dirEntries` throws on a directory it cannot open, and `exists`/`isDir`
+/// can race with it, so without the catch a font directory with the wrong
+/// permissions would turn `FontSet.tryLoad` — documented to return `false`
+/// when it cannot resolve a font — into a startup exception. (Collections,
+/// `.ttc`, are excluded because raylib's `LoadFontEx` cannot load them.)
 private string[] fontFilesInDirs(const(string)[] dirs) @safe
 {
     import std.algorithm.sorting : sort;
@@ -642,17 +668,21 @@ private string[] fontFilesInDirs(const(string)[] dirs) @safe
     string[] result;
     foreach (dir; dirs)
     {
-        if (!dir.exists || !dir.isDir)
-            continue;
-        auto files = dirEntries(dir, SpanMode.shallow)
-            .map!(e => e.name)
-            .filter!((string p) {
-                const ext = p.extension.toLower;
-                return ext == ".ttf" || ext == ".otf";
-            })
-            .array;
-        sort(files);
-        result ~= files;
+        try
+        {
+            if (!dir.exists || !dir.isDir)
+                continue;
+            auto files = dirEntries(dir, SpanMode.shallow)
+                .map!(e => e.name)
+                .filter!((string p) {
+                    const ext = p.extension.toLower;
+                    return ext == ".ttf" || ext == ".otf";
+                })
+                .array;
+            sort(files);
+            result ~= files;
+        }
+        catch (Exception) { /* unreadable dir → skip it, keep the rest */ }
     }
     return result;
 }
@@ -662,11 +692,16 @@ Resolve a font family name — or a fontconfig-style comma-separated preference
 list ("FiraCode Nerd Font Mono,JetBrains Mono,monospace") — against plain
 directories of font files, without fontconfig. For each name in order, the
 candidates are files whose normalized basename contains the normalized name;
-among them the best-ranked wins: an exact stem match, then an explicit
-`…-Regular` face, then a stem with no bold/italic/oblique decoration, then
-anything (ties broken lexicographically). Returns the first name's winner, or
-`""` when nothing matches (generic aliases like "monospace" match no file and
-simply fall through to the next name).
+among them the best-ranked wins ($(LREF faceRank)). Returns the first name's
+winner, or `""` when nothing matches (generic aliases like "monospace" match
+no file and simply fall through to the next name).
+
+Ties keep the earlier candidate, so the caller's directory order is the
+tie-breaker — `fontFilesInDirs` yields earlier directories first, which is
+the precedence it documents. (Comparing paths lexicographically instead, as
+this once did, silently handed the decision to whichever absolute path sorted
+first: hue's `[<dataDir>/fonts, /system/fonts]` only worked because `/data`
+happens to precede `/system`.)
 */
 string resolveFontInDirs(const(char)[] nameOrList, const(string)[] dirs) @safe
 {
@@ -683,20 +718,8 @@ string resolveFontInDirs(const(char)[] nameOrList, const(string)[] dirs) @safe
         int bestRank = int.max;
         foreach (path; files)
         {
-            const stem = normalizeFontName(path.baseName.stripExtension);
-            if (!stem.canFind(name))
-                continue;
-            int rank;
-            if (stem == name)
-                rank = 0;
-            else if (stem == name ~ "regular")
-                rank = 1;
-            else if (!stem.canFind("bold") && !stem.canFind("italic")
-                && !stem.canFind("oblique"))
-                rank = 2;
-            else
-                rank = 3;
-            if (rank < bestRank || (rank == bestRank && (best.length == 0 || path < best)))
+            const rank = faceRank(path, name);
+            if (rank < bestRank)
             {
                 best = path;
                 bestRank = rank;
@@ -708,13 +731,76 @@ string resolveFontInDirs(const(char)[] nameOrList, const(string)[] dirs) @safe
     return "";
 }
 
+/// How well the font file at `path` answers to the normalized family
+/// `name` — lower is better, `int.max` for "not a candidate at all":
+/// an exact stem match, then an explicit `…-Regular` face, then a stem that
+/// merely *starts* with the name, then any undecorated stem, then anything
+/// containing it. `int.max` when the name does not appear.
+///
+/// The `startsWith` tier matters against a system font directory: plain
+/// containment lets a short family name match a superset family (`"Mono"`
+/// inside `MapleMono-Regular`), and with ~200 `Noto*` files on Android an
+/// absent family would otherwise resolve to an arbitrary unrelated one.
+private int faceRank(scope const(char)[] path, scope const(char)[] name) @safe
+{
+    import std.algorithm.searching : startsWith;
+    import std.path : baseName, stripExtension;
+
+    const stem = normalizeFontName(path.baseName.stripExtension);
+    if (!stem.canFind(name))
+        return int.max;
+    if (stem == name)
+        return 0;
+    if (stem == name ~ "regular")
+        return 1;
+    const undecorated = isUndecoratedFace(path);
+    if (stem.startsWith(name))
+        return undecorated ? 2 : 4;
+    return undecorated ? 3 : 5;
+}
+
+/// `true` when the file's stem names an explicit `Regular` face.
+private bool isRegularFace(scope const(char)[] path) @safe
+{
+    import std.algorithm.searching : endsWith;
+    import std.path : baseName, stripExtension;
+
+    return normalizeFontName(path.baseName.stripExtension).endsWith("regular");
+}
+
+/// `true` when the file's stem carries no weight/slant decoration — the
+/// closest thing to "the plain face" when no explicit Regular exists.
+private bool isUndecoratedFace(scope const(char)[] path) @safe
+{
+    import std.path : baseName, stripExtension;
+
+    const stem = normalizeFontName(path.baseName.stripExtension);
+    return !stem.canFind("bold") && !stem.canFind("italic")
+        && !stem.canFind("oblique");
+}
+
+// A collision-free scratch directory. The runner executes tests in parallel
+// *threads*, which a fixed name survives — but two concurrent test
+// *processes* (a CI matrix leg beside a local `dub test`, or a retried job)
+// would share it, and one run's `rmdirRecurse` would delete the other's
+// fixture mid-assert.
+version (unittest)
+private string uniqueTestDir(string stem) @safe
+{
+    import std.file : tempDir;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    return buildPath(tempDir, stem ~ "-" ~ randomUUID().toString());
+}
+
 @("resolveFontInDirs.preferenceListAndRanking")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.file : mkdirRecurse, rmdirRecurse, write;
     import std.path : buildPath;
 
-    const dir = buildPath(tempDir, "sparkles-font-resolve-test");
+    const dir = uniqueTestDir("sparkles-font-resolve-test");
     mkdirRecurse(dir);
     scope (exit) rmdirRecurse(dir);
     foreach (f; ["FiraCodeNerdFontMono-Regular.ttf", "FiraCodeNerdFontMono-Bold.ttf",
@@ -736,6 +822,54 @@ string resolveFontInDirs(const(char)[] nameOrList, const(string)[] dirs) @safe
     // Missing dirs are skipped, not errors.
     assert(resolveFontInDirs("DejaVu Sans Mono", [buildPath(dir, "absent"), dir])
         == buildPath(dir, "DejaVuSansMono.ttf"));
+}
+
+@("resolveFontInDirs.dirPrecedenceBeatsPathOrder")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+    import std.path : buildPath;
+
+    // Two directories holding the SAME family at the same rank. The caller's
+    // order must decide — not which absolute path sorts first, which is what
+    // a lexicographic tie-break did (hue passes [<dataDir>/fonts,
+    // /system/fonts] and only worked because "/data" precedes "/system").
+    const root = uniqueTestDir("sparkles-font-precedence-test");
+    const zFirst = buildPath(root, "zzz");
+    const aSecond = buildPath(root, "aaa");
+    mkdirRecurse(zFirst);
+    mkdirRecurse(aSecond);
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(zFirst, "SomeMono-Regular.ttf"), "x");
+    write(buildPath(aSecond, "SomeMono-Regular.ttf"), "x");
+
+    // Listed first wins, despite sorting later.
+    assert(resolveFontInDirs("SomeMono", [zFirst, aSecond])
+        == buildPath(zFirst, "SomeMono-Regular.ttf"));
+    // …and symmetrically.
+    assert(resolveFontInDirs("SomeMono", [aSecond, zFirst])
+        == buildPath(aSecond, "SomeMono-Regular.ttf"));
+}
+
+@("resolveFontInDirs.prefixBeatsInteriorMatch")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+    import std.path : buildPath;
+
+    const dir = uniqueTestDir("sparkles-font-prefix-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+    // "Mono" appears inside MapleMono but at the START of MonoLisa.
+    write(buildPath(dir, "MapleMono-Regular.ttf"), "x");
+    write(buildPath(dir, "MonoLisa-Regular.ttf"), "x");
+
+    // Without a startsWith tier both are rank-1 and the tie went to whichever
+    // came first — an arbitrary family. This matters against /system/fonts,
+    // where ~200 Noto* files make interior matches abundant.
+    assert(resolveFontInDirs("Mono", [dir]) == buildPath(dir, "MonoLisa-Regular.ttf"));
+    // An exact family still wins outright.
+    assert(resolveFontInDirs("Maple Mono", [dir]) == buildPath(dir, "MapleMono-Regular.ttf"));
 }
 
 /**
@@ -776,10 +910,10 @@ void fontVariantPaths(string primaryPath,
 @("fontVariantPaths.namingConvention")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.file : mkdirRecurse, rmdirRecurse, write;
     import std.path : buildPath;
 
-    const dir = buildPath(tempDir, "sparkles-font-variant-test");
+    const dir = uniqueTestDir("sparkles-font-variant-test");
     mkdirRecurse(dir);
     scope (exit) rmdirRecurse(dir);
     foreach (f; ["Mono-Regular.ttf", "Mono-Bold.ttf", "Mono-BoldOblique.ttf",
