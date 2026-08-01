@@ -401,8 +401,7 @@ struct PreviewTui
                 width - 1, ScrollbarGlyphs('━', '─'));
             auto hbt = hb.finish(bar);
             paintGrid(g, pageBg, buildDisplayList(hbt, layout(hbt),
-                themes[themeIdx].effectivePalette, pageFg, pageBg),
-                originX, height - 2);
+                vm.palette, pageFg, pageBg), originX, height - 2);
         }
         if (!sel.active)
             return;
@@ -457,7 +456,7 @@ struct PreviewTui
         const col = b.add(colW);
         auto tree = b.finish(col);
         auto ops = buildDisplayList(tree, layout(tree),
-            themes[themeIdx].effectivePalette, pageFg, pageBg);
+            vm.palette, pageFg, pageBg);
         paintGrid(g, pageBg, ops, originX, y);
     }
 
@@ -497,16 +496,17 @@ struct PreviewTui
         const rows = bodyRows();
         if (lineCount <= rows || g.cols < 2 || originX + width > g.cols)
             return;
-        // The one thumb formula (STM2) — the GUI renders the same geometry.
-        const thumb = scrollbarThumb(cast(size_t) lineCount, rows, top, rows);
+        // The one component (WGT10) over the one machine (STM9), tinted by
+        // the palette's track/thumb entries (B-1) — the GUI renders the
+        // same state through its animated px painter.
+        import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
 
-        const col = cast(ushort)(originX + width - 1);
-        foreach (r; 0 .. rows)
-        {
-            const inThumb = r >= thumb.start && r < thumb.start + thumb.extent;
-            g.putText(col, cast(ushort)(r + 1), inThumb ? "█" : "░",
-                cellStyle(inThumb ? sbThumb : sbTrack, true, pageBg, 0));
-        }
+        auto vb = Builder();
+        const vbar = scrollbar(vb, sb.scrolledTo(top),
+            cast(size_t) lineCount, rows, rows, ScrollbarGlyphs('█', '░'));
+        auto vbt = vb.finish(vbar);
+        paintGrid(g, pageBg, buildDisplayList(vbt, layout(vbt), vm.palette,
+            pageFg, pageBg), originX + width - 1, 1);
     }
 
     // ── Input ────────────────────────────────────────────────────────────────
