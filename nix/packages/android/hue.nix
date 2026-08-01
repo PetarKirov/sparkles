@@ -157,6 +157,80 @@
       # glyph planes via the codepoint map in app.d (androidUiuaCodepointMap).
       mapleMono = pkgs.callPackage ./maple-mono { };
 
+      # Attribution for everything third-party the APK ships. OFL (the fonts)
+      # and Bitstream Vera (DejaVu) require the notice to accompany the fonts;
+      # zlib (raylib) and MIT (tree-sitter, libghostty-vt, Uiua386) require it
+      # in binary distributions. Nothing carried one before this.
+      #
+      # Generated from each package's `meta.license` rather than hand-listed,
+      # so it cannot drift from what is actually bundled — nixpkgs is the
+      # authority on the licence, and the font packages ship no LICENSE file
+      # in their outputs to copy.
+      licenseOf =
+        c:
+        if c ? licence then
+          c.licence # nixpkgs metadata too vague to attribute with
+        else
+          let
+            l = c.pkg.meta.license;
+            ls = if builtins.isList l then l else [ l ];
+          in
+          lib.concatMapStringsSep ", " (m: m.spdxId or m.shortName or "unknown") ls;
+
+      noticedComponents = [
+        {
+          what = "Maple Mono NF CN (bundled font)";
+          pkg = mapleMono;
+          home = "https://github.com/subframe7536/maple-font";
+        }
+        {
+          what = "FiraCode Nerd Font Mono (bundled font)";
+          pkg = pkgs.nerd-fonts.fira-code;
+          home = "https://github.com/ryanoasis/nerd-fonts";
+        }
+        {
+          what = "DejaVu Sans Mono (bundled font)";
+          pkg = pkgs.dejavu_fonts;
+          # nixpkgs records only `free`, which attributes nothing; DejaVu is
+          # Bitstream Vera plus the Arev additions.
+          licence = "Bitstream-Vera + Arev";
+          home = "https://dejavu-fonts.github.io";
+        }
+        {
+          what = "Uiua386 (bundled font)";
+          pkg = pkgs.uiua386;
+          home = "https://www.uiua.org";
+        }
+        {
+          what = "raylib (statically linked)";
+          pkg = pkgs.raylib;
+          home = "https://www.raylib.com";
+        }
+        {
+          what = "tree-sitter + grammars (statically linked / shipped as .so)";
+          pkg = pkgs.tree-sitter;
+          home = "https://tree-sitter.github.io";
+        }
+      ];
+
+      noticeFile = pkgs.writeText "hue-android-NOTICE" ''
+        hue for Android bundles the following third-party components.
+        Licence identifiers are SPDX, taken from each component's nixpkgs
+        metadata at build time.
+
+        ${lib.concatMapStringsSep "\n" (c: ''
+          ${c.what}
+            licence: ${licenseOf c}
+            home:    ${c.home}
+        '') noticedComponents}
+        libghostty-vt (statically linked)
+          licence: MIT
+          home:    https://ghostty.org
+
+        hue itself and the sparkles libraries are part of this repository; see
+        its LICENSE.
+      '';
+
       # The APK asset bundle, parameterized over the docs/ tree (the
       # explorer's browse surface — `stageDocs` fills $out/docs). Fonts +
       # charset sidecars and grammar queries are common to every variant;
@@ -214,6 +288,8 @@
 
             mkdir -p $out/docs
             ${stageDocs}
+
+            cp ${noticeFile} $out/NOTICE
 
             (cd $out && find . -type f -printf '%P\n' | sort > asset-manifest.txt)
             (cd $out && find . -type f ! -name bundle-hash -print0 | sort -z \
