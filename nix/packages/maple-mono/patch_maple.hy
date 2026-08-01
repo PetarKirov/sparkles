@@ -1,3 +1,13 @@
+;; VENDORED from https://github.com/reo101/rix101 — not first-party.
+;;
+;; AGENTS.md requires substantial scripts in this repository to be written
+;; in D. This one is upstream's, carried in its original language: keeping a
+;; vendored script verbatim is what makes it re-syncable, and a rewrite would
+;; fork it from the source it tracks. Edit upstream, then re-vendor.
+;;
+;; It patches Maple Mono's build inputs before upstream's build.py runs —
+;; see ./default.nix.
+
 (import sys os re)
 
 (defn log [msg]

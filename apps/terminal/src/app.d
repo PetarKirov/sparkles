@@ -11,7 +11,8 @@ import raylib;
 
 import sparkles.ghostty.c;
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid, drawBox;
+import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid, drawBox,
+    resolveFontInDirs;
 import input : ExitBehavior, SelectionState, ScrollbarState, HoverState;
 import osc_query : OscScanner;
 
@@ -514,6 +515,7 @@ int main(string[] args)
     bool debugScreenshotAndExit = false;
     string exitBehaviorOpt = "hold-on-failure";
     string[] codepointMapOpt;
+    string[] fontDirOpt;
 
     auto helpInfo = getopt(
         args,
@@ -526,6 +528,7 @@ int main(string[] args)
         "window-height", "Initial window height in rows (default: 30)", &windowRows,
         "scrollback-limit", "Maximum number of lines to keep in scrollback history (0 to disable, default: infinite)", &scrollbackLimit,
         "font-codepoint-map", "Render codepoints from a specific font (repeatable): 'U+XXXX-U+YYYY,U+ZZZZ=Family'", &codepointMapOpt,
+        "font-dir", "Resolve fonts by scanning this directory instead of fontconfig (repeatable). Makes a build portable and its font selection deterministic: no fc-match subprocess, no dependence on the host's fontconfig configuration. Pair with the bundle from `nix build .#sparkles-fonts`.", &fontDirOpt,
         "exit-behavior", "On child exit: close | wait-for-key | hold | hold-on-failure (default)", &exitBehaviorOpt,
         "debug-take-screenshot-and-exit", "Takes a screenshot after 2 seconds and exits", &debugScreenshotAndExit
     );
@@ -554,16 +557,32 @@ int main(string[] args)
 
     logBuildInfo();
 
+    // --font-dir switches the whole FontSet to directory scanning: no
+    // fc-match, no fc-query, no fc-scan. Three things that buys, all of which
+    // the Android port needed first and a desktop build wants too: it works
+    // where fontconfig is absent, it is deterministic (fc-match's answer
+    // varies with the host's fontconfig configuration, which is a
+    // golden-screenshot hazard), and it drops up to six subprocesses from
+    // startup.
+    auto fontSources = FontSet.FontSources(fontDirOpt, useFontconfig: fontDirOpt.length == 0);
+
     string fontPath = fontOpt;
     if (!fontPath.exists)
     {
-        auto res = execute(["fc-match", "-f", "%{file}", fontOpt]);
-        if (res.status == 0 && res.output.strip().length > 0)
-            fontPath = res.output.strip();
+        if (fontSources.useFontconfig)
+        {
+            auto res = execute(["fc-match", "-f", "%{file}", fontOpt]);
+            if (res.status == 0 && res.output.strip().length > 0)
+                fontPath = res.output.strip();
+        }
+        else
+            fontPath = resolveFontInDirs(fontOpt, fontDirOpt);
     }
-    if (!fontPath.exists)
+    if (fontPath.length == 0 || !fontPath.exists)
     {
         stderr.writeln("Error: Could not resolve font '", fontOpt, "'. Please provide a valid path or installed font name.");
+        if (fontDirOpt.length)
+            stderr.writeln("  (searched: ", fontDirOpt.join(", "), ")");
         return 1;
     }
 
@@ -590,7 +609,8 @@ int main(string[] args)
     // bold-italic variants, a regular and a Nerd-Font fallback, any
     // --font-codepoint-map faces, and the on-demand base atlas. Must run after
     // InitWindow (LoadFontEx needs the GL context).
-    if (!FontSet.tryLoad(fontPath, s.fontSize, s.fonts, codepointMapOpt))
+    if (!FontSet.tryLoad(fontPath, s.fontSize, s.fonts, codepointMapOpt,
+        FontSet.FaceOverrides.init, fontSources))
     {
         stderr.writeln("Error: could not load font: ", fontPath);
         CloseWindow();

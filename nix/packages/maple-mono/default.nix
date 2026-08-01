@@ -1,3 +1,16 @@
+# Maple Mono, rebuilt with a fixed set of OpenType features baked in (upstream
+# ships them as optional `cvXX`/`ssXX` alternates, which a terminal or GPU text
+# renderer cannot switch on — there is no shaping layer to ask).
+#
+# `patch_maple.hy` is VENDORED, from https://github.com/reo101/rix101 — it is
+# not first-party, which matters because AGENTS.md requires substantial scripts
+# to be written in D. That rule is about logic *this repository* owns; carrying
+# an upstream build script in its original language is the ordinary cost of
+# vendoring, and rewriting it would fork it from the source it tracks.
+#
+# It drives upstream's own Python build (`build.py`): regex surgery over the
+# four `.fea` feature files, generation of the `calt`/`ss03` lookup blocks for
+# the pill keywords, and a line patch to `build.py` itself.
 {
   lib,
   stdenvNoCC,
@@ -180,6 +193,25 @@ stdenvNoCC.mkDerivation (
       pythonEnv
       unzip
     ];
+
+    # KNOWN: this build is not reproducible. `nix build --rebuild` reports the
+    # derivation as possibly non-deterministic.
+    #
+    # What was measured, so the next attempt does not start from zero:
+    #   * ~574 bytes differ out of a ~20 MB face, clustered from offset ~193 —
+    #     i.e. in the table directory (checksums/offsets), not in glyph data;
+    #   * the `head` table's created AND modified timestamps are IDENTICAL
+    #     across runs, so it is not a clock and SOURCE_DATE_EPOCH is already
+    #     being honoured;
+    #   * `PYTHONHASHSEED = 0` does NOT fix it — tried and measured, so the
+    #     cause is not Python string-hash randomisation. Most likely an
+    #     iteration- or ordering-sensitive step inside the font tooling that
+    #     lays tables out differently between runs.
+    #
+    # Consequence worth knowing: the APK is bit-reproducible (build-apk.nix)
+    # only for a *fixed* font input. Rebuild the font and the APK changes too.
+    # Fixing this means going into upstream's build.py, which is vendored —
+    # so it belongs upstream rather than as a local patch.
 
     postUnpack = ''
       ${lib.optionalString enableCN ''
