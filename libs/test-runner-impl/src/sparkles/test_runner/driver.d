@@ -20,6 +20,7 @@ struct DriverOptions
     string compiler; /// explicit D compiler; empty = `$DC`, then `ldc2`, `dmd`
     string[] importPaths; /// extra `-I` paths
     string[] includeImports; /// extra `-i=<pattern>` module-inclusion patterns
+    bool noAutoInclude; /// don't compile the extracted tests' own modules in
     bool keep; /// keep the generated files and print their location
     bool verbose; /// echo the commands that are run
 }
@@ -272,6 +273,78 @@ private string[] includeFlags(in DriverOptions options) @safe pure
     return options.includeImports.map!(p => "-i=" ~ p).array;
 }
 
+/// The `-i=<module>` flags derived from the tests being extracted: one per
+/// distinct module that owns a test, minus the ones whose tests all opted out
+/// with `selfContained`.
+///
+/// Compiling the owning module in is the useful default. Without it an
+/// extracted program links against nothing but templates, so a `@betterC`
+/// test that calls any ordinary function of the very module it lives in —
+/// the common case — fails at link time with an undefined reference, which
+/// made the marker attribute effectively decorative for such tests.
+///
+/// The opt-out is per test (`@betterC(selfContained: true)`) rather than
+/// global because it is a property of the test: a module that is not itself
+/// `-betterC`-codegen-clean can still host a template-only test, and that
+/// self-containment is exactly what such a test asserts. `--no-auto-include`
+/// disables the whole derivation for a one-off run.
+string[] autoIncludeFlags(in Test[] extracted, in DriverOptions options) @safe pure
+{
+    import std.algorithm.searching : canFind;
+
+    if (options.noAutoInclude)
+        return null;
+
+    string[] flags;
+    foreach (ref test; extracted)
+    {
+        if (test.traits.selfContained)
+            continue;
+        const flag = "-i=" ~ test.moduleName;
+        if (!flags.canFind(flag))
+            flags ~= flag;
+    }
+    return flags;
+}
+
+@("driver.autoIncludeFlags.oneFlagPerOwningModule")
+@safe pure
+unittest
+{
+    static Test at(string fullName, bool selfContained = false)
+    {
+        Test t;
+        t.fullName = fullName;
+        t.traits.selfContained = selfContained;
+        return t;
+    }
+
+    // One flag per distinct module, in first-seen order, deduplicated.
+    assert(autoIncludeFlags([
+        at("pkg.a.__unittest_L1_C1"),
+        at("pkg.b.__unittest_L2_C1"),
+        at("pkg.a.__unittest_L3_C1"),
+    ], DriverOptions.init) == ["-i=pkg.a", "-i=pkg.b"]);
+
+    // A self-contained test contributes nothing — that is what lets a module
+    // which cannot compile under -betterC still host a template-only test.
+    assert(autoIncludeFlags([
+        at("pkg.a.__unittest_L1_C1", true),
+        at("pkg.b.__unittest_L2_C1"),
+    ], DriverOptions.init) == ["-i=pkg.b"]);
+
+    // ... but only when *every* test in that module opted out.
+    assert(autoIncludeFlags([
+        at("pkg.a.__unittest_L1_C1", true),
+        at("pkg.a.__unittest_L2_C1"),
+    ], DriverOptions.init) == ["-i=pkg.a"]);
+
+    // --no-auto-include restores the strict template-only behavior.
+    assert(autoIncludeFlags(
+        [at("pkg.a.__unittest_L1_C1")],
+        DriverOptions(noAutoInclude: true)) == []);
+}
+
 /// The complete `-I` flag list: derived source roots, `dub describe`d
 /// dependency paths, and user extras.
 private string[] allImportFlags(in Test[] allTests, in DriverOptions options)
@@ -508,15 +581,15 @@ DriverOutcome runBetterCTests(Test[] betterCTests, Test[] allTests, in DriverOpt
     write(sourceFile, generateBetterCProgram(extractTests(betterCTests)));
 
     const importFlags = allImportFlags(allTests, options);
-    // By default only the generated program is compiled, so extracted tests
-    // can use templates/CTFE-able code from the imported modules but cannot
-    // link against their non-template functions (same constraints as the
-    // phobos @betterC suite). `--include-import=<pattern>` compiles matching
-    // modules in (`-i=<pattern>`) — they must be betterC-codegen-clean, e.g.
-    // `--include-import=sparkles.base.text --include-import=std.ascii`.
+    // Each test's own module is compiled in by default (see
+    // `autoIncludeFlags`), so a test can call its module's ordinary functions
+    // and not just its templates. Anything beyond that — a sibling module, or
+    // a std module such as `--include-import=std.ascii` — is opt-in, and every
+    // module compiled in must be betterC-codegen-clean.
     const compile = run(
         [compiler, "-betterC", "-of=" ~ binary]
-            ~ includeFlags(options) ~ importFlags ~ [sourceFile],
+            ~ autoIncludeFlags(betterCTests, options) ~ includeFlags(options)
+            ~ importFlags ~ [sourceFile],
         options.verbose);
     if (compile.status != 0)
     {
@@ -592,7 +665,9 @@ DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions o
         [compiler, "-mtriple=wasm32-unknown-unknown-wasm", "-betterC",
             // reactor-style module: no _start, tests are individual exports
             "-L--no-entry",
-            "-of=" ~ wasmFile] ~ includeFlags(options) ~ importFlags ~ [sourceFile],
+            "-of=" ~ wasmFile]
+            ~ autoIncludeFlags(wasmTests, options) ~ includeFlags(options)
+            ~ importFlags ~ [sourceFile],
         options.verbose);
     if (compile.status != 0)
     {

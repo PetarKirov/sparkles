@@ -29,13 +29,17 @@ Missing pieces are reported as a skip, not a failure.
 ## Constraints
 
 Everything from [`@betterC` extraction](./write-betterc-tests.md) applies
-(public symbols only, templates/CTFE-able code by default,
-`--include-import` opt-ins), plus one more with a stock LDC:
+(public symbols only, the test's own module compiled in by default,
+`--include-import` opt-ins, `@wasm(selfContained: true)` to opt out), plus
+one more with a stock LDC:
 
 > [!WARNING]
 > The tested module's whole import chain must be wasm-compatible. Bare
 > `wasm32` druntime headers `static assert` for many `core.stdc.*` modules,
 > so any module (transitively) importing e.g. `core.time` fails to compile.
-> Keep `@wasm` tests in modules with wasm-clean imports — or point
-> `--compiler` at a wasm-enabled LDC build with full druntime/Phobos ported
-> (e.g. the `dlang.nix` `ldc-wasm` toolchain), which lifts the restriction.
+> Because the module is compiled in by default, this bites sooner here than
+> under `--better-c`. Keep `@wasm` tests in modules with wasm-clean imports,
+> mark them `@wasm(selfContained: true)` to keep the module out entirely, or
+> point `--compiler` at a wasm-enabled LDC build with full druntime/Phobos
+> ported (e.g. the `dlang.nix` `ldc-wasm` toolchain), which lifts the
+> restriction.

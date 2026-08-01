@@ -27,6 +27,12 @@ struct TestTraits
     bool isWasm;
     bool isBenchmark;
 
+    /// The test asserts it needs nothing linked from its own module, so the
+    /// extracted `--better-c` / `--wasm` program leaves that module out
+    /// (see `betterC.selfContained`). One flag covers both modes: a test
+    /// marked self-contained under either is self-contained under both.
+    bool selfContained;
+
     /// Fixed benchmark iteration count; `0` auto-scales.
     uint benchIterations;
 

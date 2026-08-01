@@ -31,6 +31,17 @@ module sparkles.test_runner.attributes;
 /// druntime when the runner is invoked with `--better-c`.
 struct betterC
 {
+    /// When `false` (the default), the extracted program compiles the test's
+    /// own module in (`-i=<module>`), so the test may call that module's
+    /// ordinary functions and not just its templates.
+    ///
+    /// Set it to `true` for a test that must stand entirely on its own. That
+    /// is what lets a module which is $(I not) itself `-betterC`-codegen-clean
+    /// still host a `@betterC` test: nothing of the module is compiled in, so
+    /// only templates and CTFE-able code are reachable — and the test is
+    /// asserting exactly that self-containment. The runner's own dogfooding
+    /// tests use it, since their modules import Phobos.
+    bool selfContained = false;
 }
 
 /// Marks a `unittest` for compile-time execution: the runner forces the test
@@ -51,6 +62,15 @@ struct ctfe
 /// `deno`, or `bun`) when the runner is invoked with `--wasm`.
 struct wasm
 {
+    /// As for $(LREF betterC)`.selfContained`: when `false` (the default) the
+    /// cross-compiled program compiles the test's own module in, so the test
+    /// may call its ordinary functions; `true` keeps the module out entirely.
+    ///
+    /// Self-containment matters more here than for `--better-c`: with a stock
+    /// LDC a `@wasm` test's whole import chain must avoid druntime headers
+    /// that do not support `wasm32`, which compiling the module in makes far
+    /// more likely to be violated.
+    bool selfContained = false;
 }
 
 /// Marks a `unittest` as a benchmark. Benchmarks are skipped in normal test
@@ -67,13 +87,14 @@ struct benchmark
 }
 
 @("attributes.selfContained.wasm")
-@wasm @betterC @safe pure nothrow @nogc
+@wasm(selfContained: true) @betterC(selfContained: true) @safe pure nothrow @nogc
 unittest
 {
-    // Dogfoods @wasm (and @betterC) end to end. It lives in this import-free
-    // module on purpose: with a stock LDC, a `@wasm` test's module import
-    // chain must avoid druntime headers that don't support wasm32 (a
-    // wasm-enabled LDC with full druntime/Phobos lifts that restriction).
+    // Dogfoods @wasm (and @betterC) end to end, and dogfoods `selfContained`
+    // itself. It lives in this import-free module on purpose: with a stock
+    // LDC, a `@wasm` test's module import chain must avoid druntime headers
+    // that don't support wasm32 (a wasm-enabled LDC with full
+    // druntime/Phobos lifts that restriction).
     int parity;
     foreach (c; "wasm")
         parity ^= c;

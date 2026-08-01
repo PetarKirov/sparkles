@@ -107,9 +107,15 @@ calling it (an abort is attributable); the wasm module exports each test as
 generated JS shim — or `wasmtime --invoke` — reports per-test outcomes from
 the host side.
 
-Extracted tests import their module but link none of its object code, hence
-the templates-only default; `--include-import` compiles chosen modules in
-(they must be betterC-codegen-clean). Import paths derive from the
+Extracted tests import their module, and the driver compiles that module in
+(`-i=<module>`) so its ordinary functions link — without it a test calling
+any non-template function of the module it lives in fails at link time, which
+made the marker decorative for most real tests. The opt-out is per test
+(`@betterC(selfContained: true)`) because self-containment is a property of
+the test, not the run: a module that cannot itself compile under `-betterC`
+can still host a template-only test, and that is precisely what such a test
+asserts. `--include-import` compiles further modules in; everything compiled
+in must be betterC-codegen-clean. Import paths derive from the
 discovered tests' module-name/file-path pairs (no dub metadata reaches the
 test binary at runtime) plus a best-effort `dub describe`.
 

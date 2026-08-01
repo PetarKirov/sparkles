@@ -248,6 +248,8 @@ silly's successor — same CLI, documented under
 --bench-min-time MS With --bench: per-case measurement budget in ms (default 5)
 --better-c          Extract @betterC tests, compile with -betterC, run them
 --wasm              Extract @wasm tests, cross-compile to wasm32, run them
+--include-import P  With --better-c/--wasm: also compile module pattern P in
+--no-auto-include   With --better-c/--wasm: don't compile the tests' own modules in
 --ctfe-trace FILE   Evaluate @ctfe tests under LDC -ftime-trace; per-test cost
 --self-test         Also run the runner's own unittests
 ```
