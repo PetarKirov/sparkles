@@ -27,10 +27,10 @@ The measurement layer has **two measurement models**:
 - **`@benchmark`** — per-iteration statistics: the timed body runs many times;
   the runner reports median / median-absolute-deviation / min / max
   nanoseconds per iteration, plus per-iteration counter averages.
-- **`@workload`** _(target — M4)_ — window statistics: the body runs once (or
-  a few reps); the runner reports counter **deltas and integrals across the
-  window**, including a wall-clock decomposition into on-CPU and attributable
-  off-CPU time.
+- **`@workload`** — window statistics: the body runs once (or a few reps);
+  the runner reports counter **deltas and integrals across the window**,
+  including a wall-clock decomposition into on-CPU and attributable off-CPU
+  time.
 
 Three invariants shape everything:
 
@@ -70,11 +70,12 @@ Measurement modules (all under
 | `raw.d`          | raw hardware-event tier (`raw:r<hex>` selectors)                       |
 | `event_naming.d` | symbolic event names via soft libpfm4 (`pfm:<name>`)                   |
 | `rdpmc.d`        | user-space counter reads (the `selfMonitoring` primitive)              |
+| `workload.d`     | the `@workload` window model: wall source, decomposition, driver       |
 | `bench_json.d`   | the `--bench-json` emitter (§8.3)                                      |
 | `reporting.d`    | tables, live displays, progress                                        |
 | `skip.d`         | `skipTest`                                                             |
 
-Planned modules _(targets)_: `workload.d`/`psi.d` (M4/M5),
+Planned modules _(targets)_: `psi.d` (M5),
 `cache_regime.d`/`provenance.d`/`cgroup.d` (M6–M8), `histogram.d` (B5),
 `sampling.d`/`symbolize.d` (B6), `offcpu.d` (M9), `loadgen.d` (M10), plus
 per-OS backend variants inside the existing modules (B3/B4).
@@ -110,8 +111,15 @@ unconditionally (not under `version (unittest)`).
   `rate` reports `amount ÷ iteration-time` as `<unit>/s`; `level` reports the
   per-iteration amount as-is. `Unit` is an open-basis symbol (`"B"`, `"req"`,
   …); see §5.3.
-- **`@workload`** _(target — M4)_ — window-model marker with a cache-regime
-  request and rep count; in-body `workloadWindow`/`workloadFiles` primitives.
+- **`@workload`** / **`@workload(reps: N)`** — window-model marker (`reps`
+  clamps to ≥ 1; combining with `@benchmark` is a discovery-time error — the
+  models are exclusive). The in-body **`workloadWindow(dg)`** /
+  `workloadWindow(name, dg)` primitive measures only the closure (× reps) as
+  one window; without any call the whole body is the window. Outside a
+  workload measurement the closure runs exactly once, inertly. Unnamed
+  windows take the test name, then `#2`, `#3`; named ones `<test>/<name>`.
+  A cache-regime request field and the in-body `workloadFiles` primitive
+  land with the page-cache regime milestone _(target — M6)_.
 
 ## 4. Measurement protocol
 
@@ -143,13 +151,27 @@ Thread coverage is inherit-shaped: counters follow threads spawned after the
 source opens; pre-existing threads and short-lived children are blind spots
 (see [open-issues.md § O3](./open-issues.md)).
 
-For `@workload` _(target — M4)_: the driver phase model is `setup →
-regime-prep (M6) → snapshot-before all sources → body × reps →
-snapshot-after → residency-verify (M6) → assemble deltas`. The wall-clock
-decomposition reports `onCpuUser`/`onCpuKernel` (rusage), `offCpuRunqueue`
-(schedstat), `offCpuDisk` (PSI, M5), and a clamped `offCpuOther` residual —
-only runqueue and disk are true per-cause durations; lock/sleep time is never
-fabricated.
+For `@workload`: the driver phase model is `setup → regime-prep (target —
+M6) → snapshot-before all sources → body × reps → snapshot-after →
+residency-verify (target — M6) → assemble deltas`. Measurement is a
+**single pass** — sources are read cumulatively at the window edges
+(`GroupSnapshot`, no per-iteration bracket, no `RESET`), so a whole-body
+candidate window and in-body windows overlap freely and the body is never
+re-run for counting (it may be expensive or non-idempotent). Edge nesting,
+outer → inner: wall clock, wall source, syscalls, raw, tier-0, perf. A
+window across which a group's enabled time never advanced reads `nan`,
+never zeros. The wall-clock decomposition reports `onCpuUser`/`onCpuKernel`
+(rusage), `offCpuRunqueue` (schedstat), `offCpuDisk` (PSI — target — M5),
+and a clamped `offCpuOther` residual — only runqueue and disk are true
+per-cause durations; lock/sleep time is never fabricated, and every
+unattributable component is `nan` plus a note, with its time left in the
+residual. On Linux the decomposition is **thread-scoped** (`RUSAGE_THREAD`
+
+- `/proc/thread-self/schedstat` — the only scoping under which
+  `wall = onCpu + runqueue + other` is arithmetically meaningful); CPU burned
+  by other threads is disclosed via the process-wide reading. Elsewhere it
+  degrades to process scope (POSIX) or wall-only. The thread-coverage caveat
+  above applies to windows identically.
 
 ## 5. The metric catalog
 
@@ -275,6 +297,15 @@ prints one line per absent-but-requested capability, re-derived from the
 same reports. Workload-track sources (PSI, cgroup, cache regime) adopt the
 same report when they land — one absence vocabulary program-wide.
 
+The workload wall source (`WallSource`: rusage + schedstat) reports through
+the same vocabulary, appearing in the `--list-metrics` block as `wall`
+(inserted at render time — it has no counting pass, so it is deliberately
+not in `CounterGroups`' fixed bench bundle). One recorded vocabulary
+judgment: schedstat unreadability is **not** a `CapabilityAbsence` — the
+report cannot hold `counting` as both present (rusage) and absent
+(schedstat); the narrower fact surfaces via `status()`, one stderr
+disclosure per run, and a per-window note.
+
 ### 6.3 Degradation rules (normative)
 
 - **Absence is reported, never fatal.** An unavailable source yields omitted
@@ -383,12 +414,20 @@ iterations, samples, medianNs, deviationNs, minNs, maxNs, metrics, error}`.
   (absent = every metric exact), and a row that ran a counting pass carries
   its effective `countIterations` (absent = no pass ran) — the schema-2
   additions.
+- `windows` — present only when `@workload` tests ran (a windowless document
+  is byte-identical to the pre-window shape): one object per measured window
+  in measurement order — `{name, reps, wallNs, scope, onCpuUserNs,
+onCpuKernelNs, offCpuRunqueueNs, offCpuDiskNs, offCpuOtherNs}` (`null` =
+  unattributable, exactly the table's em dash) plus one nested totals object
+  per attached source (`perf`, `tier0`, `syscalls`, `raw`), an optional
+  `note`, and `error`/`skipped` mirroring the row shapes. Window values are
+  totals with their own field names, deliberately never the per-iteration
+  `metrics` catalog keys (the misrepresentation open-issue O7 guarded
+  against; resolved as its option A, the anticipated bump absorbed into the
+  never-released schema 2).
 - Number policy: `nan`/infinity → `null`; integral values below 2⁵³ print as
   integers; others to 6 significant digits. Output is byte-deterministic for
   committing.
-
-Schema evolution (`@workload` windows) is tracked in
-[open-issues.md](./open-issues.md) (O7).
 
 ## 9. Portability and privilege
 

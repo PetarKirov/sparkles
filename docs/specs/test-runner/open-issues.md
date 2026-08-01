@@ -105,21 +105,6 @@ lands, `Unit.symbol` stays a label and `Mode` stays the rate stand-in.
 **Leaning:** wait — no benchmark-side action until the quantities spec
 exists.
 
-## O7 — `@workload` rows in `--bench-json`
-
-**Where:** SPEC §8.3; PLAN M4.
-
-`WorkloadWindow` is deliberately not `BenchStats`, so window results do not
-fit the current `rows` shape (per-iteration timing fields would
-misrepresent a single window).
-
-**Options:** (A) a `windows` sibling array in the same document under a
-schema bump; (B) a distinct document (`--workload-json`); (C) force windows
-into `rows` with `iterations: 1` and null deviation.
-
-**Leaning:** (A) — one self-describing document per run; (C) is ruled out
-by the misrepresentation argument that motivated the separate type.
-
 ## O8 — Apple counter-model unknowns
 
 **Where:** SPEC §9; PLAN B3.

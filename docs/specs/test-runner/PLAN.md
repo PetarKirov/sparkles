@@ -189,6 +189,26 @@ _(backend-proposal §3; SPEC §6.3, §7.)_ Four capabilities, all probed:
 
 ## M4 — `@workload` window mode
 
+> **Shipped** (branch `feat/test-runner-workload`, six commits): the
+> `@workload`/`@workload(reps: N)` marker + `isWorkload` traits (combining
+> with `@benchmark` is a discovery-time error), cumulative `GroupSnapshot`
+> edges in `perf_group.d` (the gate/scale tail factored out and shared with
+> the counting pass, plus the window-only never-enabled → `nan` gate),
+> per-tier `snapshot`/`windowStats`/`enable`/`disable` (all four tiers now
+> satisfy `hasSnapshot`), and `workload.d`: `WallSource`
+> (**thread-scoped** on Linux — `RUSAGE_THREAD` as a local ABI enum +
+> `/proc/thread-self/schedstat`; cross-thread CPU disclosed from the
+> process-wide reading), pure `assembleDecomposition` (silent-clamp budget
+> = one scheduler tick — rusage's tick-sampled user/kernel split smears on
+> short windows), in-body `workloadWindow` via a TLS context, and the
+> single-pass `runWorkload` driver (whole-body candidate window; the body
+> is never re-run for counting). Renders as one `workloads` table;
+> `--list-metrics` gains a `wall` block; `--bench-json` gains the `windows`
+> sibling array — O7 resolved as option (A), the bump absorbed into the
+> never-released schema 2. Verified by the hardware honesty pair (spin →
+> on-CPU dominates; sleep → residual, never a fabricated cause) and a
+> perf-attached window-totals test on the dev box.
+
 _(SPEC §1, §3, §4.)_ New `@workload` marker + `isWorkload` trait;
 `WorkloadWindow` (deliberately **not** `BenchStats` — its per-iteration
 fields misrepresent a single window), `runWorkload`, in-body
@@ -197,8 +217,8 @@ honesty caveats (only runqueue + disk are true per-cause durations; PSI-io
 can overlap runqueue, so the residual clamps at 0 with a status note).
 Renders as its own table. Research amendments: sources report through B1's
 `CapabilityReport`; never assume 4 KiB pages / 64 B lines in window
-accounting (Apple Silicon: 16 KiB / 128 B). JSON serialization of windows is
-[open-issues § O7](./open-issues.md).
+accounting (Apple Silicon: 16 KiB / 128 B). JSON serialization of windows
+was open-issue O7 (resolved — see the shipped note).
 
 ## M5 — PSI stall integrals
 
