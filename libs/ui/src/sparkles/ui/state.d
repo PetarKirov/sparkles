@@ -554,10 +554,11 @@ struct ScrollState
     /// moves the thumb relative to where it was grabbed instead of snapping
     /// its leading edge under the pointer.
     ScrollState draggedTo(int trackPos, long content, long viewport,
-        int track, int grab = 0) const
+        int track, int grab = 0, int minExtent = 1) const
     {
         const limit = maxOffset(content, viewport);
-        const thumb = scrollbarThumb(content, viewport, offset, track);
+        const thumb = scrollbarThumb(content, viewport, offset, track,
+            minExtent);
         const span = track - thumb.extent;
         if (span <= 0 || limit == 0)
             return ScrollState(0);
@@ -571,16 +572,18 @@ struct ScrollState
     /// the thumb (a click on the handle must not move it); $(B on the
     /// track) it jumps the thumb's leading edge to the pointer (`grab` 0).
     ScrollState pressedAt(int trackPos, long content, long viewport,
-        int track, out int grab) const
+        int track, out int grab, int minExtent = 1) const
     {
-        const thumb = scrollbarThumb(content, viewport, offset, track);
+        const thumb = scrollbarThumb(content, viewport, offset, track,
+            minExtent);
         if (trackPos >= thumb.start && trackPos < thumb.start + thumb.extent)
         {
             grab = trackPos - thumb.start;
             return this;
         }
         grab = 0;
-        return draggedTo(trackPos, content, viewport, track);
+        return draggedTo(trackPos, content, viewport, track,
+            minExtent: minExtent);
     }
 }
 
@@ -679,23 +682,23 @@ struct ScrollbarState
     /// A press at `trackPos`: on the thumb it grabs in place, on the track
     /// it jumps the leading edge there; either way the grab begins.
     ScrollbarState pressed(int trackPos, long content, long viewport,
-        int track) const
+        int track, int minExtent = 1) const
     {
         int g;
         const next = ScrollState(offset)
-            .pressedAt(trackPos, content, viewport, track, g);
+            .pressedAt(trackPos, content, viewport, track, g, minExtent);
         return ScrollbarState(axis, next.offset, true, hovered, g);
     }
 
     /// A drag while grabbed: the thumb follows relative to the grab point,
     /// wherever the pointer strays. A no-op unless dragging.
     ScrollbarState dragged(int trackPos, long content, long viewport,
-        int track) const
+        int track, int minExtent = 1) const
     {
         if (!dragging)
             return this;
         const next = ScrollState(offset)
-            .draggedTo(trackPos, content, viewport, track, grab);
+            .draggedTo(trackPos, content, viewport, track, grab, minExtent);
         return ScrollbarState(axis, next.offset, true, hovered, grab);
     }
 
