@@ -250,6 +250,7 @@ silly's successor — same CLI, documented under
 --wasm              Extract @wasm tests, cross-compile to wasm32, run them
 --include-import P  With --better-c/--wasm: also compile module pattern P in
 --no-auto-include   With --better-c/--wasm: don't compile the tests' own modules in
+--require-toolchain With --better-c/--wasm: fail instead of skipping when tools are missing
 --ctfe-trace FILE   Evaluate @ctfe tests under LDC -ftime-trace; per-test cost
 --self-test         Also run the runner's own unittests
 ```
