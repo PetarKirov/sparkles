@@ -51,7 +51,7 @@ hue-side requirements referencing those areas live in
 | [Feature requirements](./feature-requirements.md)               | app-wide requirements common to **all** rendering modes: invocation & CLI, source acquisition, language detection, the highlight engine, themes, color depth, output-mode dispatch, the ANSI/HTML/previewer sinks, degradation, non-functional                                                                                                                                                           |
 | [GUI (`--gui`) requirements](./gui.md)                          | the raylib GPU window: window/font, the wrapped-line render model, the raw & markdown-preview views, navigation, scrollbar, live theme cycling, search/goto, every markdown construct, code blocks, mouse selection & clipboard (incl. ANSI-block selection, table grid selection — sub-cell / row / column / rectangular — and copy modes: ANSI raw/strip, table TSV/markdown), fullscreen, debug hooks |
 | [TUI requirements](./tui.md) _(full viewer shipped: T1–T4)_     | the full-screen **terminal** viewer — the GUI viewer painted in cells: scrolling, a cell scrollbar, SGR mouse, incremental search, wrapping, line numbers, the markdown preview, and drag-selection → OSC 52 copy (all shipped). A GUI→TUI parity map. Extends the shipped `PRV` previewer                                                                                                               |
-| [Android](./android.md) _(shipped v0: AND1–AND9)_               | the GUI sink as a **NativeActivity APK**: raylib `PLATFORM_ANDROID`, the nix-native dual-ABI build (no Gradle), fontconfig-free fonts, soname-dlopen'd grammars, the asset bundle, touch interaction (drag/fling, tap, long-press, pinch, toolbar), lifecycle, on-device goldens, and the honest desktop-parity checklist                                                                                |
+| [Android](./android.md) _(shipped v0: AND1–AND10)_              | the GUI sink as a **NativeActivity APK**: raylib `PLATFORM_ANDROID`, the nix-native dual-ABI build (no Gradle), fontconfig-free fonts, soname-dlopen'd grammars, the asset bundle, touch interaction (drag/fling, tap, long-press, pinch, toolbar), lifecycle, on-device goldens, and the honest desktop-parity checklist                                                                                |
 | [Content folding](./folding.md) _(planned)_                     | expand/collapse of code structures, markdown sections/lists, and **any tree-sitter CST node** — a cross-backend fold-range model + fold-state machine, elided from the wrapped-line render                                                                                                                                                                                                               |
 | [Tree / DAG view](./tree-view.md) _(planned)_                   | an interactive **tree and DAG** component (snacks.nvim-explorer-style): file explorer, tree-sitter inspector, file outline, git graph, dependency graph — a `sparkles:ui` widget across GUI/TUI/HTML                                                                                                                                                                                                     |
 | [Tab view](./tab-view.md) _(planned)_                           | a **tab view** component (tab bar + active-tab state machine) — open files as tabs, and VitePress-style code groups — a `sparkles:ui` widget across GUI/TUI/HTML                                                                                                                                                                                                                                         |
@@ -121,21 +121,25 @@ traced at the boundary — the requirement names the sparkles library and the
 concrete entry point `hue` calls; the library's own internals are specified in
 its own docs.
 
-| Source file                      | Primary spec + areas                                                                            |
-| -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `apps/hue/src/app.d`             | general — `CLI`, `SRC`, `LNG`, `ENG`, `THM`, `CLR`, `MOD`, `ANS`, `HTM`, `DEG`                  |
-| `apps/hue/src/source_set.d`      | general — `SRC4`–`SRC6`; [gallery](./gallery.md) — `GAL1`, `GAL8`                               |
-| `apps/hue/src/gallery.d`         | general — `HTM4`, `HTM6`–`HTM8`; [gallery](./gallery.md) — `GAL2`–`GAL4`, `GAL6`, `GAL7`        |
-| `apps/hue/src/previewer.d`       | general — `PRV`, `NFR`                                                                          |
-| `apps/hue/src/gui.d`             | GUI — `WIN`, `FNT`, `RND`, `VIW`, `NUM`, `NAV`, `SCB`, `THG`, `FND`, `COD`, `SEL`, `FSC`, `DBG` |
-| `apps/hue/src/gui_preview.d`     | GUI — `VIW`, `MDP` (the document model; rendering is the shared widget views)                   |
-| `apps/hue/src/viewer_model.d`    | GUI — `RND`, `WRP`, `NUM`, `FND` (the viewer's Whole; ui/migration `MIG9`)                      |
-| `apps/hue/src/gui_ansi.d`        | GUI — `MDP` (the ` ```ansi ` fence decoder)                                                     |
-| `apps/hue/src/gui_text.d`        | GUI — `WRP`, `FND`, `NUM` (pure metrics/search)                                                 |
-| `apps/hue/src/table_select.d`    | GUI — `TBL1`, `TBL2`, `TBL5` (presentation-free smart-drag + serializers)                       |
-| `apps/hue/src/tui.d`             | [TUI](./tui.md) — `TIN`, `TSF`, `TSB`, `TSL`, `MDP-T`; general — `PRV` (the shipped viewer)     |
-| `apps/hue/src/ansi_model.d`      | GUI — `MDP12`; general — `NFR3` (ghostty-free presentation types shared by both painters)       |
-| `apps/hue/src/gui_canvas.d`      | [ui/backends](../ui/backends.md) — `TGT6` (the raylib canvas adapter)                           |
-| `apps/hue/src/tui_canvas.d`      | [ui/backends](../ui/backends.md) — `TGT6` (the cell-grid canvas adapter)                        |
-| `apps/hue/src/twoslash_tui.d`    | [twoslash](./twoslash.md) — `TWM`/`TWO`/`TWH`; [gallery](./gallery.md) — `GNV1`, `GNV2`         |
-| `apps/hue/tools/capture-modes.d` | [ui/backends](../ui/backends.md) — `TGT10` (the cross-backend parity harness)                   |
+| Source file                        | Primary spec + areas                                                                                                             |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/hue/src/app.d`               | general — `CLI`, `SRC`, `LNG`, `ENG`, `THM`, `CLR`, `MOD`, `ANS`, `HTM`, `DEG`                                                   |
+| `apps/hue/src/source_set.d`        | general — `SRC4`–`SRC6`; [gallery](./gallery.md) — `GAL1`, `GAL8`                                                                |
+| `apps/hue/src/gallery.d`           | general — `HTM4`, `HTM6`–`HTM8`; [gallery](./gallery.md) — `GAL2`–`GAL4`, `GAL6`, `GAL7`                                         |
+| `apps/hue/src/previewer.d`         | general — `PRV`, `NFR`                                                                                                           |
+| `apps/hue/src/gui.d`               | GUI — `WIN`, `FNT`, `RND`, `VIW`, `NUM`, `NAV`, `SCB`, `THG`, `FND`, `COD`, `SEL`, `FSC`, `DBG`                                  |
+| `apps/hue/src/gui_preview.d`       | GUI — `VIW`, `MDP` (the document model; rendering is the shared widget views)                                                    |
+| `apps/hue/src/viewer_model.d`      | GUI — `RND`, `WRP`, `NUM`, `FND` (the viewer's Whole; ui/migration `MIG9`)                                                       |
+| `apps/hue/src/gui_ansi.d`          | GUI — `MDP` (the ` ```ansi ` fence decoder)                                                                                      |
+| `apps/hue/src/gui_text.d`          | GUI — `WRP`, `FND`, `NUM` (pure metrics/search)                                                                                  |
+| `apps/hue/src/table_select.d`      | GUI — `TBL1`, `TBL2`, `TBL5` (presentation-free smart-drag + serializers)                                                        |
+| `apps/hue/src/tui.d`               | [TUI](./tui.md) — `TIN`, `TSF`, `TSB`, `TSL`, `MDP-T`; general — `PRV` (the shipped viewer)                                      |
+| `apps/hue/src/ansi_model.d`        | GUI — `MDP12`; general — `NFR3` (ghostty-free presentation types shared by both painters)                                        |
+| `apps/hue/src/gui_canvas.d`        | [ui/backends](../ui/backends.md) — `TGT6` (the raylib canvas adapter)                                                            |
+| `apps/hue/src/tui_canvas.d`        | [ui/backends](../ui/backends.md) — `TGT6` (the cell-grid canvas adapter)                                                         |
+| `apps/hue/src/twoslash_tui.d`      | [twoslash](./twoslash.md) — `TWM`/`TWO`/`TWH`; [gallery](./gallery.md) — `GNV1`, `GNV2`                                          |
+| `apps/hue/src/android_glue.d`      | [Android](./android.md) — `AND2`, `AND4`, `AND9` (the NDK surface: logcat sink, asset extraction, debug env, clipboard entry)    |
+| `apps/hue/src/android_clipboard.d` | [Android](./android.md) — `AND6` (the JNI `ClipboardManager` bridge, over an ImportC'd `<jni.h>`)                                |
+| `apps/hue/src/android_paths.d`     | [Android](./android.md) — `AND2`, `AND9` (pure, host-tested: the extracted-asset layout, manifest-entry safety, `hue-debug.env`) |
+| `apps/hue/src/gui_touch.d`         | [Android](./android.md) — `AND6` (`TouchScroller`: tap / drag+fling / long-press / gesture cancel)                               |
+| `apps/hue/tools/capture-modes.d`   | [ui/backends](../ui/backends.md) — `TGT10` (the cross-backend parity harness)                                                    |

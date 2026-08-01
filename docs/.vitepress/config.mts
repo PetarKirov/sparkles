@@ -570,6 +570,10 @@ export default withMermaid(
                 { text: 'GUI (--gui)', link: '/specs/hue/gui' },
                 { text: 'TUI (planned)', link: '/specs/hue/tui' },
                 {
+                  text: 'Android (NativeActivity APK)',
+                  link: '/specs/hue/android',
+                },
+                {
                   text: 'Content folding (planned)',
                   link: '/specs/hue/folding',
                 },

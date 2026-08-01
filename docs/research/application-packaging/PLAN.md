@@ -257,7 +257,7 @@ Audit only locally observed behavior:
 - `apps/release` stages and preflight;
 - GitHub Release publication;
 - code.dlang.org registry notification;
-- `.#all` Linux/macOS Nix builds, Cachix push, and retention pins;
+- `.#all-desktop` Linux/macOS Nix builds, Cachix push, and retention pins;
 - available application packages and native dependencies;
 - current absence of Windows release artifacts, archives/installers, macOS `.app`/DMG,
   code signing/notarization, package-manager manifests, checksums/SBOM/provenance, and an

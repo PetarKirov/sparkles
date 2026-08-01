@@ -223,6 +223,14 @@ version="~>0.5.0"`).
 
 ## Pinning the release closure on Cachix
 
+> [!NOTE]
+> The Android closure (`.#all-android`) is deliberately **not** release-pinned.
+> It exists only on `x86_64-linux` — the NDK and SDK ship prebuilt for that
+> host — while the release matrix is `x86_64-linux` + `aarch64-darwin`, so
+> pinning it would need a per-system carve-out. CI still builds and pushes it
+> on every merge via the `nix-build-android` job, so it is cached; it is just
+> not retained against garbage collection the way a release closure is.
+
 Besides the registry ping, the `release` workflow builds `.#all-desktop` (the
 aggregate from `nix/packages/all.nix`: the full dev shell, every package, and
 every standalone example) on each supported system, pushes it to the Cachix
