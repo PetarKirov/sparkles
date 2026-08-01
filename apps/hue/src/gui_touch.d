@@ -120,6 +120,48 @@ struct TouchScroller
         wasDown_ = down;
         return f;
     }
+
+    /// Abandon the in-flight gesture without resolving it — the spelling for
+    /// "something else took the pointer" (a second finger landing: a pinch is
+    /// not a tap that happens to have two contacts).
+    ///
+    /// Feeding [update] a synthetic `down: false` does $(I not) do this: the
+    /// release branch cannot tell a real lift from a fake one, so it resolves
+    /// the gesture — firing a tap, or letting a fling tail keep running.
+    void cancel() @safe pure nothrow @nogc
+    {
+        wasDown_ = false;
+        dragging_ = false;
+        longFired_ = false;
+        holdMs_ = 0;
+        velocity_ = 0;
+    }
+}
+
+@("gui_touch.cancelResolvesNothing")
+@safe pure nothrow @nogc
+unittest
+{
+    // A press that a second finger interrupts must not become a tap — the
+    // bug a synthetic pointer-up caused, since `update` cannot distinguish it
+    // from a real release.
+    TouchScroller t;
+    t.update(true, 100, 100, 16);
+    t.cancel();
+    auto f = t.update(false, 100, 100, 16);
+    assert(!f.tap && !f.longPress && !f.dragging);
+    assert(f.scrollPx == 0);
+
+    // …and a fling in flight is stopped dead rather than coasting on through
+    // whatever took the pointer.
+    TouchScroller g;
+    g.update(true, 10, 400, 16);
+    foreach (i; 0 .. 4)
+        g.update(true, 10, 400 - 30 * (i + 1), 16);
+    g.update(false, 10, 280, 16);
+    assert(g.update(false, 10, 280, 16).scrollPx > 0); // coasting
+    g.cancel();
+    assert(g.update(false, 10, 280, 16).scrollPx == 0);
 }
 
 @("gui_touch.tapUnderSlop")
