@@ -23,6 +23,16 @@ paints with) and a sink receiving zero or more events.
 */
 struct RaylibEvents
 {
+    /**
+    The touch recogniser (`IXB8`). Inert where there is no touchscreen —
+    `GetTouchPointCount()` is 0, so the arm below never feeds it — which is
+    why this needs no `version (Android)`.
+
+    Its config is public so a host can scale `slopPx`/`cellH` to the rendered
+    text size; the recognition policy itself is `sparkles:input`'s.
+    */
+    GestureRecognizer gestures;
+
     private float lastX = -1, lastY = -1;
     private bool wasFocused = true;
     private bool wasInside = true;
@@ -30,6 +40,7 @@ struct RaylibEvents
     // (high-resolution wheels/trackpads report sub-step values raylib
     // would otherwise truncate to zero) — M14.
     private float wheelAccumX = 0, wheelAccumY = 0;
+    private PointF lastTouch;
 
     /**
     Synthesizes this frame's events into `sink`. Pointer positions are mapped
@@ -98,13 +109,59 @@ struct RaylibEvents
         lastY = mp.y;
 
         // -- wheel (web deltaY signs: up is negative) ----------------------
-        // Fractional deltas accumulate to whole steps (M14) — a slow
-        // trackpad scroll still moves, a fast flick loses nothing.
+        // Fractional deltas accumulate to whole NOTCHES (M14) — a slow
+        // trackpad scroll still moves, a fast flick loses nothing — and the
+        // notch→cells multiplication happens here, because this is the
+        // producer (`INP12`). Accumulating in notches rather than cells keeps
+        // the emitted step identical to what the consumers used to compute
+        // for themselves; scrolling by a fraction of a notch is a separate
+        // question from who owns the multiplier.
         const wheel = GetMouseWheelMoveV();
-        const dx = wheelSteps(wheelAccumX, -wheel.x);
-        const dy = wheelSteps(wheelAccumY, -wheel.y);
+        const dx = wheelSteps(wheelAccumX, -wheel.x) * linesPerNotch;
+        const dy = wheelSteps(wheelAccumY, -wheel.y) * linesPerNotch;
         if (dx != 0 || dy != 0)
             sink(Event(WheelEvent(dx: dx, dy: dy, pos: pos, mods: mods)));
+
+        // -- touch ---------------------------------------------------------
+        // raylib maps the first contact onto the mouse, which is an adapter
+        // idiom the app should never learn (IXR19). Feed the recogniser raw
+        // device-space samples and drain whatever it resolves: taps arrive as
+        // press/release, drags as wheel steps, long-press and pinch as
+        // gestures — all in the shared vocabulary.
+        {
+            const contacts = GetTouchPointCount();
+            if (contacts >= 2)
+            {
+                const p0 = GetTouchPosition(0);
+                const p1 = GetTouchPosition(1);
+                gestures.setContacts(cast(ubyte) contacts,
+                    PointF(p0.x, p0.y), PointF(p1.x, p1.y));
+            }
+            else if (contacts == 1)
+            {
+                const p0 = GetTouchPosition(0);
+                lastTouch = PointF(p0.x, p0.y);
+                gestures.setContacts(1, lastTouch, PointF());
+                gestures.pointer(0, true, lastTouch);
+            }
+            else
+            {
+                gestures.setContacts(0, PointF(), PointF());
+                gestures.pointer(0, false, lastTouch);
+            }
+
+            gestures.tick(GetFrameTime() * 1000);
+
+            // The recogniser works in device space (thresholds are physical);
+            // the adapter owns the conversion to cells (GST4). Gesture and tap
+            // positions carry the ANCHOR — a tap acts where it began.
+            const anchor = gestures.anchor();
+            const anchorCell = Point(
+                (cast(int) anchor.x - originX) / (cellW > 0 ? cellW : 1),
+                (cast(int) anchor.y - originY) / (cellH > 0 ? cellH : 1));
+            for (auto e = gestures.next(); !isNoEvent(e); e = gestures.next())
+                sink(withPosition(e, anchorCell, mods));
+        }
 
         // -- keyboard ------------------------------------------------------
         for (int cp = GetCharPressed(); cp != 0; cp = GetCharPressed())
@@ -140,6 +197,22 @@ struct RaylibEvents
             shift: IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
                 || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT));
 
+    // The recogniser emits positions as a placeholder; the adapter stamps the
+    // cell-space anchor and the live modifier state on the way out.
+    private static Event withPosition(Event e, Point at, Mods m) @safe pure nothrow
+        => e.match!(
+            (PointerEvent p) => Event(PointerEvent(
+                action: p.action, button: p.button, pos: at, mods: m)),
+            (WheelEvent w) => Event(WheelEvent(
+                dx: w.dx, dy: w.dy, pos: at, mods: m, precise: w.precise)),
+            (GestureEvent g) => Event(GestureEvent(
+                gesture: g.gesture, pos: at, scale: g.scale, mods: m)),
+            (ref other) => Event(other),
+        );
+
+    private static bool isNoEvent(in Event e) @safe pure nothrow @nogc
+        => e.match!((in NoEvent _) => true, _ => false);
+
     private static PointerButton heldButton() @system
     {
         if (IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT))
@@ -152,9 +225,16 @@ struct RaylibEvents
     }
 }
 
-/// Folds a (possibly fractional) wheel delta into `accum` and returns the
-/// whole steps now due, keeping the remainder — pure, so testable without
-/// a window (M14).
+/**
+Folds a (possibly fractional) wheel delta into `accum` and returns the whole
+steps now due, keeping the remainder — pure, so testable without a window
+(M14).
+
+The unit is $(B notches), not cells: `poll` multiplies the result by
+`linesPerNotch` before it reaches a `WheelEvent`, because the producer owns
+that multiplication (`INP12`). Anything reading this directly is one step
+short of a scroll distance.
+*/
 int wheelSteps(ref float accum, float delta) @safe pure nothrow @nogc
 {
     accum += delta;
@@ -179,6 +259,15 @@ unittest
     float b = 0;
     assert(wheelSteps(b, -0.6f) == 0);
     assert(wheelSteps(b, -0.6f) == -1);
+
+    // The unit is notches: one notch is `linesPerNotch` cells of scroll, and
+    // `poll` applies that factor. Pinned because the two conventions merged
+    // from opposite directions — M14 accumulates notches, INP12 moved the
+    // multiplier to the producer — and a consumer that multiplied again (or
+    // a producer that stopped) would silently scroll by the wrong distance.
+    float c = 0;
+    assert(wheelSteps(c, 1.0f) * linesPerNotch == linesPerNotch);
+    static assert(linesPerNotch > 1);
 }
 
 /// Maps raylib's named keys onto the shared `Key` vocabulary (printable input
@@ -201,6 +290,10 @@ Key namedKey(int rk) @safe pure nothrow @nogc
         case KEY_TAB: return Key.tab;
         case KEY_BACKSPACE: return Key.backspace;
         case KEY_ESCAPE: return Key.escape;
+        // Android's hardware/gesture keys. raylib records both and eats them
+        // from the OS, so an app that maps them owns the back gesture.
+        case KEY_BACK: return Key.back;
+        case KEY_MENU: return Key.menu;
         default:
             if (rk >= KEY_F1 && rk <= KEY_F12)
                 return cast(Key)(Key.f1 + (rk - KEY_F1));
@@ -219,5 +312,11 @@ unittest
         assert(namedKey(KEY_F1) == Key.f1);
         assert(namedKey(KEY_F12) == Key.f12);
         assert(namedKey(KEY_A) == Key.none); // printable: GetCharPressed's job
+        // The Android hardware keys. `back` is what `isDismiss` equates with
+        // Escape, so an app writes one dismiss binding for every target.
+        assert(namedKey(KEY_BACK) == Key.back);
+        assert(namedKey(KEY_MENU) == Key.menu);
+        assert(isDismiss(KeyEvent(namedKey(KEY_BACK))));
+        assert(isDismiss(KeyEvent(namedKey(KEY_ESCAPE))));
     }
 }
