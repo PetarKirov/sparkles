@@ -26,6 +26,10 @@ import core.stdc.stdarg : va_list; // for the TraceLogCallback bridge (NFR7)
 // "raylib" transitively, so it is present only in the `gui` build.
 import sparkles.raylib_text : TextStyle, FontSet, drawText;
 
+// The shared scroll-step convention: this file is a wheel PRODUCER, so it
+// applies the notch multiplier itself (INP12).
+import sparkles.input.events : linesPerNotch;
+
 // hue-specific viewport/search layout (raylib-free, so it stays testable).
 import gui_text : columnWidth, Match;
 
@@ -1119,7 +1123,10 @@ int runGui(
             const wheel = GetMouseWheelMove();
             if (wheel != 0)
             {
-                wheelAccum += wheel * 3;
+                // gui.d is the producer here (RaylibEvents is not yet wired),
+                // so the notch→cells multiplication belongs at this end —
+                // INP12. Consumers downstream scroll by whole rows as given.
+                wheelAccum += wheel * linesPerNotch;
                 const steps = cast(long) wheelAccum;
                 if (steps != 0)
                 {

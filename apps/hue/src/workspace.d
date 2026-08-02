@@ -23,7 +23,8 @@ import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.tui : CellStyle, Color, Grid, PosixEvents, Terminal,
     TerminalOptions;
 import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
-    match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
+    linesPerNotch, match, PointerAction, PointerButton, PointerEvent,
+    ResizeEvent, WheelEvent;
 import sparkles.ui.geometry : Point;
 import sparkles.ui.state : SplitState, wantedPointerShape;
 import sparkles.ui.style : Slot;
@@ -242,7 +243,7 @@ struct WorkspaceTui
             bool done;
             e.match!((in WheelEvent wv) {
                 if (treeVisible && wv.pos.x < tree.width)
-                    tree.scrollBy(3 * wv.dy);
+                    tree.scrollBy(wv.dy);
                 else
                     viewer.handle(e);
                 done = true;
@@ -848,14 +849,16 @@ unittest
     }
     assert(row(1)[w.viewer.originX .. $].canFind("int line00;"), row(1));
 
-    assert(w.handle(Event(WheelEvent(dy: 1, pos: Point(60, 5)))));
+    // `dy` is CELLS, not notches (INP12) — an injected event carries what the
+    // producer would have emitted, so one notch is `linesPerNotch` rows.
+    assert(w.handle(Event(WheelEvent(dy: linesPerNotch, pos: Point(60, 5)))));
     w.paint(g);
     assert(row(1)[w.viewer.originX .. $].canFind("int line03;"),
         "wheel over the document scrolled it despite tree focus: " ~ row(1));
     assert(w.treeFocused, "the wheel does not steal focus");
 
     // And back up.
-    assert(w.handle(Event(WheelEvent(dy: -1, pos: Point(60, 5)))));
+    assert(w.handle(Event(WheelEvent(dy: -linesPerNotch, pos: Point(60, 5)))));
     w.paint(g);
     assert(row(1)[w.viewer.originX .. $].canFind("int line00;"), row(1));
 }
