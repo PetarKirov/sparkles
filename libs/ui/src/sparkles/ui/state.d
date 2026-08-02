@@ -22,6 +22,8 @@ $(LIST
     * $(LREF Timeline) — transient effects as modes, not bare counters (`STM6`)
     * $(LREF FocusState) — keyboard focus + deterministic traversal (`STM7`)
     * $(LREF SplitState) — a draggable pane divider (`STM8`)
+    * $(LREF PressState) — press arms, release-over-the-same-target
+        activates (`STM10`)
 )
 */
 module sparkles.ui.state;
@@ -1275,6 +1277,93 @@ unittest
     f = f.previous(order); // wraps to the end
     assert(f.isFocused(9));
     assert(!FocusState.cleared.next(null).isFocused(7)); // empty order clears
+}
+
+// ── Press / activation (STM10) ───────────────────────────────────────────────
+
+/**
+A press in flight over an addressable target (`STM10`, `IXB9`): the
+press-arms / release-activates contract every button, toolbar segment and
+menu item shares.
+
+A press $(B arms) a target; a release $(B over the same target) activates it;
+a release anywhere else cancels. That third case is the whole reason this is a
+machine rather than a boolean — "pressed here, released elsewhere" must not
+fire, and it is the case an ad-hoc `if (clicked && inRect)` always forgets.
+
+Ids are $(REF HoverTarget, sparkles,ui,state) hit ids, so the armed target is
+addressed by the same identity the layout pass hands the hit test — a segment
+cannot be armed by one geometry and activated by another. `0` means "nothing",
+matching `hitId`'s own convention.
+
+$(LREF activated) is $(B transient): set by the release that fired it, cleared
+by the next press. A host reads it once per event and switches on it.
+*/
+struct PressState
+{
+    size_t armed;     /// the hit id holding the press (0 = nothing armed)
+    size_t activated; /// the hit id the last release fired (0 = none)
+
+@safe pure nothrow @nogc:
+
+    /// A press landed on `hitId` (0 = pressed on nothing, which disarms).
+    /// Any pending activation is consumed here, so it is visible for exactly
+    /// the span between a release and the next press.
+    PressState pressed(size_t hitId) const
+        => PressState(hitId, 0);
+
+    /**
+    A release landed on `hitId`. Activates iff it matches the armed target —
+    press and release on the same thing — and disarms either way.
+
+    Feeding a release with no press in flight is a no-op rather than an error,
+    so a host can route every release unconditionally.
+    */
+    PressState released(size_t hitId) const
+        => PressState(0, (armed != 0 && hitId == armed) ? armed : 0);
+
+    /// The press was taken away (the pointer left, a gesture was reclassified,
+    /// a modal opened): disarm without activating.
+    PressState cancelled() const
+        => PressState(0, 0);
+
+    /// `true` iff `id` is armed — the cue to paint a segment pressed.
+    bool isArmed(size_t id) const
+        => id != 0 && id == armed;
+}
+
+@("ui.state.press.armActivateCancel")
+@safe pure nothrow @nogc
+unittest
+{
+    const idle = PressState.init;
+    assert(idle.armed == 0 && idle.activated == 0);
+
+    // Press arms; nothing has fired yet.
+    const down = idle.pressed(3);
+    assert(down.isArmed(3) && !down.isArmed(4) && down.activated == 0);
+
+    // Release over the SAME target activates and disarms.
+    const fired = down.released(3);
+    assert(fired.activated == 3 && fired.armed == 0);
+
+    // Release ELSEWHERE cancels — the case an ad-hoc hit test forgets.
+    assert(down.released(4).activated == 0);
+    assert(down.released(0).activated == 0);
+
+    // An explicit cancel never fires.
+    assert(down.cancelled().activated == 0 && down.cancelled().armed == 0);
+
+    // A release with no press in flight is a no-op, so hosts can route every
+    // release unconditionally.
+    assert(idle.released(3).activated == 0);
+
+    // `activated` is transient: the next press consumes it.
+    assert(fired.pressed(5).activated == 0);
+
+    // Nothing is never armed, so a press on empty space cannot activate.
+    assert(!idle.pressed(0).isArmed(0));
+    assert(idle.pressed(0).released(0).activated == 0);
 }
 
 // ── Pane splitter (STM8) ─────────────────────────────────────────────────────
