@@ -289,7 +289,7 @@
           $out/docs/getting-started.md
         cp ${../../../docs/libs/base/how-to/prettyprint-values.md} \
           $out/docs/prettyprint-values.md
-        cp ${../../../apps/hue/src/gui_touch.d} $out/docs/gui_touch.d
+        cp ${../../../libs/input/src/sparkles/input/gesture.d} $out/docs/gesture.d
         cp ${../../../libs/twoslash/examples/fixtures/12-async.twoslash.json} \
           $out/docs/async-example.twoslash.json
       '';

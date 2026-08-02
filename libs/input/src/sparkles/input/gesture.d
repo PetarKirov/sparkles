@@ -376,10 +376,6 @@ private struct Drain
     }
 }
 
-version (unittest)
-private bool isNoEvent(in Event e) @safe pure nothrow @nogc
-    => e.match!((in NoEvent _) => true, _ => false);
-
 @("input.gesture.tapUnderSlopBecomesPressRelease")
 @safe pure nothrow @nogc
 unittest
@@ -520,4 +516,42 @@ unittest
     g.tick(16);
     d.run(g);
     assert(d.presses == 0 && d.releases == 0, "lifting one finger is not a tap");
+}
+
+@("input.gesture.pressStopsARunningFling")
+@safe pure nothrow @nogc
+unittest
+{
+    // Touching while content coasts must stop it dead (the `velocity_ = 0` in
+    // the press branch) — otherwise the fling fights the new gesture.
+    GestureRecognizer g;
+    g.cfg.cellH = 10;
+    Drain d;
+    g.pointer(0, true, PointF(10, 400));
+    g.tick(16);
+    foreach (i; 0 .. 4)
+    {
+        g.pointer(0, true, PointF(10, 400 - 30 * (i + 1)));
+        g.tick(16);
+        d.run(g);
+    }
+    g.pointer(0, false, PointF(10, 280));
+    g.tick(16);
+    d.run(g);
+    g.tick(16);
+    d.run(g);
+    const coasting = d.scrollRows;
+
+    g.pointer(0, true, PointF(10, 280)); // finger back down
+    g.tick(16);
+    d.run(g);
+    const atPress = d.scrollRows;
+    foreach (_; 0 .. 10) // hold still: no tail survives the press
+    {
+        g.pointer(0, true, PointF(10, 280));
+        g.tick(16);
+        d.run(g);
+    }
+    assert(d.scrollRows == atPress, "the fling outlived the press");
+    assert(coasting != 0, "the fixture never actually coasted");
 }
