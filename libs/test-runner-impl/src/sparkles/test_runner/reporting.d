@@ -748,7 +748,10 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
     const hasTier0 = rows.canFind!(r => !r.tier0.isNull);
     const hasSyscalls = rows.canFind!(r => !r.syscalls.isNull);
     const hasRaw = rows.canFind!(r => !r.raw.isNull);
-    const hasPsi = rows.canFind!(r => !r.psi.isNull);
+    // Value-gated, not presence-gated: a run whose io reads all failed
+    // after the open probe would otherwise render an all-em-dash column —
+    // exactly the "always-empty column is noise" rationale above.
+    const hasPsi = rows.canFind!(r => !r.psi.isNull && !r.psi.get.ioSomeNs.isNaN);
     const hasNote = rows.canFind!(r => r.wall.note.length > 0);
 
     // Named syscall / raw selector columns come from the shared open groups,
@@ -937,6 +940,7 @@ unittest
     assert(model.cells[0].canFind("instr"));
     assert(model.cells[0].canFind("note"));
     assert(!model.cells[0].canFind("maj-flt"), "no tier-0 row → no tier-0 columns");
+    assert(!model.cells[0].canFind("io-stall"), "no psi row → no io-stall column");
 
     const r1 = model.cells[1];
     assert(r1[0] == "ingest" && r1[1] == "2");
@@ -988,6 +992,57 @@ unittest
 
     const rendered = formatWorkloadTable([scaledWin], false);
     assert(rendered.canFind("workloads"), "the table carries its title");
+}
+
+@("reporting.buildWorkloadTable.ioStallColumn")
+@system
+unittest
+{
+    import std.algorithm.searching : countUntil;
+    import std.typecons : nullable;
+    import sparkles.test_runner.perf : PerfStats;
+    import sparkles.test_runner.workload : PsiStats;
+
+    WorkloadWindow withPsi;
+    withPsi.name = "io-y";
+    withPsi.reps = 1;
+    withPsi.wall.wallNs = 30_000_000;
+    withPsi.wall.onCpuUserNs = 5_000_000;
+    withPsi.wall.offCpuOtherNs = 25_000_000;
+    PsiStats p;
+    p.ioSomeNs = 21_900_000;
+    withPsi.psi = nullable(p);
+    PerfStats pf;
+    pf.iters = 1;
+    pf.instructions = 1e6;
+    pf.cycles = 2e6;
+    withPsi.perf = nullable(pf);
+
+    WorkloadWindow noPsi;
+    noPsi.name = "plain";
+    noPsi.reps = 1;
+    noPsi.wall.wallNs = 1_000_000;
+
+    const model = buildWorkloadTable([withPsi, noPsi], false);
+    const header = model.cells[0];
+    // Placement is the contract: after `other` (context, not a
+    // decomposition part), before the perf block.
+    assert(header.countUntil("io-stall") == header.countUntil("other") + 1);
+    assert(header.countUntil("io-stall") < header.countUntil("instr"));
+    assert(model.cells[1][header.countUntil("io-stall")] == "21.9ms");
+    assert(model.cells[2][header.countUntil("io-stall")] == "—",
+        "a psi-less row in a psi table reads an em dash");
+
+    // All-nan psi values (io reads failed after the probe) suppress the
+    // column entirely — never an all-em-dash column.
+    WorkloadWindow nanPsi;
+    nanPsi.name = "nan";
+    nanPsi.reps = 1;
+    nanPsi.wall.wallNs = 1;
+    nanPsi.psi = nullable(PsiStats.init);
+    import std.algorithm.searching : canFind;
+
+    assert(!buildWorkloadTable([nanPsi], false).cells[0].canFind("io-stall"));
 }
 
 /// Per-column visible content widths over a table's rows, header included

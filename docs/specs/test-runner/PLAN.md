@@ -244,9 +244,12 @@ was open-issue O7 (resolved — see the shipped note).
 
 _(SPEC §4.)_ `PsiSource` (snapshot/delta): parse the monotonic `total=<µs>`
 accumulator from `/proc/pressure/{io,memory,cpu}` (ignore the decaying
-averages); window delta = stall-time integral (quantitative); feeds
-`WallDecomposition.offCpuDisk`. Per-cgroup `*.pressure` reuses the parser
-under M8. `CONFIG_PSI=n` → absence via B1's vocabulary.
+averages); window delta = stall-time integral, reported as a
+$(B system-wide diagnostic) — the original "feeds
+`WallDecomposition.offCpuDisk`" target was retargeted to M8 by the SPEC §4
+recorded judgment (system scope cannot attribute to the measured thread).
+Per-cgroup `*.pressure` reuses the parser under M8. `CONFIG_PSI=n` →
+absence via B1's vocabulary.
 
 ## B3 — macOS floor
 
