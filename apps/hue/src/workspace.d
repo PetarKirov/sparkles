@@ -26,7 +26,7 @@ import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     linesPerNotch, match, PointerAction, PointerButton, PointerEvent,
     ResizeEvent, WheelEvent;
 import sparkles.ui.geometry : Point;
-import sparkles.ui.state : SplitState, wantedPointerShape;
+import sparkles.ui.state : CaptureState, SplitState, wantedPointerShape;
 import sparkles.ui.style : Slot;
 
 import ansi_model : BackgroundMode;
@@ -72,11 +72,18 @@ struct WorkspaceTui
     SplitState split = SplitState(32);
     private enum minTreeCols = 12;
 
-    // Pointer capture: the pane that took the press owns every drag until
-    // release, so a grab (a scrollbar thumb, a selection) never leaks into
-    // the neighbouring pane when the drag crosses the divider.
-    private bool pointerDown;
-    private bool pointerOnTree;
+    // Pointer capture (STM11): the pane that took the press owns every drag
+    // until release, so a grab (a scrollbar thumb, a selection) never leaks
+    // into the neighbouring pane when the drag crosses the divider.
+    //
+    // The machine holds WHICH pane owns it; this pane vocabulary is the only
+    // local part. The GUI's own capture is still the allow-list chain it
+    // always was — converting it needs `RaylibEvents` wired (IXB7), because
+    // the gates are spread across ~35 raw polls rather than one event stream.
+    private enum size_t capTree = 1, capViewer = 2;
+    private CaptureState capture;
+    // Where an UNcaptured pointer currently is; frozen while a drag owns it.
+    private size_t paneUnderPointer = capViewer;
 
     // Pointer shape (OSC 22): grab state first — an active divider or
     // scrollbar grab HOLDS its shape until release, wherever the pointer
@@ -329,16 +336,25 @@ struct WorkspaceTui
         bool toTree = treeFocused;
         Event ev = e;
         e.match!((in PointerEvent p) {
-            if (p.action == PointerAction.press || !pointerDown)
+            // Re-aim on a press, or whenever nothing owns the pointer; while
+            // a drag is captured the target is frozen, which is the rule.
+            if (p.action == PointerAction.press || capture.isFree)
             {
-                pointerOnTree = treeVisible && p.pos.x < tree.width;
-                pointerDown = p.action != PointerAction.release;
+                const onTree = treeVisible && p.pos.x < tree.width;
+                paneUnderPointer = onTree ? capTree : capViewer;
                 if (p.action == PointerAction.press)
-                    treeFocused = pointerOnTree;
+                {
+                    capture = capture.capturedBy(paneUnderPointer);
+                    treeFocused = onTree; // click-to-focus
+                }
             }
-            else if (p.action == PointerAction.release)
-                pointerDown = false;
-            toTree = pointerOnTree;
+            // Route BEFORE releasing: the release is part of the gesture and
+            // belongs to whoever owned it, not to whatever sits under the
+            // pointer when the button comes up.
+            toTree = (capture.isFree ? paneUnderPointer : capture.owner)
+                == capTree;
+            if (p.action == PointerAction.release)
+                capture = capture.released();
             if (!toTree && viewer.originX > 0)
             {
                 PointerEvent q = p;

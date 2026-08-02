@@ -24,6 +24,8 @@ $(LIST
     * $(LREF SplitState) — a draggable pane divider (`STM8`)
     * $(LREF PressState) — press arms, release-over-the-same-target
         activates (`STM10`)
+    * $(LREF CaptureState) — press owns the drag; one affordance holds the
+        pointer until release (`STM11`)
 )
 */
 module sparkles.ui.state;
@@ -1364,6 +1366,106 @@ unittest
     // Nothing is never armed, so a press on empty space cannot activate.
     assert(!idle.pressed(0).isArmed(0));
     assert(idle.pressed(0).released(0).activated == 0);
+}
+
+// ── Pointer capture (STM11) ──────────────────────────────────────────────────
+
+/**
+Which affordance owns the pointer for the duration of a drag (`STM11`,
+`IXB3`, closing `IXR6`).
+
+The rule is $(B press owns the drag): whatever the press landed on keeps every
+subsequent motion and the release, wherever the pointer strays — a scrollbar
+thumb dragged off its track, a divider dragged past a pane edge, a selection
+extended out of the window. Without it a drag silently changes owner mid-gesture
+whenever the pointer crosses another affordance.
+
+The two hosts had two different answers. The TUI recorded a press and a single
+"was it on the tree" bit; the GUI wrote an $(B allow-list) of negations —
+`!split.dragging && !sb.isDragging && !treeSb.dragging && …` — that every new
+affordance had to be added to, in every other affordance's condition. The
+Android toolbar became the fourth owner of one screen row and the list did not
+grow with it, which is `IXR27`'s overlap defect seen from the other side.
+
+$(LREF available) is the whole interface an affordance needs: $(I may I act on
+this press?) — true when the pointer is free or already mine. A new affordance
+takes an id and participates; nothing else changes, which is exactly what an
+allow-list cannot offer.
+
+Ids are the caller's — hit ids, or any stable non-zero token per affordance.
+`0` means "nobody", matching `hitId`'s convention.
+*/
+struct CaptureState
+{
+    size_t owner; /// the affordance holding the pointer (0 = free)
+
+@safe pure nothrow @nogc:
+
+    /**
+    A press landed on `id`, which now owns the pointer until release.
+
+    Capture does $(B not) transfer: a press while another affordance holds the
+    pointer is ignored, because a press cannot occur without an intervening
+    release in a well-formed stream, and honouring one would reintroduce the
+    mid-drag owner change this exists to prevent.
+    */
+    CaptureState capturedBy(size_t id) const
+        => owner == 0 ? CaptureState(id) : this;
+
+    /// The pointer was released: ownership ends.
+    CaptureState released() const
+        => CaptureState(0);
+
+    /// `true` iff nobody holds the pointer.
+    bool isFree() const => owner == 0;
+
+    /// `true` iff `id` holds the pointer.
+    bool ownedBy(size_t id) const => id != 0 && owner == id;
+
+    /**
+    $(I May `id` act on this pointer?) — free, or already its own.
+
+    This replaces the negation chain: an affordance asks about itself instead
+    of enumerating everything that might be dragging.
+    */
+    bool available(size_t id) const => isFree || ownedBy(id);
+}
+
+@("ui.state.capture.pressOwnsTheDrag")
+@safe pure nothrow @nogc
+unittest
+{
+    enum divider = 1, scrollbar = 2, selection = 3;
+
+    // Free: every affordance may act.
+    const free = CaptureState.init;
+    assert(free.isFree);
+    assert(free.available(divider) && free.available(scrollbar));
+
+    // A press captures. The owner may act; nobody else may — this is the one
+    // assertion the GUI's allow-list was hand-maintaining.
+    const held = free.capturedBy(divider);
+    assert(held.ownedBy(divider) && held.available(divider));
+    assert(!held.available(scrollbar) && !held.available(selection));
+
+    // Capture does not transfer mid-drag: a stray press cannot steal the
+    // pointer from the affordance that owns it.
+    assert(held.capturedBy(scrollbar).ownedBy(divider));
+
+    // Release frees it for anyone.
+    const done = held.released();
+    assert(done.isFree && done.available(scrollbar));
+
+    // `0` owns nothing and is never available as an owner, so an affordance
+    // that forgot to take an id cannot accidentally capture.
+    assert(!held.ownedBy(0));
+    assert(free.capturedBy(0).isFree);
+
+    // A NEW affordance needs no edit anywhere else: it is available exactly
+    // when the pointer is free, purely by asking.
+    enum newlyAdded = 99;
+    assert(free.available(newlyAdded));
+    assert(!held.available(newlyAdded));
 }
 
 // ── Pane splitter (STM8) ─────────────────────────────────────────────────────
