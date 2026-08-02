@@ -71,6 +71,7 @@ string captureTuiFrameHtml(
     auto app = TwoslashTui(&tw, theme);
     app.cache = &cache;
     app.events = events;
+    app.viewCols = cols - padCols; // the room a `^?` line has (`SIG2`)
     app.rebuildView();
     app.selIdx = selIdx;
 
@@ -198,12 +199,16 @@ private struct TwoslashTui
                 selectable ~= d.node;
     }
 
+    /// The cells the document view has, or 0 for unbounded — a `^?` query
+    /// signature breaks inside it rather than past the right edge.
+    int viewCols;
+
     /// Rebuilds the document tree + its derived geometry (per payload/theme;
     /// call after `events`/`cache` are set). Token rects come from the
     /// identity channel, so the pointer hit-test needs no per-frame capture.
     void rebuildView() @system
     {
-        tree = viewTwoslashDocument(tw, events, &theme, pageFg, cache);
+        tree = viewTwoslashDocument(tw, events, &theme, pageFg, cache, viewCols);
         frames = layout(tree);
         ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
         targetRects = new Rect[](selectable.length);

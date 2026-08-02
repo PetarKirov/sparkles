@@ -239,7 +239,7 @@ struct ViewerModel
             // A twoslash document: the whole-document widget view (code lines
             // as resolved spans + fused decorations + interleaved blocks).
             tree = viewTwoslashDocument(tw, events, thisCurrent(), pageFg,
-                cache);
+                cache, widthCols);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
                 defaultTwoslashPalette(schemeForBackground(pageBg)),
