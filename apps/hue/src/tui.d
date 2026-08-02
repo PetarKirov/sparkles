@@ -22,6 +22,7 @@ import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : NodeType, TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslashDocument;
+import sparkles.twoslash.signature_layout : ExpandedRegions;
 
 import sparkles.tui : Cell, CellStyle, Color, Grid, PosixEvents, Terminal,
     TerminalOptions, TextAttr, UnderlineStyle;
@@ -132,6 +133,9 @@ struct PreviewTui
     // `p` cycling) and the selected one (-1 = none; click toggles).
     private size_t[] hoverNodes;
     private int hoverSel = -1;
+    // Which collapsed runs of the focused popup's signature are open. Per
+    // popup: moving to another node asks a fresh question.
+    private ExpandedRegions hoverExpanded;
 
     // ── the model's vocabulary, forwarded (IXB5) ─────────────────────────────
     // The old field names keep working for the methods below and every host
@@ -448,6 +452,25 @@ struct PreviewTui
     // The selected hover token's popup (twoslash documents), composited over
     // the pane below the token — the shared viewHoverPopup chrome. The token
     // rect comes from the identity channel.
+    /// Open every collapsed run of the focused popup, or close them all if
+    /// they are already open. Answers whether there was a popup to act on.
+    private bool toggleHoverRegions() @safe
+    {
+        if (hoverSel < 0 || hoverSel >= cast(int) hoverNodes.length)
+            return false;
+        const ni = hoverNodes[hoverSel];
+        const abbrevs = tw.nodes[ni].signature.abbrevs.length;
+        if (abbrevs == 0)
+            return false;
+        bool anyClosed;
+        foreach (r; 0 .. abbrevs)
+            if (!hoverExpanded.get(r, false))
+                anyClosed = true;
+        foreach (r; 0 .. abbrevs)
+            hoverExpanded[r] = anyClosed;
+        return true;
+    }
+
     private void paintHoverPopup(ref Grid g) @system
     {
         if (hoverSel < 0 || hoverSel >= cast(int) hoverNodes.length)
@@ -474,7 +497,8 @@ struct PreviewTui
         const pal = defaultTwoslashPalette(schemeForBackground(pageBg));
         const avail = width - rs[0].x - 1;
         auto tree = viewHoverPopup(tw, hoverNodes[hoverSel],
-            HoverViewOptions(maxWidth: effectivePopupWidth(pal, avail), sigSpans: sig));
+            HoverViewOptions(maxWidth: effectivePopupWidth(pal, avail), sigSpans: sig,
+                expanded: hoverExpanded, nodeKey: hoverNodes[hoverSel] + 1));
         // A lazy hover span (live types: underlined, type not yet resolved)
         // views as an empty tree — nothing to paint until the answer lands.
         if (!tree.nodes.length)
@@ -621,6 +645,13 @@ struct PreviewTui
         const rows = bodyRows();
         switch (e.key)
         {
+            case Key.enter:
+                // Open (or re-close) the signature's collapsed runs. The TUI
+                // has no pointer to name one, so the popup opens as a whole;
+                // a per-region cursor is the extension point.
+                if (toggleHoverRegions())
+                    break;
+                goto default;
             case Key.up:       top -= 1; clampTop(); break;
             case Key.down:     top += 1; clampTop(); break;
             case Key.pageUp:   top -= rows; clampTop(); break;
@@ -656,9 +687,18 @@ struct PreviewTui
                 switch (e.ch)
                 {
                     case 'q': return false;
+                    case ' ':
+                        if (toggleHoverRegions())
+                            break;
+                        top += rows; // otherwise the usual page-down
+                        clampTop();
+                        break;
                     case 'p': // cycle the twoslash hover popups
                         if (hoverNodes.length)
+                        {
                             hoverSel = (hoverSel + 1) % cast(int) hoverNodes.length;
+                            hoverExpanded = null;
+                        }
                         break;
                     case 'j': top += 1; clampTop(); break;
                     case 'k': top -= 1; clampTop(); break;
@@ -782,6 +822,7 @@ struct PreviewTui
                         {
                             hoverSel = hoverSel == cast(int) i
                                 ? -1 : cast(int) i;
+                            hoverExpanded = null;
                             return true;
                         }
                 if (hoverSel >= 0)

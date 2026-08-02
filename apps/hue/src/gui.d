@@ -62,7 +62,8 @@ import sparkles.base.term_color : mix;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
-import sparkles.twoslash.render_widgets : viewHoverPopup;
+import sparkles.twoslash.render_widgets : abbrevRegion, viewHoverPopup;
+import sparkles.twoslash.signature_layout : ExpandedRegions;
 
 // The shared visual language: the twoslash palette is the single source for the
 // error/warn/tag/highlight colors this backend used to hand-copy as literals, and
@@ -73,10 +74,10 @@ import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : layout;
-import sparkles.ui.state : CaptureState, hoverTargets, HoverState,
-    PressState, ScrollAxis,
-    ScrollbarState, scrollbarThumb, selectionRects, sourceOffsetAt,
-    wantedPointerShape, SplitState, Timeline;
+import sparkles.ui.state : CaptureState, hoverTargets, HoverState, keyAt,
+    keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
+    scrollbarThumb, selectionRects, sourceOffsetAt, wantedPointerShape,
+    SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : drawScrollbar, RaylibCanvas, ScrollbarAnim,
@@ -618,6 +619,12 @@ int runGui(
     size_t hotNode = 0;
     Rectangle hotPopup;
     bool havePopup = false;
+    // Which collapsed runs of the hot popup's signature the reader opened, and
+    // where they landed so a click can name one. Per popup, not persistent:
+    // pointing at another token asks a fresh question.
+    ExpandedRegions expandedRegions;
+    KeyTarget[] popupKeys;
+    size_t popupNode = size_t.max;
     Timeline fade;
     int forceHover = -1; // HUE_GUI_HOVER=<n>: force the Nth popup (goldens)
     try
@@ -1797,13 +1804,32 @@ int runGui(
             else if (clickPressed()
                 && !overSb && !overTree)
                 treeFocused = false;
+            // A click on a collapsed `\u2026` in the open popup opens that one run.
+            // The popup's geometry is last frame's, which is what the reader
+            // aimed at; keys are cell-relative to the box.
+            bool popupClicked;
+            if (havePopup && popupKeys.length && clickPressed()
+                && mp.x >= hotPopup.x && mp.x <= hotPopup.x + hotPopup.width
+                && mp.y >= hotPopup.y && mp.y <= hotPopup.y + hotPopup.height)
+            {
+                popupClicked = true; // never a selection, hit or miss
+                const k = keyAt(popupKeys,
+                    Point(cast(int)((mp.x - hotPopup.x) / cellW),
+                        cast(int)((mp.y - hotPopup.y) / cellH)));
+                if (k != 0)
+                {
+                    const r = abbrevRegion(k);
+                    expandedRegions[r] = !expandedRegions.get(r, false);
+                }
+            }
             const shiftMod = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
             const altMod = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
             // The five-term negation chain this replaces was the clearest
             // instance of the allow-list defect: every new draggable had to be
-            // added here, and to every other affordance's condition.
+            // added here, and to every other affordance's condition. A popup
+            // click is not a draggable — it consumes the press outright.
             if (selectStartPressed() && !overSb && !overTree && !copyClicked
-                && capture.available(capSelection))
+                && !popupClicked && capture.available(capSelection))
             {
                 const h = hitAt(mp.x, mp.y);
                 selecting = h.ok;
@@ -2087,11 +2113,19 @@ int runGui(
                     // in cells — the popup is capped to it and, failing that,
                     // slid left inside it.
                     const availCells = (screenW - cast(int) rightPad - hx) / cellW;
+                    // A different token is a different question: drop what the
+                    // last popup had opened.
+                    if (popupNode != hotNode)
+                    {
+                        expandedRegions = null;
+                        popupNode = hotNode;
+                    }
                     hotPopup = drawPopup(fonts, buf, vm.tw, hotNode - 1,
                         cast(float) hx, cast(float)(hy + cellH),
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
-                        vm.pageFg, vm.pageBg, availCells);
+                        vm.pageFg, vm.pageBg, availCells,
+                        expandedRegions, popupKeys);
                     // Zero width ⇒ a lazy node drew no popup (nothing to keep
                     // the pointer inside yet).
                     havePopup = hotPopup.width > 0;
@@ -2312,7 +2346,8 @@ private Color alpha(RgbColor c, ubyte a) pure nothrow @nogc @trusted
 private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     in TwoslashReturn tw, size_t nodeIndex, float x, float y, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
-    RgbColor pageFg, RgbColor pageBg, int availCells) @system
+    RgbColor pageFg, RgbColor pageBg, int availCells,
+    ExpandedRegions expanded, out KeyTarget[] keys) @system
 {
     import sparkles.twoslash.render_widgets : clampOrigin, effectivePopupWidth,
         HoverViewOptions, signatureSpans;
@@ -2323,7 +2358,8 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
         (() @trusted => &theme)(), pageFg,
         withoutQuickinfoPrefix(tw.nodes[nodeIndex].text));
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry,
-        HoverViewOptions(maxWidth: effectivePopupWidth(pal, availCells), sigSpans: sig));
+        HoverViewOptions(maxWidth: effectivePopupWidth(pal, availCells),
+            sigSpans: sig, expanded: expanded, nodeKey: nodeIndex + 1));
     // A lazy hover span (live types: the underline is up, the type has not
     // arrived yet) views as an EMPTY tree — there is nothing to lay out, and
     // the zero rect tells the caller there is no popup to keep the pointer in.
@@ -2343,6 +2379,10 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
 
     auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, px, y);
     paint(canvas, ops);
+
+    // Where each collapsible run landed, in cells relative to the popup — the
+    // caller turns a click into the region under it.
+    keys = keyTargets(tree, frames);
 
     // The popup's on-screen rect (px), for the caller's pointer hysteresis —
     // the drawn rect, not the anchor, or the pointer leaves a shifted popup

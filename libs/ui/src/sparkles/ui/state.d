@@ -83,6 +83,61 @@ HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
     return targets;
 }
 
+/// A keyed element and where it landed — `hoverTargets` for `Widget.key`
+/// rather than `Widget.hitId`.
+///
+/// The two answer different questions. `hitId` says "which logical thing is
+/// the pointer over", and several widgets share one; `key` names a single
+/// element so its own state — a disclosure, a scroll offset — can be
+/// addressed. A twoslash popup uses both at once: one `hitId` for the popup's
+/// pointer hysteresis, and a `key` per collapsed region so a click expands the
+/// one under the cursor.
+struct KeyTarget
+{
+    Rect rect;
+    size_t key;
+}
+
+/// ditto
+KeyTarget[] keyTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
+{
+    KeyTarget[] targets;
+
+    void walk(uint idx, in Rect clip)
+    {
+        const node = tree.nodes[idx];
+        if (node.visibility != Visibility.visible)
+            return;
+        const rect = frames[idx].rect;
+        if (node.key != 0)
+        {
+            const visible = rect.intersection(clip);
+            if (!visible.empty)
+                targets ~= KeyTarget(visible, node.key);
+        }
+        // Clipped exactly as the display list scissors, so an element scrolled
+        // out of a viewport can no more be clicked than painted.
+        const childClip = childClipOf(node, rect, clip);
+        foreach (ci; node.children)
+            walk(ci, childClip);
+    }
+
+    walk(tree.root, unclipped());
+    return targets;
+}
+
+/// The topmost keyed element at `p`, or 0 for none. Later targets win: a child
+/// paints over its parent, so it should also take the click.
+size_t keyAt(in KeyTarget[] targets, Point p) pure nothrow @nogc
+{
+    size_t hit;
+    foreach (t; targets)
+        if (t.rect.contains(p))
+            hit = t.key;
+    return hit;
+}
+
+
 /// Tracks which target is currently under the pointer. Backend-agnostic: the GUI
 /// feeds it `GetMousePosition`, the TUI feeds it terminal mouse reports.
 struct HoverState
@@ -142,6 +197,34 @@ unittest
     // Pointer leaves the viewport ⇒ nothing hot.
     assert(h.update(PointerEvent(action: PointerAction.leave, pos: Point(3, 1)), targets));
     assert(h.hot == 0);
+}
+
+@("ui.state.keyTargets.addressesElementsNotLogicalThings")
+@safe unittest
+{
+    // `hitId` groups; `key` singles out. A row of markers sharing one hitId
+    // must still be individually addressable, or a click cannot say *which*
+    // one it meant.
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    const a = b.add(Widget(kind: WidgetKind.text, text: "aa", hitId: 7, key: 101));
+    const c = b.add(Widget(kind: WidgetKind.text, text: "bbbb", hitId: 7, key: 202));
+    const row = b.add(Widget(kind: WidgetKind.row, children: [a, c], hitId: 7));
+    auto tree = b.finish(row);
+    auto frames = layout(tree);
+
+    const targets = keyTargets(tree, frames);
+    assert(targets.length == 2, "one target per keyed element");
+
+    assert(keyAt(targets, Point(0, 0)) == 101);
+    assert(keyAt(targets, Point(3, 0)) == 202);
+    assert(keyAt(targets, Point(99, 0)) == 0, "off the end names nothing");
+
+    // The unkeyed container contributes nothing, even though it is hit-testable.
+    foreach (t; targets)
+        assert(t.key != 0);
 }
 
 @("ui.state.hoverTargets.pipelineRoundTrip")
