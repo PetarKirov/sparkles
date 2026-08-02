@@ -59,11 +59,28 @@ Every window's wall time is split into:
 | `runq`    | `/proc/thread-self/schedstat` | runnable but waiting for a CPU             |
 | `other`   | residual (clamped at 0)       | everything else off-CPU: locks, sleeps, IO |
 
-The decomposition is deliberately honest: only runqueue wait (and, once the
-PSI stall integral lands, disk stall) are true per-cause durations.
-Everything else lands in `other` — the runner never fabricates a cause. A
-component the host cannot attribute (schedstat unreadable, non-Linux) renders
-an em dash, its time stays in `other`, and a note says so.
+The decomposition is deliberately honest: only runqueue wait is a true
+per-cause duration today. Everything else — locks, sleeps, disk — lands in
+`other`; the runner never fabricates a cause. A component the host cannot
+attribute (schedstat unreadable, non-Linux) renders an em dash, its time
+stays in `other`, and a note says so. Disk attribution arrives with the
+cgroup milestone (M8), which scopes the pressure files to the workload.
+
+## The `io-stall` column (PSI)
+
+On kernels with pressure-stall information (`CONFIG_PSI`), each window also
+reports the **system-wide** io stall integral that accumulated concurrently
+with it — the window delta of `/proc/pressure/io`'s monotonic `some`
+`total`. It renders as an `io-stall` column placed _after_ `other`: the
+placement is the claim — this is **context, not a part of the
+decomposition's sum**. The whole system's stalls are in it, including other
+processes': a pure CPU spin on a busy box can show tens of milliseconds of
+io-stall it never waited on. Use it to tell a noisy-neighbor residual from
+your own blocking, not to assign blame. The full delta set (io/memory/cpu,
+`some` and `full`) lands in `--bench-json`'s per-window
+`psi: { scope: "system", … }` object; a PSI-less kernel omits the column
+and the object, and `--list-metrics` reports the reasoned absence under
+the `psi` backend.
 
 Two scoping facts worth knowing:
 

@@ -222,6 +222,26 @@ was open-issue O7 (resolved — see the shipped note).
 
 ## M5 — PSI stall integrals
 
+> **Shipped** (branch `feat/test-runner-psi`, four commits) — with one
+> user-approved retarget recorded in SPEC §4: the original "feeds
+> `WallDecomposition.offCpuDisk`" predates M4's thread-scoping decision
+> and is unsound — `/proc/pressure` is system-wide, so any attribution
+> (raw or capped by the thread's off-CPU time) reports other processes'
+> stalls as the workload's and deterministically fails M4's shipped
+> sleep-honesty test on a host with background IO (the dev box idles at
+> ~80 % io `some` pressure; a pure CPU spin's 30 ms window shows ~22 ms
+> of concurrent system io stall). M5 therefore ships the integrals as
+> **diagnostics**: `psi.d` (`parsePsiFile` over the monotonic
+> `total=<µs>` accumulators, averages ignored; `PsiSource`
+> snapshot-shaped like `WallSource`, absence as a reasoned
+> `CapabilityAbsence`), window deltas as `WorkloadWindow.psi`
+> (subtracted in long µs before the ns conversion — the absolutes near
+> 2⁵³ as ns on long-uptime hosts), the `io-stall` table column placed
+> after `other` (context, not a decomposition part), and the JSON `psi`
+> object with `scope: "system"`. `offCpuDisk` stays nan and moves to
+> **M8**, whose cgroup-scoped `*.pressure` (identical file shape) reuses
+> `parsePsiFile` verbatim and makes attribution real.
+
 _(SPEC §4.)_ `PsiSource` (snapshot/delta): parse the monotonic `total=<µs>`
 accumulator from `/proc/pressure/{io,memory,cpu}` (ignore the decaying
 averages); window delta = stall-time integral (quantitative); feeds
@@ -272,7 +292,13 @@ counters; never cache node counts across configuration changes.
 
 `CgroupV2{tryCreate, moveSelfIn, setMemoryMax, readStat, destroy}` +
 `CgroupStat` (workingset_refault, file, ioR/Wbytes, cpuUsageUs,
-memPressureTotalUs). Two uses: clean per-window accounting, and
+memPressureTotalUs). **Inherits `offCpuDisk` from M5** (SPEC §4 recorded
+judgment): the per-cgroup `io.pressure`/`memory.pressure` files have the
+same shape as `/proc/pressure` — `psi.d`'s `parsePsiFile` reuses verbatim
+— and a cgroup holding only the workload process makes the stall integral
+attributable, so the decomposition's disk slot finally fills here (the
+JSON `psi.scope` becomes `"cgroup"`). Two uses: clean per-window
+accounting, and
 `memoryMaxSweep(caps, body)` → a performance-vs-cache-size curve rendered as
 sibling rows. Permission reality: root or systemd user delegation
 (`systemd-run --user --scope -p Delegate=yes`); anything less →
