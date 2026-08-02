@@ -252,6 +252,17 @@ struct GitStatusCache
 
 @system:
 
+    /// Installs `m` as the current result and marks the cache FRESH, so
+    /// `ensureFresh` won't kick an async refresh for a TTL — the seeding
+    /// seam deterministic tests need (a hand-seeded map must not race a
+    /// late-landing worker under load).
+    void seed(GitStatusMap m)
+    {
+        map = m;
+        last = MonoTime.currTime;
+        haveLast = true;
+    }
+
     /// True while a refresh is in flight (the host may idle-tick on it).
     bool refreshing() const pure nothrow @nogc => inFlight !is null;
 
