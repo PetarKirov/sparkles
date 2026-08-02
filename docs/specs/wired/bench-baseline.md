@@ -7,7 +7,11 @@ replaced it (SPEC §11), and — since the harness moved onto
 validates the runner's measurements against the retired hand-rolled harness.
 Numbers from [`libs/wired/bench/runtime`](../../../libs/wired/bench/runtime/README.md);
 the canonical snapshot is
-[`results/2026-07-11-ryzen9-7940hx-x86-64-v4-runner-inline.json`](../../../libs/wired/bench/runtime/results/2026-07-11-ryzen9-7940hx-x86-64-v4-runner-inline.json)._
+[`results/2026-08-03-ryzen9-7940hx-x86-64-v4-rebaseline.json`](../../../libs/wired/bench/runtime/results/2026-08-03-ryzen9-7940hx-x86-64-v4-rebaseline.json),
+re-baselined on current `main`. The runner-validation sections below still cite
+the [2026-07-11 snapshot](../../../libs/wired/bench/runtime/results/2026-07-11-ryzen9-7940hx-x86-64-v4-runner-inline.json)
+and its B0 predecessor, which are the artifacts that comparison was made
+against._
 
 ## Environment
 
@@ -209,23 +213,45 @@ performs more work per byte than yyjson's single-visit string machine.
 ## The scalar exit gate (M15)
 
 The engine's own iteration-1 exit gate is wired-native parse **and** decode
-within ±10 % of yyjson. On this snapshot:
+within ±10 % of yyjson. Re-baselined on current `main`
+(`results/2026-08-03-…-rebaseline.json`, 1 500 ms budget, x86-64-v4):
 
 | corpus (parse, MB/s) | wired-native | yyjson | ±10 % gate |    at |
 | -------------------- | -----------: | -----: | ---------: | ----: |
-| twitter              |        3 196 |  4 013 |      3 612 | 0.80× |
-| citm_catalog         |        4 113 |  3 899 |      3 509 | 1.05× |
-| canada               |          999 |  1 357 |      1 221 | 0.74× |
-| github_events        |        3 819 |  4 530 |      4 077 | 0.84× |
+| twitter              |        3 142 |  3 664 |      3 298 | 0.86× |
+| citm_catalog         |        4 026 |  3 868 |      3 481 | 1.04× |
+| canada               |          936 |  1 324 |      1 192 | 0.71× |
+| github_events        |        3 671 |  4 296 |      3 866 | 0.85× |
 
-Typed decode (twitter): wired-native 2 614 vs yyjson 3 324 (0.79×).
+Typed decode (twitter): wired-native 2 543 vs yyjson 3 371 (0.75×).
 `wired-native` **clears the gate on citm** (structure-heavy — the arena's
-threaded-parent container build shines) and sits at 0.74–0.84× elsewhere.
-Consistent with the pre-rebase standing: **iteration 1 (scalar) has
-plateaued** at ~8 ins/B with the field's best IPC; the remaining gap is work
-volume, which is iteration 2's (SIMD) target. These numbers match the
-pre-rebase executable baseline within noise once codegen parity is restored,
-confirming the rebase changed the harness, not the engine.
+threaded-parent container build shines) and sits at 0.71–0.86 × elsewhere.
+The standing is unchanged from the previous snapshot within run-to-run noise,
+so the engine did not drift while `main` moved.
+
+### What closing the gap actually costs
+
+Throughput is `IPC ÷ instructions-per-byte`, and wired already wins the IPC
+term outright — so the deficit is entirely work volume:
+
+| op / corpus         | ratio | wired IPC | yyjson IPC | IPC× | wired ins/B | yyjson ins/B | ins/B needed |  cut |
+| ------------------- | ----: | --------: | ---------: | ---: | ----------: | -----------: | -----------: | ---: |
+| parse/canada        | 0.71× |      4.47 |       3.87 | 1.15 |       23.30 |        14.25 |        16.79 | 28 % |
+| parse/citm_catalog  | 1.04× |      5.08 |       4.09 | 1.24 |        6.21 |         5.13 |         6.50 |    — |
+| parse/github_events | 0.85× |      4.65 |       3.48 | 1.34 |        6.90 |         4.45 |         6.06 | 12 % |
+| parse/twitter       | 0.86× |      5.02 |       3.49 | 1.44 |        8.12 |         4.64 |         6.81 | 16 % |
+| decode/twitter      | 0.75× |      4.51 |       3.39 | 1.33 |        8.93 |         5.06 |         6.89 | 23 % |
+
+("ins/B needed" is the per-byte instruction budget that reaches 0.98 × yyjson
+at today's IPC; "cut" is the reduction required from the current figure.)
+
+wired retires **1.5–1.8× yyjson's instructions per byte** and claws most of it
+back through IPC. A ≤2 % target therefore means removing **12–16 %** of the
+work per byte on the string/structure-bound corpora, and **23–28 %** on
+`canada` (float-bound) and typed decode — the two lanes that were already the
+weakest. Whether that is reachable without vectorization is the open question
+of iteration 1; the number-parsing and string-copy lanes hold nearly all of
+the residue, so they are where any scalar round has to pay for itself.
 
 ## Reproducing
 
