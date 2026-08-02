@@ -80,6 +80,78 @@ uint eightDigits(ulong w)
     return cast(uint)((lo + hi) >> 32);
 }
 
+/// The number of leading ASCII digits in `w` (0–8) — the partial-run
+/// companion to $(LREF allDigits8), for a digit run that ends inside the
+/// word. Both badness tests keep their bits inside their own byte (the
+/// low-nibble test cannot carry, since a nibble plus 6 stays under 0x16),
+/// so the first non-digit is just the lowest set bit's byte index.
+uint digitRun8(ulong w)
+{
+    pragma(inline, true);
+    import core.bitop : bsf;
+
+    enum ulong hi = 0xF0F0_F0F0_F0F0_F0F0;
+    enum ulong lo = 0x0F0F_0F0F_0F0F_0F0F;
+    // High nibble must be 3; low nibble must not exceed 9.
+    const badHi = (w & hi) ^ 0x3030_3030_3030_3030;
+    const badLo = ((w & lo) + 0x0606_0606_0606_0606) & 0x1010_1010_1010_1010;
+    const bad = badHi | badLo;
+    return bad == 0 ? 8 : cast(uint)(bsf(bad) >> 3);
+}
+
+/// `w` with byte positions `n..8` replaced by `'0'`, so a run of `n < 8`
+/// digits can go through $(LREF eightDigits) unchanged. The result reads
+/// as the `n` digits followed by `8 - n` zeros — i.e. the run's value
+/// scaled by `10 ^^ (8 - n)`; callers cancel that by counting the padding
+/// as consumed digits in the decimal exponent.
+ulong padDigits8(ulong w, uint n)
+in (n < 8)
+{
+    pragma(inline, true);
+    const keep = (1UL << (n * 8)) - 1;
+    return (w & keep) | (0x3030_3030_3030_3030 & ~keep);
+}
+
+@("scan.digitRun8.partialRuns")
+@safe pure nothrow @nogc
+unittest
+{
+    static ulong word(in char[8] s)
+    {
+        ulong w = 0;
+        foreach_reverse (c; s)
+            w = w << 8 | c;
+        return w;
+    }
+
+    assert(digitRun8(word("12345678")) == 8);
+    assert(digitRun8(word("1234567,")) == 7);
+    assert(digitRun8(word("12,45678")) == 2);
+    assert(digitRun8(word(",1234567")) == 0);
+    assert(digitRun8(word("1234567\0")) == 7); // the pool's zero padding
+    // Neighbours of the digit range, and a high byte (no cross-byte carry).
+    assert(digitRun8(word("12/45678")) == 2 && digitRun8(word("12:45678")) == 2);
+    assert(digitRun8(word("12\xFF5678")) == 2);
+}
+
+@("scan.padDigits8.scalesByPowerOfTen")
+@safe pure nothrow @nogc
+unittest
+{
+    static ulong word(in char[8] s)
+    {
+        ulong w = 0;
+        foreach_reverse (c; s)
+            w = w << 8 | c;
+        return w;
+    }
+
+    // Seven digits padded to eight read as the run followed by one zero.
+    assert(eightDigits(padDigits8(word("1234567,"), 7)) == 12_345_670);
+    assert(eightDigits(padDigits8(word("12,45678"), 2)) == 12_000_000);
+    assert(eightDigits(padDigits8(word(",1234567"), 0)) == 0);
+}
+
 @("scan.eightDigits.swarConversion")
 @safe pure nothrow @nogc
 unittest
