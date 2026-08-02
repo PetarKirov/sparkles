@@ -29,7 +29,8 @@ import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
 
 // The shared scroll-step convention: this file is a wheel PRODUCER, so it
 // applies the notch multiplier itself (INP12).
-import sparkles.input.events : linesPerNotch;
+import sparkles.input.events : Key, KeyEvent, linesPerNotch, Mods;
+import keymap : Command, commandFor, InputMode, KeyContext;
 import sparkles.input.capability : InputCapabilities, mousePointer,
     touchPointer;
 
@@ -80,7 +81,7 @@ import sparkles.ui.state : CaptureState, hoverTargets, HoverState, keyAt,
     SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
-import sparkles.ui_raylib : drawScrollbar, RaylibCanvas, ScrollbarAnim,
+import sparkles.ui_raylib : drawScrollbar, namedKey, RaylibCanvas, ScrollbarAnim,
     scrollbarLayout, toRaylibCursor;
 
 // Live D types (`PRJ12`-`PRJ16`): the `twoslash-extract --serve` oracle beside
@@ -587,6 +588,9 @@ int runGui(
     ScrollbarState docSb;
     ScrollbarState treeVSb;
     ScrollbarAnim sbAnim, treeSbAnim, treeHAnim, docHAnim;
+
+    // Reused across frames so the per-frame drain does not allocate.
+    KeyEvent[] keyBuf;
 
     // Pointer capture (STM11, closing IXR6's GUI half). Every draggable
     // affordance takes an id and asks `capture.available(id)` — "free, or
@@ -1187,66 +1191,106 @@ int runGui(
         }
         else
         {
-            // Normal mode: scroll, theme cycling, font sizing, match nav, and the
-            // keys that enter the input modes.
-
-            // 'e' toggles the explorer pane (XPL2); focus follows visibility.
-            if (pressed(KeyboardKey.KEY_E))
-                toggleExplorer();
-
+            // Normal mode. The ~45 `IsKeyPressed` sites this replaced are now
+            // one tested table (`keymap.commandFor`) plus one dispatch — and
+            // the dispatch is a `final switch`, so the compiler proves every
+            // command has an arm. Each arm's body is the original body,
+            // unchanged; what moved is the DECISION, which is the part that
+            // was untestable.
+            // Set exactly where the original did — the tree arms below read
+            // it through `clamp`, and they only fire with the tree focused.
             if (treeFocused && treeVisible)
-            {
-                // The explorer pane's keys: row navigation + open/close.
                 tree.height = visibleRows;
-                if (pressed(KeyboardKey.KEY_J) || pressed(KeyboardKey.KEY_DOWN))
+
+            // A pending `z` claims the next key — the same condition the old
+            // block computed inline, now an input to the keymap instead of a
+            // guard scattered across the sites it affected.
+            const foldSeq = !treeFocused && foldSeqFrames > 0;
+
+            const kctx = KeyContext(
+                mode: InputMode.normal,
+                treeFocused: treeFocused,
+                treeVisible: treeVisible,
+                foldArmed: foldSeq,
+                hasMatches: vm.matches.length > 0,
+                hasDocSet: set !is null && !set.empty && loadDoc !is null,
+                showPreview: vm.showPreview,
+            );
+
+            // The armed fold sequence expires on a frame clock, as before; a
+            // recognised fold key clears it early by zeroing the counter.
+            if (foldSeq)
+                --foldSeqFrames;
+
+            foreach (kev; drainKeys(keyBuf))
+            {
+                const kc = commandFor(kev, kctx);
+                final switch (kc.cmd)
                 {
+                case Command.none:
+                    break;
+
+                case Command.toggleFullscreen:
+                    break; // handled before the mode branches, with the window
+
+                case Command.dismiss:
+                    // Android's Back runs its chain before the mode branches,
+                    // alongside the window handling — a second arm here would
+                    // fire it twice, because `IsKeyPressed` reads per-frame
+                    // state while `GetKeyPressed` drains a queue and both see
+                    // the same press.
+                    break;
+
+                case Command.inputBackspace:
+                case Command.inputAccept:
+                case Command.inputCancel:
+                    break; // unreachable in normal mode
+
+                // ── explorer pane ────────────────────────────────────────
+                case Command.treeDown:
                     ++tree.sel;
                     tree.clamp();
-                }
-                if (pressed(KeyboardKey.KEY_K) || pressed(KeyboardKey.KEY_UP))
-                {
+                    break;
+                case Command.treeUp:
                     --tree.sel;
                     tree.clamp();
-                }
-                if (pressed(KeyboardKey.KEY_HOME))
-                {
+                    break;
+                case Command.treeHome:
                     tree.sel = 0;
                     tree.clamp();
-                }
-                if (pressed(KeyboardKey.KEY_END))
-                {
+                    break;
+                case Command.treeEnd:
                     tree.sel = cast(long) tree.rows.length - 1;
                     tree.clamp();
-                }
-                if (IsKeyPressed(KeyboardKey.KEY_ENTER) || pressed(KeyboardKey.KEY_L))
+                    break;
+                case Command.treeActivate:
                     activateTree();
-                const treeShift = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
-                    || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
-                if (pressed(KeyboardKey.KEY_R))
-                {
-                    // r = manual refresh (XPF4); Shift-R = re-root to the
-                    // selected item (XPF3).
-                    if (treeShift)
-                        tree.rerootSel();
-                    else
-                        tree.refreshNow();
-                }
-                if (treeShift && pressed(KeyboardKey.KEY_I))
+                    break;
+                case Command.treeRefresh:
+                    tree.refreshNow(); // XPF4
+                    break;
+                case Command.treeReroot:
+                    tree.rerootSel(); // XPF3
+                    break;
+                case Command.treeToggleIgnored:
                     tree.toggleIgnored(); // XPF2
-                if (pressed(KeyboardKey.KEY_U))
+                    break;
+                case Command.treeParent:
                     tree.rerootParent(); // XPF3
-                // Next/prev git change (XPF1) — the pane owns the brackets
-                // while focused.
-                if (pressed(KeyboardKey.KEY_RIGHT_BRACKET))
-                    tree.jumpChange(1);
-                if (pressed(KeyboardKey.KEY_LEFT_BRACKET))
-                    tree.jumpChange(-1);
-                if (pressed(KeyboardKey.KEY_C))
+                    break;
+                case Command.treeNextChange:
+                    tree.jumpChange(1); // XPF1
+                    break;
+                case Command.treePrevChange:
+                    tree.jumpChange(-1); // XPF1
+                    break;
+                case Command.treeCloseAll:
                     tree.closeAll(); // XPF3
-                if (treeShift && pressed(KeyboardKey.KEY_H))
+                    break;
+                case Command.treeToggleHidden:
                     tree.toggleHidden(); // XPF2
-                else if (pressed(KeyboardKey.KEY_H))
-                {
+                    break;
+                case Command.treeCollapseOrUp:
                     // Close the selected dir, or jump to the parent row.
                     if (tree.sel < cast(long) tree.rows.length)
                     {
@@ -1269,29 +1313,148 @@ int runGui(
                             tree.clamp();
                         }
                     }
+                    break;
+                case Command.treeFilter:
+                    tree.filterStart();
+                    break;
+
+                // ── viewer ───────────────────────────────────────────────
+                case Command.viewDown:
+                    ++vm.top;
+                    break;
+                case Command.viewUp:
+                    --vm.top;
+                    break;
+                case Command.viewHome:
+                    vm.top = 0;
+                    break;
+                case Command.viewEnd:
+                    vm.top = maxTop;
+                    break;
+                case Command.viewPageDown:
+                    vm.top += visibleRows;
+                    break;
+                case Command.viewPageUp:
+                    vm.top -= visibleRows;
+                    break;
+
+                // ── shared, normal mode ──────────────────────────────────
+                case Command.toggleExplorer:
+                    toggleExplorer(); // XPL2
+                    break;
+                case Command.themeNext:
+                    applyTheme(vm.themeIdx + 1 == themes.length ? 0 : vm.themeIdx + 1);
+                    break;
+                case Command.themePrev:
+                    applyTheme(vm.themeIdx == 0 ? themes.length - 1 : vm.themeIdx - 1);
+                    break;
+                case Command.fontBigger:
+                    bumpFontSize(2);
+                    break;
+                case Command.fontSmaller:
+                    bumpFontSize(-2);
+                    break;
+                case Command.matchNext:
+                    jumpToMatch(vm.curMatch + 1, visibleRows);
+                    break;
+                case Command.matchPrev:
+                    jumpToMatch(vm.curMatch + vm.matches.length - 1, visibleRows);
+                    break;
+                case Command.setPrev:
+                    if (set.move(-1))
+                        loadSelected();
+                    break;
+                case Command.setNext:
+                    if (set.move(1))
+                        loadSelected();
+                    break;
+                case Command.setIndex:
+                    treeVisible = true;
+                    treeFocused = true;
+                    vm.widthCols = -1;
+                    relayout();
+                    break;
+                case Command.toggleView:
+                    toggleView();
+                    break;
+                case Command.copySelection:
+                    copySelection();
+                    break;
+                case Command.toggleLineNumbers:
+                    lineNumbers = !lineNumbers;
+                    vm.widthCols = -1; // gutter width changed → reflow
+                    relayout();
+                    break;
+                case Command.toggleCodeLineNumbers:
+                    codeLineNumbers = !codeLineNumbers;
+                    vm.codeLineNumbers = codeLineNumbers;
+                    vm.widthCols = -1;
+                    relayout();
+                    break;
+                case Command.toggleAnsiCopy:
+                    ansiStrip = !ansiStrip;
+                    copyModeMsg = ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
+                    toast = Timeline.triggered(toastCfg);
+                    break;
+                case Command.toggleTableCopy:
+                    tableFmt = tableFmt == TableCopyFormat.tsv
+                        ? TableCopyFormat.markdown : TableCopyFormat.tsv;
+                    copyModeMsg = tableFmt == TableCopyFormat.tsv
+                        ? "table-copy: tsv" : "table-copy: markdown";
+                    toast = Timeline.triggered(toastCfg);
+                    break;
+                case Command.startSearch:
+                    mode = Mode.search;
+                    query.clear();
+                    vm.matches = null;
+                    break;
+                case Command.startGoto:
+                    mode = Mode.gotoLine;
+                    query.clear();
+                    break;
+                case Command.foldArm:
+                    foldSeqFrames = 60;
+                    break;
+
+                // ── the armed fold sequence (FLD5) ───────────────────────
+                case Command.foldToggle:
+                    foldAtCursor(ViewerModel.FoldOp.toggle);
+                    foldSeqFrames = 0;
+                    break;
+                case Command.foldClose:
+                    foldAtCursor(ViewerModel.FoldOp.close);
+                    foldSeqFrames = 0;
+                    break;
+                case Command.foldOpen:
+                    foldAtCursor(ViewerModel.FoldOp.open);
+                    foldSeqFrames = 0;
+                    break;
+                case Command.foldOpenAll:
+                    vm.setAllFolds(false);
+                    foldSeqFrames = 0;
+                    break;
+                case Command.foldCloseAll:
+                    vm.setAllFolds(true);
+                    foldSeqFrames = 0;
+                    break;
+                case Command.foldLevel:
+                    vm.foldToLevel(kc.arg); // z1–z9, vim's foldlevel
+                    foldSeqFrames = 0;
+                    break;
                 }
             }
-            else
-            {
-                // Scroll: wheel, ↑/↓ (one line), j/k, PageUp/Down, Home/End.
-                if (pressed(KeyboardKey.KEY_J) || pressed(KeyboardKey.KEY_DOWN))
-                    ++vm.top;
-                if (pressed(KeyboardKey.KEY_K) || pressed(KeyboardKey.KEY_UP))
-                    --vm.top;
-                if (pressed(KeyboardKey.KEY_HOME))
-                    vm.top = 0;
-                if (pressed(KeyboardKey.KEY_END))
-                    vm.top = maxTop;
-            }
+
+            // ── not keyboard, so not the keymap's business ───────────────
+
             // The wheel scrolls the pane under the cursor (tree or document).
             // High-resolution wheels deliver FRACTIONAL deltas; accumulate to
             // whole rows so gentle scrolling is never truncated to nothing.
             const wheel = GetMouseWheelMove();
             if (wheel != 0)
             {
-                // gui.d is the producer here (RaylibEvents is not yet wired),
-                // so the notch→cells multiplication belongs at this end —
-                // INP12. Consumers downstream scroll by whole rows as given.
+                // gui.d is the producer here (RaylibEvents is not yet wired
+                // for pointer input), so the notch→cells multiplication
+                // belongs at this end — INP12.
                 wheelAccum += wheel * linesPerNotch;
                 const steps = cast(long) wheelAccum;
                 if (steps != 0)
@@ -1303,153 +1466,16 @@ int runGui(
                         vm.top -= steps;
                 }
             }
-            if (pressed(KeyboardKey.KEY_PAGE_DOWN))
-                vm.top += visibleRows;
-            if (pressed(KeyboardKey.KEY_PAGE_UP))
-                vm.top -= visibleRows;
 
-            // Live theme cycling (← previous, → next, wrapping).
-            if (pressed(KeyboardKey.KEY_RIGHT))
-                applyTheme(vm.themeIdx + 1 == themes.length ? 0 : vm.themeIdx + 1);
-            if (pressed(KeyboardKey.KEY_LEFT))
-                applyTheme(vm.themeIdx == 0 ? themes.length - 1 : vm.themeIdx - 1);
-
-            // Font sizing: Ctrl-'=' / Ctrl-'-' (reload faces + re-measure). A
-            // discrete keypress, so reflow immediately (the cell size — and thus
-            // the column count — changed) rather than waiting out the resize debounce.
-            const ctrl = IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL)
-                || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL);
-            if (ctrl && pressed(KeyboardKey.KEY_EQUAL))
-                bumpFontSize(2);
-            else if (ctrl && pressed(KeyboardKey.KEY_MINUS))
-                bumpFontSize(-2);
-
-            // Match navigation: n next, Shift-n previous.
-            if (vm.matches.length && pressed(KeyboardKey.KEY_N))
-            {
-                const shift = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
-                    || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
-                jumpToMatch(shift ? vm.curMatch + vm.matches.length - 1 : vm.curMatch + 1, visibleRows);
-            }
-
-            // `[` / `]` (and the mouse back/forward buttons) walk the document
-            // set; `i` returns to the index view (`GNV1`/`GAL5`).
+            // The mouse back/forward buttons walk the document set regardless
+            // of which pane has focus — the keyboard's `[`/`]` are focus
+            // dependent and go through the keymap above.
             if (set !is null && !set.empty && loadDoc !is null)
             {
-                // With the tree focused the brackets belong to the pane
-                // (next/prev git change); the mouse back/forward buttons
-                // navigate the set regardless of focus.
-                const back = (!treeFocused
-                        && IsKeyPressed(KeyboardKey.KEY_LEFT_BRACKET))
-                    || IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_BACK);
-                const fwd = (!treeFocused
-                        && IsKeyPressed(KeyboardKey.KEY_RIGHT_BRACKET))
-                    || IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_FORWARD);
+                const back = IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_BACK);
+                const fwd = IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_FORWARD);
                 if ((back || fwd) && set.move(back ? -1 : 1))
                     loadSelected();
-                if (IsKeyPressed(KeyboardKey.KEY_I))
-                {
-                    treeVisible = true;
-                    treeFocused = true;
-                    vm.widthCols = -1;
-                    relayout();
-                }
-            }
-
-            // Tab toggles the decorated view ↔ raw highlighted source.
-            if (IsKeyPressed(KeyboardKey.KEY_TAB))
-                toggleView();
-
-            // 'l' toggles the file line-number gutter (changes the wrap width).
-            if (!treeFocused && pressed(KeyboardKey.KEY_L))
-            {
-                lineNumbers = !lineNumbers;
-                vm.widthCols = -1; // gutter width changed → reflow
-                relayout();
-            }
-
-            // A pending fold sequence claims the next key (see below).
-            const foldSeq = !treeFocused && foldSeqFrames > 0;
-
-            // Ctrl-C copies the current selection to the clipboard; plain 'c'
-            // toggles the in-panel code-block line numbers.
-            if (ctrl && IsKeyPressed(KeyboardKey.KEY_C))
-                copySelection();
-            else if (!ctrl && !treeFocused && !foldSeq
-                && pressed(KeyboardKey.KEY_C))
-            {
-                codeLineNumbers = !codeLineNumbers;
-                vm.codeLineNumbers = codeLineNumbers;
-                vm.widthCols = -1;
-                relayout();
-            }
-
-            // Copy-mode toggles (SEL7/TBL2): 'y' ANSI raw↔strip, 't' table
-            // TSV↔markdown. They only change how a copy renders — no relayout.
-            if (pressed(KeyboardKey.KEY_Y))
-            {
-                ansiStrip = !ansiStrip;
-                copyModeMsg = ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
-                toast = Timeline.triggered(toastCfg);
-            }
-            // The FLD5 fold family over the row's source identity (no-ops
-            // in views without foldable spans): 'z' arms the sequence; then
-            // a/z toggle, c close, o open, Shift-R open-all, Shift-M
-            // fold-all. The armed state expires after ~1 s.
-            if (foldSeq)
-            {
-                --foldSeqFrames;
-                bool consumed = true;
-                if (pressed(KeyboardKey.KEY_A) || pressed(KeyboardKey.KEY_Z))
-                    foldAtCursor(ViewerModel.FoldOp.toggle);
-                else if (pressed(KeyboardKey.KEY_C))
-                    foldAtCursor(ViewerModel.FoldOp.close);
-                else if (pressed(KeyboardKey.KEY_O))
-                    foldAtCursor(ViewerModel.FoldOp.open);
-                else if (pressed(KeyboardKey.KEY_R))
-                    vm.setAllFolds(false);
-                else if (pressed(KeyboardKey.KEY_M))
-                    vm.setAllFolds(true);
-                else
-                {
-                    consumed = false;
-                    // z1–z9: fold to nesting level (vim's foldlevel).
-                    foreach (n; 0 .. 9)
-                        if (pressed(KeyboardKey.KEY_ONE + n))
-                        {
-                            vm.foldToLevel(n + 1);
-                            consumed = true;
-                            break;
-                        }
-                }
-                if (consumed)
-                    foldSeqFrames = 0;
-            }
-            else if (!treeFocused && pressed(KeyboardKey.KEY_Z))
-                foldSeqFrames = 60;
-            if (pressed(KeyboardKey.KEY_T))
-            {
-                tableFmt = tableFmt == TableCopyFormat.tsv
-                    ? TableCopyFormat.markdown : TableCopyFormat.tsv;
-                copyModeMsg = tableFmt == TableCopyFormat.tsv
-                    ? "table-copy: tsv" : "table-copy: markdown";
-                toast = Timeline.triggered(toastCfg);
-            }
-
-            // Enter an input mode: '/' filters the tree pane when focused,
-            // else searches (raw view only); 'g' goto-line.
-            if (treeFocused && IsKeyPressed(KeyboardKey.KEY_SLASH))
-                tree.filterStart();
-            else if (!treeFocused && !vm.showPreview && IsKeyPressed(KeyboardKey.KEY_SLASH))
-            {
-                mode = Mode.search;
-                query.clear();
-                vm.matches = null;
-            }
-            else if (!treeFocused && IsKeyPressed(KeyboardKey.KEY_G))
-            {
-                mode = Mode.gotoLine;
-                query.clear();
             }
         }
 
@@ -2411,9 +2437,62 @@ private size_t maxNameCols(scope const SourceEntry[] entries) @safe pure nothrow
     return w;
 }
 
-/// `IsKeyPressed` plus auto-repeat while held, so PageDown/j/k etc. repeat.
-private bool pressed(int key) @system
-    => IsKeyPressed(key) || IsKeyPressedRepeat(key);
+/**
+This frame's key events, in the shared `sparkles:input` vocabulary.
+
+The interim seam for `IXB7`: hue consumes `sparkles:input` KEYS here while its
+pointer and touch input still poll raylib directly. Swapping this for
+`RaylibEvents.poll` wholesale has to happen together with the pointer move,
+because that type also owns a `GestureRecognizer` which would otherwise run
+alongside hue's and recognise every Android gesture twice.
+
+The raylib→`Key` table is `sparkles:ui_raylib`'s `namedKey`, so the mapping
+still lives in one place; only the queue drain is local.
+*/
+private KeyEvent[] drainKeys(ref KeyEvent[] buf) @system
+{
+    buf.length = 0;
+    const m = Mods(
+        ctrl: IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL)
+            || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL),
+        alt: IsKeyDown(KeyboardKey.KEY_LEFT_ALT)
+            || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT),
+        shift: IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
+            || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT));
+
+    // Printable input, including the OS auto-repeat raylib delivers natively
+    // through this queue.
+    for (int cp = GetCharPressed(); cp != 0; cp = GetCharPressed())
+        buf ~= KeyEvent(Key.char_, cast(dchar) cp, m);
+
+    for (int k = GetKeyPressed(); k != 0; k = GetKeyPressed())
+    {
+        const key = namedKey(k);
+        if (key != Key.none)
+            buf ~= KeyEvent(key, 0, m);
+        else if (m.ctrl && k >= 32 && k < 127)
+            // A Ctrl chord produces NO character, so the physical key is the
+            // only signal there is — `GetCharPressed` stays silent and the
+            // binding would simply vanish. raylib's letter codes are ASCII
+            // capitals; lower them so the keymap sees `ctrl+c`, not `ctrl+C`.
+            buf ~= KeyEvent(Key.char_,
+                cast(dchar)(k >= 'A' && k <= 'Z' ? k + ('a' - 'A') : k), m);
+    }
+
+    // Named keys repeat only through this call (chars repeat above), so held
+    // navigation keeps firing — what `pressed()` used to provide.
+    static immutable int[] repeatable = [
+        KeyboardKey.KEY_UP, KeyboardKey.KEY_DOWN,
+        KeyboardKey.KEY_LEFT, KeyboardKey.KEY_RIGHT,
+        KeyboardKey.KEY_PAGE_UP, KeyboardKey.KEY_PAGE_DOWN,
+        KeyboardKey.KEY_HOME, KeyboardKey.KEY_END,
+    ];
+    foreach (rk; repeatable)
+        if (IsKeyPressedRepeat(rk))
+            buf ~= KeyEvent(namedKey(rk), 0, m);
+
+    return buf;
+}
 
 // Transient-effect configs (STM6): the copy-✔ flash, the copy-mode toast, and
 // the hover-underline fade — one Timeline machine, three configurations. The
