@@ -22,6 +22,14 @@
                 "breaks": [
                     {
                         "offset": 66
+                    },
+                    {
+                        "group": 1,
+                        "offset": 26
+                    },
+                    {
+                        "group": 1,
+                        "offset": 43
                     }
                 ],
                 "effects": {
@@ -93,6 +101,14 @@
                 "breaks": [
                     {
                         "offset": 52
+                    },
+                    {
+                        "group": 1,
+                        "offset": 16
+                    },
+                    {
+                        "group": 1,
+                        "offset": 21
                     }
                 ],
                 "effects": {
@@ -180,6 +196,34 @@
                 "breaks": [
                     {
                         "offset": 105
+                    },
+                    {
+                        "group": 1,
+                        "offset": 26
+                    },
+                    {
+                        "group": 1,
+                        "offset": 43
+                    },
+                    {
+                        "group": 2,
+                        "offset": 87
+                    },
+                    {
+                        "group": 2,
+                        "offset": 92
+                    },
+                    {
+                        "group": 3,
+                        "offset": 71
+                    },
+                    {
+                        "group": 4,
+                        "offset": 121
+                    },
+                    {
+                        "group": 4,
+                        "offset": 126
                     }
                 ],
                 "effects": {
@@ -291,6 +335,14 @@
                 "breaks": [
                     {
                         "offset": 66
+                    },
+                    {
+                        "group": 1,
+                        "offset": 26
+                    },
+                    {
+                        "group": 1,
+                        "offset": 43
                     }
                 ],
                 "effects": {
