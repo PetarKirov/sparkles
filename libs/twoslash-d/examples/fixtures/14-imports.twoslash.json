@@ -134,6 +134,50 @@
             "docs": "Implements the homonym function (also known as `accumulate`, `compress`, `inject`, or `foldl`) present in various programming\nlanguages of functional flavor. There is also `fold` which does\nthe same thing but with the opposite parameter order.\n\n- Use `seed` to initialize an internal `accumulator`.\n- For each element `e` in `range`, evaluate `accumulator = fun(result, e)`.\n- Return `accumulator`.\n\nThe one-argument version ``reduce`!(fun)(range)`\nworks similarly, but it uses the first element of the range as the\nseed (the range must be non-empty, else this throws).\n\nIf range has only one element, the functions are never invoked and\n`result` and the seed is returned unchanged.",
             "length": 6,
             "line": 3,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 24,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 68
+                    }
+                ],
+                "effects": {
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 76
+                        },
+                        {
+                            "length": 6,
+                            "offset": 81
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 75,
+                        "open": 67
+                    },
+                    {
+                        "close": 51,
+                        "open": 35,
+                        "stage": 1
+                    },
+                    {
+                        "close": 66,
+                        "open": 60,
+                        "stage": 1
+                    }
+                ]
+            },
             "start": 86,
             "tags": [
                 [
@@ -177,6 +221,50 @@
             "docs": "The ``to`` template converts a value from one type to another.\nThe source type is deduced and the target type must be specified, for example the\nexpression ``to`!int(42.0)` converts the number 42 from\n`double` to `int`. The conversion is \"safe\", i.e.,\nit checks for overflow; ``to`!int(4.2e10)` would throw the\n`ConvOverflowException` exception. Overflow checks are only\ninserted when necessary, e.g., ``to`!double(42)` does not do\nany checking because any `int` fits in a `double`.\n\nConversions from string to numeric types differ from the C equivalents\n`atoi()` and `atol()` by checking for overflow and not allowing whitespace.\n\nFor conversion of strings to signed types, the grammar recognized is:\n*Integer*:\n*Sign UnsignedInteger*\n*UnsignedInteger*\n*Sign*:\n**+**\n**-**\n\nFor conversion to unsigned types, the grammar recognized is:\n*UnsignedInteger*:\n*DecimalDigit*\n*DecimalDigit* *UnsignedInteger*",
             "length": 6,
             "line": 4,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 9,
+                        "offset": 7
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 23
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 37
+                    }
+                ],
+                "effects": {
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 51
+                        },
+                        {
+                            "length": 8,
+                            "offset": 56
+                        },
+                        {
+                            "length": 6,
+                            "offset": 64
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 50,
+                        "open": 36
+                    }
+                ]
+            },
             "start": 139,
             "text": "string std.conv.toText!string.to!int(int __param_0) pure nothrow @safe",
             "type": "hover"

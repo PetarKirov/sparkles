@@ -272,6 +272,42 @@ unittest
     assert(d["offsetEncoding"].str == "utf-8");
 }
 
+@("ingest.encode.signatureLayoutRoundTrips")
+unittest
+{
+    // The structure is optional on every axis: a node without it must encode
+    // to no key at all, so every payload predating it — and every non-function
+    // hover — keeps its exact shape.
+    import std.json : parseJSON;
+    import sparkles.wired.json : toJSON;
+    import sparkles.twoslash.protocol : Abbrev, BreakGroup, BreakPoint,
+        Contract, EffectSpan, Effects, Node, NodeType, SignatureLayout;
+
+    const plain = parseJSON(toJSON(TwoslashReturn(code: "x",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1)])).value[]);
+    assert("signature" !in plain.object["nodes"].array[0].object);
+
+    auto sig = SignatureLayout(
+        groups: [BreakGroup(4, 12, 1)],
+        breaks: [BreakPoint(5, 0)],
+        abbrevs: [Abbrev(0, 3, "…", "template")],
+        effects: Effects(trust: "@safe", isPure: true, inferred: true,
+            spans: [EffectSpan(13, 6)]),
+        contracts: [Contract("out", "r", "r > 0", false)],
+        constraint: "isIntegral!T");
+
+    const encoded = toJSON(TwoslashReturn(code: "x",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int x)", signature: sig)])).value;
+    const back = parseTwoslash(encoded[]).value;
+    const got = back.nodes[0].signature;
+
+    assert(got.groups == sig.groups && got.breaks == sig.breaks);
+    assert(got.abbrevs == sig.abbrevs, "abbreviations must survive verbatim");
+    assert(got.effects == sig.effects, "a false effect is not the same as an absent one");
+    assert(got.contracts == sig.contracts && got.constraint == sig.constraint);
+}
+
 @("ingest.parseTwoslash.invalidJson")
 unittest
 {

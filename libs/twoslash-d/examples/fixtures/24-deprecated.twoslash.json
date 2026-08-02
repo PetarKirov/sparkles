@@ -7,6 +7,24 @@
             "docs": "The old spelling.",
             "length": 6,
             "line": 2,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 5
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 19,
+                        "open": 18
+                    }
+                ]
+            },
             "start": 64,
             "text": "void sample.render()",
             "type": "hover"
@@ -16,6 +34,29 @@
             "docs": "The replacement.",
             "length": 8,
             "line": 5,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 5
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 21
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 33,
+                        "open": 20
+                    }
+                ]
+            },
             "start": 103,
             "text": "void sample.renderTo(ref int sink)",
             "type": "hover"
@@ -40,6 +81,17 @@
             "character": 5,
             "length": 4,
             "line": 7,
+            "signature": {
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 12,
+                        "open": 11
+                    }
+                ]
+            },
             "start": 146,
             "text": "void D main()",
             "type": "hover"
@@ -49,6 +101,24 @@
             "docs": "The old spelling.",
             "length": 6,
             "line": 9,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 5
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 19,
+                        "open": 18
+                    }
+                ]
+            },
             "start": 159,
             "text": "void sample.render()",
             "type": "hover"

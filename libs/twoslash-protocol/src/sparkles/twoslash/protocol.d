@@ -98,8 +98,97 @@ struct Node
     /// tag name (the word after `// @`).
     @WireOptional(WireSkip.whenDefault) string name;
 
+    /// hover/query structured signature layout (`TIP5`). Absent on every
+    /// non-function hover and on every payload predating it.
+    @WireOptional(WireSkip.whenDefault) SignatureLayout signature;
+
     /// Exclusive end offset into `code`.
     size_t end() const @safe pure nothrow @nogc => start + length;
+}
+
+/// Where a signature may break, what of it collapses, and the effects and
+/// contracts lifted out of its text (`TIP5`).
+///
+/// Every offset indexes the node's own `text`, which stays exactly what a
+/// renderer would print unaided — collapsing a run means *hiding* a range, so
+/// offsets never shift when the reader expands it again, and a consumer that
+/// ignores this field renders precisely what it always did.
+struct SignatureLayout
+{
+    /// Parenthesized lists the renderer may explode one item per line.
+    @WireOptional(WireSkip.whenDefault) BreakGroup[] groups;
+    /// Places a line may break, always *before* the offset.
+    @WireOptional(WireSkip.whenDefault) BreakPoint[] breaks;
+    /// Runs the renderer may replace with a short form until expanded.
+    @WireOptional(WireSkip.whenDefault) Abbrev[] abbrevs;
+    /// The four effect attributes, as data rather than trailing words.
+    @WireOptional(WireSkip.whenDefault) Effects effects;
+    /// `in`/`out` contracts, as written.
+    @WireOptional(WireSkip.whenDefault) Contract[] contracts;
+    /// A template's `if (…)` body, empty when there is none.
+    @WireOptional(WireSkip.whenDefault) string constraint;
+}
+
+/// ditto
+struct BreakGroup
+{
+    uint open;  /// byte offset of `(`
+    uint close; /// byte offset of `)`
+    /// Staging order, not nesting: the runtime parameter list (0) explodes
+    /// before the template one (1).
+    @WireOptional(WireSkip.whenDefault) ubyte stage;
+}
+
+/// ditto
+struct BreakPoint
+{
+    uint offset;
+    @WireOptional(WireSkip.whenDefault) ubyte group; /// index into `groups`
+}
+
+/// ditto
+struct Abbrev
+{
+    uint offset;
+    uint length;
+    /// What to show while collapsed (`"…"`), or empty to elide the run.
+    @WireOptional(WireSkip.whenDefault) string shortText;
+    /// `"template"` (a nested argument list) or `"module"` (a qualifier).
+    @WireOptional(WireSkip.whenDefault) string kind;
+}
+
+/// ditto
+struct EffectSpan
+{
+    uint offset;
+    uint length; /// separator included, so excising leaves no double space
+}
+
+/// ditto
+struct Effects
+{
+    /// `"@safe"` | `"@trusted"` | `"@system"`; empty when not yet determined.
+    @WireOptional(WireSkip.whenDefault) string trust;
+    @WireOptional(WireSkip.whenDefault) bool isPure;
+    @WireOptional(WireSkip.whenDefault) bool isNothrow;
+    @WireOptional(WireSkip.whenDefault) bool isNogc;
+    /// The attributes are inferred per instantiation and this is the
+    /// uninstantiated template, so a `false` above means "not yet known"
+    /// rather than "not so" — render those as unknown, not as a denial.
+    @WireOptional(WireSkip.whenDefault) bool inferred;
+    @WireOptional(WireSkip.whenDefault) EffectSpan[] spans;
+}
+
+/// ditto
+struct Contract
+{
+    /// `"in"` or `"out"`.
+    string kind;
+    /// The `r` of `out (r; …)`; empty for `in` and for `out (; …)`.
+    @WireOptional(WireSkip.whenDefault) string resultId;
+    /// The expression, or the whole block when `isBlock`.
+    @WireOptional(WireSkip.whenDefault) string text;
+    @WireOptional(WireSkip.whenDefault) bool isBlock;
 }
 
 /// The full twoslash payload: the display source plus its flat node list.

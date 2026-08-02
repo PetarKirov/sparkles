@@ -15,6 +15,29 @@
             "docs": "Sums 1 .. `n` inclusive — an ordinary function, usable at compile time.",
             "length": 10,
             "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 24
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 31,
+                        "open": 23
+                    }
+                ]
+            },
             "start": 83,
             "text": "ulong sample.triangular(ulong n)",
             "type": "hover"
@@ -112,6 +135,29 @@
             "docs": "Sums 1 .. `n` inclusive — an ordinary function, usable at compile time.",
             "length": 10,
             "line": 9,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 24
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 31,
+                        "open": 23
+                    }
+                ]
+            },
             "start": 200,
             "text": "ulong sample.triangular(ulong n)",
             "type": "hover"
@@ -145,6 +191,29 @@
             "docs": "Sums 1 .. `n` inclusive — an ordinary function, usable at compile time.",
             "length": 10,
             "line": 10,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 24
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 31,
+                        "open": 23
+                    }
+                ]
+            },
             "start": 257,
             "text": "ulong sample.triangular(ulong n)",
             "type": "hover"
@@ -154,6 +223,29 @@
             "docs": "Sums 1 .. `n` inclusive — an ordinary function, usable at compile time.",
             "length": 10,
             "line": 10,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 24
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 31,
+                        "open": 23
+                    }
+                ]
+            },
             "start": 272,
             "text": "ulong sample.triangular(ulong n)",
             "type": "hover"
@@ -163,6 +255,29 @@
             "docs": "Sums 1 .. `n` inclusive — an ordinary function, usable at compile time.",
             "length": 10,
             "line": 10,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 24
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 31,
+                        "open": 23
+                    }
+                ]
+            },
             "start": 287,
             "text": "ulong sample.triangular(ulong n)",
             "type": "hover"

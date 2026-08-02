@@ -6,6 +6,24 @@
             "character": 5,
             "length": 6,
             "line": 0,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 5
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 19,
+                        "open": 18
+                    }
+                ]
+            },
             "start": 5,
             "text": "void sample.broken()",
             "type": "hover"

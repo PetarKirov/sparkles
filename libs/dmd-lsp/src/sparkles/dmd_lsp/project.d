@@ -202,31 +202,36 @@ DubProject describeDubProject(string startPath, DubQuery query = DubQuery.init) 
         if (res.status != 0)
             res = execute(argv, null, Config.stderrPassThrough);
 
-        // A `sourceLibrary` has no target for dub to describe either — and
-        // unlike a none-target root it owns the file outright, so the
-        // subpackage scan below has nothing to find. Its *unittest*
-        // configuration is buildable (that is what `dub test` builds), and it
-        // carries the same import paths, so describe that instead. Only when
-        // the caller expressed no preference of its own (`PRJ3`).
-        if (res.status != 0 && query.config.length == 0 && query.buildType.length == 0)
-        {
-            auto asTest = argv ~ ["--config=unittest", "--build=unittest"];
-            const test = execute(asTest, null, Config.stderrPassThrough);
-            if (test.status == 0)
-            {
-                proj.analyzer = parseDubBuildSettings(lastNonBlankLine(test.output));
-                return proj; // no `error` set ⇒ usable
-            }
-        }
-
         if (res.status != 0)
         {
             // A root package with `targetType "none"` (dmd) or without any
             // sources (a monorepo umbrella) has no describable target — dub
             // exits nonzero (or asserts). The file still belongs to one of
             // the root's subpackages; find it (`PRJ7`).
-            return describeOwningSubpackage(proj, startPath, query,
+            auto scanned = describeOwningSubpackage(proj, startPath, query,
                 text("`dub describe` failed (exit ", res.status, ") in ", proj.root));
+            if (scanned.usable)
+                return scanned;
+
+            // A `sourceLibrary` has no target for dub to describe either, and
+            // unlike a none-target root it owns the file outright, so the scan
+            // above had nothing to find. Its *unittest* configuration is
+            // buildable — that is what `dub test` builds — and carries the same
+            // import paths. Tried last, so a none-target root never reaches it:
+            // dub asserts rather than exits when asked for a configuration a
+            // recipe does not declare. Only when the caller expressed no
+            // preference of its own (`PRJ3`).
+            if (query.config.length == 0 && query.buildType.length == 0)
+            {
+                auto asTest = argv ~ ["--config=unittest", "--build=unittest"];
+                const test = execute(asTest, null, Config.stderrPassThrough);
+                if (test.status == 0)
+                {
+                    proj.analyzer = parseDubBuildSettings(lastNonBlankLine(test.output));
+                    return proj; // no `error` set ⇒ usable
+                }
+            }
+            return scanned;
         }
         proj.analyzer = parseDubBuildSettings(lastNonBlankLine(res.output));
     }

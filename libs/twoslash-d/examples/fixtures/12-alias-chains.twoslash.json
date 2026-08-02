@@ -72,6 +72,29 @@
             "character": 7,
             "length": 4,
             "line": 6,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 15
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 27,
+                        "open": 26
+                    }
+                ]
+            },
             "start": 110,
             "text": "sample.Box!int sample.open()",
             "type": "hover"
@@ -104,6 +127,29 @@
             "character": 9,
             "length": 4,
             "line": 8,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 15
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 27,
+                        "open": 26
+                    }
+                ]
+            },
             "start": 142,
             "text": "sample.Box!int sample.open()",
             "type": "hover"

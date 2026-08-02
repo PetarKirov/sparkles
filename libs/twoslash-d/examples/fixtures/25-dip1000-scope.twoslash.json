@@ -7,6 +7,30 @@
             "docs": "Slices a stack buffer and returns it — dip1000 rejects the escape.",
             "length": 4,
             "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "effects": {
+                    "spans": [
+                        {
+                            "length": 6,
+                            "offset": 19
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 18,
+                        "open": 17
+                    }
+                ]
+            },
             "start": 79,
             "text": "int[] sample.leak() @safe",
             "type": "hover"

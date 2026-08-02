@@ -18,6 +18,9 @@ module sparkles.dmd_lsp.api;
 
 public import sparkles.dmd_lsp.diag : Diagnostic, DiagKind, DiagPos;
 public import sparkles.dmd_lsp.options : AnalyzerConfig;
+public import sparkles.dmd_lsp.signature : Abbrev, AbbrevKind, BreakGroup,
+    BreakPoint, Contract, ContractKind, EffectSpan, Effects, SigTrust,
+    SignatureInfo;
 public import sparkles.dmd_lsp.support : TypeReferenceKind;
 
 import sparkles.dmd_lsp.diag : DiagnosticSink;
@@ -272,7 +275,7 @@ struct AnalyzedModule
             // Real DDoc rendering (sections -> chips, macros -> CommonMark).
             auto doc = render(data.doc, data.symbol);
             return Tip(kind: data.kind, code: data.code,
-                doc: doc.docs, tags: doc.tags);
+                doc: doc.docs, tags: doc.tags, sig: data.sig);
         }
         if (data.kind == "parameter" && data.symbol !is null)
         {
@@ -280,7 +283,8 @@ struct AnalyzedModule
             if (tip.found)
                 return tip;
         }
-        return Tip(kind: data.kind, code: data.code, doc: data.doc.strip);
+        return Tip(kind: data.kind, code: data.code, doc: data.doc.strip,
+            sig: data.sig);
     }
 
     /**
@@ -414,6 +418,11 @@ struct Tip
     /// `["param", "x desc"]` per `Params:` row, plus returns/throws/see/
     /// deprecated/authors/… (spec `DOC3`).
     string[][] tags;
+
+    /// Where `code` may break, what of it collapses, and the effects and
+    /// contracts lifted out of it (`TIP5`). Empty for everything but a
+    /// function, and every offset indexes `code`.
+    SignatureInfo sig;
 
     /// Whether the query resolved to anything.
     bool found() const @safe pure nothrow @nogc => kind.length != 0 || code.length != 0;

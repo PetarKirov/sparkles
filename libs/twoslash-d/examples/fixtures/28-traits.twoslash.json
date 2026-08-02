@@ -57,6 +57,34 @@
             "character": 4,
             "length": 7,
             "line": 9,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 19
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 19
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 34,
+                        "open": 18
+                    }
+                ]
+            },
             "start": 163,
             "text": "int sample.connect(sample.Config c)",
             "type": "hover"
@@ -116,6 +144,34 @@
             "character": 26,
             "length": 7,
             "line": 10,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 19
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 19
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 34,
+                        "open": 18
+                    }
+                ]
+            },
             "start": 218,
             "text": "int sample.connect(sample.Config c)",
             "type": "hover"

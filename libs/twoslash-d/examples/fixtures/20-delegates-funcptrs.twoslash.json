@@ -6,6 +6,29 @@
             "character": 4,
             "length": 6,
             "line": 0,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 18
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 23,
+                        "open": 17
+                    }
+                ]
+            },
             "start": 4,
             "text": "int sample.square(int x)",
             "type": "hover"
@@ -54,6 +77,29 @@
             "character": 24,
             "length": 6,
             "line": 2,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 18
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 23,
+                        "open": 17
+                    }
+                ]
+            },
             "start": 53,
             "text": "int sample.square(int x)",
             "type": "hover"
@@ -63,6 +109,45 @@
             "docs": "Captures `by`, so the result is a delegate rather than a function pointer.",
             "length": 9,
             "line": 4,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 45
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 62
+                    }
+                ],
+                "effects": {
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 69
+                        },
+                        {
+                            "length": 8,
+                            "offset": 74
+                        },
+                        {
+                            "length": 6,
+                            "offset": 82
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 68,
+                        "open": 61
+                    }
+                ]
+            },
             "start": 143,
             "text": "int delegate(int x) pure nothrow @nogc @safe sample.makeShift(int by) pure nothrow @safe",
             "type": "hover"
@@ -103,6 +188,24 @@
             "character": 4,
             "length": 8,
             "line": 9,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 20,
+                        "open": 19
+                    }
+                ]
+            },
             "start": 212,
             "text": "int sample.useShift()",
             "type": "hover"
@@ -128,6 +231,45 @@
             "docs": "Captures `by`, so the result is a delegate rather than a function pointer.",
             "length": 9,
             "line": 11,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 45
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 62
+                    }
+                ],
+                "effects": {
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 69
+                        },
+                        {
+                            "length": 8,
+                            "offset": 74
+                        },
+                        {
+                            "length": 6,
+                            "offset": 82
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 68,
+                        "open": 61
+                    }
+                ]
+            },
             "start": 242,
             "text": "int delegate(int x) pure nothrow @nogc @safe sample.makeShift(int by) pure nothrow @safe",
             "type": "hover"

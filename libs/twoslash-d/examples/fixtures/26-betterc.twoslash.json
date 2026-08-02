@@ -7,6 +7,24 @@
             "docs": "`-betterC` drops the exception machinery, so the `throw` is rejected.",
             "length": 4,
             "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 16,
+                        "open": 15
+                    }
+                ]
+            },
             "start": 89,
             "text": "int sample.main()",
             "type": "hover"
@@ -15,6 +33,24 @@
             "character": 8,
             "length": 7,
             "line": 3,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 19,
+                        "open": 18
+                    }
+                ]
+            },
             "start": 106,
             "text": "int sample.compute()",
             "type": "hover"
@@ -33,6 +69,24 @@
             "character": 4,
             "length": 7,
             "line": 8,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 19,
+                        "open": 18
+                    }
+                ]
+            },
             "start": 183,
             "text": "int sample.compute()",
             "type": "hover"

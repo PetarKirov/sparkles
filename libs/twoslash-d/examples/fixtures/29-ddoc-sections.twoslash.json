@@ -15,6 +15,29 @@
             "docs": "Parses a decimal byte count with an optional `KB`/`MB` suffix.\n\nThe input is trimmed first; a bare number means bytes.\n\n### Complexity Notes\n\nSingle pass, O(n) in the length of `text`.",
             "length": 10,
             "line": 13,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 24
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 35,
+                        "open": 23
+                    }
+                ]
+            },
             "start": 416,
             "tags": [
                 [

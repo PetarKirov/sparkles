@@ -7,6 +7,41 @@
             "docs": "Returns the first byte; `scope` promises the slice never escapes.",
             "length": 4,
             "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 18
+                    }
+                ],
+                "contracts": [
+                    {
+                        "kind": "in",
+                        "text": "bytes.length > 0LU"
+                    }
+                ],
+                "effects": {
+                    "spans": [
+                        {
+                            "length": 6,
+                            "offset": 45
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 44,
+                        "open": 17
+                    }
+                ]
+            },
             "start": 76,
             "text": "ubyte sample.head(scope const(ubyte)[] bytes) @safe",
             "type": "hover"
@@ -72,6 +107,41 @@
             "docs": "Returns the first byte; `scope` promises the slice never escapes.",
             "length": 4,
             "line": 6,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 18
+                    }
+                ],
+                "contracts": [
+                    {
+                        "kind": "in",
+                        "text": "bytes.length > 0LU"
+                    }
+                ],
+                "effects": {
+                    "spans": [
+                        {
+                            "length": 6,
+                            "offset": 45
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 44,
+                        "open": 17
+                    }
+                ]
+            },
             "start": 200,
             "text": "ubyte sample.head(scope const(ubyte)[] bytes) @safe",
             "type": "hover"

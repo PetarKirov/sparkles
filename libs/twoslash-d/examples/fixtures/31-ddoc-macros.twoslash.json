@@ -15,6 +15,29 @@
             "docs": "Formats a byte count: **bold**, *italic*, `code(x)`, and a\ncustom **4096 bytes**.\n\nUses `text` and `parseBytes`; runs in O(1).\nSee [the DDoc spec](http://dlang.org/spec/ddoc.html) plus\nundefined, args, which renders its arguments.",
             "length": 11,
             "line": 11,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 7
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 26
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 33,
+                        "open": 25
+                    }
+                ]
+            },
             "start": 323,
             "text": "string sample.formatBytes(ulong n)",
             "type": "hover"
