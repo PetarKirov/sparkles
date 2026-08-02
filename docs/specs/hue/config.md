@@ -137,6 +137,43 @@ Deliberately **not** configurable, each for a stated reason:
 A configuration file that can express "always output HTML" is a footgun, not a
 feature.
 
+### Inspecting the layers (`CFG10`)
+
+Five layers that silently override each other are a debugging problem, not a
+feature. `git` solved this with `--show-origin`, and `hue --show-config` copies
+it: every effective setting, prefixed with **where it came from**.
+
+```console
+$ hue --show-config
+default                                     appearance.background=full
+default                                     panes.viewer.codeLineNumbers=true
+file:/home/petar/.config/hue/config.json    appearance.theme=builtin-dark
+file:/home/petar/.config/hue/config.json    appearance.font.family=Maple Mono
+file:/home/petar/code/sparkles/.hue.json    panes.viewer.tabWidth=4
+file:/home/petar/code/sparkles/.hue.json    panes.tree.exclude=[result, result-*]
+env:HUE_GUI_FONTSIZE                        appearance.font.size=20
+cli:--tree-width                            panes.tree.width=40
+keys:tree                                   shift+r=treeReroot
+```
+
+The origin is the answer to the question the layering otherwise makes hard:
+_why is my setting not taking effect?_ — because a project file, an
+environment hook, or a flag is above it. Without this, `CFG2`'s five layers are
+a maintenance liability; with it they are inspectable.
+
+Two details worth fixing now rather than discovering later:
+
+- **Every effective setting is listed, including defaults**, so the output is a
+  complete picture rather than a diff. `--show-config --changed` can filter to
+  non-default origins if that proves noisy.
+- **`--show-config=json` emits the same effective state as valid JSON**, which
+  is the "give me a starting file" job. Keeping it a _mode_ of the inspector
+  rather than a separate `--write-config` means the file a user starts from and
+  the state hue reports are produced by one code path and cannot disagree.
+
+Persisting runtime toggles is a **different** operation and keeps its own flag
+(`--save-config`, `CFG11`): one reports state, the other changes it.
+
 ### Errors are located, never silent (`CFG8`)
 
 A malformed config must report **file, line, column and the offending value**,
@@ -150,41 +187,43 @@ channel) rather than swallowing it.
 
 ## Requirements
 
-| ID      | Requirement                                                                                                                                                               | Status      |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| `CFG1`  | The schema is a D aggregate reflected by `sparkles:wired`; JSON is its surface. No hand-written parser and no second declaration of any field.                            | not started |
-| `CFG2`  | Layering defaults → user file → project file → environment → CLI, each layer a **sparse overlay** where absence means inherit.                                            | not started |
-| `CFG3`  | `appearance`: theme, background mode, the four font faces, font size, window size.                                                                                        | not started |
-| `CFG4`  | `panes`: tree width/visibility filters/globs; viewer line numbers, code line numbers, tab width, whitespace rendering.                                                    | not started |
-| `CFG5`  | `behaviour`: default view, ansi-copy and table-copy modes, overlay defaults, gallery output dir.                                                                          | not started |
-| `CFG6`  | `keys`: per-context binding tables over the `Command` enum, applied as an **overlay** on the built-in map; `null` unbinds.                                                | not started |
-| `CFG7`  | Per-invocation concerns (output format, target, backend choice, test hooks) are **not** configurable.                                                                     | not started |
-| `CFG8`  | A malformed config reports file/line/column and hue continues with defaults.                                                                                              | not started |
-| `CFG9`  | A JSON Schema is **generated** from the same reflection for editor completion — never hand-maintained.                                                                    | not started |
-| `CFG10` | `hue --write-config` emits the effective configuration (defaults + every layer) as a commented starting point.                                                            | not started |
-| `CFG11` | Runtime toggles (`l`, `c`, `y`, `t`, theme, font size) may be **persisted on request** (`hue --save-config`), so an experiment can become a setting without hand-editing. | not started |
-| `CFG12` | Android reads the same file from the app's data dir, which is the only way those preferences are reachable there at all.                                                  | not started |
+| ID      | Requirement                                                                                                                                                                                                                                                                                                          | Status      |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `CFG1`  | The schema is a D aggregate reflected by `sparkles:wired`; JSON is its surface. No hand-written parser and no second declaration of any field.                                                                                                                                                                       | not started |
+| `CFG2`  | Layering defaults → user file → project file → environment → CLI, each layer a **sparse overlay** where absence means inherit.                                                                                                                                                                                       | not started |
+| `CFG3`  | `appearance`: theme, background mode, the four font faces, font size, window size.                                                                                                                                                                                                                                   | not started |
+| `CFG4`  | `panes`: tree width/visibility filters/globs; viewer line numbers, code line numbers, tab width, whitespace rendering.                                                                                                                                                                                               | not started |
+| `CFG5`  | `behaviour`: default view, ansi-copy and table-copy modes, overlay defaults, gallery output dir.                                                                                                                                                                                                                     | not started |
+| `CFG6`  | `keys`: per-context binding tables over the `Command` enum, applied as an **overlay** on the built-in map; `null` unbinds.                                                                                                                                                                                           | not started |
+| `CFG7`  | Per-invocation concerns (output format, target, backend choice, test hooks) are **not** configurable.                                                                                                                                                                                                                | not started |
+| `CFG8`  | A malformed config reports file/line/column and hue continues with defaults.                                                                                                                                                                                                                                         | not started |
+| `CFG9`  | A JSON Schema is **generated** from the same reflection for editor completion — never hand-maintained.                                                                                                                                                                                                               | not started |
+| `CFG10` | `hue --show-config` lists every effective setting **with the origin that supplied it** (`default`, a file path, an env var, or the CLI flag) — the layering made observable, after `git config --show-origin --list`. `--show-config=json` emits the same effective state as valid JSON, for use as a starting file. | not started |
+| `CFG11` | Runtime toggles (`l`, `c`, `y`, `t`, theme, font size) may be **persisted on request** (`hue --save-config`), so an experiment can become a setting without hand-editing.                                                                                                                                            | not started |
+| `CFG12` | Android reads the same file from the app's data dir, which is the only way those preferences are reachable there at all.                                                                                                                                                                                             | not started |
 
 ## Milestones
 
-| Milestone | Scope                                                            | Requirements          |
-| --------- | ---------------------------------------------------------------- | --------------------- |
-| C1        | The struct + wired round-trip + located errors                   | `CFG1`, `CFG8`        |
-| C2        | Layering and the sparse-overlay merge                            | `CFG2`                |
-| C3        | Appearance / panes / behaviour sections wired to their consumers | `CFG3`–`CFG5`, `CFG7` |
-| C4        | Configurable keymap over the `Command` enum                      | `CFG6`                |
-| C5        | `--write-config` / `--save-config`, generated JSON Schema        | `CFG9`–`CFG11`        |
-| C6        | Android config path                                              | `CFG12`               |
+| Milestone | Scope                                                                    | Requirements          |
+| --------- | ------------------------------------------------------------------------ | --------------------- |
+| C1        | The struct + wired round-trip + located errors                           | `CFG1`, `CFG8`        |
+| C2        | Layering and the sparse-overlay merge                                    | `CFG2`                |
+| C3        | Appearance / panes / behaviour sections wired to their consumers         | `CFG3`–`CFG5`, `CFG7` |
+| C4        | Configurable keymap over the `Command` enum                              | `CFG6`                |
+| C5        | `--show-config` (origins + json), `--save-config`, generated JSON Schema | `CFG9`–`CFG11`        |
+| C6        | Android config path                                                      | `CFG12`               |
 
 ## Open questions
 
 1. **Format.** JSON is the brief, and `sparkles:wired` speaks it natively. But
    JSON has no comments, and a config a user hand-edits wants them. Options:
    accept JSON-with-comments on read (a lexer concession, and then
-   `--write-config` output cannot round-trip through a strict writer), or ship
-   `.jsonc`, or accept the limitation and put explanation in `--write-config`'s
-   generated output. **Recommendation: JSONC on read, strict JSON on write** —
-   comments survive because hue never rewrites a file it did not generate.
+   `--show-config=json` output cannot round-trip through a strict writer), or
+   ship `.jsonc`, or accept the limitation and lean on `--show-config` to
+   explain the file instead of comments in it. **Recommendation: JSONC on read,
+   strict JSON on write** — comments survive because hue never rewrites a file
+   it did not generate, and `--show-config` covers the "what does this mean,
+   and where did it come from" job that comments would otherwise carry.
 2. **Themes.** `appearance.theme` names a built-in today. Whether a user may
    _define_ a theme in the config, or only reference one, is a larger question
    that belongs with `sparkles:syntax`'s theme layer rather than here.
