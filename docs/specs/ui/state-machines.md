@@ -39,6 +39,7 @@ state`, a pure function; the caller assigns the result. Timers are not bare
 | STM8  | **Pane splitter** — a draggable divider between two panes as a value: grab, grab-relative drag with `[min, max]` clamping, release, and a post-resize re-clamp. Unit-agnostic (cells or pixels), so every backend runs the same drag.                                                                                                                                  | full              | `state.d` `SplitState`                                                                                                                               |
 | STM9  | **Scrollbar machine** — the whole bar as one value over STM2: axis (vertical/horizontal), the grab-relative interaction (a thumb press grabs in place, a track press jumps, drags move relative to the grab and own the pointer until release), hover, and the wanted pointer shape by axis. Both panes and every backend run this machine; none re-implements a grab. | full              | `state.d` `ScrollbarState`; consumed by `apps/hue` `tui.d`/`explorer.d`; the machine-driven `scrollbar` component overload ([`WGT10`](./widgets.md)) |
 | STM10 | **Press / activation** — a press arms an addressable target, a release **over the same target** activates it, a release elsewhere cancels. Ids are hit ids, so a target cannot be armed by one geometry and activated by another; the activation is transient, consumed by the next press.                                                                             | full              | `state.d` `PressState`; the `actionBar` component ([`WGT15`](./widgets.md) in part)                                                                  |
+| STM11 | **Pointer capture** — press owns the drag: the affordance that took the press keeps every motion and the release wherever the pointer strays. `available(id)` asks _may I act?_ (free, or already mine), so a new affordance participates by taking an id rather than by being added to every other affordance's negation chain.                                       | full              | `state.d` `CaptureState`; `apps/hue` `workspace.d`                                                                                                   |
 | STM8  | Machines must be **Regular values** — copyable, comparable — so a view's behavior can be snapshotted, replayed and diffed in tests.                                                                                                                                                                                                                                    | full (`49fa8e50`) | every machine; snapshot/replay asserted in the disclosure test                                                                                       |
 
 > [!NOTE]
@@ -67,7 +68,7 @@ state`, a pure function; the caller assigns the result. Timers are not bare
 
 | Source file                       | Requirements   |
 | --------------------------------- | -------------- |
-| `libs/ui/src/sparkles/ui/state.d` | `STM1`–`STM10` |
+| `libs/ui/src/sparkles/ui/state.d` | `STM1`–`STM11` |
 
 ## Relationship to existing specs
 
