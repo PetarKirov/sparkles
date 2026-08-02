@@ -587,6 +587,10 @@ export default withMermaid(
                   link: '/specs/hue/android',
                 },
                 {
+                  text: 'Configuration (design)',
+                  link: '/specs/hue/config',
+                },
+                {
                   text: 'Content folding (planned)',
                   link: '/specs/hue/folding',
                 },
