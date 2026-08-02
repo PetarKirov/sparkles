@@ -500,10 +500,12 @@ in (nodeIndex < tw.nodes.length)
     // No grammar registry ⇒ docs render as plain newline-split lines (JSDoc `\n`
     // must not reach a backend as a literal control char). The `registry` overlay
     // below renders them as full markdown.
-    uint[] docsRows = node.docs.length ? plainDocsRows(b, node.docs, hit) : null;
+    const inner = popupInterior(opts.maxWidth);
+    uint[] docsRows = node.docs.length
+        ? plainDocsRows(b, node.docs, hit, inner) : null;
     uint[] tagRows;
     foreach (ref const string[] tag; node.tags)
-        tagRows ~= buildPopupTag(b, tag, hit);
+        tagRows ~= buildPopupTag(b, tag, hit, inner);
     return finishHoverPopup(b, node, hit, docsRows, tagRows, opts);
 }
 
@@ -523,11 +525,12 @@ in (nodeIndex < tw.nodes.length)
     if (!node.text.length && !node.docs.length && !node.tags.length)
         return WidgetTree.init; // lazy span: nothing to pop up (yet)
     const hit = hitOf(nodeIndex);
+    const inner = popupInterior(opts.maxWidth);
     uint[] docsRows = node.docs.length
-        ? markdownDocsRows(b, registry, node.docs, hit, opts.maxWidth) : null;
+        ? markdownDocsRows(b, registry, node.docs, hit, inner) : null;
     uint[] tagRows;
     foreach (ref const string[] tag; node.tags)
-        tagRows ~= buildPopupTagMd(b, registry, tag, hit);
+        tagRows ~= buildPopupTagMd(b, registry, tag, hit, inner);
     return finishHoverPopup(b, node, hit, docsRows, tagRows, opts);
 }
 
@@ -832,24 +835,42 @@ private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
 }
 /// Docs fallback (no markdown grammar): the raw text split on newlines into rows,
 /// so a `\n` reads as a line break instead of a tofu glyph.
-private uint[] plainDocsRows(ref Builder b, const(char)[] docs, size_t hit)
+private uint[] plainDocsRows(ref Builder b, const(char)[] docs, size_t hit,
+    int maxWidth = 0)
 {
     uint[] rows;
     size_t start = 0;
     foreach (i, char c; docs)
         if (c == '\n')
         {
-            rows ~= docsLine(b, docs[start .. i], hit);
+            rows ~= docsLine(b, docs[start .. i], hit, maxWidth);
             start = i + 1;
         }
-    rows ~= docsLine(b, docs[start .. $], hit);
+    rows ~= docsLine(b, docs[start .. $], hit, maxWidth);
     return rows;
 }
 
-private uint docsLine(ref Builder b, const(char)[] text, size_t hit)
-    => b.add(Widget(kind: WidgetKind.text, text: text.length ? text : " ",
-        slot: Slot.docs, hitId: hit,
+private uint docsLine(ref Builder b, const(char)[] text, size_t hit,
+    int maxWidth = 0)
+{
+    // A ddoc line is prose of any length; without the cap it paints straight
+    // through the popup's right border (`SIG1`).
+    auto width = SizeSpec.fit_;
+    if (maxWidth > 0)
+        width.max = maxWidth;
+    return b.add(Widget(kind: WidgetKind.text, text: text.length ? text : " ",
+        slot: Slot.docs, hitId: hit, width: width,
+        wrap: maxWidth > 0 ? TextWrap.greedy : TextWrap.none,
         textStyle: TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale)));
+}
+
+/// The cells a popup's content has: the cap less its border and section
+/// padding. `0` (unbounded) stays unbounded.
+private int popupInterior(int maxWidth) @safe pure nothrow @nogc
+{
+    const inner = maxWidth - 2 * M.borderWidth - 2;
+    return maxWidth > 0 && inner > 0 ? inner : 0;
+}
 
 private TextStyle docsBase() pure nothrow @nogc
     => TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale);
@@ -861,7 +882,8 @@ private const(char)[] sliceOf(const(char)[] src, in Span s) @safe
 
 /// A JSDoc tag row inside a hover popup: a `@name` pill (`Slot.chip` — muted text
 /// on a grey fill, like the HTML `.twoslash-popup-docs-tag-name`) + its text.
-private uint buildPopupTag(ref Builder b, const string[] tag, size_t hit)
+private uint buildPopupTag(ref Builder b, const string[] tag, size_t hit,
+    int maxWidth = 0)
 {
     const nameText = tag.length ? tagName(b, tag[0]) : tagName(b, "");
     uint[] parts;
@@ -872,9 +894,19 @@ private uint buildPopupTag(ref Builder b, const string[] tag, size_t hit)
         decoration: Decoration(borderRadius: M.popupRadius),
         textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.tagFontScale)));
     if (tag.length > 1 && tag[1].length)
+    {
+        // The value gets what the chip and the gap leave. Without that the row
+        // overflows and the layout squeezes the *chip* to fit, which is how
+        // `@returns` used to render as `@ret`.
+        auto width = SizeSpec.fit_;
+        const room = maxWidth - cast(int)(nameText.length + 1);
+        if (maxWidth > 0 && room > 0)
+            width.max = room;
         parts ~= b.add(Widget(kind: WidgetKind.text, text: tag[1],
-            slot: Slot.docs, hitId: hit,
+            slot: Slot.docs, hitId: hit, width: width,
+            wrap: width.max > 0 ? TextWrap.greedy : TextWrap.none,
             textStyle: TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale)));
+    }
     return b.container(WidgetKind.row, parts, gap: 1);
 }
 
@@ -882,7 +914,7 @@ private uint buildPopupTag(ref Builder b, const string[] tag, size_t hit)
 /// value's `[label](url)` becomes an underlined link, `` `code` `` a pill, etc.),
 /// via the grammar `registry`. `@system` (the tree-sitter parse).
 private uint buildPopupTagMd(ref Builder b, ref GrammarRegistry registry,
-    const string[] tag, size_t hit) @system
+    const string[] tag, size_t hit, int maxWidth = 0) @system
 {
     const nameText = tag.length ? tagName(b, tag[0]) : tagName(b, "");
     uint[] parts;
@@ -904,9 +936,16 @@ private uint buildPopupTagMd(ref Builder b, ref GrammarRegistry registry,
         else
             pushProse(tag[1], docsBase(), Slot.docs, spans);
 
-        // The value on one unwrapped rich run (tag values are short).
+        // Tag values are usually short, but `@see`/`@returns` are not: wrap to
+        // what the chip leaves, rather than overflow the row and let the layout
+        // squeeze the chip instead.
+        auto width = SizeSpec.fit_;
+        const room = maxWidth - cast(int) nameText.length;
+        if (maxWidth > 0 && room > 0)
+            width.max = room;
         parts ~= b.add(Widget(kind: WidgetKind.rich, slot: Slot.docs, hitId: hit,
-            spans: spans, textStyle: docsBase(),
+            spans: spans, textStyle: docsBase(), width: width,
+            wrap: width.max > 0 ? TextWrap.greedy : TextWrap.none,
             decoration: Decoration(borderRadius: M.popupRadius)));
     }
     return b.container(WidgetKind.row, parts, gap: 0);
@@ -1307,6 +1346,36 @@ version (unittest)
             assert(w.key == abbrevKey(3, 0), "the marker must name its region");
         }
     assert(sawMarker, "the collapsed run must render a marker");
+}
+
+@("render_widgets.viewHoverPopup.docsAndTagsStayInsideTheBox")
+@safe unittest
+{
+    // The cap has to reach the docs and the tag values too. Before it did, a
+    // ddoc paragraph painted straight through the popup's right border, and an
+    // overflowing tag row made the layout squeeze the *chip* instead — which is
+    // how `@returns` rendered as `@ret`.
+    import std.algorithm.searching : canFind;
+    import std.array : join;
+
+    const tw = TwoslashReturn(code: "f()\n",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1, line: 0,
+            character: 0, text: "void f()",
+            docs: "The predicate is passed to unaryFun, and can be either a"
+                ~ " string, or any callable that can be executed via pred.",
+            tags: [["returns", "An input range that contains the filtered"
+                ~ " elements, in the order they were seen."]])]);
+
+    enum cap = 40;
+    auto c = render(viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: cap)));
+    assert(rightEdge(c) <= cap, "the popup overflowed its cap");
+
+    // The chip keeps its own width — nothing was stolen from it to make room.
+    string[] painted;
+    foreach (op; c.ops)
+        if (op.text.length)
+            painted ~= op.text.idup;
+    assert(painted.canFind("@returns"), painted.join("|"));
 }
 
 @("render_widgets.viewBelowBlock.queryLineStaysInsideThePane")
