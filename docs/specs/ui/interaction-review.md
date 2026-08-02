@@ -119,11 +119,20 @@ not converted. IXB9 wants IXB1 first, so the toolbar's bottom-row ownership is
 settled by the shared scrollbar rather than by a second hardcoded zone.
 IXB11/IXB12 are independent of all of it.
 
+**Status update (2026-08-02).** Several rows above landed while the Android
+branch was in flight, so the ordering below has already partly resolved: IXB1
+shipped with B-1 (`ScrollbarState` + `ui_raylib.scrollbar`, closing
+IXR1–IXR3), IXB2 with PR #150, IXB4 as `wantedPointerShape`, IXB5 as
+`PreviewTui`'s `ViewerModel` adoption, and IXB6 as `LineEditState`. IXR22 is
+discharged too — the wheel multiplier is producer-side (`INP12`), which is
+what unblocked the touch work. **IXB9 is therefore no longer blocked**: the
+shared scrollbar it wanted to arbitrate the bottom row with now exists.
+
 The Android port also **raises IXB3's priority**. Before it, pointer capture
 was justified by a divider and two scrollbars in a windowed app. Now there is a
 third bottom-edge affordance on a device where the pointer is a fingertip
 several cells wide — and IXR27 is the proof that two ad-hoc owners of one press
-is not a hypothetical. Order: IXB1 → IXB9 → IXB3.
+is not a hypothetical. Order: ~~IXB1~~ (done) → IXB9 → IXB3.
 
 Original sequencing note: IXB1/IXB4 are independent and small; IXB3 wants IXB7 for
 the GUI side but its TUI half can land first (the TUI workspace already
