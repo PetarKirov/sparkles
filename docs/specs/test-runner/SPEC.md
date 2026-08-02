@@ -71,11 +71,12 @@ Measurement modules (all under
 | `event_naming.d` | symbolic event names via soft libpfm4 (`pfm:<name>`)                   |
 | `rdpmc.d`        | user-space counter reads (the `selfMonitoring` primitive)              |
 | `workload.d`     | the `@workload` window model: wall source, decomposition, driver       |
+| `psi.d`          | PSI stall integrals (`/proc/pressure` parser + diagnostic source)      |
 | `bench_json.d`   | the `--bench-json` emitter (§8.3)                                      |
 | `reporting.d`    | tables, live displays, progress                                        |
 | `skip.d`         | `skipTest`                                                             |
 
-Planned modules _(targets)_: `psi.d` (M5),
+Planned modules _(targets)_:
 `cache_regime.d`/`provenance.d`/`cgroup.d` (M6–M8), `histogram.d` (B5),
 `sampling.d`/`symbolize.d` (B6), `offcpu.d` (M9), `loadgen.d` (M10), plus
 per-OS backend variants inside the existing modules (B3/B4).
@@ -158,24 +159,41 @@ residency-verify (target — M6) → assemble deltas`. Measurement is a
 (`GroupSnapshot`, no per-iteration bracket, no `RESET`), so a whole-body
 candidate window and in-body windows overlap freely and the body is never
 re-run for counting (it may be expensive or non-idempotent). Edge nesting,
-outer → inner: wall clock, wall source, syscalls, raw, tier-0, perf. The
-nesting means an outer source's window contains the inner sources' edge
+outer → inner: wall clock, wall source, psi, syscalls, raw, tier-0, perf.
+The nesting means an outer source's window contains the inner sources' edge
 reads — a small, deterministic apparatus floor (≈2 `syscr` in tier-0 with
-perf open; ≈a dozen syscalls in the syscall total), disclosed in the
-how-to and never netted out (subtracting an estimate would fabricate). A
-window across which a group's enabled time never advanced reads `nan`,
-never zeros. The wall-clock decomposition reports `onCpuUser`/`onCpuKernel`
-(rusage), `offCpuRunqueue` (schedstat), `offCpuDisk` (PSI — target — M5),
-and a clamped `offCpuOther` residual — only runqueue and disk are true
-per-cause durations; lock/sleep time is never fabricated, and every
-unattributable component is `nan` plus a note, with its time left in the
-residual. On Linux the decomposition is **thread-scoped** (`RUSAGE_THREAD`
+perf open; ≈a dozen syscalls in the syscall total; the psi file reads sit
+outside every counter tier's window), disclosed in the how-to and never
+netted out (subtracting an estimate would fabricate). A window across
+which a group's enabled time never advanced reads `nan`, never zeros. The
+wall-clock decomposition reports `onCpuUser`/`onCpuKernel` (rusage),
+`offCpuRunqueue` (schedstat), `offCpuDisk` (cgroup-scoped PSI — target —
+M8), and a clamped `offCpuOther` residual — only runqueue is a true
+per-cause duration today; lock/sleep/disk time is never fabricated, and
+every unattributable component is `nan` plus a note, with its time left in
+the residual. On Linux the decomposition is **thread-scoped**
+(`RUSAGE_THREAD` plus `/proc/thread-self/schedstat` — the only scoping
+under which `wall = onCpu + runqueue + other` is arithmetically
+meaningful); CPU burned by other threads is disclosed via the process-wide
+reading. Elsewhere it degrades to process scope (POSIX) or wall-only. The
+thread-coverage caveat above applies to windows identically.
 
-- `/proc/thread-self/schedstat` — the only scoping under which
-  `wall = onCpu + runqueue + other` is arithmetically meaningful); CPU burned
-  by other threads is disclosed via the process-wide reading. Elsewhere it
-  degrades to process scope (POSIX) or wall-only. The thread-coverage caveat
-  above applies to windows identically.
+**Recorded judgment (M5): PSI stall integrals are diagnostics, not
+attribution.** `/proc/pressure` is system-wide, so a window delta of its
+monotonic `total=<µs>` accumulators states "the system accumulated this
+much stall concurrently with the window" — it cannot be assigned to the
+measured thread without fabricating (on a host with background IO, a pure
+CPU spin's window shows tens of ms of concurrent io stall the thread never
+waited on). The original M5 target ("feeds `offCpuDisk`") was therefore
+retargeted: windows carry the raw system-wide deltas as a `psi` diagnostic
+(the `io-stall` table column, placed after `other`, and the `psi` JSON
+object with `scope: "system"`), and `offCpuDisk` stays `nan` until M8's
+per-cgroup `*.pressure` (same file shape, same parser) makes the
+attribution real. Considered and rejected: capping the integral by the
+thread's off-CPU time (reports coincidence as attribution exactly when the
+cap doesn't engage, and fails the shipped sleep-honesty test on a busy
+host); attributing only provable zeros (flaps baselines between `0` and
+`null` with background load).
 
 ## 5. The metric catalog
 
@@ -429,13 +447,16 @@ iterations, samples, medianNs, deviationNs, minNs, maxNs, metrics, error}`.
   is byte-identical to the pre-window shape): one object per measured window
   in measurement order — `{name, reps, wallNs, scope, onCpuUserNs,
 onCpuKernelNs, offCpuRunqueueNs, offCpuDiskNs, offCpuOtherNs}` (`null` =
-  unattributable, exactly the table's em dash) plus one nested totals object
+  unattributable, exactly the table's em dash; `offCpuDiskNs` is always
+  `null` until M8 — see the §4 recorded judgment), one nested totals object
   per attached source (`perf`, `tier0`, `syscalls`, `raw`), an optional
-  `note`, and `error`/`skipped` mirroring the row shapes. Window values are
-  totals with their own field names, deliberately never the per-iteration
-  `metrics` catalog keys (the misrepresentation open-issue O7 guarded
-  against; resolved as its option A, the anticipated bump absorbed into the
-  never-released schema 2).
+  `psi` object — `{scope: "system", ioSomeNs, ioFullNs, memSomeNs,
+memFullNs, cpuSomeNs}`, the system-wide stall deltas, omitted when PSI is
+  unavailable — an optional `note`, and `error`/`skipped` mirroring the row
+  shapes. Window values are totals with their own field names, deliberately
+  never the per-iteration `metrics` catalog keys (the misrepresentation
+  open-issue O7 guarded against; resolved as its option A, the anticipated
+  bump absorbed into the never-released schema 2).
 - Number policy: `nan`/infinity → `null`; integral values below 2⁵³ print as
   integers; others to 6 significant digits. Output is byte-deterministic for
   committing.
