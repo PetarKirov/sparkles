@@ -34,6 +34,43 @@ import dmd.id : Id;
 import dmd.mtype : attributesApply, MODtoBuffer, Type, TypeFunction;
 import dmd.statement : Statement;
 
+/// A parenthesized list the renderer may explode one item per line.
+///
+/// `stage` is the staging order, not a nesting depth: the runtime parameter
+/// list (stage 0) breaks before the template list (stage 1), because a reader
+/// scanning a call cares about the arguments they pass first.
+struct BreakGroup
+{
+    uint open;   /// byte offset of `(`
+    uint close;  /// byte offset of `)`
+    ubyte stage;
+}
+
+/// A place a line may break, always *before* `offset`.
+struct BreakPoint
+{
+    uint offset;
+    ubyte group; /// index into `SignatureInfo.groups`
+}
+
+/// Why a run of text is collapsible.
+enum AbbrevKind : ubyte
+{
+    nestedTemplateArgs, /// `Foo!(Bar!(…))` — the inner arguments
+    modulePrefix,       /// `sparkles.math.vector.Vector` — everything before `Vector`
+}
+
+/// A run the renderer may replace with `shortText` until the reader expands it.
+/// The expansion is the slice itself, so the full form is never duplicated on
+/// the wire and offsets never shift when it opens.
+struct Abbrev
+{
+    uint offset;
+    uint length;
+    string shortText; /// `"…"`, or empty to elide the run entirely
+    AbbrevKind kind;
+}
+
 /// Which of the four memory-safety states a function declares. `unspecified`
 /// is a symbol that cannot carry one at all (a variable that is not `@system`).
 enum SigTrust : ubyte { unspecified, system, trusted, safe }
@@ -52,6 +89,13 @@ struct Effects
 {
     SigTrust trust;
     bool isPure, isNothrow, isNogc;
+
+    /// The attributes are inferred per instantiation and this is the
+    /// *uninstantiated* template, so a `false` above means "not yet known",
+    /// not "not so" — a renderer must show those as unknown rather than as a
+    /// denial.
+    bool inferred;
+
     EffectSpan[] spans; /// ascending, disjoint
 
     /// Whether anything here is worth a chip row.
@@ -77,6 +121,9 @@ struct SignatureInfo
     Effects effects;
     Contract[] contracts;
     string constraint; /// the body of a template's `if (…)`, empty when none
+    BreakGroup[] groups;
+    BreakPoint[] breaks; /// ascending by offset
+    Abbrev[] abbrevs;    /// ascending by offset, disjoint
 }
 
 /**
@@ -115,12 +162,14 @@ string renderSignature(Declaration decl, TemplateDeclaration td,
     HdrGenState hgs = { ddoc: true, fullQual: true };
     OutBuffer buf;
 
-    readEffects(tf, info.effects);
+    readEffects(tf, td !is null, info.effects);
 
     if (td !is null)
         writePrefixFrame(tf, decl, td, buf, hgs, info);
     else
         writePostfixFrame(tf, decl, buf, hgs, info);
+
+    scanTemplateArgs(buf[], info);
 
     if (auto fd = decl.isFuncDeclaration())
         info.contracts = readContracts(fd, hgs);
@@ -150,7 +199,7 @@ private void writePostfixFrame(TypeFunction tf, Declaration decl,
         buf.put("auto ");
 
     buf.put(decl.toPrettyChars(true).toDStr);
-    writeParameterList(tf, buf, hgs);
+    writeParameterList(tf, buf, hgs, info, runtimeStage);
 
     if (tf.mod)
     {
@@ -220,17 +269,21 @@ private void writePrefixFrame(TypeFunction tf, Declaration decl,
 
     if (td.origParameters !is null)
     {
+        const group = cast(ubyte) info.groups.length;
+        const open = cast(uint) buf.length;
         buf.put('(');
         foreach (i, p; *td.origParameters)
         {
             if (i)
                 buf.put(", ");
+            info.breaks ~= BreakPoint(cast(uint) buf.length, group);
             toCBuffer(p, buf, hgs);
         }
+        info.groups ~= BreakGroup(open, cast(uint) buf.length, templateStage);
         buf.put(')');
     }
 
-    writeParameterList(tf, buf, hgs);
+    writeParameterList(tf, buf, hgs, info, runtimeStage);
 
     // With ddoc on, the type constructor reads better after the parameters.
     if (tf.mod)
@@ -258,16 +311,21 @@ never bites in practice; if it ever does, the fix is to widen the fork's public
 surface rather than to guess here.
 */
 private void writeParameterList(TypeFunction tf, ref OutBuffer buf,
-    ref HdrGenState hgs) @system
+    ref HdrGenState hgs, ref SignatureInfo info, ubyte stage) @system
 {
     import dmd.hdrgen : parameterToChars;
 
     auto pl = tf.parameterList;
+    const group = cast(ubyte) info.groups.length;
+    const open = cast(uint) buf.length;
     buf.put('(');
     foreach (i; 0 .. pl.length)
     {
         if (i)
             buf.put(", ");
+        // The break belongs *before* the parameter, so an exploded list reads
+        // one argument per line with the comma left on the line above.
+        info.breaks ~= BreakPoint(cast(uint) buf.length, group);
         buf.put(parameterToChars(pl[i], tf, hgs.fullQual).toDStr);
     }
 
@@ -291,6 +349,7 @@ private void writeParameterList(TypeFunction tf, ref OutBuffer buf,
                 buf.put("...");
             break;
     }
+    info.groups ~= BreakGroup(open, cast(uint) buf.length, stage);
     buf.put(')');
 }
 
@@ -305,16 +364,25 @@ private bool isEffectWord(scope const(char)[] w) @safe pure nothrow @nogc
 /// with the default format `attributesApply` stays silent when `trust` is
 /// `TRUST.default_`, which is why an undecorated function has never shown
 /// `@system` — but "not memory-safe" is exactly what a chip should say.
-private void readEffects(TypeFunction tf, ref Effects e) @system
+private void readEffects(TypeFunction tf, bool uninstantiated, ref Effects e) @system
 {
     import dmd.astenums : PURE, TRUST;
 
     e.isPure = tf.purity != PURE.impure;
     e.isNothrow = tf.isNothrow;
     e.isNogc = tf.isNogc;
+    e.inferred = uninstantiated;
+
     final switch (tf.trust)
     {
+        // `TRUST.default_` means two different things. On an ordinary function
+        // it is D's default — the function is not memory-safe, and saying so is
+        // the point of the chip. On an uninstantiated template it means the
+        // attribute has not been inferred yet, and claiming `@system` there
+        // would be a lie the reader cannot check.
         case TRUST.default_:
+            e.trust = uninstantiated ? SigTrust.unspecified : SigTrust.system;
+            break;
         case TRUST.system:  e.trust = SigTrust.system;  break;
         case TRUST.trusted: e.trust = SigTrust.trusted; break;
         case TRUST.safe:    e.trust = SigTrust.safe;    break;
@@ -393,12 +461,335 @@ private string stmtText(Statement st, ref HdrGenState hgs) @system
     return cast(string) b.extractSlice();
 }
 
+/**
+Finds the template argument lists and the runs worth collapsing.
+
+This is the one place a scan is unavoidable: hdrgen hands back a name like
+`std.array.array!(MapResult!(__lambda_L8_C30, FilterResult!(…)))` as a single
+opaque leaf, and `tiargsToBuffer` is private, so the structure inside it can
+only be recovered by reading the text. That is tractable here because the
+grammar is known and tiny — `!(`, brackets, and the three string forms — unlike
+a scan of a whole signature, which cannot tell an attribute from a default
+argument.
+
+Records:
+$(UL
+$(LI a `templateStage` group per `!(…)`, so the renderer can explode one
+    argument per line;)
+$(LI an `Abbrev` over each $(I nested) argument list — depth 2 and beyond,
+    since the outermost one is usually the interesting part;)
+$(LI an `Abbrev` over each module qualifier, `a.b.C` → `C`.)
+)
+
+Abbreviations come back ascending and disjoint: a qualifier inside an already
+collapsed argument list is dropped, because the renderer replaces whole runs.
+*/
+private void scanTemplateArgs(scope const(char)[] text, ref SignatureInfo info)
+    @safe pure
+{
+    Abbrev[] nested;
+    uint[] openStack; // offsets of the `(` of each enclosing `!(…)`
+
+    size_t i;
+    while (i < text.length)
+    {
+        const c = text[i];
+
+        // Strings and character literals hide everything: `!"+"`, `["x)", "y"]`
+        // and a CTFE constant's body all live inside a signature.
+        if (c == '"' || c == '`' || c == '\'')
+        {
+            i = skipLiteral(text, i);
+            continue;
+        }
+
+        if (c == '!' && i + 1 < text.length && text[i + 1] == '(')
+        {
+            openStack ~= cast(uint)(i + 1);
+            i += 2;
+            continue;
+        }
+
+        if (c == '(' && openStack.length)
+        {
+            // A parenthesis inside an argument list — track it so the matching
+            // close does not end the list early.
+            openStack ~= uint.max;
+            i++;
+            continue;
+        }
+
+        if (c == ')' && openStack.length)
+        {
+            const open = openStack[$ - 1];
+            openStack = openStack[0 .. $ - 1];
+            if (open != uint.max)
+            {
+                info.groups ~= BreakGroup(open, cast(uint) i, templateStage);
+                // Depth 2+: the argument list of an argument.
+                if (openStack.length)
+                    nested ~= Abbrev(open + 1, cast(uint)(i - open - 1), "…",
+                        AbbrevKind.nestedTemplateArgs);
+            }
+            i++;
+            continue;
+        }
+
+        i++;
+    }
+
+    info.abbrevs = mergeAbbrevs(nested, scanModulePrefixes(text));
+}
+
+/**
+The leading module qualifier of a dotted chain, as the run to elide.
+
+Only the $(I leading) run: `std.range.iota!(int, int).Result` elides `std.range.`
+and keeps `iota!(int, int).Result`, because everything from the first
+instantiated or capitalized component onward names types and members rather
+than packages. Eliding to the last dot instead would silently drop `.Result`,
+which is the part carrying the meaning.
+
+The test is D's own naming convention — packages and modules are lowercase —
+so it is a heuristic, but a wrong guess only ever hides a qualifier the reader
+can expand again.
+*/
+private Abbrev[] scanModulePrefixes(scope const(char)[] text) @safe pure
+{
+    Abbrev[] result;
+    size_t i;
+    while (i < text.length)
+    {
+        const c = text[i];
+        if (c == '"' || c == '`' || c == '\'')
+        {
+            i = skipLiteral(text, i);
+            continue;
+        }
+        if (!isIdentStart(c))
+        {
+            i++;
+            continue;
+        }
+
+        const start = i;
+        size_t elideEnd; // one past the last dot that is still a qualifier
+        while (i < text.length)
+        {
+            const compStart = i;
+            while (i < text.length && isIdentChar(text[i]))
+                i++;
+
+            // A qualifier component is followed by a dot and another
+            // identifier; a lone trailing name (or `1.5`) is not one.
+            const dotted = i + 1 < text.length && text[i] == '.'
+                && isIdentStart(text[i + 1]);
+            if (!dotted)
+                break;
+
+            const instantiated = i < text.length && text[i] == '!';
+            const capitalized = text[compStart] >= 'A' && text[compStart] <= 'Z';
+            if (instantiated || capitalized)
+                break; // a type or a member — the qualifier ended before it
+
+            elideEnd = i + 1;
+            i++; // past the dot
+        }
+
+        // Skip whatever remains of the chain so its members are not rescanned
+        // as fresh qualifiers.
+        while (i < text.length && (isIdentChar(text[i])
+            || (text[i] == '.' && i + 1 < text.length && isIdentStart(text[i + 1]))))
+            i++;
+
+        if (elideEnd > start)
+            result ~= Abbrev(cast(uint) start, cast(uint)(elideEnd - start),
+                null, AbbrevKind.modulePrefix);
+    }
+    return result;
+}
+
+/// Ascending and disjoint: a qualifier inside a collapsed argument list is
+/// dropped, because the renderer swaps whole runs and a nested marker would
+/// have nothing to attach to.
+private Abbrev[] mergeAbbrevs(Abbrev[] nested, Abbrev[] prefixes) @safe pure
+{
+    import std.algorithm.sorting : sort;
+
+    auto result = nested.dup;
+    foreach (px; prefixes)
+    {
+        bool covered;
+        foreach (n; nested)
+            if (px.offset >= n.offset && px.offset + px.length <= n.offset + n.length)
+            {
+                covered = true;
+                break;
+            }
+        if (!covered)
+            result ~= px;
+    }
+    result.sort!((a, b) => a.offset < b.offset);
+    return result;
+}
+
+/// Past the string or character literal starting at `i`, escapes included.
+private size_t skipLiteral(scope const(char)[] text, size_t i) @safe pure nothrow @nogc
+{
+    const quote = text[i];
+    i++;
+    while (i < text.length)
+    {
+        if (quote != '`' && text[i] == '\\' && i + 1 < text.length)
+        {
+            i += 2;
+            continue;
+        }
+        if (text[i] == quote)
+            return i + 1;
+        i++;
+    }
+    return i; // unterminated: consume the rest rather than rescan it as code
+}
+
+private bool isIdentStart(char c) @safe pure nothrow @nogc
+    => c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+
+private bool isIdentChar(char c) @safe pure nothrow @nogc
+    => isIdentStart(c) || (c >= '0' && c <= '9');
+
+/// The staging order the renderer walks: the runtime list explodes before the
+/// template one.
+private enum ubyte runtimeStage = 0;
+/// ditto
+private enum ubyte templateStage = 1;
+
 /// The `const(char)*` hdrgen hands back, as a slice.
 private const(char)[] toDStr(const(char)* s) @system
 {
     import core.stdc.string : strlen;
 
     return s is null ? null : s[0 .. strlen(s)];
+}
+
+@("signature.scanTemplateArgs.ignoresStringsAndLiterals")
+@safe pure unittest
+{
+    // A signature carries `!"+"`, `["x", "y"]` and lambdas; a scanner that
+    // reads a `)` inside a literal as structure corrupts every later offset.
+    SignatureInfo info;
+    enum text = `Vector!(float, 4LU, ["x)", "y!("]) test.opBinary!"+"(int a)`;
+    scanTemplateArgs(text, info);
+
+    foreach (g; info.groups)
+    {
+        assert(g.open < g.close && g.close < text.length);
+        assert(text[g.open] == '(' && text[g.close] == ')',
+            text[g.open .. g.close + 1]);
+    }
+    foreach (a; info.abbrevs)
+        assert(a.offset + a.length <= text.length);
+}
+
+@("signature.scanModulePrefixes.elidesQualifiersOnly")
+@safe pure unittest
+{
+    // The qualifier is the run up to and including the last dot, and a dot
+    // that is not between two identifiers is not one.
+    static string[] elided(string text)
+    {
+        string[] r;
+        foreach (a; scanModulePrefixes(text))
+            r ~= text[a.offset .. a.offset + a.length];
+        return r;
+    }
+
+    assert(elided("sparkles.math.vector.Vector") == ["sparkles.math.vector."]);
+    assert(elided("int test.f(int x)") == ["test."]);
+    assert(elided("auto f(double d = 1.5)") == []);
+    assert(elided(`f(string s = "a.b.c")`) == [], "a literal is not a qualifier");
+
+    // Stop at the first component that names a type or an instantiation:
+    // eliding to the last dot would drop `.Result`, which carries the meaning.
+    assert(elided("std.range.iota!(int, int).Result") == ["std.range."]);
+    assert(elided("core.internal.array.construction._d_arrayliteralTX!(char[])")
+        == ["core.internal.array.construction."]);
+    assert(elided("sparkles.math.vector.Vector!(float, 2LU).opEquals")
+        == ["sparkles.math.vector."]);
+}
+
+@("signature.renderSignature.offsetsAreSaneAndUtf8Aligned")
+@system unittest
+{
+    // Everything the renderer slices by must land inside the text and on a
+    // UTF-8 boundary — it splits styled spans at exactly these points.
+    import std.algorithm.searching : canFind;
+
+    import sparkles.dmd_lsp.testing : withAnalysis;
+
+    enum src = q{
+        module test;
+        import std.traits : isIntegral;
+
+        int plain(int a, int b) pure @safe { return a + b; }
+        T twice(T)(T x, string label = "a, b") if (isIntegral!T) { return x * 2; }
+        int none() { return 0; }
+    };
+
+    withAnalysis(src, (m) {
+        size_t checked;
+        walkFunctions(m.module_, (Declaration decl, TemplateDeclaration td) {
+            SignatureInfo info;
+            const text = renderSignature(decl, td, info);
+            if (text is null)
+                return;
+            ++checked;
+
+            assertOffsetsSane(text, info);
+        });
+        assert(checked >= 3);
+    });
+}
+
+@("signature.renderSignature.breaksMatchTheParameters")
+@system unittest
+{
+    // One break before each parameter, and the runtime list stages ahead of
+    // the template one.
+    import sparkles.dmd_lsp.testing : withAnalysis;
+
+    enum src = q{
+        module test;
+        T pick(T, U)(T first, U second, int third) { return first; }
+    };
+
+    withAnalysis(src, (m) {
+        size_t seen;
+        walkFunctions(m.module_, (Declaration decl, TemplateDeclaration td) {
+            SignatureInfo info;
+            const text = renderSignature(decl, td, info);
+            if (text is null || td is null)
+                return;
+            ++seen;
+
+            size_t runtime, template_;
+            foreach (b; info.breaks)
+            {
+                if (info.groups[b.group].stage == runtimeStage)
+                    ++runtime;
+                else
+                    ++template_;
+            }
+            assert(runtime == 3, text);   // first, second, third
+            assert(template_ == 2, text); // T, U
+
+            // The first parameter of each list starts right after its `(`.
+            foreach (b; info.breaks)
+                if (b.offset == info.groups[b.group].open + 1)
+                    assert(text[b.offset] != ',', text);
+        });
+        assert(seen == 1);
+    });
 }
 
 @("signature.readEffects.dataNotWords")
@@ -441,6 +832,39 @@ private const(char)[] toDStr(const(char)* s) @system
         assert(bare.effects.spans.length == 0, textByName["bare"]);
 
         assert(byName["trusted"].effects.trust == SigTrust.trusted);
+        assert(!dec.effects.inferred, "an ordinary function's effects are known");
+    });
+}
+
+@("signature.readEffects.uninstantiatedTemplateIsUnknownNotDenied")
+@system unittest
+{
+    // A template's attributes are inferred per instantiation, so rendering the
+    // declaration and reporting `@system`/not-pure would state as fact what
+    // the compiler has not decided.
+    import sparkles.dmd_lsp.testing : withAnalysis;
+
+    enum src = q{
+        module test;
+        T inferAll(T)(T x) { return x; }
+        T explicit(T)(T x) @safe pure { return x; }
+    };
+
+    withAnalysis(src, (m) {
+        SignatureInfo[string] byName;
+        walkFunctions(m.module_, (Declaration decl, TemplateDeclaration td) {
+            SignatureInfo info;
+            if (renderSignature(decl, td, info) !is null && td !is null)
+                byName[decl.ident.toString().idup] = info;
+        });
+
+        const a = byName["inferAll"].effects;
+        assert(a.inferred, "an uninstantiated template infers its attributes");
+        assert(a.trust == SigTrust.unspecified, "not @system — merely unknown");
+
+        // What the source states explicitly is still known.
+        const e = byName["explicit"].effects;
+        assert(e.trust == SigTrust.safe && e.isPure);
     });
 }
 
@@ -621,7 +1045,7 @@ private const(char)[] toDStr(const(char)* s) @system
     ];
 
     // One analysis per Analyzer (COR2), so each file gets its own session.
-    size_t files, checked, diverged, prefixFrame;
+    size_t files, checked, diverged, prefixFrame, withAbbrevs;
     string firstDiff;
     foreach (path; candidates)
     {
@@ -633,11 +1057,18 @@ private const(char)[] toDStr(const(char)* s) @system
         auto m = analyzer.analyze(path, readText(path));
 
         walkFunctions(m.module_, (Declaration decl, TemplateDeclaration td) {
-            const mine = renderSignature(decl, td);
+            SignatureInfo info;
+            const mine = renderSignature(decl, td, info);
             const theirs = viaHdrgen(decl, td);
             if (theirs is null)
                 return;
             ++checked;
+            if (mine !is null)
+            {
+                assertOffsetsSane(mine, info);
+                if (info.abbrevs.length)
+                    ++withAbbrevs;
+            }
             if (td !is null)
                 ++prefixFrame;
             if (mine != theirs)
@@ -667,6 +1098,9 @@ private const(char)[] toDStr(const(char)* s) @system
     // A sweep that only ever took the postfix frame would pass while leaving
     // the harder half untested.
     assert(prefixFrame > 0, "the sweep never hit the prefix frame");
+    // Real modules are full of qualified names; a scan that found nothing to
+    // collapse would be silently inert.
+    assert(withAbbrevs > 20, "the abbreviation scan found almost nothing");
     assert(diverged == 0, firstDiff);
 }
 
@@ -676,6 +1110,39 @@ version (unittest)
     import dmd.attrib : AttribDeclaration;
     import dmd.dsymbol : Dsymbol, ScopeDsymbol;
     import dmd.hdrgen : functionToBufferFull, functionToBufferWithIdent;
+
+    /// Every offset the renderer will slice by: inside the text, on a UTF-8
+    /// boundary, and — for abbreviations — disjoint and ascending, since the
+    /// renderer swaps whole runs.
+    private void assertOffsetsSane(string text, in SignatureInfo info) @safe pure
+    {
+        static bool aligned(string t, size_t at)
+            => at == t.length || (t[at] & 0xC0) != 0x80;
+
+        foreach (g; info.groups)
+        {
+            assert(g.open < g.close && g.close < text.length, text);
+            assert(text[g.open] == '(' && text[g.close] == ')', text);
+            assert(g.stage == runtimeStage || g.stage == templateStage, text);
+        }
+        foreach (b; info.breaks)
+        {
+            assert(b.offset <= text.length && aligned(text, b.offset), text);
+            assert(b.group < info.groups.length, text);
+            const g = info.groups[b.group];
+            assert(b.offset > g.open && b.offset <= g.close, text);
+        }
+        uint prevEnd;
+        foreach (a; info.abbrevs)
+        {
+            assert(a.offset + a.length <= text.length, text);
+            assert(aligned(text, a.offset) && aligned(text, a.offset + a.length), text);
+            assert(a.offset >= prevEnd, "abbrevs must be disjoint: " ~ text);
+            prevEnd = a.offset + a.length;
+        }
+        foreach (sp; info.effects.spans)
+            assert(sp.offset + sp.length <= text.length, text);
+    }
 
     /// What the hover renders today — the oracle both differential tests
     /// compare against.
