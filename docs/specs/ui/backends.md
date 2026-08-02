@@ -31,23 +31,26 @@ a target that cannot serve one should say so where the toolkit can act on it.
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | TGT3 | An **immediate** interpreter must walk the display list and issue draw calls per frame.                                                                                                             | full                          | `interp/immediate.d`                                                                                                                |
 | TGT4 | An **HTML** target must serialize the tree to markup and CSS, with semantic class names and an external stylesheet, and must express tier-0 interactivity in **pure CSS** with no script.           | full (`9314a49b`)             | `interp/html_semantic.d` (classes + stylesheet + `:hover`-reveal/`<details>`); `interp/html.d` stays the inline-style parity oracle |
-| TGT5 | Every target must **declare its capabilities** — which chrome features it honours and which input tiers it serves — as data the toolkit can inspect, so degradation is reported rather than silent. | not started                   | proposed capability declaration                                                                                                     |
+| TGT5 | Every target must **declare its capabilities** — which chrome features it honours and which input tiers it serves — as data the toolkit can inspect, so degradation is reported rather than silent. | partial (`IXB10`)             | `sparkles.input.capability` `InputCapabilities`; `RaylibEvents.capabilities`, `PosixEvents.capabilities`. Chrome half not started   |
 | TGT6 | Concrete canvases must live in **sibling packages** (`sparkles:ui-tui`, `sparkles:ui-raylib`), so the toolkit stays backend-free and a consumer links only what it uses.                            | full (`2c8356e1`, `6b0c9714`) | `libs/ui-tui` (`GridCanvas`), `libs/ui-raylib` (`RaylibCanvas` + `RaylibEvents`)                                                    |
 
 ## Current degradations
 
 Honest inventory, to become `TGT5` declarations:
 
-| Feature                   | Cell target                     | GPU target                     | HTML target                 |
-| ------------------------- | ------------------------------- | ------------------------------ | --------------------------- |
-| corner radius             | dropped (box-drawing corners)   | approximated                   | native                      |
-| drop shadow               | dropped                         | approximated                   | native                      |
-| single-side accent border | dropped                         | native                         | native                      |
-| dashed / dotted stroke    | approximated by underline style | approximated                   | native                      |
-| wavy underline            | curly underline where supported | drawn                          | native                      |
-| font role / scale         | n/a (single cell metric)        | **dropped** (single-size font) | native                      |
-| sub-cell positioning      | n/a                             | available                      | native                      |
-| tier-1 input              | served                          | served                         | **unavailable** (no script) |
+| Feature                   | Cell target                     | GPU target                          | HTML target                 |
+| ------------------------- | ------------------------------- | ----------------------------------- | --------------------------- |
+| corner radius             | dropped (box-drawing corners)   | approximated                        | native                      |
+| drop shadow               | dropped                         | approximated                        | native                      |
+| single-side accent border | dropped                         | native                              | native                      |
+| dashed / dotted stroke    | approximated by underline style | approximated                        | native                      |
+| wavy underline            | curly underline where supported | drawn                               | native                      |
+| font role / scale         | n/a (single cell metric)        | **dropped** (single-size font)      | native                      |
+| sub-cell positioning      | n/a                             | available                           | native                      |
+| tier-1 input              | served                          | served                              | **unavailable** (no script) |
+| hover                     | served                          | served (mouse) / **absent** (touch) | served (`:hover`)           |
+| sub-cell pointer          | **absent** (whole cells)        | served                              | n/a                         |
+| multi-pointer             | **absent** (one pointer)        | **absent** (mouse) / served (touch) | **absent**                  |
 
 ## Forward compatibility (`TGT7`–`TGT9`)
 
@@ -69,13 +72,13 @@ the existing ones **without editing `sparkles:ui`**. That holds only if:
 
 ## Milestones
 
-| Milestone | Scope                                                      | Status                        | Requirements |
-| --------- | ---------------------------------------------------------- | ----------------------------- | ------------ |
-| B0        | Adapter packages extracted from their current consumer     | full (`2c8356e1`, `6b0c9714`) | `TGT6`       |
-| B1        | Clip state carried through the display list                | not started                   | `TGT2`       |
-| B2        | HTML target: semantic classes, stylesheet, pure-CSS tier 0 | not started                   | `TGT4`       |
-| B3        | Declared capabilities, with reported degradation           | not started                   | `TGT5`       |
-| B4        | Parity harness across every target                         | partial                       | `TGT10`      |
+| Milestone | Scope                                                      | Status                                                                            | Requirements |
+| --------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------ |
+| B0        | Adapter packages extracted from their current consumer     | full (`2c8356e1`, `6b0c9714`)                                                     | `TGT6`       |
+| B1        | Clip state carried through the display list                | not started                                                                       | `TGT2`       |
+| B2        | HTML target: semantic classes, stylesheet, pure-CSS tier 0 | not started                                                                       | `TGT4`       |
+| B3        | Declared capabilities, with reported degradation           | partial — input axes declared and consumed (`IXB10`); chrome features still prose | `TGT5`       |
+| B4        | Parity harness across every target                         | partial                                                                           | `TGT10`      |
 
 ## Module coverage
 
@@ -85,6 +88,7 @@ the existing ones **without editing `sparkles:ui`**. That holds only if:
 | `libs/ui/src/sparkles/ui/display_list.d`     | `TGT2`                 |
 | `libs/ui/src/sparkles/ui/interp/immediate.d` | `TGT3`                 |
 | `libs/ui/src/sparkles/ui/interp/html.d`      | `TGT4`, `TGT10`        |
+| `libs/input/src/sparkles/input/capability.d` | `TGT5`                 |
 | `libs/ui-tui/src/`                           | `TGT5`, `TGT6`         |
 | `libs/ui-raylib/src/`                        | `TGT5`, `TGT6`, `TGT9` |
 
