@@ -97,6 +97,32 @@ import sparkles.twoslash.ingest : loadTwoslashFile;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 
 /// The window's default font size in pixels (Ctrl-±/theme cycling arrive in M3).
+/// Which selection regime a drag runs (`SEL`/`TBL`).
+private enum Regime
+{
+    none,
+    text,
+    table,
+}
+
+/// The mouse-selection drag state (M15 GROUP-S of the GuiState hoist):
+/// which regime the drag runs (text span vs table grid), the live anchors,
+/// and the modifier snapshot a table drag copies with.
+private struct SelectionDrag
+{
+    Regime regime;
+    bool selecting;
+    long anchorLo, anchorHi, headLo, headHi;
+    int selTable = -1;
+    GridHit tblAnchor, tblHead;
+    bool tblShift, tblAlt;
+
+    long selMin() const @safe pure nothrow @nogc
+        => anchorLo < headLo ? anchorLo : headLo;
+    long selMax() const @safe pure nothrow @nogc
+        => anchorHi > headHi ? anchorHi : headHi;
+}
+
 private enum defaultFontSize = 18;
 
 
@@ -638,19 +664,11 @@ int runGui(
     }
 
     // Mouse selection has two regimes (a drag stays in the one it starts in, TBL4):
-    //  • text  (SEL): a source byte range [selMin, selMax). Prose/code map a click
+    //  • text  (SEL): a source byte range [drag.selMin, drag.selMax). Prose/code map a click
     //    char-precisely; an ANSI body line selects its whole fence-body span (SEL6).
     //  • table (TBL): a 2D grid selection inside one table, resolved from anchor +
     //    head cells (from the table map) under Shift/Alt.
-    enum Regime { none, text, table }
-    Regime regime;
-    bool selecting;
-    // text regime — anchor/head each a source span (char ⇒ lo==hi; ANSI ⇒ block).
-    long anchorLo, anchorHi, headLo, headHi;
-    // table regime.
-    int selTable = -1;
-    GridHit tblAnchor, tblHead;
-    bool tblShift, tblAlt;
+    SelectionDrag drag;
 
     // Copy modes (SEL7/TBL2), toggleable at runtime ('y' ANSI, 't' table); a
     // toggle flashes the new mode in the status bar for a moment.
@@ -659,10 +677,8 @@ int runGui(
     string copyModeMsg;
     Timeline toast;
 
-    // The text-regime selection as a source range [selMin, selMax) — the union of
+    // The text-regime selection as a source range [drag.selMin, drag.selMax) — the union of
     // the anchor and head spans (a char point is a zero-width span).
-    long selMin() => anchorLo < headLo ? anchorLo : headLo;
-    long selMax() => anchorHi > headHi ? anchorHi : headHi;
 
     // The one clipboard seam. raylib's Android SetClipboardText is an
     // unimplemented no-op (a TRACELOG warning — see rcore_android.c), so
@@ -691,22 +707,23 @@ int runGui(
     // fence offsets belong to the current document.
     void copySelection()
     {
-        if (regime == Regime.text && selMax() > selMin() && selMax() <= vm.source.length)
+        if (drag.regime == Regime.text && drag.selMax() > drag.selMin()
+            && drag.selMax() <= vm.source.length)
         {
-            auto txt = vm.source[cast(size_t) selMin() .. cast(size_t) selMax()];
+            auto txt = vm.source[cast(size_t) drag.selMin() .. cast(size_t) drag.selMax()];
             copyToClipboard(ansiStrip ? stripSgr(txt) : txt);
         }
-        else if (regime == Regime.table && selTable >= 0)
+        else if (drag.regime == Regime.table && drag.selTable >= 0)
         {
             // Cell content = its raw source slice (through the cell spans the
             // document walk collected — the same identity the tint uses).
-            const dims = vm.tableDims(selTable);
-            const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
+            const dims = vm.tableDims(drag.selTable);
+            const reg = tableSelection(drag.tblAnchor, drag.tblHead, drag.tblShift, drag.tblAlt,
                 dims.rows, dims.cols);
             const(char)[] cellText(size_t r, size_t c)
             {
                 foreach (ref const mc; vm.cellList)
-                    if (mc.table == selTable && mc.row == r && mc.col == c
+                    if (mc.table == drag.selTable && mc.row == r && mc.col == c
                         && mc.span.end <= vm.source.length)
                         return vm.source[mc.span.start .. mc.span.end];
                 return "";
@@ -722,8 +739,8 @@ int runGui(
     void foldAtCursor(ViewerModel.FoldOp op)
     {
         long off = -1;
-        if (regime == Regime.text && selMax() > selMin())
-            off = selMin();
+        if (drag.regime == Regime.text && drag.selMax() > drag.selMin())
+            off = drag.selMin();
         else if (vm.rows.length)
         {
             const t0 = cast(size_t)(vm.top >= 0
@@ -835,8 +852,8 @@ int runGui(
         // selection, and Ctrl-C is the only caller of copySelection), which
         // made the spec's "Copy … works" true only with a keyboard attached.
         bool hasSelection() =>
-            (regime == Regime.text && selMax() > selMin()) ||
-            (regime == Regime.table && selTable >= 0);
+            (drag.regime == Regime.text && drag.selMax() > drag.selMin()) ||
+            (drag.regime == Regime.table && drag.selTable >= 0);
 
         string[toolbarSegments] toolbarLabels() => [
             "◀ thm", "thm ▶", "view", "tree", hasSelection() ? "copy" : "ln №",
@@ -1664,7 +1681,7 @@ int runGui(
                 return h; // left of the content (tree/gutter) hits nothing
             const p = Point(cx, cast(int) cy);
             const off = sourceOffsetAt(vm.tree, vm.frames, p);
-            // Inside a keyed table cell: a grid hit (2-D regime anchor),
+            // Inside a keyed table cell: a grid hit (2-D drag.regime anchor),
             // with the char offset relative to the cell's source span.
             foreach (ref const kr; vm.cells)
                 if (kr.rect.contains(p))
@@ -1817,44 +1834,44 @@ int runGui(
                 && !popupClicked && capture.available(capSelection))
             {
                 const h = hitAt(mp.x, mp.y);
-                selecting = h.ok;
-                if (selecting)
+                drag.selecting = h.ok;
+                if (drag.selecting)
                     capture = capture.capturedBy(capSelection);
                 if (h.table)
                 {
-                    regime = Regime.table;
-                    selTable = h.tableIdx;
-                    tblAnchor = tblHead = h.cell;
-                    tblShift = tblAlt = false;
+                    drag.regime = Regime.table;
+                    drag.selTable = h.tableIdx;
+                    drag.tblAnchor = drag.tblHead = h.cell;
+                    drag.tblShift = drag.tblAlt = false;
                 }
                 else if (h.ok)
                 {
-                    regime = Regime.text;
-                    anchorLo = headLo = h.lo;
-                    anchorHi = headHi = h.hi;
+                    drag.regime = Regime.text;
+                    drag.anchorLo = drag.headLo = h.lo;
+                    drag.anchorHi = drag.headHi = h.hi;
                 }
                 else
-                    regime = Regime.none;
+                    drag.regime = Regime.none;
             }
-            if (selecting && fin.leftDown)
+            if (drag.selecting && fin.leftDown)
             {
                 const h = hitAt(mp.x, mp.y);
-                if (regime == Regime.table && h.table && h.tableIdx == selTable)
+                if (drag.regime == Regime.table && h.table && h.tableIdx == drag.selTable)
                 {
-                    tblHead = h.cell;
-                    tblShift = shiftMod;
-                    tblAlt = altMod;
+                    drag.tblHead = h.cell;
+                    drag.tblShift = shiftMod;
+                    drag.tblAlt = altMod;
                 }
-                else if (regime == Regime.text && h.ok)
+                else if (drag.regime == Regime.text && h.ok)
                 {
                     // Extend over anything with a source span — including a table
                     // line's block span, so a drag from outside sweeps across it.
-                    headLo = h.lo;
-                    headHi = h.hi;
+                    drag.headLo = h.lo;
+                    drag.headHi = h.hi;
                 }
             }
             if (fin.leftReleased)
-                selecting = false;
+                drag.selecting = false;
         }
 
 
@@ -1983,18 +2000,18 @@ int runGui(
                 cast(size_t) lo, cast(size_t) hi))
                 tintRow(r.y - vm.top, r.x, r.x + r.width);
         }
-        if (regime == Regime.text && selMax() > selMin())
+        if (drag.regime == Regime.text && drag.selMax() > drag.selMin())
             // One pass covers prose, code and table cells alike — every
             // span with source identity inside [smin, smax) tints.
-            tintSrcRange(selMin(), selMax());
-        else if (regime == Regime.table && selTable >= 0)
+            tintSrcRange(drag.selMin(), drag.selMax());
+        else if (drag.regime == Regime.table && drag.selTable >= 0)
         {
-            const dims = vm.tableDims(selTable);
-            const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
+            const dims = vm.tableDims(drag.selTable);
+            const reg = tableSelection(drag.tblAnchor, drag.tblHead, drag.tblShift, drag.tblAlt,
                 dims.rows, dims.cols);
             foreach (ref const mc; vm.cellList)
             {
-                if (mc.table != selTable)
+                if (mc.table != drag.selTable)
                     continue;
                 if (reg.subCell)
                 {
