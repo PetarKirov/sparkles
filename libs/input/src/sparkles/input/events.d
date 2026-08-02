@@ -43,6 +43,8 @@ enum Key : ubyte
     home, end, pageUp, pageDown, insert, delete_,
     enter, tab, backspace, escape,
     f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12,
+    back, /// the platform "go back / dismiss" key (Android's system back)
+    menu, /// the platform menu key (Android); no desktop spelling
 }
 
 /// Keyboard modifiers carried on a key or pointer event.
@@ -90,6 +92,18 @@ struct PointerEvent
     PointerButton button = PointerButton.none;
     Point pos;
     Mods mods;
+    /**
+    Which pointer this is — `0` for the mouse, or the platform's stable finger
+    id on a multi-touch target (`INP11`).
+
+    Single-pointer producers leave it `0`, and so does everything above the
+    gesture layer: the toolkit's state machines (`HoverState`, `ScrollState`'s
+    grab) are single-pointer by construction, so a recognizer owns the ids and
+    hands onward only the primary. The field exists because multi-touch is
+    otherwise not expressible in the shared vocabulary at all — which would
+    strand pinch in the app forever.
+    */
+    ubyte pointerId;
 }
 
 /**
@@ -136,6 +150,39 @@ struct ResizeEvent
     Size size;
 }
 
+/**
+What a recognizer resolved a multi-sample pointer sequence into.
+
+Taps and drags are deliberately $(B absent): they already have a spelling, so a
+recognizer emits a tap as `PointerEvent(press)`+`(release)` and a drag or fling
+as a `WheelEvent` (`GST2`). That is what keeps modality out of consumer code —
+nothing downstream asks "was this a finger?".
+
+Only gestures with no existing spelling appear here.
+*/
+enum Gesture : ubyte
+{
+    longPress, /// held past the threshold, within the slop radius
+    pinch,     /// two pointers changed separation; `scale` is the ratio
+}
+
+/**
+A recognized gesture at `pos` — the $(B anchor), i.e. where the gesture began,
+not where the pointer is now.
+
+One case rather than one per gesture, so `Event`'s arity stays stable and a
+gesture stream stays recordable through the same seam as all other input
+(`INP4`). `scale` is `1.0` for gestures that do not scale, which is a
+legitimate value rather than a dead field.
+*/
+struct GestureEvent
+{
+    Gesture gesture;
+    Point pos;
+    float scale = 1.0;
+    Mods mods;
+}
+
 /// An unrecognized or incomplete input sequence — ignorable, but its presence
 /// is visible (e.g. to a raw-input debugger) rather than silently dropped.
 struct NoEvent
@@ -151,7 +198,7 @@ struct EndOfInput
 /// `event.match!((in KeyEvent k) => …, …)`. `Event.init` is `NoEvent`.
 alias Event = SumType!(
     NoEvent, KeyEvent, PointerEvent, WheelEvent, FocusEvent, ResizeEvent,
-    EndOfInput);
+    GestureEvent, EndOfInput);
 
 /// A named-key event.
 Event keyEvent(Key k, Mods m = Mods()) pure nothrow @nogc
@@ -164,6 +211,27 @@ Event charEvent(dchar c, Mods m = Mods()) pure nothrow @nogc
 /// `true` iff the stream ended — the one test every event-loop shell makes.
 bool isEndOfInput(in Event e) pure nothrow @nogc
     => e.match!((in EndOfInput _) => true, _ => false);
+
+/**
+`true` for the platform spellings of "go back / dismiss" (`INP13`): `Escape`
+on desktop and in the terminal, the system back key on Android.
+
+The framework owns the $(I equivalence); the application owns the chain. hue
+dismisses a hover popup, then the explorer, then quits — that ordering is
+hue's, and a different app would nest differently. `q` is deliberately not
+here: "q quits" is a keybinding, not a platform spelling of dismiss.
+*/
+bool isDismiss(in KeyEvent k) pure nothrow @nogc
+    => k.key == Key.escape || k.key == Key.back;
+
+@("input.events.isDismiss")
+@safe pure nothrow @nogc unittest
+{
+    assert(isDismiss(KeyEvent(Key.escape)));
+    assert(isDismiss(KeyEvent(Key.back)));
+    assert(!isDismiss(KeyEvent(Key.menu)));
+    assert(!isDismiss(KeyEvent(Key.char_, 'q')));
+}
 
 // ---------------------------------------------------------------------------
 // Tests

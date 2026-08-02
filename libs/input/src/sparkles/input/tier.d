@@ -38,6 +38,10 @@ InteractionTier tierOf(in Event e) pure nothrow @nogc
         (in KeyEvent _) => InteractionTier.interactive,
         (in PointerEvent _) => InteractionTier.interactive,
         (in WheelEvent _) => InteractionTier.interactive,
+        // The first case that makes `precise` reachable from `tierOf`: a
+        // gesture is resolved from sub-cell positions over time, which is the
+        // ladder's own definition of tier 2 (`GST5`).
+        (in GestureEvent _) => InteractionTier.precise,
         _ => InteractionTier.passive,
     );
 
@@ -46,6 +50,7 @@ InteractionTier tierOf(in Event e) pure nothrow @nogc
 {
     assert(tierOf(keyEvent(Key.enter)) == InteractionTier.interactive);
     assert(tierOf(Event(WheelEvent(dy: 1))) == InteractionTier.interactive);
+    assert(tierOf(Event(GestureEvent(Gesture.longPress))) == InteractionTier.precise);
     assert(tierOf(Event(FocusEvent(focused: true))) == InteractionTier.passive);
     assert(tierOf(Event(ResizeEvent())) == InteractionTier.passive);
     // The ladder is ordered, so "does the target serve this?" is `<=`.
