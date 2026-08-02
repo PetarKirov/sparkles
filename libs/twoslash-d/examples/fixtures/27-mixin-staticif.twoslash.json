@@ -15,6 +15,17 @@
             "character": 15,
             "length": 5,
             "line": 6,
+            "signature": {
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 13,
+                        "open": 12
+                    }
+                ]
+            },
             "start": 189,
             "text": "size_t bytes() const",
             "type": "hover"
@@ -71,6 +82,24 @@
             "character": 23,
             "length": 5,
             "line": 11,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 45,
+                        "open": 44
+                    }
+                ]
+            },
             "start": 298,
             "text": "ulong sample.Buffer.SizeAccessor!\"KiB\".bytes() const",
             "type": "hover"

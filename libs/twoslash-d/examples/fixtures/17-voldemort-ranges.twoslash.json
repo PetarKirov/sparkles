@@ -7,6 +7,71 @@
             "docs": "The even perfect squares below `n` * `n`, lazily.",
             "length": 11,
             "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 19,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "template",
+                        "length": 23,
+                        "offset": 61,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 87
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 106
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 112
+                        },
+                        {
+                            "length": 8,
+                            "offset": 117
+                        },
+                        {
+                            "length": 6,
+                            "offset": 125
+                        },
+                        {
+                            "length": 6,
+                            "offset": 131
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 111,
+                        "open": 105
+                    },
+                    {
+                        "close": 84,
+                        "open": 60,
+                        "stage": 1
+                    },
+                    {
+                        "close": 85,
+                        "open": 32,
+                        "stage": 1
+                    }
+                ]
+            },
             "start": 55,
             "text": "sample.evenSquares.FilterResult!(__lambda_L7_C45, MapResult!(__lambda_L7_C25, Result)) sample.evenSquares(int n) pure nothrow @nogc @safe",
             "type": "hover"
@@ -24,6 +89,60 @@
             "docs": "Ditto",
             "length": 4,
             "line": 3,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 10,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "module",
+                        "length": 10,
+                        "offset": 33
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 52
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 60
+                        },
+                        {
+                            "length": 8,
+                            "offset": 65
+                        },
+                        {
+                            "length": 6,
+                            "offset": 73
+                        },
+                        {
+                            "length": 6,
+                            "offset": 79
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 59,
+                        "open": 51
+                    },
+                    {
+                        "close": 24,
+                        "open": 15,
+                        "stage": 1
+                    }
+                ]
+            },
             "start": 87,
             "text": "std.range.iota!(int, int).Result std.range.iota!int(int end) pure nothrow @nogc @safe",
             "type": "hover"
@@ -41,6 +160,91 @@
             "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call ``map`!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.",
             "length": 3,
             "line": 3,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 19,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "module",
+                        "length": 19,
+                        "offset": 55
+                    },
+                    {
+                        "kind": "module",
+                        "length": 10,
+                        "offset": 79
+                    },
+                    {
+                        "kind": "template",
+                        "length": 8,
+                        "offset": 95,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 10,
+                        "offset": 113
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 113
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 148
+                        },
+                        {
+                            "length": 8,
+                            "offset": 153
+                        },
+                        {
+                            "length": 6,
+                            "offset": 161
+                        },
+                        {
+                            "length": 6,
+                            "offset": 167
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 147,
+                        "open": 112
+                    },
+                    {
+                        "close": 53,
+                        "open": 29,
+                        "stage": 1
+                    },
+                    {
+                        "close": 103,
+                        "open": 94,
+                        "stage": 1
+                    },
+                    {
+                        "close": 111,
+                        "open": 78,
+                        "stage": 1
+                    },
+                    {
+                        "close": 137,
+                        "open": 128,
+                        "stage": 1
+                    }
+                ]
+            },
             "start": 95,
             "tags": [
                 [
@@ -68,6 +272,102 @@
             "docs": "``filter`!(predicate)(`range`)` returns a new `range` containing only elements `x` in ``range`` for\nwhich `predicate(x)` returns `true`.\n\nThe predicate is passed to `unaryFun`, and can be either a string, or\nany callable that can be executed via `pred(element)`.",
             "length": 6,
             "line": 3,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 19,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "template",
+                        "length": 23,
+                        "offset": 61,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 19,
+                        "offset": 87
+                    },
+                    {
+                        "kind": "module",
+                        "length": 19,
+                        "offset": 114
+                    },
+                    {
+                        "kind": "template",
+                        "length": 23,
+                        "offset": 144,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 19,
+                        "offset": 170
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 170
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 231
+                        },
+                        {
+                            "length": 8,
+                            "offset": 236
+                        },
+                        {
+                            "length": 6,
+                            "offset": 244
+                        },
+                        {
+                            "length": 6,
+                            "offset": 250
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 230,
+                        "open": 169
+                    },
+                    {
+                        "close": 84,
+                        "open": 60,
+                        "stage": 1
+                    },
+                    {
+                        "close": 85,
+                        "open": 32,
+                        "stage": 1
+                    },
+                    {
+                        "close": 167,
+                        "open": 143,
+                        "stage": 1
+                    },
+                    {
+                        "close": 168,
+                        "open": 113,
+                        "stage": 1
+                    },
+                    {
+                        "close": 223,
+                        "open": 199,
+                        "stage": 1
+                    }
+                ]
+            },
             "start": 112,
             "tags": [
                 [
@@ -115,6 +415,71 @@
             "docs": "The even perfect squares below `n` * `n`, lazily.",
             "length": 11,
             "line": 6,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 19,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "template",
+                        "length": 23,
+                        "offset": 61,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 87
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 106
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 112
+                        },
+                        {
+                            "length": 8,
+                            "offset": 117
+                        },
+                        {
+                            "length": 6,
+                            "offset": 125
+                        },
+                        {
+                            "length": 6,
+                            "offset": 131
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 111,
+                        "open": 105
+                    },
+                    {
+                        "close": 84,
+                        "open": 60,
+                        "stage": 1
+                    },
+                    {
+                        "close": 85,
+                        "open": 32,
+                        "stage": 1
+                    }
+                ]
+            },
             "start": 151,
             "text": "sample.evenSquares.FilterResult!(__lambda_L7_C45, MapResult!(__lambda_L7_C25, Result)) sample.evenSquares(int n) pure nothrow @nogc @safe",
             "type": "hover"

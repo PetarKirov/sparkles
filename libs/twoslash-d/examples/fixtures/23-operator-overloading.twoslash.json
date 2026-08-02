@@ -41,6 +41,60 @@
             "docs": "Adds or subtracts component-wise.",
             "length": 8,
             "line": 6,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 12
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 37
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 37
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 59
+                        },
+                        {
+                            "length": 8,
+                            "offset": 64
+                        },
+                        {
+                            "length": 6,
+                            "offset": 72
+                        },
+                        {
+                            "length": 6,
+                            "offset": 78
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 52,
+                        "open": 36
+                    }
+                ]
+            },
             "start": 132,
             "text": "sample.Vec2 sample.Vec2.opBinary!\"+\"(sample.Vec2 rhs) const pure nothrow @nogc @safe",
             "type": "hover"
@@ -110,6 +164,60 @@
             "docs": "Adds or subtracts component-wise.",
             "length": 4,
             "line": 11,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 12
+                    },
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 37
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 37
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 59
+                        },
+                        {
+                            "length": 8,
+                            "offset": 64
+                        },
+                        {
+                            "length": 6,
+                            "offset": 72
+                        },
+                        {
+                            "length": 6,
+                            "offset": 78
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 52,
+                        "open": 36
+                    }
+                ]
+            },
             "start": 302,
             "text": "sample.Vec2 sample.Vec2.opBinary!\"+\"(sample.Vec2 rhs) const pure nothrow @nogc @safe",
             "type": "hover"

@@ -7,6 +7,29 @@
             "docs": "Keeps the `readings` above three, then scales what is left by ten.",
             "length": 6,
             "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 20
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 34,
+                        "open": 19
+                    }
+                ]
+            },
             "start": 75,
             "text": "int[] sample.scaled(int[] readings)",
             "type": "hover"
@@ -48,6 +71,65 @@
             "docs": "``filter`!(predicate)(`range`)` returns a new `range` containing only elements `x` in ``range`` for\nwhich `predicate(x)` returns `true`.\n\nThe predicate is passed to `unaryFun`, and can be either a string, or\nany callable that can be executed via `pred(element)`.",
             "length": 6,
             "line": 3,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 14,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "module",
+                        "length": 14,
+                        "offset": 52
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 81
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 93
+                        },
+                        {
+                            "length": 8,
+                            "offset": 98
+                        },
+                        {
+                            "length": 6,
+                            "offset": 106
+                        },
+                        {
+                            "length": 6,
+                            "offset": 112
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 92,
+                        "open": 80
+                    },
+                    {
+                        "close": 50,
+                        "open": 27,
+                        "stage": 1
+                    },
+                    {
+                        "close": 79,
+                        "open": 73,
+                        "stage": 1
+                    }
+                ]
+            },
             "start": 125,
             "tags": [
                 [
@@ -103,6 +185,102 @@
             "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call ``map`!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.",
             "length": 3,
             "line": 4,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 14,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "template",
+                        "length": 22,
+                        "offset": 56,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 14,
+                        "offset": 81
+                    },
+                    {
+                        "kind": "module",
+                        "length": 14,
+                        "offset": 100
+                    },
+                    {
+                        "kind": "template",
+                        "length": 22,
+                        "offset": 128,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 14,
+                        "offset": 153
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 153
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 207
+                        },
+                        {
+                            "length": 8,
+                            "offset": 212
+                        },
+                        {
+                            "length": 6,
+                            "offset": 220
+                        },
+                        {
+                            "length": 6,
+                            "offset": 226
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 206,
+                        "open": 152
+                    },
+                    {
+                        "close": 78,
+                        "open": 55,
+                        "stage": 1
+                    },
+                    {
+                        "close": 79,
+                        "open": 24,
+                        "stage": 1
+                    },
+                    {
+                        "close": 150,
+                        "open": 127,
+                        "stage": 1
+                    },
+                    {
+                        "close": 151,
+                        "open": 99,
+                        "stage": 1
+                    },
+                    {
+                        "close": 203,
+                        "open": 180,
+                        "stage": 1
+                    }
+                ]
+            },
             "start": 170,
             "tags": [
                 [
@@ -138,6 +316,98 @@
             "docs": "Allocates an `array` and initializes it with copies of the elements\nof range ``r``.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
             "length": 5,
             "line": 5,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 10,
+                        "offset": 6
+                    },
+                    {
+                        "kind": "module",
+                        "length": 14,
+                        "offset": 23
+                    },
+                    {
+                        "kind": "template",
+                        "length": 54,
+                        "offset": 48,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "template",
+                        "length": 22,
+                        "offset": 79,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 14,
+                        "offset": 105
+                    },
+                    {
+                        "kind": "template",
+                        "length": 22,
+                        "offset": 161,
+                        "shortText": "…"
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 105
+                    }
+                ],
+                "effects": {
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 188
+                        },
+                        {
+                            "length": 8,
+                            "offset": 193
+                        },
+                        {
+                            "length": 6,
+                            "offset": 201
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 187,
+                        "open": 104
+                    },
+                    {
+                        "close": 101,
+                        "open": 78,
+                        "stage": 1
+                    },
+                    {
+                        "close": 102,
+                        "open": 47,
+                        "stage": 1
+                    },
+                    {
+                        "close": 103,
+                        "open": 22,
+                        "stage": 1
+                    },
+                    {
+                        "close": 183,
+                        "open": 160,
+                        "stage": 1
+                    },
+                    {
+                        "close": 184,
+                        "open": 129,
+                        "stage": 1
+                    }
+                ]
+            },
             "start": 208,
             "tags": [
                 [

@@ -23,6 +23,24 @@
             "character": 25,
             "length": 8,
             "line": 0,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 28,
+                        "open": 27
+                    }
+                ]
+            },
             "start": 25,
             "text": "ulong sample.Sized.byteSize() const",
             "type": "hover"
@@ -74,6 +92,24 @@
             "character": 11,
             "length": 8,
             "line": 6,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 28,
+                        "open": 27
+                    }
+                ]
+            },
             "start": 213,
             "text": "ulong sample.Chunk.byteSize() const",
             "type": "hover"
@@ -150,6 +186,24 @@
             "character": 20,
             "length": 8,
             "line": 12,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 27,
+                        "open": 26
+                    }
+                ]
+            },
             "start": 316,
             "text": "ulong sample.Pool.byteSize() const",
             "type": "hover"

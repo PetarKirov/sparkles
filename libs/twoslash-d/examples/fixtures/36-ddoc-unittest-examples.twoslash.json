@@ -7,6 +7,32 @@
             "docs": "Returns the `larger` of two ints.",
             "length": 6,
             "line": 5,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 18
+                    },
+                    {
+                        "offset": 25
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 30,
+                        "open": 17
+                    }
+                ]
+            },
             "start": 153,
             "tags": [
                 [
@@ -70,6 +96,32 @@
             "docs": "Returns the `larger` of two ints.",
             "length": 6,
             "line": 10,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 18
+                    },
+                    {
+                        "offset": 25
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 30,
+                        "open": 17
+                    }
+                ]
+            },
             "start": 284,
             "tags": [
                 [
@@ -101,6 +153,32 @@
             "docs": "Returns the `larger` of two ints.",
             "length": 6,
             "line": 13,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 18
+                    },
+                    {
+                        "offset": 25
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 30,
+                        "open": 17
+                    }
+                ]
+            },
             "start": 318,
             "tags": [
                 [

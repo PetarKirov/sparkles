@@ -15,6 +15,56 @@
             "docs": "Clamps `value` into the range `lo` .. `hi`; T is inferred from the arguments.",
             "length": 7,
             "line": 5,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 7
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 29
+                    },
+                    {
+                        "offset": 43
+                    },
+                    {
+                        "offset": 54
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 64
+                        },
+                        {
+                            "length": 8,
+                            "offset": 69
+                        },
+                        {
+                            "length": 6,
+                            "offset": 77
+                        },
+                        {
+                            "length": 6,
+                            "offset": 83
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 63,
+                        "open": 28
+                    }
+                ]
+            },
             "start": 381,
             "text": "double sample.clamped!double(double value, double lo, double hi) pure nothrow @nogc @safe",
             "type": "hover"
@@ -144,6 +194,56 @@
             "docs": "Clamps `value` into the range `lo` .. `hi`; T is inferred from the arguments.",
             "length": 7,
             "line": 8,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 7
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 29
+                    },
+                    {
+                        "offset": 43
+                    },
+                    {
+                        "offset": 54
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 64
+                        },
+                        {
+                            "length": 8,
+                            "offset": 69
+                        },
+                        {
+                            "length": 6,
+                            "offset": 77
+                        },
+                        {
+                            "length": 6,
+                            "offset": 83
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 63,
+                        "open": 28
+                    }
+                ]
+            },
             "start": 479,
             "text": "double sample.clamped!double(double value, double lo, double hi) pure nothrow @nogc @safe",
             "type": "hover"

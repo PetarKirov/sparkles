@@ -20,9 +20,13 @@ module sparkles.twoslash_d.analyze;
 
 import sparkles.base.text.lineindex : LineIndex;
 
-import sparkles.dmd_lsp.api : AnalyzedModule, Analyzer, AnalyzerConfig, DiagKind, Tip;
+import sparkles.dmd_lsp.api : AnalyzedModule, Analyzer, AnalyzerConfig, DiagKind,
+    SignatureInfo, Tip;
 
-import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
+import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn,
+    WireAbbrev = Abbrev, WireBreakGroup = BreakGroup, WireBreakPoint = BreakPoint,
+    WireContract = Contract, WireEffectSpan = EffectSpan,
+    WireSignature = SignatureLayout;
 
 import sparkles.twoslash_d.notation : ParsedNotation, parseNotation;
 
@@ -166,6 +170,61 @@ private Prepared prepare(string filename, string annotatedSource,
     return prep;
 }
 
+/**
+The analyzer's signature structure, as the wire model.
+
+Two POD shapes for one idea: `sparkles:dmd-lsp` speaks in frontend enums, and
+`sparkles:twoslash-protocol` must not depend on the frontend at all, so the
+translation lands here — the one package that already sees both.
+
+Offsets pass through untouched: they index the tip's `code`, which is exactly
+the `text` the node carries.
+*/
+private WireSignature toWire(const SignatureInfo info) @safe pure
+{
+    import sparkles.dmd_lsp.api : AbbrevKind, ContractKind, SigTrust;
+
+    WireSignature w;
+
+    foreach (g; info.groups)
+        w.groups ~= WireBreakGroup(g.open, g.close, g.stage);
+    foreach (b; info.breaks)
+        w.breaks ~= WireBreakPoint(b.offset, b.group);
+    foreach (a; info.abbrevs)
+        w.abbrevs ~= WireAbbrev(a.offset, a.length, a.shortText,
+            a.kind == AbbrevKind.nestedTemplateArgs ? "template" : "module");
+
+    final switch (info.effects.trust)
+    {
+        case SigTrust.unspecified: w.effects.trust = null;       break;
+        case SigTrust.system:      w.effects.trust = "@system";  break;
+        case SigTrust.trusted:     w.effects.trust = "@trusted"; break;
+        case SigTrust.safe:        w.effects.trust = "@safe";    break;
+    }
+    w.effects.isPure = info.effects.isPure;
+    w.effects.isNothrow = info.effects.isNothrow;
+    w.effects.isNogc = info.effects.isNogc;
+    w.effects.inferred = info.effects.inferred;
+    foreach (sp; info.effects.spans)
+        w.effects.spans ~= WireEffectSpan(sp.offset, sp.length);
+
+    foreach (c; info.contracts)
+        w.contracts ~= WireContract(c.kind == ContractKind.in_ ? "in" : "out",
+            c.resultId, c.text, c.isBlock);
+
+    w.constraint = info.constraint;
+    return w;
+}
+
+/// Whether a tip's structure describes the text the node will carry.
+///
+/// Every offset indexes the tip's `code`, and `tipText` prefixes `"(kind) "`
+/// for everything that has a kind — a function has none, which is exactly the
+/// set the producer records structure for. Anything else would carry offsets
+/// pointing where they no longer say.
+private bool structureMatchesText(const Tip tip) @safe pure nothrow @nogc
+    => tip.kind.length == 0;
+
 /// The node-building back half over a live analysis. `lazyHovers` emits
 /// hover nodes as bare spans (empty `text`/`docs` — the documented lazy
 /// convention): underlines render, content resolves on demand
@@ -249,7 +308,9 @@ private AnalyzeResult buildNodes(ref AnalyzedModule analyzed, ref Prepared prep,
             length: word.text.length,
             text: tipText(tip),
             docs: tip.doc,
-            tags: tip.tags.toMutableTags);
+            tags: tip.tags.toMutableTags,
+            signature: structureMatchesText(tip)
+                ? toWire(tip.sig) : WireSignature.init);
     }
 
     // --- `^?` queries: same oracle, persisted below the line.

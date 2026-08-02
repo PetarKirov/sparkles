@@ -71,6 +71,29 @@
             "docs": "inout propagates the argument mutability through to the result.",
             "length": 9,
             "line": 6,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 14
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 31
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 49,
+                        "open": 30
+                    }
+                ]
+            },
             "start": 185,
             "text": "inout(char)[] sample.firstHalf(inout(char)[] text)",
             "type": "hover"
@@ -112,6 +135,29 @@
             "docs": "inout propagates the argument mutability through to the result.",
             "length": 9,
             "line": 8,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 14
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 31
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 49,
+                        "open": 30
+                    }
+                ]
+            },
             "start": 249,
             "text": "inout(char)[] sample.firstHalf(inout(char)[] text)",
             "type": "hover"

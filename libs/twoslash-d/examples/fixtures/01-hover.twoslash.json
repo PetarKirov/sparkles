@@ -7,6 +7,29 @@
             "docs": "Doubles a number — the ddoc travels into the hover popup.",
             "length": 5,
             "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 17
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 22,
+                        "open": 16
+                    }
+                ]
+            },
             "start": 68,
             "text": "int sample.twice(int x)",
             "type": "hover"
@@ -48,6 +71,29 @@
             "docs": "Doubles a number — the ddoc travels into the hover popup.",
             "length": 5,
             "line": 3,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 17
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 22,
+                        "open": 16
+                    }
+                ]
+            },
             "start": 106,
             "text": "int sample.twice(int x)",
             "type": "hover"

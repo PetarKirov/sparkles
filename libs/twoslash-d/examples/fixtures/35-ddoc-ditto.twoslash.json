@@ -7,6 +7,29 @@
             "docs": "Rounds `x` toward zero.",
             "length": 8,
             "line": 3,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 20
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 28,
+                        "open": 19
+                    }
+                ]
+            },
             "start": 172,
             "text": "int sample.truncate(double x)",
             "type": "hover"
@@ -32,6 +55,29 @@
             "docs": "ditto",
             "length": 8,
             "line": 5,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 5
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 21
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 27,
+                        "open": 20
+                    }
+                ]
+            },
             "start": 222,
             "text": "long sample.truncate(real x)",
             "type": "hover"
@@ -57,6 +103,29 @@
             "docs": "A postfix doc comment.",
             "length": 4,
             "line": 7,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 16
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 24,
+                        "open": 15
+                    }
+                ]
+            },
             "start": 261,
             "text": "int sample.wide(double x)",
             "type": "hover"
@@ -90,6 +159,29 @@
             "docs": "Rounds `x` toward zero.",
             "length": 8,
             "line": 9,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 20
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 28,
+                        "open": 19
+                    }
+                ]
+            },
             "start": 329,
             "text": "int sample.truncate(double x)",
             "type": "hover"
@@ -116,6 +208,29 @@
             "docs": "ditto",
             "length": 8,
             "line": 10,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 5
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 21
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 27,
+                        "open": 20
+                    }
+                ]
+            },
             "start": 353,
             "text": "long sample.truncate(real x)",
             "type": "hover"
@@ -142,6 +257,29 @@
             "docs": "A postfix doc comment.",
             "length": 4,
             "line": 11,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 16
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 24,
+                        "open": 15
+                    }
+                ]
+            },
             "start": 378,
             "text": "int sample.wide(double x)",
             "type": "hover"

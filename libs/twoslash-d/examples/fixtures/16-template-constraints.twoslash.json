@@ -15,6 +15,50 @@
             "docs": "Doubles only integral values — the constraint rides along into the tip.",
             "length": 5,
             "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 21
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 27
+                        },
+                        {
+                            "length": 8,
+                            "offset": 32
+                        },
+                        {
+                            "length": 6,
+                            "offset": 40
+                        },
+                        {
+                            "length": 6,
+                            "offset": 46
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 26,
+                        "open": 20
+                    }
+                ]
+            },
             "start": 80,
             "text": "int sample.twice!int(int x) pure nothrow @nogc @safe",
             "type": "hover"
@@ -72,6 +116,50 @@
             "docs": "Doubles only integral values — the constraint rides along into the tip.",
             "length": 5,
             "line": 5,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 21
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 27
+                        },
+                        {
+                            "length": 8,
+                            "offset": 32
+                        },
+                        {
+                            "length": 6,
+                            "offset": 40
+                        },
+                        {
+                            "length": 6,
+                            "offset": 46
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 26,
+                        "open": 20
+                    }
+                ]
+            },
             "start": 145,
             "text": "int sample.twice!int(int x) pure nothrow @nogc @safe",
             "type": "hover"

@@ -15,6 +15,35 @@
             "docs": "Renders a progress `meter`.",
             "length": 5,
             "line": 12,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 7
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 20
+                    },
+                    {
+                        "offset": 34
+                    },
+                    {
+                        "offset": 48
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 59,
+                        "open": 19
+                    }
+                ]
+            },
             "start": 458,
             "tags": [
                 [

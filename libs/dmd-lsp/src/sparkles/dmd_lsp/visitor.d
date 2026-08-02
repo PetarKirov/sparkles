@@ -50,6 +50,7 @@ them lets the file be diffed against upstream wholesale.
 */
 module sparkles.dmd_lsp.visitor;
 
+import sparkles.dmd_lsp.signature : renderSignature, SignatureInfo;
 import sparkles.dmd_lsp.support : contains, DenseSet, TypeReferenceKind;
 import dmd.access;
 import dmd.aggregate;
@@ -1300,6 +1301,13 @@ struct TipData
     string doc;
     string sna; // size and aligmment
     Dsymbol symbol; // owner of `doc` when known (sparkles extension, for ddoc rendering)
+
+    // Where `code` may break, what of it collapses, and the effects and
+    // contracts lifted out of it (sparkles extension, `TIP5`). Populated for
+    // functions only, whose `kind` is empty — every offset indexes `code`, so
+    // anything that prefixes it (an alias) must drop this rather than carry
+    // offsets that no longer point where they say.
+    SignatureInfo sig;
 }
 
 string tipForObject(RootObject obj)
@@ -1339,19 +1347,18 @@ TipData tipForDeclaration(Declaration decl)
 {
     if (auto func = decl.isFuncDeclaration())
     {
-        HdrGenState hgs = { ddoc: true, fullQual: true };
-        OutBuffer buf;
-
         auto fntype = decl.type ? decl.type.isTypeFunction() : null;
+        auto td = fntype && decl.parent ? decl.parent.isTemplateDeclaration() : null;
 
-        if (auto td = fntype && decl.parent ? decl.parent.isTemplateDeclaration() : null)
-            functionToBufferFull(fntype, buf, decl.getIdent(), hgs, td);
-        else if (fntype)
-            functionToBufferWithIdent(fntype, buf, decl.toPrettyChars(true), hgs, func.isStatic);
-        else
-            buf.writestring(decl.toPrettyChars(true));
-        auto res = buf.extractSlice(); // take ownership
-        return TipData("", cast(string)res);
+        SignatureInfo info;
+        if (auto text = renderSignature(decl, td, info))
+            return TipData("", text, "", "", null, info);
+
+        // No function type (or a self-referential one `renderSignature`
+        // declines): the name alone, as before.
+        OutBuffer buf;
+        buf.writestring(decl.toPrettyChars(true));
+        return TipData("", cast(string) buf.extractSlice());
     }
 
     bool fqn = true;

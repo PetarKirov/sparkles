@@ -15,6 +15,32 @@
             "docs": "Escapes `<html>` markup: the literal $(NOT_A_MACRO) stays as text, and\n`snake_case_name` keeps every underscore it was written with.",
             "length": 10,
             "line": 10,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 7
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 25
+                    },
+                    {
+                        "offset": 49
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 58,
+                        "open": 24
+                    }
+                ]
+            },
             "start": 405,
             "tags": [
                 [
