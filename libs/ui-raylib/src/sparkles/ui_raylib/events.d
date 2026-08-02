@@ -210,9 +210,6 @@ struct RaylibEvents
             (ref other) => Event(other),
         );
 
-    private static bool isNoEvent(in Event e) @safe pure nothrow @nogc
-        => e.match!((in NoEvent _) => true, _ => false);
-
     private static PointerButton heldButton() @system
     {
         if (IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT))

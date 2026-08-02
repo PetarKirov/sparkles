@@ -691,22 +691,26 @@ int runGui(
 
     int frame = 0;
     // Touch interaction (Android): raylib maps the first touch to the mouse;
-    // the TouchScroller classifies those samples into tap / drag-scroll /
-    // long-press, and two touch points pinch-zoom the font. Desktop input is
-    // untouched — the helpers below are the only seam.
+    // `sparkles:input`'s recogniser classifies those samples into taps,
+    // drag-scrolls, long-presses and pinches; hue only consumes the result.
+    // Desktop input is untouched — the helpers below are the only seam.
     version (Android)
     {
-        import gui_touch : TouchScroller;
+        import sparkles.input.gesture : GestureRecognizer, PointF;
+        import sparkles.input.events : Gesture, GestureEvent, isNoEvent, match,
+            NoEvent, PointerAction, PointerEvent, WheelEvent;
 
-        TouchScroller touch;
-        TouchScroller.Frame touchFrame;
-        float touchAccumPx = 0;
-        float prevPinchDist = 0;
-        // A pinch owns the pointer until EVERY finger lifts. Latching on the
-        // way out matters: dropping from two fingers to one would otherwise
-        // start a fresh gesture on the finger still down, and lifting that
-        // one would fire a tap.
-        bool pinching = false;
+        // The recogniser is `sparkles:input`'s (IXB8): hue no longer classifies
+        // taps, drags, flings, long-presses or pinches — it consumes what they
+        // resolve to. The frame flags below are set purely by draining it.
+        //
+        // hue still POLLS raylib rather than consuming `RaylibEvents` (that is
+        // IXB7/M17), so it drives the recogniser itself for now; the drain is
+        // the same either way, which is what makes that later switch small.
+        GestureRecognizer touch;
+        bool touchTap, touchLongPress;
+        long touchScrollRows;
+        float touchPinch = 0;
 
         // A tap is the touch spelling of a click; a long-press starts a
         // selection (drag-extends via the existing machinery).
@@ -718,8 +722,8 @@ int runGui(
         // Fixing it needs a press-down seam distinct from "a tap happened",
         // which is what the shared scrollbar component (IXB1) will provide;
         // adding a second ad-hoc one here is what the component exists to stop.
-        bool clickPressed() => touchFrame.tap;
-        bool selectStartPressed() => touchFrame.longPress;
+        bool clickPressed() => touchTap;
+        bool selectStartPressed() => touchLongPress;
 
         // The bottom toolbar as ONE table, read by both the hit test and the
         // paint, so the two cannot disagree about where a segment is. (The
@@ -783,76 +787,79 @@ int runGui(
 
         version (Android)
         {
-            // Slop is a physical radius, so it tracks the cell height: a
-            // pinch or Ctrl-± changes `fonts.cellH()`, and a slop computed
-            // once before the loop would misclassify drags after any zoom.
-            touch.slopPx = cellH / 2.0f > 8 ? cellH / 2.0f : 8;
+            // Feed the shared recogniser raw samples, then drain what it
+            // resolved. Everything hue used to decide here — is this a tap, a
+            // drag, a fling, a long-press, a pinch; when does a second finger
+            // cancel the first — is `sparkles:input`'s now (IXB8).
+            //
+            // Slop and the row height are physical, so they track the cell
+            // size: a pinch or Ctrl-± changes `fonts.cellH()`, and thresholds
+            // computed once before the loop would misclassify after any zoom.
+            touch.cfg.slopPx = cellH / 2.0f > 8 ? cellH / 2.0f : 8;
+            touch.cfg.cellH = cellH;
 
-            // Two fingers = pinch zoom. The scroller is CANCELLED, not fed a
-            // synthetic up: `update(down: false)` cannot tell a fake release
-            // from a real one, so it would resolve the in-flight gesture —
-            // firing a tap on the frame the second finger lands (delivering a
-            // toolbar action, fold toggle or tree activation mid-pinch), and
-            // letting any fling tail coast on while the font resizes.
             const touchCount = GetTouchPointCount();
             if (touchCount >= 2)
-                pinching = true;
-            else if (touchCount == 0)
-                pinching = false; // only a full lift ends it — see `pinching`
-
-            if (pinching)
             {
-                if (touchCount >= 2)
-                {
-                    import std.math.algebraic : hypot;
-
-                    const p0 = GetTouchPosition(0);
-                    const p1 = GetTouchPosition(1);
-                    // Fixed ±2 px steps: coarse, since the Android font size
-                    // is DPI-scaled (a 420 dpi panel puts it near 49 px, so a
-                    // step is ~4 %), and each one pays a full atlas rebuild.
-                    // A proportional step would feel better; left alone until
-                    // pinch has been exercised on hardware (AND6).
-                    const dist = hypot(p1.x - p0.x, p1.y - p0.y);
-                    if (prevPinchDist > 0 && dist > prevPinchDist * 1.15f)
-                    {
-                        bumpFontSize(2);
-                        prevPinchDist = dist;
-                    }
-                    else if (prevPinchDist > 0 && dist < prevPinchDist * 0.87f)
-                    {
-                        bumpFontSize(-2);
-                        prevPinchDist = dist;
-                    }
-                    else if (prevPinchDist == 0)
-                        prevPinchDist = dist;
-                }
-                touch.cancel();
-                touchFrame = TouchScroller.Frame.init;
+                const p0 = GetTouchPosition(0);
+                const p1 = GetTouchPosition(1);
+                touch.setContacts(cast(ubyte) touchCount,
+                    PointF(p0.x, p0.y), PointF(p1.x, p1.y));
             }
             else
             {
-                prevPinchDist = 0;
                 const tp = GetMousePosition();
-                touchFrame = touch.update(
-                    IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT),
-                    tp.x, tp.y, GetFrameTime() * 1000);
+                touch.setContacts(cast(ubyte) touchCount, PointF(tp.x, tp.y), PointF());
+                touch.pointer(0, IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT),
+                    PointF(tp.x, tp.y));
             }
+            touch.tick(GetFrameTime() * 1000);
+
+            touchTap = false;
+            touchLongPress = false;
+            touchScrollRows = 0;
+            touchPinch = 0;
+            for (auto ev = touch.next(); !ev.isNoEvent; ev = touch.next())
+                ev.match!(
+                    // A tap arrives as press+release; hue reacts on the press
+                    // and ignores the release, because `clickPressed()` is a
+                    // one-frame edge.
+                    (in PointerEvent p) {
+                        if (p.action == PointerAction.press)
+                            touchTap = true;
+                    },
+                    (in WheelEvent w) { touchScrollRows += w.dy; },
+                    (in GestureEvent g) {
+                        if (g.gesture == Gesture.longPress)
+                            touchLongPress = true;
+                        else
+                            touchPinch = g.scale;
+                    },
+                    (in _) {},
+                );
+
+            // Pinch → font size. Which gesture means "zoom", and by how much,
+            // is hue's decision; that a pinch happened is the framework's.
+            //
+            // Fixed ±2 px steps: coarse, since the Android font size is
+            // DPI-scaled (a 420 dpi panel puts it near 49 px, so a step is
+            // ~4 %), and each pays a full atlas rebuild. Left alone until
+            // pinch is exercised on hardware (AND6).
+            if (touchPinch > 1)
+                bumpFontSize(2);
+            else if (touchPinch != 0 && touchPinch < 1)
+                bumpFontSize(-2);
 
             // Drag/fling → whole rows into the pane under the gesture anchor
-            // (same routing rule as the wheel).
-            if (touchFrame.scrollPx != 0)
+            // (the same routing rule as the wheel). The rows are already
+            // quantised — `WheelEvent.precise` — so nothing multiplies here.
+            if (touchScrollRows != 0)
             {
-                touchAccumPx += touchFrame.scrollPx;
-                const rows = cast(long)(touchAccumPx / cellH);
-                if (rows != 0)
-                {
-                    touchAccumPx -= rows * cellH;
-                    if (treeVisible && touchFrame.x < treeCols * cellW)
-                        tree.scrollBy(rows);
-                    else
-                        vm.top += rows;
-                }
+                const anchorX = touch.anchor().x;
+                if (treeVisible && anchorX < treeCols * cellW)
+                    tree.scrollBy(touchScrollRows);
+                else
+                    vm.top += touchScrollRows;
             }
 
             // Bottom-row toolbar taps — the touch equivalents of the keyboard
@@ -866,9 +873,10 @@ int runGui(
             // slop can exceed half a segment on a narrow screen — so the two
             // can disagree about which segment was meant. The anchor is what
             // the user aimed at.
-            if (touchFrame.tap && !inputMode && touchFrame.y >= screenH - cellH)
+            if (touchTap && !inputMode && touch.anchor().y >= screenH - cellH)
             {
-                const seg = cast(int)(touchFrame.x / (screenW / cast(float) toolbarSegments));
+                const seg = cast(int)(touch.anchor().x
+                    / (screenW / cast(float) toolbarSegments));
                 switch (seg)
                 {
                     case 0: applyTheme(vm.themeIdx == 0 ? themes.length - 1 : vm.themeIdx - 1); break;
@@ -888,7 +896,7 @@ int runGui(
                         }
                         break;
                 }
-                touchFrame.tap = false; // consumed
+                touchTap = false; // consumed
             }
 
             // The system back button: close the explorer, else leave (the

@@ -212,6 +212,11 @@ Event charEvent(dchar c, Mods m = Mods()) pure nothrow @nogc
 bool isEndOfInput(in Event e) pure nothrow @nogc
     => e.match!((in EndOfInput _) => true, _ => false);
 
+/// `true` iff `e` carries nothing — the drain sentinel every recogniser and
+/// decoder returns when it has no more events this frame.
+bool isNoEvent(in Event e) pure nothrow @nogc
+    => e.match!((in NoEvent _) => true, _ => false);
+
 /**
 `true` for the platform spellings of "go back / dismiss" (`INP13`): `Escape`
 on desktop and in the terminal, the system back key on Android.
