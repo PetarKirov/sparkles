@@ -70,23 +70,81 @@ struct SigLayoutResult
 // attributes instead of being forced through a delegate.
 
 /**
+The part of the signature that is not an effect attribute.
+
+The four effects are rendered as chips, so the text must stop showing them —
+but rebasing every offset around a hole in the middle would invite exactly the
+off-by-one this design was shaped to avoid. hdrgen only ever writes them in one
+run at one end (postfix style appends, prefix style prepends), so trimming the
+range is enough: rows stay ranges into the original text, and the caller's
+spans still slice by the offsets they were stamped with.
+
+An effect word anywhere else — which hdrgen does not produce — simply stays
+visible, which is the harmless outcome.
+*/
+struct SigBody
+{
+    uint start;
+    uint end;
+}
+
+/// ditto
+SigBody effectFreeRange(scope const(char)[] text, in SignatureLayout sig) pure
+{
+    uint lo, hi = cast(uint) text.length;
+    bool moved = true;
+    while (moved)
+    {
+        moved = false;
+        foreach (sp; sig.effects.spans)
+        {
+            if (sp.offset == lo && sp.offset + sp.length <= hi)
+            {
+                lo = sp.offset + sp.length;
+                moved = true;
+            }
+            else if (sp.offset + sp.length == hi && sp.offset >= lo)
+            {
+                hi = sp.offset;
+                moved = true;
+            }
+        }
+        // The separator the span did not swallow.
+        while (lo < hi && text[lo] == ' ')
+        {
+            lo++;
+            moved = true;
+        }
+        while (hi > lo && text[hi - 1] == ' ')
+        {
+            hi--;
+            moved = true;
+        }
+    }
+    return SigBody(lo, hi);
+}
+
+/**
 Lays `text` out within `width` cells, using the producer's structure.
 
 `indentCells` is the continuation indent for an exploded list — a style metric
 the caller reads from its palette, never invented here (`LAY10`).
 */
 SigLayoutResult layoutSignature(F)(scope const(char)[] text, in SignatureLayout sig,
-    int width, int indentCells, scope F measure)
+    int width, int indentCells, scope F measure, SigBody body_ = SigBody.init)
 if (is(typeof(measure("")) : int))
 {
+    if (body_ == SigBody.init)
+        body_ = SigBody(0, cast(uint) text.length);
+
     auto clauses = clauseLines(sig);
 
     // Stage 0: the whole thing on one line, clauses included.
-    if (width <= 0 || fits(oneLine(text, clauses), width, measure))
-        return SigLayoutResult(flatRows(text, clauses), SigStage.flat);
+    if (width <= 0 || fits(oneLine(text[body_.start .. body_.end], clauses), width, measure))
+        return SigLayoutResult(flatRows(body_, clauses), SigStage.flat);
 
     // Stage 1: the signature keeps one line; each clause takes its own.
-    auto rows = [SigRow(0, cast(uint) text.length)] ~ clauseRows(clauses);
+    auto rows = [SigRow(body_.start, body_.end)] ~ clauseRows(clauses);
     if (fitsAll(text, rows, width, measure))
         return SigLayoutResult(rows, SigStage.clauses);
 
@@ -96,7 +154,7 @@ if (is(typeof(measure("")) : int))
     foreach (stage; [SigStage.runtimeArgs, SigStage.templateArgs])
     {
         const maxStage = stage == SigStage.runtimeArgs ? 0 : 1;
-        auto exploded = explode(text, sig, maxStage, indentCells)
+        auto exploded = explode(text, sig, maxStage, indentCells, body_)
             ~ clauseRows(clauses);
         if (fitsAll(text, exploded, width, measure))
             return SigLayoutResult(exploded, stage);
@@ -128,16 +186,16 @@ private string[] clauseLines(in SignatureLayout sig)
     return out_;
 }
 
-private SigRow[] flatRows(scope const(char)[] text, string[] clauses)
+private SigRow[] flatRows(SigBody body_, string[] clauses)
 {
-    auto rows = [SigRow(0, cast(uint) text.length)];
+    auto rows = [SigRow(body_.start, body_.end)];
     // Flat means one line, so the clauses ride along as one trailing literal.
     if (clauses.length)
     {
         string joined;
         foreach (c; clauses)
             joined ~= " " ~ c;
-        rows ~= SigRow(cast(uint) text.length, cast(uint) text.length, joined);
+        rows ~= SigRow(body_.end, body_.end, joined);
     }
     return rows;
 }
@@ -158,7 +216,7 @@ stays on the line above and the closing paren returns to the outer indent —
 the shape D itself is formatted in.
 */
 private SigRow[] explode(scope const(char)[] text, in SignatureLayout sig,
-    int maxStage, int indentCells)
+    int maxStage, int indentCells, SigBody body_)
 {
     // Cut points, each carrying the indent the row that *starts* there wants.
     // Depth comes from containment: a list nested inside another indents one
@@ -190,11 +248,11 @@ private SigRow[] explode(scope const(char)[] text, in SignatureLayout sig,
     points.sort();
 
     SigRow[] rows;
-    uint from;
+    uint from = body_.start;
     ubyte indent;
     foreach (p; points)
     {
-        if (p <= from)
+        if (p <= from || p > body_.end)
             continue;
         // A break sits *before* an item, so the row above ends with the
         // separator's `", "` — the comma belongs to the line, the space does
@@ -203,8 +261,8 @@ private SigRow[] explode(scope const(char)[] text, in SignatureLayout sig,
         from = p;
         indent = indentAt[p];
     }
-    if (from < text.length)
-        rows ~= SigRow(from, trimEnd(text, from, cast(uint) text.length), null, indent);
+    if (from < body_.end)
+        rows ~= SigRow(from, trimEnd(text, from, body_.end), null, indent);
     return rows;
 }
 
@@ -268,6 +326,51 @@ version (unittest)
         }
         return out_;
     }
+}
+
+@("signature_layout.effectFreeRange.trimsTheAttributeRun")
+@safe unittest
+{
+    import sparkles.twoslash.protocol : EffectSpan, Effects;
+
+    // Postfix style: the run is at the end, each span carrying its separator.
+    enum post = "int f(int x) pure nothrow @nogc @safe";
+    auto sig = SignatureLayout(effects: Effects(spans: [
+        EffectSpan(12, 5), EffectSpan(17, 8), EffectSpan(25, 6), EffectSpan(31, 6)]));
+    const b = effectFreeRange(post, sig);
+    assert(post[b.start .. b.end] == "int f(int x)", post[b.start .. b.end]);
+
+    // Prefix style: the run leads, and the separator it leaves behind goes too.
+    enum pre = "pure nothrow @safe T twice(T)(T x)";
+    auto sig2 = SignatureLayout(effects: Effects(spans: [
+        EffectSpan(0, 5), EffectSpan(5, 8), EffectSpan(13, 6)]));
+    const b2 = effectFreeRange(pre, sig2);
+    assert(pre[b2.start .. b2.end] == "T twice(T)(T x)", pre[b2.start .. b2.end]);
+
+    // Nothing to trim.
+    const b3 = effectFreeRange("int f()", SignatureLayout.init);
+    assert(b3.start == 0 && b3.end == 7);
+}
+
+@("signature_layout.layoutSignature.laysOutTheBodyOnly")
+@safe unittest
+{
+    import sparkles.twoslash.protocol : EffectSpan, Effects;
+
+    enum text = "int f(int a, int b) pure @safe";
+    auto sig = SignatureLayout(
+        groups: [BreakGroup(5, 18, 0)],
+        breaks: [BreakPoint(6, 0), BreakPoint(13, 0)],
+        effects: Effects(spans: [EffectSpan(19, 5), EffectSpan(24, 6)]));
+
+    const body_ = effectFreeRange(text, sig);
+    const r = layoutSignature(text, sig, 14, 4, &ascii, body_);
+    assert(renderRows(text, r.rows) == [
+        "int f(",
+        "    int a,",
+        "    int b",
+        ")",
+    ], "the attribute run must not reach the rows");
 }
 
 @("signature_layout.layoutSignature.flatWhenItFits")

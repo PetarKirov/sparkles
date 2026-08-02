@@ -38,7 +38,7 @@ import sparkles.ui.wrap : TextWrap;
 
 import sparkles.twoslash.overlay : BelowBlock, errIsWarning,
     highlightSignature, planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
-import sparkles.twoslash.protocol : Completion, Node, NodeType,
+import sparkles.twoslash.protocol : Completion, Effects, Node, NodeType,
     SignatureLayout, TwoslashReturn;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
 
@@ -431,6 +431,11 @@ struct HoverViewOptions
 
     /// The signature as resolved syntax-colored spans (`signatureSpans`).
     TextSpan[] sigSpans;
+
+    /// Whether the target can render non-ASCII marks. The theme states a
+    /// preference (`GlyphSet.unicode`); a terminal that cannot render them
+    /// overrides it, which is the backend's call, not the view's.
+    bool unicode = true;
 }
 
 WidgetTree viewHoverPopup(const TwoslashReturn tw, size_t nodeIndex,
@@ -512,6 +517,12 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
                 hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))];
 
     uint[] sections = [popupSection(b, sigRows, divider: false)];
+    // Functions only: the producer reports effects for nothing else, and a
+    // variable's lone `@system` rides in its text where it was written.
+    if (structured && node.signature.effects != Effects.init)
+        sections ~= popupSection(b,
+            effectChips(b, node.signature.effects, hit, opts.unicode),
+            divider: true);
     if (docsRows.length)
         sections ~= popupSection(b, docsRows, divider: true);
     if (tagRows.length)
@@ -543,12 +554,15 @@ private uint[] signatureRows(ref Builder b, const Node node, size_t hit,
     HoverViewOptions opts, TextStyle sigStyle, SizeSpec sigWidth,
     TextWrap sigWrap)
 {
-    import sparkles.twoslash.signature_layout : layoutSignature, SigRow;
+    import sparkles.twoslash.signature_layout : effectFreeRange, layoutSignature,
+        SigRow;
     import sparkles.ui.geometry : cellsOf;
 
     const text = withoutQuickinfoPrefix(node.text);
+    // The effect words are drawn as chips, so the rows stop at the body.
+    const body_ = effectFreeRange(text, node.signature);
     const laid = layoutSignature(text, node.signature, opts.maxWidth,
-        M.sigIndent, (scope const(char)[] s) => cast(int) cellsOf(s));
+        M.sigIndent, (scope const(char)[] s) => cast(int) cellsOf(s), body_);
 
     uint[] rows;
     foreach (row; laid.rows)
@@ -595,6 +609,53 @@ private TextSpan[] sliceSpans(const(TextSpan)[] spans, uint start, uint end) @sa
     }
     return out_;
 }
+
+/**
+The effect attributes as chips: what the function $(I is not), as legibly as
+what it is.
+
+Memory safety is a tri-state, not a checkbox, so the reported `@safe` /
+`@trusted` / `@system` is one always-present chip; `pure`, `nothrow` and
+`@nogc` are a checked/unchecked trio, because "this is not `pure`" is as much
+of an answer as the reverse.
+
+An uninstantiated template is the case that would otherwise lie: its
+attributes are inferred per instantiation, so a cross would claim the compiler
+decided something it has not. Those render unmarked instead.
+*/
+private uint[] effectChips(ref Builder b, in Effects effects, size_t hit,
+    bool unicode)
+{
+    uint[] chips;
+
+    if (effects.trust.length)
+        // A fresh copy, not a borrow: the widget outlives this frame's view of
+        // the node.
+        chips ~= chipWidget(b, effects.trust.idup, Slot.chip, hit);
+
+    static struct Flag { string name; bool on; }
+    const flags = [
+        Flag("pure", effects.isPure),
+        Flag("nothrow", effects.isNothrow),
+        Flag("@nogc", effects.isNogc),
+    ];
+    foreach (f; flags)
+    {
+        const mark = effects.inferred
+            ? (unicode ? "· " : "? ")
+            : (f.on ? (unicode ? "✓ " : "+ ") : (unicode ? "✗ " : "- "));
+        chips ~= chipWidget(b, mark ~ f.name,
+            effects.inferred || !f.on ? Slot.muted : Slot.chip, hit);
+    }
+    return [b.container(WidgetKind.row, chips, gap: 1)];
+}
+
+/// The rounded pill `buildPopupTag` draws, shared with the effect row.
+private uint chipWidget(ref Builder b, string text, Slot slot, size_t hit)
+    => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot, hitId: hit,
+        paintBackground: slot != Slot.muted,
+        decoration: Decoration(borderRadius: M.popupRadius),
+        textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.tagFontScale)));
 
 /// A full-width popup section: a `stretch` column with its own horizontal padding
 /// (`6px 8px` in the CSS) and, when `divider`, a 1px top border that — because the
@@ -1036,6 +1097,81 @@ version (unittest)
     assert(implicit.ops.length == explicit.ops.length);
     foreach (i, op; implicit.ops)
         assert(op.rect == explicit.ops[i].rect && op.text == explicit.ops[i].text);
+}
+
+@("render_widgets.viewHoverPopup.effectChipsShowAbsenceToo")
+@safe unittest
+{
+    // The point of the row: "not `pure`" is as much of an answer as "`pure`".
+    import std.algorithm.searching : canFind;
+    import std.array : join;
+
+    import sparkles.twoslash.protocol : EffectSpan, Effects;
+
+    enum text = "int f(int x) pure @safe";
+    auto sig = SignatureLayout(effects: Effects(trust: "@safe", isPure: true,
+        spans: [EffectSpan(12, 5), EffectSpan(17, 6)]));
+    const tw = TwoslashReturn(code: "f()\n",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1, line: 0,
+            character: 0, text: text, signature: sig)]);
+
+    auto c = render(viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 60)));
+
+    string[] painted;
+    foreach (op; c.ops)
+        if (op.text.length)
+            painted ~= op.text.idup;
+    const all = painted.join("|");
+
+    assert(painted.canFind("@safe"), all);
+    assert(painted.canFind("✓ pure"), all);
+    assert(painted.canFind("✗ nothrow"), all);
+    assert(painted.canFind("✗ @nogc"), all);
+
+    // And the words they replaced are gone from the signature itself.
+    assert(painted.canFind("int f(int x)"), all);
+    assert(!painted.canFind!(t => t.canFind("int f(int x) pure")), all);
+}
+
+@("render_widgets.viewHoverPopup.inferredEffectsAreUnknownNotDenied")
+@safe unittest
+{
+    // An uninstantiated template infers its attributes, so a cross would claim
+    // the compiler decided something it has not.
+    import std.algorithm.searching : canFind;
+    import std.array : join;
+
+    import sparkles.twoslash.protocol : Effects;
+
+    auto sig = SignatureLayout(effects: Effects(inferred: true));
+    const tw = TwoslashReturn(code: "f()\n",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1, line: 0,
+            character: 0, text: "T twice(T)(T x)", signature: sig)]);
+
+    auto c = render(viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 60)));
+
+    string[] painted;
+    foreach (op; c.ops)
+        if (op.text.length)
+            painted ~= op.text.idup;
+    const all = painted.join("|");
+
+    assert(painted.canFind("· pure"), all);
+    assert(!painted.canFind("✗ pure"), all);
+}
+
+@("render_widgets.viewHoverPopup.noEffectRowWithoutStructure")
+@safe unittest
+{
+    // A TypeScript payload — or any node predating the field — must render
+    // exactly as it always did.
+    const tw = TwoslashReturn(code: "wrap(1)\n",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 4, line: 0,
+            character: 0, text: "(alias) function wrap<T>(value: T): Box<T>")]);
+
+    auto c = render(viewHoverPopup(tw, 0));
+    foreach (op; c.ops)
+        assert(!op.text.length || op.text != "@safe", "no chips without effects");
 }
 
 @("render_widgets.viewHoverPopup.surfaceSignatureDocsTags")
