@@ -139,7 +139,7 @@ geometry from $(REF selectionRects, sparkles,ui,state).
 */
 WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
     const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
-    RgbColor pageFg, TsConfigCache* cache = null)
+    RgbColor pageFg, TsConfigCache* cache = null, int maxWidth = 0)
 {
     import sparkles.ui.canvas : LineStyle;
     import sparkles.ui.geometry : Point, SizeSpec;
@@ -226,7 +226,7 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
         foreach (ref const blk; plan.belowBlocks)
             if (blk.line == line)
                 rows ~= buildBelowBlock(b, tw.nodes[blk.node], blk.node,
-                    sigSpans(tw.nodes[blk.node]));
+                    sigSpans(tw.nodes[blk.node]), maxWidth);
     }
 
     return b.finish(b.container(WidgetKind.column, rows));
@@ -258,11 +258,13 @@ error message, `^?` query, completion list, or `// @tag` line, indented to its
 source column. Used by an interleaved renderer (the interactive terminal overlay)
 that places each block directly under its code line instead of stacking them all.
 */
-WidgetTree viewBelowBlock(const TwoslashReturn tw, size_t nodeIndex)
+WidgetTree viewBelowBlock(const TwoslashReturn tw, size_t nodeIndex,
+    int maxWidth = 0)
 in (nodeIndex < tw.nodes.length)
 {
     auto b = Builder();
-    const root = buildBelowBlock(b, tw.nodes[nodeIndex], nodeIndex);
+    const root = buildBelowBlock(b, tw.nodes[nodeIndex], nodeIndex,
+        maxWidth: maxWidth);
     return b.finish(root);
 }
 
@@ -270,7 +272,7 @@ in (nodeIndex < tw.nodes.length)
 /// `sigSpans` (when non-empty) replaces a query signature's single-color text
 /// with resolved syntax-colored spans.
 private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex,
-    TextSpan[] sigSpans = null)
+    TextSpan[] sigSpans = null, int maxWidth = 0)
 {
     const indent = Insets(0, 0, 0, cast(int) node.character);
     const hit = hitOf(nodeIndex);
@@ -294,12 +296,18 @@ private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex,
         case NodeType.query:
             const caret = b.add(Widget(kind: WidgetKind.text,
                 text: "^?", slot: Slot.caret, hitId: hit));
-            const sig = sigSpans.length
-                ? b.add(Widget(kind: WidgetKind.rich, spans: sigSpans,
-                    slot: Slot.code, hitId: hit))
-                : b.add(Widget(kind: WidgetKind.text, text: node.text,
-                    slot: Slot.code, hitId: hit));
-            return b.container(WidgetKind.column, [caret, sig], padding: indent);
+            // The query line breaks like the popup does — the same signature,
+            // shown in place instead of floating. What it has is the room left
+            // to the right of its own indent.
+            auto qWidth = SizeSpec.fit_;
+            const avail = maxWidth - cast(int) node.character;
+            if (maxWidth > 0 && avail > 0)
+                qWidth.max = avail;
+            auto rows = signatureBlock(b, node, hit,
+                HoverViewOptions(maxWidth: avail > 0 ? avail : 0, sigSpans: sigSpans),
+                TextStyle.init, qWidth,
+                maxWidth > 0 ? TextWrap.greedy : TextWrap.none);
+            return b.container(WidgetKind.column, caret ~ rows, padding: indent);
 
         case NodeType.completion:
             uint[] rows;
@@ -549,14 +557,7 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     // without it (a TypeScript payload, or a node predating the field) it is
     // one run and the space-wrapping above is all there is.
     const structured = node.signature != SignatureLayout.init;
-    uint[] sigRows = structured
-        ? signatureRows(b, node, hit, opts, sigStyle, sigWidth, sigWrap)
-        : [opts.sigSpans.length
-            ? b.add(Widget(kind: WidgetKind.rich, spans: opts.sigSpans, slot: Slot.code,
-                hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))
-            : b.add(Widget(kind: WidgetKind.text,
-                text: withoutQuickinfoPrefix(node.text), slot: Slot.code,
-                hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))];
+    uint[] sigRows = signatureBlock(b, node, hit, opts, sigStyle, sigWidth, sigWrap);
 
     uint[] sections = [popupSection(b, sigRows, divider: false)];
     // Functions only: the producer reports effects for nothing else, and a
@@ -580,6 +581,25 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
         width: width, padding: Insets(1, 0, 1, 0), paintBackground: true,
         decoration: surfaceDeco(arrow: true), children: [col], hitId: hit));
     return b.finish(popup);
+}
+
+/// The signature as rows: structural breaking when the producer described this
+/// one, a single (optionally space-wrapped) run otherwise. Shared by the hover
+/// popup and the `^?` query line so both break the same way.
+private uint[] signatureBlock(ref Builder b, const Node node, size_t hit,
+    HoverViewOptions opts, TextStyle sigStyle, SizeSpec sigWidth,
+    TextWrap sigWrap)
+{
+    if (node.signature != SignatureLayout.init)
+        return signatureRows(b, node, hit, opts, sigStyle, sigWidth, sigWrap);
+    // A TypeScript payload, a node predating the field, or a tip whose text is
+    // not a signature at all: one run, and the space-wrapping is all there is.
+    return [opts.sigSpans.length
+        ? b.add(Widget(kind: WidgetKind.rich, spans: opts.sigSpans, slot: Slot.code,
+            hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))
+        : b.add(Widget(kind: WidgetKind.text,
+            text: withoutQuickinfoPrefix(node.text), slot: Slot.code,
+            hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))];
 }
 
 /**
@@ -1287,6 +1307,33 @@ version (unittest)
             assert(w.key == abbrevKey(3, 0), "the marker must name its region");
         }
     assert(sawMarker, "the collapsed run must render a marker");
+}
+
+@("render_widgets.viewBelowBlock.queryLineStaysInsideThePane")
+@safe unittest
+{
+    // A `^?` line is the same signature shown in place instead of floating, so
+    // it gets the same treatment — otherwise a 200-cell D type runs off the
+    // right edge of the pane it is drawn in (`SIG2`).
+    import sparkles.twoslash.protocol : Abbrev;
+    import std.string : indexOf;
+
+    enum text = "sample.squares.MapResult!(__lambda_L6_C25, Result) tenSquares";
+    auto sig = SignatureLayout(abbrevs: [
+        Abbrev(cast(uint) text.indexOf("sample.squares."), 15, null, "module"),
+    ]);
+    const tw = TwoslashReturn(code: "auto tenSquares = squares(10);\n",
+        nodes: [Node(type: NodeType.query, start: 5, length: 10, line: 0,
+            character: 5, text: text, signature: sig)]);
+
+    // Unbounded, the query line is one row as wide as its text.
+    assert(rightEdge(render(viewBelowBlock(tw, 0))) > 40);
+
+    // Given the pane's width it stays inside it — indent included, since the
+    // block is padded to its source column.
+    enum pane = 40;
+    const bounded = rightEdge(render(viewBelowBlock(tw, 0, pane)));
+    assert(bounded <= pane, "query line overflowed the pane");
 }
 
 @("render_widgets.viewHoverPopup.clickingAMarkerNamesItsRegion")
