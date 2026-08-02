@@ -695,7 +695,8 @@ unittest
     assert(win["onCpuUserNs"].integer == 31_000_000);
     assert(win["offCpuRunqueueNs"].type == JSONType.null_,
         "unattributable = null, exactly the table's em dash");
-    assert(win["offCpuDiskNs"].type == JSONType.null_, "PSI lands in M5");
+    assert(win["offCpuDiskNs"].type == JSONType.null_,
+        "PSI is system-scoped; disk attribution lands with M8 cgroups");
     assert(win["perf"]["instructions"].integer == 2_410_000_000,
         "integral totals render as JSON integers");
     assert(win["perf"]["scale"].integer == 1);

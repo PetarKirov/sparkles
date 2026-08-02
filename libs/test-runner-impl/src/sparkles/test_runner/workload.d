@@ -12,12 +12,15 @@
  * freely in a single pass — a workload body is never re-run for counting,
  * because it may be expensive or non-idempotent.
  *
- * Edge-snapshot nesting order (outer → inner): wall clock, wall source
- * (rusage/schedstat), psi, syscalls, raw, tier-0, perf — so the cycle
+ * Edge-snapshot nesting order (outer → inner): psi, wall clock, wall
+ * source (rusage/schedstat), syscalls, raw, tier-0, perf — so the cycle
  * counters see only the body, and each tier's window contains at most the
  * inner tiers' edge reads (a handful of syscalls per edge, negligible at
- * window granularity and disclosed here rather than hidden; the psi file
- * reads sit outside every counter tier's window entirely).
+ * window granularity and disclosed here rather than hidden). Psi sits
+ * outermost — outside even the wall clock and rusage windows — so its six
+ * file reads per edge (~20 µs) contribute zero apparatus anywhere in the
+ * decomposition; a system-wide µs-resolution integral's own window being a
+ * few µs wider than the wall clock is immaterial.
  *
  * Decomposition honesty: only runqueue wait is a true per-cause duration
  * today; everything else off-CPU — locks, sleeps, disk — lands in
@@ -677,10 +680,11 @@ private string uintString(uint v) @safe pure nothrow
 }
 
 /// The edge snapshots of one window, in the fixed nesting order (outer →
-/// inner): wall clock, wall source, psi, syscalls, raw, tier-0, perf.
-/// The psi file reads sit OUTSIDE every counter tier's window — they add
-/// nothing to the tier-0/syscall apparatus floors (only µs of kernel time
-/// inside the rusage window, far under the clamp budget).
+/// inner): psi, wall clock, wall source, syscalls, raw, tier-0, perf.
+/// Psi is OUTERMOST: its file reads sit outside every other window,
+/// including the wall clock and rusage — zero apparatus anywhere in the
+/// decomposition (a system-wide integral's own window being ~20 µs wider
+/// than the wall clock is immaterial at µs resolution).
 private struct WindowEdges
 {
     long t0;
@@ -699,11 +703,11 @@ private struct WindowEdges
         import core.time : MonoTime;
 
         WindowEdges e;
+        if (psi.available)
+            e.psi0 = psi.snapshot(); // before t0: outside the wall clock
         e.t0 = MonoTime.currTime.ticks;
         if (wall.available)
             e.wall0 = wall.snapshot();
-        if (psi.available)
-            e.psi0 = psi.snapshot();
         if (counters.syscalls.available)
             e.sys0 = counters.syscalls.snapshot();
         if (counters.raw.available)
@@ -730,10 +734,10 @@ private struct WindowEdges
             w.raw = counters.raw.windowStats(raw0, counters.raw.snapshot());
         if (counters.syscalls.available)
             w.syscalls = counters.syscalls.windowStats(sys0, counters.syscalls.snapshot());
-        if (psi.available)
-            w.psi = psiWindow(psi0, psi.snapshot());
         const wall1 = wall.available ? wall.snapshot() : WallReading();
         const wallNs = elapsedNs(t0);
+        if (psi.available)
+            w.psi = psiWindow(psi0, psi.snapshot()); // after elapsedNs: outside the wall clock
         w.wall = assembleDecomposition(wallNs, wall0, wall1, wall.scopeName,
             wall.schedReason);
         if (!wall.available)

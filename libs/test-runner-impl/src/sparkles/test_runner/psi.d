@@ -46,15 +46,22 @@ struct PsiReading
 /// avg300=… total=<µs>`. Only the monotonic totals are read; a reading is
 /// `ok` when the `some` line parsed (the `full` line is optional). M8's
 /// per-cgroup `io.pressure` has the identical shape and reuses this.
+///
+/// Torn reads are REJECTED, not truncated: a total's digit run must be
+/// terminated by a further character (the kernel always ends lines with
+/// `\n`), because a digit run cut at end-of-buffer is a valid-looking but
+/// wrong prefix — a torn BEFORE edge would otherwise fabricate a
+/// near-boot-sized "stall delta" that passes every downstream gate.
 PsiFileReading parsePsiFile(scope const(char)[] content) @safe pure nothrow @nogc
 {
     PsiFileReading r;
     size_t i;
     while (i < content.length)
     {
-        // Line label: "some" or "full".
-        const isSome = matches(content, i, "some");
-        const isFull = !isSome && matches(content, i, "full");
+        // Line label: "some " or "full " (the trailing space rejects glued
+        // tokens like "sometotal=").
+        const isSome = matches(content, i, "some ");
+        const isFull = !isSome && matches(content, i, "full ");
         // Scan the line for "total=" and parse its integer.
         long total = -1;
         while (i < content.length && content[i] != '\n')
@@ -62,15 +69,19 @@ PsiFileReading parsePsiFile(scope const(char)[] content) @safe pure nothrow @nog
             if ((isSome || isFull) && matches(content, i, "total="))
             {
                 i += 6;
-                if (i < content.length && content[i] >= '0' && content[i] <= '9')
+                size_t digits;
+                long value = 0;
+                while (i < content.length && content[i] >= '0' && content[i] <= '9')
                 {
-                    total = 0;
-                    while (i < content.length && content[i] >= '0' && content[i] <= '9')
-                    {
-                        total = total * 10 + (content[i] - '0');
-                        i++;
-                    }
+                    value = value * 10 + (content[i] - '0');
+                    digits++;
+                    i++;
                 }
+                // Valid only when non-empty, in range (a real total is
+                // ~13 digits; 19+ overflows long), and terminated — a run
+                // ending exactly at end-of-buffer may be torn.
+                if (digits > 0 && digits < 19 && i < content.length)
+                    total = value;
                 continue;
             }
             i++;
@@ -138,13 +149,18 @@ unittest
     // The decaying averages must never be mistaken for the total.
     const avgOnly = parsePsiFile("some avg10=99.99 avg60=99.99 avg300=99.99 total=7\n");
     assert(avgOnly.someUs == 7);
-    // Truncated mid-total: the digits read so far still parse (a torn /proc
-    // read yields a shorter-but-valid prefix, and the delta stays sane).
-    const truncated = parsePsiFile("some avg10=0.00 total=123");
-    assert(truncated.ok && truncated.someUs == 123);
-    // No trailing newline on the last line.
-    const noNl = parsePsiFile("some avg10=0.00 total=5\nfull avg10=0.00 total=3");
-    assert(noNl.someUs == 5 && noNl.fullUs == 3);
+    // Truncated mid-total: REJECTED — the digits read so far are a
+    // valid-looking but wrong prefix; accepting them at a torn BEFORE edge
+    // would fabricate a near-boot-sized stall delta that passes every
+    // downstream gate.
+    assert(!parsePsiFile("some avg10=0.00 total=123").ok);
+    const torn = parsePsiFile("some avg10=0.00 total=5\nfull avg10=0.00 total=3");
+    assert(torn.someUs == 5, "the newline-terminated some line is complete");
+    assert(torn.fullUs == -1, "the EOF-cut full total may be torn — rejected");
+    // Glued tokens and overflowing digit runs are not readings.
+    assert(!parsePsiFile("sometotal=7\n").ok);
+    assert(!parsePsiFile("some avg10=0.00 total=99999999999999999999\n").ok,
+        "a 20-digit total would wrap long — rejected, never wrapped");
 }
 
 /// The PSI diagnostic source: snapshot-shaped like `WallSource` (it has no
@@ -152,7 +168,9 @@ unittest
 struct PsiSource
 {
     private bool enabled;
-    private bool ok_;
+    private bool ok_; /// /proc/pressure/io readable+parsable (the availability gate)
+    private bool memOk_; /// memory/cpu probed separately: a hardened /proc can
+    private bool cpuOk_; /// mask files individually, and ✓ must not overclaim
 
     private static immutable CapabilityAbsence[1] notRequestedAbsence = [
         CapabilityAbsence(Capability.counting, "not requested"),
@@ -168,11 +186,22 @@ struct PsiSource
     /// Whether the pressure files are readable on this host.
     bool available() const @safe pure nothrow @nogc => enabled && ok_;
 
-    /// Human-readable availability, for a report header.
+    /// Human-readable availability, for a report header. A partially-masked
+    /// /proc (io readable, memory/cpu not — ProtectProc=, lxcfs) is
+    /// disclosed here so the block's ✓ never silently overclaims all three
+    /// files; the masked files' window deltas read nan.
     string status() const @safe pure nothrow
     {
         if (available)
-            return "system-wide stall integrals (/proc/pressure)";
+        {
+            if (memOk_ && cpuOk_)
+                return "system-wide stall integrals (/proc/pressure)";
+            if (!memOk_ && !cpuOk_)
+                return "system-wide stall integrals (/proc/pressure; io only — memory/cpu unreadable)";
+            return memOk_
+                ? "system-wide stall integrals (/proc/pressure; cpu unreadable)"
+                : "system-wide stall integrals (/proc/pressure; memory unreadable)";
+        }
         if (!enabled)
             return "unavailable (not requested)";
         version (linux)
@@ -196,8 +225,9 @@ struct PsiSource
             return CapabilityReport(Capability.none, stubAbsence[]);
     }
 
-    /// Opens the source unless disabled; probes `/proc/pressure/io`'s
-    /// readability (and parsability) once.
+    /// Opens the source unless disabled; probes each pressure file's
+    /// readability (and parsability) once — per file, because a hardened
+    /// /proc can mask them individually.
     static PsiSource tryOpen(bool enabled) @safe nothrow
     {
         PsiSource s;
@@ -210,6 +240,8 @@ struct PsiSource
 
             char[256] buf = void;
             s.ok_ = parsePsiFile(readSmallFile("/proc/pressure/io", buf[])).ok;
+            s.memOk_ = parsePsiFile(readSmallFile("/proc/pressure/memory", buf[])).ok;
+            s.cpuOk_ = parsePsiFile(readSmallFile("/proc/pressure/cpu", buf[])).ok;
         }
         return s;
     }
