@@ -88,7 +88,7 @@ struct cannot.
 | ------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `CFG3` | `appearance` | `theme`, `background` mode, fonts (`family`, `bold`, `italic`, `boldItalic`, `size`), `window` (`width`, `height` in cells)                                  |
 | `CFG4` | `panes`      | `tree` (`width`, `showDotfiles`, `showIgnored`, `include[]`, `exclude[]`), `viewer` (`lineNumbers`, `codeLineNumbers`, `tabWidth`, `listWhitespace`, `wrap`) |
-| `CFG5` | `behaviour`  | `defaultView` (preview\|raw), `ansiCopy` (raw\|strip), `tableCopy` (tsv\|markdown), `overlays[]`, `gallery.out`                                              |
+| `CFG5` | `behaviour`  | `defaultView` (preview\|raw), `ansiCopy` (raw\|strip), `tableCopy` (tsv\|markdown), `overlays[]`, `gallery.out`, `grammarPaths[]`                            |
 | `CFG6` | `keys`       | binding table — see below                                                                                                                                    |
 
 The grouping follows what a user thinks they are changing, **not** how the code
@@ -123,6 +123,32 @@ Configuration replaces the hardcoded table with a loaded one:
   other 44 bindings alone; `"j": null` unbinds. Replacing wholesale is the
   common way a config format strands users after an upgrade adds a command.
 
+### Grammar search paths compose, they do not override (`CFG14`)
+
+`SPARKLES_TS_GRAMMAR_PATH` looks like packaging — nix sets it to the store path
+of the grammar bundle — and that reading is what first put it in the excluded
+list. It is wrong. A user building a tree-sitter grammar for a language the
+bundle does not carry is **extending hue**, not repackaging it, and today the
+only way to say so is an environment variable: unavailable in a desktop
+launcher, and on **Android unreachable entirely**, which is where an
+unsupported language is most likely to be met.
+
+So `behaviour.grammarPaths` is a list of additional directories, and it is the
+one place `CFG2`'s scalar rule does **not** apply:
+
+> For a search path, "the higher layer wins" would mean a user's extra grammar
+> _replaces_ the bundle and highlighting collapses to nothing. The layers
+> **compose** instead — configured paths are searched first, then the
+> environment's, then the built-in default.
+
+Searched first, not last, so a user can shadow a bundled grammar with a newer
+build of it — the reason to point at your own copy in the first place.
+
+This composition is the exception, so it is stated where it is easy to find
+rather than inferred; the same shape will apply to any future list-valued
+setting (theme directories, overlay plugins) and should not be re-argued each
+time.
+
 ### What stays out of the file (`CFG7`)
 
 Deliberately **not** configurable, each for a stated reason:
@@ -132,7 +158,6 @@ Deliberately **not** configurable, each for a stated reason:
 | `--html`, `--out`, `--overlay`, `--twoslash`, target paths | these describe _this invocation's work_, not a preference                                                      |
 | `--gui` / `--no-gui` / `--tui`                             | backend selection is environment detection plus an explicit override; persisting it defeats the auto-detection |
 | `HUE_GUI_*`                                                | test hooks; making them configuration would make goldens depend on a developer's file                          |
-| `SPARKLES_TS_GRAMMAR_PATH`                                 | a packaging concern owned by nix                                                                               |
 
 A configuration file that can express "always output HTML" is a footgun, not a
 feature.
@@ -218,17 +243,18 @@ channel) rather than swallowing it.
 | `CFG11` | Runtime toggles (`l`, `c`, `y`, `t`, theme, font size) may be **persisted on request** (`hue --save-config`), so an experiment can become a setting without hand-editing.                                                                                | not started |
 | `CFG12` | Android reads the same file from the app's data dir, which is the only way those preferences are reachable there at all.                                                                                                                                 | not started |
 | `CFG13` | `hue --write-config` emits a **commented starting file** — every setting with its default and a one-line description drawn from the same reflection as the schema (`CFG9`). Renders from the same resolved value as `CFG10`, so the two cannot disagree. | not started |
+| `CFG14` | `behaviour.grammarPaths[]` adds tree-sitter grammar directories. Search paths **compose** rather than override — configured, then `SPARKLES_TS_GRAMMAR_PATH`, then the built-in default — the one documented exception to `CFG2`'s scalar layering.      | not started |
 
 ## Milestones
 
-| Milestone | Scope                                                                     | Requirements            |
-| --------- | ------------------------------------------------------------------------- | ----------------------- |
-| C1        | The struct + wired round-trip + located errors                            | `CFG1`, `CFG8`          |
-| C2        | Layering and the sparse-overlay merge                                     | `CFG2`                  |
-| C3        | Appearance / panes / behaviour sections wired to their consumers          | `CFG3`–`CFG5`, `CFG7`   |
-| C4        | Configurable keymap over the `Command` enum                               | `CFG6`                  |
-| C5        | `--show-config`, `--write-config`, `--save-config`, generated JSON Schema | `CFG9`–`CFG11`, `CFG13` |
-| C6        | Android config path                                                       | `CFG12`                 |
+| Milestone | Scope                                                                     | Requirements                   |
+| --------- | ------------------------------------------------------------------------- | ------------------------------ |
+| C1        | The struct + wired round-trip + located errors                            | `CFG1`, `CFG8`                 |
+| C2        | Layering and the sparse-overlay merge                                     | `CFG2`                         |
+| C3        | Appearance / panes / behaviour sections wired to their consumers          | `CFG3`–`CFG5`, `CFG7`, `CFG14` |
+| C4        | Configurable keymap over the `Command` enum                               | `CFG6`                         |
+| C5        | `--show-config`, `--write-config`, `--save-config`, generated JSON Schema | `CFG9`–`CFG11`, `CFG13`        |
+| C6        | Android config path                                                       | `CFG12`                        |
 
 ## Open questions
 
