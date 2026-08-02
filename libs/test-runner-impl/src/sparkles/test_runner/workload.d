@@ -13,15 +13,18 @@
  * because it may be expensive or non-idempotent.
  *
  * Edge-snapshot nesting order (outer → inner): wall clock, wall source
- * (rusage/schedstat), syscalls, raw, tier-0, perf — so the cycle counters
- * see only the body, and each tier's window contains at most the inner
- * tiers' edge reads (a handful of syscalls per edge, negligible at window
- * granularity and disclosed here rather than hidden).
+ * (rusage/schedstat), psi, syscalls, raw, tier-0, perf — so the cycle
+ * counters see only the body, and each tier's window contains at most the
+ * inner tiers' edge reads (a handful of syscalls per edge, negligible at
+ * window granularity and disclosed here rather than hidden; the psi file
+ * reads sit outside every counter tier's window entirely).
  *
- * Decomposition honesty: only runqueue wait (and, once M5 lands, PSI disk
- * stall) are true per-cause durations; everything else off-CPU — locks,
- * sleeps, page-cache misses without PSI — lands in `offCpuOtherNs`, which
- * clamps at zero and says so in `note` rather than fabricating a cause.
+ * Decomposition honesty: only runqueue wait is a true per-cause duration
+ * today; everything else off-CPU — locks, sleeps, disk — lands in
+ * `offCpuOtherNs`, which clamps at zero and says so in `note` rather than
+ * fabricating a cause. PSI stall integrals ride alongside as $(B system-wide
+ * diagnostics) (`WorkloadWindow.psi`) — `/proc/pressure` cannot attribute to
+ * the measured thread, so disk attribution waits for M8's cgroup scoping.
  * On Linux the decomposition is $(B thread-scoped) (`RUSAGE_THREAD` +
  * `/proc/thread-self/schedstat` — the only scoping under which
  * `wall = onCpu + runqueue + other` is arithmetically meaningful); the
@@ -44,6 +47,7 @@ import sparkles.test_runner.capability : BackendCapabilities, Capability,
 import sparkles.test_runner.execution : executeTest, toThrown;
 import sparkles.test_runner.model : Test, TestResult, Thrown;
 import sparkles.test_runner.perf : PerfStats;
+import sparkles.test_runner.psi : PsiReading, PsiSource;
 import sparkles.test_runner.raw : RawStats;
 import sparkles.test_runner.skip : TestSkipped;
 import sparkles.test_runner.syscalls : SyscallStats;
@@ -299,7 +303,12 @@ struct WallDecomposition
     double onCpuUserNs = double.nan; /// rusage user time (µs resolution)
     double onCpuKernelNs = double.nan; /// rusage system time
     double offCpuRunqueueNs = double.nan; /// schedstat runqueue wait
-    double offCpuDiskNs = double.nan; /// PSI io stall integral — lands in M5
+    /// Disk-stall attribution — always nan today: `/proc/pressure` is
+    /// system-scoped, so a thread-scoped attribution would report other
+    /// processes' stalls as this workload's; it lands with M8's
+    /// cgroup-scoped PSI. The system-wide integrals ship as diagnostics
+    /// (`WorkloadWindow.psi`, the `io-stall` column) meanwhile.
+    double offCpuDiskNs = double.nan;
     double offCpuOtherNs = double.nan; /// clamped residual: locks, sleeps, the rest
     string scope_; /// `"thread"` (Linux) or `"process"`
     string note; /// clamp/absence/cross-thread disclosures, `"; "`-joined
@@ -358,7 +367,8 @@ WallDecomposition assembleDecomposition(long wallNs,
             ~ (runqueueAbsenceReason.length ? runqueueAbsenceReason : "schedstat unreadable")
             ~ ") — included in other");
 
-    // offCpuDiskNs stays nan until the PSI stall integral lands (M5).
+    // offCpuDiskNs stays nan: system-scoped PSI cannot attribute to the
+    // measured thread — cgroup-scoped attribution lands with M8.
 
     double other = double(wallNs) - attributed;
     if (other < 0)
@@ -430,7 +440,8 @@ unittest
     assert(d.onCpuUserNs == 60_000_000.0);
     assert(d.onCpuKernelNs == 20_000_000.0);
     assert(d.offCpuRunqueueNs == 5_000_000.0);
-    assert(d.offCpuDiskNs.isNaN, "PSI lands in M5 — never fabricated");
+    assert(d.offCpuDiskNs.isNaN,
+        "PSI is system-scoped; disk attribution lands with M8 cgroups");
     assert(d.offCpuOtherNs == 15_000_000.0);
     assert(d.scope_ == "thread");
     assert(d.note.length == 0);
@@ -513,6 +524,73 @@ unittest
 // Window results and the in-body primitive
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// A window's PSI stall-time deltas, in ns — $(B system-wide) diagnostics
+/// ("the system accumulated this much stall concurrently with the window"),
+/// never attribution to the measured thread (that lands with M8's
+/// cgroup-scoped PSI). `nan` = line absent, edges unreadable, or a
+/// backwards accumulator.
+struct PsiStats
+{
+    double ioSomeNs = double.nan; /// ≥ 1 task stalled on io
+    double ioFullNs = double.nan; /// all non-idle tasks stalled on io
+    double memSomeNs = double.nan;
+    double memFullNs = double.nan;
+    double cpuSomeNs = double.nan;
+    // No cpuFullNs: pinned to 0 at system scope; M8 adds it when cgroup
+    // scope makes it meaningful.
+}
+
+/// Pure delta assembly between two edge readings. Subtraction happens in
+/// long µs BEFORE the double conversion — the absolute accumulators on
+/// long-uptime hosts approach 2⁵³ as ns, where double subtraction loses
+/// ULPs; the deltas are small and exact.
+PsiStats psiWindow(in PsiReading before, in PsiReading after) @safe pure nothrow @nogc
+{
+    static double someDelta(in typeof(before.io) a, in typeof(before.io) b)
+        => a.ok && b.ok && b.someUs >= a.someUs
+            ? double(b.someUs - a.someUs) * 1000 : double.nan;
+    static double fullDelta(in typeof(before.io) a, in typeof(before.io) b)
+        => a.ok && b.ok && a.fullUs >= 0 && b.fullUs >= a.fullUs
+            ? double(b.fullUs - a.fullUs) * 1000 : double.nan;
+
+    PsiStats s;
+    s.ioSomeNs = someDelta(before.io, after.io);
+    s.ioFullNs = fullDelta(before.io, after.io);
+    s.memSomeNs = someDelta(before.memory, after.memory);
+    s.memFullNs = fullDelta(before.memory, after.memory);
+    s.cpuSomeNs = someDelta(before.cpu, after.cpu);
+    return s;
+}
+
+@("workload.psiWindow.deltas")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.test_runner.psi : PsiFileReading;
+
+    PsiReading a, b;
+    a.io = PsiFileReading(someUs: 1_000, fullUs: 500, ok: true);
+    b.io = PsiFileReading(someUs: 4_000, fullUs: 700, ok: true);
+    a.memory = PsiFileReading(someUs: 10, fullUs: -1, ok: true); // no full line
+    b.memory = PsiFileReading(someUs: 10, fullUs: -1, ok: true);
+    a.cpu = PsiFileReading(someUs: 9, fullUs: 0, ok: true);
+    b.cpu = PsiFileReading(someUs: 4, fullUs: 0, ok: true); // backwards
+
+    const s = psiWindow(a, b);
+    assert(s.ioSomeNs == 3_000_000.0, "µs deltas convert to ns");
+    assert(s.ioFullNs == 200_000.0);
+    assert(s.memSomeNs == 0.0, "a zero system delta is a true statement");
+    assert(s.memFullNs.isNaN, "absent full line stays nan");
+    assert(s.cpuSomeNs.isNaN, "a backwards accumulator is nan, never a number");
+
+    // An unreadable edge poisons only its own file's deltas.
+    PsiReading c = a;
+    c.io = PsiFileReading.init; // !ok
+    const t = psiWindow(c, b);
+    assert(t.ioSomeNs.isNaN && t.ioFullNs.isNaN);
+    assert(t.memSomeNs == 0.0);
+}
+
 /// One measured window. Deliberately NOT `BenchStats`: its per-iteration
 /// timing fields would misrepresent a single window — counter stats here are
 /// window $(B totals) (`iters == 1`).
@@ -525,6 +603,7 @@ struct WorkloadWindow
     Nullable!Tier0Stats tier0;
     Nullable!SyscallStats syscalls;
     Nullable!RawStats raw;
+    Nullable!PsiStats psi; /// system-wide stall deltas — diagnostics, not attribution
     string error; /// non-empty = error (or, with `skipped`, skip) row
     bool skipped;
 }
@@ -542,6 +621,7 @@ private struct WorkloadContext
     uint reps;
     CounterGroups* counters;
     WallSource* wall;
+    PsiSource* psi;
     WorkloadWindow[] windows;
     uint[string] nameCounts; /// per-resolved-name occurrence counter (#2, #3, …)
     bool measuring; /// a window is open — nested `workloadWindow` calls run inertly
@@ -597,11 +677,15 @@ private string uintString(uint v) @safe pure nothrow
 }
 
 /// The edge snapshots of one window, in the fixed nesting order (outer →
-/// inner): wall clock, wall source, syscalls, raw, tier-0, perf.
+/// inner): wall clock, wall source, psi, syscalls, raw, tier-0, perf.
+/// The psi file reads sit OUTSIDE every counter tier's window — they add
+/// nothing to the tier-0/syscall apparatus floors (only µs of kernel time
+/// inside the rusage window, far under the clamp budget).
 private struct WindowEdges
 {
     long t0;
     WallReading wall0;
+    PsiReading psi0;
     // Snapshot types differ per platform; let the fields infer from the
     // groups' snapshot() return types.
     typeof(CounterGroups.init.syscalls.snapshot()) sys0;
@@ -609,7 +693,8 @@ private struct WindowEdges
     typeof(CounterGroups.init.tier0.snapshot()) tier00;
     typeof(CounterGroups.init.perf.snapshot()) perf0;
 
-    static WindowEdges open(ref CounterGroups counters, ref WallSource wall) @safe
+    static WindowEdges open(ref CounterGroups counters, ref WallSource wall,
+        ref PsiSource psi) @safe
     {
         import core.time : MonoTime;
 
@@ -617,6 +702,8 @@ private struct WindowEdges
         e.t0 = MonoTime.currTime.ticks;
         if (wall.available)
             e.wall0 = wall.snapshot();
+        if (psi.available)
+            e.psi0 = psi.snapshot();
         if (counters.syscalls.available)
             e.sys0 = counters.syscalls.snapshot();
         if (counters.raw.available)
@@ -633,7 +720,7 @@ private struct WindowEdges
     /// group yields all-nan totals, keeping each selected column's em-dash
     /// presence (the contract `countInto` honors).
     void closeInto(ref WorkloadWindow w, ref CounterGroups counters,
-        ref WallSource wall) @safe
+        ref WallSource wall, ref PsiSource psi) @safe
     {
         if (counters.perf.available)
             w.perf = counters.perf.windowStats(perf0, counters.perf.snapshot());
@@ -643,6 +730,8 @@ private struct WindowEdges
             w.raw = counters.raw.windowStats(raw0, counters.raw.snapshot());
         if (counters.syscalls.available)
             w.syscalls = counters.syscalls.windowStats(sys0, counters.syscalls.snapshot());
+        if (psi.available)
+            w.psi = psiWindow(psi0, psi.snapshot());
         const wall1 = wall.available ? wall.snapshot() : WallReading();
         const wallNs = elapsedNs(t0);
         w.wall = assembleDecomposition(wallNs, wall0, wall1, wall.scopeName,
@@ -699,7 +788,7 @@ private struct WindowEdges
 private void measureWindow(DG)(WorkloadContext* ctx, string name, scope DG run)
 {
     auto w = WorkloadWindow(name: name, reps: ctx.reps);
-    auto edges = WindowEdges.open(*ctx.counters, *ctx.wall);
+    auto edges = WindowEdges.open(*ctx.counters, *ctx.wall, *ctx.psi);
     ctx.measuring = true;
     scope (exit)
         ctx.measuring = false;
@@ -726,7 +815,7 @@ private void measureWindow(DG)(WorkloadContext* ctx, string name, scope DG run)
         ctx.windows ~= w;
         throw t;
     }
-    edges.closeInto(w, *ctx.counters, *ctx.wall);
+    edges.closeInto(w, *ctx.counters, *ctx.wall, *ctx.psi);
     ctx.windows ~= w;
 }
 
@@ -742,7 +831,7 @@ private void measureWindow(DG)(WorkloadContext* ctx, string name, scope DG run)
 /// the single whole-body window — the body is never re-run for counting.
 package(sparkles.test_runner)
 WorkloadOutcome runWorkload(Test test, ref CounterGroups counters,
-    ref WallSource wall) @system
+    ref WallSource wall, ref PsiSource psi) @system
 {
     const reps = test.traits.workloadReps ? test.traits.workloadReps : 1;
 
@@ -751,12 +840,12 @@ WorkloadOutcome runWorkload(Test test, ref CounterGroups counters,
         counters.endWindows();
 
     auto ctx = WorkloadContext(testName: test.name, reps: reps,
-        counters: &counters, wall: &wall);
+        counters: &counters, wall: &wall, psi: &psi);
     activeWorkloadContext = &ctx;
     scope (exit)
         activeWorkloadContext = null;
 
-    auto edges = WindowEdges.open(counters, wall);
+    auto edges = WindowEdges.open(counters, wall, psi);
     auto result = executeTest(test);
 
     if (result.succeeded && ctx.windows.length == 0)
@@ -791,45 +880,48 @@ WorkloadOutcome runWorkload(Test test, ref CounterGroups counters,
         if (!broke)
         {
             auto w = WorkloadWindow(name: test.name, reps: reps);
-            edges.closeInto(w, counters, wall);
+            edges.closeInto(w, counters, wall, psi);
             ctx.windows ~= w;
         }
     }
     return WorkloadOutcome(ctx.windows, result);
 }
 
-/// Inserts the wall source's capability block among the counter backends
-/// (after `raw`, before `pfm`) for `--list-metrics`. The workload phase's
-/// source belongs in the capability report, but deliberately not in
-/// `CounterGroups`' fixed six-backend bench bundle — it has no counting
-/// pass to contribute there.
+/// Inserts the workload-phase sources' capability blocks among the counter
+/// backends (after `raw`, before `pfm`) for `--list-metrics`. They belong
+/// in the capability report, but deliberately not in `CounterGroups`' fixed
+/// six-backend bench bundle — neither has a counting pass to contribute
+/// there.
 // `const`, not `in`: dip1000's `scope` would forbid the `capabilities()`
-// member call on the parameter.
-BackendCapabilities[] withWallBlock(BackendCapabilities[] blocks, const WallSource wall)
-    @safe nothrow
+// member calls on the parameters.
+BackendCapabilities[] withWorkloadBlocks(BackendCapabilities[] blocks,
+    const WallSource wall, const PsiSource psi) @safe nothrow
 {
-    const entry = BackendCapabilities("wall", wall.capabilities);
+    const wallEntry = BackendCapabilities("wall", wall.capabilities);
+    const psiEntry = BackendCapabilities("psi", psi.capabilities);
     foreach (i, ref b; blocks)
         if (b.backend == "pfm")
-            return blocks[0 .. i] ~ entry ~ blocks[i .. $];
-    return blocks ~ entry;
+            return blocks[0 .. i] ~ wallEntry ~ psiEntry ~ blocks[i .. $];
+    return blocks ~ wallEntry ~ psiEntry;
 }
 
-@("workload.withWallBlock.insertsBeforePfm")
+@("workload.withWorkloadBlocks.insertsBeforePfm")
 @safe
 unittest
 {
     auto blocks = CounterGroups.none.capabilities;
-    const withWall = withWallBlock(blocks, WallSource.tryOpen(true));
-    assert(withWall.length == blocks.length + 1);
-    assert(withWall[4].backend == "wall");
-    assert(withWall[5].backend == "pfm");
-    assert(withWall[6].backend == "harness");
+    const merged = withWorkloadBlocks(blocks,
+        WallSource.tryOpen(true), PsiSource.tryOpen(true));
+    assert(merged.length == blocks.length + 2);
+    assert(merged[4].backend == "wall");
+    assert(merged[5].backend == "psi");
+    assert(merged[6].backend == "pfm");
+    assert(merged[7].backend == "harness");
     version (Posix)
     {
         import sparkles.test_runner.capability : Capability, has;
 
-        assert(withWall[4].report.has(Capability.counting));
+        assert(merged[4].report.has(Capability.counting));
     }
 }
 
@@ -922,10 +1014,11 @@ unittest
 
     auto counters = CounterGroups.none;
     auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false); // disabled: window shapes stay host-independent
     const outcome = runWorkload(
         Test(fullName: "m.w", name: "demo", ptr: &body_,
             traits: TestTraits(isWorkload: true, workloadReps: 2)),
-        counters, wall);
+        counters, wall, psi);
 
     assert(outcome.result.succeeded);
     assert(outcome.windows.length == 3, "the whole-body candidate is discarded");
@@ -952,10 +1045,11 @@ unittest
 
     auto counters = CounterGroups.none;
     auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false); // disabled: window shapes stay host-independent
     const outcome = runWorkload(
         Test(fullName: "m.p", name: "plain", ptr: &plain,
             traits: TestTraits(isWorkload: true, workloadReps: 3)),
-        counters, wall);
+        counters, wall, psi);
 
     assert(outcome.result.succeeded);
     assert(bodyRuns == 3, "reps run in the same pass — the body is never re-run for counting");
@@ -985,10 +1079,11 @@ unittest
 
     auto counters = CounterGroups.none;
     auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false); // disabled: window shapes stay host-independent
     const outcome = runWorkload(
         Test(fullName: "m.n", name: "n", ptr: &body_,
             traits: TestTraits(isWorkload: true, workloadReps: 2)),
-        counters, wall);
+        counters, wall, psi);
 
     assert(outcome.result.succeeded);
     assert(outcome.windows.length == 2, "the nested call adds no row");
@@ -1021,10 +1116,11 @@ unittest
 
     auto counters = CounterGroups.none;
     auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false); // disabled: window shapes stay host-independent
     const outcome = runWorkload(
         Test(fullName: "m.l", name: "lazy", ptr: &lazyBody,
             traits: TestTraits(isWorkload: true, workloadReps: 3)),
-        counters, wall);
+        counters, wall, psi);
 
     assert(outcome.result.succeeded);
     assert(runs == 3);
@@ -1060,6 +1156,47 @@ unittest
     assert(p.note.canFind("runqueue wait unattributed (not Linux)"));
 }
 
+version (linux)
+{
+    @("workload.runWorkload.psiDiagnostics")
+    @system
+    unittest
+    {
+        import sparkles.test_runner.model : TestTraits;
+
+        static void body_()
+        {
+            static ulong sink;
+            foreach (i; 0 .. 100_000)
+                sink += i * i;
+        }
+
+        auto counters = CounterGroups.none;
+        auto wall = WallSource.tryOpen(true);
+        auto psi = PsiSource.tryOpen(true);
+        const outcome = runWorkload(
+            Test(fullName: "m.psi", name: "psi-demo", ptr: &body_,
+                traits: TestTraits(isWorkload: true, workloadReps: 1)),
+            counters, wall, psi);
+
+        assert(outcome.result.succeeded);
+        const w = outcome.windows[0];
+        if (!psi.available)
+        {
+            assert(w.psi.isNull, "no PSI host → no psi object");
+            return; // CONFIG_PSI=n / psi=0 — degradation is the assertion
+        }
+        assert(!w.psi.isNull, "a PSI host attaches window deltas");
+        const p = w.psi.get;
+        assert(p.ioSomeNs.isNaN || p.ioSomeNs >= 0);
+        assert(p.cpuSomeNs.isNaN || p.cpuSomeNs >= 0);
+        // The honesty core of M5: the system-wide integral never leaks into
+        // the decomposition.
+        assert(w.wall.offCpuDiskNs.isNaN,
+            "disk attribution stays unattributed until M8's cgroup scoping");
+    }
+}
+
 @("workload.runWorkload.windowThrowKeepsEarlierWindows")
 @system
 unittest
@@ -1076,10 +1213,11 @@ unittest
 
     auto counters = CounterGroups.none;
     auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false); // disabled: window shapes stay host-independent
     const outcome = runWorkload(
         Test(fullName: "m.t", name: "t", ptr: &thrower,
             traits: TestTraits(isWorkload: true, workloadReps: 1)),
-        counters, wall);
+        counters, wall, psi);
 
     assert(!outcome.result.succeeded);
     assert(outcome.result.thrown.length, "the throw fails the test with its trace");
@@ -1105,10 +1243,11 @@ unittest
 
     auto counters = CounterGroups.none;
     auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false); // disabled: window shapes stay host-independent
     const outcome = runWorkload(
         Test(fullName: "m.s", name: "s", ptr: &skipper,
             traits: TestTraits(isWorkload: true, workloadReps: 1)),
-        counters, wall);
+        counters, wall, psi);
 
     assert(outcome.result.succeeded, "a window-level skip does not fail the test");
     assert(outcome.windows.length == 2);
@@ -1131,10 +1270,11 @@ unittest
 
     auto counters = CounterGroups.none;
     auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false); // disabled: window shapes stay host-independent
     const outcome = runWorkload(
         Test(fullName: "m.sa", name: "sa", ptr: &skipAll,
             traits: TestTraits(isWorkload: true, workloadReps: 2)),
-        counters, wall);
+        counters, wall, psi);
 
     assert(outcome.result.skipped);
     assert(outcome.windows.length == 0, "no fabricated window for a skipped body");
@@ -1161,10 +1301,11 @@ version (linux)
 
         auto counters = CounterGroups.none;
         auto wall = WallSource.tryOpen(true);
+        auto psi = PsiSource.tryOpen(false);
         const outcome = runWorkload(
             Test(fullName: "m.spin", name: "spin", ptr: &spin,
                 traits: TestTraits(isWorkload: true, workloadReps: 1)),
-            counters, wall);
+            counters, wall, psi);
 
         const d = outcome.windows[0].wall;
         assert(d.wallNs >= 25_000_000);
@@ -1190,10 +1331,11 @@ version (linux)
 
         auto counters = CounterGroups.none;
         auto wall = WallSource.tryOpen(true);
+        auto psi = PsiSource.tryOpen(false);
         const outcome = runWorkload(
             Test(fullName: "m.sleep", name: "sleep", ptr: &sleeper,
                 traits: TestTraits(isWorkload: true, workloadReps: 1)),
-            counters, wall);
+            counters, wall, psi);
 
         const d = outcome.windows[0].wall;
         assert(d.wallNs >= 25_000_000);
@@ -1225,10 +1367,11 @@ version (linux)
         }
 
         auto wall = WallSource.tryOpen(true);
+        auto psi = PsiSource.tryOpen(false);
         const outcome = runWorkload(
             Test(fullName: "m.c", name: "crunch", ptr: &crunch,
                 traits: TestTraits(isWorkload: true, workloadReps: 1)),
-            counters, wall);
+            counters, wall, psi);
 
         assert(outcome.result.succeeded);
         assert(!outcome.windows[0].perf.isNull, "an open perf group attaches window stats");

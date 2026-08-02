@@ -745,13 +745,17 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         stdout.write(formatMetricCatalog(cat, colored));
         stdout.writeln;
         {
-            import sparkles.test_runner.workload : WallSource, withWallBlock;
+            import sparkles.test_runner.psi : PsiSource;
+            import sparkles.test_runner.workload : WallSource, withWorkloadBlocks;
 
             auto wallProbe = WallSource.tryOpen(true);
             stdout.write(formatCapabilityBlock(
-                withWallBlock(probe.capabilities, wallProbe), colored));
+                withWorkloadBlocks(probe.capabilities, wallProbe,
+                    PsiSource.tryOpen(true)), colored));
             // The block's ✓/✗ vocabulary can't carry "counting works but
             // runqueue attribution doesn't" — say the narrower fact here.
+            // (PSI needs no such line: its absence is a whole-source
+            // CapabilityAbsence, fully expressed in the block above.)
             if (wallProbe.available && !wallProbe.schedOk)
                 stdout.writeln("wall: runqueue attribution unavailable (",
                     wallProbe.schedReason, ") — workload windows fold it into `other`");
@@ -1095,6 +1099,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // window — for a handful of long single-pass windows the stderr spinner
     // is disclosure enough, and keeping display I/O out of measurement is
     // the model's point.
+    import sparkles.test_runner.psi : PsiSource;
     import sparkles.test_runner.workload : runWorkload, WallSource, WorkloadWindow;
 
     auto workloadTests = tests.filter!(t => t.traits.isWorkload).array;
@@ -1104,6 +1109,9 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         auto wallSource = WallSource.tryOpen(true);
         scope (exit)
             wallSource.close();
+        auto psiSource = PsiSource.tryOpen(true);
+        scope (exit)
+            psiSource.close();
         // Disclose the degraded decomposition once per run, like the perf
         // header notes: on such hosts every window's runqueue column is an
         // em dash and its time lands in `other`.
@@ -1117,7 +1125,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         foreach (test; workloadTests)
         {
             progress.tick(test.name);
-            auto outcome = runWorkload(test, counters, wallSource);
+            auto outcome = runWorkload(test, counters, wallSource, psiSource);
             if (outcome.result.skipped)
             {
                 progress.clear();
