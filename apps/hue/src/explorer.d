@@ -1262,7 +1262,7 @@ unittest
     x.width = 44;
     x.height = 12;
     // The snapshot marks build/ ignored (as `!! build/` would).
-    x.git.map = GitStatusMap(["build": GitStatus.ignored], null, root, true);
+    x.git.seed(GitStatusMap(["build": GitStatus.ignored], null, root, true));
     x.rebuild();
 
     bool listed(string name)
@@ -1369,7 +1369,7 @@ unittest
     x.pageBg = fallbackBg;
     x.width = 44;
     x.height = 12;
-    x.git.map = GitStatusMap(["build": GitStatus.ignored], null, root, true);
+    x.git.seed(GitStatusMap(["build": GitStatus.ignored], null, root, true));
     x.open = x.open.opened(buildPath(root, "build"));
 
     bool listed(string name)
