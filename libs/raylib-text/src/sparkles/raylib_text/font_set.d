@@ -32,6 +32,7 @@ import sparkles.raylib_text.font : LoadedFont, loadFontInto, loadVariantFile,
 // and charset parsing. Split out because this module needs a GL context and
 // that one does not (IXR29).
 import sparkles.raylib_text.font_discovery;
+import sparkles.raylib_text.metrics_dpi : DisplayMetrics;
 
 /// The face chosen for a cell's bold/italic attributes, plus whether the missing
 /// axis must still be faked (a synthetic slant / a double-strike thickening)
@@ -631,4 +632,24 @@ struct FontSet
             codepointMapCount++;
         }
     }
+}
+
+/**
+The current window's display metrics — the $(I query) half of `IXB11`.
+
+Lives here rather than in `metrics_dpi.d` so that module stays raylib-free and
+testable with no window, and here rather than in `sparkles:ui-raylib` so that
+`apps/terminal` — which depends on this package but not on the canvas adapter
+— can reach it without taking a dependency on the whole backend for one call.
+
+`GetWindowScaleDPI` is genuinely implemented on Android (`rcore_android.c`
+computes it from `AConfiguration_getDensity`), so this is not a desktop-only
+path; it is the reason a phone renders text at a readable size.
+
+Must be called after `InitWindow`.
+*/
+DisplayMetrics displayMetrics() @system nothrow @nogc
+{
+    const s = GetWindowScaleDPI();
+    return DisplayMetrics(scale: s.x > 0 ? s.x : 1.0f);
 }

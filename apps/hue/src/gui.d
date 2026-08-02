@@ -24,7 +24,8 @@ import core.stdc.stdarg : va_list; // for the TraceLogCallback bridge (NFR7)
 
 // The shared raylib text core (extracted in M5). Pulls raylib-d + libs
 // "raylib" transitively, so it is present only in the `gui` build.
-import sparkles.raylib_text : TextStyle, FontSet, drawText;
+import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
+    drawText, pixelsForPoints, TextStyle;
 
 // The shared scroll-step convention: this file is a wheel PRODUCER, so it
 // applies the notch multiplier itself (INP12).
@@ -234,7 +235,9 @@ int runGui(
     // the --font-size for deterministic captures.
     // `--font-size` arrives in points; convert to pixels (96-DPI, 1pt = 1/72in)
     // exactly like apps/terminal so both raylib apps size a font identically.
-    int fontSizePx = cast(int)(fontSize * 96.0 / 72.0 + 0.5);
+    // Resolved against the real display below, once the window exists; this
+    // is the nominal-DPI fallback for the paths that read it earlier.
+    int fontSizePx = pixelsForPoints(fontSize, DisplayMetrics.init);
     long initialTop;
     try
     {
@@ -283,10 +286,17 @@ int runGui(
 
         fontSrc = FontSet.FontSources([fontsDir(androidDataDir()), "/system/fonts"],
             useFontconfig: false);
-        const dpiScale = GetWindowScaleDPI().x;
-        if (dpiScale > 1 && environment.get("HUE_GUI_FONTSIZE", "").length == 0)
-            fontSizePx = cast(int) (fontSizePx * (dpiScale > 4 ? 4 : dpiScale));
     }
+
+    // Resolve the point size against the real panel. This is no longer an
+    // Android special case: a HiDPI desktop has the same problem, and used to
+    // get the same 19 px as a 96 dpi one (IXR28). The clamp that keeps the
+    // atlas bounded is the library's now, not a magic 4 here.
+    //
+    // HUE_GUI_FONTSIZE stays the deterministic override for goldens, so it
+    // suppresses scaling entirely rather than being scaled itself.
+    if (environment.get("HUE_GUI_FONTSIZE", "").length == 0)
+        fontSizePx = pixelsForPoints(fontSize, displayMetrics());
     FontSet fonts;
     if (!FontSet.tryLoad(fontName, fontSizePx, fonts, codepointMaps, faces, fontSrc))
     {

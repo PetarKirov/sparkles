@@ -11,7 +11,8 @@ import raylib;
 
 import sparkles.ghostty.c;
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid, drawBox,
+import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
+    LoadedFont, drawGrapheme, drawSolid, drawBox, pixelsForPoints,
     resolveFontInDirs;
 import input : ExitBehavior, SelectionState, ScrollbarState, HoverState;
 import osc_query : OscScanner;
@@ -590,8 +591,8 @@ int main(string[] args)
     // Point size → pixels for raylib's pixel-based rasterizer (96-DPI points:
     // 1pt = 1/72in, 96px/in). Converted once; the rest of the renderer works in
     // pixels (Ctrl +/- then adjusts the pixel size directly).
-    s.fontSize = cast(int) (fontSizePt * 96.0 / 72.0 + 0.5);
-    if (s.fontSize < 1) s.fontSize = 1;
+    // Resolved after InitWindow, below, once the panel is known.
+    s.fontSize = pixelsForPoints(fontSizePt, DisplayMetrics.init);
     s.cols = cast(ushort) (windowCols > 0 ? windowCols : 1);
     s.rows = cast(ushort) (windowRows > 0 ? windowRows : 1);
     s.exitBehavior = parseExitBehavior(exitBehaviorOpt);
@@ -604,6 +605,12 @@ int main(string[] args)
     // Disable raylib's default "Escape closes the window" behavior — Esc must be
     // forwarded to the terminal application (vim, less, …) like any other key.
     SetExitKey(KeyboardKey.KEY_NULL);
+
+    // Now the window exists, resolve the point size against the ACTUAL panel.
+    // The terminal had no DPI factor at all — it computed pt→px at a nominal
+    // 96 dpi and rendered unreadably on a HiDPI display where hue was legible
+    // (IXR28). Same conversion, same clamp, one library.
+    s.fontSize = pixelsForPoints(fontSizePt, displayMetrics());
 
     // Load the whole face set via the shared library: primary + real bold/italic/
     // bold-italic variants, a regular and a Nerd-Font fallback, any
