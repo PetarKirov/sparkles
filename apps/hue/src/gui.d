@@ -34,7 +34,7 @@ import sparkles.input.capability : InputCapabilities, mousePointer,
     touchPointer;
 
 // hue-specific viewport/search layout (raylib-free, so it stays testable).
-import gui_text : columnWidth, Match;
+import gui_text : Match;
 
 // Markdown-preview model (raylib-free) and the ANSI-fence decoder.
 import gui_preview : PreviewModel, stripSgr;
@@ -69,13 +69,13 @@ import sparkles.twoslash.render_widgets : viewHoverPopup;
 // the widget views drive the hover popup (so the GUI matches the TUI/HTML chrome).
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
     schemeForBackground, Slot, UiTextStyle = TextStyle;
-import sparkles.ui.components.chrome : headerBar;
+import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : layout;
-import sparkles.ui.state : ScrollAxis, ScrollbarState, scrollbarThumb,
-    selectionRects, sourceOffsetAt, wantedPointerShape,
-    SplitState, Timeline;
+import sparkles.ui.state : hoverTargets, HoverState, PressState, ScrollAxis,
+    ScrollbarState, scrollbarThumb, selectionRects, sourceOffsetAt,
+    wantedPointerShape, SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : drawScrollbar, RaylibCanvas, ScrollbarAnim,
@@ -746,11 +746,20 @@ int runGui(
         bool clickPressed() => touchTap;
         bool selectStartPressed() => touchLongPress;
 
-        // The bottom toolbar as ONE table, read by both the hit test and the
-        // paint, so the two cannot disagree about where a segment is. (The
-        // real fix is a shared actionBar component in sparkles:ui — this is
-        // the local version of the same invariant.)
+        // The bottom toolbar's product policy: which segments exist and what
+        // they do. The geometry, the hit test and the press contract are the
+        // toolkit's `actionBar` + `PressState` (IXB9), so nothing here knows
+        // where a segment sits.
         enum toolbarSegments = 5;
+
+        // The hit-id block this bar owns. Segment i is `toolbarHitBase + i`;
+        // an activation maps back by subtracting the base. Non-zero because
+        // `0` is `hitId`'s "not hit-testable".
+        enum size_t toolbarHitBase = 0x7B_00;
+
+        // The press in flight over the bar, across frames: a press arms a
+        // segment, a release over the SAME segment activates it (STM10).
+        PressState toolbarPress;
 
         // The last segment is context-sensitive: with a live selection there
         // is otherwise NO touch route to copy it (a long-press-drag creates a
@@ -808,6 +817,40 @@ int runGui(
 
         version (Android)
         {
+            // The toolbar, built ONCE per frame (IXB9). The tap handler below
+            // hit-tests these frames and the painter at the end of the loop
+            // draws them — so "where is segment 3" has a single answer, where
+            // it used to be `screenW / 5` computed independently at each end,
+            // ~1200 lines apart (IXR27).
+            //
+            // `collapsed` while an input line owns the row: that one
+            // assignment governs both paint and hit test, because
+            // `hoverTargets` skips non-visible nodes. The old code needed the
+            // `!inputMode` gate repeated at both ends and had it at only one.
+            import sparkles.ui.geometry : SizeSpec;
+            import sparkles.ui.widget : Builder, Visibility, Widget, WidgetKind;
+
+            auto barB = Builder();
+            const barLabels = toolbarLabels();
+            const barRoot = actionBar(barB, barLabels[], toolbarHitBase,
+                toolbarPress);
+            if (inputMode)
+                barB.nodes[barRoot].visibility = Visibility.collapsed;
+            Widget barColW = Widget(kind: WidgetKind.column, children: [barRoot],
+                width: SizeSpec.fixed(screenW / cellW));
+            auto barTree = barB.finish(barB.add(barColW));
+            auto barFrames = layout(barTree);
+            const barTargets = hoverTargets(barTree, barFrames);
+            // `toolbarY`, not `barY`: the input-line blocks below already own
+            // that name for the same row.
+            const toolbarY = screenH - cellH;
+
+            // The gesture ANCHOR in the bar's cell space: a tap is a release
+            // within the slop radius of its press, and slop can exceed half a
+            // segment on a narrow screen, so the anchor is what was aimed at.
+            Point barCell(in PointF p) => Point(
+                cast(int)(p.x / cellW), cast(int)((p.y - toolbarY) / cellH));
+
             // Feed the shared recogniser raw samples, then drain what it
             // resolved. Everything hue used to decide here — is this a tap, a
             // drag, a fling, a long-press, a pinch; when does a second finger
@@ -842,12 +885,23 @@ int runGui(
             touchPinch = 0;
             for (auto ev = touch.next(); !ev.isNoEvent; ev = touch.next())
                 ev.match!(
-                    // A tap arrives as press+release; hue reacts on the press
-                    // and ignores the release, because `clickPressed()` is a
-                    // one-frame edge.
+                    // A tap arrives as press+release. `clickPressed()` is a
+                    // one-frame edge, so the panes still react on the press —
+                    // but the toolbar runs the STM10 contract over the same
+                    // pair, so a press that travels off its segment before
+                    // release does NOT activate it (IXB9).
                     (in PointerEvent p) {
+                        const cell = barCell(touch.anchor());
+                        HoverState hh;
+                        hh.update(PointerEvent(action: PointerAction.move,
+                            pos: cell), barTargets);
                         if (p.action == PointerAction.press)
+                        {
                             touchTap = true;
+                            toolbarPress = toolbarPress.pressed(hh.hot);
+                        }
+                        else if (p.action == PointerAction.release)
+                            toolbarPress = toolbarPress.released(hh.hot);
                     },
                     (in WheelEvent w) { touchScrollRows += w.dy; },
                     (in GestureEvent g) {
@@ -883,29 +937,19 @@ int runGui(
                     vm.top += touchScrollRows;
             }
 
-            // Bottom-row toolbar taps — the touch equivalents of the keyboard
-            // essentials; a consumed tap never reaches the panes. Layout must
-            // match the draw block near the end of the loop, INCLUDING the
-            // `!inputMode` gate: while '/' or ':' owns the bottom row the bar
-            // is not drawn, so it must not be tappable either.
-            //
-            // Hit-test the gesture ANCHOR, not the live pointer: a tap is
-            // defined as a release within the slop radius of its press, and
-            // slop can exceed half a segment on a narrow screen — so the two
-            // can disagree about which segment was meant. The anchor is what
-            // the user aimed at.
-            if (touchTap && !inputMode && touch.anchor().y >= screenH - cellH)
+            // Which segments exist and what they do is hue's policy; that a
+            // press on one of them activated is the toolkit's (IXB9). No
+            // geometry here at all — and no `!inputMode` gate, because a
+            // collapsed bar contributes no hit targets, so `activated` cannot
+            // fire while an input line owns the row.
+            if (toolbarPress.activated != 0)
             {
-                const seg = cast(int)(touch.anchor().x
-                    / (screenW / cast(float) toolbarSegments));
-                switch (seg)
+                switch (toolbarPress.activated - toolbarHitBase)
                 {
                     case 0: applyTheme(vm.themeIdx == 0 ? themes.length - 1 : vm.themeIdx - 1); break;
                     case 1: applyTheme(vm.themeIdx + 1 == themes.length ? 0 : vm.themeIdx + 1); break;
                     case 2: toggleView(); break;
                     case 3: toggleExplorer(); break;
-                    // 4, plus the single-pixel `x == screenW` case that
-                    // divides to exactly 5.
                     default:
                         if (hasSelection())
                             copySelection();
@@ -917,7 +961,8 @@ int runGui(
                         }
                         break;
                 }
-                touchTap = false; // consumed
+                touchTap = false; // consumed — never reaches the panes
+                toolbarPress = toolbarPress.cancelled();
             }
 
             // The system back button: close the explorer, else leave (the
@@ -2044,34 +2089,19 @@ int runGui(
             drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), rl(vm.gutterFg));
         }
 
-        // Bottom toolbar (Android): tappable equivalents of the keyboard
-        // essentials, in five equal segments — the tap handler at the top of
-        // the loop hit-tests the same geometry. Drawn over the bottom row like
-        // the input bar (which replaces it while typing).
+        // Bottom toolbar (Android): the SAME tree and frames the tap handler
+        // hit-tested at the top of the loop, painted through RaylibCanvas
+        // (IXB9). Nothing here measures a label or divides a width — a
+        // collapsed bar simply produces no ops, which is also what made it
+        // untappable.
         version (Android)
         {
-            if (!inputMode)
-            {
-                const tbY = screenH - cellH;
-                DrawRectangle(0, tbY, screenW, cellH, rl(mix(vm.pageBg, vm.pageFg, 0.12)));
-                DrawRectangle(0, tbY - 1, screenW, 1, rl(vm.gutterFg));
-                const tbLabels = toolbarLabels();
-                const segW = screenW / cast(float) toolbarSegments;
-                foreach (i, label; tbLabels)
-                {
-                    if (i != 0)
-                        DrawRectangle(cast(int)(segW * i), tbY + 2, 1, cellH - 4,
-                            rl(vm.gutterFg));
-                    // columnWidth, not `label.length`: the labels are UTF-8,
-                    // so "◀ thm" is 7 bytes / 5 columns and "ln №" 6 / 4 —
-                    // byte length made them ~40 % too wide and pushed three of
-                    // the five off-centre into the clamp below.
-                    const lw = cast(int) columnWidth(label) * cellW;
-                    const lx = segW * i + (segW - lw) / 2;
-                    drawText(fonts, cstrOf(buf, label), lx < segW * i + 2 ? segW * i + 2 : lx,
-                        cast(float) tbY, TextStyle(0), rl(vm.pageFg));
-                }
-            }
+            DrawRectangle(0, toolbarY - 1, screenW, 1, rl(vm.gutterFg));
+            auto barOps = buildDisplayList(barTree, barFrames,
+                themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
+            auto barCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+                0, cast(float) toolbarY);
+            paint(barCanvas, barOps);
         }
 
         // Input line at the bottom: '/query' while searching, ':n' while going
