@@ -165,7 +165,7 @@ armed segment pressed. A `label` that is empty renders an empty segment,
 which still takes its share of the width — a bar's segments stay aligned
 across rebuilds even when one has nothing to say.
 */
-uint actionBar(ref Builder b, scope const(char)[][] labels, size_t hitBase,
+uint actionBar(ref Builder b, scope const(string)[] labels, size_t hitBase,
     in PressState press = PressState.init)
 {
     auto segs = new uint[](labels.length);
@@ -174,7 +174,10 @@ uint actionBar(ref Builder b, scope const(char)[][] labels, size_t hitBase,
         const id = hitBase + i;
         const caption = b.add(Widget(
             kind: WidgetKind.text,
-            text: label.idup,
+            // `string`, not `const(char)[]`: this is built every frame by a
+            // GUI host, and taking immutable labels keeps that path free of a
+            // per-segment `idup`.
+            text: label,
             slot: press.isArmed(id) ? Slot.chromeAccent : Slot.chrome,
         ));
         segs[i] = b.add(Widget(
