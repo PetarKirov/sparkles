@@ -145,6 +145,14 @@
                 "breaks": [
                     {
                         "offset": 68
+                    },
+                    {
+                        "group": 1,
+                        "offset": 36
+                    },
+                    {
+                        "group": 2,
+                        "offset": 61
                     }
                 ],
                 "effects": {

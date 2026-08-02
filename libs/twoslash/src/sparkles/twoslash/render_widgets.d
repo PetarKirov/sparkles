@@ -38,7 +38,8 @@ import sparkles.ui.wrap : TextWrap;
 
 import sparkles.twoslash.overlay : BelowBlock, errIsWarning,
     highlightSignature, planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
-import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
+import sparkles.twoslash.protocol : Completion, Node, NodeType,
+    SignatureLayout, TwoslashReturn;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
 
 import sparkles.syntax.md.model : extractMarkdown, MdBlock, MdBlockKind, MdDoc,
@@ -113,8 +114,13 @@ TextSpan[] signatureSpans(ref TsConfigCache cache, scope const(char)[] language,
     foreach (sp; byStyledSpan(ev[]))
     {
         const spec = (*theme)[sp.label];
+        // The byte range is stamped, not left at `size_t.max`: the producer's
+        // break offsets index this same text, so slicing a span by them needs
+        // the two to share one coordinate system — and it is the identity
+        // channel selection and copy already ride on.
         spans ~= TextSpan(sig[sp.start .. sp.end], Slot.code,
-            TextStyle.init, fg: toRgb(spec.fg, pageFg), hasFg: true);
+            TextStyle.init, fg: toRgb(spec.fg, pageFg), hasFg: true,
+            srcStart: sp.start, srcEnd: sp.end);
     }
     return spans;
 }
@@ -492,14 +498,20 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     if (opts.maxWidth > 0)
         sigWidth.max = opts.maxWidth - 2 * M.popupPadX;
     const sigWrap = opts.maxWidth > 0 ? TextWrap.greedy : TextWrap.none;
-    const sig = opts.sigSpans.length
-        ? b.add(Widget(kind: WidgetKind.rich, spans: opts.sigSpans, slot: Slot.code,
-            hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))
-        : b.add(Widget(kind: WidgetKind.text,
-            text: withoutQuickinfoPrefix(node.text), slot: Slot.code,
-            hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap));
+    // With the producer's structure the signature breaks where D would break;
+    // without it (a TypeScript payload, or a node predating the field) it is
+    // one run and the space-wrapping above is all there is.
+    const structured = node.signature != SignatureLayout.init;
+    uint[] sigRows = structured
+        ? signatureRows(b, node, hit, opts, sigStyle, sigWidth, sigWrap)
+        : [opts.sigSpans.length
+            ? b.add(Widget(kind: WidgetKind.rich, spans: opts.sigSpans, slot: Slot.code,
+                hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))
+            : b.add(Widget(kind: WidgetKind.text,
+                text: withoutQuickinfoPrefix(node.text), slot: Slot.code,
+                hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))];
 
-    uint[] sections = [popupSection(b, [sig], divider: false)];
+    uint[] sections = [popupSection(b, sigRows, divider: false)];
     if (docsRows.length)
         sections ~= popupSection(b, docsRows, divider: true);
     if (tagRows.length)
@@ -515,6 +527,73 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
         width: width, padding: Insets(1, 0, 1, 0), paintBackground: true,
         decoration: surfaceDeco(arrow: true), children: [col], hitId: hit));
     return b.finish(popup);
+}
+
+/**
+The signature as one widget per broken row, or a single row when it fits.
+
+Slices the caller's styled spans by the producer's break offsets rather than
+re-highlighting each row: a fragment like `ref T value,` parses differently
+from a declaration, so per-row highlighting would change a token's colour with
+the window width, and the staging tries several candidate layouts per frame.
+Slicing also keeps `srcStart`/`srcEnd` exact, since `[s,k)` and `[k,e)` tile
+the span they came from.
+*/
+private uint[] signatureRows(ref Builder b, const Node node, size_t hit,
+    HoverViewOptions opts, TextStyle sigStyle, SizeSpec sigWidth,
+    TextWrap sigWrap)
+{
+    import sparkles.twoslash.signature_layout : layoutSignature, SigRow;
+    import sparkles.ui.geometry : cellsOf;
+
+    const text = withoutQuickinfoPrefix(node.text);
+    const laid = layoutSignature(text, node.signature, opts.maxWidth,
+        M.sigIndent, (scope const(char)[] s) => cast(int) cellsOf(s));
+
+    uint[] rows;
+    foreach (row; laid.rows)
+    {
+        // The indent is padding, not leading spaces: spaces would enter the
+        // identity channel and land in a selection or a copy.
+        const pad = Insets(0, row.indent, 0, 0);
+        if (row.isLiteral)
+        {
+            rows ~= b.add(Widget(kind: WidgetKind.text, text: row.literal,
+                slot: Slot.code, hitId: hit, textStyle: sigStyle,
+                padding: pad, width: sigWidth, wrap: sigWrap));
+            continue;
+        }
+        auto spans = sliceSpans(opts.sigSpans, row.start, row.end);
+        rows ~= spans.length
+            ? b.add(Widget(kind: WidgetKind.rich, spans: spans, slot: Slot.code,
+                hitId: hit, textStyle: sigStyle, padding: pad,
+                width: sigWidth, wrap: sigWrap))
+            : b.add(Widget(kind: WidgetKind.text, text: text[row.start .. row.end],
+                slot: Slot.code, hitId: hit, textStyle: sigStyle, padding: pad,
+                width: sigWidth, wrap: sigWrap));
+    }
+    return rows;
+}
+
+/// The part of `spans` covering `[start, end)`, colours and identity intact.
+private TextSpan[] sliceSpans(const(TextSpan)[] spans, uint start, uint end) @safe pure
+{
+    TextSpan[] out_;
+    foreach (sp; spans)
+    {
+        if (sp.srcEnd <= start || sp.srcStart >= end)
+            continue;
+        const from = sp.srcStart >= start ? 0 : start - sp.srcStart;
+        const to = sp.srcEnd <= end ? sp.text.length : end - sp.srcStart;
+        if (from >= to)
+            continue;
+        TextSpan piece = sp;
+        piece.text = sp.text[from .. to];
+        piece.srcStart = sp.srcStart + from;
+        piece.srcEnd = sp.srcStart + to;
+        out_ ~= piece;
+    }
+    return out_;
 }
 
 /// A full-width popup section: a `stretch` column with its own horizontal padding
@@ -892,27 +971,55 @@ version (unittest)
         text("painted to ", rightEdge(capped), " past a cap of 40"));
 }
 
-@("render_widgets.viewHoverPopup.oneLongTokenStillOverflows")
+@("render_widgets.viewHoverPopup.structuredSignatureBreaksAtItsParameters")
 @safe unittest
 {
-    // The limitation the cap alone cannot fix, recorded rather than hidden:
-    // wrapping breaks at spaces, so a single 51-cell token — a fully qualified
-    // instantiated type, which is exactly what D produces — has nowhere to
-    // break and overhangs. Structural breaking at `(`/`,` is what closes this;
-    // until then the overhang must at least stay bounded by the token itself.
-    enum oneToken = "sparkles.evenSquares.FilterResult!(__lambda_L7_C45,"
-        ~ " MapResult!(__lambda_L7_C25, Result)) filter(int n)";
+    // What S4 could not do: the token with nowhere to break is a parameter
+    // list, and the producer said so, so the popup breaks there instead of
+    // overhanging.
+    import std.string : indexOf, lastIndexOf;
+
+    import sparkles.twoslash.protocol : BreakGroup, BreakPoint;
+
+    enum text = "FilterResult!(Lambda, MapResult) filter(int first, int second)";
+
+    // Computed, not counted by hand: an off-by-one here would test the wrong
+    // break points and still look plausible.
+    const tOpen = cast(uint) text.indexOf("!(") + 1;
+    const tClose = cast(uint) text.indexOf(")");
+    const rOpen = cast(uint) text.indexOf("filter(") + 6;
+    const rClose = cast(uint) text.lastIndexOf(")");
+
+    auto sig = SignatureLayout(
+        groups: [BreakGroup(rOpen, rClose, 0), BreakGroup(tOpen, tClose, 1)],
+        breaks: [
+            BreakPoint(cast(uint) text.indexOf("int first"), 0),
+            BreakPoint(cast(uint) text.indexOf("int second"), 0),
+            BreakPoint(cast(uint) text.indexOf("Lambda"), 1),
+            BreakPoint(cast(uint) text.indexOf("MapResult"), 1),
+        ]);
+
     const tw = TwoslashReturn(code: "f()\n",
         nodes: [Node(type: NodeType.hover, start: 0, length: 1, line: 0,
-            character: 0, text: oneToken)]);
+            character: 0, text: text, signature: sig)]);
 
     auto capped = render(viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40)));
 
-    import std.conv : text;
+    import std.algorithm.searching : canFind;
+    import std.array : join;
+    import std.conv : text_ = text;
 
-    const edge = rightEdge(capped);
-    assert(edge > 40, "if this now fits, structural breaking landed — drop this test");
-    assert(edge <= 55, text("overhang grew to ", edge, ": worse than the token"));
+    assert(rightEdge(capped) <= 40,
+        text_("painted to ", rightEdge(capped), " past a cap of 40"));
+
+    // Broken at the parameters, not mid-word: each parameter is its own row.
+    string[] painted;
+    foreach (op; capped.ops)
+        if (op.text.length)
+            painted ~= op.text.idup;
+    const all = painted.join("|");
+    assert(painted.canFind!(t => t.canFind("int first,")), all);
+    assert(painted.canFind!(t => t.canFind("int second")), all);
 }
 
 @("render_widgets.viewHoverPopup.maxWidthZeroStaysUnbounded")

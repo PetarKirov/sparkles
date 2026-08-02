@@ -488,7 +488,18 @@ private void scanTemplateArgs(scope const(char)[] text, ref SignatureInfo info)
     @safe pure
 {
     Abbrev[] nested;
-    uint[] openStack; // offsets of the `(` of each enclosing `!(…)`
+
+    // One frame per open `!(`: where it started, and where its arguments
+    // begin. The group index is only known when it closes, so the breaks are
+    // held here and attached then.
+    static struct Frame
+    {
+        uint open;
+        uint[] argStarts;
+        bool isTemplateArgs;
+    }
+
+    Frame[] stack;
 
     size_t i;
     while (i < text.length)
@@ -505,31 +516,49 @@ private void scanTemplateArgs(scope const(char)[] text, ref SignatureInfo info)
 
         if (c == '!' && i + 1 < text.length && text[i + 1] == '(')
         {
-            openStack ~= cast(uint)(i + 1);
+            stack ~= Frame(cast(uint)(i + 1), [cast(uint)(i + 2)], true);
             i += 2;
             continue;
         }
 
-        if (c == '(' && openStack.length)
+        if (c == '(' && stack.length)
         {
             // A parenthesis inside an argument list — track it so the matching
-            // close does not end the list early.
-            openStack ~= uint.max;
+            // close does not end the list early, and so a comma inside it is
+            // not mistaken for an argument separator.
+            stack ~= Frame(cast(uint) i, null, false);
             i++;
             continue;
         }
 
-        if (c == ')' && openStack.length)
+        if (c == ',' && stack.length && stack[$ - 1].isTemplateArgs)
         {
-            const open = openStack[$ - 1];
-            openStack = openStack[0 .. $ - 1];
-            if (open != uint.max)
+            // The next argument starts after the separator's space.
+            uint at = cast(uint)(i + 1);
+            while (at < text.length && text[at] == ' ')
+                at++;
+            stack[$ - 1].argStarts ~= at;
+            i++;
+            continue;
+        }
+
+        if (c == ')' && stack.length)
+        {
+            auto frame = stack[$ - 1];
+            stack = stack[0 .. $ - 1];
+            if (frame.isTemplateArgs)
             {
-                info.groups ~= BreakGroup(open, cast(uint) i, templateStage);
+                const group = cast(ubyte) info.groups.length;
+                info.groups ~= BreakGroup(frame.open, cast(uint) i, templateStage);
+                // Without these the list has nowhere to break and "exploding"
+                // it only moves its `)` to a line of its own.
+                foreach (at; frame.argStarts)
+                    if (at < i)
+                        info.breaks ~= BreakPoint(at, group);
                 // Depth 2+: the argument list of an argument.
-                if (openStack.length)
-                    nested ~= Abbrev(open + 1, cast(uint)(i - open - 1), "…",
-                        AbbrevKind.nestedTemplateArgs);
+                if (stack.length)
+                    nested ~= Abbrev(frame.open + 1, cast(uint)(i - frame.open - 1),
+                        "…", AbbrevKind.nestedTemplateArgs);
             }
             i++;
             continue;

@@ -29,6 +29,22 @@
                 "breaks": [
                     {
                         "offset": 106
+                    },
+                    {
+                        "group": 1,
+                        "offset": 61
+                    },
+                    {
+                        "group": 1,
+                        "offset": 78
+                    },
+                    {
+                        "group": 2,
+                        "offset": 33
+                    },
+                    {
+                        "group": 2,
+                        "offset": 50
                     }
                 ],
                 "effects": {
@@ -105,6 +121,14 @@
                 "breaks": [
                     {
                         "offset": 52
+                    },
+                    {
+                        "group": 1,
+                        "offset": 16
+                    },
+                    {
+                        "group": 1,
+                        "offset": 21
                     }
                 ],
                 "effects": {
@@ -192,6 +216,34 @@
                 "breaks": [
                     {
                         "offset": 113
+                    },
+                    {
+                        "group": 1,
+                        "offset": 30
+                    },
+                    {
+                        "group": 1,
+                        "offset": 47
+                    },
+                    {
+                        "group": 2,
+                        "offset": 95
+                    },
+                    {
+                        "group": 2,
+                        "offset": 100
+                    },
+                    {
+                        "group": 3,
+                        "offset": 79
+                    },
+                    {
+                        "group": 4,
+                        "offset": 129
+                    },
+                    {
+                        "group": 4,
+                        "offset": 134
                     }
                 ],
                 "effects": {
@@ -310,6 +362,42 @@
                 "breaks": [
                     {
                         "offset": 170
+                    },
+                    {
+                        "group": 1,
+                        "offset": 61
+                    },
+                    {
+                        "group": 1,
+                        "offset": 78
+                    },
+                    {
+                        "group": 2,
+                        "offset": 33
+                    },
+                    {
+                        "group": 2,
+                        "offset": 50
+                    },
+                    {
+                        "group": 3,
+                        "offset": 144
+                    },
+                    {
+                        "group": 3,
+                        "offset": 161
+                    },
+                    {
+                        "group": 4,
+                        "offset": 114
+                    },
+                    {
+                        "group": 5,
+                        "offset": 200
+                    },
+                    {
+                        "group": 5,
+                        "offset": 217
                     }
                 ],
                 "effects": {
@@ -437,6 +525,22 @@
                 "breaks": [
                     {
                         "offset": 106
+                    },
+                    {
+                        "group": 1,
+                        "offset": 61
+                    },
+                    {
+                        "group": 1,
+                        "offset": 78
+                    },
+                    {
+                        "group": 2,
+                        "offset": 33
+                    },
+                    {
+                        "group": 2,
+                        "offset": 50
                     }
                 ],
                 "effects": {
