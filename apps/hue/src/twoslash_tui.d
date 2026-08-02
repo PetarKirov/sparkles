@@ -28,7 +28,8 @@ import sparkles.base.term_caps : TermSize;
 
 import sparkles.twoslash.overlay : planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
-import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslashDocument;
+import sparkles.twoslash.render_widgets : clampOrigin, effectivePopupWidth,
+    HoverViewOptions, signatureSpans, viewHoverPopup, viewTwoslashDocument;
 
 import sparkles.syntax : HighlightEvent, LabelSet,
     ResolvedTheme, RgbColor, toRgb;
@@ -236,8 +237,25 @@ private struct TwoslashTui
         if (selIdx >= 0 && selIdx < cast(int) targetRects.length)
         {
             const r = targetRects[selIdx];
-            paintTree(grid, viewHoverPopup(tw, selectable[selIdx]),
-                padCols + r.x, r.y - scrollRow + 1);
+            const ni = selectable[selIdx];
+            // The room left at the anchor, capped by the theme's ceiling, and
+            // the same shift-don't-shrink rule the other backends use (`SIG1`).
+            const anchor = padCols + r.x;
+            const avail = grid.cols - anchor;
+            import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
+            import sparkles.ui.widget : TextSpan;
+
+            TextSpan[] sig = cache !is null
+                ? signatureSpans(*cache, tw.effectiveLanguage,
+                    (() @trusted => &theme)(), pageFg,
+                    withoutQuickinfoPrefix(tw.nodes[ni].text)) : null;
+            auto tree = viewHoverPopup(tw, ni,
+                HoverViewOptions(maxWidth: effectivePopupWidth(pal, avail),
+                    sigSpans: sig, nodeKey: ni + 1));
+            auto frames = layout(tree);
+            paintTree(grid, tree,
+                clampOrigin(anchor, frames[tree.root].rect.width, grid.cols),
+                r.y - scrollRow + 1);
         }
 
         drawStatus(grid);

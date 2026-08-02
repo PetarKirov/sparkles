@@ -139,13 +139,26 @@ struct GridCanvas
     void fillRect(in Rect r, in Visual v) scope
     {
         if (v.hasBg)
+        {
+            // An opaque fill is a *surface*: it hides what it covers, so the
+            // cell's glyph goes with its background. A translucent one is a
+            // tint over content that must stay legible (the highlight band,
+            // the error line), so it keeps the glyph.
+            const opaque = v.bgAlpha == 0xFF;
             foreach (y; r.y .. r.y + r.height)
                 foreach (x; r.x .. r.x + r.width)
                     if (inBounds(x, y))
                     {
                         auto c = &cell(x, y);
                         c.style.bg = Color.fromRgb(blend(cellBg(c.style), v.bg, v.bgAlpha));
+                        if (opaque)
+                        {
+                            c.bytes[0] = ' ';
+                            c.len = 1;
+                            c.width = 1;
+                        }
                     }
+        }
 
         if (v.border.any)
         {
@@ -346,6 +359,37 @@ static assert(isCanvas!GridCanvas);
     assert(sig.style.bg == Color.fromRgb(0xf8, 0xf8, 0xf8)); // opaque surface, kept under text
     // The corner of the surface fill (no glyph) is the surface color too.
     assert(g[0, 0].style.bg == Color.fromRgb(0xf8, 0xf8, 0xf8));
+}
+
+@("tui_canvas.opaqueFillHidesWhatItCovers")
+@safe unittest
+{
+    // A popup is a surface, not a tint: whatever the document already painted
+    // under it must be gone, or its text reads through the popup's blank areas.
+    // A translucent fill is the opposite — it exists to let content show.
+    import sparkles.ui.canvas : DrawOp, OpKind;
+    import sparkles.ui.geometry : Rect;
+    import sparkles.ui.style : Visual;
+
+    Grid g;
+    g.resize(20, 2);
+    CellStyle st;
+    g.putText(0, 0, "document text here", st);
+    g.putText(0, 1, "document text here", st);
+
+    const surface = RgbColor(0xf8, 0xf8, 0xf8);
+    DrawOp[] ops = [
+        DrawOp(kind: OpKind.fillRect, rect: Rect(2, 0, 6, 1),
+            visual: Visual(bg: surface, hasBg: true)),
+        DrawOp(kind: OpKind.fillRect, rect: Rect(2, 1, 6, 1),
+            visual: Visual(bg: surface, hasBg: true, bgAlpha: 0x40)),
+    ];
+    paintGrid(g, RgbColor(0x1e, 0x1e, 0x2e), ops);
+
+    assert(g[2, 0].grapheme == " ", "an opaque fill blanks the cell");
+    assert(g[1, 0].grapheme == "o", "and only inside its own rect");
+    assert(g[9, 0].grapheme == "t", "and stops at its right edge");
+    assert(g[2, 1].grapheme == "c", "a translucent fill keeps the glyph");
 }
 
 @("tui_canvas.errorSquiggleIsUndercurl")
