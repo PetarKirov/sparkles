@@ -30,6 +30,8 @@ import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
 // The shared scroll-step convention: this file is a wheel PRODUCER, so it
 // applies the notch multiplier itself (INP12).
 import sparkles.input.events : linesPerNotch;
+import sparkles.input.capability : InputCapabilities, mousePointer,
+    touchPointer;
 
 // hue-specific viewport/search layout (raylib-free, so it stays testable).
 import gui_text : columnWidth, Match;
@@ -700,6 +702,15 @@ int runGui(
 
 
     int frame = 0;
+    // What this target's input actually offers (IXB10/TGT5). This is the one
+    // place the platform is named for interaction purposes: components ask the
+    // capability, not the platform, so a hover-driven affordance degrades by
+    // declaration instead of by a `version (Android)` at every site.
+    version (Android)
+        const InputCapabilities caps = touchPointer;
+    else
+        const InputCapabilities caps = mousePointer;
+
     // Touch interaction (Android): raylib maps the first touch to the mouse;
     // `sparkles:input`'s recogniser classifies those samples into taps,
     // drag-scrolls, long-presses and pinches; hue only consumes the result.
@@ -1363,7 +1374,7 @@ int runGui(
             }
             else
                 docSb = docSb.hoveredNow(false).released();
-            sbAnim.step(docSb.hovered || docSb.dragging ? hoverW : idleW,
+            sbAnim.step(docSb.expanded(caps) ? hoverW : idleW,
                 GetFrameTime());
         }
 
@@ -1398,8 +1409,8 @@ int runGui(
             }
             tree.top = treeVSb.offset;
             tree.scrollBy(0); // clamp
-            treeSbAnim.step(treeVSb.hovered || treeVSb.dragging
-                ? hoverW : idleW, GetFrameTime());
+            treeSbAnim.step(treeVSb.expanded(caps) ? hoverW : idleW,
+                GetFrameTime());
         }
         else
             treeVSb = treeVSb.hoveredNow(false).released();
@@ -1569,10 +1580,10 @@ int runGui(
                 const live = vm.hOverflows() && mode == Mode.normal;
                 const over = live && mp.x >= gutterPx
                     && mp.y >= screenH - bottomChromeH
-                        - (vm.hsb.hovered ? hHoverH2 : hIdleH2) - 4
+                        - (vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2) - 4
                     && mp.y < screenH - bottomChromeH;
                 vm.hsb = vm.hsb.hoveredNow(live && (over || vm.hsb.dragging));
-                docHAnim.step(vm.hsb.hovered ? hHoverH2 : hIdleH2,
+                docHAnim.step(vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2,
                     GetFrameTime());
                 if (over && clickPressed())
                     vm.hsb = vm.hsb.pressed(
@@ -1597,11 +1608,11 @@ int runGui(
             const hLive = tree.hOverflows() && !tree.searching;
             const overHBar = hLive && overTree
                 && mp.y >= screenH - bottomChromeH
-                    - (tree.hsb.hovered ? hHoverH : hIdleH) - 4
+                    - (tree.hsb.expanded(caps) ? hHoverH : hIdleH) - 4
                 && mp.y < screenH - bottomChromeH;
             tree.hsb = tree.hsb.hoveredNow(
                 hLive && (overHBar || tree.hsb.dragging));
-            treeHAnim.step(tree.hsb.hovered ? hHoverH : hIdleH,
+            treeHAnim.step(tree.hsb.expanded(caps) ? hHoverH : hIdleH,
                 GetFrameTime());
             if (overHBar && clickPressed())
                 tree.hsb = tree.hsb.pressed(cast(int)(mp.x / cellW),

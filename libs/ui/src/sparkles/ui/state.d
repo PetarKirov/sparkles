@@ -27,7 +27,8 @@ $(LIST
 module sparkles.ui.state;
 
 import sparkles.base.term_control : PointerShape;
-import sparkles.input : PointerAction, PointerEvent;
+import sparkles.input : cellPointer, InputCapabilities, mousePointer,
+    PointerAction, PointerEvent, touchPointer;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
 import sparkles.ui.widget : TextSpan, Visibility, WidgetKind, WidgetTree;
@@ -728,6 +729,40 @@ struct ScrollbarState
             ? (axis == ScrollAxis.vertical
                 ? PointerShape.nsResize : PointerShape.ewResize)
             : PointerShape.default_;
+
+    /**
+    Whether the bar should render at its expanded width (`IXB10`).
+
+    Hover-expand is an affordance that presumes a pointer can rest on the bar.
+    Where the target declares `hover: false` there is no such thing, and the
+    honest rendering is $(B permanently expanded) — a bar wide enough to grab
+    with a fingertip — rather than a thin rail easing open on a hover that
+    never occurs. Hosts asked `hovered || dragging` directly before this, which
+    on a touchscreen animated against the stale position of the last tap
+    (`IXR26`).
+    */
+    bool expanded(in InputCapabilities caps) const
+        => dragging || hovered || !caps.hover;
+}
+
+@("ui.state.scrollbarState.expandedWithoutHover")
+@safe pure nothrow @nogc
+unittest
+{
+    const idle = ScrollbarState(ScrollAxis.vertical);
+
+    // With a mouse the bar is a thin rail until hovered or grabbed.
+    assert(!idle.expanded(mousePointer));
+    assert(idle.hoveredNow(true).expanded(mousePointer));
+    assert(idle.pressed(0, 100, 10, 50).expanded(mousePointer));
+
+    // Without hover it is always grabbable: the affordance cannot be revealed,
+    // so it is never hidden. This is the assertion that makes IXR26
+    // unrepresentable rather than fixed per host.
+    assert(idle.expanded(touchPointer));
+
+    // A cell target has hover, so it keeps the reveal.
+    assert(!idle.expanded(cellPointer));
 }
 
 @("ui.state.scrollbarState.grabDragReleaseAndShape")

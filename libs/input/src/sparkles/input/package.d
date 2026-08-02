@@ -13,6 +13,7 @@ polled state.
 */
 module sparkles.input;
 
+public import sparkles.input.capability;
 public import sparkles.input.events;
 public import sparkles.input.gesture;
 public import sparkles.input.tier;

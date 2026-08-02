@@ -209,6 +209,17 @@ version (Posix)
     /// stdin in raw mode.
     struct PosixEvents
     {
+        /**
+        What a terminal's input offers (`IXB10`/`TGT5`): SGR-1006 reports
+        motion without a button, so hover is real — but positions arrive as
+        whole cells and there is exactly one pointer.
+
+        Fixed rather than settable: unlike a raylib window, which is a mouse
+        target or a touch target depending on the device, every terminal this
+        decoder drives has the same shape.
+        */
+        enum InputCapabilities capabilities = cellPointer;
+
         private sigaction_t _oldWinch;
         private bool _installed;
         private int _fd = STDIN_FILENO;

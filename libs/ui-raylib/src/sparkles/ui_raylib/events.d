@@ -33,6 +33,20 @@ struct RaylibEvents
     */
     GestureRecognizer gestures;
 
+    /**
+    What this window's input actually offers (`IXB10`/`TGT5`).
+
+    A raylib window is a mouse target on the desktop and a touch target on a
+    phone, and the difference is not observable until a contact arrives — so
+    this is a $(B declaration the host sets), defaulting to the desktop case.
+    An Android entry point assigns `touchPointer`.
+
+    Declaring it beats branching on it: components ask the capability rather
+    than the platform, so the knowledge lives in one assignment instead of
+    spreading as `version (Android)` through everything hover-driven.
+    */
+    InputCapabilities capabilities = mousePointer;
+
     private float lastX = -1, lastY = -1;
     private bool wasFocused = true;
     private bool wasInside = true;
