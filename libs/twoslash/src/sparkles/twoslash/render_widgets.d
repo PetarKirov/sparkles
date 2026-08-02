@@ -40,6 +40,7 @@ import sparkles.twoslash.overlay : BelowBlock, errIsWarning,
     highlightSignature, planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
 import sparkles.twoslash.protocol : Completion, Effects, Node, NodeType,
     SignatureLayout, TwoslashReturn;
+import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
 
 import sparkles.syntax.md.model : extractMarkdown, MdBlock, MdBlockKind, MdDoc,
@@ -436,6 +437,47 @@ struct HoverViewOptions
     /// preference (`GlyphSet.unicode`); a terminal that cannot render them
     /// overrides it, which is the backend's call, not the view's.
     bool unicode = true;
+
+    /// Which collapsible runs of the signature are showing in full, by index
+    /// into `Node.signature.abbrevs`. Absent means collapsed.
+    ExpandedRegions expanded;
+
+    /// Identity base for the expandable regions, so a click can name one.
+    /// Distinct per popup; see `abbrevKey`.
+    size_t nodeKey;
+}
+
+/// The key a collapsible region carries as its `Widget.key`, unique across the
+/// popups a frame may hold.
+size_t abbrevKey(size_t nodeKey, size_t region) @safe pure nothrow @nogc
+    => ((nodeKey + 1) << 20) | (region + 1);
+
+/// The region a `Widget.key` names, undoing `abbrevKey`. Backends resolve a
+/// click to a key and index `ExpandedRegions` — which is per signature — with
+/// this; `abbrevNode` says which popup the key belonged to.
+size_t abbrevRegion(size_t key) @safe pure nothrow @nogc
+in (key != 0)
+    => (key & 0xF_FFFF) - 1;
+
+/// ditto
+size_t abbrevNode(size_t key) @safe pure nothrow @nogc
+in (key != 0)
+    => (key >> 20) - 1;
+
+@("render_widgets.abbrevKey.roundTrips")
+@safe pure nothrow @nogc unittest
+{
+    // A key must name exactly one (popup, region) pair: the GUI resolves a
+    // click to a key and has to get the region back out of it.
+    foreach (node; 0 .. 4)
+        foreach (region; 0 .. 4)
+        {
+            const k = abbrevKey(node, region);
+            assert(abbrevNode(k) == node);
+            assert(abbrevRegion(k) == region);
+            assert(k != 0, "0 is reserved for `no key`");
+        }
+    assert(abbrevKey(0, 1) != abbrevKey(1, 0), "distinct pairs, distinct keys");
 }
 
 WidgetTree viewHoverPopup(const TwoslashReturn tw, size_t nodeIndex,
@@ -562,7 +604,8 @@ private uint[] signatureRows(ref Builder b, const Node node, size_t hit,
     // The effect words are drawn as chips, so the rows stop at the body.
     const body_ = effectFreeRange(text, node.signature);
     const laid = layoutSignature(text, node.signature, opts.maxWidth,
-        M.sigIndent, (scope const(char)[] s) => cast(int) cellsOf(s), body_);
+        M.sigIndent, (scope const(char)[] s) => cast(int) cellsOf(s), body_,
+        opts.expanded);
 
     uint[] rows;
     foreach (row; laid.rows)
@@ -577,16 +620,93 @@ private uint[] signatureRows(ref Builder b, const Node node, size_t hit,
                 padding: pad, width: sigWidth, wrap: sigWrap));
             continue;
         }
-        auto spans = sliceSpans(opts.sigSpans, row.start, row.end);
-        rows ~= spans.length
-            ? b.add(Widget(kind: WidgetKind.rich, spans: spans, slot: Slot.code,
-                hitId: hit, textStyle: sigStyle, padding: pad,
-                width: sigWidth, wrap: sigWrap))
-            : b.add(Widget(kind: WidgetKind.text, text: text[row.start .. row.end],
-                slot: Slot.code, hitId: hit, textStyle: sigStyle, padding: pad,
-                width: sigWidth, wrap: sigWrap));
+        auto pieces = rowPieces(sliceSpans(opts.sigSpans, row.start, row.end),
+            node.signature, opts, row.start, row.end);
+
+        // The common case: nothing hidden on this row, so it is one run.
+        if (pieces.length == 1 && pieces[0].marker.length == 0)
+        {
+            rows ~= pieces[0].spans.length
+                ? b.add(Widget(kind: WidgetKind.rich, spans: pieces[0].spans,
+                    slot: Slot.code, hitId: hit, textStyle: sigStyle,
+                    padding: pad, width: sigWidth, wrap: sigWrap))
+                : b.add(Widget(kind: WidgetKind.text,
+                    text: text[pieces[0].from .. pieces[0].to], slot: Slot.code,
+                    hitId: hit, textStyle: sigStyle, padding: pad,
+                    width: sigWidth, wrap: sigWrap));
+            continue;
+        }
+
+        uint[] parts;
+        foreach (piece; pieces)
+        {
+            if (piece.marker.length)
+            {
+                parts ~= b.add(Widget(kind: WidgetKind.text, text: piece.marker,
+                    slot: Slot.muted, hitId: hit, textStyle: sigStyle,
+                    key: abbrevKey(opts.nodeKey, piece.region)));
+                continue;
+            }
+            // Without a grammar cache there are no spans to slice, so the
+            // piece falls back to its own range — never the row's, or the
+            // collapse would be silently undone.
+            parts ~= piece.spans.length
+                ? b.add(Widget(kind: WidgetKind.rich, spans: piece.spans,
+                    slot: Slot.code, hitId: hit, textStyle: sigStyle))
+                : b.add(Widget(kind: WidgetKind.text,
+                    text: text[piece.from .. piece.to], slot: Slot.code,
+                    hitId: hit, textStyle: sigStyle));
+        }
+        rows ~= b.add(Widget(kind: WidgetKind.row, children: parts,
+            padding: pad, hitId: hit));
     }
     return rows;
+}
+
+/**
+One row's content, split where a collapsed run interrupts it.
+
+A collapsed `…` has to be addressable on its own — a click must name the region
+under the pointer, not the popup — and identity in this toolkit lives on a
+widget (`Widget.key`), not on a span. So a row containing collapsed runs
+becomes a horizontal row of widgets rather than one styled run. Rows without
+any stay a single run, which is every row of a signature that has nothing worth
+hiding.
+*/
+private struct RowPiece
+{
+    TextSpan[] spans;  /// visible text, when this is not a marker
+    string marker;     /// the short form, when it is
+    size_t region;     /// index into `abbrevs`, for the marker's key
+    uint from;         /// the piece's own range — the fallback slices by this,
+    uint to;           /// not by the row's, or a collapse would be undone
+}
+
+/// ditto
+private RowPiece[] rowPieces(TextSpan[] spans, in SignatureLayout sig,
+    HoverViewOptions opts, uint rowStart, uint rowEnd) @safe pure
+{
+    import sparkles.twoslash.signature_layout : isRegionExpanded;
+
+    RowPiece[] out_;
+    uint at = rowStart;
+    foreach (i, a; sig.abbrevs)
+    {
+        if (isRegionExpanded(opts.expanded, i))
+            continue;
+        const from = a.offset, to = a.offset + a.length;
+        if (to <= rowStart || from >= rowEnd)
+            continue;
+
+        if (from > at)
+            out_ ~= RowPiece(spans: sliceSpans(spans, at, from), from: at, to: from);
+        if (a.shortText.length)
+            out_ ~= RowPiece(marker: a.shortText, region: i, from: from, to: to);
+        at = to > rowEnd ? rowEnd : to;
+    }
+    if (at < rowEnd)
+        out_ ~= RowPiece(spans: sliceSpans(spans, at, rowEnd), from: at, to: rowEnd);
+    return out_;
 }
 
 /// The part of `spans` covering `[start, end)`, colours and identity intact.
@@ -1097,6 +1217,122 @@ version (unittest)
     assert(implicit.ops.length == explicit.ops.length);
     foreach (i, op; implicit.ops)
         assert(op.rect == explicit.ops[i].rect && op.text == explicit.ops[i].text);
+}
+
+@("render_widgets.viewHoverPopup.collapsedRegionsShrinkTheSignature")
+@safe unittest
+{
+    // The reason abbreviation exists: a qualified, nested type is most of the
+    // width and almost none of the answer.
+    import std.algorithm.searching : canFind;
+    import std.array : join;
+
+    import sparkles.twoslash.protocol : Abbrev;
+    import std.string : indexOf;
+
+    enum text = "std.range.iota!(int, int).Result f(int n)";
+    const qualifier = cast(uint) text.indexOf("std.range.");
+
+    auto sig = SignatureLayout(abbrevs: [
+        Abbrev(qualifier, 10, null, "module"),          // elide `std.range.`
+        Abbrev(cast(uint) text.indexOf("int, int"), 8, "…", "template"),
+    ]);
+    const tw = TwoslashReturn(code: "f()\n",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1, line: 0,
+            character: 0, text: text, signature: sig)]);
+
+    string[] painted(HoverViewOptions o)
+    {
+        string[] out_;
+        foreach (op; render(viewHoverPopup(tw, 0, o)).ops)
+            if (op.text.length)
+                out_ ~= op.text.idup;
+        return out_;
+    }
+
+    const collapsed = painted(HoverViewOptions(maxWidth: 60));
+    assert(collapsed.canFind("…"), collapsed.join("|"));
+    assert(!collapsed.canFind!(t => t.canFind("std.range.")), collapsed.join("|"));
+
+    // Expanding one region shows it again, and only it.
+    ExpandedRegions open;
+    open[1] = true;
+    const opened = painted(HoverViewOptions(maxWidth: 60, expanded: open));
+    assert(opened.canFind!(t => t.canFind("int, int")), opened.join("|"));
+    assert(!opened.canFind!(t => t.canFind("std.range.")), "region 0 stays hidden");
+}
+
+@("render_widgets.viewHoverPopup.collapsedMarkerKeepsTheFullRange")
+@safe unittest
+{
+    // The reader hid the text from view; they did not delete it. Selection and
+    // copy still resolve to what the `…` stands for.
+    import sparkles.twoslash.protocol : Abbrev;
+    import std.string : indexOf;
+
+    enum text = "Foo!(Bar, Baz) f()";
+    const inner = cast(uint) text.indexOf("Bar, Baz");
+    auto sig = SignatureLayout(abbrevs: [Abbrev(inner, 8, "…", "template")]);
+    const tw = TwoslashReturn(code: "f()\n",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1, line: 0,
+            character: 0, text: text, signature: sig)]);
+
+    auto tree = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 60, nodeKey: 3));
+
+    bool sawMarker;
+    foreach (w; tree.nodes)
+        if (w.text == "…")
+        {
+            sawMarker = true;
+            assert(w.key == abbrevKey(3, 0), "the marker must name its region");
+        }
+    assert(sawMarker, "the collapsed run must render a marker");
+}
+
+@("render_widgets.viewHoverPopup.clickingAMarkerNamesItsRegion")
+@safe unittest
+{
+    // The whole point of stamping keys: a pointer lands on a `…`, and the
+    // backend has to learn *which* run it means without knowing anything
+    // about signature layout.
+    import std.algorithm.searching : canFind;
+    import std.array : join;
+    import std.string : indexOf;
+
+    import sparkles.twoslash.protocol : Abbrev;
+    import sparkles.ui.geometry : Point;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : keyAt, keyTargets;
+
+    enum text = "Map!(Filter!(Pred, Range)) f(int n)";
+    auto sig = SignatureLayout(abbrevs: [
+        Abbrev(cast(uint) text.indexOf("Pred, Range"), 11, "…", "template"),
+    ]);
+    const tw = TwoslashReturn(code: "f()\n",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1, line: 0,
+            character: 0, text: text, signature: sig)]);
+
+    enum nodeKey = 1; // as a backend numbers the popup: node index + 1
+    auto opts = HoverViewOptions(maxWidth: 60, nodeKey: nodeKey);
+    auto tree = viewHoverPopup(tw, 0, opts);
+    const targets = keyTargets(tree, layout(tree));
+    assert(targets.length == 1, "one collapsed run, one target");
+
+    // Aim at the marker's own cell, the way a click would.
+    const k = keyAt(targets, Point(targets[0].rect.x, targets[0].rect.y));
+    assert(k == abbrevKey(nodeKey, 0));
+    assert(abbrevNode(k) == nodeKey, "the key says which popup it came from");
+
+    // Feeding the decoded region back in expands that run and nothing else.
+    ExpandedRegions open;
+    open[abbrevRegion(k)] = true;
+    string[] painted;
+    foreach (op; render(viewHoverPopup(tw, 0,
+            HoverViewOptions(maxWidth: 60, nodeKey: nodeKey, expanded: open))).ops)
+        if (op.text.length)
+            painted ~= op.text.idup;
+    assert(painted.canFind!(t => t.canFind("Pred, Range")), painted.join("|"));
+    assert(!painted.canFind("…"), "nothing left collapsed: " ~ painted.join("|"));
 }
 
 @("render_widgets.viewHoverPopup.effectChipsShowAbsenceToo")

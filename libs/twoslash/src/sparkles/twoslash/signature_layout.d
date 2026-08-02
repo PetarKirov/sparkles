@@ -70,6 +70,62 @@ struct SigLayoutResult
 // attributes instead of being forced through a delegate.
 
 /**
+Which collapsible runs are showing their full text.
+
+Indexed by position in `SignatureLayout.abbrevs`; absent means collapsed, which
+is the default — a hover exists to answer a question quickly, and
+`std.range.iota!(int, int).Result` answers it better than
+`std.range.iota!(int, int).Result` spelled out three times across a wrapped
+line. Expanding is one click away.
+*/
+alias ExpandedRegions = bool[size_t];
+
+/// Whether `i` is showing in full. Public because the view asks the same
+/// question when it renders the markers.
+bool isRegionExpanded(in ExpandedRegions expanded, size_t i) @safe pure nothrow
+{
+    if (auto e = i in expanded)
+        return *e;
+    return false;
+}
+
+/// The width `[start, end)` occupies once collapsed runs are swapped for their
+/// short forms — what the reader actually sees, which is what must fit.
+private int visibleWidth(F)(scope const(char)[] text, in SignatureLayout sig,
+    in ExpandedRegions expanded, uint start, uint end, scope F measure)
+{
+    int w;
+    uint at = start;
+    foreach (i, a; sig.abbrevs)
+    {
+        if (isRegionExpanded(expanded, i))
+            continue;
+        const from = a.offset, to = a.offset + a.length;
+        if (to <= start || from >= end)
+            continue;
+        if (from > at)
+            w += measure(text[at .. from]);
+        w += measure(a.shortText);
+        at = to > end ? end : to;
+    }
+    if (at < end)
+        w += measure(text[at .. end]);
+    return w;
+}
+
+/// Whether `offset` falls inside a run that is currently collapsed — its
+/// structure is hidden, so breaking there would break inside a `…`.
+private bool insideCollapsed(in SignatureLayout sig, in ExpandedRegions expanded,
+    uint offset)
+{
+    foreach (i, a; sig.abbrevs)
+        if (!isRegionExpanded(expanded, i)
+            && offset > a.offset && offset < a.offset + a.length)
+            return true;
+    return false;
+}
+
+/**
 The part of the signature that is not an effect attribute.
 
 The four effects are rendered as chips, so the text must stop showing them —
@@ -131,7 +187,8 @@ Lays `text` out within `width` cells, using the producer's structure.
 the caller reads from its palette, never invented here (`LAY10`).
 */
 SigLayoutResult layoutSignature(F)(scope const(char)[] text, in SignatureLayout sig,
-    int width, int indentCells, scope F measure, SigBody body_ = SigBody.init)
+    int width, int indentCells, scope F measure, SigBody body_ = SigBody.init,
+    in ExpandedRegions expanded = null)
 if (is(typeof(measure("")) : int))
 {
     if (body_ == SigBody.init)
@@ -140,12 +197,14 @@ if (is(typeof(measure("")) : int))
     auto clauses = clauseLines(sig);
 
     // Stage 0: the whole thing on one line, clauses included.
-    if (width <= 0 || fits(oneLine(text[body_.start .. body_.end], clauses), width, measure))
+    const bodyWidth = visibleWidth(text, sig, expanded, body_.start, body_.end, measure)
+        + clausesWidth(clauses, measure);
+    if (width <= 0 || bodyWidth <= width)
         return SigLayoutResult(flatRows(body_, clauses), SigStage.flat);
 
     // Stage 1: the signature keeps one line; each clause takes its own.
     auto rows = [SigRow(body_.start, body_.end)] ~ clauseRows(clauses);
-    if (fitsAll(text, rows, width, measure))
+    if (fitsAll(text, sig, expanded, rows, width, measure))
         return SigLayoutResult(rows, SigStage.clauses);
 
     // Stages 2 and 3: explode the lists, runtime first — a reader scanning a
@@ -154,9 +213,9 @@ if (is(typeof(measure("")) : int))
     foreach (stage; [SigStage.runtimeArgs, SigStage.templateArgs])
     {
         const maxStage = stage == SigStage.runtimeArgs ? 0 : 1;
-        auto exploded = explode(text, sig, maxStage, indentCells, body_)
+        auto exploded = explode(text, sig, maxStage, indentCells, body_, expanded)
             ~ clauseRows(clauses);
-        if (fitsAll(text, exploded, width, measure))
+        if (fitsAll(text, sig, expanded, exploded, width, measure))
             return SigLayoutResult(exploded, stage);
         rows = exploded;
     }
@@ -216,7 +275,7 @@ stays on the line above and the closing paren returns to the outer indent —
 the shape D itself is formatted in.
 */
 private SigRow[] explode(scope const(char)[] text, in SignatureLayout sig,
-    int maxStage, int indentCells, SigBody body_)
+    int maxStage, int indentCells, SigBody body_, in ExpandedRegions expanded)
 {
     // Cut points, each carrying the indent the row that *starts* there wants.
     // Depth comes from containment: a list nested inside another indents one
@@ -226,6 +285,10 @@ private SigRow[] explode(scope const(char)[] text, in SignatureLayout sig,
     foreach (i, g; sig.groups)
     {
         if (g.stage > maxStage)
+            continue;
+        // A list hidden inside a collapsed run has no visible structure to
+        // break at; breaking there would split a `…`.
+        if (insideCollapsed(sig, expanded, g.open))
             continue;
 
         int depth;
@@ -285,8 +348,16 @@ private string oneLine(scope const(char)[] text, string[] clauses)
 private bool fits(F)(scope const(char)[] s, int width, scope F measure)
     => measure(s) <= width;
 
-private bool fitsAll(F)(scope const(char)[] text, in SigRow[] rows, int width,
-    scope F measure)
+private int clausesWidth(F)(string[] clauses, scope F measure)
+{
+    int w;
+    foreach (c; clauses)
+        w += measure(" ") + measure(c);
+    return w;
+}
+
+private bool fitsAll(F)(scope const(char)[] text, in SignatureLayout sig,
+    in ExpandedRegions expanded, in SigRow[] rows, int width, scope F measure)
 {
     foreach (r; rows)
     {
@@ -296,7 +367,8 @@ private bool fitsAll(F)(scope const(char)[] text, in SigRow[] rows, int width,
         // for no gain. An over-long clause is the caller's to wrap.
         if (r.isLiteral)
             continue;
-        if (measure(text[r.start .. r.end]) + r.indent > width)
+        if (visibleWidth(text, sig, expanded, r.start, r.end, measure)
+            + r.indent > width)
             return false;
     }
     return true;
