@@ -1117,24 +1117,9 @@ int runGui(
         vm.top = vm.top < 0 ? 0 : (vm.top > maxTop ? maxTop : vm.top);
         const topLine = cast(size_t) vm.top;
 
-        BeginDrawing();
-        // GL scissor state is global; a scissor leaked from any earlier path
-        // (or left over across the buffer swap) would CLIP the clear below —
-        // exactly the "documents ghost over each other" failure. Start every
-        // frame from a clean state so the clear always covers the window.
-        EndScissorMode();
-        if (flashDebug)
-            ClearBackground((frame / 30) % 2 == 0
-                ? Color(70, 20, 20, 255) : Color(20, 20, 70, 255));
-        else
-        {
-            ClearBackground(rl(vm.pageBg));
-            // Panes own their background: an explicit fill over the document
-            // region every frame, so its pixels never depend on the clear
-            // alone (the tree pane and header fill their own rects).
-            DrawRectangle(treePx(), 0, screenW - treePx(), screenH, rl(vm.pageBg));
-        }
-
+        // M16: every input block runs BEFORE the frame draws — the
+        // painter renders the post-input state (one frame less input
+        // latency, and the M17 event drain slots in here wholesale).
         // One-cell background padding on the left, the scrollbar gutter on the
         // right, plus the optional line-number gutter; text starts at `contentX`.
         const padX = cellW;
@@ -1144,87 +1129,7 @@ int runGui(
         // padding, and the line-number gutter.
         const gutterPx = treePx() + padX + gcols * cellW;
 
-        // The gutter strip (the fold column + line numbers) sits on its own
-        // theme-derived band, visually distinct from the document.
-        if (!flashDebug)
-            DrawRectangle(treePx(), docY0, gutterPx - treePx(),
-                screenH - docY0, rl(vm.gutterBg));
 
-        // The document pane's header — the SHARED chrome (headerBar +
-        // Slot.chromeFocused + bold title), same look as the TUI's.
-        {
-            import std.conv : text;
-
-            drawChromeBar(treePx(), hdrY, (screenW - treePx()) / cellW,
-                vm.title,
-                text(names[vm.themeIdx], " · ",
-                    vm.showPreview ? "preview" : "raw"),
-                text(vm.top + 1, "/", total),
-                focused: !treeFocused || !treeVisible);
-        }
-
-        // The one painter: the active tree's precomputed ops through the
-        // raylib canvas, offset by the scroll position and culled to the
-        // viewport rows (raylib clips px; the cull skips dead draw calls).
-        {
-            auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
-                cast(float)(gutterPx - dhx * cellW),
-                cast(float)(docY0 - vm.top * cellH));
-            // The pane's base clip: content (an unwrappable code line inside
-            // a fence, a wide table) never bleeds past the pane or under the
-            // header — the same rule the tree pane follows.
-            canvas.pushClip(Rect(dhx, cast(int) vm.top,
-                (screenW - rightPad - gutterPx) / cellW, docRows));
-            foreach (ref op; vm.ops)
-            {
-                const oy = op.rect.y;
-                if (op.kind != OpKind.pushClip && op.kind != OpKind.popClip
-                    && (oy + op.rect.height <= vm.top || oy > vm.top + docRows))
-                    continue;
-                paint(canvas, (&op)[0 .. 1]);
-            }
-            canvas.popClip();
-
-            // Fold markers in the gutter's fold column (FLD5): ▾ on an
-            // open region's first row, ▸ on a folded one's placeholder;
-            // click toggles. The placeholder itself renders unobstructed —
-            // its inline marker is disabled (inlineFoldMarker: false), so
-            // the column is the one fold affordance.
-            foreach (ref const fm; vm.foldMarkers)
-            {
-                if (fm.row < topLine || fm.row >= topLine + docRows)
-                    continue;
-                drawText(fonts, cstrOf(buf, fm.open ? "▾" : "▸"),
-                    cast(float)(treePx() + 2),
-                    docY0 + (fm.row - topLine) * cast(float) cellH,
-                    TextStyle(0), rl(vm.gutterFg));
-            }
-
-            // Source line numbers in the gutter — from the row's source range
-            // (first visual row of each source line only).
-            if (gcols > 0)
-            {
-                size_t prevLine = size_t.max;
-                foreach (row; 0 .. docRows)
-                {
-                    const vi = topLine + row;
-                    if (vi >= vm.rows.length)
-                        break;
-                    if (vm.rows[vi].srcStart == size_t.max)
-                        continue;
-                    const ln = srcLineOf(vm.lineStarts, vm.rows[vi].srcStart);
-                    if (ln == prevLine)
-                        continue;
-                    prevLine = ln;
-                    const s = cstrOf(buf, uintToBuf(ln + 1));
-                    drawText(fonts, s,
-                        gutterPx - (s.length + 1) * cast(float) cellW,
-                        docY0 + row * cast(float) cellH, TextStyle(0), rl(vm.gutterFg));
-                }
-            }
-        }
-
-        copiedFlash = copiedFlash.stepped(frameMs(), copiedCfg);
         // The ✔ glyph lives in the widget tree: rebuild when the flash ends so
         // the header reverts to the copy affordance.
         if (copiedShown && !copiedFlash.visible)
@@ -1467,66 +1372,6 @@ int runGui(
                 selecting = false;
         }
 
-        // Selection highlight — a translucent tint. `tintRow` takes content columns
-        // (0 = the content origin, i.e. after `gutterPx`).
-        void tintRow(long screenRow, int xStartCol, int xEndCol)
-        {
-            if (screenRow < 0 || screenRow >= docRows || xEndCol <= xStartCol)
-                return;
-            DrawRectangle(gutterPx + xStartCol * cellW,
-                cast(int)(docY0 + screenRow * cellH),
-                (xEndCol - xStartCol) * cellW, cellH, alpha(vm.quoteBars[1], 80));
-        }
-        // Tint a source byte range on the widget path: the toolkit derives the
-        // char-precise rects (document cell coordinates) once for any backend.
-        void tintSrcRange(long lo, long hi)
-        {
-            if (hi <= lo)
-                return;
-            foreach (r; selectionRects(vm.tree, vm.frames,
-                cast(size_t) lo, cast(size_t) hi))
-                tintRow(r.y - vm.top, r.x, r.x + r.width);
-        }
-        if (regime == Regime.text && selMax() > selMin())
-            // One pass covers prose, code and table cells alike — every
-            // span with source identity inside [smin, smax) tints.
-            tintSrcRange(selMin(), selMax());
-        else if (regime == Regime.table && selTable >= 0)
-        {
-            const dims = vm.tableDims(selTable);
-            const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
-                dims.rows, dims.cols);
-            foreach (ref const mc; vm.cellList)
-            {
-                if (mc.table != selTable)
-                    continue;
-                if (reg.subCell)
-                {
-                    if (mc.row == reg.row && mc.col == reg.col)
-                        tintSrcRange(cast(long)(mc.span.start + reg.charLo),
-                            cast(long)(mc.span.start + reg.charHi));
-                }
-                else if (mc.row >= reg.rowLo && mc.row <= reg.rowHi
-                    && mc.col >= reg.colLo && mc.col <= reg.colHi)
-                    tintSrcRange(cast(long) mc.span.start, cast(long) mc.span.end);
-            }
-        }
-
-        // Search-match overlay (raw view only): a translucent tint over each
-        // visible match, its rects derived once from the identity channel
-        // (the vm.current match brighter).
-        if (!vm.showPreview)
-            foreach (i, rects; vm.matchRects)
-                foreach (ref const r; rects)
-                {
-                    const row = r.y - vm.top;
-                    if (row < 0 || row >= docRows)
-                        continue;
-                    DrawRectangle(gutterPx + r.x * cellW,
-                        cast(int)(docY0 + row * cellH), r.width * cellW, cellH,
-                        i == vm.curMatch ? currentMatchTint : matchTint);
-                }
-
         // Twoslash hover: pointer → byte (the identity channel) → hover node;
         // the token's dotted underline fades in and the popup (the shared
         // viewHoverPopup chrome via drawPopup) draws on vm.top, with pointer
@@ -1599,6 +1444,165 @@ int runGui(
                 }
             }
         }
+
+        BeginDrawing();
+        // GL scissor state is global; a scissor leaked from any earlier path
+        // (or left over across the buffer swap) would CLIP the clear below —
+        // exactly the "documents ghost over each other" failure. Start every
+        // frame from a clean state so the clear always covers the window.
+        EndScissorMode();
+        if (flashDebug)
+            ClearBackground((frame / 30) % 2 == 0
+                ? Color(70, 20, 20, 255) : Color(20, 20, 70, 255));
+        else
+        {
+            ClearBackground(rl(vm.pageBg));
+            // Panes own their background: an explicit fill over the document
+            // region every frame, so its pixels never depend on the clear
+            // alone (the tree pane and header fill their own rects).
+            DrawRectangle(treePx(), 0, screenW - treePx(), screenH, rl(vm.pageBg));
+        }
+
+        // The gutter strip (the fold column + line numbers) sits on its own
+        // theme-derived band, visually distinct from the document.
+        if (!flashDebug)
+            DrawRectangle(treePx(), docY0, gutterPx - treePx(),
+                screenH - docY0, rl(vm.gutterBg));
+
+        // The document pane's header — the SHARED chrome (headerBar +
+        // Slot.chromeFocused + bold title), same look as the TUI's.
+        {
+            import std.conv : text;
+
+            drawChromeBar(treePx(), hdrY, (screenW - treePx()) / cellW,
+                vm.title,
+                text(names[vm.themeIdx], " · ",
+                    vm.showPreview ? "preview" : "raw"),
+                text(vm.top + 1, "/", total),
+                focused: !treeFocused || !treeVisible);
+        }
+
+        // The one painter: the active tree's precomputed ops through the
+        // raylib canvas, offset by the scroll position and culled to the
+        // viewport rows (raylib clips px; the cull skips dead draw calls).
+        {
+            auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+                cast(float)(gutterPx - dhx * cellW),
+                cast(float)(docY0 - vm.top * cellH));
+            // The pane's base clip: content (an unwrappable code line inside
+            // a fence, a wide table) never bleeds past the pane or under the
+            // header — the same rule the tree pane follows.
+            canvas.pushClip(Rect(dhx, cast(int) vm.top,
+                (screenW - rightPad - gutterPx) / cellW, docRows));
+            foreach (ref op; vm.ops)
+            {
+                const oy = op.rect.y;
+                if (op.kind != OpKind.pushClip && op.kind != OpKind.popClip
+                    && (oy + op.rect.height <= vm.top || oy > vm.top + docRows))
+                    continue;
+                paint(canvas, (&op)[0 .. 1]);
+            }
+            canvas.popClip();
+
+            // Fold markers in the gutter's fold column (FLD5): ▾ on an
+            // open region's first row, ▸ on a folded one's placeholder;
+            // click toggles. The placeholder itself renders unobstructed —
+            // its inline marker is disabled (inlineFoldMarker: false), so
+            // the column is the one fold affordance.
+            foreach (ref const fm; vm.foldMarkers)
+            {
+                if (fm.row < topLine || fm.row >= topLine + docRows)
+                    continue;
+                drawText(fonts, cstrOf(buf, fm.open ? "▾" : "▸"),
+                    cast(float)(treePx() + 2),
+                    docY0 + (fm.row - topLine) * cast(float) cellH,
+                    TextStyle(0), rl(vm.gutterFg));
+            }
+
+            // Source line numbers in the gutter — from the row's source range
+            // (first visual row of each source line only).
+            if (gcols > 0)
+            {
+                size_t prevLine = size_t.max;
+                foreach (row; 0 .. docRows)
+                {
+                    const vi = topLine + row;
+                    if (vi >= vm.rows.length)
+                        break;
+                    if (vm.rows[vi].srcStart == size_t.max)
+                        continue;
+                    const ln = srcLineOf(vm.lineStarts, vm.rows[vi].srcStart);
+                    if (ln == prevLine)
+                        continue;
+                    prevLine = ln;
+                    const s = cstrOf(buf, uintToBuf(ln + 1));
+                    drawText(fonts, s,
+                        gutterPx - (s.length + 1) * cast(float) cellW,
+                        docY0 + row * cast(float) cellH, TextStyle(0), rl(vm.gutterFg));
+                }
+            }
+        }
+
+        copiedFlash = copiedFlash.stepped(frameMs(), copiedCfg);
+        // Selection highlight — a translucent tint. `tintRow` takes content columns
+        // (0 = the content origin, i.e. after `gutterPx`).
+        void tintRow(long screenRow, int xStartCol, int xEndCol)
+        {
+            if (screenRow < 0 || screenRow >= docRows || xEndCol <= xStartCol)
+                return;
+            DrawRectangle(gutterPx + xStartCol * cellW,
+                cast(int)(docY0 + screenRow * cellH),
+                (xEndCol - xStartCol) * cellW, cellH, alpha(vm.quoteBars[1], 80));
+        }
+        // Tint a source byte range on the widget path: the toolkit derives the
+        // char-precise rects (document cell coordinates) once for any backend.
+        void tintSrcRange(long lo, long hi)
+        {
+            if (hi <= lo)
+                return;
+            foreach (r; selectionRects(vm.tree, vm.frames,
+                cast(size_t) lo, cast(size_t) hi))
+                tintRow(r.y - vm.top, r.x, r.x + r.width);
+        }
+        if (regime == Regime.text && selMax() > selMin())
+            // One pass covers prose, code and table cells alike — every
+            // span with source identity inside [smin, smax) tints.
+            tintSrcRange(selMin(), selMax());
+        else if (regime == Regime.table && selTable >= 0)
+        {
+            const dims = vm.tableDims(selTable);
+            const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
+                dims.rows, dims.cols);
+            foreach (ref const mc; vm.cellList)
+            {
+                if (mc.table != selTable)
+                    continue;
+                if (reg.subCell)
+                {
+                    if (mc.row == reg.row && mc.col == reg.col)
+                        tintSrcRange(cast(long)(mc.span.start + reg.charLo),
+                            cast(long)(mc.span.start + reg.charHi));
+                }
+                else if (mc.row >= reg.rowLo && mc.row <= reg.rowHi
+                    && mc.col >= reg.colLo && mc.col <= reg.colHi)
+                    tintSrcRange(cast(long) mc.span.start, cast(long) mc.span.end);
+            }
+        }
+
+        // Search-match overlay (raw view only): a translucent tint over each
+        // visible match, its rects derived once from the identity channel
+        // (the vm.current match brighter).
+        if (!vm.showPreview)
+            foreach (i, rects; vm.matchRects)
+                foreach (ref const r; rects)
+                {
+                    const row = r.y - vm.top;
+                    if (row < 0 || row >= docRows)
+                        continue;
+                    DrawRectangle(gutterPx + r.x * cellW,
+                        cast(int)(docY0 + row * cellH), r.width * cellW, cellH,
+                        i == vm.curMatch ? currentMatchTint : matchTint);
+                }
 
         // The explorer pane (XPL2): the tree's widget view painted through
         // RaylibCanvas at the window's left edge, viewport-sliced, with a
