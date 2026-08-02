@@ -199,6 +199,24 @@ struct Palette
     int popupPadY = 1;   /// popup vertical padding, in cells
     int detachGap = 1;   /// blank rows between code and a detached meta block
 
+    /// The widest a hover popup may grow, in cells. The backend narrows this
+    /// further to the room actually left at the popup's anchor — the metric is
+    /// the ceiling, not the width (`LAY10`: a view never invents one).
+    int popupMaxWidth = 120;
+
+    /// Popup docs width maximum, in cells. Handed to the layout engine as
+    /// `Widget.width.max`, which wraps the run itself rather than the view
+    /// packing lines.
+    int docsMaxWidth = 56;
+
+    /// Continuation indent, in cells, for a signature broken across rows.
+    int sigIndent = 4;
+
+    /// The narrowest a hover popup may be squeezed to. Below this a popup
+    /// stops informing and starts shredding words, so a backend with less room
+    /// than this shifts the popup instead of shrinking it further.
+    int popupMinWidth = 24;
+
     // Sub-cell chrome geometry, in device px, authored to match `twoslash.css`
     // (the CSS-lockstep test guards these against the stylesheet). The TUI cell
     // grid approximates: any non-zero border → a 1-cell box-drawing rule; radius

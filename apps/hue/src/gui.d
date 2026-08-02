@@ -2083,11 +2083,15 @@ int runGui(
                         cast(ubyte)(fade.alphaPercent(fadeCfg) * 255 / 100));
                     for (int i = 0; i + 2 <= hw; i += 4)
                         DrawRectangle(hx + i, uy, 2, 1, uc);
+                    // Room from the anchor to the document pane's right edge,
+                    // in cells — the popup is capped to it and, failing that,
+                    // slid left inside it.
+                    const availCells = (screenW - cast(int) rightPad - hx) / cellW;
                     hotPopup = drawPopup(fonts, buf, vm.tw, hotNode - 1,
                         cast(float) hx, cast(float)(hy + cellH),
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
-                        vm.pageFg, vm.pageBg);
+                        vm.pageFg, vm.pageBg, availCells);
                     // Zero width ⇒ a lazy node drew no popup (nothing to keep
                     // the pointer inside yet).
                     havePopup = hotPopup.width > 0;
@@ -2308,16 +2312,18 @@ private Color alpha(RgbColor c, ubyte a) pure nothrow @nogc @trusted
 private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     in TwoslashReturn tw, size_t nodeIndex, float x, float y, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
-    RgbColor pageFg, RgbColor pageBg) @system
+    RgbColor pageFg, RgbColor pageBg, int availCells) @system
 {
-    import sparkles.twoslash.render_widgets : signatureSpans;
+    import sparkles.twoslash.render_widgets : clampOrigin, effectivePopupWidth,
+        HoverViewOptions, signatureSpans;
 
     // Render JSDoc docs as markdown (bold/italic/code/links/lists/fences), via the
     // grammar registry — falls back to plain lines without it.
     auto sig = signatureSpans(cache, tw.effectiveLanguage,
         (() @trusted => &theme)(), pageFg,
         withoutQuickinfoPrefix(tw.nodes[nodeIndex].text));
-    auto tree = viewHoverPopup(tw, nodeIndex, cache.registry, sig);
+    auto tree = viewHoverPopup(tw, nodeIndex, cache.registry,
+        HoverViewOptions(maxWidth: effectivePopupWidth(pal, availCells), sigSpans: sig));
     // A lazy hover span (live types: the underline is up, the type has not
     // arrived yet) views as an EMPTY tree — there is nothing to lay out, and
     // the zero rect tells the caller there is no popup to keep the pointer in.
@@ -2326,12 +2332,23 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     auto frames = layout(tree);
     auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
-    auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, x, y);
+    // A popup anchored near the right edge slides left rather than being
+    // squeezed into a two-word column. `availCells` was measured from the
+    // anchor, so the window edge is `x + availCells` cells out.
+    const box = frames[tree.root].rect;
+    const px = availCells > 0
+        ? cast(float) clampOrigin(cast(int) x, box.width * cellW,
+            cast(int) x + availCells * cellW)
+        : x;
+
+    auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, px, y);
     paint(canvas, ops);
 
-    // The popup's on-screen rect (px), for the caller's pointer hysteresis.
-    const box = frames[tree.root].rect;
-    return Rectangle(x, y, cast(float)(box.width * cellW), cast(float)(box.height * cellH));
+    // The popup's on-screen rect (px), for the caller's pointer hysteresis —
+    // the drawn rect, not the anchor, or the pointer leaves a shifted popup
+    // the moment it moves onto it.
+    return Rectangle(px, y, cast(float)(box.width * cellW),
+        cast(float)(box.height * cellH));
 }
 
 
