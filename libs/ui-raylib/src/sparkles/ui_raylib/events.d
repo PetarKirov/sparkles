@@ -26,6 +26,10 @@ struct RaylibEvents
     private float lastX = -1, lastY = -1;
     private bool wasFocused = true;
     private bool wasInside = true;
+    // Fractional wheel deltas accumulate here until a whole step is due
+    // (high-resolution wheels/trackpads report sub-step values raylib
+    // would otherwise truncate to zero) — M14.
+    private float wheelAccumX = 0, wheelAccumY = 0;
 
     /**
     Synthesizes this frame's events into `sink`. Pointer positions are mapped
@@ -59,14 +63,21 @@ struct RaylibEvents
             sink(Event(PointerEvent(action: PointerAction.leave, pos: pos)));
         wasInside = inside;
 
+        // The explicit raylib→toolkit button map (never an index cast:
+        // PointerButton's `none` sits mid-enum, and raylib's back/forward
+        // ids are not contiguous with the first three) — M14.
         static immutable buttons = [
-            MouseButton.MOUSE_BUTTON_LEFT, MouseButton.MOUSE_BUTTON_MIDDLE,
-            MouseButton.MOUSE_BUTTON_RIGHT,
+            [MouseButton.MOUSE_BUTTON_LEFT, PointerButton.left],
+            [MouseButton.MOUSE_BUTTON_MIDDLE, PointerButton.middle],
+            [MouseButton.MOUSE_BUTTON_RIGHT, PointerButton.right],
+            [MouseButton.MOUSE_BUTTON_BACK, PointerButton.back],
+            [MouseButton.MOUSE_BUTTON_FORWARD, PointerButton.forward],
         ];
         bool anyDown;
-        foreach (i, rb; buttons)
+        foreach (pair; buttons)
         {
-            const btn = cast(PointerButton) i;
+            const rb = cast(MouseButton) pair[0];
+            const btn = cast(PointerButton) pair[1];
             if (IsMouseButtonPressed(rb))
                 sink(Event(PointerEvent(action: PointerAction.press,
                     button: btn, pos: pos, mods: mods)));
@@ -87,11 +98,13 @@ struct RaylibEvents
         lastY = mp.y;
 
         // -- wheel (web deltaY signs: up is negative) ----------------------
+        // Fractional deltas accumulate to whole steps (M14) — a slow
+        // trackpad scroll still moves, a fast flick loses nothing.
         const wheel = GetMouseWheelMoveV();
-        if (wheel.y != 0 || wheel.x != 0)
-            sink(Event(WheelEvent(
-                dx: -cast(int) wheel.x, dy: -cast(int) wheel.y,
-                pos: pos, mods: mods)));
+        const dx = wheelSteps(wheelAccumX, -wheel.x);
+        const dy = wheelSteps(wheelAccumY, -wheel.y);
+        if (dx != 0 || dy != 0)
+            sink(Event(WheelEvent(dx: dx, dy: dy, pos: pos, mods: mods)));
 
         // -- keyboard ------------------------------------------------------
         for (int cp = GetCharPressed(); cp != 0; cp = GetCharPressed())
@@ -102,6 +115,20 @@ struct RaylibEvents
             if (key != Key.none)
                 sink(keyEvent(key, mods));
         }
+        // Named-key auto-repeat (M14): raylib reports OS repeats only
+        // through IsKeyPressedRepeat (chars repeat natively through
+        // GetCharPressed), so held navigation/editing keys keep firing.
+        static immutable int[] repeatable = [
+            KeyboardKey.KEY_UP, KeyboardKey.KEY_DOWN, KeyboardKey.KEY_LEFT,
+            KeyboardKey.KEY_RIGHT, KeyboardKey.KEY_PAGE_UP,
+            KeyboardKey.KEY_PAGE_DOWN, KeyboardKey.KEY_HOME,
+            KeyboardKey.KEY_END, KeyboardKey.KEY_BACKSPACE,
+            KeyboardKey.KEY_DELETE, KeyboardKey.KEY_ENTER,
+            KeyboardKey.KEY_TAB,
+        ];
+        foreach (rk; repeatable)
+            if (IsKeyPressedRepeat(rk))
+                sink(keyEvent(namedKey(rk), mods));
     }
 
     private static Mods currentMods() @system
@@ -123,6 +150,35 @@ struct RaylibEvents
             return PointerButton.right;
         return PointerButton.none;
     }
+}
+
+/// Folds a (possibly fractional) wheel delta into `accum` and returns the
+/// whole steps now due, keeping the remainder — pure, so testable without
+/// a window (M14).
+int wheelSteps(ref float accum, float delta) @safe pure nothrow @nogc
+{
+    accum += delta;
+    const steps = cast(int) accum;
+    accum -= steps;
+    return steps;
+}
+
+@("ui_raylib.events.wheelStepsAccumulation")
+@safe pure nothrow @nogc
+unittest
+{
+    float a = 0;
+    // Sub-step deltas accumulate; the whole step fires once, remainder kept.
+    assert(wheelSteps(a, 0.4f) == 0);
+    assert(wheelSteps(a, 0.4f) == 0);
+    assert(wheelSteps(a, 0.4f) == 1);
+    assert(a > 0.19f && a < 0.21f);
+    // A fast flick delivers every whole step at once.
+    assert(wheelSteps(a, 3.0f) == 3);
+    // Opposite-direction deltas cancel the remainder first.
+    float b = 0;
+    assert(wheelSteps(b, -0.6f) == 0);
+    assert(wheelSteps(b, -0.6f) == -1);
 }
 
 /// Maps raylib's named keys onto the shared `Key` vocabulary (printable input

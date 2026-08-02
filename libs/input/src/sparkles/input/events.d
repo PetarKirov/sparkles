@@ -69,6 +69,8 @@ enum PointerButton : ubyte
     middle,
     right,
     none,
+    back,    /// the thumb "back" button (set navigation)
+    forward, /// the thumb "forward" button
 }
 
 /// What the pointer did.
