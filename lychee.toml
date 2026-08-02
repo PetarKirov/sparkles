@@ -90,6 +90,18 @@ request_interval = "1s"
 [hosts."api.github.com"]
 request_interval = "200ms"
 
+# The `github.com` throttle above does NOT cover most GitHub links: the remap
+# rewrites every non-sparkles `/blob/` URL to raw.githubusercontent.com, and
+# lychee applies host throttling to the RESOLVED host. That left ~3.3k links
+# hitting an unthrottled host 16-at-a-time (`max_concurrency`), which earns a
+# burst of 429s that `max_retries = 2` at 2 s apart does not outlast.
+#
+# 100 ms rather than the 1 s used for github.com: at ~3.3k links a 1 s pace
+# would serialize this host into ~55 min and blow the job's 35 min budget,
+# whereas 100 ms costs ~5.5 min against a run that already takes ~19.
+[hosts."raw.githubusercontent.com"]
+request_interval = "100ms"
+
 [hosts."gitlab.freedesktop.org"]
 request_interval = "1s"
 
