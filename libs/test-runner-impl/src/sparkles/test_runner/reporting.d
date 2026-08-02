@@ -727,11 +727,14 @@ string formatWorkloadTable(in WorkloadWindow[] rows, bool colored) @system
 }
 
 /// The workload table's model: `workload | reps | wall | cpu usr | cpu krn |
-/// runq | other`, then window-total columns for each source any row carries
-/// (perf, tier-0, syscalls, raw), then a dim `note` column when any window
-/// has a disclosure. An unattributable component is an em dash; scaled perf
-/// windows render `≈`-marked like the bench tables. No disk column until the
-/// PSI integral lands (M5) — an always-empty column is noise.
+/// runq | other`, then — when PSI is readable — an `io-stall` column placed
+/// AFTER `other` (the placement is the claim: a system-wide stall integral
+/// is context next to the decomposition, not a part of its sum), then
+/// window-total columns for each source any row carries (perf, tier-0,
+/// syscalls, raw), then a dim `note` column when any window has a
+/// disclosure. An unattributable component is an em dash; scaled perf
+/// windows render `≈`-marked like the bench tables. No disk column: thread
+/// attribution of disk stall lands with M8's cgroup-scoped PSI.
 package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colored) @system
 {
     import std.algorithm.searching : canFind;
@@ -745,6 +748,7 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
     const hasTier0 = rows.canFind!(r => !r.tier0.isNull);
     const hasSyscalls = rows.canFind!(r => !r.syscalls.isNull);
     const hasRaw = rows.canFind!(r => !r.raw.isNull);
+    const hasPsi = rows.canFind!(r => !r.psi.isNull);
     const hasNote = rows.canFind!(r => r.wall.note.length > 0);
 
     // Named syscall / raw selector columns come from the shared open groups,
@@ -761,6 +765,8 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
 
     string[] headers = ["workload", "reps", "wall", "cpu usr", "cpu krn",
         "runq", "other"];
+    if (hasPsi)
+        headers ~= "io-stall";
     if (hasPerf)
         headers ~= ["instr", "cycles", "ipc", "pg-flt"];
     if (hasTier0)
@@ -816,6 +822,8 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
             durCell(r.wall.offCpuRunqueueNs),
             durCell(r.wall.offCpuOtherNs),
         ];
+        if (hasPsi)
+            cols ~= r.psi.isNull ? "—" : durCell(r.psi.get.ioSomeNs);
         if (hasPerf)
         {
             if (r.perf.isNull)

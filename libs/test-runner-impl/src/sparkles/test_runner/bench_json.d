@@ -427,6 +427,19 @@ private string windowJson(in WorkloadWindow w) @safe
         o ~= ", \"scale\": " ~ jsonNumber(r.scale) ~ " },\n";
     }
 
+    if (!w.psi.isNull)
+    {
+        // System-wide stall integrals — diagnostics, self-described by the
+        // scope field (M8's cgroup-scoped source will emit "cgroup").
+        const p = w.psi.get;
+        o ~= "      \"psi\": { \"scope\": \"system\""
+            ~ ", \"ioSomeNs\": " ~ jsonNumber(p.ioSomeNs)
+            ~ ", \"ioFullNs\": " ~ jsonNumber(p.ioFullNs)
+            ~ ", \"memSomeNs\": " ~ jsonNumber(p.memSomeNs)
+            ~ ", \"memFullNs\": " ~ jsonNumber(p.memFullNs)
+            ~ ", \"cpuSomeNs\": " ~ jsonNumber(p.cpuSomeNs) ~ " },\n";
+    }
+
     if (w.wall.note.length)
         o ~= "      \"note\": \"" ~ jsonEscape(w.wall.note) ~ "\",\n";
     o ~= "      \"error\": \"\"\n";
@@ -690,6 +703,7 @@ unittest
     assert(win["syscalls"]["named"]["read"].integer == 600);
     assert("tier0" !in win, "an absent source omits its key");
     assert("raw" !in win);
+    assert("psi" !in win, "psi omits its key like every absent source");
     assert(win["note"].str.length > 0);
     assert(win["error"].str == "");
 
@@ -716,4 +730,50 @@ unittest
     const meta = BenchMeta(date: "2026-08-02");
     assert(benchReportJson([row], meta) == benchReportJson([row], meta, null));
     assert(benchReportJson(null, meta) == benchReportJson(null, meta, null));
+
+    // And a psi-less window (a CONFIG_PSI=n host) must omit the psi key —
+    // asserted explicitly, not incidentally.
+    WorkloadWindow noPsi;
+    noPsi.name = "w";
+    noPsi.reps = 1;
+    noPsi.wall.wallNs = 1;
+    noPsi.wall.scope_ = "thread";
+    import std.algorithm.searching : canFind;
+
+    assert(!benchReportJson(null, meta, [noPsi]).canFind("\"psi\""));
+}
+
+@("benchJson.windows.psiObject")
+@system
+unittest
+{
+    import std.json : JSONType, parseJSON;
+    import std.typecons : nullable;
+    import sparkles.test_runner.workload : PsiStats;
+
+    WorkloadWindow w;
+    w.name = "with-psi";
+    w.reps = 1;
+    w.wall.wallNs = 10_000_000;
+    w.wall.scope_ = "thread";
+    PsiStats p;
+    p.ioSomeNs = 3_000_000;
+    p.ioFullNs = 200_000;
+    p.memSomeNs = 0;
+    // memFullNs stays nan (absent full line) → null
+    p.cpuSomeNs = 14_000;
+    w.psi = nullable(p);
+
+    const doc = parseJSON(benchReportJson(null, BenchMeta(date: "2026-08-03"), [w]));
+    const psi = doc["windows"][0]["psi"];
+    assert(psi["scope"].str == "system",
+        "the object self-describes its scope — M8's cgroup source will differ");
+    assert(psi["ioSomeNs"].integer == 3_000_000);
+    assert(psi["ioFullNs"].integer == 200_000);
+    assert(psi["memSomeNs"].integer == 0, "a zero system delta is a true statement");
+    assert(psi["memFullNs"].type == JSONType.null_, "absent full line → null");
+    assert(psi["cpuSomeNs"].integer == 14_000);
+    assert("cpuFullNs" !in psi, "pinned-zero system cpu-full is not emitted");
+    // The decomposition slot stays honest: no attribution from system scope.
+    assert(doc["windows"][0]["offCpuDiskNs"].type == JSONType.null_);
 }
