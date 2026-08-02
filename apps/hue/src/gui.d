@@ -73,7 +73,8 @@ import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : layout;
-import sparkles.ui.state : hoverTargets, HoverState, PressState, ScrollAxis,
+import sparkles.ui.state : CaptureState, hoverTargets, HoverState,
+    PressState, ScrollAxis,
     ScrollbarState, scrollbarThumb, selectionRects, sourceOffsetAt,
     wantedPointerShape, SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList;
@@ -536,6 +537,17 @@ int runGui(
     ScrollbarState docSb;
     ScrollbarState treeVSb;
     ScrollbarAnim sbAnim, treeSbAnim, treeHAnim, docHAnim;
+
+    // Pointer capture (STM11, closing IXR6's GUI half). Every draggable
+    // affordance takes an id and asks `capture.available(id)` — "free, or
+    // already mine" — in place of the allow-list of negations it used to
+    // carry (`!split.dragging && !docSb.dragging && !treeVSb.dragging && …`),
+    // which every NEW affordance had to be added to inside every OTHER
+    // affordance's condition. The Android toolbar became a fourth owner of
+    // one screen row and that list did not grow with it.
+    enum size_t capDivider = 1, capDocSb = 2, capTreeSb = 3,
+        capDocHSb = 4, capTreeHSb = 5, capSelection = 6;
+    CaptureState capture;
     float wheelAccum = 0;   // fractional wheel deltas accumulate to whole rows
 
     // Fullscreen (F11): a manual borderless toggle. raylib's
@@ -1364,6 +1376,13 @@ int runGui(
         // The pane divider (STM8): hovering it shows the resize cursor; a
         // grab drags the split live. The drag owns the pointer, so nothing
         // below starts a selection or a scrollbar drag mid-resize.
+        // One release frees the pointer for everyone (STM11). Central on
+        // purpose: a per-affordance release is how a capture leaks — the one
+        // that forgets leaves the pointer owned and every other affordance
+        // dead until the process restarts.
+        if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+            capture = capture.released();
+
         bool divZone;
         if (treeVisible)
         {
@@ -1371,9 +1390,12 @@ int runGui(
             const divX = treeCols * cellW + cellW / 2;
             const zone = mp.x >= divX - 4 && mp.x <= divX + 4;
             divZone = zone;
-            if (zone && !split.dragging
+            if (zone && capture.available(capDivider)
                 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+            {
                 split = split.started(cast(int)(mp.x / cellW));
+                capture = capture.capturedBy(capDivider);
+            }
             if (split.dragging)
             {
                 const maxCols = (screenW / cellW) / 2 < 12
@@ -1404,9 +1426,12 @@ int runGui(
                 const pos = GetMousePosition();
                 const hoverTrack = pos.x >= screenW - hoverW;
                 docSb = docSb.hoveredNow(hoverTrack);
-                if (hoverTrack && !docSb.dragging && clickPressed())
+                if (hoverTrack && capture.available(capDocSb) && clickPressed())
+                {
                     docSb = docSb.pressed(cast(int)(pos.y - docY0),
                         total, docRows, trackH, minExtent: 24);
+                    capture = capture.capturedBy(capDocSb);
+                }
                 else if (docSb.dragging)
                 {
                     if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
@@ -1440,9 +1465,12 @@ int runGui(
             const hoverTrack = pos.x >= edge - hoverW && pos.x < edge
                 && pos.y >= trackTop;
             treeVSb = treeVSb.scrolledTo(tree.top).hoveredNow(hoverTrack);
-            if (hoverTrack && !treeVSb.dragging && clickPressed())
+            if (hoverTrack && capture.available(capTreeSb) && clickPressed())
+            {
                 treeVSb = treeVSb.pressed(cast(int)(pos.y - trackTop),
                     tree.rows.length, treePaneRows, trackH, minExtent: 24);
+                capture = capture.capturedBy(capTreeSb);
+            }
             else if (treeVSb.dragging)
             {
                 if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
@@ -1630,10 +1658,13 @@ int runGui(
                 vm.hsb = vm.hsb.hoveredNow(live && (over || vm.hsb.dragging));
                 docHAnim.step(vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2,
                     GetFrameTime());
-                if (over && clickPressed())
+                if (over && capture.available(capDocHSb) && clickPressed())
+                {
                     vm.hsb = vm.hsb.pressed(
                         cast(int)((mp.x - gutterPx) / cellW),
                         vm.contentCols, vm.widthCols, vm.widthCols);
+                    capture = capture.capturedBy(capDocHSb);
+                }
                 else if (vm.hsb.dragging)
                 {
                     if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
@@ -1659,9 +1690,12 @@ int runGui(
                 hLive && (overHBar || tree.hsb.dragging));
             treeHAnim.step(tree.hsb.expanded(caps) ? hHoverH : hIdleH,
                 GetFrameTime());
-            if (overHBar && clickPressed())
+            if (overHBar && capture.available(capTreeHSb) && clickPressed())
+            {
                 tree.hsb = tree.hsb.pressed(cast(int)(mp.x / cellW),
                     tree.contentCols, treeCols - 1, treeCols - 1);
+                capture = capture.capturedBy(capTreeHSb);
+            }
             else if (tree.hsb.dragging)
             {
                 if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
@@ -1670,7 +1704,9 @@ int runGui(
                     tree.hsb = tree.hsb.dragged(cast(int)(mp.x / cellW),
                         tree.contentCols, treeCols - 1, treeCols - 1);
             }
-            if (overTree && !overTreeSb && !overHBar && !tree.hsb.dragging
+            // A row click is not a drag, so it takes no id — it only needs
+            // the pointer to be unowned.
+            if (overTree && !overTreeSb && !overHBar && capture.isFree
                 && clickPressed())
             {
                 treeFocused = true;
@@ -1690,12 +1726,16 @@ int runGui(
                 treeFocused = false;
             const shiftMod = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
             const altMod = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
-            if (selectStartPressed() && !overSb
-                && !overTree && !copyClicked && !treeVSb.dragging
-                && !docSb.dragging && !split.dragging)
+            // The five-term negation chain this replaces was the clearest
+            // instance of the allow-list defect: every new draggable had to be
+            // added here, and to every other affordance's condition.
+            if (selectStartPressed() && !overSb && !overTree && !copyClicked
+                && capture.available(capSelection))
             {
                 const h = hitAt(mp.x, mp.y);
                 selecting = h.ok;
+                if (selecting)
+                    capture = capture.capturedBy(capSelection);
                 if (h.table)
                 {
                     regime = Regime.table;
