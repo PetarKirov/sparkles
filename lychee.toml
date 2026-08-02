@@ -105,6 +105,14 @@ request_interval = "100ms"
 [hosts."gitlab.freedesktop.org"]
 request_interval = "1s"
 
+# The C++ committee papers server is simply slow: it answers, but several
+# concurrent requests push past the 20 s `timeout` and lychee counts a timeout
+# as a failure even when the error count is zero. Only 6 links point here, so
+# one-at-a-time costs ~6 s against a 16 min run — the same trade as
+# web.archive.org below, for the same reason.
+[hosts."www.open-std.org"]
+request_interval = "1s"
+
 # web.archive.org refuses *connections* (TCP-level "Connection refused", which is
 # never retried) once an IP opens too many at once; it recovers in tens of seconds.
 # A custom user_agent does not help — the refusal happens before any header is sent.
