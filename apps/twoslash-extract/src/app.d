@@ -98,7 +98,8 @@ int main(string[] args)
 /**
 The resident oracle (`--serve`): one analysis held alive for the process
 (`EXT2`), the lazy payload on stdout line 1, then a JSON-lines request loop —
-`{"tip": <nodeIndex>}` → `{"node": <i>, "text": …, "docs": …, "tags": […]}` —
+`{"tip": <nodeIndex>}` →
+`{"node": <i>, "text": …, "docs": …, "tags": […], "signature": {…}}` —
 until stdin closes. Malformed requests answer `{"error": …}` and the loop
 continues; hue drives this through `ResidentProcess`.
 */
@@ -109,7 +110,7 @@ private int runServe(in CliParams cli, string samplePath)
     import std.stdio : stdin, stdout;
 
     import sparkles.dmd_lsp.api : AnalyzerConfig;
-    import sparkles.twoslash_d.analyze : LiveTwoslash;
+    import sparkles.twoslash_d.analyze : LiveTwoslash, wireSignature;
     import sparkles.twoslash_d.emit : declareDPayload;
     import sparkles.wired.json : toJSON;
 
@@ -158,6 +159,14 @@ private int runServe(in CliParams cli, string samplePath)
                 tags ~= JSONValue(pair);
             }
             reply["tags"] = JSONValue(tags);
+            // The structure the batch path puts on the node, so a live-resolved
+            // hover reflows and abbreviates like every other one (`EXT7`).
+            // wired encodes to text, so it re-enters std.json to join the reply
+            // — the reply is one small object per hover, not a hot path.
+            auto sig = toJSON(wireSignature(tip));
+            if (sig.hasError)
+                throw new Exception(sig.error.toString());
+            reply["signature"] = parseJSON(sig.value[]);
         }
         catch (Exception e)
             reply = JSONValue(["error": JSONValue(e.msg)]);

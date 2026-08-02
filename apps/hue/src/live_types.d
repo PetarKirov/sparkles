@@ -21,6 +21,8 @@ import std.json : JSONType, JSONValue, parseJSON;
 
 import sparkles.core_cli.process_utils : isInPath, ResidentProcess;
 import sparkles.twoslash : parseTwoslash, TwoslashReturn;
+import sparkles.twoslash.protocol : SignatureLayout;
+import sparkles.wired.json : fromJSON;
 
 /// One resolved hover: the oracle's answer to a `{"tip": index}` request.
 struct TipAnswer
@@ -29,6 +31,7 @@ struct TipAnswer
     string text;     /// the type signature (`(kind) code`)
     string docs;     /// the ddoc body, if any
     string[][] tags; /// `[name, text?]` pairs
+    SignatureLayout signature; /// break/abbrev structure over `text`, if any
 }
 
 /// What one non-payload stdout line from the oracle turned out to be.
@@ -87,6 +90,18 @@ ServeLine classifyServeLine(scope const(char)[] line) @safe
     if (auto d = "docs" in root)
         if (d.type == JSONType.string)
             a.docs = d.str;
+    // The signature structure rides along as the same wired shape the batch
+    // payload carries; a reply without it (or one we cannot read) simply
+    // renders flat, which is what every reply did before `EXT7`.
+    if (auto sg = "signature" in root)
+        if (sg.type == JSONType.object)
+        {
+            // `fromJSON` infers `@system` through `std.json`'s checked union
+            // accessors; the object-ness is verified right above.
+            auto decoded = (() @trusted => fromJSON!SignatureLayout(*sg))();
+            if (decoded.hasValue)
+                a.signature = decoded.value;
+        }
     if (auto tg = "tags" in root)
         if (tg.type == JSONType.array)
             foreach (pair; tg.arrayNoRef)
@@ -118,6 +133,7 @@ bool applyTip(ref TwoslashReturn tw, TipAnswer a) @safe pure nothrow
     tw.nodes[a.index].text = a.text;
     tw.nodes[a.index].docs = a.docs;
     tw.nodes[a.index].tags = a.tags;
+    tw.nodes[a.index].signature = a.signature;
     return true;
 }
 
@@ -423,6 +439,36 @@ private struct StderrSilencer
     // The oracle parses what we emit — the round trip the protocol rests on.
     const req = parseJSON(tipRequest(7));
     assert(req["tip"].integer == 7);
+}
+
+@("live_types.classifyServeLine.carriesTheSignatureStructure")
+@safe unittest
+{
+    // A live-resolved hover must reflow and abbreviate like a batch one, so the
+    // reply's structure has to survive the trip through JSON and onto the node
+    // (`EXT7`) — the same wired shape the payload itself uses.
+    import sparkles.twoslash.protocol : Node, NodeType;
+
+    enum line = `{"node": 0, "text": "T f(int n)", "docs": "", "tags": [],`
+        ~ ` "signature": {"abbrevs": [{"offset": 0, "length": 1,`
+        ~ ` "shortText": "\u2026", "kind": "template"}]}}`;
+
+    auto l = classifyServeLine(line);
+    assert(l.kind == ServeLineKind.answer, l.message);
+    assert(l.answer.signature.abbrevs.length == 1);
+    assert(l.answer.signature.abbrevs[0].shortText == "\u2026");
+
+    TwoslashReturn tw = {
+        code: "f()",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1)],
+    };
+    assert(applyTip(tw, l.answer));
+    assert(tw.nodes[0].signature.abbrevs.length == 1, "it reaches the node");
+
+    // A reply without the field is still a good answer — it just renders flat.
+    const bare = classifyServeLine(`{"node": 0, "text": "int x"}`);
+    assert(bare.kind == ServeLineKind.answer);
+    assert(bare.answer.signature == SignatureLayout.init);
 }
 
 @("live_types.applyTip.fillsLazyNodeAndIgnoresStale")

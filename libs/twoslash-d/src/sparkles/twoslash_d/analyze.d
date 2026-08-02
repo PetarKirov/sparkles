@@ -225,6 +225,33 @@ private WireSignature toWire(const SignatureInfo info) @safe pure
 private bool structureMatchesText(const Tip tip) @safe pure nothrow @nogc
     => tip.kind.length == 0;
 
+/// A tip's signature structure as the wire model, or nothing when the tip's
+/// text is not what its offsets index.
+///
+/// The batch path applies this inline while building nodes; `--serve` answers
+/// one tip at a time and needs the same gate, or a live-resolved hover would
+/// carry offsets into text it doesn't have.
+WireSignature wireSignature(const Tip tip) @safe pure
+    => structureMatchesText(tip) ? toWire(tip.sig) : WireSignature.init;
+
+@("analyze.wireSignature.gatedOnKind")
+@safe unittest
+{
+    // A kind means `tipText` prefixes `"(kind) "`, which shifts every offset —
+    // so the structure is dropped rather than handed over misaligned.
+    import sparkles.dmd_lsp.api : SignatureInfo;
+    import sparkles.dmd_lsp.signature : Abbrev;
+
+    Tip tip;
+    tip.code = "T f(int n)";
+    tip.sig.abbrevs = [Abbrev(0, 1, "\u2026")];
+
+    assert(wireSignature(tip).abbrevs.length == 1, "a function carries it");
+
+    tip.kind = "struct";
+    assert(wireSignature(tip) == WireSignature.init, "anything else does not");
+}
+
 /// The node-building back half over a live analysis. `lazyHovers` emits
 /// hover nodes as bare spans (empty `text`/`docs` — the documented lazy
 /// convention): underlines render, content resolves on demand
@@ -309,8 +336,7 @@ private AnalyzeResult buildNodes(ref AnalyzedModule analyzed, ref Prepared prep,
             text: tipText(tip),
             docs: tip.doc,
             tags: tip.tags.toMutableTags,
-            signature: structureMatchesText(tip)
-                ? toWire(tip.sig) : WireSignature.init);
+            signature: wireSignature(tip));
     }
 
     // --- `^?` queries: same oracle, persisted below the line.
