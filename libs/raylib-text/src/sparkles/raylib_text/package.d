@@ -23,6 +23,7 @@ public import sparkles.raylib_text.style;
 public import sparkles.raylib_text.atlas;
 public import sparkles.raylib_text.metrics;
 public import sparkles.raylib_text.font;
+public import sparkles.raylib_text.font_discovery;
 public import sparkles.raylib_text.font_set;
 public import sparkles.raylib_text.draw;
 public import sparkles.raylib_text.box;

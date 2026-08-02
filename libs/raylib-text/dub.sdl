@@ -32,10 +32,9 @@ configuration "unittest" {
     // screenshot goldens — so `dub test :raylib-text` runs headless (linking
     // libraylib.so needs no display; only InitWindow/LoadFontEx/DrawTextEx do).
     //
-    // font_set.d is the one module that is both: it holds the GL-backed
-    // FontSet AND the raylib-free font-discovery helpers, and only the latter
-    // are tested. Splitting discovery into its own raylib-free module is
-    // logged in docs/specs/ui/interaction-review.md.
+    // font_discovery.d is where the tested half lives: name→path resolution,
+    // the sibling naming convention and charset parsing, with no raylib import
+    // at all (it compiles with raylib absent from the import path entirely).
     dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
