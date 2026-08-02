@@ -23,8 +23,8 @@ import sparkles.base.text.float_conv : bitsToDouble, doubleToBits, readDigits,
     slowDouble, tryFastDouble;
 import sparkles.base.text.utf8 : indexOfInvalidUtf8;
 import sparkles.wired.json.document : JsonCell, JsonDocument, JsonKind;
-import sparkles.wired.json.scan : allDigits8, eightDigits, loadWord,
-    scanStringBody, skipWs, StringScan;
+import sparkles.wired.json.scan : allDigits8, digitRun8, eightDigits, loadWord,
+    padDigits8, scanStringBody, skipWs, StringScan;
 
 /// Compile-time reader configuration (SPEC §11.3). Each combination
 /// specializes the reader; dead option branches vanish.
@@ -219,31 +219,58 @@ private size_t scanNumber(JsonReadOptions opts)(
                 sig = sig * 100_000_000 + eightDigits(w);
                 k += 8;
             }
-            while (k + 2 <= budgetEnd)
+            // Tail (1–7 digits — the shape geo data always ends on: canada
+            // is 15 fraction digits, so one gulp then a short remainder).
+            // Padding the remainder to a full gulp keeps it on the SWAR
+            // path: `padDigits8` appends `8 - n` decimal zeros, scaling
+            // `sig` by that power of ten, and counting the padding as
+            // consumed fraction digits subtracts the same power from
+            // `exp10` — the value is unchanged and the scalar pair loop
+            // disappears. Only worth it while the padded run still fits
+            // the 19-digit significand budget.
+            size_t padded = 0;
+            const w = loadWord(p + k);
+            const run = digitRun8(w);
+            if (run != 0 && run < 8 && k + run <= budgetEnd
+                && taken + (k - fs) + 8 <= 19)
             {
-                const uint d0 = cast(uint)(p[k] - '0');
-                if (d0 > 9)
-                    break;
-                const uint d1 = cast(uint)(p[k + 1] - '0');
-                if (d1 > 9)
-                {
-                    sig = sig * 10 + d0;
-                    k++;
-                    break;
-                }
-                sig = sig * 100 + d0 * 10 + d1;
-                k += 2;
+                sig = sig * 100_000_000 + eightDigits(padDigits8(w, run));
+                k += run;
+                padded = 8 - run;
             }
-            if (k < budgetEnd)
+            else
             {
-                const uint d = cast(uint)(p[k] - '0');
-                if (d <= 9)
+                while (k + 2 <= budgetEnd)
                 {
-                    sig = sig * 10 + d;
-                    k++;
+                    const uint d0 = cast(uint)(p[k] - '0');
+                    if (d0 > 9)
+                        break;
+                    const uint d1 = cast(uint)(p[k + 1] - '0');
+                    if (d1 > 9)
+                    {
+                        sig = sig * 10 + d0;
+                        k++;
+                        break;
+                    }
+                    sig = sig * 100 + d0 * 10 + d1;
+                    k += 2;
+                }
+                if (k < budgetEnd)
+                {
+                    const uint d = cast(uint)(p[k] - '0');
+                    if (d <= 9)
+                    {
+                        sig = sig * 10 + d;
+                        k++;
+                    }
                 }
             }
-            fracTaken = k - fs;
+            // The padding rides in `fracTaken`: it feeds both the budget
+            // (`taken`) and `exp10`, which is exactly where the appended
+            // zeros must cancel. The raw digit slices handed to
+            // `slowDouble` use `fracStart`/`fracEnd`, so the exact
+            // fallback still sees the real digits.
+            fracTaken = (k - fs) + padded;
             taken += fracTaken;
         }
         while (p[k] >= '0' && p[k] <= '9')
