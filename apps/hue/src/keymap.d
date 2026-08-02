@@ -130,8 +130,22 @@ Ordering mirrors the frame loop's own precedence, which is load-bearing: an
 armed fold sequence claims letters that otherwise toggle things, and an open
 input mode claims Enter/Escape/Backspace before anything else sees them.
 */
-KeyCommand commandFor(in KeyEvent k, in KeyContext ctx)
+KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
 {
+    // Producers disagree about how a shifted letter arrives. raylib's
+    // `GetCharPressed` yields the SHIFTED character ('R') and separately
+    // reports `shift`; a terminal may send 'R' with no modifier at all; a
+    // synthesised event may send 'r' + shift. All three mean one keystroke, so
+    // normalise here — once — rather than spelling both cases in every table
+    // row, or asking each producer to normalise, which is how producers drift
+    // apart again.
+    KeyEvent k = raw;
+    if (k.key == Key.char_ && k.ch >= 'A' && k.ch <= 'Z')
+    {
+        k.ch += 'a' - 'A';
+        k.mods.shift = true;
+    }
+
     // F11 outranks every mode — you can always leave fullscreen.
     if (k.key == Key.f11)
         return KeyCommand(Command.toggleFullscreen);
@@ -373,6 +387,28 @@ unittest
     // (it belongs to the document set).
     assert(ch('i', tree, shift).cmd == Command.treeToggleIgnored);
     assert(ch('i', tree).cmd == Command.none);
+}
+
+@("keymap.shiftedLettersNormaliseAcrossProducers")
+@safe pure nothrow @nogc
+unittest
+{
+    auto tree = KeyContext(treeFocused: true, treeVisible: true);
+
+    // The three spellings a real producer may use for Shift-R, all resolving
+    // to one command. Found by WIRING this: raylib's `GetCharPressed` returns
+    // the shifted character, so a table matching only lowercase+shift would
+    // have silently missed every capital.
+    assert(ch('r', tree, Mods(shift: true)).cmd == Command.treeReroot); // synthesised
+    assert(ch('R', tree, Mods(shift: true)).cmd == Command.treeReroot); // raylib
+    assert(ch('R', tree).cmd == Command.treeReroot);                    // bare capital
+
+    // …and the unshifted key still means the other thing.
+    assert(ch('r', tree).cmd == Command.treeRefresh);
+
+    // Normalisation must not invent a shift for keys that never had one.
+    assert(ch('j', tree).cmd == Command.treeDown);
+    assert(ch('J', tree).cmd == Command.treeDown, "shift-j is still down");
 }
 
 @("keymap.ctrlChordsOutrankTheLetter")
