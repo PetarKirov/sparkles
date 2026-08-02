@@ -453,7 +453,9 @@ struct PreviewTui
         if (hoverSel < 0 || hoverSel >= cast(int) hoverNodes.length)
             return;
         import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
-        import sparkles.twoslash.render_widgets : signatureSpans;
+        import sparkles.twoslash.render_widgets : clampOrigin,
+            effectivePopupWidth, HoverViewOptions, signatureSpans;
+        import sparkles.ui.geometry : Rect;
         import sparkles.ui.widget : TextSpan;
 
         const n = tw.nodes[hoverNodes[hoverSel]];
@@ -466,16 +468,30 @@ struct PreviewTui
             ? signatureSpans(*cache, tw.effectiveLanguage,
                 (() @trusted => &vm.current)(), pageFg,
                 withoutQuickinfoPrefix(n.text)) : null;
-        auto tree = viewHoverPopup(tw, hoverNodes[hoverSel], sig);
+        // The room actually left at the anchor, capped by the theme's ceiling.
+        // Without this the popup grows to whatever the signature measures and
+        // walks off the pane.
+        const pal = defaultTwoslashPalette(schemeForBackground(pageBg));
+        const avail = width - rs[0].x - 1;
+        auto tree = viewHoverPopup(tw, hoverNodes[hoverSel],
+            HoverViewOptions(maxWidth: effectivePopupWidth(pal, avail), sigSpans: sig));
         // A lazy hover span (live types: underlined, type not yet resolved)
         // views as an empty tree — nothing to paint until the answer lands.
         if (!tree.nodes.length)
             return;
         auto frames = layout(tree);
-        auto ops = buildDisplayList(tree, frames,
-            defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg, pageBg);
-        paintGrid(g, pageBg, ops, originX + rs[0].x,
-            cast(int)(rs[0].y - top + 2));
+        auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
+
+        // Keep it inside the pane on both axes: shift left rather than shrink
+        // when it would overhang the right edge (a narrower popup would only
+        // move the problem into the text), and clip so it can never spill
+        // across the divider into the explorer — `paintGrid` clips in
+        // canvas-local cells, so the rect is expressed relative to the origin.
+        const box = frames[tree.root].rect;
+        const ox = clampOrigin(rs[0].x, box.width, width);
+        const oy = cast(int)(rs[0].y - top + 2);
+        paintGrid(g, pageBg, ops, originX + ox, oy,
+            Rect(-ox, -oy, width, height));
     }
 
     // Paint a one-row chrome bar (the shared WGT17 headerBar view) at grid row

@@ -30,8 +30,9 @@ module sparkles.twoslash.render_widgets;
 import sparkles.base.term_color : RgbColor, toRgb;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
 import sparkles.syntax.theme : ResolvedTheme;
-import sparkles.ui.geometry : cellsOf, Insets;
+import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
+import sparkles.ui.wrap : TextWrap;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
@@ -355,8 +356,79 @@ Builds a floating hover/query popup for node `nodeIndex` of `tw`: a `popup` pane
 `docs`, and any `@tag`s. The caller positions it (anchored above/below the
 hovered token) — the tree is laid out at the origin.
 */
+/**
+The width to hand $(LREF HoverViewOptions): the theme's ceiling, narrowed to the
+room actually left at the anchor, with a floor.
+
+Both backends need the same decision, and it is a decision — not a measurement
+— so it lives beside the view rather than being re-derived per backend.
+`available` is the cells between the anchor and the far edge; a non-positive
+value means the caller could not work it out and gets the ceiling.
+*/
+int effectivePopupWidth(in Palette pal, int available) @safe pure nothrow @nogc
+{
+    if (available <= 0)
+        return pal.popupMaxWidth;
+    const room = available < pal.popupMinWidth ? pal.popupMinWidth : available;
+    return room < pal.popupMaxWidth ? room : pal.popupMaxWidth;
+}
+
+/**
+Where to start drawing a popup of `width` anchored at `anchor`, so it stays
+inside `extent`.
+
+It $(I shifts) rather than shrinks: a popup narrowed to fit under a token near
+the right edge would wrap its signature into a column two words wide, which
+reads worse than the same popup slid left. Clamped at 0 so a popup wider than
+the pane still starts on screen.
+*/
+int clampOrigin(int anchor, int width, int extent) @safe pure nothrow @nogc
+{
+    const over = anchor + width - extent;
+    const shifted = over > 0 ? anchor - over : anchor;
+    return shifted < 0 ? 0 : shifted;
+}
+
+@("render_widgets.effectivePopupWidth.ceilingRoomAndFloor")
+@safe pure nothrow @nogc unittest
+{
+    const pal = Palette.init;
+    assert(effectivePopupWidth(pal, 0) == pal.popupMaxWidth, "unknown room ⇒ ceiling");
+    assert(effectivePopupWidth(pal, 500) == pal.popupMaxWidth, "the ceiling holds");
+    assert(effectivePopupWidth(pal, 40) == 40, "room narrower than the ceiling wins");
+    assert(effectivePopupWidth(pal, 3) == pal.popupMinWidth, "never below the floor");
+}
+
+@("render_widgets.clampOrigin.shiftsRatherThanOverhangs")
+@safe pure nothrow @nogc unittest
+{
+    assert(clampOrigin(10, 20, 100) == 10, "it fits — leave it at the anchor");
+    assert(clampOrigin(90, 20, 100) == 80, "overhang shifts left, exactly flush");
+    assert(clampOrigin(5, 200, 100) == 0, "wider than the pane still starts on screen");
+}
+
+/**
+What a backend knows about a hover popup that the view cannot work out for
+itself.
+
+Replaces the trailing `sigSpans` parameter rather than joining it: both
+overloads already end in a defaulted argument, so a second one would make a
+two-argument call ambiguous.
+*/
+struct HoverViewOptions
+{
+    /// Effective content width in cells; 0 leaves the popup unbounded, which
+    /// is what every caller got before this existed. The backend passes
+    /// `min(Palette.popupMaxWidth, room at the anchor)` — the view never
+    /// invents a width (`LAY10`).
+    int maxWidth = 0;
+
+    /// The signature as resolved syntax-colored spans (`signatureSpans`).
+    TextSpan[] sigSpans;
+}
+
 WidgetTree viewHoverPopup(const TwoslashReturn tw, size_t nodeIndex,
-    TextSpan[] sigSpans = null)
+    HoverViewOptions opts = HoverViewOptions.init)
 in (nodeIndex < tw.nodes.length)
 {
     auto b = Builder();
@@ -371,7 +443,7 @@ in (nodeIndex < tw.nodes.length)
     uint[] tagRows;
     foreach (ref const string[] tag; node.tags)
         tagRows ~= buildPopupTag(b, tag, hit);
-    return finishHoverPopup(b, node, hit, docsRows, tagRows, sigSpans);
+    return finishHoverPopup(b, node, hit, docsRows, tagRows, opts);
 }
 
 /**
@@ -382,7 +454,7 @@ HTML backend uses. Falls back to plain newline-split lines when the markdown
 grammars are unavailable, so docs never vanish. `@system` (the tree-sitter parse).
 */
 WidgetTree viewHoverPopup(const TwoslashReturn tw, size_t nodeIndex,
-    ref GrammarRegistry registry, TextSpan[] sigSpans = null) @system
+    ref GrammarRegistry registry, HoverViewOptions opts = HoverViewOptions.init) @system
 in (nodeIndex < tw.nodes.length)
 {
     auto b = Builder();
@@ -390,11 +462,12 @@ in (nodeIndex < tw.nodes.length)
     if (!node.text.length && !node.docs.length && !node.tags.length)
         return WidgetTree.init; // lazy span: nothing to pop up (yet)
     const hit = hitOf(nodeIndex);
-    uint[] docsRows = node.docs.length ? markdownDocsRows(b, registry, node.docs, hit) : null;
+    uint[] docsRows = node.docs.length
+        ? markdownDocsRows(b, registry, node.docs, hit, opts.maxWidth) : null;
     uint[] tagRows;
     foreach (ref const string[] tag; node.tags)
         tagRows ~= buildPopupTagMd(b, registry, tag, hit);
-    return finishHoverPopup(b, node, hit, docsRows, tagRows, sigSpans);
+    return finishHoverPopup(b, node, hit, docsRows, tagRows, opts);
 }
 
 /// Assembles the popup shell shared by both `viewHoverPopup` overloads: three
@@ -404,19 +477,27 @@ in (nodeIndex < tw.nodes.length)
 /// inside the floating surface (border/radius/shadow/arrow). The popup carries no
 /// horizontal padding so the dividers reach the edges; each section pads its own.
 private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
-    uint[] docsRows, uint[] tagRows, TextSpan[] sigSpans = null)
+    uint[] docsRows, uint[] tagRows, HoverViewOptions opts)
 {
     // Signature (CSS `.twoslash-popup-code`): the code face at 1em — as
     // resolved syntax-colored spans when the caller supplied them
     // (signatureSpans), so no backend re-highlights over the painted popup.
     const sigStyle = TextStyle(fontRole: FontRole.code,
         fontScale: M.codeFontScale);
-    const sig = sigSpans.length
-        ? b.add(Widget(kind: WidgetKind.rich, spans: sigSpans, slot: Slot.code,
-            hitId: hit, textStyle: sigStyle))
+    // Capping the popup alone does not reflow an unwrappable child, so the
+    // signature carries the cap itself. Breaking at spaces is a placeholder:
+    // it keeps a 200-cell D signature inside the window today, and the
+    // structural breaking that replaces it knows where the parameters are.
+    auto sigWidth = SizeSpec.fit_;
+    if (opts.maxWidth > 0)
+        sigWidth.max = opts.maxWidth - 2 * M.popupPadX;
+    const sigWrap = opts.maxWidth > 0 ? TextWrap.greedy : TextWrap.none;
+    const sig = opts.sigSpans.length
+        ? b.add(Widget(kind: WidgetKind.rich, spans: opts.sigSpans, slot: Slot.code,
+            hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))
         : b.add(Widget(kind: WidgetKind.text,
             text: withoutQuickinfoPrefix(node.text), slot: Slot.code,
-            hitId: hit, textStyle: sigStyle));
+            hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap));
 
     uint[] sections = [popupSection(b, [sig], divider: false)];
     if (docsRows.length)
@@ -425,8 +506,13 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
         sections ~= popupSection(b, tagRows, divider: true);
 
     const col = b.container(WidgetKind.column, sections);
+    // The cap is a clamp on a `fit` box, so the popup still shrinks to its
+    // content — it just stops growing past the room the backend reported.
+    auto width = SizeSpec.fit_;
+    if (opts.maxWidth > 0)
+        width.max = opts.maxWidth;
     const popup = b.add(Widget(kind: WidgetKind.popup, slot: Slot.surface,
-        padding: Insets(1, 0, 1, 0), paintBackground: true,
+        width: width, padding: Insets(1, 0, 1, 0), paintBackground: true,
         decoration: surfaceDeco(arrow: true), children: [col], hitId: hit));
     return b.finish(popup);
 }
@@ -444,15 +530,10 @@ private uint popupSection(ref Builder b, uint[] rows, bool divider)
 
 // ── JSDoc docs → widget rows (markdown, wrapped) ───────────────────────────
 
-/// The popup docs width *maximum*, in cells — a style metric handed to the
-/// layout engine (`Widget.width.max`), which wraps the rich run itself
-/// (`LAY10`: no packing loop in the view).
-private enum docsMaxWidth = 56;
-
 /// Renders `docs` (JSDoc markdown) into wrapped, inline-styled widget rows via the
 /// `sparkles:syntax` `MdDoc` model. Empty parse (no grammar) ⇒ plain-line fallback.
 private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
-    const(char)[] docs, size_t hit) @system
+    const(char)[] docs, size_t hit, int maxWidth) @system
 {
     import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
 
@@ -461,8 +542,12 @@ private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
         return plainDocsRows(b, docs, hit);
     // The shared composable markdown view — "JSDoc renders through the same
     // markdown view" — with the popup's docs face/slot/width and hit identity.
+    // The docs metric is a preferred measure; the room the backend reported
+    // wins when it is narrower.
+    const docsWidth = maxWidth > 0 && maxWidth < M.docsMaxWidth
+        ? maxWidth : M.docsMaxWidth;
     return [viewMarkdownInto(b, doc, MdViewOptions(
-        maxWidth: docsMaxWidth, hitId: hit,
+        maxWidth: docsWidth, hitId: hit,
         baseStyle: docsBase(), proseSlot: Slot.docs))];
 }
 /// Docs fallback (no markdown grammar): the raw text split on newlines into rows,
@@ -583,6 +668,17 @@ version (unittest)
 
     // Paints a view through the pure pipeline into a RecordingCanvas — the
     // GL-free proof the U1 plan calls for.
+    /// The furthest cell any op paints to — how wide the popup really is,
+    /// as opposed to how wide it was asked to be.
+    private int rightEdge(in RecordingCanvas c) @safe pure nothrow
+    {
+        int max;
+        foreach (op; c.ops)
+            if (op.rect.x + op.rect.width > max)
+                max = op.rect.x + op.rect.width;
+        return max;
+    }
+
     private RecordingCanvas render(in WidgetTree tree)
     {
         const pal = defaultTwoslashPalette();
@@ -770,6 +866,69 @@ version (unittest)
             sawUnmatched = true;
     }
     assert(sawMarker && sawMatched && sawUnmatched);
+}
+
+@("render_widgets.viewHoverPopup.maxWidthCapsThePopup")
+@safe unittest
+{
+    // A D signature can measure 200+ cells. Uncapped the popup grows to match
+    // and walks off the window; the cap is what a backend hands it after
+    // measuring the room at the anchor.
+    // Short tokens throughout, so wrapping alone can honour the cap — the
+    // unbreakable-token case is the test below.
+    enum long_ = "int wrap(int first, int second, int third, int fourth, "
+        ~ "int fifth, int sixth, int seventh, int eighth)";
+    const tw = TwoslashReturn(code: "f()\n",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1, line: 0,
+            character: 0, text: long_)]);
+
+    auto wide = render(viewHoverPopup(tw, 0));
+    auto capped = render(viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40)));
+
+    import std.conv : text;
+
+    assert(rightEdge(wide) > 60, "the corpus stopped being a wide case");
+    assert(rightEdge(capped) <= 40,
+        text("painted to ", rightEdge(capped), " past a cap of 40"));
+}
+
+@("render_widgets.viewHoverPopup.oneLongTokenStillOverflows")
+@safe unittest
+{
+    // The limitation the cap alone cannot fix, recorded rather than hidden:
+    // wrapping breaks at spaces, so a single 51-cell token — a fully qualified
+    // instantiated type, which is exactly what D produces — has nowhere to
+    // break and overhangs. Structural breaking at `(`/`,` is what closes this;
+    // until then the overhang must at least stay bounded by the token itself.
+    enum oneToken = "sparkles.evenSquares.FilterResult!(__lambda_L7_C45,"
+        ~ " MapResult!(__lambda_L7_C25, Result)) filter(int n)";
+    const tw = TwoslashReturn(code: "f()\n",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1, line: 0,
+            character: 0, text: oneToken)]);
+
+    auto capped = render(viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40)));
+
+    import std.conv : text;
+
+    const edge = rightEdge(capped);
+    assert(edge > 40, "if this now fits, structural breaking landed — drop this test");
+    assert(edge <= 55, text("overhang grew to ", edge, ": worse than the token"));
+}
+
+@("render_widgets.viewHoverPopup.maxWidthZeroStaysUnbounded")
+@safe unittest
+{
+    // The default is what every caller got before the option existed, so a
+    // backend that cannot work out its room changes nothing.
+    const tw = TwoslashReturn(code: "f()\n",
+        nodes: [Node(type: NodeType.hover, start: 0, length: 1, line: 0,
+            character: 0, text: "int aVeryLongSignature(int first, int second, int third)")]);
+
+    auto implicit = render(viewHoverPopup(tw, 0));
+    auto explicit = render(viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 0)));
+    assert(implicit.ops.length == explicit.ops.length);
+    foreach (i, op; implicit.ops)
+        assert(op.rect == explicit.ops[i].rect && op.text == explicit.ops[i].text);
 }
 
 @("render_widgets.viewHoverPopup.surfaceSignatureDocsTags")
