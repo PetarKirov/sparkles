@@ -563,7 +563,7 @@ struct PreviewTui
             return handleSearch(e);
         return e.match!(
             (in PointerEvent p) => handlePointer(p),
-            (in WheelEvent w) { top += 3 * w.dy; clampTop(); return true; },
+            (in WheelEvent w) { top += w.dy; clampTop(); return true; },
             (in KeyEvent k) => handleKey(k),
             (in EndOfInput _) => false,
             _ => true,

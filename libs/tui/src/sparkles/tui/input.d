@@ -149,10 +149,14 @@ Event decodeMouse(scope const(char)[] s) @safe pure nothrow @nogc
     if (b & 64) // wheel: 64=up 65=down 66=left 67=right (deltaY/deltaX signs)
         switch (b & 3)
         {
-            case 0: return Event(WheelEvent(dy: -1, pos: pos, mods: mods));
-            case 1: return Event(WheelEvent(dy: +1, pos: pos, mods: mods));
-            case 2: return Event(WheelEvent(dx: -1, pos: pos, mods: mods));
-            default: return Event(WheelEvent(dx: +1, pos: pos, mods: mods));
+            // The notch→cells multiplication happens HERE, at the producer
+            // (INP12): consumers scroll by `dy` as given, so a source with no
+            // notches (a touch drag, already whole rows) can emit the same
+            // event without every consumer having to know which it was.
+            case 0: return Event(WheelEvent(dy: -linesPerNotch, pos: pos, mods: mods));
+            case 1: return Event(WheelEvent(dy: +linesPerNotch, pos: pos, mods: mods));
+            case 2: return Event(WheelEvent(dx: -linesPerNotch, pos: pos, mods: mods));
+            default: return Event(WheelEvent(dx: +linesPerNotch, pos: pos, mods: mods));
         }
 
     const button = cast(PointerButton)(b & 3);
@@ -373,10 +377,15 @@ unittest
     assert(decodeMouse("2;1;1M") == Event(PointerEvent(
         action: PointerAction.press, button: PointerButton.right, pos: Point(0, 0))));
     // Wheel signs follow the web's deltaY/deltaX: up/left negative.
-    assert(decodeMouse("64;1;1M") == Event(WheelEvent(dy: -1)));
-    assert(decodeMouse("65;1;1M") == Event(WheelEvent(dy: +1)));
-    assert(decodeMouse("66;1;1M") == Event(WheelEvent(dx: -1)));
-    assert(decodeMouse("67;1;1M") == Event(WheelEvent(dx: +1)));
+    // Wheel deltas are CELLS, not notches: the decoder applies
+    // `linesPerNotch` so every consumer scrolls by `dy` as given (INP12).
+    assert(decodeMouse("64;1;1M") == Event(WheelEvent(dy: -linesPerNotch)));
+    assert(decodeMouse("65;1;1M") == Event(WheelEvent(dy: +linesPerNotch)));
+    assert(decodeMouse("66;1;1M") == Event(WheelEvent(dx: -linesPerNotch)));
+    assert(decodeMouse("67;1;1M") == Event(WheelEvent(dx: +linesPerNotch)));
+    // A notch is more than one cell — the property that makes the producer,
+    // not the consumer, the right place to apply it.
+    assert(linesPerNotch > 1);
 }
 
 @("input.classifyByte.controlAndPrintable")

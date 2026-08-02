@@ -92,16 +92,36 @@ struct PointerEvent
     Mods mods;
 }
 
-/// A scroll step at `pos`. Sign convention matches the web's `deltaY`:
-/// scrolling $(B up) is negative `dy`, down is positive; `dx` likewise
-/// (left negative). Terminal wheels step by ±1; pixel backends may batch.
+/**
+A scroll step at `pos`. Sign convention matches the web's `deltaY`: scrolling
+$(B up) is negative `dy`, down is positive; `dx` likewise (left negative).
+
+`dx`/`dy` are the $(B cells to scroll), already multiplied — never a raw notch
+count. The producer applies $(LREF linesPerNotch); a consumer that multiplies
+again is a bug (`INP12`).
+
+That rule exists so a producer with no notches can participate. A touch drag
+resolves to whole rows by construction, and a high-resolution trackpad reports
+pixels; both set `precise` and pass their own step, and every consumer scrolls
+by exactly what it is given. Without it, touch could not reuse this event at
+all — the historical ×3 applied by each consumer would have tripled a drag.
+*/
 struct WheelEvent
 {
     int dx;
     int dy;
     Point pos;
     Mods mods;
+    /// `true` when `dx`/`dy` came from a continuous source (a touch drag, a
+    /// pixel-precise trackpad) rather than a discrete notch. Informational —
+    /// consumers scroll by `dx`/`dy` either way; it exists so a host can, for
+    /// example, decline to animate a precise scroll.
+    bool precise;
 }
+
+/// Rows a discrete wheel notch scrolls. Applied by the $(B producer) so that
+/// notch-derived and continuous scroll events arrive commensurable (`INP12`).
+enum int linesPerNotch = 3;
 
 /// Keyboard focus entered (`focused`) or left the surface.
 struct FocusEvent

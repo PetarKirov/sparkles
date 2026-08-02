@@ -618,7 +618,7 @@ struct ExplorerTui
         return e.match!(
             (in KeyEvent k) => handleKey(k),
             (in WheelEvent w) {
-                sel += 3 * w.dy;
+                sel += w.dy;
                 clamp();
                 return true;
             },
