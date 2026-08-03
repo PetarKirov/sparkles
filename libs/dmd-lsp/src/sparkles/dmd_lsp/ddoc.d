@@ -159,11 +159,41 @@ private string documentedUnittests(Dsymbol sym) @system
     if (sym is null)
         return null;
 
-    string body_;
-    for (UnitTestDeclaration utd = sym.ddocUnittest; utd !is null; utd = utd.ddocUnittest)
+    // The chain hangs off whichever declaration the unittest followed in
+    // source. For a call site that is rarely the symbol we resolved to:
+    // `each!(int[])` is an instance of the inner eponymous `each(Iterable)`,
+    // which is a member of the outer `template each(alias pred)` — and it is
+    // the outer one the `/// …` unittest came after. Climb the template links
+    // the same way `docForSymbol` does, bounded for the same reason.
+    enum maxHops = 8;
+    auto owner = sym;
+    foreach (_; 0 .. maxHops)
     {
+        if (owner.ddocUnittest !is null || owner.parent is null)
+            break;
+        if (auto td = owner.parent.isTemplateDeclaration())
+        {
+            owner = td;
+            continue;
+        }
+        if (auto ti = owner.parent.isTemplateInstance())
+        {
+            auto td = ti.tempdecl !is null ? ti.tempdecl.isTemplateDeclaration() : null;
+            owner = td !is null ? cast(Dsymbol) td : cast(Dsymbol) ti;
+            continue;
+        }
+        break;
+    }
+
+    string body_;
+    for (UnitTestDeclaration utd = owner.ddocUnittest; utd !is null; utd = utd.ddocUnittest)
+    {
+        // No `fbody` check: outside the root module the fork records the body
+        // *text* without parsing it (no AST, no semantic), which is all an
+        // `Examples:` section needs — and is the only way a Phobos hover has
+        // examples at all.
         if (utd.visibility.kind == Visibility.Kind.private_
-            || utd.comment is null || utd.fbody is null)
+            || utd.comment is null || utd.codedoc is null)
             continue;
         // `/// ditto` on a unittest means "another example for the same
         // declaration", not prose — the idiom exists precisely so a second
@@ -1009,6 +1039,33 @@ version (unittest)
         });
         return tip;
     }
+}
+
+@("ddoc.render.importedSymbolsCarryTheirExamples")
+@system unittest
+{
+    // The parser used to skip unittest bodies outside the root module, so no
+    // Phobos hover could ever have an example. The fork records the body text
+    // while skipping (no AST, no semantic); the owner of the chain is the
+    // declaration the unittest followed — for `each` the *outer* template, two
+    // hops above the instance a call site resolves to.
+    import sparkles.dmd_lsp.testing : withAnalysis;
+    import std.algorithm.searching : canFind;
+
+    enum src = q{
+        module test;
+        import std.algorithm.iteration : each;
+        void main()
+        {
+            [1, 2, 3].each!(n => n);                  // Line 6
+        }
+    };
+
+    withAnalysis(src, (m) {
+        const doc = m.tipAt(6, 23).doc;
+        assert(doc.canFind("### Examples"), doc);
+        assert(doc.canFind("```d unittest"), doc);
+    }, null, ["-unittest"]);
 }
 
 @("ddoc.render.documentedUnittestsBecomeLabelledExamples")

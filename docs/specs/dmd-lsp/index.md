@@ -88,36 +88,37 @@ resolved to `line`/`character` against the post-cut display code.
 The commit-level execution plan; each lands green on its own. Track A has no
 DMD dependency; Track B needs the fork pin.
 
-| Milestone | Track | Scope                                                                                        | Status                                                                 |
-| --------- | ----- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------- |
-| L0        | A     | This spec                                                                                    | full (`bd21a054`)                                                      |
-| L1        | A     | `sparkles.base.text.lineindex` — byte ↔ line/col                                             | full (`34369c9c`)                                                      |
-| L2        | A     | Extract `libs/twoslash-protocol`; add `language` + `offsetEncoding` (`NTN4`)                 | full (`a0626e09`)                                                      |
-| L3        | A     | Parameterize the popup/highlight language in `overlay.d` + hue (`EXT5`)                      | full (`1344c42b`)                                                      |
-| L4        | A     | `sparkles:twoslash-d` notation parser (`NTN1`–`NTN3`)                                        | full (`f8c9a846`)                                                      |
-| L5        | B     | Fork branch `dmdserver-dub` + pin + `dmd-import-paths` nix plumbing (`BLD1`–`BLD4`)          | full (`acef0edd`)                                                      |
-| L6        | B     | `sparkles:dmd-lsp` analysis core + diagnostics (`COR1`–`COR6`)                               | full (`ec71308d`)                                                      |
-| L7        | B     | `semvisitor.d` port — tips, identifier types (`TIP1`–`TIP3`, `DOC1`)                         | full (`032f3b35`)                                                      |
-| L8        | B     | `twoslash-d` node assembly + emit + golden fixtures (`NTN2`, `DOC2`)                         | full (`618e98a0`)                                                      |
-| L9        | B     | `apps/twoslash-extract` CLI (`EXT1`–`EXT4`)                                                  | full (`5aa94285`)                                                      |
-| L10       | B     | hue showcase fixtures; reconcile [hue/twoslash.md](../hue/twoslash.md) `NOT`/`DMD` statuses  | partial (corpus `67c04784`; spec reconciliation pending)               |
-| L11       | B     | Diátaxis docs (`docs/libs/dmd-lsp/`, `docs/libs/twoslash-d/`) + `AGENTS.md` rows             | not started                                                            |
-| L12       | —     | _(follow-up)_ `apps/ci` twoslash verification (`@errors:` glob via <code v-pre>{{_}}</code>) | not started                                                            |
-| L13       | B     | [Dub-project context](./project.md) (`PRJ1`–`PRJ11`) + `twoslash-extract --dub`              | full (`95a85f51`, `59e623ff`); viewer path `PRJ12`–`PRJ16` not started |
-| L14       | B     | Fork `+ls.2` (public ddoc machinery) + pin bump                                              | full (`69e0dfbd`)                                                      |
-| L15       | B     | DDoc → CommonMark translator ([test plan](./ddoc.md))                                        | full (`d7a33164`)                                                      |
-| L16       | B     | ddoc tags on nodes + per-param hover docs                                                    | full (`49da12f5`)                                                      |
-| L17       | A/B   | `^^^` highlights · `^                                                                        | `completions ·`@filename:` multi-file                                  | full (`114d49c0`, `32520ca0`, `2cc273ff`) |
-| L18       | —     | Corpus to 36 samples (380 nodes)                                                             | full (`cea792ca`)                                                      |
-| L19       | A     | DDoc test plan page ([ddoc.md](./ddoc.md), `DDC1`–`DDC84`)                                   | full (`be5c0100`)                                                      |
-| L20       | —     | Defect: dub-describe subpackage fallback (`PRJ7`)                                            | full (`0dfc3168`)                                                      |
-| L21       | —     | Single-walk tip collector: eager 175.8 s → **5.8 s** on `expressionsem.d` (30×)              | full (`c8c76b93`)                                                      |
-| L22       | —     | Lazy payloads + `--serve` oracle (0.6 ms tips) + `ResidentProcess`                           | full (`0549eef6`)                                                      |
-| L23       | —     | Always-on hover underlines (`Slot.hoverUnderline`)                                           | full (`12038f7e`)                                                      |
-| L24       | —     | Slim node encoding (eager 10.1 MB/767 KB gz, lazy 6.7 MB/465 KB gz)                          | full (`08eacbb1`)                                                      |
-| L25       | —     | hue live D types (`PRJ12`–`PRJ16`, hue `LIV*`)                                               | full (`d3d1d7a8`)                                                      |
-| L26       | B     | Imported-symbol ddoc (`DOC4`) + fork `+ls.3` (complete `typeInfoExp`)                        | full                                                                   |
-| L27       | —     | Tooltip markdown defects: ddoc indentation read as code, unterminated fence                  | full                                                                   |
+| Milestone | Track | Scope                                                                                                                                   | Status                                                                 |
+| --------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------- |
+| L0        | A     | This spec                                                                                                                               | full (`bd21a054`)                                                      |
+| L1        | A     | `sparkles.base.text.lineindex` — byte ↔ line/col                                                                                        | full (`34369c9c`)                                                      |
+| L2        | A     | Extract `libs/twoslash-protocol`; add `language` + `offsetEncoding` (`NTN4`)                                                            | full (`a0626e09`)                                                      |
+| L3        | A     | Parameterize the popup/highlight language in `overlay.d` + hue (`EXT5`)                                                                 | full (`1344c42b`)                                                      |
+| L4        | A     | `sparkles:twoslash-d` notation parser (`NTN1`–`NTN3`)                                                                                   | full (`f8c9a846`)                                                      |
+| L5        | B     | Fork branch `dmdserver-dub` + pin + `dmd-import-paths` nix plumbing (`BLD1`–`BLD4`)                                                     | full (`acef0edd`)                                                      |
+| L6        | B     | `sparkles:dmd-lsp` analysis core + diagnostics (`COR1`–`COR6`)                                                                          | full (`ec71308d`)                                                      |
+| L7        | B     | `semvisitor.d` port — tips, identifier types (`TIP1`–`TIP3`, `DOC1`)                                                                    | full (`032f3b35`)                                                      |
+| L8        | B     | `twoslash-d` node assembly + emit + golden fixtures (`NTN2`, `DOC2`)                                                                    | full (`618e98a0`)                                                      |
+| L9        | B     | `apps/twoslash-extract` CLI (`EXT1`–`EXT4`)                                                                                             | full (`5aa94285`)                                                      |
+| L10       | B     | hue showcase fixtures; reconcile [hue/twoslash.md](../hue/twoslash.md) `NOT`/`DMD` statuses                                             | partial (corpus `67c04784`; spec reconciliation pending)               |
+| L11       | B     | Diátaxis docs (`docs/libs/dmd-lsp/`, `docs/libs/twoslash-d/`) + `AGENTS.md` rows                                                        | not started                                                            |
+| L12       | —     | _(follow-up)_ `apps/ci` twoslash verification (`@errors:` glob via <code v-pre>{{_}}</code>)                                            | not started                                                            |
+| L13       | B     | [Dub-project context](./project.md) (`PRJ1`–`PRJ11`) + `twoslash-extract --dub`                                                         | full (`95a85f51`, `59e623ff`); viewer path `PRJ12`–`PRJ16` not started |
+| L14       | B     | Fork `+ls.2` (public ddoc machinery) + pin bump                                                                                         | full (`69e0dfbd`)                                                      |
+| L15       | B     | DDoc → CommonMark translator ([test plan](./ddoc.md))                                                                                   | full (`d7a33164`)                                                      |
+| L16       | B     | ddoc tags on nodes + per-param hover docs                                                                                               | full (`49da12f5`)                                                      |
+| L17       | A/B   | `^^^` highlights · `^                                                                                                                   | `completions ·`@filename:` multi-file                                  | full (`114d49c0`, `32520ca0`, `2cc273ff`) |
+| L18       | —     | Corpus to 36 samples (380 nodes)                                                                                                        | full (`cea792ca`)                                                      |
+| L19       | A     | DDoc test plan page ([ddoc.md](./ddoc.md), `DDC1`–`DDC84`)                                                                              | full (`be5c0100`)                                                      |
+| L20       | —     | Defect: dub-describe subpackage fallback (`PRJ7`)                                                                                       | full (`0dfc3168`)                                                      |
+| L21       | —     | Single-walk tip collector: eager 175.8 s → **5.8 s** on `expressionsem.d` (30×)                                                         | full (`c8c76b93`)                                                      |
+| L22       | —     | Lazy payloads + `--serve` oracle (0.6 ms tips) + `ResidentProcess`                                                                      | full (`0549eef6`)                                                      |
+| L23       | —     | Always-on hover underlines (`Slot.hoverUnderline`)                                                                                      | full (`12038f7e`)                                                      |
+| L24       | —     | Slim node encoding (eager 10.1 MB/767 KB gz, lazy 6.7 MB/465 KB gz)                                                                     | full (`08eacbb1`)                                                      |
+| L25       | —     | hue live D types (`PRJ12`–`PRJ16`, hue `LIV*`)                                                                                          | full (`d3d1d7a8`)                                                      |
+| L26       | B     | Imported-symbol ddoc (`DOC4`) + fork `+ls.3` (complete `typeInfoExp`)                                                                   | full                                                                   |
+| L27       | —     | Tooltip markdown defects: ddoc indentation read as code, unterminated fence                                                             | full                                                                   |
+| L28       | B     | GFM tables + numbered lists; `ditto`; documented unittests as labelled examples; fork `+ls.4` (unittest bodies outside the root module) | full                                                                   |
 
 Issue #124's D3 (completions, references) and D4 (JSON-RPC LSP server) are
 follow-on milestones behind the same core.

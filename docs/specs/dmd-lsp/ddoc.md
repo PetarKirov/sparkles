@@ -81,13 +81,25 @@ markdown view's header band shows — the example is executable, not
 illustrative. A `/// ditto` unittest contributes another such fence and no
 prose: the idiom exists so a second example needs no second write-up.
 
-Three gates apply. The chain is only built under `-unittest` (without it the
-parser skips unittest bodies wholesale); the body text is only captured when
+Two gates apply, and they differ by module. The body text is only captured when
 `compileEnv.ddocOutput` is set — the lexer's own copy of `params.ddoc.doOutput`,
-which `init_` now sets alongside it; and the parser attaches unittests **only in
-the root module** (`parse.d`'s `doUnittests && mod.isRoot()`, a codegen-culling
-guard), so an imported symbol — every Phobos hover — still shows no examples.
-Lifting that needs a fork change and is not done here.
+which `init_` now sets alongside it. And the **root** module's own unittests
+need `-unittest`, because without it the parser has no reason to build their
+ASTs at all.
+
+Imported symbols need neither: `parse.d` used to skip those bodies wholesale
+(`doUnittests && mod.isRoot()`, a template codegen-culling guard), so no Phobos
+hover could ever show an example. Under `version(LanguageServer)` the fork's
+skip branch now records the body's extent as it counts braces and copies the
+text out — no AST, no semantic, and so none of the hazard the guard exists to
+avoid — then links the declaration's `ddocUnittest` (`+ls.4`).
+
+The chain hangs off whichever declaration the unittest followed in source,
+which for a call site is rarely the symbol resolved to: `each!(int[])` is an
+instance of the inner eponymous `each(Iterable)`, itself a member of the outer
+`template each(alias pred)` — and it is the outer one the `/// …` unittest came
+after. `documentedUnittests` climbs the template links the same way
+`docForSymbol` does.
 
 ## Sections (`DDC16`-`DDC28`)
 

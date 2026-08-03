@@ -55,7 +55,7 @@
         },
         {
             "character": 39,
-            "docs": "Calculates the absolute value of a number.\n\n### Limitations\n\nWhen `x` is a signed integral equal to `Num.min` the value of `x` will be returned instead.\nNote for 2's complement; `-Num.min` (= `Num.max + 1`) is not representable due to overflow.",
+            "docs": "Calculates the absolute value of a number.\n\n### Limitations\n\nWhen `x` is a signed integral equal to `Num.min` the value of `x` will be returned instead.\nNote for 2's complement; `-Num.min` (= `Num.max + 1`) is not representable due to overflow.\n\n### Examples\n\n```d unittest\nimport std.math.traits : isIdentical, isNaN;\n\nassert(isIdentical(abs(-0.0L), 0.0L));\nassert(isNaN(abs(real.nan)));\nassert(abs(-real.infinity) == real.infinity);\nassert(abs(-56) == 56);\nassert(abs(2321312L)  == 2321312L);\nassert(abs(23u) == 23u);\n```\n",
             "length": 3,
             "line": 1,
             "signature": {
