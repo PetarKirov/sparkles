@@ -37,10 +37,13 @@ jobs:
             system: aarch64-darwin
             DC: ldc2
     runs-on: ${{ matrix.runner }}
-    # The Linux legs finish in ~4m; the macOS leg normally runs ~5m but the
+    # The Linux legs finish in ~4m warm; the macOS leg normally runs ~5m but the
     # hosted Apple-Silicon runner occasionally hangs (a 5m job has stalled for
-    # 78m). Cap per-runner: generous for macOS, tighter where history is stable.
-    timeout-minutes: ${{ matrix.runner == 'macos-latest' && 20 || 12 }}
+    # 78m). The cap is uniform at 20m because the DUB cache key is the hash of
+    # the dub files, so bumping the `dmd:frontend` pin invalidates it and the
+    # leg pays a cold frontend build — ~7m under dmd, which overran a 12m cap.
+    # That is a build cost, not a runtime one, and it recurs on every pin bump.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
