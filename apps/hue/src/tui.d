@@ -476,6 +476,8 @@ struct PreviewTui
         if (hoverSel < 0 || hoverSel >= cast(int) hoverNodes.length)
             return;
         import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
+        import sparkles.syntax.md.render_widgets : highlightedFenceRenderer,
+            MdViewTheme;
         import sparkles.twoslash.render_widgets : clampOrigin,
             effectivePopupWidth, HoverViewOptions, signatureSpans;
         import sparkles.ui.geometry : Rect;
@@ -496,9 +498,20 @@ struct PreviewTui
         // walks off the pane.
         const pal = defaultTwoslashPalette(schemeForBackground(pageBg));
         const avail = width - rs[0].x - 1;
-        auto tree = viewHoverPopup(tw, hoverNodes[hoverSel],
-            HoverViewOptions(maxWidth: effectivePopupWidth(pal, avail), sigSpans: sig,
-                expanded: hoverExpanded, nodeKey: hoverNodes[hoverSel] + 1));
+        // Through the *registry* overload: the ddoc is markdown, and without
+        // it the popup shows `### Examples` and fence markers as literal text
+        // while the document one pane over renders them properly. The theme
+        // and fence highlighter are the same ones the preview uses, so a
+        // documented unittest arrives with its `unittest` fence label.
+        auto opts = HoverViewOptions(
+            maxWidth: effectivePopupWidth(pal, avail), sigSpans: sig,
+            expanded: hoverExpanded, nodeKey: hoverNodes[hoverSel] + 1,
+            mdTheme: MdViewTheme.derive(vm.current, pageFg, pageBg),
+            fenceRenderer: highlightedFenceRenderer(cache,
+                (() @trusted => &vm.current)(), pageFg));
+        auto tree = cache !is null
+            ? viewHoverPopup(tw, hoverNodes[hoverSel], cache.registry, opts)
+            : viewHoverPopup(tw, hoverNodes[hoverSel], opts);
         // A lazy hover span (live types: underlined, type not yet resolved)
         // views as an empty tree — nothing to paint until the answer lands.
         if (!tree.nodes.length)

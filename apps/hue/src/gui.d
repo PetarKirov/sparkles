@@ -2357,9 +2357,18 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     auto sig = signatureSpans(cache, tw.effectiveLanguage,
         (() @trusted => &theme)(), pageFg,
         withoutQuickinfoPrefix(tw.nodes[nodeIndex].text));
+    // The docs are markdown, and the theme + fence highlighter are the ones
+    // the preview uses — so a fence in a tooltip gets the same chrome as one
+    // in the document, including the `unittest` label on a runnable example.
+    import sparkles.syntax.md.render_widgets : highlightedFenceRenderer,
+        MdViewTheme;
+
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry,
         HoverViewOptions(maxWidth: effectivePopupWidth(pal, availCells),
-            sigSpans: sig, expanded: expanded, nodeKey: nodeIndex + 1));
+            sigSpans: sig, expanded: expanded, nodeKey: nodeIndex + 1,
+            mdTheme: MdViewTheme.derive(theme, pageFg, pageBg),
+            fenceRenderer: highlightedFenceRenderer(&cache,
+                (() @trusted => &theme)(), pageFg)));
     // A lazy hover span (live types: the underline is up, the type has not
     // arrived yet) views as an EMPTY tree — there is nothing to lay out, and
     // the zero rect tells the caller there is no popup to keep the pointer in.

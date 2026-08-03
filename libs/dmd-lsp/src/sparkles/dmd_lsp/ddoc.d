@@ -75,6 +75,67 @@ private enum char listClose = '\x11';
 private enum char alignOpen = '\x13';
 private enum char alignClose = '\x14';
 
+/// Marks the fence on the line after it as coming from a documented unittest.
+/// The engine keeps only the first word of a fence's info string (`d`), so the
+/// label cannot be written into the fence directly; `reflowListsAndTables`
+/// moves it back on.
+private enum char runnableMark = '\x15';
+
+/// Drops the source indentation a captured unittest body carries — it is the
+/// declaration's position in the file, not the example's own shape. Without
+/// this the first line lands flush and every other keeps its original column.
+private string dedent(const(char)[] code) @safe pure
+{
+    import std.algorithm.iteration : map, splitter;
+    import std.array : array, join;
+    import std.string : stripRight;
+
+    auto lines = code.splitter('\n').map!(l => l.stripRight).array;
+    size_t common = size_t.max;
+    foreach (l; lines)
+    {
+        if (!l.length)
+            continue;
+        size_t i = 0;
+        while (i < l.length && l[i] == ' ')
+            ++i;
+        if (i < common)
+            common = i;
+    }
+    if (common == size_t.max)
+        common = 0;
+
+    string[] outLines;
+    foreach (l; lines)
+        outLines ~= (l.length > common ? l[common .. $] : "").idup;
+    // Trim the blank lines the braces leave at either end.
+    size_t lo = 0, hi = outLines.length;
+    while (lo < hi && outLines[lo].length == 0)
+        ++lo;
+    while (hi > lo && outLines[hi - 1].length == 0)
+        --hi;
+    return outLines[lo .. hi].join("\n");
+}
+
+/// Whether a doc comment is nothing but `ditto` — case-insensitive, with
+/// whitespace either side (`dmd.doc.isDitto`, which is private to that module).
+private bool isDittoComment(const(char)* comment) @system
+{
+    import core.stdc.string : strlen;
+    import std.ascii : toLower;
+    import std.string : strip;
+
+    if (comment is null)
+        return false;
+    const c = comment[0 .. strlen(comment)].strip;
+    if (c.length != 5)
+        return false;
+    foreach (i, ch; c)
+        if (ch.toLower != "ditto"[i])
+            return false;
+    return true;
+}
+
 /**
 The `Examples:` section a symbol's documented unittests contribute (`DDC15`).
 
@@ -104,14 +165,19 @@ private string documentedUnittests(Dsymbol sym) @system
         if (utd.visibility.kind == Visibility.Kind.private_
             || utd.comment is null || utd.fbody is null)
             continue;
-        const prose = utd.comment[0 .. strlen(utd.comment)].strip;
+        // `/// ditto` on a unittest means "another example for the same
+        // declaration", not prose — the idiom exists precisely so a second
+        // example needs no second write-up. Emitting the word would put the
+        // literal "ditto" above the code.
+        const prose = isDittoComment(utd.comment)
+            ? null : utd.comment[0 .. strlen(utd.comment)].strip;
         if (prose.length)
             body_ ~= "\n" ~ prose ~ "\n";
         if (utd.codedoc !is null)
         {
-            const code = utd.codedoc[0 .. strlen(utd.codedoc)].strip;
+            const code = dedent(utd.codedoc[0 .. strlen(utd.codedoc)]);
             if (code.length)
-                body_ ~= "\n----\n" ~ code ~ "\n----\n";
+                body_ ~= "\n" ~ runnableMark ~ "\n```d\n" ~ code ~ "\n```\n";
         }
     }
     return body_.length ? "\n\nExamples:\n" ~ body_ : null;
@@ -598,6 +664,7 @@ private string[] reflowListsAndTables(string[] lines) @safe pure
     Frame[] stack;
     string[] out_;
     bool inFence = false;
+    bool markNextFence = false;
 
     foreach (line; lines)
     {
@@ -624,9 +691,22 @@ private string[] reflowListsAndTables(string[] lines) @safe pure
         // cosmetic. CommonMark disagrees: four such spaces after a blank line
         // is an indented code block, which is how `core.time.dur`'s third
         // paragraph turned into an empty box with its text gone.
+        if (line.length && line[0] == runnableMark)
+        {
+            markNextFence = true;
+            continue;
+        }
         if (line.stripLeft.startsWith("```"))
         {
             inFence = !inFence;
+            // An opening fence the producer marked: label it, so the renderer's
+            // fence chrome can say the example is an executable unittest.
+            if (inFence && markNextFence)
+            {
+                out_ ~= line ~ " unittest";
+                markNextFence = false;
+                continue;
+            }
             out_ ~= line;
             continue;
         }
@@ -929,6 +1009,46 @@ version (unittest)
         });
         return tip;
     }
+}
+
+@("ddoc.render.documentedUnittestsBecomeLabelledExamples")
+@system unittest
+{
+    // `DDC15`: the unittest → `Examples:` merge is `emitComment`'s job, which
+    // only runs while writing a documentation file. The fence carries a
+    // `unittest` label so the renderer's chrome can say the example is
+    // executable rather than illustrative.
+    import sparkles.dmd_lsp.testing : withAnalysis;
+    import std.algorithm.searching : canFind;
+
+    enum src = q{
+        module test;
+        /// Returns the larger of two.
+        int larger(int a, int b) => a >= b ? a : b;   // Line 4
+
+        /// One way to use it.
+        unittest
+        {
+            assert(larger(2, 3) == 3);
+        }
+
+        /// ditto
+        unittest
+        {
+            assert(larger(-1, -5) == -1);
+        }
+    };
+
+    withAnalysis(src, (m) {
+        const doc = m.tipAt(4, 13).doc;
+        assert(doc.canFind("### Examples"), doc);
+        assert(doc.canFind("One way to use it."), doc);
+        // Two labelled fences, one per documented unittest.
+        assert(doc.canFind("```d unittest\nassert(larger(2, 3) == 3);\n```"), doc);
+        assert(doc.canFind("```d unittest\nassert(larger(-1, -5) == -1);\n```"), doc);
+        // `/// ditto` on a unittest means "another example", not prose.
+        assert(!doc.canFind("ditto"), doc);
+    }, null, ["-unittest"]);
 }
 
 @("ddoc.render.tablesGetTheirDelimiterRow")
