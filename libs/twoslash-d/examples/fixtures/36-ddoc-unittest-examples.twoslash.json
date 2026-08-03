@@ -1,12 +1,12 @@
 {
-    "code": "// NB: a documented unittest is *not* surfaced as an Examples section here.\n/++\nReturns the larger of two ints.\nReturns: a when it is at least b.\n+/\nint larger(int a, int b) => a >= b ? a : b;\n\n/// The documented-unittest form: this example belongs to `larger`.\nunittest\n{\n    assert(larger(2, 3) == 3);\n}\n\nauto top = larger(10, 20);\n",
+    "code": "/++\nReturns the larger of two ints.\nReturns: a when it is at least b.\n+/\nint larger(int a, int b) => a >= b ? a : b;\n\n/// The documented-unittest form: this example belongs to `larger`.\nunittest\n{\n    assert(larger(2, 3) == 3);\n}\n\nauto top = larger(10, 20);\n",
     "language": "d",
     "nodes": [
         {
             "character": 4,
-            "docs": "Returns the `larger` of two ints.",
+            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d\nassert(larger(2, 3) == 3);\n```\n",
             "length": 6,
-            "line": 5,
+            "line": 4,
             "signature": {
                 "abbrevs": [
                     {
@@ -33,7 +33,7 @@
                     }
                 ]
             },
-            "start": 153,
+            "start": 77,
             "tags": [
                 [
                     "returns",
@@ -46,56 +46,56 @@
         {
             "character": 15,
             "length": 1,
-            "line": 5,
-            "start": 164,
+            "line": 4,
+            "start": 88,
             "text": "(parameter) int a",
             "type": "hover"
         },
         {
             "character": 22,
             "length": 1,
-            "line": 5,
-            "start": 171,
+            "line": 4,
+            "start": 95,
             "text": "(parameter) int b",
             "type": "hover"
         },
         {
             "character": 28,
             "length": 1,
-            "line": 5,
-            "start": 177,
+            "line": 4,
+            "start": 101,
             "text": "(parameter) int a",
             "type": "hover"
         },
         {
             "character": 33,
             "length": 1,
-            "line": 5,
-            "start": 182,
+            "line": 4,
+            "start": 106,
             "text": "(parameter) int b",
             "type": "hover"
         },
         {
             "character": 37,
             "length": 1,
-            "line": 5,
-            "start": 186,
+            "line": 4,
+            "start": 110,
             "text": "(parameter) int a",
             "type": "hover"
         },
         {
             "character": 41,
             "length": 1,
-            "line": 5,
-            "start": 190,
+            "line": 4,
+            "start": 114,
             "text": "(parameter) int b",
             "type": "hover"
         },
         {
             "character": 11,
-            "docs": "Returns the `larger` of two ints.",
+            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d\nassert(larger(2, 3) == 3);\n```\n",
             "length": 6,
-            "line": 10,
+            "line": 9,
             "signature": {
                 "abbrevs": [
                     {
@@ -122,7 +122,7 @@
                     }
                 ]
             },
-            "start": 284,
+            "start": 208,
             "tags": [
                 [
                     "returns",
@@ -135,24 +135,24 @@
         {
             "character": 5,
             "length": 3,
-            "line": 13,
-            "start": 312,
+            "line": 12,
+            "start": 236,
             "text": "(thread local global) int sample.top",
             "type": "hover"
         },
         {
             "character": 5,
             "length": 3,
-            "line": 13,
-            "start": 312,
+            "line": 12,
+            "start": 236,
             "text": "(thread local global) int sample.top",
             "type": "query"
         },
         {
             "character": 11,
-            "docs": "Returns the `larger` of two ints.",
+            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d\nassert(larger(2, 3) == 3);\n```\n",
             "length": 6,
-            "line": 13,
+            "line": 12,
             "signature": {
                 "abbrevs": [
                     {
@@ -179,7 +179,7 @@
                     }
                 ]
             },
-            "start": 318,
+            "start": 242,
             "tags": [
                 [
                     "returns",
@@ -191,10 +191,10 @@
         },
         {
             "character": 11,
-            "docs": "Returns the `larger` of two ints.",
+            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d\nassert(larger(2, 3) == 3);\n```\n",
             "length": 6,
-            "line": 13,
-            "start": 318,
+            "line": 12,
+            "start": 242,
             "tags": [
                 [
                     "returns",

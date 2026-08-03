@@ -43,38 +43,43 @@ Sample traces name planned additions to the D corpus in
 Lexical forms, the summary/description split, and how comments bind to
 declarations (`ddoc.dd:82-196`).
 
-| ID    | Requirement                                                                                                                                                                                 | Status            | Traces to                                       |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------------------------------------------- |
-| DDC1  | A `/** … */` comment attached to a declaration is recognized and its body reaches `renderDdoc` via `Dsymbol.comment`.                                                                       | full (`d7a33164`) | all six `ddoc.render.*` tests                   |
-| DDC2  | The `/++ … +/` form is equivalent; extra `+`s after the opener are not content. It is the form that allows `/* … */` inside an embedded code block.                                         | not started       | engine (lexer); `29-ddoc-sections`              |
-| DDC3  | The `///` one-line form is equivalent, and consecutive `///` lines form one comment.                                                                                                        | not started       | engine (lexer); `29-ddoc-sections`              |
-| DDC4  | Extra `*`/`+` on the opener, the closer, and the left margin are stripped, so a `*`-prefixed continuation line contributes only its text (`ddoc.dd:96-137`).                                | not started       | engine (lexer); `33-ddoc-markdown`              |
-| DDC5  | The **Summary** is the first paragraph, ending at a blank line or a section name, and is emitted as the first block of `docs`.                                                              | full (`d7a33164`) | `ddoc.render.summaryDescriptionSections`        |
-| DDC6  | A blank line **inside an embedded code block** does not end the Summary.                                                                                                                    | not started       | engine (`dmd.doc`); `32-ddoc-fences`            |
-| DDC7  | The **Description** is every following paragraph up to the first section name; it joins the `docs` body after the Summary, separated by a blank line.                                       | full (`d7a33164`) | `ddoc.render.summaryDescriptionSections`        |
-| DDC8  | Multiple doc comments applying to the same declaration are concatenated before parsing.                                                                                                     | not started       | engine (parser); `ddoc.dd:168-196` fixture      |
-| DDC9  | A doc comment to the **right** of a declaration documents that declaration (`int b; /// …`).                                                                                                | not started       | engine (parser); `ddoc.dd:168-196` fixture      |
-| DDC10 | A prefix comment and a postfix comment on the same declaration both apply and concatenate (`/** for g */ int g; /// more for g`).                                                           | not started       | engine (parser); `ddoc.dd:168-196` fixture      |
-| DDC11 | A comment consisting only of `ditto` (case-insensitive, trailing whitespace tolerated) reuses the previous declaration's comment at the same scope, including a member-then-class sequence. | partial           | `35-ddoc-ditto`; see caveat below               |
-| DDC12 | Enum members carry their own doc comments and render like any other symbol.                                                                                                                 | not started       | engine (parser); `29-ddoc-sections`             |
-| DDC13 | An empty doc comment is legal; for tooltips it must yield empty `docs`/`tags`, never a crash or a stray heading.                                                                            | not started       | `renderDdocText` early-outs; `29-ddoc-sections` |
-| DDC14 | Destructors, postblits, invariants, static constructors/destructors and `TypeInfo`/`ModuleInfo` get no `-D` output.                                                                         | partial           | divergence, see caveat below                    |
-| DDC15 | A documented `unittest` following a declaration appends its body to that declaration's `Examples:` section; several documented unittests append in order (`ddoc.dd:1273-1297`).             | partial           | `36-ddoc-unittest-examples`; see caveat below   |
+| ID    | Requirement                                                                                                                                                                                 | Status            | Traces to                                                                      |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------ |
+| DDC1  | A `/** … */` comment attached to a declaration is recognized and its body reaches `renderDdoc` via `Dsymbol.comment`.                                                                       | full (`d7a33164`) | all six `ddoc.render.*` tests                                                  |
+| DDC2  | The `/++ … +/` form is equivalent; extra `+`s after the opener are not content. It is the form that allows `/* … */` inside an embedded code block.                                         | not started       | engine (lexer); `29-ddoc-sections`                                             |
+| DDC3  | The `///` one-line form is equivalent, and consecutive `///` lines form one comment.                                                                                                        | not started       | engine (lexer); `29-ddoc-sections`                                             |
+| DDC4  | Extra `*`/`+` on the opener, the closer, and the left margin are stripped, so a `*`-prefixed continuation line contributes only its text (`ddoc.dd:96-137`).                                | not started       | engine (lexer); `33-ddoc-markdown`                                             |
+| DDC5  | The **Summary** is the first paragraph, ending at a blank line or a section name, and is emitted as the first block of `docs`.                                                              | full (`d7a33164`) | `ddoc.render.summaryDescriptionSections`                                       |
+| DDC6  | A blank line **inside an embedded code block** does not end the Summary.                                                                                                                    | not started       | engine (`dmd.doc`); `32-ddoc-fences`                                           |
+| DDC7  | The **Description** is every following paragraph up to the first section name; it joins the `docs` body after the Summary, separated by a blank line.                                       | full (`d7a33164`) | `ddoc.render.summaryDescriptionSections`                                       |
+| DDC8  | Multiple doc comments applying to the same declaration are concatenated before parsing.                                                                                                     | not started       | engine (parser); `ddoc.dd:168-196` fixture                                     |
+| DDC9  | A doc comment to the **right** of a declaration documents that declaration (`int b; /// …`).                                                                                                | not started       | engine (parser); `ddoc.dd:168-196` fixture                                     |
+| DDC10 | A prefix comment and a postfix comment on the same declaration both apply and concatenate (`/** for g */ int g; /// more for g`).                                                           | not started       | engine (parser); `ddoc.dd:168-196` fixture                                     |
+| DDC11 | A comment consisting only of `ditto` (case-insensitive, trailing whitespace tolerated) reuses the previous declaration's comment at the same scope, including a member-then-class sequence. | full              | `visitor.dittoTarget`; `visitor.docForSymbol.dittoInheritsThePrecedingComment` |
+| DDC12 | Enum members carry their own doc comments and render like any other symbol.                                                                                                                 | not started       | engine (parser); `29-ddoc-sections`                                            |
+| DDC13 | An empty doc comment is legal; for tooltips it must yield empty `docs`/`tags`, never a crash or a stray heading.                                                                            | not started       | `renderDdocText` early-outs; `29-ddoc-sections`                                |
+| DDC14 | Destructors, postblits, invariants, static constructors/destructors and `TypeInfo`/`ModuleInfo` get no `-D` output.                                                                         | partial           | divergence, see caveat below                                                   |
+| DDC15 | A documented `unittest` following a declaration appends its body to that declaration's `Examples:` section; several documented unittests append in order (`ddoc.dd:1273-1297`).             | full              | `ddoc.documentedUnittests`; `36-ddoc-unittest-examples`                        |
 
-`DDC11` caveat: ditto resolution lives in `dmd.doc.emitComment` (`doc.d:1396`),
-which the translator does not run — it reads `Dsymbol.comment` directly, so a
-`/// ditto` symbol currently renders the literal word `ditto`. Resolving it
-means walking to the previous documented symbol in the same scope.
+`DDC11` note: ditto resolution lives in `dmd.doc.emitComment` (`doc.d:1396`),
+which the translator does not run — it reads `Dsymbol.comment` directly. It is
+reproduced in `visitor.dittoTarget` by walking the enclosing scope's members
+backwards to the nearest one with a real comment, flattening attribute blocks
+(`private:`), which are scopes for lookup but not for ditto. Phobos feels this
+most: `std.range.iota`'s overloads all hovered as the literal word `Ditto`.
 
 `DDC14` caveat: the suppression also lives in `emitComment`, so a documented
 destructor **does** produce a tip here. That is the right behavior for hovers
 (the user asked about that symbol) and is recorded as an intentional divergence
 rather than a defect.
 
-`DDC15` caveat: the unittest → `Examples:` merge is likewise `emitComment`'s
-job, so documented-unittest bodies do not reach tooltips today; an explicit
-`Examples:` section in the comment itself does render (as a `### Examples`
-heading).
+`DDC15` note: the unittest → `Examples:` merge is likewise `emitComment`'s job.
+`ddoc.documentedUnittests` walks the `ddocUnittest` chain the parser builds and
+appends the section to the comment text, so the ordinary section machinery
+renders it. Two gates apply: the chain is only built under `-unittest` (without
+it the parser skips unittest bodies wholesale), and the body text is only
+captured when `compileEnv.ddocOutput` is set — the lexer's own copy of
+`params.ddoc.doOutput`, which `init_` now sets alongside it.
 
 ## Sections (`DDC16`-`DDC28`)
 

@@ -1,7 +1,5 @@
 module sample;
 // ---cut---
-// NB: `/// ditto` currently reaches the popup as the literal word "ditto"
-// rather than the first declaration's docs — pinned here as-is.
 /// Rounds x toward zero.
 int truncate(double x) => cast(int) x;
 /// ditto

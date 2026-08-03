@@ -1517,6 +1517,85 @@ TipData tipForTemplate(TemplateExp te)
     return TipData(kind, tip);
 }
 
+/// Whether a doc comment is nothing but `ditto` — case-insensitive, with
+/// whitespace either side (`dmd.doc.isDitto`, which is private to that module;
+/// the rule is frozen by `DDC11` and is five lines, so it is restated rather
+/// than patched into the fork).
+private bool isDitto(const(char)* comment) @system
+{
+    import core.stdc.string : strlen;
+    import std.ascii : toLower;
+    import std.string : strip;
+
+    if (comment is null)
+        return false;
+    auto c = comment[0 .. strlen(comment)].strip;
+    if (c.length != 5)
+        return false;
+    foreach (i, ch; c)
+        if (ch.toLower != "ditto"[i])
+            return false;
+    return true;
+}
+
+/**
+The comment a `/// ditto` declaration inherits: the nearest preceding sibling
+with one of its own.
+
+DMD's own resolution is a side effect of generating a documentation file — it
+pushes the symbol onto the last emitted `DocComment` — so nothing about it
+survives into an analysis-only run. Walking the enclosing scope's members
+backwards reproduces it for the one symbol being asked about, which is all a
+hover needs. Attribute blocks (`private:`, `@safe { … }`) are flattened, since
+they are scopes for lookup but not for `ditto`.
+*/
+private const(char)[] dittoTarget(Dsymbol s) @system
+{
+    auto sds = s.parent !is null ? s.parent.isScopeDsymbol() : null;
+    if (sds is null || sds.members is null)
+        return null;
+
+    Dsymbol[] flat;
+    void flatten(Dsymbols* members)
+    {
+        if (members is null)
+            return;
+        foreach (m; *members)
+        {
+            if (m is null)
+                continue;
+            if (auto ad = m.isAttribDeclaration())
+            {
+                flatten(ad.decl);
+                continue;
+            }
+            flat ~= m;
+        }
+    }
+    flatten(sds.members);
+
+    // A templated function is a `TemplateDeclaration` in the member list, so
+    // look for whichever of the two is actually there.
+    auto self = s;
+    if (auto td = s.parent.isTemplateDeclaration())
+        self = td;
+
+    size_t at = size_t.max;
+    foreach (i, m; flat)
+        if (m is self || m is s)
+        {
+            at = i;
+            break;
+        }
+    if (at == size_t.max)
+        return null;
+
+    foreach_reverse (m; flat[0 .. at])
+        if (m.comment !is null && !isDitto(m.comment))
+            return m.comment[0 .. strlen(m.comment)];
+    return null;
+}
+
 /**
 The doc comment that belongs to `var`, following the two indirections that
 separate a symbol from the declaration its documentation was written on
@@ -1564,7 +1643,16 @@ string docForSymbol(Dsymbol var)
     }
 
     static const(char)[] commentOf(Dsymbol s)
-        => s !is null && s.comment ? s.comment[0 .. strlen(s.comment)] : null;
+    {
+        if (s is null || s.comment is null)
+            return null;
+        // `/// ditto` means "the previous declaration's docs". DMD resolves it
+        // in `emitComment` via `sc.lastdc`, which this translator never runs,
+        // so a ditto'd overload used to render the literal word.
+        if (isDitto(s.comment))
+            return dittoTarget(s);
+        return s.comment[0 .. strlen(s.comment)];
+    }
 
     // `onemember` is upstream's guard against handing an arbitrary member its
     // template's docs. It is null whenever the body holds anything else —
@@ -3817,6 +3905,37 @@ version (unittest)
             ~ " pure nothrow @nogc @property @trusted`...");
         checkTip(m, 10, 20, "`string core.cpuid.vendor() pure nothrow @nogc"
             ~ " @property @trusted`...");
+    });
+}
+
+@("visitor.docForSymbol.dittoInheritsThePrecedingComment")
+@system unittest
+{
+    // `DDC11`: `/// ditto` is resolved by `emitComment`'s `sc.lastdc`, which
+    // only runs while generating a documentation file — so every ditto'd
+    // overload used to hover as the literal word "ditto".
+    enum src = q{
+        /// Rounds x toward zero.
+        int truncate(double x) => cast(int) x;       // Line 3
+        /// ditto
+        long truncate(real x) => cast(long) x;       // Line 5
+        /// ditto
+        long truncate(float x) => cast(long) x;      // Line 7
+
+        private:
+        /// In an attribute block.
+        int inner(double x) => cast(int) x;          // Line 11
+        /// ditto
+        int inner(real x) => cast(int) x;            // Line 13
+    };
+
+    withAnalysis(src, (m) {
+        assert(m.tipAt(3, 13).doc == "Rounds `x` toward zero.", m.tipAt(3, 13).doc);
+        assert(m.tipAt(5, 14).doc == "Rounds `x` toward zero.", m.tipAt(5, 14).doc);
+        // A chain of dittos all reach back to the one real comment.
+        assert(m.tipAt(7, 14).doc == "Rounds `x` toward zero.", m.tipAt(7, 14).doc);
+        // `private:` is a scope for lookup but not for ditto.
+        assert(m.tipAt(13, 13).doc == "In an attribute block.", m.tipAt(13, 13).doc);
     });
 }
 

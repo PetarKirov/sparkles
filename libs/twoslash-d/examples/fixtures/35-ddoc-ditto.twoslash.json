@@ -1,12 +1,12 @@
 {
-    "code": "// NB: `/// ditto` currently reaches the popup as the literal word \"ditto\"\n// rather than the first declaration's docs — pinned here as-is.\n/// Rounds x toward zero.\nint truncate(double x) => cast(int) x;\n/// ditto\nlong truncate(real x) => cast(long) x;\n\nint wide(double x) => cast(int) x; /// A postfix doc comment.\n\nauto a = truncate(2.7);\nauto b = truncate(2.7L);\nauto c = wide(2.7);\n",
+    "code": "/// Rounds x toward zero.\nint truncate(double x) => cast(int) x;\n/// ditto\nlong truncate(real x) => cast(long) x;\n\nint wide(double x) => cast(int) x; /// A postfix doc comment.\n\nauto a = truncate(2.7);\nauto b = truncate(2.7L);\nauto c = wide(2.7);\n",
     "language": "d",
     "nodes": [
         {
             "character": 4,
             "docs": "Rounds `x` toward zero.",
             "length": 8,
-            "line": 3,
+            "line": 1,
             "signature": {
                 "abbrevs": [
                     {
@@ -30,31 +30,31 @@
                     }
                 ]
             },
-            "start": 172,
+            "start": 30,
             "text": "int sample.truncate(double x)",
             "type": "hover"
         },
         {
             "character": 20,
             "length": 1,
-            "line": 3,
-            "start": 188,
+            "line": 1,
+            "start": 46,
             "text": "(parameter) double x",
             "type": "hover"
         },
         {
             "character": 36,
             "length": 1,
-            "line": 3,
-            "start": 204,
+            "line": 1,
+            "start": 62,
             "text": "(parameter) double x",
             "type": "hover"
         },
         {
             "character": 5,
-            "docs": "ditto",
+            "docs": "Rounds `x` toward zero.",
             "length": 8,
-            "line": 5,
+            "line": 3,
             "signature": {
                 "abbrevs": [
                     {
@@ -78,23 +78,23 @@
                     }
                 ]
             },
-            "start": 222,
+            "start": 80,
             "text": "long sample.truncate(real x)",
             "type": "hover"
         },
         {
             "character": 19,
             "length": 1,
-            "line": 5,
-            "start": 236,
+            "line": 3,
+            "start": 94,
             "text": "(parameter) real x",
             "type": "hover"
         },
         {
             "character": 36,
             "length": 1,
-            "line": 5,
-            "start": 253,
+            "line": 3,
+            "start": 111,
             "text": "(parameter) real x",
             "type": "hover"
         },
@@ -102,7 +102,7 @@
             "character": 4,
             "docs": "A postfix doc comment.",
             "length": 4,
-            "line": 7,
+            "line": 5,
             "signature": {
                 "abbrevs": [
                     {
@@ -126,31 +126,31 @@
                     }
                 ]
             },
-            "start": 261,
+            "start": 119,
             "text": "int sample.wide(double x)",
             "type": "hover"
         },
         {
             "character": 16,
             "length": 1,
-            "line": 7,
-            "start": 273,
+            "line": 5,
+            "start": 131,
             "text": "(parameter) double x",
             "type": "hover"
         },
         {
             "character": 32,
             "length": 1,
-            "line": 7,
-            "start": 289,
+            "line": 5,
+            "start": 147,
             "text": "(parameter) double x",
             "type": "hover"
         },
         {
             "character": 5,
             "length": 1,
-            "line": 9,
-            "start": 325,
+            "line": 7,
+            "start": 183,
             "text": "(thread local global) int sample.a",
             "type": "hover"
         },
@@ -158,7 +158,7 @@
             "character": 9,
             "docs": "Rounds `x` toward zero.",
             "length": 8,
-            "line": 9,
+            "line": 7,
             "signature": {
                 "abbrevs": [
                     {
@@ -182,7 +182,7 @@
                     }
                 ]
             },
-            "start": 329,
+            "start": 187,
             "text": "int sample.truncate(double x)",
             "type": "hover"
         },
@@ -190,24 +190,24 @@
             "character": 9,
             "docs": "Rounds `x` toward zero.",
             "length": 8,
-            "line": 9,
-            "start": 329,
+            "line": 7,
+            "start": 187,
             "text": "int sample.truncate(double x)",
             "type": "query"
         },
         {
             "character": 5,
             "length": 1,
-            "line": 10,
-            "start": 349,
+            "line": 8,
+            "start": 207,
             "text": "(thread local global) long sample.b",
             "type": "hover"
         },
         {
             "character": 9,
-            "docs": "ditto",
+            "docs": "Rounds `x` toward zero.",
             "length": 8,
-            "line": 10,
+            "line": 8,
             "signature": {
                 "abbrevs": [
                     {
@@ -231,24 +231,24 @@
                     }
                 ]
             },
-            "start": 353,
+            "start": 211,
             "text": "long sample.truncate(real x)",
             "type": "hover"
         },
         {
             "character": 9,
-            "docs": "ditto",
+            "docs": "Rounds `x` toward zero.",
             "length": 8,
-            "line": 10,
-            "start": 353,
+            "line": 8,
+            "start": 211,
             "text": "long sample.truncate(real x)",
             "type": "query"
         },
         {
             "character": 5,
             "length": 1,
-            "line": 11,
-            "start": 374,
+            "line": 9,
+            "start": 232,
             "text": "(thread local global) int sample.c",
             "type": "hover"
         },
@@ -256,7 +256,7 @@
             "character": 9,
             "docs": "A postfix doc comment.",
             "length": 4,
-            "line": 11,
+            "line": 9,
             "signature": {
                 "abbrevs": [
                     {
@@ -280,7 +280,7 @@
                     }
                 ]
             },
-            "start": 378,
+            "start": 236,
             "text": "int sample.wide(double x)",
             "type": "hover"
         },
@@ -288,8 +288,8 @@
             "character": 9,
             "docs": "A postfix doc comment.",
             "length": 4,
-            "line": 11,
-            "start": 378,
+            "line": 9,
+            "start": 236,
             "text": "int sample.wide(double x)",
             "type": "query"
         }
