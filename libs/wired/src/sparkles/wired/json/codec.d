@@ -52,7 +52,7 @@ alias JsonString = SmallBuffer!(char, 256);
 Expected!(JsonString, JsonError) toJSON(T)(const T value)
 {
     JsonString buf;
-    auto r = encodeNative!(JsonWriteOptions.init)(value, buf, 0);
+    auto r = encodeNative!(JsonWriteOptions.init, lexicalLess)(value, buf, 0);
     if (r.failed)
         return err!JsonString(r.error);
     return ok!JsonError(buf);
@@ -95,20 +95,21 @@ Expected!(T, JsonError) readJSONFile(T)(string path)
 
 /// Encodes `value` and writes it to `path` atomically (temp file in the
 /// same directory + rename) with a trailing newline, creating missing
-/// parent directories — without throwing (§4.1). `compact` selects
-/// single-line vs pretty rendering (SPEC §11.4: 2-space indent, `": "`,
-/// LF).
-Expected!(void, JsonError) writeJSONFile(T)(const T value, string path,
-    bool compact = false)
+/// parent directories — without throwing (§4.1). `opts` and `keyLess`
+/// select the on-disk layout at compile time and default to the SPEC
+/// §11.4 pretty form (2-space indent, `": "`, LF, declaration order);
+/// pass `JsonWriteOptions.init` for minified output. Pinning them
+/// explicitly is what keeps a file's diff stable across wired releases.
+Expected!(void, JsonError) writeJSONFile(
+    JsonWriteOptions opts = JsonWriteOptions(pretty: true),
+    alias keyLess = lexicalLess, T)(const T value, string path)
 {
     import std.array : appender;
     import std.file : mkdirRecurse, rename, write;
     import std.path : dirName;
 
     auto buf = appender!string;
-    auto enc = compact
-        ? writeJSON!(JsonWriteOptions.init)(value, buf)
-        : writeJSON!(JsonWriteOptions(pretty: true))(value, buf);
+    auto enc = writeJSON!(opts, keyLess)(value, buf);
     if (enc.hasError)
     {
         auto fe = enc.error;
@@ -279,8 +280,8 @@ import sparkles.wired.json.document : JsonKind, JsonValue;
 import sparkles.wired.json.error : JsonError, JsonStage, kindText,
     parseStageError;
 import sparkles.wired.json.reader : parseJsonDocument;
-import sparkles.wired.json.writer : JsonWriteOptions, newlineIndent,
-    writeJsonString;
+import sparkles.wired.json.writer : JsonWriteOptions, KeyOrder, lexicalLess,
+    newlineIndent, writeJsonString;
 
 /// Decodes JSON text straight into a `T` — parse (arena engine) + native
 /// view walk, no intermediate `JSONValue`. The `JsonError` renders the
@@ -308,11 +309,12 @@ Expected!(T, JsonError) fromJSON(T)(scope JsonValue view)
 /// Streams `value` as JSON into any output range — the primary encode
 /// API (SPEC §11.6): no intermediate document, no GC on the success path
 /// beyond what `T`'s own iteration requires. `opts` selects minified
-/// (default) or pretty rendering at compile time.
+/// (default) or pretty rendering and the key order at compile time;
+/// `keyLess` is the comparator applied wherever keys sort (§11.4).
 Expected!(void, JsonError) writeJSON(JsonWriteOptions opts = JsonWriteOptions.init,
-    T, Writer)(const T value, ref Writer w)
+    alias keyLess = lexicalLess, T, Writer)(const T value, ref Writer w)
 {
-    auto r = encodeNative!opts(value, w, 0);
+    auto r = encodeNative!(opts, keyLess)(value, w, 0);
     if (r.failed)
         return err!void(r.error);
     return ok!JsonError();
@@ -905,7 +907,7 @@ private JsonError encodeError(T)(string reason)
 
 /// The recursive native encode walk (mirrors `encodeImpl`, but streams
 /// tokens instead of building a tree).
-private EncRes encodeNative(JsonWriteOptions opts, T, Writer)(
+private EncRes encodeNative(JsonWriteOptions opts, alias keyLess, T, Writer)(
     const T value, ref Writer w, uint depth)
 {
     import std.range.primitives : put;
@@ -913,10 +915,10 @@ private EncRes encodeNative(JsonWriteOptions opts, T, Writer)(
     alias U = Unqual!T;
 
     static if (is(U == JSONValue))
-        return writeStdJson!opts(value, w, depth);
+        return writeStdJson!(opts, keyLess)(value, w, depth);
 
     else static if (hasConvert!(Json, U))
-        return encodeViaNative!(convertOf!(Json, U), U, opts)(value, w, depth);
+        return encodeViaNative!(convertOf!(Json, U), U, opts, keyLess)(value, w, depth);
 
     else static if (is(U == bool))
     {
@@ -982,8 +984,8 @@ private EncRes encodeNative(JsonWriteOptions opts, T, Writer)(
                 if (i)
                     put(w, ',');
                 static if (opts.pretty)
-                    newlineIndent(w, depth + 1);
-                auto r = encodeNative!opts(e, w, depth + 1);
+                    newlineIndent!opts(w, depth + 1);
+                auto r = encodeNative!(opts, keyLess)(e, w, depth + 1);
                 if (r.failed)
                 {
                     r.error.prependIndex(i);
@@ -991,14 +993,14 @@ private EncRes encodeNative(JsonWriteOptions opts, T, Writer)(
                 }
             }
             static if (opts.pretty)
-                newlineIndent(w, depth);
+                newlineIndent!opts(w, depth);
             put(w, ']');
             return encOk();
         }
     }
 
     else static if (is(U == V[K], V, K))
-        return encodeAANative!opts(value, w, depth);
+        return encodeAANative!(opts, keyLess)(value, w, depth);
 
     else static if (is(U == Nullable!N, N))
     {
@@ -1007,7 +1009,7 @@ private EncRes encodeNative(JsonWriteOptions opts, T, Writer)(
             put(w, "null");
             return encOk();
         }
-        return encodeNative!opts(value.get, w, depth);
+        return encodeNative!(opts, keyLess)(value.get, w, depth);
     }
 
     else static if (is(U == Optional!N, N))
@@ -1017,7 +1019,7 @@ private EncRes encodeNative(JsonWriteOptions opts, T, Writer)(
             put(w, "null");
             return encOk();
         }
-        return encodeNative!opts(value.front, w, depth);
+        return encodeNative!(opts, keyLess)(value.front, w, depth);
     }
 
     else static if (is(U == Ternary))
@@ -1034,10 +1036,10 @@ private EncRes encodeNative(JsonWriteOptions opts, T, Writer)(
     }
 
     else static if (isSumType!U)
-        return value.match!(v => encodeNative!opts(v, w, depth));
+        return value.match!(v => encodeNative!(opts, keyLess)(v, w, depth));
 
     else static if (is(U == struct))
-        return encodeStructNative!opts(value, w, depth);
+        return encodeStructNative!(opts, keyLess)(value, w, depth);
 
     else
         static assert(false, "wired: unsupported type for writeJSON: " ~ T.stringof);
@@ -1049,7 +1051,7 @@ if (is(E == enum))
 {
     static if (repr == Repr.value)
         // Scalar payload: depth and pretty layout cannot apply.
-        return encodeNative!(JsonWriteOptions.init)(
+        return encodeNative!(JsonWriteOptions.init, lexicalLess)(
             cast(OriginalType!E) value, w, 0);
     else
     {
@@ -1064,20 +1066,42 @@ if (is(E == enum))
     }
 }
 
-/// Struct fields stream in declaration order (SPEC §11.6), skip policies
-/// applied inline exactly as in the tree-building walk.
-private EncRes encodeStructNative(JsonWriteOptions opts, T, Writer)(
+/// The field emission order of `T` under `opts`: declaration order, or a
+/// permutation sorted by wire key under `keyLess`. Resolved entirely at
+/// compile time, so `KeyOrder.sorted` costs nothing at run time and the
+/// walk stays `@nogc`.
+private template fieldOrder(JsonWriteOptions opts, alias keyLess, T)
+{
+    static immutable size_t[] fieldOrder = () {
+        import std.algorithm.sorting : sort;
+
+        alias policies = fieldPolicies!(Json, T);
+        auto idx = new size_t[](policies.length);
+        foreach (i, ref e; idx)
+            e = i;
+        static if (opts.keyOrder == KeyOrder.sorted)
+            idx.sort!((x, y) => keyLess(policies[x].key, policies[y].key));
+        return idx;
+    }();
+}
+
+/// Struct fields stream in declaration order, or sorted by wire key under
+/// `opts.keyOrder` (SPEC §11.6); skip policies are applied inline exactly
+/// as in the tree-building walk.
+private EncRes encodeStructNative(JsonWriteOptions opts, alias keyLess, T, Writer)(
     const T value, ref Writer w, uint depth)
 if (is(T == struct))
 {
     import std.range.primitives : put;
 
     alias policies = fieldPolicies!(Json, T);
+    alias order = fieldOrder!(opts, keyLess, T);
 
     put(w, '{');
     bool first = true;
-    static foreach (i; 0 .. policies.length)
+    static foreach (j; 0 .. policies.length)
     {{
+        enum i = order[j];
         alias V = typeof(T.tupleof[i]);
 
         static if (policies[i].skip == WireSkip.never)
@@ -1093,7 +1117,7 @@ if (is(T == struct))
                 put(w, ',');
             first = false;
             static if (opts.pretty)
-                newlineIndent(w, depth + 1);
+                newlineIndent!opts(w, depth + 1);
             writeJsonString(w, policies[i].key);
             static if (opts.pretty)
                 put(w, ": ");
@@ -1101,7 +1125,7 @@ if (is(T == struct))
                 put(w, ':');
 
             static if (policies[i].hasConvert)
-                auto r = encodeViaNative!(convertOf!(Json, T.tupleof[i]), V, opts)(
+                auto r = encodeViaNative!(convertOf!(Json, T.tupleof[i]), V, opts, keyLess)(
                     value.tupleof[i], w, depth + 1);
             else static if (is(V == enum))
                 auto r = encodeEnumNative!(V,
@@ -1114,7 +1138,7 @@ if (is(T == struct))
                     policies[i].caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(
                     value.tupleof[i], w);
             else
-                auto r = encodeNative!opts(value.tupleof[i], w, depth + 1);
+                auto r = encodeNative!(opts, keyLess)(value.tupleof[i], w, depth + 1);
 
             if (r.failed)
             {
@@ -1126,7 +1150,7 @@ if (is(T == struct))
     static if (opts.pretty)
     {
         if (!first) // any member emitted
-            newlineIndent(w, depth);
+            newlineIndent!opts(w, depth);
     }
     put(w, '}');
     return encOk();
@@ -1155,22 +1179,22 @@ if (is(E == enum))
 }
 
 private EncRes encodeViaNative(alias Conv, V,
-    JsonWriteOptions opts, Writer)(const V value, ref Writer w, uint depth)
+    JsonWriteOptions opts, alias keyLess, Writer)(const V value, ref Writer w, uint depth)
 {
     auto wire = Conv.to(value);
     static if (isExpectedLike!(typeof(wire)))
     {
         if (wire.hasError)
             return EncRes(true, encodeError!V(wire.error.msg));
-        return encodeNative!opts(wire.value, w, depth);
+        return encodeNative!(opts, keyLess)(wire.value, w, depth);
     }
     else
-        return encodeNative!opts(wire, w, depth);
+        return encodeNative!(opts, keyLess)(wire, w, depth);
 }
 
 /// Associative arrays stream with lexicographically sorted keys
 /// (SPEC §11.6 — deterministic output independent of hash order).
-private EncRes encodeAANative(JsonWriteOptions opts, T, Writer)(
+private EncRes encodeAANative(JsonWriteOptions opts, alias keyLess, T, Writer)(
     const T value, ref Writer w, uint depth)
 if (is(T == V[K], V, K))
 {
@@ -1189,7 +1213,7 @@ if (is(T == V[K], V, K))
     pairs.reserve(value.length);
     foreach (k, ref const _; value)
         pairs ~= Pair(aaKeyText(k), k);
-    pairs.sort!((a, b) => a.text < b.text);
+    pairs.sort!((a, b) => keyLess(a.text, b.text));
 
     if (pairs.length == 0)
     {
@@ -1202,13 +1226,13 @@ if (is(T == V[K], V, K))
         if (i)
             put(w, ',');
         static if (opts.pretty)
-            newlineIndent(w, depth + 1);
+            newlineIndent!opts(w, depth + 1);
         writeJsonString(w, p.text);
         static if (opts.pretty)
             put(w, ": ");
         else
             put(w, ':');
-        auto r = encodeNative!opts(value[p.key], w, depth + 1);
+        auto r = encodeNative!(opts, keyLess)(value[p.key], w, depth + 1);
         if (r.failed)
         {
             r.error.prependKey(p.text);
@@ -1216,14 +1240,14 @@ if (is(T == V[K], V, K))
         }
     }
     static if (opts.pretty)
-        newlineIndent(w, depth);
+        newlineIndent!opts(w, depth);
     put(w, '}');
     return encOk();
 }
 
 /// Streams a passed-through `JSONValue` (§4.2). Object keys sort; a NaN
 /// or infinity inside is an encode error (resolves O3 strictly).
-private EncRes writeStdJson(JsonWriteOptions opts, Writer)(
+private EncRes writeStdJson(JsonWriteOptions opts, alias keyLess, Writer)(
     const JSONValue v, ref Writer w, uint depth)
 {
     import std.algorithm.sorting : sort;
@@ -1275,8 +1299,8 @@ private EncRes writeStdJson(JsonWriteOptions opts, Writer)(
                 if (i)
                     put(w, ',');
                 static if (opts.pretty)
-                    newlineIndent(w, depth + 1);
-                auto r = writeStdJson!opts(e, w, depth + 1);
+                    newlineIndent!opts(w, depth + 1);
+                auto r = writeStdJson!(opts, keyLess)(e, w, depth + 1);
                 if (r.failed)
                 {
                     r.error.prependIndex(i);
@@ -1284,7 +1308,7 @@ private EncRes writeStdJson(JsonWriteOptions opts, Writer)(
                 }
             }
             static if (opts.pretty)
-                newlineIndent(w, depth);
+                newlineIndent!opts(w, depth);
             put(w, ']');
             return encOk();
         }
@@ -1295,7 +1319,7 @@ private EncRes writeStdJson(JsonWriteOptions opts, Writer)(
             keys.reserve(obj.length);
             foreach (k, ref const _; obj)
                 keys ~= k;
-            keys.sort();
+            keys.sort!((x, y) => keyLess(x, y));
             if (keys.length == 0)
             {
                 put(w, "{}");
@@ -1307,13 +1331,13 @@ private EncRes writeStdJson(JsonWriteOptions opts, Writer)(
                 if (i)
                     put(w, ',');
                 static if (opts.pretty)
-                    newlineIndent(w, depth + 1);
+                    newlineIndent!opts(w, depth + 1);
                 writeJsonString(w, k);
                 static if (opts.pretty)
                     put(w, ": ");
                 else
                     put(w, ':');
-                auto r = writeStdJson!opts(obj[k], w, depth + 1);
+                auto r = writeStdJson!(opts, keyLess)(obj[k], w, depth + 1);
                 if (r.failed)
                 {
                     r.error.prependKey(k);
@@ -1321,7 +1345,7 @@ private EncRes writeStdJson(JsonWriteOptions opts, Writer)(
                 }
             }
             static if (opts.pretty)
-                newlineIndent(w, depth);
+                newlineIndent!opts(w, depth);
             put(w, '}');
             return encOk();
         }
@@ -1536,6 +1560,87 @@ version (unittest)
     assert(fromJSON!(string[Priority])(jsonText(byVal)).value == byVal);
 }
 
+version (unittest)
+{
+    /// `writeJSON` text under an explicit layout (asserts the encode succeeded).
+    private string layoutText(JsonWriteOptions opts, alias less = lexicalLess, T)(
+        const T value)
+    {
+        import std.array : appender;
+
+        auto buf = appender!string;
+        auto r = writeJSON!(opts, less)(value, buf);
+        assert(!r.hasError);
+        return buf[];
+    }
+
+    /// By length, then lexically — distinguishable from both lexical order
+    /// and its reverse.
+    private bool byLengthThenLexical(scope const(char)[] a, scope const(char)[] b)
+        @safe pure nothrow @nogc
+        => a.length == b.length ? a < b : a.length < b.length;
+}
+
+@("wired.json.keyOrder.structFields")
+@safe unittest
+{
+    static struct Rec
+    {
+        int zebra;
+        int alpha;
+        @WireName!Json("mid") int middle;
+    }
+
+    enum rec = Rec(1, 2, 3);
+    enum sorted = JsonWriteOptions(keyOrder: KeyOrder.sorted);
+
+    // Default: declaration order (SPEC §11.6).
+    assert(layoutText!(JsonWriteOptions.init)(rec)
+        == `{"zebra":1,"alpha":2,"mid":3}`);
+
+    // Sorted by the *wire* key, so the @WireName rename sorts as "mid".
+    assert(layoutText!sorted(rec) == `{"alpha":2,"mid":3,"zebra":1}`);
+
+    // The comparator drives it, and the permutation is compile-time only.
+    assert(layoutText!(sorted, byLengthThenLexical)(rec)
+        == `{"mid":3,"alpha":2,"zebra":1}`);
+
+    // Both orders decode back to the same value.
+    assert(fromJSON!Rec(layoutText!sorted(rec)).value == rec);
+
+    // Sorting reaches nested aggregates and composes with pretty layout.
+    static struct Outer { Rec inner; int a; }
+    enum pretty = JsonWriteOptions(pretty: true, indent: "    ",
+        keyOrder: KeyOrder.sorted);
+    assert(layoutText!pretty(Outer(rec, 9))
+        == "{\n    \"a\": 9,\n    \"inner\": {\n        \"alpha\": 2,\n"
+        ~ "        \"mid\": 3,\n        \"zebra\": 1\n    }\n}");
+}
+
+@("wired.json.keyOrder.comparatorReachesEveryPosition")
+@system unittest
+{
+    import std.json : parseJSON;
+
+    // Associative arrays and JSONValue objects have no inherent order, so
+    // they sort under *every* keyOrder — but always through `keyLess`.
+    auto aa = ["ccc": 1, "a": 2, "bb": 3];
+    assert(layoutText!(JsonWriteOptions.init)(aa) == `{"a":2,"bb":3,"ccc":1}`);
+    assert(layoutText!(JsonWriteOptions.init, byLengthThenLexical)(aa)
+        == `{"a":2,"bb":3,"ccc":1}`);
+
+    auto aa2 = ["zz": 1, "y": 2];
+    assert(layoutText!(JsonWriteOptions.init)(aa2) == `{"y":2,"zz":1}`);
+    assert(layoutText!(JsonWriteOptions.init, byLengthThenLexical)(aa2)
+        == `{"y":2,"zz":1}`);
+
+    // The JSONValue passthrough honors the comparator too.
+    auto v = parseJSON(`{"zz":1,"y":2,"xxx":3}`);
+    assert(layoutText!(JsonWriteOptions.init)(v) == `{"xxx":3,"y":2,"zz":1}`);
+    assert(layoutText!(JsonWriteOptions.init, byLengthThenLexical)(v)
+        == `{"y":2,"zz":1,"xxx":3}`);
+}
+
 @("wired.json.wireConvert")
 @safe unittest
 {
@@ -1629,7 +1734,7 @@ version (unittest)
     assert(r.hasValue && r.value == Cfg("localhost", 8080));
 
     // Compact form is single-line.
-    assert(!writeJSONFile(Cfg("h", 1), path, true).hasError);
+    assert(!writeJSONFile!(JsonWriteOptions.init)(Cfg("h", 1), path).hasError);
     assert(readText(path) == "{\"host\":\"h\",\"port\":1}\n");
 
     // Missing file → read-stage error naming the file.
