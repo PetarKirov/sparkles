@@ -1,22 +1,22 @@
 {
-    "code": "// NB: a GFM table does not survive the translator (delimiter row dropped,\n// body rows blank-line separated), so this stops at the constructs below.\n/++\n# Retry policy\n\nRetries happen on:\n\n- connection resets\n- *transient* DNS failures\n\nEscalate to **operations** after three attempts, per the\n[backoff guide](https://dlang.org).\n+/\nenum maxAttempts = 3;\n",
+    "code": "/++\n# Retry policy\n\nRetries happen on:\n\n- connection resets\n- *transient* DNS failures\n\nEscalate to **operations** after three attempts, per the\n[backoff guide](https://dlang.org).\n\nThe backoff schedule, in order:\n\n1. wait one second\n2. wait four seconds\n    - jittered, so a fleet does not retry in lockstep\n3. give up\n\n| Attempt | Delay | Outcome |\n| :------ | ----: | :-----: |\n| first | 1s | retry |\n| second | 4s | retry |\n| third | — | fail |\n+/\nenum maxAttempts = 3;\n",
     "language": "d",
     "nodes": [
         {
             "character": 5,
-            "docs": "# Retry policy\n\nRetries happen on:\n\n- connection resets\n- *transient* DNS failures\n\nEscalate to **operations** after three attempts, per the\n[backoff guide](https://dlang.org).",
+            "docs": "# Retry policy\n\nRetries happen on:\n\n- connection resets\n- *transient* DNS failures\n\nEscalate to **operations** after three attempts, per the\n[backoff guide](https://dlang.org).\n\nThe backoff schedule, in order:\n\n1. wait one second\n2. wait four seconds\n    - jittered, so a fleet does not retry in lockstep\n3. give up\n\n| Attempt | Delay | Outcome |\n| :--- | ---: | :---: |\n| first | 1s | retry |\n| second | 4s | retry |\n| third | — | fail |",
             "length": 11,
-            "line": 13,
-            "start": 339,
+            "line": 24,
+            "start": 459,
             "text": "(constant) int sample.maxAttempts = 3",
             "type": "hover"
         },
         {
             "character": 5,
-            "docs": "# Retry policy\n\nRetries happen on:\n\n- connection resets\n- *transient* DNS failures\n\nEscalate to **operations** after three attempts, per the\n[backoff guide](https://dlang.org).",
+            "docs": "# Retry policy\n\nRetries happen on:\n\n- connection resets\n- *transient* DNS failures\n\nEscalate to **operations** after three attempts, per the\n[backoff guide](https://dlang.org).\n\nThe backoff schedule, in order:\n\n1. wait one second\n2. wait four seconds\n    - jittered, so a fleet does not retry in lockstep\n3. give up\n\n| Attempt | Delay | Outcome |\n| :--- | ---: | :---: |\n| first | 1s | retry |\n| second | 4s | retry |\n| third | — | fail |",
             "length": 11,
-            "line": 13,
-            "start": 339,
+            "line": 24,
+            "start": 459,
             "text": "(constant) int sample.maxAttempts = 3",
             "type": "query"
         }

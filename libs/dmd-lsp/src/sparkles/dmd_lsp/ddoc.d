@@ -59,6 +59,22 @@ private enum char idSep = '\x02';
 private enum char pathOpen = '\x05';
 private enum char pathClose = '\x06';
 
+/// List framing the `UL`/`OL`/`OL_START` macros emit, so `renumberLists` can
+/// tell an ordered item from an unordered one: `LI` is shared between both and
+/// a macro cannot see its parent. Each marker sits on a line of its own;
+/// `olOpen`'s line carries the start index. Both kinds close with `listClose`.
+private enum char ulOpen = '\x0E';
+private enum char olOpen = '\x0F';
+private enum char listClose = '\x11';
+
+/// Table framing: each header cell records its column's alignment between
+/// `alignOpen`/`alignClose`. That both marks the row as a header — the
+/// delimiter row CommonMark requires is absent from DDoc's output, and
+/// dlang.org's `BOOKTABLE` has no `THEAD` to hang it off — and says whether
+/// the column wanted `:-`, `-:` or `:-:`.
+private enum char alignOpen = '\x13';
+private enum char alignClose = '\x14';
+
 /**
 Renders `sym`'s doc comment. `sc` may be null — a global scope for the
 symbol's module is created on demand (analysis must have run; call inside a
@@ -353,17 +369,28 @@ private void defineMacros(ref MacroTable t) @safe pure nothrow
     t.define("SYMBOL_LINK", "[$+]($1)");
 
     // --- lists / tables: emit markdown line-wise
-    t.define("UL", "\n$0\n");
-    t.define("OL", "\n$0\n");
-    t.define("OL_START", "\n$2\n");
+    //
+    // `LI` is shared by both list kinds, so the framing macros bracket their
+    // items and `renumberLists` rewrites the marker afterwards. `OL_START`
+    // carries the author's start index as `$1` (`ddoc.dd`'s `$(OL_START n,…)`).
+    t.define("UL", "\n" ~ ulOpen ~ "\n$0\n" ~ listClose ~ "\n");
+    t.define("OL", "\n" ~ olOpen ~ "1\n$0\n" ~ listClose ~ "\n");
+    t.define("OL_START", "\n" ~ olOpen ~ "$1\n$+\n" ~ listClose ~ "\n");
     t.define("LI", "- $0\n");
     t.define("TABLE", "\n$0\n");
-    t.define("THEAD", "$0");
+    // The engine puts no newline between `$(THEAD …)` and `$(TBODY …)`, and
+    // `TR` no longer supplies one, so the header row would run into the first
+    // body row.
+    t.define("THEAD", "$0\n");
     t.define("TBODY", "$0");
-    t.define("TR", "|$0\n");
-    t.define("TH", " $0 |");
+    // No trailing newline: the engine already separates rows, and a second one
+    // makes every row its own paragraph, which ends the table at row one.
+    t.define("TR", "|$0");
+    // Every header cell records an alignment, `-` meaning none, so the
+    // delimiter row can be built positionally.
+    t.define("TH", " $0 |" ~ alignOpen ~ "-" ~ alignClose);
     t.define("TD", " $0 |");
-    t.define("TH_ALIGN", " $+ |");
+    t.define("TH_ALIGN", " $+ |" ~ alignOpen ~ "$1" ~ alignClose);
     t.define("TD_ALIGN", " $+ |");
     // dlang.org's no-wrap cells, used by every Phobos module summary table.
     t.define("TDNW", " $0 |");
@@ -443,28 +470,9 @@ private string cleanupMarkdown(string s) @safe pure
     import std.string : stripLeft, stripRight;
 
     s = joinModulePaths(stripSentinels(s));
-    auto lines = s.splitter('\n').map!(l => l.stripRight("\r").stripRight).array;
+    auto lines = reflowListsAndTables(
+        s.splitter('\n').map!(l => l.stripRight("\r").stripRight.idup).array);
 
-    // DDoc has no indented-code convention — its code blocks are `---`
-    // sections, which reach here already fenced — so the leading whitespace on
-    // a continuation line is the author indenting under `/**`, purely
-    // cosmetic. CommonMark disagrees: four of those spaces after a blank line
-    // is an indented code block, which is how `core.time.dur`'s third
-    // paragraph turned into an empty box in the tooltip and its text vanished.
-    // Strip it, but never inside a fence, where indentation is the code's own.
-    {
-        bool inFence = false;
-        foreach (ref l; lines)
-        {
-            if (l.stripLeft.startsWith("```"))
-            {
-                inFence = !inFence;
-                continue;
-            }
-            if (!inFence)
-                l = l.stripLeft;
-        }
-    }
     // Fold runs of blank lines; drop the blank between consecutive list
     // items (the LI macro's newlines would render every list loose) and the
     // blank a code-block macro leaves before its closing fence.
@@ -475,15 +483,241 @@ private string cleanupMarkdown(string s) @safe pure
         const blank = l.length == 0;
         if (blank && prevBlank)
             continue;
-        if (blank && i + 1 < lines.length && folded.length
-            && folded[$ - 1].startsWith("- ") && lines[i + 1].startsWith("- "))
-            continue;
+        // Keep a list tight. The next line is often another blank (a nested
+        // list's framing left two), so look past them — otherwise every
+        // numbered list renders loose, one paragraph per item.
+        if (blank && folded.length && isListItem(folded[$ - 1]))
+        {
+            size_t j = i + 1;
+            while (j < lines.length && lines[j].length == 0)
+                ++j;
+            if (j < lines.length && isListItem(lines[j]))
+                continue;
+        }
         if (blank && i + 1 < lines.length && lines[i + 1].startsWith("```"))
             continue;
         folded ~= l;
         prevBlank = blank;
     }
     return folded.join("\n");
+}
+
+/// `n` levels of list indentation. Four spaces per level clears the content
+/// column of every marker DDoc can produce, so a nested list nests.
+private string indentOf(size_t n) @safe pure nothrow
+{
+    static immutable string spaces = "                                ";
+    const w = n * 4;
+    if (w <= spaces.length)
+        return spaces[0 .. w];
+    auto pad = new char[](w);
+    pad[] = ' ';
+    return () @trusted { return cast(string) pad; }();
+}
+
+/// Whether a line opens a list item — `- ` or `12. `. The blank-line fold uses
+/// it to keep a list tight; without the ordered form every numbered list
+/// rendered loose, one paragraph per item.
+private bool isListItem(scope const(char)[] line) @safe pure nothrow @nogc
+{
+    import std.ascii : isDigit;
+
+    size_t i = 0;
+    while (i < line.length && line[i] == ' ')
+        ++i;
+    if (i + 1 < line.length && line[i] == '-' && line[i + 1] == ' ')
+        return true;
+    const start = i;
+    while (i < line.length && line[i].isDigit)
+        ++i;
+    return i > start && i + 1 < line.length && line[i] == '.' && line[i + 1] == ' ';
+}
+
+/**
+Turns the list/table framing the macro table emits into real CommonMark.
+
+Two things DDoc's own output cannot express. `LI` serves both list kinds, so
+every item arrives as `- ` and an ordered list loses its numbers; the framing
+macros bracket their items and the numbers are put back here, honouring the
+author's start index and nesting (a bullet list inside a numbered one stays
+bulleted). And a DDoc table has no delimiter row at all — without one
+CommonMark reads the rows as a paragraph full of pipes — so each header cell
+records its column's alignment and the row is built from those.
+*/
+private string[] reflowListsAndTables(string[] lines) @safe pure
+{
+    import std.algorithm.searching : endsWith, startsWith;
+    import std.string : stripLeft;
+
+    static struct Frame { bool ordered; int next; }
+
+    Frame[] stack;
+    string[] out_;
+    bool inFence = false;
+
+    foreach (line; lines)
+    {
+        if (line.length && line[0] == ulOpen)
+        {
+            stack ~= Frame(false, 0);
+            continue;
+        }
+        if (line.length && line[0] == olOpen)
+        {
+            stack ~= Frame(true, startIndex(line[1 .. $]));
+            continue;
+        }
+        if (line.length && line[0] == listClose)
+        {
+            if (stack.length)
+                stack = stack[0 .. $ - 1];
+            continue;
+        }
+        // Indentation is decided here, where the list nesting is known.
+        // DDoc has no indented-code convention — its code blocks are `---`
+        // sections, which reach here already fenced — so leading whitespace
+        // outside a list is the author indenting under `/**`, purely
+        // cosmetic. CommonMark disagrees: four such spaces after a blank line
+        // is an indented code block, which is how `core.time.dur`'s third
+        // paragraph turned into an empty box with its text gone.
+        if (line.stripLeft.startsWith("```"))
+        {
+            inFence = !inFence;
+            out_ ~= line;
+            continue;
+        }
+        if (inFence)
+        {
+            out_ ~= line; // the code's own indentation, not the author's
+            continue;
+        }
+
+        auto body_ = line.stripLeft;
+        if (!body_.length)
+        {
+            out_ ~= line;
+            continue;
+        }
+        if (stack.length == 0)
+        {
+            out_ ~= body_;
+            continue;
+        }
+
+        // Inside a list, indentation *is* structure: an item sits at its
+        // depth, and anything else belongs to the item above it. Four spaces
+        // per level clears the content column of both `- ` and `12. `.
+        const depth = stack.length - 1;
+        if (body_.startsWith("- "))
+        {
+            if (stack[$ - 1].ordered)
+            {
+                import std.conv : text;
+
+                body_ = text(stack[$ - 1].next) ~ ". " ~ body_[2 .. $];
+                stack[$ - 1].next++;
+            }
+            out_ ~= indentOf(depth) ~ body_;
+        }
+        else
+            out_ ~= indentOf(depth + 1) ~ body_;
+    }
+
+    // A row carrying alignment markers is a header row: CommonMark needs a
+    // delimiter under it or the table is a paragraph full of pipes, and DDoc
+    // emits no such line (nor does dlang.org's `BOOKTABLE`, which has no
+    // `THEAD` to hang one off). Take the delimiter now, while the markers are
+    // still there, and let it ride along with its header.
+    auto delims = new string[](out_.length);
+    foreach (i, ref o; out_)
+    {
+        delims[i] = delimiterRow(o);
+        o = stripAlignMarks(o);
+    }
+
+    // A GFM row is one line, but a `BOOKTABLE` cell routinely holds a stack of
+    // `$(D …)` names on separate lines — Phobos module summaries are all like
+    // this. Fold a row's continuations back into it, stopping at a blank line
+    // so a stray leading `|` cannot swallow the rest of the doc.
+    string[] rows;
+    for (size_t i = 0; i < out_.length; i++)
+    {
+        auto l = out_[i];
+        const delim = delims[i];
+        if (l.startsWith("|") && !l.endsWith("|"))
+            while (i + 1 < out_.length && out_[i + 1].length)
+            {
+                l ~= " " ~ out_[i + 1];
+                ++i;
+                if (out_[i].endsWith("|"))
+                    break;
+            }
+        rows ~= l;
+        if (delim.length)
+            rows ~= delim;
+    }
+    out_ = rows;
+    return out_;
+}
+
+/// The `$(OL_START n, …)` index, defaulting to 1 for anything unparseable —
+/// a list that starts at the wrong number still reads; one that throws does not.
+private int startIndex(scope const(char)[] digits) @safe pure nothrow
+{
+    int n = 0;
+    foreach (c; digits)
+    {
+        if (c < '0' || c > '9')
+            return n > 0 ? n : 1;
+        n = n * 10 + (c - '0');
+    }
+    return n > 0 ? n : 1;
+}
+
+/// The delimiter row for a header row, one cell per recorded alignment.
+/// Empty when the row carries no markers — then it was never a table header.
+private string delimiterRow(scope const(char)[] header) @safe pure
+{
+    string row;
+    for (size_t i = 0; i < header.length; i++)
+    {
+        if (header[i] != alignOpen)
+            continue;
+        const start = i + 1;
+        size_t end = start;
+        while (end < header.length && header[end] != alignClose)
+            ++end;
+        if (end >= header.length)
+            break;
+        const a = header[start .. end];
+        row ~= a == "left" ? "| :--- "
+            : a == "right" ? "| ---: "
+            : a == "center" ? "| :---: "
+            : "| --- ";
+        i = end;
+    }
+    return row.length ? row ~ "|" : null;
+}
+
+/// Drops the alignment markers a header row carries, leaving the cell text.
+private string stripAlignMarks(string line) @safe pure
+{
+    import std.algorithm.searching : canFind;
+
+    if (!line.canFind(alignOpen))
+        return line;
+    string o;
+    for (size_t i = 0; i < line.length; i++)
+    {
+        if (line[i] == alignOpen)
+        {
+            while (i < line.length && line[i] != alignClose)
+                ++i;
+            continue;
+        }
+        o ~= line[i];
+    }
+    return o;
 }
 
 /// Removes the macro expander's 0xFF escape sentinels — each 0xFF and the
@@ -651,6 +885,44 @@ version (unittest)
         });
         return tip;
     }
+}
+
+@("ddoc.render.tablesGetTheirDelimiterRow")
+@system unittest
+{
+    // DDoc's own table output has no delimiter row, and CommonMark without one
+    // reads the whole thing as a paragraph full of pipes. The alignment DDoc
+    // recorded per column has to survive with it.
+    const tip = tipIn("/**\n"
+        ~ "| L | C | R |\n"
+        ~ "| :- | :-: | -: |\n"
+        ~ "| a | b | c |\n"
+        ~ "| d | e | f |\n"
+        ~ "*/\n"
+        ~ "int k;\n", 8, 5);
+    assert(tip.doc == "| L | C | R |\n"
+        ~ "| :--- | :---: | ---: |\n"
+        ~ "| a | b | c |\n"
+        ~ "| d | e | f |", tip.doc);
+}
+
+@("ddoc.render.orderedListsKeepTheirNumbers")
+@system unittest
+{
+    // `LI` serves both list kinds, so every item arrives as `- `; the numbers
+    // are put back from the list framing, including the author's start index.
+    // A bullet list nested in a numbered one stays bulleted.
+    const tip = tipIn("/**\n"
+        ~ "3. third\n"
+        ~ "4. fourth\n"
+        ~ "\n"
+        ~ "1. outer\n"
+        ~ "    - inner\n"
+        ~ "2. second\n"
+        ~ "*/\n"
+        ~ "int k;\n", 10, 5);
+    assert(tip.doc == "3. third\n4. fourth\n\n"
+        ~ "1. outer\n    - inner\n2. second", tip.doc);
 }
 
 @("ddoc.render.summaryDescriptionSections")
