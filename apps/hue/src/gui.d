@@ -139,8 +139,11 @@ private enum RgbColor hardFallbackFg = RgbColor(0xcd, 0xd6, 0xf4);
 private enum RgbColor hardFallbackBg = RgbColor(0x1e, 0x1e, 0x2e);
 
 /// Translucent overlays for search matches: all matches, and the current one.
-private enum Color matchTint = Color(255, 215, 0, 70);
-private enum Color currentMatchTint = Color(255, 145, 0, 130);
+/// A translucent overlay colour: RGB plus its own alpha, so the constants
+/// below need no backend type (`UIA7`).
+private struct Tint { RgbColor rgb; ubyte alpha; }
+private enum Tint matchTint = Tint(RgbColor(255, 215, 0), 70);
+private enum Tint currentMatchTint = Tint(RgbColor(255, 145, 0), 130);
 
 /// The interactive input mode (M4): normal keys, or typing a search / goto line.
 private enum Mode
@@ -1900,6 +1903,12 @@ int runGui(
 
 
         BeginDrawing();
+        // The chrome fills below go through the backend adapter, not raylib
+        // (UIA7). Pixel-space because hue's chrome is pixel-positioned — a
+        // 1 px divider, a `cellH - 1` band — and quantising to cells would
+        // move it. Chrome that can become a widget should (UIA2); this is the
+        // seam for what has not yet.
+        auto chrome = RaylibCanvas(&fonts, &buf, cellW, cellH);
         // GL scissor state is global; a scissor leaked from any earlier path
         // (or left over across the buffer swap) would CLIP the clear below —
         // exactly the "documents ghost over each other" failure. Start every
@@ -1914,14 +1923,14 @@ int runGui(
             // Panes own their background: an explicit fill over the document
             // region every frame, so its pixels never depend on the clear
             // alone (the tree pane and header fill their own rects).
-            DrawRectangle(treePx(), 0, screenW - treePx(), screenH, rl(vm.pageBg));
+            chrome.fillPixels(treePx(), 0, screenW - treePx(), screenH, vm.pageBg);
         }
 
         // The gutter strip (the fold column + line numbers) sits on its own
         // theme-derived band, visually distinct from the document.
         if (!flashDebug)
-            DrawRectangle(treePx(), docY0, gutterPx - treePx(),
-                screenH - docY0, rl(vm.gutterBg));
+            chrome.fillPixels(treePx(), docY0, gutterPx - treePx(),
+                screenH - docY0, vm.gutterBg);
 
         // The document pane's header — the SHARED chrome (headerBar +
         // Slot.chromeFocused + bold title), same look as the TUI's.
@@ -2004,9 +2013,9 @@ int runGui(
         {
             if (screenRow < 0 || screenRow >= docRows || xEndCol <= xStartCol)
                 return;
-            DrawRectangle(gutterPx + xStartCol * cellW,
+            chrome.fillPixels(gutterPx + xStartCol * cellW,
                 cast(int)(docY0 + screenRow * cellH),
-                (xEndCol - xStartCol) * cellW, cellH, alpha(vm.quoteBars[1], 80));
+                (xEndCol - xStartCol) * cellW, cellH, vm.quoteBars[1], 80);
         }
         // Tint a source byte range on the widget path: the toolkit derives the
         // char-precise rects (document cell coordinates) once for any backend.
@@ -2053,9 +2062,10 @@ int runGui(
                     const row = r.y - vm.top;
                     if (row < 0 || row >= docRows)
                         continue;
-                    DrawRectangle(gutterPx + r.x * cellW,
+                    const t = i == vm.curMatch ? currentMatchTint : matchTint;
+                    chrome.fillPixels(gutterPx + r.x * cellW,
                         cast(int)(docY0 + row * cellH), r.width * cellW, cellH,
-                        i == vm.curMatch ? currentMatchTint : matchTint);
+                        t.rgb, t.alpha);
                 }
 
         // Twoslash hover: pointer → byte (the identity channel) → hover node;
@@ -2131,10 +2141,9 @@ int runGui(
                     const uv = resolveSlot(
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
                         Slot.hoverUnderline, vm.pageFg, vm.pageBg);
-                    const uc = Color(uv.fg.r, uv.fg.g, uv.fg.b,
-                        cast(ubyte)(fade.alphaPercent(fadeCfg) * 255 / 100));
+                    const ua = cast(ubyte)(fade.alphaPercent(fadeCfg) * 255 / 100);
                     for (int i = 0; i + 2 <= hw; i += 4)
-                        DrawRectangle(hx + i, uy, 2, 1, uc);
+                        chrome.fillPixels(hx + i, uy, 2, 1, uv.fg, ua);
                     // Room from the anchor to the document pane's right edge,
                     // in cells — the popup is capped to it and, failing that,
                     // slid left inside it.
@@ -2169,10 +2178,8 @@ int runGui(
             tree.height = visibleRows - treeTopRows - 1; // − the header row
             tree.width = treeCols; // the shared overflow check uses it
             tree.scrollBy(0); // bounds only — never yank the view to the cursor
-            DrawRectangle(0, 0, treeCols * cellW, screenH,
-                rl(mix(vm.pageBg, vm.pageFg, 0.03)));
-            DrawRectangle(treeCols * cellW + cellW / 2, 0, 1, screenH,
-                rl(vm.gutterFg));
+            chrome.fillPixels(0, 0, treeCols * cellW, screenH, mix(vm.pageBg, vm.pageFg, 0.03));
+            chrome.fillPixels(treeCols * cellW + cellW / 2, 0, 1, screenH, vm.gutterFg);
 
             // The explorer pane's header — the shared chrome, focused when
             // the tree holds the input focus.
@@ -2228,8 +2235,7 @@ int runGui(
             if (tree.searching)
             {
                 const barY = screenH - cellH;
-                DrawRectangle(0, barY, treeCols * cellW, cellH,
-                    rl(vm.gutterFg));
+                chrome.fillPixels(0, barY, treeCols * cellW, cellH, vm.gutterFg);
                 buf.clear();
                 buf ~= "/";
                 buf ~= tree.filterQuery;
@@ -2274,8 +2280,8 @@ int runGui(
         // vm.top row so scrolled content passes under it.
         if (set !is null && !set.empty && loadDoc !is null)
         {
-            DrawRectangle(0, 0, screenW, cellH, rl(mix(vm.pageBg, vm.pageFg, 0.12)));
-            DrawRectangle(0, cellH - 1, screenW, 1, rl(vm.gutterFg));
+            chrome.fillPixels(0, 0, screenW, cellH, mix(vm.pageBg, vm.pageFg, 0.12));
+            chrome.fillPixels(0, cellH - 1, screenW, 1, vm.gutterFg);
             const left = vm.summary.length ? vm.title ~ "  " ~ vm.summary : vm.title;
             drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0, TextStyle(0), rl(vm.pageFg));
             const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next   i index");
@@ -2290,7 +2296,7 @@ int runGui(
         // untappable.
         version (Android)
         {
-            DrawRectangle(0, toolbarY - 1, screenW, 1, rl(vm.gutterFg));
+            chrome.fillPixels(0, toolbarY - 1, screenW, 1, vm.gutterFg);
             auto barOps = buildDisplayList(barTree, barFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
             auto barCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
@@ -2303,7 +2309,7 @@ int runGui(
         if (inputMode)
         {
             const barY = screenH - cellH;
-            DrawRectangle(0, barY, screenW, cellH, rl(vm.gutterFg));
+            chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
             auto lineText = mode == Mode.search
                 ? text("/", query[], "   ", vm.matches.length, " vm.matches")
                 : text(":", query[]);
@@ -2314,7 +2320,7 @@ int runGui(
         {
             toast = toast.stepped(frameMs(), toastCfg);
             const barY = screenH - cellH;
-            DrawRectangle(0, barY, screenW, cellH, rl(vm.gutterFg));
+            chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
             drawText(fonts, cstrOf(buf, copyModeMsg), 4, cast(float) barY, TextStyle(0), rl(vm.pageBg));
         }
 
@@ -2361,8 +2367,6 @@ private size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
 }
 
 /// An RGB triple as a raylib color with an explicit alpha (for overlays).
-private Color alpha(RgbColor c, ubyte a) pure nothrow @nogc @trusted
-    => Color(c.r, c.g, c.b, a);
 
 /// The floating hover popup, built from the shared `viewHoverPopup` widget view
 /// (surface panel + docs + `@param` chips — the same chrome as the TUI/HTML) and
