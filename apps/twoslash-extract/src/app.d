@@ -387,9 +387,11 @@ private int writePayload(P)(in CliParams cli, string samplePath, string outPath,
 /// `--verify` (`EXT3`): the payload on disk must match a fresh extraction.
 private int verifyPayload(P)(in CliParams cli, string samplePath, string outPath, P payload)
 {
+    import std.array : appender;
     import std.file : exists, readText;
 
-    import sparkles.wired.json : toJSON;
+    import sparkles.twoslash_d.emit : declareDPayload, twoslashPayloadLayout;
+    import sparkles.wired.json : writeJSON;
 
     if (!outPath.exists)
     {
@@ -397,19 +399,22 @@ private int verifyPayload(P)(in CliParams cli, string samplePath, string outPath
         return 1;
     }
 
-    auto fresh = toJSON(payload);
-    if (fresh.hasError)
+    // Compare the *bytes*, through the same layout `writeTwoslashFile` uses.
+    // This used to compare parsed documents on the grounds that only the tree
+    // was the contract — which is precisely why a wired default-layout change
+    // silently reformatted every fixture (`e630631d`) without failing. Now the
+    // layout is pinned, so the text is the contract too.
+    declareDPayload(payload);
+    auto fresh = appender!string;
+    auto enc = writeJSON!twoslashPayloadLayout(payload, fresh);
+    if (enc.hasError)
     {
-        stderr.writeln("error: ", samplePath, ": ", fresh.error.toString());
+        stderr.writeln("error: ", samplePath, ": ", enc.error.toString());
         return 1;
     }
+    fresh ~= '\n'; // writeJSONFile's trailing newline
 
-    import std.json : parseJSON;
-
-    // Compare as parsed documents, not as text: wired writes the payload
-    // through `writeJSONFile`, and only the tree is the contract.
-    const onDisk = parseJSON(readText(outPath));
-    if (onDisk != parseJSON(fresh.value[]))
+    if (readText(outPath) != fresh[])
     {
         stderr.writeln("error: ", outPath,
             ": payload drift — re-run twoslash-extract to regenerate");
