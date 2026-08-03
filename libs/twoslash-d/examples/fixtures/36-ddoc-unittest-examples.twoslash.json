@@ -1,10 +1,10 @@
 {
-    "code": "/++\nReturns the larger of two ints.\nReturns: a when it is at least b.\n+/\nint larger(int a, int b) => a >= b ? a : b;\n\n/// The documented-unittest form: this example belongs to `larger`.\nunittest\n{\n    assert(larger(2, 3) == 3);\n}\n\nauto top = larger(10, 20);\n",
+    "code": "/++\nReturns the larger of two ints.\nReturns: a when it is at least b.\n+/\nint larger(int a, int b) => a >= b ? a : b;\n\n/// The documented-unittest form: this example belongs to `larger`.\nunittest\n{\n    assert(larger(2, 3) == 3);\n}\n\n/// ditto\nunittest\n{\n    // A second example needs no second write-up — that is what the idiom is\n    // for, so the word `ditto` must not reach the popup as prose.\n    assert(larger(-1, -5) == -1);\n}\n\nauto top = larger(10, 20);\n",
     "language": "d",
     "nodes": [
         {
             "character": 4,
-            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d\nassert(larger(2, 3) == 3);\n```\n",
+            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d unittest\nassert(larger(2, 3) == 3);\n```\n\n```d unittest\n// A second example needs no second write-up — that is what the idiom is\n// for, so the word `ditto` must not reach the popup as prose.\nassert(larger(-1, -5) == -1);\n```\n",
             "length": 6,
             "line": 4,
             "signature": {
@@ -93,7 +93,7 @@
         },
         {
             "character": 11,
-            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d\nassert(larger(2, 3) == 3);\n```\n",
+            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d unittest\nassert(larger(2, 3) == 3);\n```\n\n```d unittest\n// A second example needs no second write-up — that is what the idiom is\n// for, so the word `ditto` must not reach the popup as prose.\nassert(larger(-1, -5) == -1);\n```\n",
             "length": 6,
             "line": 9,
             "signature": {
@@ -133,26 +133,10 @@
             "type": "hover"
         },
         {
-            "character": 5,
-            "length": 3,
-            "line": 12,
-            "start": 236,
-            "text": "(thread local global) int sample.top",
-            "type": "hover"
-        },
-        {
-            "character": 5,
-            "length": 3,
-            "line": 12,
-            "start": 236,
-            "text": "(thread local global) int sample.top",
-            "type": "query"
-        },
-        {
             "character": 11,
-            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d\nassert(larger(2, 3) == 3);\n```\n",
+            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d unittest\nassert(larger(2, 3) == 3);\n```\n\n```d unittest\n// A second example needs no second write-up — that is what the idiom is\n// for, so the word `ditto` must not reach the popup as prose.\nassert(larger(-1, -5) == -1);\n```\n",
             "length": 6,
-            "line": 12,
+            "line": 17,
             "signature": {
                 "abbrevs": [
                     {
@@ -179,7 +163,64 @@
                     }
                 ]
             },
-            "start": 242,
+            "start": 409,
+            "tags": [
+                [
+                    "returns",
+                    "`a` when it is at least `b`."
+                ]
+            ],
+            "text": "int sample.larger(int a, int b)",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "length": 3,
+            "line": 20,
+            "start": 440,
+            "text": "(thread local global) int sample.top",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "length": 3,
+            "line": 20,
+            "start": 440,
+            "text": "(thread local global) int sample.top",
+            "type": "query"
+        },
+        {
+            "character": 11,
+            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d unittest\nassert(larger(2, 3) == 3);\n```\n\n```d unittest\n// A second example needs no second write-up — that is what the idiom is\n// for, so the word `ditto` must not reach the popup as prose.\nassert(larger(-1, -5) == -1);\n```\n",
+            "length": 6,
+            "line": 20,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 18
+                    },
+                    {
+                        "offset": 25
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 30,
+                        "open": 17
+                    }
+                ]
+            },
+            "start": 446,
             "tags": [
                 [
                     "returns",
@@ -191,10 +232,10 @@
         },
         {
             "character": 11,
-            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d\nassert(larger(2, 3) == 3);\n```\n",
+            "docs": "Returns the `larger` of two ints.\n\n### Examples\n\nThe documented-unittest form: this example belongs to ``larger``.\n\n```d unittest\nassert(larger(2, 3) == 3);\n```\n\n```d unittest\n// A second example needs no second write-up — that is what the idiom is\n// for, so the word `ditto` must not reach the popup as prose.\nassert(larger(-1, -5) == -1);\n```\n",
             "length": 6,
-            "line": 12,
-            "start": 242,
+            "line": 20,
+            "start": 446,
             "tags": [
                 [
                     "returns",

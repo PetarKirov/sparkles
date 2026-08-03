@@ -76,10 +76,18 @@ rather than a defect.
 `DDC15` note: the unittest → `Examples:` merge is likewise `emitComment`'s job.
 `ddoc.documentedUnittests` walks the `ddocUnittest` chain the parser builds and
 appends the section to the comment text, so the ordinary section machinery
-renders it. Two gates apply: the chain is only built under `-unittest` (without
-it the parser skips unittest bodies wholesale), and the body text is only
-captured when `compileEnv.ddocOutput` is set — the lexer's own copy of
-`params.ddoc.doOutput`, which `init_` now sets alongside it.
+renders it. Each body is emitted as a fence labelled `unittest`, which the
+markdown view's header band shows — the example is executable, not
+illustrative. A `/// ditto` unittest contributes another such fence and no
+prose: the idiom exists so a second example needs no second write-up.
+
+Three gates apply. The chain is only built under `-unittest` (without it the
+parser skips unittest bodies wholesale); the body text is only captured when
+`compileEnv.ddocOutput` is set — the lexer's own copy of `params.ddoc.doOutput`,
+which `init_` now sets alongside it; and the parser attaches unittests **only in
+the root module** (`parse.d`'s `doUnittests && mod.isRoot()`, a codegen-culling
+guard), so an imported symbol — every Phobos hover — still shows no examples.
+Lifting that needs a fork change and is not done here.
 
 ## Sections (`DDC16`-`DDC28`)
 

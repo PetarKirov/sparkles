@@ -249,9 +249,21 @@ private struct TwoslashTui
                 ? signatureSpans(*cache, tw.effectiveLanguage,
                     (() @trusted => &theme)(), pageFg,
                     withoutQuickinfoPrefix(tw.nodes[ni].text)) : null;
-            auto tree = viewHoverPopup(tw, ni,
-                HoverViewOptions(maxWidth: effectivePopupWidth(pal, avail),
-                    sigSpans: sig, nodeKey: ni + 1));
+            // The registry overload renders the ddoc as markdown; without it
+            // the popup shows headings and fence markers as literal text.
+            import sparkles.syntax.md.render_widgets : highlightedFenceRenderer,
+                MdViewTheme;
+
+            auto opts = HoverViewOptions(
+                maxWidth: effectivePopupWidth(pal, avail),
+                sigSpans: sig, nodeKey: ni + 1,
+                mdTheme: MdViewTheme.derive(theme, pageFg, pageBg),
+                fenceRenderer: cache !is null
+                    ? highlightedFenceRenderer(cache,
+                        (() @trusted => &theme)(), pageFg) : null);
+            auto tree = cache !is null
+                ? viewHoverPopup(tw, ni, cache.registry, opts)
+                : viewHoverPopup(tw, ni, opts);
             auto frames = layout(tree);
             paintTree(grid, tree,
                 clampOrigin(anchor, frames[tree.root].rect.width, grid.cols),

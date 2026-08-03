@@ -43,6 +43,7 @@ import sparkles.twoslash.protocol : Completion, Effects, Node, NodeType,
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
 
+import sparkles.syntax.md.render_widgets : MdViewTheme;
 import sparkles.syntax.md.model : extractMarkdown, MdBlock, MdBlockKind, MdDoc,
     MdInline, MdInlineKind, Span;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -453,6 +454,17 @@ struct HoverViewOptions
     /// Identity base for the expandable regions, so a click can name one.
     /// Distinct per popup; see `abbrevKey`.
     size_t nodeKey;
+
+    /// Markdown chrome for the docs section: the document view's resolved
+    /// colours and the fence-body highlighter. Without them a popup's ddoc
+    /// renders as raw markdown — `### Examples` and the fence markers as
+    /// literal text — while the same document renders it properly one pane
+    /// over. Absent (`theme.present == false`) keeps the plain look.
+    MdViewTheme mdTheme;
+
+    /// ditto
+    TextSpan[][] delegate(const(char)[] infoLang, const(char)[] body_) @safe
+        fenceRenderer;
 }
 
 /// The key a collapsible region carries as its `Widget.key`, unique across the
@@ -527,7 +539,7 @@ in (nodeIndex < tw.nodes.length)
     const hit = hitOf(nodeIndex);
     const inner = popupInterior(opts.maxWidth);
     uint[] docsRows = node.docs.length
-        ? markdownDocsRows(b, registry, node.docs, hit, inner) : null;
+        ? markdownDocsRows(b, registry, node.docs, hit, inner, opts) : null;
     uint[] tagRows;
     foreach (ref const string[] tag; node.tags)
         tagRows ~= buildPopupTagMd(b, registry, tag, hit, inner);
@@ -816,7 +828,8 @@ private uint popupSection(ref Builder b, uint[] rows, bool divider)
 /// Renders `docs` (JSDoc markdown) into wrapped, inline-styled widget rows via the
 /// `sparkles:syntax` `MdDoc` model. Empty parse (no grammar) ⇒ plain-line fallback.
 private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
-    const(char)[] docs, size_t hit, int maxWidth) @system
+    const(char)[] docs, size_t hit, int maxWidth,
+    HoverViewOptions opts = HoverViewOptions.init) @system
 {
     import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
 
@@ -831,7 +844,8 @@ private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
         ? maxWidth : M.docsMaxWidth;
     return [viewMarkdownInto(b, doc, MdViewOptions(
         maxWidth: docsWidth, hitId: hit,
-        baseStyle: docsBase(), proseSlot: Slot.docs))];
+        baseStyle: docsBase(), proseSlot: Slot.docs,
+        theme: opts.mdTheme, fenceRenderer: opts.fenceRenderer))];
 }
 /// Docs fallback (no markdown grammar): the raw text split on newlines into rows,
 /// so a `\n` reads as a line break instead of a tofu glyph.
@@ -927,8 +941,10 @@ private uint buildPopupTagMd(ref Builder b, ref GrammarRegistry registry,
     {
         import sparkles.syntax.md.render_widgets : inlinesToSpans, pushProse;
 
+        // The gap belongs to the row, not to the text: a leading space span is
+        // the first thing greedy wrapping drops, which ran `@returns` straight
+        // into its value.
         TextSpan[] spans;
-        spans ~= TextSpan(" ", Slot.docs, docsBase()); // gap after the chip
         MdDoc doc = extractMarkdown(registry, tag[1]);
         if (doc.root.children.length)
             foreach (ref const blk; doc.root.children)
@@ -948,7 +964,7 @@ private uint buildPopupTagMd(ref Builder b, ref GrammarRegistry registry,
             wrap: width.max > 0 ? TextWrap.greedy : TextWrap.none,
             decoration: Decoration(borderRadius: M.popupRadius)));
     }
-    return b.container(WidgetKind.row, parts, gap: 0);
+    return b.container(WidgetKind.row, parts, gap: 1);
 }
 
 /// `"^" * n` from a small static pool (avoids per-node allocation for the common
