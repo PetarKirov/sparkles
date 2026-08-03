@@ -82,6 +82,7 @@ import sparkles.ui.state : CaptureState, hoverTargets, HoverState, keyAt,
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : drawScrollbar, namedKey, RaylibCanvas, ScrollbarAnim,
+    traceLogTo, Window, WindowRequest,
     scrollbarLayout, toRaylibCursor;
 
 // Live D types (`PRJ12`-`PRJ16`): the `twoslash-extract --serve` oracle beside
@@ -269,21 +270,19 @@ int runGui(
     // opens anything, so its init chatter obeys hue's log level instead of
     // writing to stderr. Its default LOG_INFO threshold still gates what it
     // hands us; everything bridged lands at trace level (silent by default).
-    SetTraceLogCallback(&raylibTraceLog);
+    traceLogTo(&raylibTraceLog);
 
     // Android: 0×0 = the native surface resolution (a non-zero size is NOT
     // ignored there — raylib letterboxes it onto the screen); the surface is
     // the app, so no resizable state and no cell-sizing either.
+    // 0×0 on Android = the native surface resolution; the surface IS the app,
+    // so it is neither sized nor resizable there.
     version (Android)
-        InitWindow(0, 0, ("hue — " ~ title).toStringz);
+        auto window = Window.open(WindowRequest(
+            title: "hue — " ~ title, width: 0, height: 0, resizable: false));
     else
-        InitWindow(800, 600, ("hue — " ~ title).toStringz);
-    scope (exit) CloseWindow();
-    version (Android) {}
-    else
-        SetWindowState(ConfigFlags.FLAG_WINDOW_RESIZABLE);
-    SetTargetFPS(60);
-    SetExitKey(KeyboardKey.KEY_NULL); // arrow/close-button handling only (M3 adds keys)
+        auto window = Window.open(WindowRequest(
+            title: "hue — " ~ title, width: 800, height: 600));
 
     // LoadFontEx uploads a GPU texture, so the FontSet must load after InitWindow.
     // `fontName` may be a path, a family, or a fontconfig preference list.
@@ -329,7 +328,7 @@ int runGui(
     // the window to the loaded cell metrics.
     version (Android) {}
     else if (windowWidth > 0 && windowHeight > 0)
-        SetWindowSize(windowWidth * fonts.cellW(), windowHeight * fonts.cellH());
+        window.resize(windowWidth * fonts.cellW(), windowHeight * fonts.cellH());
 
     // The viewer's Whole (PRN1 / the C1 diagnosis): one value owns the
     // document, its theme-resolved colors, the widget pipeline, folding,
@@ -384,7 +383,7 @@ int runGui(
     int widthCols()
     {
         const cw = fonts.cellW();
-        const w = (GetScreenWidth() - cw - scrollbarGutter() - gutterCols() * cw
+        const w = (window.width - cw - scrollbarGutter() - gutterCols() * cw
             - treePx()) / cw;
         return w < 8 ? 8 : w;
     }
@@ -435,7 +434,7 @@ int runGui(
     {
         vm.widthCols = widthCols();
         vm.applyTheme(i);
-        SetWindowTitle(text("hue — ", title, " — ", names[i],
+        window.title(text("hue — ", title, " — ", names[i],
             " (", i + 1, "/", names.length, ")").toStringz);
         // The explorer pane follows the theme too — page colors and the
         // palette its slots resolve against, not just the syntax colors.
@@ -532,7 +531,7 @@ int runGui(
             doc.twoslash, doc.lang);
         query.clear();
         mode = Mode.normal;
-        SetWindowTitle(("hue — " ~ name).toStringz);
+        window.title(("hue — " ~ name).toStringz);
         tree.reveal(path); // the explorer follows the open document (XPL3/4)
         startLive(path, vm.tw.code.length != 0);
         return true;
@@ -684,7 +683,7 @@ int runGui(
                 warning(i"copy: JNI clipboard bridge failed");
         }
         else
-            SetClipboardText(text.toStringz);
+            window.clipboard(text.toStringz);
     }
 
     // Copy the current selection: a text range → `vm.source[min..max]`
@@ -854,7 +853,7 @@ int runGui(
         bool selectStartPressed() => IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT);
     }
 
-    while (!WindowShouldClose())
+    while (!window.shouldClose())
     {
         // Live D types (`PRJ12`/`PRJ14`): drain the oracle's non-blocking
         // output. The lazy payload attaches to the open document (every hover
@@ -882,8 +881,8 @@ int runGui(
 
         const cellW = fonts.cellW();
         const cellH = fonts.cellH();
-        const screenW = GetScreenWidth();
-        const screenH = GetScreenHeight();
+        const screenW = window.width;
+        const screenH = window.height;
         const visibleRows = screenH / cellH;
         // With a set header bar, BOTH panes start under it (nothing hides
         // beneath the bar any more); the panes are docRows tall.
@@ -976,7 +975,7 @@ int runGui(
                 touch.pointer(0, IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT),
                     PointF(tp.x, tp.y));
             }
-            touch.tick(GetFrameTime() * 1000);
+            touch.tick(window.frameSeconds * 1000);
 
             touchTap = false;
             touchLongPress = false;
@@ -1101,27 +1100,11 @@ int runGui(
         // screen size changes.
         if (IsKeyPressed(KeyboardKey.KEY_F11))
         {
-            if (!isFullscreen)
-            {
-                const wp = GetWindowPosition();
-                savedX = cast(int) wp.x;
-                savedY = cast(int) wp.y;
-                savedW = GetScreenWidth();
-                savedH = GetScreenHeight();
-                const mon = GetCurrentMonitor();
-                const mp = GetMonitorPosition(mon);
-                SetWindowState(ConfigFlags.FLAG_WINDOW_UNDECORATED);
-                SetWindowPosition(cast(int) mp.x, cast(int) mp.y);
-                SetWindowSize(GetMonitorWidth(mon), GetMonitorHeight(mon));
-                isFullscreen = true;
-            }
-            else
-            {
-                ClearWindowState(ConfigFlags.FLAG_WINDOW_UNDECORATED);
-                SetWindowSize(savedW, savedH);
-                SetWindowPosition(savedX, savedY);
-                isFullscreen = false;
-            }
+            // The window owns the manoeuvre AND the saved geometry, and is a
+            // no-op where the target has no fullscreen concept — which is what
+            // stops this running on Android, where the surface is already the
+            // screen and the dance had nothing to act on.
+            window.toggleFullscreen();
         }
 
         if (treeFocused && tree.searching)
@@ -1554,7 +1537,7 @@ int runGui(
             else
                 docSb = docSb.hoveredNow(false).released();
             sbAnim.step(docSb.expanded(caps) ? hoverW : idleW,
-                GetFrameTime());
+                window.frameSeconds);
         }
 
         // The tree pane's scrollbar — the SAME hover-expand behavior as the
@@ -1592,7 +1575,7 @@ int runGui(
             tree.top = treeVSb.offset;
             tree.scrollBy(0); // clamp
             treeSbAnim.step(treeVSb.expanded(caps) ? hoverW : idleW,
-                GetFrameTime());
+                window.frameSeconds);
         }
         else
             treeVSb = treeVSb.hoveredNow(false).released();
@@ -1603,7 +1586,7 @@ int runGui(
         // orientation, else the default arrow.
         // The ONE shared decision (IXB4), mapped to the window cursor —
         // the TUI writes the identical result as OSC 22.
-        SetMouseCursor(toRaylibCursor(wantedPointerShape(split, divZone,
+        window.pointerShape((wantedPointerShape(split, divZone,
             vm.hsb, tree.hsb, docSb, treeVSb)));
 
         vm.top = vm.top < 0 ? 0 : (vm.top > maxTop ? maxTop : vm.top);
@@ -1766,7 +1749,7 @@ int runGui(
                     && mp.y < screenH - bottomChromeH;
                 vm.hsb = vm.hsb.hoveredNow(live && (over || vm.hsb.dragging));
                 docHAnim.step(vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2,
-                    GetFrameTime());
+                    window.frameSeconds);
                 if (over && capture.available(capDocHSb) && clickPressed())
                 {
                     vm.hsb = vm.hsb.pressed(
@@ -1798,7 +1781,7 @@ int runGui(
             tree.hsb = tree.hsb.hoveredNow(
                 hLive && (overHBar || tree.hsb.dragging));
             treeHAnim.step(tree.hsb.expanded(caps) ? hHoverH : hIdleH,
-                GetFrameTime());
+                window.frameSeconds);
             if (overHBar && capture.available(capTreeHSb) && clickPressed())
             {
                 tree.hsb = tree.hsb.pressed(cast(int)(mp.x / cellW),
@@ -1902,7 +1885,7 @@ int runGui(
         }
 
 
-        BeginDrawing();
+        window.beginFrame();
         // The chrome fills below go through the backend adapter, not raylib
         // (UIA7). Pixel-space because hue's chrome is pixel-positioned — a
         // 1 px divider, a `cellH - 1` band — and quantising to cells would
@@ -1913,13 +1896,13 @@ int runGui(
         // (or left over across the buffer swap) would CLIP the clear below —
         // exactly the "documents ghost over each other" failure. Start every
         // frame from a clean state so the clear always covers the window.
-        EndScissorMode();
+        window.resetClip();
         if (flashDebug)
-            ClearBackground((frame / 30) % 2 == 0
-                ? Color(70, 20, 20, 255) : Color(20, 20, 70, 255));
+            window.clear((frame / 30) % 2 == 0
+                ? RgbColor(70, 20, 20) : RgbColor(20, 20, 70));
         else
         {
-            ClearBackground(rl(vm.pageBg));
+            window.clear(vm.pageBg);
             // Panes own their background: an explicit fill over the document
             // region every frame, so its pixels never depend on the clear
             // alone (the tree pane and header fill their own rects).
@@ -2006,7 +1989,7 @@ int runGui(
             }
         }
 
-        copiedFlash = copiedFlash.stepped(frameMs(), copiedCfg);
+        copiedFlash = copiedFlash.stepped(frameMs(window.frameSeconds), copiedCfg);
         // Selection highlight — a translucent tint. `tintRow` takes content columns
         // (0 = the content origin, i.e. after `gutterPx`).
         void tintRow(long screenRow, int xStartCol, int xEndCol)
@@ -2118,7 +2101,7 @@ int runGui(
                 if (!fade.visible)
                     fade = Timeline.triggered(fadeCfg);
                 fade = forced ? Timeline(Timeline.Phase.hold, 0)
-                    : fade.stepped(frameMs(), fadeCfg);
+                    : fade.stepped(frameMs(window.frameSeconds), fadeCfg);
             }
             havePopup = false;
             if (hotNode != 0)
@@ -2318,14 +2301,14 @@ int runGui(
         // Copy-mode toast (when not typing): flashes the mode after a 'y'/'t' toggle.
         else if (toast.visible)
         {
-            toast = toast.stepped(frameMs(), toastCfg);
+            toast = toast.stepped(frameMs(window.frameSeconds), toastCfg);
             const barY = screenH - cellH;
             chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
             drawText(fonts, cstrOf(buf, copyModeMsg), 4, cast(float) barY, TextStyle(0), rl(vm.pageBg));
         }
 
-        EndScissorMode(); // never let a scissor survive the frame
-        EndDrawing();
+        window.resetClip(); // never let a scissor survive the frame
+        window.endFrame();
 
         // On-demand atlas growth: drawText requests any covered-but-unrasterized
         // codepoints (emoji, CJK, higher-plane icons) as it draws; grow the atlas
@@ -2340,7 +2323,7 @@ int runGui(
             // framebuffer swap lags the draw, so an early TakeScreenshot grabs a
             // black frame. ~20 frames is reliably past both.
             if (frame == shotFrame)
-                TakeScreenshot(shotPath.toStringz);
+                window.screenshot(shotPath.toStringz);
             if (frame >= shotFrame + 1)
                 break;
         }
@@ -2505,8 +2488,11 @@ private enum copiedCfg = Timeline.Config(holdMs: 1200);
 private enum toastCfg = Timeline.Config(holdMs: 1600);
 private enum fadeCfg = Timeline.Config(fadeInMs: 300, holdUntilDismissed: true);
 
-/// This frame's duration in Timeline milliseconds.
-private int frameMs() @system => cast(int)(GetFrameTime() * 1000);
+/// A frame duration in Timeline milliseconds. Takes the seconds rather than
+/// reading a clock, so it stays a pure conversion and the window stays the one
+/// thing that knows how long a frame took.
+private int frameMs(float seconds) @safe pure nothrow @nogc
+    => cast(int)(seconds * 1000);
 
 /// Decimal digit count (at least 1, for 0).
 private int digitCount(size_t n) pure nothrow @nogc @safe
