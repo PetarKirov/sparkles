@@ -5,9 +5,9 @@
       "version": "1.3.1"
     },
     "dmd": {
-      "version": "75cc02845a556547f74d2a5381037bb7c0ac9a59",
+      "version": "ea88375142644d2dc7755089357acdfdd69c6620",
       "repository": "https://github.com/PetarKirov/dmd.git",
-      "sha256": "150f85k4ss4qglhqz73syhr3yv7jf6z97y5lvvwbl4m54vgc7221"
+      "sha256": "152aj2bhz2k4xfp9qpnjcnmbrcafl8vzirny7r7gagzsr4b6d5jp"
     },
     "expected": {
       "version": "0.4.1",

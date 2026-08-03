@@ -179,7 +179,7 @@
         },
         {
             "character": 19,
-            "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call ``map`!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.",
+            "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call ``map`!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.\n\n### Examples\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.range : chain, only;\nauto squares =\n    chain(only(1, 2, 3, 4), only(5, 6)).map!(a => a * a);\nassert(equal(squares, only(1, 4, 9, 16, 25, 36)));\n```\n\nMultiple functions can be passed to ``map``. In that case, the\nelement type of ``map`` is a tuple containing one element for each\nfunction.\n\n```d unittest\nauto sums = [2, 4, 6, 8];\nauto products = [1, 4, 9, 16];\n\nsize_t i = 0;\nforeach (result; [ 1, 2, 3, 4 ].map!(\"a + a\", \"a * a\"))\n{\n    assert(result[0] == sums[i]);\n    assert(result[1] == products[i]);\n    ++i;\n}\n```\n\nYou may alias ``map`` with some function(s) to a symbol and use\nit separately:\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.conv : to;\n\nalias stringize = map!(to!string);\nassert(equal(stringize([ 1, 2, 3, 4 ]), [ \"1\", \"2\", \"3\", \"4\" ]));\n```\n",
             "length": 3,
             "line": 2,
             "signature": {
