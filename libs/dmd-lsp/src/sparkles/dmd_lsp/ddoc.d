@@ -76,6 +76,48 @@ private enum char alignOpen = '\x13';
 private enum char alignClose = '\x14';
 
 /**
+The `Examples:` section a symbol's documented unittests contribute (`DDC15`).
+
+The parser hangs each `/// …` unittest off the declaration above it and keeps
+its body text; the merge into an `Examples:` section is `emitComment`'s job,
+which only runs while writing a documentation file, so tooltips never saw
+them. Appending the section to the comment text lets the ordinary section
+machinery render it — heading, prose and fenced code alike.
+
+Requires `-unittest`: without it the parser skips unittest bodies wholesale,
+so there is nothing to attach. Private ones are omitted, as upstream does.
+*/
+private string documentedUnittests(Dsymbol sym) @system
+{
+    import core.stdc.string : strlen;
+    import std.string : strip;
+
+    import dmd.dsymbol : Visibility;
+    import dmd.func : UnitTestDeclaration;
+
+    if (sym is null)
+        return null;
+
+    string body_;
+    for (UnitTestDeclaration utd = sym.ddocUnittest; utd !is null; utd = utd.ddocUnittest)
+    {
+        if (utd.visibility.kind == Visibility.Kind.private_
+            || utd.comment is null || utd.fbody is null)
+            continue;
+        const prose = utd.comment[0 .. strlen(utd.comment)].strip;
+        if (prose.length)
+            body_ ~= "\n" ~ prose ~ "\n";
+        if (utd.codedoc !is null)
+        {
+            const code = utd.codedoc[0 .. strlen(utd.codedoc)].strip;
+            if (code.length)
+                body_ ~= "\n----\n" ~ code ~ "\n----\n";
+        }
+    }
+    return body_.length ? "\n\nExamples:\n" ~ body_ : null;
+}
+
+/**
 Renders `sym`'s doc comment. `sc` may be null — a global scope for the
 symbol's module is created on demand (analysis must have run; call inside a
 live `Analyzer` session only).
@@ -99,6 +141,8 @@ DdocRendered renderDdocText(string comment, Dsymbol sym, Scope* sc = null) @syst
 
     if (!comment.length || sym is null)
         return DdocRendered.init;
+
+    comment ~= documentedUnittests(sym);
 
     if (sc is null)
     {

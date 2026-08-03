@@ -1,7 +1,6 @@
 module sample;
 // @dflags: -unittest
 // ---cut---
-// NB: a documented unittest is *not* surfaced as an Examples section here.
 /++
 Returns the larger of two ints.
 Returns: a when it is at least b.

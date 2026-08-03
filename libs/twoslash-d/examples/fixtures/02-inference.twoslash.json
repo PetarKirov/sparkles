@@ -82,7 +82,7 @@
         },
         {
             "character": 11,
-            "docs": "Ditto",
+            "docs": "Creates a range of values that span the given starting and stopping\nvalues.\n\n### Example\n\n```d\nvoid main()\n{\n    import std.stdio;\n\n    // The following groups all produce the same output of:\n    // 0 1 2 3 4\n\n    foreach (i; 0 .. 5)\n        writef(\"%s \", i);\n    writeln();\n\n    import std.range : iota;\n    foreach (i; iota(0, 5))\n        writef(\"%s \", i);\n    writeln();\n\n    writefln(\"%(%s %|%)\", iota(0, 5));\n\n    import std.algorithm.iteration : map;\n    import std.algorithm.mutation : copy;\n    import std.format;\n    iota(0, 5).map!(i => format(\"%s \", i)).copy(stdout.lockingTextWriter());\n    writeln();\n}\n```\n",
             "length": 4,
             "line": 2,
             "signature": {
@@ -148,6 +148,24 @@
                 ]
             },
             "start": 33,
+            "tags": [
+                [
+                    "param",
+                    "begin The starting value."
+                ],
+                [
+                    "param",
+                    "end The value that serves as the stopping criterion. This value is not included in the range."
+                ],
+                [
+                    "param",
+                    "step The value to add to the current value at each iteration."
+                ],
+                [
+                    "returns",
+                    "A range that goes through the numbers `begin`, `begin + step`,\n`begin + 2 * step`, `...`, up to and excluding ``end``.\n\nThe two-argument overloads have `step = 1`. If `begin < `end` && step <\n0` or `begin > `end` && step > 0` or `begin == `end``, then an empty range\nis returned. If `step == 0` then `begin == `end`` is an error.\n\nFor built-in types, the range returned is a random access range. For\nuser-defined types that support `++`, the range is an input\nrange.\n\n**`in` operator and `contains`::**\n``iota`` over an integral/pointer type defines the `in` operator from the right.\n`val in `iota`(...)` is `true` when `val` occurs in the range. When present, it takes\n`step` into account - `val` won't be considered\ncontained if it falls between two consecutive elements of the range.\nThe `contains` method does the same as `in`, but from the left-hand side."
+                ]
+            ],
             "text": "std.range.iota!(int, int).Result std.range.iota!int(int end) pure nothrow @nogc @safe",
             "type": "hover"
         },

@@ -60,6 +60,11 @@ void initAnalyzer(ref DiagnosticSink sink, in AnalyzerConfig config) @system
     global.params.obj = false;
     global.params.useInline = false;
     global.params.ddoc.doOutput = true;
+    // The *lexer's* copy of the same switch, which `main` mirrors from
+    // `params.ddoc.doOutput`. It gates capturing a documented unittest's body
+    // (`parseUnitTest`'s `codedoc`), which is the `Examples:` section a tooltip
+    // shows — without it the comment survives and the example does not.
+    global.compileEnv.ddocOutput = true;
     {
         import dmd.globals : DiagnosticReporting;
 
