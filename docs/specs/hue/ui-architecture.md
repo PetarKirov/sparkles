@@ -47,14 +47,69 @@ Two decisions shape the port beyond a mechanical rewrite:
 
 ## hue's consumption (`UIA`)
 
-| ID   | Requirement                                                                                                                                                                                                  | Status                                                                                                                                                     | Traces to                                                                     |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| UIA1 | hue's interactive UI must be built on the **canvas-first toolkit** [`sparkles:ui`](../ui/index.md), across the GUI, TUI and HTML targets.                                                                    | partial                                                                                                                                                    | `sparkles:ui`; twoslash overlay in `gui.d`/`twoslash_tui.d`                   |
-| UIA2 | hue must contain **no rendering code of its own** — no per-backend painters, no backend-specific chrome. Anything hue draws that the toolkit lacks is a missing widget, to be added there and consumed here. | full (`28ff3dfe`) — the markdown/twoslash/raw-source/explorer views and all chrome are toolkit trees; the popup signature is resolved spans (no overpaint) | [ui/widgets.md](../ui/widgets.md) `WGT7`+                                     |
-| UIA3 | hue must not reach for native OS or HTML toolkit widgets on any target; every visual comes from toolkit primitives.                                                                                          | full                                                                                                                                                       | canvas-first contract                                                         |
-| UIA4 | hue's existing **per-backend widgets must be ported** onto the toolkit — one definition, three targets — and their predecessors deleted in the same change, so no third copy is created.                     | partial — see the inventory (each swap deleted its predecessor); raw view + gutters pending                                                                | see the port inventory below                                                  |
-| UIA5 | hue's frame-loop state must be a **single owned view-state value** driving the toolkit's state machines, replacing peer locals and mutating closures.                                                        | partial — the shared STMs replaced ad-hoc state; the `ViewerModel` Whole is open                                                                           | [ui/principles.md](../ui/principles.md) `PRN1`, `PRN7`                        |
-| UIA6 | hue's views must be **re-entrant**, so any content kind can embed another at any depth and the same view serves both the top-level document and a nested one.                                                | full (`bc3e1f17`) — `viewMarkdownInto` / `viewTwoslashDocument` / fence sub-views / popup JSDoc, all re-entrant with a depth budget                        | [ui/widgets.md](../ui/widgets.md) `WGT2`; [pipeline.md](./pipeline.md) `XFM3` |
+| ID   | Requirement                                                                                                                                                                                                                                                   | Status                                                                                                                                                     | Traces to                                                                     |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| UIA1 | hue's interactive UI must be built on the **canvas-first toolkit** [`sparkles:ui`](../ui/index.md), across the GUI, TUI and HTML targets.                                                                                                                     | partial                                                                                                                                                    | `sparkles:ui`; twoslash overlay in `gui.d`/`twoslash_tui.d`                   |
+| UIA2 | hue must contain **no rendering code of its own** — no per-backend painters, no backend-specific chrome. Anything hue draws that the toolkit lacks is a missing widget, to be added there and consumed here.                                                  | full (`28ff3dfe`) — the markdown/twoslash/raw-source/explorer views and all chrome are toolkit trees; the popup signature is resolved spans (no overpaint) | [ui/widgets.md](../ui/widgets.md) `WGT7`+                                     |
+| UIA3 | hue must not reach for native OS or HTML toolkit widgets on any target; every visual comes from toolkit primitives.                                                                                                                                           | full                                                                                                                                                       | canvas-first contract                                                         |
+| UIA4 | hue's existing **per-backend widgets must be ported** onto the toolkit — one definition, three targets — and their predecessors deleted in the same change, so no third copy is created.                                                                      | partial — see the inventory (each swap deleted its predecessor); raw view + gutters pending                                                                | see the port inventory below                                                  |
+| UIA5 | hue's frame-loop state must be a **single owned view-state value** driving the toolkit's state machines, replacing peer locals and mutating closures.                                                                                                         | partial — the shared STMs replaced ad-hoc state; the `ViewerModel` Whole is open                                                                           | [ui/principles.md](../ui/principles.md) `PRN1`, `PRN7`                        |
+| UIA6 | hue's views must be **re-entrant**, so any content kind can embed another at any depth and the same view serves both the top-level document and a nested one.                                                                                                 | full (`bc3e1f17`) — `viewMarkdownInto` / `viewTwoslashDocument` / fence sub-views / popup JSDoc, all re-entrant with a depth budget                        | [ui/widgets.md](../ui/widgets.md) `WGT2`; [pipeline.md](./pipeline.md) `XFM3` |
+| UIA7 | **No direct `import raylib` in `apps/hue`.** Every raylib call sits behind a `sparkles:ui-raylib` seam — input via `RaylibEvents`, painting via `RaylibCanvas`, window/lifecycle via a window seam. A grep for `import raylib` under `apps/hue/` is the test. | partial — 1 file (`gui.d`), ~94 calls; see the census below                                                                                                | `sparkles:ui-raylib`; [ui/backends.md](../ui/backends.md) `TGT6`              |
+| UIA8 | **No direct `sparkles:tui` use in `apps/hue`.** The cell backend is reached through `sparkles:ui-tui` and the shared `sparkles:input` vocabulary, not through `Grid`/`CellStyle`/`Terminal` directly — the same rule as `UIA7`, on the other target.          | partial — 4 files (`tui.d`, `workspace.d`, `explorer.d`, `twoslash_tui.d`)                                                                                 | `sparkles:ui-tui`; `sparkles:input`                                           |
+
+## Backend encapsulation (`UIA7`/`UIA8`) — census and why now
+
+[`docs/research/window-system-integration/`](../../research/window-system-integration/index.md)
+is research-first design toward a replacement for raylib, at least for the
+**event loop and input**. That makes encapsulation the load-bearing prerequisite:
+a backend swap is cheap exactly to the degree that `apps/hue` cannot tell which
+backend it has, and expensive in proportion to how many raylib calls it makes
+directly.
+
+So the immediate goal is not a new abstraction — it is **removing hue's ability
+to name raylib at all**.
+
+> [!IMPORTANT]
+> This is also why a `sparkles:android` platform package is **deferred**. It
+> would be built against the very window/input seam the redesign is about to
+> replace, so it would be re-cut immediately. The Android-specific modules stay
+> in `apps/hue` until the new seam exists — the cheaper order.
+
+### Where raylib is reached today
+
+One file imports it — `apps/hue/src/gui.d` — in ~94 calls across four distinct
+seams, which is what makes this tractable rather than a rewrite:
+
+| Seam                 | Calls | Representative                                                             | Target                                                                  |
+| -------------------- | ----: | -------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Input**            |   ~53 | `IsKeyDown`, `IsMouseButton*`, `GetMousePosition`, `GetTouch*`, `GetChar*` | `RaylibEvents` — [`IXB7`](../ui/interaction-review.md)'s remaining half |
+| **Painting**         |   ~17 | `DrawRectangle` ×13, `BeginScissorMode`, `ClearBackground`                 | `RaylibCanvas` + the display list ([`UIA2`](#hues-consumption-uia))     |
+| **Window/lifecycle** |   ~15 | `InitWindow`, `SetWindowSize/Title/State`, `TakeScreenshot`, `GetScreen*`  | a window seam in `sparkles:ui-raylib`                                   |
+| **Platform bits**    |    ~9 | `SetMouseCursor`, `SetClipboardText`, `GetFrameTime`                       | existing seams (`wantedPointerShape`, clipboard, frame clock)           |
+
+The **painting** row is the one worth naming, because it is `UIA2` restated as
+a number: thirteen `DrawRectangle` calls are thirteen pieces of chrome the
+toolkit should own. They are not a porting problem — the canvas already has
+fills and a clip stack.
+
+### The TUI side (`UIA8`)
+
+Four files import `sparkles.tui` directly: `tui.d`, `workspace.d`, `explorer.d`,
+`twoslash_tui.d` — for `Grid`, `CellStyle`, `Color`, `Terminal`, `PosixEvents`.
+
+`sparkles.tui.input` re-exports `sparkles:input`, so those imports are the
+shared vocabulary reached by an indirect path rather than a violation; importing
+`sparkles.input` directly is a rename. The `Grid`/`CellStyle` uses are the real
+work, and they are the same shape as the GUI's `DrawRectangle` chrome — hand
+painting that `GridCanvas` should do.
+
+### Order
+
+Input first (`IXB7`), because it is the seam the redesign actually replaces and
+the one with a tested oracle. Painting second, since each `DrawRectangle` is an
+independent, verifiable move. Window/lifecycle last — it is small, and its shape
+should be informed by what the research concludes rather than guessed now.
 
 ## Port inventory
 
