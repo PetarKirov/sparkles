@@ -22,6 +22,7 @@ import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
 import sparkles.ui.canvas : isCanvas, LineStyle;
 import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
+import sparkles.base.term_color : RgbColor;
 import sparkles.ui.style : BorderStyle, Visual;
 
 /// A resolved `Visual`'s foreground as a raylib `Color` (with its alpha).
@@ -119,6 +120,31 @@ struct RaylibCanvas
             BeginScissorMode(cast(int) x0, cast(int) y0,
                 cast(int)(x1 - x0), cast(int)(y1 - y0));
 
+    }
+
+    /**
+    A flat fill in $(B pixels), for chrome that is genuinely not cell-aligned
+    (`UIA7`).
+
+    The rest of this canvas speaks cells, and that is the right unit for
+    anything the layout engine positions. Some application chrome is not:
+    a one-pixel pane divider, a hairline under a header bar, a band whose
+    height is `cellH - 1`. Quantising those to cells would move them.
+
+    So this exists to let an application stop naming raylib without changing
+    what it paints — the `UIA7` boundary, not the `UIA2` one. Chrome that CAN
+    be a widget should be: it then gets layout, hit-testing and theming for
+    free, and this method is not involved. Treat a growing number of callers
+    as a signal that a widget is missing.
+
+    Coordinates are absolute window pixels; `originX`/`originY` do not apply,
+    because a caller reaching for pixels already knows where it is.
+    */
+    void fillPixels(int x, int y, int w, int h, RgbColor c, ubyte a = 0xFF) @system
+    {
+        if (w <= 0 || h <= 0)
+            return;
+        DrawRectangle(x, y, w, h, Color(c.r, c.g, c.b, a));
     }
 
     /// Paints a box: drop shadow (behind), background fill (rounded when
