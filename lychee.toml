@@ -105,6 +105,20 @@ request_interval = "100ms"
 [hosts."gitlab.freedesktop.org"]
 request_interval = "1s"
 
+# Small, long-lived documentation sites that answer a single client instantly
+# (both measured at HTTP 200 in <0.5 s) but drop or stall connections when 16
+# arrive at once from one runner IP. The symptom is misleading: the first probe
+# fails, lychee caches it, and every later reference reports `Error (cached)` —
+# so ONE unreachable URL became 15 "errors" plus 6 timeouts in a single run and
+# read like link rot. It is not; the links are live.
+#
+# 12 unique tronche.com URLs and 3 juce.com, so pacing them costs ~15 s.
+[hosts."tronche.com"]
+request_interval = "1s"
+
+[hosts."juce.com"]
+request_interval = "1s"
+
 # The C++ committee papers server is simply slow: it answers, but several
 # concurrent requests push past the 20 s `timeout` and lychee counts a timeout
 # as a failure even when the error count is zero. Only 6 links point here, so
