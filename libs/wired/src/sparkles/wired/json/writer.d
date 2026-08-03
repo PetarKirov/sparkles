@@ -7,43 +7,78 @@ doubles, branchlut integers); $(LREF writeJson) — document/view →
 text; and (next milestone) the codec's streaming encode from D values.
 
 Escape policy: the two-character escapes plus `\u00XX` for other control
-characters; `/` is never escaped. Pretty mode is 2-space indent, `": "`
-separator, LF newlines. Doubles render shortest-round-trip; a document's
+characters; `/` is never escaped. Pretty mode defaults to 2-space indent,
+`": "` separator, LF newlines — all configurable through
+$(LREF JsonWriteOptions). Doubles render shortest-round-trip; a document's
 saturated `±infinity` (JSON cannot spell it) renders as `±1e999`, which
 re-parses to the same value under any saturating RFC 8259 reader.
+
+Object-key order follows one rule: positions with no inherent order — D
+associative arrays and passthrough `JSONValue` objects — are *always*
+sorted, so output never depends on hash order; positions that do have one
+— struct fields, parsed-document members — follow
+`JsonWriteOptions.keyOrder`. The comparator at every sorted position is
+the `keyLess` template argument.
 */
 module sparkles.wired.json.writer;
 
 import std.range.primitives : put;
 
-import sparkles.wired.json.document : JsonKind, JsonValue;
+import sparkles.wired.json.document : JsonKind, JsonMember, JsonValue;
+
+/// Object-key emission order for the positions that have an inherent one
+/// (struct fields, parsed-document members) — SPEC §11.4.
+enum KeyOrder
+{
+    declared, /// struct declaration order / parsed-document source order
+    sorted,   /// sorted by wire key under the `keyLess` comparator
+}
 
 /// Compile-time writer configuration (SPEC §11.4).
 struct JsonWriteOptions
 {
-    bool pretty = false; /// 2-space indent, `": "` separator, LF newlines
+    bool pretty = false;   /// multi-line layout: indent, `": "` separator, newlines
+    string indent = "  ";  /// indent unit emitted per nesting level (pretty only)
+    string newline = "\n"; /// line terminator (pretty only)
+    KeyOrder keyOrder = KeyOrder.declared; /// order of inherently-ordered keys
 }
+
+/**
+The default object-key comparator: byte-lexical, i.e. plain `<` on the
+UTF-8 key text.
+
+Every writer entry point takes a `keyLess` template argument defaulting to
+this one; a custom comparator has the same signature and must be callable
+during CTFE (aggregate field order is resolved at compile time).
+*/
+bool lexicalLess(scope const(char)[] a, scope const(char)[] b)
+    @safe pure nothrow @nogc => a < b;
 
 /**
 Serializes one parsed value (usually a document root) to `w`.
 The walk recurses per nesting level; documents produced by the reader
 are depth-bounded by `JsonReadOptions.maxDepth`.
 
-When `w` is a $(LREF JsonSink) (and `opts.pretty` is off), a
-specialized walk takes over: one capacity check covers each token, the
-bytes after it are raw stores, and separators use the trailing-comma
-discipline instead of per-token `put` calls.
+When `w` is a $(LREF JsonSink) (and neither pretty layout nor key sorting
+is requested), a specialized walk takes over: one capacity check covers
+each token, the bytes after it are raw stores, and separators use the
+trailing-comma discipline instead of per-token `put` calls.
+
+`keyLess` orders object members when `opts.keyOrder` is
+`KeyOrder.sorted`; sorting a parsed document allocates one temporary index
+array per object, so the default `KeyOrder.declared` walk stays `@nogc`.
 */
-ref Writer writeJson(JsonWriteOptions opts = JsonWriteOptions.init, Writer)(
-    JsonValue root, return ref Writer w)
+ref Writer writeJson(JsonWriteOptions opts = JsonWriteOptions.init,
+    alias keyLess = lexicalLess, Writer)(JsonValue root, return ref Writer w)
 {
-    static if (is(Writer == JsonSink) && !opts.pretty)
+    static if (is(Writer == JsonSink) && !opts.pretty
+        && opts.keyOrder == KeyOrder.declared)
     {
         sinkValue(root, w);
         w.unput(); // the walk's trailing comma
     }
     else
-        writeJsonValue!opts(root, w, 0);
+        writeJsonValue!(opts, keyLess)(root, w, 0);
     return w;
 }
 
@@ -319,7 +354,28 @@ private void sinkValue(scope JsonValue v, ref JsonSink w) @safe
     }
 }
 
-private void writeJsonValue(JsonWriteOptions opts, Writer)(
+/**
+An object's members lifted out of the document so `KeyOrder.sorted` can
+reorder them.
+
+`@trusted`: the members are borrowed views into the document arena, and
+`v` is only `scope` because the walk recurses into it — the arena outlives
+every `writeJson` call by construction, so copying the views into a local
+array cannot outlive what they point at.
+*/
+private JsonMember[] sortedMembers(alias keyLess)(scope JsonValue v) @trusted
+{
+    import std.algorithm.sorting : sort;
+
+    JsonMember[] members;
+    members.reserve(v.length);
+    foreach (m; v.byKeyValue)
+        members ~= m;
+    members.sort!((a, b) => keyLess(a.key, b.key));
+    return members;
+}
+
+private void writeJsonValue(JsonWriteOptions opts, alias keyLess, Writer)(
     scope JsonValue v, ref Writer w, uint depth)
 {
     final switch (v.kind) with (JsonKind)
@@ -360,11 +416,11 @@ private void writeJsonValue(JsonWriteOptions opts, Writer)(
                     put(w, ',');
                 first = false;
                 static if (opts.pretty)
-                    newlineIndent(w, depth + 1);
-                writeJsonValue!opts(e, w, depth + 1);
+                    newlineIndent!opts(w, depth + 1);
+                writeJsonValue!(opts, keyLess)(e, w, depth + 1);
             }
             static if (opts.pretty)
-                newlineIndent(w, depth);
+                newlineIndent!opts(w, depth);
             put(w, ']');
             break;
         }
@@ -376,23 +432,31 @@ private void writeJsonValue(JsonWriteOptions opts, Writer)(
                 break;
             }
             put(w, '{');
+
+            // KeyOrder.sorted materializes the members to reorder them; the
+            // default walk streams them in source order and stays @nogc.
+            static if (opts.keyOrder == KeyOrder.sorted)
+                auto members = sortedMembers!keyLess(v);
+            else
+                auto members = v.byKeyValue;
+
             bool first = true;
-            foreach (m; v.byKeyValue)
+            foreach (m; members)
             {
                 if (!first)
                     put(w, ',');
                 first = false;
                 static if (opts.pretty)
-                    newlineIndent(w, depth + 1);
+                    newlineIndent!opts(w, depth + 1);
                 writeJsonString(w, m.key);
                 static if (opts.pretty)
                     put(w, ": ");
                 else
                     put(w, ':');
-                writeJsonValue!opts(m.value, w, depth + 1);
+                writeJsonValue!(opts, keyLess)(m.value, w, depth + 1);
             }
             static if (opts.pretty)
-                newlineIndent(w, depth);
+                newlineIndent!opts(w, depth);
             put(w, '}');
             break;
         }
@@ -401,11 +465,11 @@ private void writeJsonValue(JsonWriteOptions opts, Writer)(
     }
 }
 
-package void newlineIndent(Writer)(ref Writer w, uint depth)
+package void newlineIndent(JsonWriteOptions opts, Writer)(ref Writer w, uint depth)
 {
-    put(w, '\n');
+    put(w, opts.newline);
     foreach (_; 0 .. depth)
-        put(w, "  ");
+        put(w, opts.indent);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -587,6 +651,84 @@ unittest
     checkPretty(`[1]`, "[\n  1\n]");
 }
 
+@("writer.pretty.indentAndNewline")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : checkWriter;
+
+    static void check(JsonWriteOptions opts)(string text, string expected)
+    {
+        checkWriter!((ref b) {
+            auto r = parseJsonDocument(text);
+            assert(r.hasValue);
+            writeJson!opts(r.document.root, b);
+        })(expected);
+    }
+
+    enum src = `{"a":1,"b":[2]}`;
+
+    // The default pretty layout is 2-space + LF (SPEC §11.4).
+    check!(JsonWriteOptions(pretty: true))(src,
+        "{\n  \"a\": 1,\n  \"b\": [\n    2\n  ]\n}");
+
+    // A tab indent, and the four-space form std.json used to emit.
+    check!(JsonWriteOptions(pretty: true, indent: "\t"))(src,
+        "{\n\t\"a\": 1,\n\t\"b\": [\n\t\t2\n\t]\n}");
+    check!(JsonWriteOptions(pretty: true, indent: "    "))(src,
+        "{\n    \"a\": 1,\n    \"b\": [\n        2\n    ]\n}");
+
+    // CRLF line endings.
+    check!(JsonWriteOptions(pretty: true, newline: "\r\n"))(src,
+        "{\r\n  \"a\": 1,\r\n  \"b\": [\r\n    2\r\n  ]\r\n}");
+
+    // indent/newline are inert without `pretty`.
+    check!(JsonWriteOptions(indent: "\t", newline: "\r\n"))(src, src);
+}
+
+version (unittest)
+{
+    /// A comparator that is neither lexical nor its reverse, so a test can
+    /// tell "sorted with the custom order" from "sorted" and "unsorted".
+    private bool byLengthThenLexical(scope const(char)[] a, scope const(char)[] b)
+        @safe pure nothrow @nogc
+        => a.length == b.length ? a < b : a.length < b.length;
+}
+
+@("writer.keyOrder.document")
+@safe unittest
+{
+    import std.array : appender;
+
+    static string render(JsonWriteOptions opts, alias less = lexicalLess)(string text)
+    {
+        auto r = parseJsonDocument(text);
+        assert(r.hasValue);
+        auto buf = appender!string;
+        writeJson!(opts, less)(r.document.root, buf);
+        return buf[];
+    }
+
+    enum src = `{"beta":1,"alpha":2,"c":{"z":3,"y":4},"d":[{"q":5,"p":6}]}`;
+    enum sorted = JsonWriteOptions(keyOrder: KeyOrder.sorted);
+
+    // Default: parsed-document members keep source order.
+    assert(render!(JsonWriteOptions.init)(src) == src);
+
+    // KeyOrder.sorted reorders every object, at every depth, including
+    // objects nested inside arrays.
+    assert(render!sorted(src)
+        == `{"alpha":2,"beta":1,"c":{"y":4,"z":3},"d":[{"p":6,"q":5}]}`);
+
+    // The comparator drives the order: by length, then lexically.
+    assert(render!(sorted, byLengthThenLexical)(src)
+        == `{"c":{"y":4,"z":3},"d":[{"p":6,"q":5}],"beta":1,"alpha":2}`);
+
+    // Sorting composes with pretty layout and leaves empty objects alone.
+    enum both = JsonWriteOptions(pretty: true, keyOrder: KeyOrder.sorted);
+    assert(render!both(`{"b":1,"a":{}}`) == "{\n  \"a\": {},\n  \"b\": 1\n}");
+}
+
 @("writer.rawNumbers.passThrough")
 @safe pure nothrow @nogc
 unittest
@@ -616,16 +758,25 @@ unittest
         `"lone string"`, `42`, `null`, `[[[[1]]]]`,
         "\"controls \\u0001\\u001f and unicode € \U0001F30D\"",
     ];
-    foreach (doc; docs)
-    {
-        auto r = parseJsonDocument(doc);
-        assert(r.hasValue);
-        auto generic = appender!string;
-        writeJson(r.document.root, generic);
-        JsonSink sink;
-        writeJson(r.document.root, sink);
-        assert(sink[] == generic[], doc);
-    }
+    // Every (pretty × keyOrder) combination must agree, so the specialized
+    // walk's guard cannot silently swallow a layout or ordering request.
+    static foreach (opts; [
+            JsonWriteOptions.init,
+            JsonWriteOptions(pretty: true),
+            JsonWriteOptions(keyOrder: KeyOrder.sorted),
+            JsonWriteOptions(pretty: true, indent: "\t",
+                keyOrder: KeyOrder.sorted),
+        ])
+        foreach (doc; docs)
+        {
+            auto r = parseJsonDocument(doc);
+            assert(r.hasValue);
+            auto generic = appender!string;
+            writeJson!opts(r.document.root, generic);
+            JsonSink sink;
+            writeJson!opts(r.document.root, sink);
+            assert(sink[] == generic[], doc);
+        }
 }
 
 @("writer.sink.growthAndReuse")

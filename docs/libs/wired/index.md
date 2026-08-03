@@ -84,6 +84,80 @@ void main()
 {"host":"localhost","port":8080,"tags":["web","edge"]}
 ```
 
+## Deterministic, diff-friendly output
+
+Generated JSON that lives in version control wants a layout that never moves
+on its own. `JsonWriteOptions` carries that layout — indent unit, line
+terminator, and key order — and `writeJSON` / `writeJSONFile` take it (plus an
+optional key comparator) as compile-time arguments:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "wired_layout"
+    dependency "sparkles:wired" version="*"
++/
+import std.array : appender;
+import std.stdio : writeln;
+
+import sparkles.wired : writeJSON;
+import sparkles.wired.json.writer : JsonWriteOptions, KeyOrder;
+
+/// Sorts numeric-looking keys numerically, and after any other key.
+bool versionish(scope const(char)[] a, scope const(char)[] b)
+    @safe pure nothrow @nogc
+{
+    static bool numeric(scope const(char)[] s)
+    {
+        foreach (c; s)
+            if (c < '0' || c > '9')
+                return false;
+        return s.length > 0;
+    }
+
+    if (numeric(a) != numeric(b))
+        return !numeric(a);
+    if (numeric(a) && a.length != b.length)
+        return a.length < b.length; // 9 before 10
+    return a < b;
+}
+
+void main()
+{
+    auto releases = ["10": "newest", "9": "older", "name": "widget"];
+
+    // Four-space indent, keys through the custom comparator.
+    enum layout = JsonWriteOptions(
+        pretty: true,
+        indent: "    ",
+        keyOrder: KeyOrder.sorted,
+    );
+
+    auto buf = appender!string;
+    writeJSON!(layout, versionish)(releases, buf);
+    writeln(buf[]);
+}
+```
+
+```[Output]
+{
+    "name": "widget",
+    "9": "older",
+    "10": "newest"
+}
+```
+
+One rule governs key order. Associative arrays and `JSONValue` objects have no
+inherent order, so they are **always** sorted — output never depends on hash
+order. Struct fields and parsed-document members do have one, so they follow
+`keyOrder`: `declared` (the default) keeps declaration/source order, `sorted`
+sorts by wire key. The comparator applies at every sorted position and must be
+CTFE-callable, since struct field order is resolved at compile time.
+
+`writeJSONFile!(layout)(value, path)` writes the same text atomically, with a
+trailing newline. Pin `layout` at the call site for any file you check in: a
+future change to wired's defaults then cannot silently reformat it.
+
 ## Errors as values
 
 Because decoding never throws, malformed input surfaces as the `JsonError`
@@ -124,16 +198,16 @@ error: true
 
 ## API
 
-| Symbol                                                                            | Description                                                                                         |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `writeJSON(value, ref writer)` → `Expected!(void, JsonError)`                     | Stream JSON into any output range — the primary encode form (never throws).                         |
-| `toJSON(value)` → `Expected!(JsonString, JsonError)`                              | Encode a value to minified text; a failure is captured as the `JsonError` payload (never throws).   |
-| `fromJSON!T(text)` → `Expected!(T, JsonError)`                                    | Parse and decode JSON text; a failure is captured as the `JsonError` payload (never throws).        |
-| `readJSONFile!T(string path)` → `Expected!(T, JsonError)`                         | Read, parse, and decode a file; the error identifies the failing stage (read, parse, decode).       |
-| `writeJSONFile(value, path, bool compact = false)` → `Expected!(void, JsonError)` | Encode and write to `path` atomically, creating parent directories; `compact` writes a single line. |
-| `@WireName("…")`                                                                  | Field / enum-member UDA overriding the JSON wire name.                                              |
-| `@WireCase(CaseStyle.…)`                                                          | Recase field / member names (e.g. `snakeCase`, `kebabCase`).                                        |
-| `@WireRepr(Repr.…)`                                                               | Serialize an enum by member `name` (default) or underlying `value`.                                 |
+| Symbol                                                                      | Description                                                                                           |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `writeJSON(value, ref writer)` → `Expected!(void, JsonError)`               | Stream JSON into any output range — the primary encode form (never throws).                           |
+| `toJSON(value)` → `Expected!(JsonString, JsonError)`                        | Encode a value to minified text; a failure is captured as the `JsonError` payload (never throws).     |
+| `fromJSON!T(text)` → `Expected!(T, JsonError)`                              | Parse and decode JSON text; a failure is captured as the `JsonError` payload (never throws).          |
+| `readJSONFile!T(string path)` → `Expected!(T, JsonError)`                   | Read, parse, and decode a file; the error identifies the failing stage (read, parse, decode).         |
+| `writeJSONFile!(opts, keyLess)(value, path)` → `Expected!(void, JsonError)` | Encode and write to `path` atomically, creating parent directories; `opts` pins indent and key order. |
+| `@WireName("…")`                                                            | Field / enum-member UDA overriding the JSON wire name.                                                |
+| `@WireCase(CaseStyle.…)`                                                    | Recase field / member names (e.g. `snakeCase`, `kebabCase`).                                          |
+| `@WireRepr(Repr.…)`                                                         | Serialize an enum by member `name` (default) or underlying `value`.                                   |
 
 ## Supported types
 

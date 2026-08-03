@@ -91,14 +91,14 @@ back to the `AnyFormat` form, then to the built-in default.
 `sparkles.wired.json` (re-exported from `sparkles.wired`) serializes under the
 `Json` format. Its surface:
 
-| Symbol                                                                          | Description                                                                   |
-| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `writeJSON(value, ref writer) → Expected!(void, JsonError)`                     | Stream JSON into any output range — the primary encode form (§11.6).          |
-| `toJSON(value) → Expected!(JsonString, JsonError)`                              | Encode to minified text (`JsonString` = `SmallBuffer!(char, 256)`).           |
-| `fromJSON!T(text) → Expected!(T, JsonError)`                                    | Parse + decode JSON text; also accepts a parsed `JsonValue` subtree.          |
-| `fromJSON!T(JSONValue) → Expected!(T, JsonError)`                               | One-release compatibility shim: renders the value, decodes via the text path. |
-| `readJSONFile!T(string path) → Expected!(T, JsonError)`                         | Read, parse, and decode a file without throwing.                              |
-| `writeJSONFile(value, path, bool compact = false) → Expected!(void, JsonError)` | Encode and write a file without throwing.                                     |
+| Symbol                                                                    | Description                                                                   |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `writeJSON(value, ref writer) → Expected!(void, JsonError)`               | Stream JSON into any output range — the primary encode form (§11.6).          |
+| `toJSON(value) → Expected!(JsonString, JsonError)`                        | Encode to minified text (`JsonString` = `SmallBuffer!(char, 256)`).           |
+| `fromJSON!T(text) → Expected!(T, JsonError)`                              | Parse + decode JSON text; also accepts a parsed `JsonValue` subtree.          |
+| `fromJSON!T(JSONValue) → Expected!(T, JsonError)`                         | One-release compatibility shim: renders the value, decodes via the text path. |
+| `readJSONFile!T(string path) → Expected!(T, JsonError)`                   | Read, parse, and decode a file without throwing.                              |
+| `writeJSONFile!(opts, keyLess)(value, path) → Expected!(void, JsonError)` | Encode and write a file without throwing; `opts` pins the layout (§11.4).     |
 
 ### 4.1 File helpers
 
@@ -111,16 +111,18 @@ Failures are returned as `Expected!(T, JsonError)` errors. I/O failures are
 value path, with the file path recorded so the rendered message carries the
 file context (§9).
 
-`writeJSONFile(value, path, compact = false)` encodes `value` with `toJSON`,
-recursively creates any missing parent directories of `path`, and writes UTF-8
-text to `path`. The write is **atomic**: the encoded text is written to a
-temporary file in the same directory and then renamed onto `path`, so a partial
-or failed write never truncates or corrupts an existing file — after the call,
-`path` holds either its previous contents or the fully written new contents.
+`writeJSONFile!(opts, keyLess)(value, path)` encodes `value`, recursively
+creates any missing parent directories of `path`, and writes UTF-8 text to
+`path`. The write is **atomic**: the encoded text is written to a temporary
+file in the same directory and then renamed onto `path`, so a partial or failed
+write never truncates or corrupts an existing file — after the call, `path`
+holds either its previous contents or the fully written new contents.
 
-- `compact == false` renders pretty (§11.4: 2-space indent, `": "`
-  separator, LF newlines).
-- `compact == true` renders minified.
+- `opts` defaults to `JsonWriteOptions(pretty: true)` — the §11.4 layout:
+  2-space indent, `": "` separator, LF newlines, declaration order.
+- `JsonWriteOptions.init` renders minified.
+- Both are compile-time parameters; see §11.4 for the layout and key-order
+  vocabulary, and pin them explicitly for files kept under version control.
 - `/` is never escaped in either mode; both append exactly one final Unix
   newline (`\n`) after the rendered JSON text.
 
@@ -1074,17 +1076,45 @@ JsonParseResult!Allocator parseJsonDocument
 ### 11.4 Writer
 
 ```d
-struct JsonWriteOptions { bool pretty = false; }
+enum KeyOrder { declared, sorted }
 
-ref Writer writeJson(JsonWriteOptions opts = JsonWriteOptions.init, Writer)
-    (JsonValue root, return ref Writer w);
+struct JsonWriteOptions
+{
+    bool pretty = false;
+    string indent = "  ";
+    string newline = "\n";
+    KeyOrder keyOrder = KeyOrder.declared;
+}
+
+bool lexicalLess(scope const(char)[] a, scope const(char)[] b)
+    @safe pure nothrow @nogc;
+
+ref Writer writeJson(JsonWriteOptions opts = JsonWriteOptions.init,
+    alias keyLess = lexicalLess, Writer)(JsonValue root, return ref Writer w);
 ```
 
 Token emission uses shortest-round-trip double formatting
 (`parse(write(x)) == x` bit-exactly) and table-driven integer formatting
 from `sparkles.base.text`. Escape policy: the two-character escapes plus
-`\uXXXX` for other control characters; `/` is never escaped. Pretty mode is
-2-space indent, `": "` separator, LF newlines.
+`\uXXXX` for other control characters; `/` is never escaped. Pretty mode
+emits `opts.indent` per nesting level and `opts.newline` between members,
+with a `": "` separator; `indent` and `newline` are inert when `pretty` is
+off. The defaults — 2-space indent, LF — are the layout described
+throughout this document.
+
+**Key order.** Positions with no inherent order — D associative arrays and
+passthrough `JSONValue` objects — are **always** sorted, so output never
+depends on hash order. Positions that do have one — aggregate fields
+(declaration order) and parsed-document members (source order) — follow
+`opts.keyOrder`. The comparator at every sorted position is the `keyLess`
+template argument, which must be callable during CTFE: aggregate field
+order is resolved at compile time, so `KeyOrder.sorted` costs nothing at
+run time and leaves the encode walk `@nogc`. Sorting a _parsed document_
+does allocate one temporary array per object.
+
+Applications that keep generated JSON under version control should pin
+`opts` (and `keyLess`) explicitly at the call site rather than inherit the
+defaults, so the on-disk diff is stable across wired releases.
 
 ### 11.5 Conformance
 
