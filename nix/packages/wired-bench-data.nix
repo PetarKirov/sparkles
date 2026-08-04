@@ -2,8 +2,9 @@
 # (libs/wired/bench/runtime). The canonical nativejson-benchmark trio —
 # twitter.json (string-heavy), canada.json (float-heavy), citm_catalog.json
 # (structure-heavy) — plus simdjson's github_events.json for the small-document
-# regime. Fetched by hash, never checked into the repo; the devshell exposes
-# the farm as $WIRED_BENCH_DATA (the harness's --data-dir overrides it).
+# regime and mesh compact/pretty for dense numeric arrays and whitespace.
+# Fetched by hash, never checked into the repo; the devshell exposes the farm
+# as $WIRED_BENCH_DATA.
 { ... }:
 {
   perSystem =
@@ -44,6 +45,14 @@
         {
           name = "github_events.json";
           path = fromSimdjson "github_events.json" "sha256-ye67LPLUZkkFnp1IcAkZuss+jg+1hFIGWhqd53eP0i4=";
+        }
+        {
+          name = "mesh.json";
+          path = fromSimdjson "mesh.json" "sha256-RbyL9Ck0CodKevjqcFbWBJdAL4D1XboebsxMqPHkav8=";
+        }
+        {
+          name = "mesh.pretty.json";
+          path = fromSimdjson "mesh.pretty.json" "sha256-sIuLGIGxMfgvimuPiwImI1SIFU1zY8yDAhU+ckd2ro4=";
         }
       ];
     };

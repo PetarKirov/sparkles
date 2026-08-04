@@ -30,6 +30,15 @@ struct Fingerprint
     ulong keyBytes;      /// decoded UTF-8 bytes of object keys
     double numberSum = 0; /// sum of every number as `double`
 
+    /// Adds another document's counters, for a record-stream fingerprint.
+    void add(in Fingerprint other) @safe pure nothrow @nogc
+    {
+        static foreach (i, T; typeof(Fingerprint.init.tupleof))
+            static if (is(T == ulong))
+                this.tupleof[i] += other.tupleof[i];
+        numberSum += other.numberSum;
+    }
+
     /// Whether the two fingerprints agree: counters exactly, `numberSum`
     /// within relative tolerance.
     bool matches(in Fingerprint other) const @safe pure nothrow @nogc
@@ -151,4 +160,7 @@ void accumulate(const ref JSONValue v, ref Fingerprint f) @safe
     b.strings = 1;
     assert(!a.matches(b));
     assert(diffFingerprints(a, b).length > 0);
+
+    a.add(b);
+    assert(a.numbers == 6 && a.strings == 1);
 }

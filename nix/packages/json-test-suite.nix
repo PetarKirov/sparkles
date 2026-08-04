@@ -3,17 +3,29 @@
 # y_* files every RFC 8259 parser must accept, n_* files it must reject,
 # and i_* files where either verdict is fine but crashing is not. Pinned
 # by rev + hash; the devshell exposes the checkout as $JSON_TEST_SUITE and
-# wired's conformance tests skip (with a log line) when it is unset.
+# wired's conformance tests skip (with a log line) when it is unset. The older
+# nativejson-benchmark JSON_checker and roundtrip fixtures are pinned beside it
+# as a second, independent robustness corpus.
 { ... }:
 {
   perSystem =
     { pkgs, ... }:
+    let
+      nativejsonRev = "478d5727c2a4048e835a29c65adecc7d795360d5";
+    in
     {
       packages.json-test-suite = pkgs.fetchFromGitHub {
         owner = "nst";
         repo = "JSONTestSuite";
         rev = "1ef36fa01286573e846ac449e8683f8833c5b26a";
         hash = "sha256-s2yMgVWq2DwibAjOvLKhGDbEwXm4yke/g4mp7u565H4=";
+      };
+
+      packages.nativejson-test-suite = pkgs.fetchFromGitHub {
+        owner = "miloyip";
+        repo = "nativejson-benchmark";
+        rev = nativejsonRev;
+        hash = "sha256-85bfK5pYzVRVDbucksXKYQRWQk5yOwR/wEzoHGm7cdM=";
       };
     };
 }

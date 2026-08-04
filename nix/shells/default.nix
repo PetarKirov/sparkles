@@ -203,6 +203,7 @@
             # JSONTestSuite conformance corpus for the wired native JSON
             # reader (dub test :wired skips those tests when unset).
             export JSON_TEST_SUITE=${config.packages.json-test-suite}
+            export NATIVEJSON_TEST_SUITE=${config.packages.nativejson-test-suite}
 
             # druntime/phobos sources matching the pinned dmd:frontend, for
             # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
