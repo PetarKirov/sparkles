@@ -116,7 +116,9 @@ unittest
 
 `cold` is `fdatasync` + `posix_fadvise(DONTNEED)` per file; `warm` is an
 explicit read-through preload; both are verified with `mmap` + `mincore`
-residency and stamped on every window measured after the call — the table
+residency and stamped on the NEXT measured window — consume-once: a second
+window without its own `workloadFiles` call renders `—` rather than a
+stale "cold" claim for a run the first window already warmed — the table
 gains a `regime` column (`cold`, or `cold→steady` when the regime could
 not be established, with the reason in the note), and `--bench-json`
 windows carry the exact fractions in a `regime` object. The marker form
@@ -130,8 +132,10 @@ disclosure, not evidence (noted, thresholds suppressed); a file another
 process has mapped won't evict (downgraded, with the resident percentage);
 and a `workloadFiles` call inside an open window or on a repetition after
 the first is refused with a note — prep mid-measurement would sabotage the
-window in flight. Outside `--bench` the call does nothing at all: no
-eviction, no probes.
+window in flight. In a windowless body, each call restarts the whole-body
+window (prep is setup) — a second call therefore discards the work before
+it, disclosed in the note; use explicit windows for multi-regime bodies.
+Outside `--bench` the call does nothing at all: no eviction, no probes.
 
 ## Measuring part of the body, and reps
 
