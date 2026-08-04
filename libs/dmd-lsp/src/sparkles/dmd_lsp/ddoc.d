@@ -1626,7 +1626,7 @@ private string toDebugString(in string[][] tags) @safe pure
 
     // Hovering a parameter usage inherits its Params: row from the enclosing
     // function (the 08-jsdoc reference shape): docs = the row's description,
-    // tags = only that parameter's chip.
+    // tags = empty; the body carries it.
     withAnalysis("module test;\n"
         ~ "/**\n"
         ~ "Scales.\n"
@@ -1643,7 +1643,9 @@ private string toDebugString(in string[][] tags) @safe pure
         // did not: `to!int(42.0)` on a declaration named `to` came out as
         // ``to`!int(42.0)`. `collapseCodeSpans` emits one pair either way.
         assert(tip.doc == "the multiplier applied to `value`", tip.doc);
-        assert(tip.tags == [["param",
-            "factor the multiplier applied to `value`"]], tip.tags.toDebugString);
+        // No `@param` chip: the row *is* this parameter's documentation, and a
+        // chip beside it repeated the text verbatim under the signature line
+        // that already names the parameter.
+        assert(tip.tags.length == 0, tip.tags.toDebugString);
     });
 }
