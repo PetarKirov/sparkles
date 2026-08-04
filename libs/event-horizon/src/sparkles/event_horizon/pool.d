@@ -580,7 +580,7 @@ private final class Deque
 @system
 unittest
 {
-    import core.atomic : atomicOp;
+    import core.atomic : atomicLoad, atomicOp, atomicStore;
     import core.time : msecs;
 
     import sparkles.event_horizon.io : sleep;
@@ -610,6 +610,20 @@ unittest
     import core.thread : Thread;
 
     const seedThread = (() @trusted => cast(void*) Thread.getThis())();
+
+    // NB no assertion here about WHICH worker ran a task. Distribution is a
+    // capability, not a per-run guarantee: nothing forces a peer to steal, and
+    // a started fiber is pinned to its worker for life (SPEC §11), so on a
+    // CPU-starved host the seeding worker can legitimately spawn and drain all
+    // 400 before a peer is scheduled. Asserting otherwise asserts a race — it
+    // flaked ~1 run in 12 pinned to two CPUs, which is what CI runners are, and
+    // retrying across rounds neither fixed it nor was free (each extra
+    // `pool.run` is another O22 GC/io_uring-enter deadlock exposure: five
+    // rounds hung 6 of 18). What this test owns is the contract: every
+    // submitted task runs exactly once, across workers, through the ring.
+    // Stealing itself is covered deterministically by
+    // `pool.workStealing.cpuBoundInlineFanOut`, whose 8191-task fan-out cannot
+    // complete without it and whose assertion does not depend on placement.
     pool.run((ref WorkStealingPool p) {
         foreach (_; 0 .. tasks)
             p.submit(() {
@@ -622,11 +636,7 @@ unittest
             });
     });
 
-    import core.atomic : atomicLoad;
-
     assert(atomicLoad(completed) == tasks, "every submitted task ran to completion");
-    assert(atomicLoad(worker0Tasks) < tasks,
-        "work distributed across workers, not all on the seeding thread");
 }
 
 @("pool.workStealing.cpuBoundInlineFanOut")

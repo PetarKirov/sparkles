@@ -340,6 +340,17 @@ never touches the GC at all.
 **Leaning:** (A) now; (B)/(C) when a long-lived pool with steady allocation
 is a real workload.
 
+**Severity update (2026-08-04) — this flakes CI.** `GC.disable` mitigates but
+does not eliminate it. Measured with the event-horizon suite pinned to **two
+CPUs** (what a GitHub runner is): **1 hang in 25 runs**. Exposure is per
+`pool.run`, and it compounds — a variant of
+`pool.workStealing.distributesTasksAcrossWorkers` that called `pool.run` five
+times hung **6 of 18**. Two consequences: (a) any pool test on a
+CPU-constrained runner is a ~4 %-per-run flake, so a green CI run is not
+evidence the deadlock is gone; (b) tests should call `pool.run` **once**, which
+is now a stated constraint on writing them. This raises the priority of a
+GC-safe blocking wait from "correctness nicety" to "CI reliability".
+
 ## O23 — Pool per-worker setup weight vs short batch workloads
 
 **Where:** SPEC §11 (`WorkStealingPool`), `benchmarks.md` §2.
