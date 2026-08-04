@@ -237,23 +237,51 @@ state **by value**", "put per-case setup/release in `setup`/`teardown`"). That
 the same team tripped three times anyway is the argument that documentation is
 not the fix — the API should make the wrong thing hard to write.
 
-**Options:** (A) make the lifetime explicit in the type — have `benchIter`/
-`benchCase` take a `setup` returning a state value that is passed _into_ the
-timed closure (`benchIter!(() => makeState(), (ref s) { … })`), so captured
-locals are structurally unnecessary and the state's lifetime is the runner's;
-(B) keep the shape but reject the common mistakes at compile time — e.g.
-require the timed delegate be `static`/non-capturing unless it goes through the
-state seam, turning "captured a `scope` local" into a compile error; (C) run a
-**probe iteration eagerly** at registration (inside the body, where the state
-is still alive) and again at measurement time, comparing a cheap invariant
-(e.g. the `after` verdict) — a state-lifetime bug then reports as a bench error
-row instead of UB; (D) documentation only (status quo).
+**Decided: (A) + function-pointer hooks.** Every `RegisteredCase` hook —
+`setup`, `runTimed`, `runAfter`, `teardown` — becomes a `function` over an
+explicit per-case state block, never a `delegate`. A function pointer _cannot_
+close over anything, so the whole bug class stops being expressible rather than
+merely documented; state a hook needs travels in the block, whose lifetime the
+case owns.
 
-**Leaning:** (A) as the real fix — it is the only option that makes the failure
-_unwritable_ rather than merely detected — with (C) as an interim guard that is
-cheap and catches the silent-UB case that (D) demonstrably does not. (B) is
-attractive but likely too strict for the matrix-registration pattern
-(`benchCase` helpers deliberately capture their per-case state by value).
+```d
+struct RegisteredCase
+{
+    string name; string[string] labels; Metric[] metrics;
+    void* state;                         // heap-allocated; outlives the body
+    void   function(void*) setup;
+    void   function(void*) runTimed;
+    string function(void*) runAfter;     // null = batched row
+    void   function(void*) teardown;
+}
+```
+
+Public surface: `benchCase!State(name, state, timed, after, …)` with hooks
+typed `void function(ref State)`, plus stateless overloads over an empty
+`NoState` for hooks that genuinely need nothing. The typed→erased bridge is a
+`static` nested function per instantiation (a function pointer, so the
+apparatus obeys its own rule) over a heap `CaseCell` holding the state and the
+hook pointers.
+
+One simplification falls out and should be taken: today `timed` _returns_ a
+result that the runner stashes and threads into `after`. With an explicit state
+block that plumbing is redundant — `timed` writes its result into the state,
+`after` reads it — which deletes the `last`-value machinery in `makeCase`.
+
+**Migration.** D converts a **non-capturing** lambda to a function pointer
+implicitly, so declaring the parameters as `function` leaves every
+non-capturing call site compiling untouched and rejects exactly the capturing
+ones — the change is self-targeting. Scope at time of writing: 28 call sites
+outside the runner (`wired` bench ×7, `tui` bench ×5, `base` ×4, `hue`,
+`core-cli` example, `event-horizon` suite) plus 17 inside it. Sequence: land
+the core with both shapes, migrate package by package (each independently
+green), then remove the delegate path so the rule is enforced rather than
+advisory.
+
+**Not done yet** — the core redesign plus a 45-site migration is a larger
+change than the batching fix it rode in with, and a partially-migrated
+monorepo does not compile. Specified here so it can be executed in one clean
+pass.
 
 **Raised by:** `sparkles:event-horizon`'s bench port.
 
