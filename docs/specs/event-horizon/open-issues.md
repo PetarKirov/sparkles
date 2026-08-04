@@ -46,13 +46,23 @@ mechanism-agnostic until then.
 **Leaning:** futex parking for "any work available" + `MSG_RING` for targeted
 completion/fd handoff; eventfd only inside the kqueue/IOCP backends.
 
-**Update:** the per-worker Chase-Lev-style deques landed (`pool.d`: owner
-push/pop tail, thieves steal head), replacing the single global mutex-guarded
-queue. Measured on the polyglot-walks walker: **no change** (~0.103 s) — the
-mutex was never that workload's bottleneck; the fiber-per-task cost is (see
-`benchmarks.md` §2). The deques still cut contention for submit-heavy,
-many-core workloads. Idle parking still polls a short in-ring timer;
-futex/`MSG_RING`-driven wakeups + targeted stealing remain.
+**Update (superseded twice — read the whole entry):** per-worker deques landed
+first as _mutex-guarded_ ones, and measured **no change** on the walker
+(~0.103 s); the conclusion drawn at the time — "the fiber-per-task cost is the
+bottleneck" — was wrong. Hardware counters later showed the real cause was
+per-worker `io_uring` ring + fiber-stack setup ([O23](#o23--pool-per-worker-setup-weight-vs-short-batch-workloads)).
+The deques were then rebuilt **lock-free** (Chase-Lev: owner push/pop tail,
+thieves CAS the head) and given randomized victim selection, batch
+(steal-half) stealing, and a `PAUSE`-based idle spin — that combination is what
+made the pool beat `rust-rayon` on every walk shape (`benchmarks.md` §2), so
+the mutex _was_ costing something, just not on the workload first used to judge
+it. Verified race-clean under ASan (70 runs) and TSan (see
+`libs/event-horizon/tsan-suppressions.txt` for why the residual reports are
+false positives).
+
+Still open here: idle parking polls a short in-ring timer, so the
+futex/`MSG_RING`-driven wakeup and targeted stealing this entry is really about
+remain unbuilt.
 
 ## O3 — betterC reach of tier A
 
@@ -355,3 +365,40 @@ the walker now BEATS rust-rayon on a real source tree (1.16× at 16 workers,
 1.9× on a dense synthetic tree), and scaling turned positive. See
 `benchmarks.md` §2. The default (async, per-worker rings) is unchanged — it is
 the right tool for long-lived async-I/O fan-out.
+
+## O24 — Benchmark suite: what moved, and what is superseded but not retired
+
+**Where:** `libs/event-horizon/bench/`; `benchmarks.md`.
+
+The benchmarks now run on **`sparkles:test-runner`**
+(`libs/event-horizon/bench/suite/`, `dub test -b bench -- --bench`), which
+supplies the counting pass, the metric catalog, and `--bench-json` snapshots.
+Three artifacts predate that move and are **superseded but still in the tree**,
+deliberately, because each still does something the suite does not:
+
+| artifact                             | status                                                                                                                                                              |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bench/loop-bench.d`                 | superseded by `bench/suite/`. Kept only because it produced the pre/post-rebase baseline; **retire once the suite's numbers are confirmed on an idle machine**      |
+| `bench/perf/` (ImportC)              | fully superseded by the runner's `--perf`; retire with `loop-bench.d`                                                                                               |
+| `bench/walk-bench.sh` + `gen-tree.d` | **keep** — drives the external `rust-rayon`/`taskPool` binaries, which cannot run under the D runner, and its `strace -c` pass covers `--syscalls` (root-only here) |
+
+Two cautions for whoever picks this up:
+
+- The §1 tier numbers were corrected **twice** during the port (the veneer, and
+  registered-vs-plain reads — both old figures were measurement artifacts, see
+  the corrections in `benchmarks.md` §1). They are believed right but were
+  measured on a machine also running builds; one clean confirmation run on an
+  idle host before treating them as final is warranted.
+- The suite's own `benchIter`/`benchCase` closures must build everything they
+  need **inside** the closure — the runner defers them past the test body.
+  Getting this wrong cost a deadlock, a segfault, and one silently-wrong
+  published number here. The API fix is decided and specified in
+  [test-runner O14](../test-runner/open-issues.md) but **not implemented**; until
+  it is, this is a live footgun for anyone adding a benchmark.
+
+**Options:** (A) retire `loop-bench.d` + `bench/perf/` after a confirmation run
+(the intent); (B) keep `loop-bench.d` indefinitely as an independent
+cross-check of the runner's numbers.
+
+**Leaning:** (A) — two harnesses measuring the same thing drift, and the
+runner's is the one with statistics.
