@@ -86,6 +86,23 @@ struct benchmark
     uint iterations = 0;
 }
 
+/// The page-cache regime a `@workload` requests for the files it names via
+/// $(REF workloadFiles, sparkles,test_runner,workload): leave the cache
+/// alone (`steadyState`), preload (`warm`), or evict (`cold`). The runner
+/// $(B verifies) the achieved regime (`mmap` + `mincore` residency) and
+/// stamps every measured window with requested vs effective — a regime that
+/// could not be established (tmpfs, no `posix_fadvise`, foreign mappings)
+/// degrades with a reason, never silently.
+///
+/// `steadyState` is first so `.init` (and a bare `@workload`) means
+/// "no cache manipulation".
+enum CacheRegime
+{
+    steadyState,
+    warm,
+    cold,
+}
+
 /// Marks a `unittest` as a workload. Workloads are skipped in normal test
 /// runs and measured by `--bench` under the $(I window) model: the body runs
 /// once (or `reps` times inside one measured window), and the runner reports
@@ -99,6 +116,10 @@ struct workload
     /// Times the window content runs inside the single measured window;
     /// `0` is treated as `1`.
     uint reps = 1;
+
+    /// The page-cache regime applied to files named by in-body
+    /// `workloadFiles` calls (overridable per call).
+    CacheRegime regime = CacheRegime.steadyState;
 }
 
 @("attributes.selfContained.wasm")
