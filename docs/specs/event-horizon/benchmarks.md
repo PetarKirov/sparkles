@@ -19,8 +19,8 @@ section.
 | batched NOP throughput (×128)   | ~5.3 M ops/s | amortized submit + `io_uring_enter` + dispatch (loop-overhead floor) |
 | ping-pong NOP latency (×1)      | ~660 ns/op   | un-amortized round-trip: one `io_uring_enter` per op                 |
 | fiber await ping-pong (×1)      | ~840 ns/op   | + the tier-B seam: submit → park → CQE → enqueue → resume            |
-| effect veneer — direct baseline | ~29 ns/op    | a pure `map`/`map` chain written directly                            |
-| effect veneer — `Effect!T`      | ~130 ns/op   | the same chain through the tier-C interpreter                        |
+| effect veneer — direct baseline | ~1.24 ns/op  | a pure `map`/`map` chain written directly                            |
+| effect veneer — `Effect!T`      | ~1.51 ns/op  | the same chain through the tier-C interpreter                        |
 | registered vs plain 4 KiB read  | ~1.0×        | `READ_FIXED` vs plain read on a single cached page                   |
 
 Readings:
@@ -28,38 +28,66 @@ Readings:
 - **Fiber overhead over the callback tier is ~180 ns** (840 − 660): the cost
   of one park/resume plus the mailbox hand-off. That is the price of direct
   style, and it is small against any real I/O.
-- **The `Effect!T` veneer adds ~30–40 ns per node** (~100 ns across three
-  nodes). The interpreter is a compile-time fold — static `static if` dispatch,
-  no runtime instruction loop — so this is not dispatch cost but the `Outcome`
-  value constructed per node. Against a real I/O leaf (μs scale) it vanishes;
-  for pure in-memory pipelines it is measurable and you would stay in direct
-  style.
+- **The `Effect!T` veneer is very nearly free: ~0.27 ns and ~11 retired
+  instructions across the whole three-node chain** (~0.09 ns / ~4 instructions
+  per node). The interpreter is a compile-time fold — static `static if`
+  dispatch, no runtime instruction loop — and with the optimizer able to see
+  through it, that folds essentially to the direct arithmetic. Against a real
+  I/O leaf (µs scale) it is unmeasurable.
+
+  > **Correction (2026-08-04).** This row previously read "~30–40 ns per node
+  > (~100 ns across three nodes)", from the retired standalone `loop-bench.d`.
+  > That figure was a **measurement artifact**, found when the suite moved onto
+  > `sparkles:test-runner`. The old bodies used `assert(…)` as their only
+  > consumer, and `assert` is stripped under `releaseMode` — so the _direct_
+  > body became dead code and was eliminated, while the _veneer_ body was not.
+  > It compared nothing against something. Re-measured with `blackBox` barriers
+  > on both sides (which is what `blackBox` is for), the gap collapses from
+  > ~90 ns to ~0.27 ns. The old shapes are kept as the
+  > `loop.effect.{direct,veneer}Literal` control rows: in the current build
+  > they fold to within 0.9 instructions of each other, which is what pins the
+  > cause to the missing barriers rather than to the veneer.
+
 - **Registered buffers show ~1.0× on a single small cached read.** Honest: the
   `get_user_pages` avoidance that `REGISTER_BUFFERS` buys only pays under
   many-buffer / high-concurrency load, not one 4 KiB page already in cache.
   The registration path is kept as a regression tracker; the win belongs to
   the (future) concurrent-echo matrix.
 
-### Hardware counters — the "why" behind the ns/op
+### Running the suite, and reading the hardware counters
 
-`loop-bench.d` also runs a dedicated `perf_event_open(2)` counting pass per
-tier (`libs/event-horizon/bench/perf/`, adapted from the wired runtime bench).
-Each timed body runs 256 inner ops so the ~2-ioctl measurement floor
-amortizes; the reported numbers are true per-op:
+The benchmarks are `@benchmark`/`@workload` unittests on
+**`sparkles:test-runner`** (`libs/event-horizon/bench/suite/`):
 
-| benchmark       | instrs/op | IPC  | cycles/op | notes                                    |
-| --------------- | --------- | ---- | --------- | ---------------------------------------- |
-| `nop-pingpong`  | ~3 760    | 1.17 | ~3 210    | the `io_uring_enter` round-trip          |
-| `fiber-await`   | ~4 900    | 1.21 | ~4 050    | **+~1 140 instrs** for the tier-B seam   |
-| `effect-direct` | ~31       | 0.93 | ~33       | three int ops written directly           |
-| `effect-veneer` | ~1 050    | 1.95 | ~535      | **+~1 015 instrs** Outcome-boxing / node |
+```bash
+cd libs/event-horizon/bench/suite
+dub test -b bench -- --bench                  # ns/iter medians
+dub test -b bench -- --bench --perf --metrics=all   # + counters, tier-0
+dub test -b bench -- --bench --bench-json=out.json  # committed baselines
+```
 
-Now the tier costs are exact, not inferred from wall-clock: the fiber
-park/resume seam is **~1 140 retired instructions** over the raw callback loop,
-and the `Effect!T` veneer's three-node pure chain is **~1 015 instructions**
-of `Outcome` construction over the direct version (IPC 1.95 — it is
-well-pipelined compute, not stalls). Counters degrade gracefully: absent off
-Linux or under `perf_event_paranoid`.
+`-b bench` matters: dub's stock `unittest` build leaves asserts on, and the
+runner warns when it detects them. The runner supplies the counting pass, the
+metric catalog (`--list-metrics`), and the JSON snapshots, so the
+hand-rolled `perf_event_open` harness this suite used to carry is gone.
+
+> **Reading `instr/iter` on the sub-nanosecond rows — don't.** The runner's
+> counting pass brackets **each iteration** with an ENABLE/DISABLE ioctl pair
+> costing ~3 270 retired instructions. For the ~1.2 ns tier-C bodies that
+> floor _is_ the reported cell (`3286.4` for a body retiring ~3 instructions),
+> and `--perf-iters` does not amortize it — it pins the iteration count, not
+> the bracketing granularity. Two rows measured in the same run still difference
+> correctly (the common floor cancels), which is how the veneer's ~11
+> instructions above were obtained. Filed as
+> [test-runner O14](../test-runner/open-issues.md) with a batching proposal;
+> the µs-scale rows (`loop.read.*`, the pool workloads) are unaffected.
+
+With that caveat, the counters answer "why" on the rows big enough to carry
+them — and retired instructions and page faults are the host-stable anchors a
+cross-build comparison should rest on. That property is what verified the
+`origin/main` rebase was performance-neutral: all four tier anchors came back
+bit-identical (3760 / 4896 / 31 / 1045 instructions) across the rebase, while
+wall-clock wandered by a few percent.
 
 ## 2. polyglot-walks: beating Rust rayon
 

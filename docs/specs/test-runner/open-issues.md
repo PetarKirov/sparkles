@@ -57,6 +57,13 @@ cost dominating a real measurement.
 **Leaning:** (A), scoped to the exact (non-`--perf-scaled`) mode where the
 continuous-enable semantics are provably equivalent.
 
+**Update:** option (C)'s condition is met — `sparkles:event-horizon`'s tier-C
+benchmarks (~1.2 ns bodies) are a real measurement where the ioctl bracket
+does not merely dominate but _is_ the entire reported figure (~3 270 of
+3 286 instructions). See [O14](#o14--the-counting-pass-is-unbatched-so-sub-µs-bodies-read-only-the-bracket),
+which also argues rdpmc alone is insufficient at that body size (30 ns still
+swamps 1.2 ns ~25×) — the two fixes compose rather than compete.
+
 ## O3 — The thread-coverage contract
 
 **Where:** SPEC §4 (protocol), §6 (backend contract).
@@ -189,6 +196,70 @@ summary set but warn when a `--metrics` selector names a column outside it;
 **Leaning:** (B) soon (cheap, honest), (A) when a real consumer needs
 window column control. (M5 confirmed the prediction that the window column
 set grows — it added `io-stall`.)
+
+## O14 — The counting pass is unbatched, so sub-µs bodies read only the bracket
+
+**Where:** SPEC §7 (counting pass), §8.3 (`--perf-iters`);
+[benchmark how-to](../../libs/test-runner/how-to/benchmark.md) `--perf`.
+
+The **timing** pass is batched (`n = 32×4194304`: samples × iterations, one
+clock read per sample). The **counting** pass is not — it brackets _each_
+iteration with an ENABLE/DISABLE ioctl pair, whose cost O2 measured at
+2.2 µs. For a body far below that, every perf cell is the bracket, not the
+body.
+
+Measured on `sparkles:event-horizon`'s tier-C benchmarks (`-b bench`,
+Zen 4, `--perf-iters=20000`, medians of 3):
+
+| row                         | median/iter | reported `instr/iter` |
+| --------------------------- | ----------- | --------------------- |
+| `loop.effect.direct`        | 1.238 ns    | 3286.4                |
+| `loop.effect.veneer`        | 1.508 ns    | 3297.5                |
+| `loop.effect.directLiteral` | 1.222 ns    | 3276.8                |
+
+A ~1.2 ns body cannot retire 3 286 instructions: the floor is ≈ 3 270
+(the ioctl pair — consistent with O2's 2.2 µs at this IPC), so the **signal
+is ~0.3 % of the reported cell**. Two implementations differing 4× in real
+instructions both render "3.3k". The failure is silent: nothing marks the
+cell as floor-dominated, and
+[benchmark how-to](../../libs/test-runner/how-to/benchmark.md) currently
+offers retired instructions as "exact, host-stable anchors — the columns a
+correctness comparison between two builds can rest on", which does not hold
+in this regime.
+
+`--perf-iters` does **not** help: it pins how many bracketed iterations run,
+not the bracketing granularity. Sweeping it 1 → 10⁷ left `instr/iter` flat at
+3.20k–3.28k. (Differencing two rows does cancel the common floor — that is
+how the veneer question above was settled — but that is a workaround a
+consumer has to know to apply, and it only works for rows measured in the
+same run.)
+
+O2's rdpmc bracket (~30 ns) shrinks the floor ~70× but does not remove the
+regime: 30 ns still swamps a 1.2 ns body ~25×. The orthogonal fix is to give
+the counting pass the **same batched shape the timing pass already has**.
+
+**Options:** (A) batch the counting pass — bracket K iterations, divide
+counters by K, with K auto-derived from the timing pass's per-sample
+iteration count (the floor then amortizes as 1/K, independent of the bracket
+primitive, and composes with O2's rdpmc rather than competing with it);
+(B) calibrate the empty-bracket cost once per run and subtract it from each
+cell (cheaper, but subtraction near equality is numerically poor and cannot
+recover IPC); (C) keep per-iteration bracketing but **detect** the regime —
+when a cell is within, say, 5× of the calibrated floor, render `—` (or an
+`≈`-style label, reusing the multiplex-estimate convention) instead of a
+misleading number, and say so in `--bench-json`; (D) document the limitation
+and leave it to consumers.
+
+**Leaning:** (A) as the fix, with (C) as the guard that should land
+regardless — a floor-dominated cell rendering a confident number is the part
+that actually misleads, and (C) is cheap next to (A). (A) needs a decision on
+what a batched pass means for `between()`/per-call `benchCase` rows, which is
+presumably why the pass is per-iteration today; batching is naturally
+available for the `benchIter`/whole-body (batched) rows, which is exactly the
+regime where the floor bites.
+
+**Raised by:** `sparkles:event-horizon`'s bench port (this is the consumer
+O2's option (C) was waiting for).
 
 ## Validation cross-references
 

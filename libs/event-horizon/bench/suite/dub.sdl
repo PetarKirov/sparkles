@@ -1,0 +1,44 @@
+name "event-horizon-bench"
+description "Loop/tier microbenchmarks and pool workloads for sparkles:event-horizon, on sparkles:test-runner"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:event-horizon" path="../../../.."
+// Top-level, not merely under `configuration "unittest"`: the bench modules
+// import sparkles.test_runner.* at module scope, so it is an unconditional
+// dependency of the package — declaring it here keeps the manifest honest.
+dependency "sparkles:test-runner" path="../../../.."
+
+// Real numbers need an optimized unittest build — dub's stock `unittest` type
+// leaves asserts on (the runner prints a warning when it detects them).
+// Invoke as `dub test -b bench -- --bench`.
+buildType "bench" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+}
+
+// A/B control for the `Effect!T` veneer's codegen sensitivity: dub's stock
+// release flags (what the old standalone `loop-bench.d` executable used), with
+// none of the extra LDC tuning above. Running the effect benchmarks under both
+// shows how much of the veneer's cost the optimizer removes — the difference
+// is large, so the veneer's "overhead" is a property of the build, not the
+// abstraction. Invoke as `dub test -b bench-plain -- --bench --perf`.
+buildType "bench-plain" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+}
+
+configuration "unittest" {
+    // The benchmarks are `@benchmark`/`@workload` unittests run through
+    // sparkles:test-runner: `dub test -- --bench` (add `--perf` for hardware
+    // counters, `--syscalls=...` for the kernel-side view).
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
