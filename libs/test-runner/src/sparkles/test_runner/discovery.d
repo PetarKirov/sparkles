@@ -11,7 +11,8 @@ module sparkles.test_runner.discovery;
 import std.meta : Alias, AliasSeq, staticMap;
 import std.traits : fullyQualifiedName, getUDAs, hasUDA;
 
-import sparkles.test_runner.attributes : benchmark, betterC, ctfe, wasm, workload;
+import sparkles.test_runner.attributes : benchmark, betterC, CacheRegime, ctfe,
+    wasm, workload;
 import sparkles.test_runner.model : Test, TestLocation, TestTraits;
 
 /// The module containing `m`: `m` itself when it is a module, or its parent
@@ -94,7 +95,10 @@ TestTraits testTraits(alias test)()
         traits.workloadReps = 1;
         alias wuda = Alias!(getUDAs!(test, workload)[0]);
         static if (!is(wuda))
+        {
             traits.workloadReps = wuda.reps ? wuda.reps : 1;
+            traits.workloadRegime = wuda.regime;
+        }
     }
     return traits;
 }
@@ -194,6 +198,7 @@ version (unittest)
     @workload(reps: 3) private void workloadRepsFixture() {}
     @workload private void workloadBareFixture() {}
     @workload(reps: 0) private void workloadZeroFixture() {}
+    @workload(reps: 2, regime: CacheRegime.cold) private void workloadColdFixture() {}
     @benchmark @workload private void benchmarkWorkloadClashFixture() {}
 }
 
@@ -209,6 +214,12 @@ unittest
     enum bare = testTraits!workloadBareFixture();
     static assert(bare.isWorkload);
     static assert(bare.workloadReps == 1);
+    static assert(bare.workloadRegime == CacheRegime.steadyState,
+        "a bare marker requests no cache manipulation");
+
+    enum cold = testTraits!workloadColdFixture();
+    static assert(cold.workloadReps == 2);
+    static assert(cold.workloadRegime == CacheRegime.cold);
 
     // `reps: 0` is clamped at discovery so the driver never sees 0.
     enum zero = testTraits!workloadZeroFixture();

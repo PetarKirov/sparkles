@@ -9,6 +9,8 @@ module sparkles.test_runner.model;
 
 import core.time : Duration;
 
+import sparkles.test_runner.attributes : CacheRegime;
+
 /// Source location of a `unittest` block, from `__traits(getLocation)`.
 /// The file path is as the compiler saw it (usually relative to the package
 /// root that `dub test` runs in).
@@ -40,6 +42,9 @@ struct TestTraits
     /// Workload window rep count; discovery clamps it to ≥ 1
     /// (see `workload.reps`). Meaningful only when `isWorkload`.
     uint workloadReps;
+
+    /// The workload's requested page-cache regime (see `workload.regime`).
+    CacheRegime workloadRegime;
 
     /// The test's safety/purity attributes (`"@safe pure nothrow @nogc"`),
     /// re-applied to extracted `@betterC`/`@wasm` test functions.
