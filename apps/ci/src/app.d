@@ -1719,15 +1719,18 @@ private bool isAnsiFence(string fenceType)
 @safe pure
 Example[] extractExamples(string content)
 {
-    // Expected output uses the ```[Output] or ```ansi fence (a VitePress code-group
-    // label). Bare ``` and all other labelled fences (```d [D], ```rust
-    // [Rust], etc.) are code blocks, not output.
+    // Expected output uses the ```ansi fence (ANSI escapes preserved, rendered
+    // as real color by the site). ```[Output] is the legacy spelling and stores
+    // ANSI-stripped text; it is still recognised so old blocks keep verifying
+    // instead of silently degrading to "no expected output". Bare ``` and all
+    // other labelled fences (```d [D], ```rust [Rust], etc.) are code blocks,
+    // not output.
     string getOutputFenceType(string s)
     {
         auto stripped = s.strip;
-        if (stripped == "```[Output]") return "[Output]";
         if (stripped == "```ansi") return "ansi";
         if (stripped == "```[Output:ansi]") return "[Output:ansi]";
+        if (stripped == "```[Output]") return "[Output]";
         return null;
     }
 
@@ -2923,7 +2926,10 @@ int runUpdateMode(Example[] examples, ExecutionResult[] results, string mdFile, 
         }
 
         string actualOutput;
-        string fenceType = "[Output]";
+        // Newly inserted output blocks default to ```ansi so colors survive.
+        // An existing block keeps its own fence type (including the legacy
+        // ```[Output], which stores ANSI-stripped text).
+        string fenceType = "ansi";
 
         if (example.outputFenceType !is null)
         {
