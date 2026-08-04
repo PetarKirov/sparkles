@@ -165,7 +165,7 @@ elements, each implemented twice** — once per backend.
 | tree pane background   | `gui.d:2137`         | `explorer.d:522`                        |
 | pane divider           | `gui.d:2138` (1 px)  | `workspace.d:156` (`│`)                 |
 | status / bottom bar    | `gui.d:2268`, `2279` | `twoslash_tui.d:293` + `294`            |
-| selection fill         | `gui.d:2022`         | `tui.d:450`                             |
+| selection fill         | `gui.d:1982`         | `tui.d:450` — **they disagree, below**  |
 | page fill              | the window clear     | `workspace.d:138`, `twoslash_tui.d:232` |
 
 GUI-only remainders: the gutter band (`1888`), the header bar and its hairline
@@ -179,6 +179,36 @@ document differently; a divider drawn as a 1 px rule on one backend and a `│`
 column on the other is the same defect earlier in its life. The pairing is how
 to sequence the work — one element at a time, deleting **both** predecessors in
 the same change (`UIA4`).
+
+#### Pairing the sites found two defects, not just duplication
+
+The table above was first written by matching sites that _looked_ alike. Two of
+those pairings were wrong, and correcting them is the most useful thing the
+exercise produced — because what the divergence hides is not duplicated code but
+**different behaviour**:
+
+- **Selection renders at a different granularity on each backend.**
+  `gui.d:1982` tints through `selectionRects`, which derives char-precise rects
+  and whose own comment says the toolkit derives them "once for any backend".
+  `tui.d:450` ignores that and tints **whole rows** —
+  `foreach (x; 0 .. width - 1)` for every line in `[lo, hi]`. Select half a line
+  and the GUI shows half a line; the TUI shows all of it. This is the scrollbar
+  problem the rationale at the top of this page describes, except it is not
+  hypothetical and it is shipping.
+
+- **Search-match highlighting exists only in the GUI.** `gui.d:2022` paints
+  `vm.matchRects` with two tints (the current match brighter). The TUI has no
+  `matchRects` at all. It was mistaken for the selection pairing because both
+  are "a tinted rect over text"; they are different features, and the TUI is
+  simply missing one.
+
+So `UIA2` here is not cosmetic tidying. Routing both through one widget is what
+makes the backends agree, and the second finding means one of them gains a
+feature rather than merely changing how it draws.
+
+The remaining pairings are matched by role and are **approximate until each is
+done** — the two corrections above are exactly what happens when a pairing is
+assumed rather than read.
 
 #### It is not six new widgets — it is a geometry decision
 
