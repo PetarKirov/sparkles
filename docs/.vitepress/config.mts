@@ -1547,6 +1547,14 @@ export default withMermaid(
                       link: '/research/diff-review/diffs-nvim',
                     },
                     {
+                      text: 'Neovim linematch',
+                      link: '/research/diff-review/neovim-linematch',
+                    },
+                    {
+                      text: 'Neovim charmatch (PR)',
+                      link: '/research/diff-review/neovim-charmatch',
+                    },
+                    {
                       text: 'VS Code Diff Editor',
                       link: '/research/diff-review/vscode',
                     },
