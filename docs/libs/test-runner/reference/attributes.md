@@ -84,6 +84,9 @@ to `@benchmark`'s per-iteration statistics.
 - On Linux the decomposition is thread-scoped (the driving thread); rusage's
   user/kernel split is tick-sampled, so windows should be **long** (tens of
   milliseconds up) for the split to be signal rather than quantization.
+- `@workload(regime: CacheRegime.cold)` (or `warm`) sets the page-cache
+  regime `workloadFiles(paths...)` establishes and verifies for the files
+  the body names — see the how-to's regime section.
 
 See [Measure workloads](../how-to/measure-workloads.md).
 

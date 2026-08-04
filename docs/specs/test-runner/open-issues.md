@@ -187,8 +187,8 @@ summary set but warn when a `--metrics` selector names a column outside it;
 (C) status quo, documented.
 
 **Leaning:** (B) soon (cheap, honest), (A) when a real consumer needs
-window column control. (M5 confirmed the prediction that the window column
-set grows — it added `io-stall`.)
+window column control. (M5 and M6 confirmed the prediction that the
+window column set grows — `io-stall`, then `regime`.)
 
 ## Validation cross-references
 

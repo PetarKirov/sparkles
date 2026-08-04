@@ -92,6 +92,47 @@ Two scoping facts worth knowing:
   smears by up to a scheduler tick. Make windows **long** — tens of
   milliseconds and up — so the split is signal, not quantization.
 
+## Declared page-cache regimes: `workloadFiles`
+
+An I/O workload's numbers depend on what the page cache already holds. A
+`@workload` can declare — and the runner will **verify**, never assume —
+the regime its files run under:
+
+```d
+import sparkles.test_runner.attributes : CacheRegime, workload;
+import sparkles.test_runner.workload : workloadFiles, workloadWindow;
+
+@("ingest.coldVsWarm")
+@workload @system
+unittest
+{
+    workloadFiles(CacheRegime.cold, "testdata/big.json"); // evict, verify
+    workloadWindow("cold", () { processFile("testdata/big.json"); });
+
+    workloadFiles(CacheRegime.warm, "testdata/big.json"); // preload, verify
+    workloadWindow("warm", () { processFile("testdata/big.json"); });
+}
+```
+
+`cold` is `fdatasync` + `posix_fadvise(DONTNEED)` per file; `warm` is an
+explicit read-through preload; both are verified with `mmap` + `mincore`
+residency and stamped on every window measured after the call — the table
+gains a `regime` column (`cold`, or `cold→steady` when the regime could
+not be established, with the reason in the note), and `--bench-json`
+windows carry the exact fractions in a `regime` object. The marker form
+`@workload(regime: CacheRegime.cold)` sets the default for calls that
+don't override it.
+
+What the verification protects you from, honestly: on **tmpfs** the pages
+ARE the file — cold is impossible and the stamp says so; on **ZFS**,
+`mincore` sees neither ARC warmth nor ARC survival, so residency there is
+disclosure, not evidence (noted, thresholds suppressed); a file another
+process has mapped won't evict (downgraded, with the resident percentage);
+and a `workloadFiles` call inside an open window or on a repetition after
+the first is refused with a note — prep mid-measurement would sabotage the
+window in flight. Outside `--bench` the call does nothing at all: no
+eviction, no probes.
+
 ## Measuring part of the body, and reps
 
 `workloadWindow` scopes the window to a closure — everything outside it is

@@ -72,12 +72,13 @@ Measurement modules (all under
 | `rdpmc.d`        | user-space counter reads (the `selfMonitoring` primitive)              |
 | `workload.d`     | the `@workload` window model: wall source, decomposition, driver       |
 | `psi.d`          | PSI stall integrals (`/proc/pressure` parser + diagnostic source)      |
+| `cache_regime.d` | page-cache regime control: fs probes, residency, the stamp policy      |
 | `bench_json.d`   | the `--bench-json` emitter (§8.3)                                      |
 | `reporting.d`    | tables, live displays, progress                                        |
 | `skip.d`         | `skipTest`                                                             |
 
 Planned modules _(targets)_:
-`cache_regime.d`/`provenance.d`/`cgroup.d` (M6–M8), `histogram.d` (B5),
+`provenance.d`/`cgroup.d` (M7–M8), `histogram.d` (B5),
 `sampling.d`/`symbolize.d` (B6), `offcpu.d` (M9), `loadgen.d` (M10), plus
 per-OS backend variants inside the existing modules (B3/B4).
 
@@ -119,8 +120,17 @@ unconditionally (not under `version (unittest)`).
   one window; without any call the whole body is the window. Outside a
   workload measurement the closure runs exactly once, inertly. Unnamed
   windows take the test name, then `#2`, `#3`; named ones `<test>/<name>`.
-  A cache-regime request field and the in-body `workloadFiles` primitive
-  land with the page-cache regime milestone _(target — M6)_.
+  **`@workload(regime: CacheRegime.cold)`** requests a page-cache regime
+  for the files the body names via **`workloadFiles(paths...)`** /
+  `workloadFiles(regime, paths...)` (per-call override): the call preps
+  the files NOW (cold = fdatasync + fadvise-evict; warm = read-through
+  preload; steadyState = nothing), verifies residency (`mmap` +
+  `mincore`), and stamps every window measured after it with
+  requested-vs-effective (`CacheRegimeStamp`) — a later call REPLACES
+  the pending stamp. Outside a workload measurement the call does
+  NOTHING (no eviction, no probes — cache vandalism in an ordinary run);
+  inside an open window or on a whole-body repetition after the first,
+  prep is SKIPPED and the window's note says so.
 
 ## 4. Measurement protocol
 
@@ -152,9 +162,14 @@ Thread coverage is inherit-shaped: counters follow threads spawned after the
 source opens; pre-existing threads and short-lived children are blind spots
 (see [open-issues.md § O3](./open-issues.md)).
 
-For `@workload`: the driver phase model is `setup → regime-prep (target —
-M6) → snapshot-before all sources → body × reps → snapshot-after →
-residency-verify (target — M6) → assemble deltas`. Measurement is a
+For `@workload`: the driver phase model is `setup → snapshot-before all
+sources → body × reps → snapshot-after → assemble deltas`. **Recorded
+judgment (M6):** the originally planned distinct `regime-prep` and
+post-body `residency-verify` phases dissolved into the in-body
+`workloadFiles` call site — prep AND verification happen there, and the
+whole-body candidate window's edges are re-opened after prep (prep is
+setup, retroactively), so a post-body probe phase would either pollute
+windows or describe a candidate that in-body windows discard. Measurement is a
 **single pass** — sources are read cumulatively at the window edges
 (`GroupSnapshot`, no per-iteration bracket, no `RESET`), so a whole-body
 candidate window and in-body windows overlap freely and the body is never
