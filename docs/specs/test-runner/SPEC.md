@@ -125,9 +125,11 @@ unconditionally (not under `version (unittest)`).
   `workloadFiles(regime, paths...)` (per-call override): the call preps
   the files NOW (cold = fdatasync + fadvise-evict; warm = read-through
   preload; steadyState = nothing), verifies residency (`mmap` +
-  `mincore`), and stamps every window measured after it with
-  requested-vs-effective (`CacheRegimeStamp`) — a later call REPLACES
-  the pending stamp. Outside a workload measurement the call does
+  `mincore`), and stamps the NEXT measured window with
+  requested-vs-effective (`CacheRegimeStamp`) — consume-once, because the
+  verified state is stale the moment a window has run against it: later
+  windows are unstamped until their own `workloadFiles` call, and a later
+  call before any window REPLACES the pending stamp. Outside a workload measurement the call does
   NOTHING (no eviction, no probes — cache vandalism in an ordinary run);
   inside an open window or on a whole-body repetition after the first,
   prep is SKIPPED and the window's note says so.
@@ -168,8 +170,15 @@ judgment (M6):** the originally planned distinct `regime-prep` and
 post-body `residency-verify` phases dissolved into the in-body
 `workloadFiles` call site — prep AND verification happen there, and the
 whole-body candidate window's edges are re-opened after prep (prep is
-setup, retroactively), so a post-body probe phase would either pollute
-windows or describe a candidate that in-body windows discard. Measurement is a
+setup, retroactively; a second call restarts the window again and the
+fallback row discloses that only work after the last call is measured),
+so a post-body probe phase would either pollute windows or describe a
+candidate that in-body windows discard. The same judgment records that
+`/proc/sys/vm/drop_caches` is never used: it is a system-global,
+root-only sledgehammer that evicts every other process's state —
+per-file `posix_fadvise` + verification + downgrade-note is the honest
+scope, and M8's cgroup `memory.max` is the scoped successor if stronger
+eviction is ever needed. Measurement is a
 **single pass** — sources are read cumulatively at the window edges
 (`GroupSnapshot`, no per-iteration bracket, no `RESET`), so a whole-body
 candidate window and in-body windows overlap freely and the body is never
@@ -487,8 +496,12 @@ onCpuKernelNs, offCpuRunqueueNs, offCpuDiskNs, offCpuOtherNs}` (`null` =
   per attached source (`perf`, `tier0`, `syscalls`, `raw`), an optional
   `psi` object — `{scope: "system", ioSomeNs, ioFullNs, memSomeNs,
 memFullNs, cpuSomeNs}`, the system-wide stall deltas, omitted when PSI is
-  unavailable — an optional `note`, and `error`/`skipped` mirroring the row
-  shapes. Window values are totals with their own field names, deliberately
+  unavailable — an optional `regime` object — `{requested, effective,
+residentBefore, residentAfter, note?}`, the page-cache regime
+  `workloadFiles` established and verified for this window, omitted when
+  no prep preceded it and KEPT on error/skip windows (the stamp predates
+  the window) — an optional `note`, and `error`/`skipped` mirroring the
+  row shapes. Window values are totals with their own field names, deliberately
   never the per-iteration `metrics` catalog keys (the misrepresentation
   open-issue O7 guarded against; resolved as its option A, the anticipated
   bump absorbed into the never-released schema 2).

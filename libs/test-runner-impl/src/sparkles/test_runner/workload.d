@@ -635,6 +635,7 @@ private struct WorkloadContext
     Nullable!CacheRegimeStamp pendingStamp; /// the latest workloadFiles stamp
     CacheRegime markerRegime; /// the @workload marker's regime default
     bool prepSkipped; /// a workloadFiles call was refused under `measuring`
+    uint candidateRefreshes; /// workloadFiles restarts of the whole-body window
 }
 
 /// The active workload measurement, when `runWorkload` is driving this
@@ -791,9 +792,14 @@ private void workloadFilesImpl(WorkloadContext* ctx, CacheRegime regime,
     // still live (no windows recorded), re-open its edges so everything
     // above — probes, eviction, preload I/O — stays outside the measured
     // window. The refresh re-reads psi outermost, so prep's own writeback
-    // stall also lands outside `psi0`.
+    // stall also lands outside `psi0`. A SECOND call restarts the window
+    // again, discarding real work run between the calls — disclosed on the
+    // fallback window rather than silently vanished.
     if (ctx.windows.length == 0)
+    {
         ctx.candidate = WindowEdges.open(*ctx.counters, *ctx.wall, *ctx.psi);
+        ctx.candidateRefreshes++;
+    }
 }
 
 private string uintString(uint v) @safe pure nothrow
@@ -933,6 +939,7 @@ private void measureWindow(DG)(WorkloadContext* ctx, string name, scope DG run)
     {
         w.error = errorCell(s.message.idup);
         w.skipped = true;
+        ctx.prepSkipped = false; // this window's refusal must not leak to the next
         ctx.windows ~= w;
         return;
     }
@@ -944,16 +951,29 @@ private void measureWindow(DG)(WorkloadContext* ctx, string name, scope DG run)
         const thrown = toThrown(t);
         w.error = errorCell(thrown.length
             ? thrown[0].type ~ ": " ~ thrown[0].message : "threw");
+        ctx.prepSkipped = false;
         ctx.windows ~= w;
         throw t;
     }
     edges.closeInto(w, *ctx.counters, *ctx.wall, *ctx.psi);
+    // Consume-once: the stamp described residency verified at the prep call
+    // — this window consumed that state, so a later window without its own
+    // workloadFiles call is UNSTAMPED (an em dash prompting a re-prep),
+    // never a stale "cold" claim for a run the first window already warmed.
+    ctx.pendingStamp.nullify();
     if (ctx.prepSkipped)
     {
         appendNote(w.wall.note,
             "workloadFiles inside a window — prep skipped; call it before the window");
         ctx.prepSkipped = false;
     }
+    // The explicit-window twin of the whole-body late-rep disclosure: prep
+    // ran once, but reps 2+ execute against the cache state rep 1 left
+    // behind — a "cold" stamp on a reps > 1 window is cold for rep 1 only.
+    if (ctx.reps > 1 && !w.regime.isNull
+        && w.regime.get.requested != CacheRegime.steadyState)
+        appendNote(w.wall.note,
+            "regime prep ran once — reps 2+ reuse rep 1's cache state");
     ctx.windows ~= w;
 }
 
@@ -1026,6 +1046,10 @@ WorkloadOutcome runWorkload(Test test, ref CounterGroups counters,
             if (ctx.prepSkipped)
                 appendNote(w.wall.note, "workloadFiles on a repetition after "
                     ~ "the first — prep ran only before rep 1");
+            if (ctx.candidateRefreshes > 1)
+                appendNote(w.wall.note, "whole-body window restarted by a later "
+                    ~ "workloadFiles call — only work after the last call is "
+                    ~ "measured (use explicit windows for multi-regime bodies)");
             ctx.windows ~= w;
         }
     }
@@ -1787,4 +1811,53 @@ unittest
     while (MonoTime.currTime - t0 < 15.msecs)
         foreach (i; 0 .. 10_000)
             sink += i * i;
+}
+
+@("workload.workloadFiles.consumeOnceAndRestartDisclosure")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : deleteme, remove, write;
+    import sparkles.test_runner.model : TestTraits;
+
+    static string file;
+    file = deleteme ~ ".regime-consume";
+    write(file, new ubyte[](64 * 1024));
+    scope (exit)
+        remove(file);
+
+    // Consume-once: one prep, two windows — only the first is stamped.
+    static void twoWindows()
+    {
+        workloadFiles(CacheRegime.warm, file);
+        workloadWindow("first", () {});
+        workloadWindow("second", () {});
+    }
+
+    auto counters = CounterGroups.none;
+    auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false);
+    auto outcome = runWorkload(
+        Test(fullName: "m.co", name: "co", ptr: &twoWindows,
+            traits: TestTraits(isWorkload: true, workloadReps: 1)),
+        counters, wall, psi);
+    assert(!outcome.windows[0].regime.isNull);
+    assert(outcome.windows[1].regime.isNull,
+        "the second window is unstamped — the verified state is stale");
+
+    // Windowless multi-call: the whole-body restart is disclosed.
+    static void twoPreps()
+    {
+        workloadFiles(file);
+        workloadFiles(file);
+    }
+
+    outcome = runWorkload(
+        Test(fullName: "m.rs", name: "rs", ptr: &twoPreps,
+            traits: TestTraits(isWorkload: true, workloadReps: 1)),
+        counters, wall, psi);
+    assert(outcome.windows.length == 1);
+    assert(outcome.windows[0].wall.note.canFind("restarted"),
+        "a second refresh discards prior work — never silently");
 }

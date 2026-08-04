@@ -845,7 +845,7 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
                 : render(colored, i"{red $(r.error)}");
             string[] errCols = [r.name, r.reps.to!string];
             if (hasRegime)
-                errCols ~= "—";
+                errCols ~= regimeCell(r); // the stamp predates the failure — keep it
             errCols ~= message; // lands in the wall column
             while (errCols.length < headers.length)
                 errCols ~= "—";

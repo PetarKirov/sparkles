@@ -102,17 +102,22 @@ version (Posix)
         private enum int posixFadvDontneed = 4;
 
         // No Linux statfs in druntime; only f_type (the first word) is
-        // read — the buffer is oversized past every ABI variant.
+        // read — the buffer is oversized past every ABI variant, and the
+        // field is `c_long` because `__fsword_t` is 32-bit on 32-bit ABIs
+        // (a `long` there would read f_type and f_bsize as one word and
+        // silently disable every fs-specific honesty rule).
         private extern (C) int statfs(const(char)* path, void* buf) @nogc nothrow;
         private struct StatfsBuf
         {
-            long f_type;
+            import core.stdc.config : c_long;
+
+            c_long f_type;
             ubyte[144] rest;
         }
 
-        private enum long tmpfsMagic = 0x0102_1994;
-        private enum long ramfsMagic = 0x8584_58f6;
-        private enum long zfsMagic = 0x2fc1_2fc1;
+        private enum ulong tmpfsMagic = 0x0102_1994;
+        private enum ulong ramfsMagic = 0x8584_58f6;
+        private enum ulong zfsMagic = 0x2fc1_2fc1;
     }
     else version (OSX)
     {
@@ -128,10 +133,15 @@ version (Posix)
         {
             import std.string : toStringz;
 
+            import core.stdc.config : c_ulong;
+
             StatfsBuf buf;
             if (statfs(path.toStringz, &buf) != 0)
                 return FsKind.unknown;
-            switch (buf.f_type)
+            // Zero-extend through the unsigned width: ramfs's magic has the
+            // top bit set, which a signed 32-bit f_type would sign-extend
+            // past every case.
+            switch (cast(ulong) cast(c_ulong) buf.f_type)
             {
                 case tmpfsMagic, ramfsMagic: return FsKind.tmpfs;
                 case zfsMagic: return FsKind.zfs;
@@ -142,19 +152,61 @@ version (Posix)
             return FsKind.unknown;
     }
 
+    /// Opens `path` read-only with `O_CLOEXEC | O_NONBLOCK` and verifies it
+    /// is a REGULAR file: a FIFO would block the runner forever in `open`
+    /// (or `read`), and a character device (`/dev/zero`) would make the
+    /// preload loop non-terminating. `-1` with `reason` set on any failure;
+    /// `st` is filled on success.
+    private int openRegular(scope const(char)[] path, out stat_t st,
+        out string reason) @trusted nothrow
+    {
+        import core.sys.posix.sys.stat : S_IFMT, S_IFREG;
+        import std.string : toStringz;
+
+        version (OSX)
+        {
+            // druntime's darwin core.sys.posix.fcntl has no O_CLOEXEC —
+            // values from the SDK's fcntl.h.
+            enum int oExtra = 0x0100_0000 /*O_CLOEXEC*/ | 0x0004 /*O_NONBLOCK*/;
+        }
+        else
+        {
+            import core.sys.posix.fcntl : O_CLOEXEC, O_NONBLOCK;
+
+            enum int oExtra = O_CLOEXEC | O_NONBLOCK;
+        }
+
+        const fd = open(path.toStringz, O_RDONLY | oExtra);
+        if (fd < 0)
+        {
+            reason = "open failed";
+            return -1;
+        }
+        if (fstat(fd, &st) != 0)
+        {
+            close(fd);
+            reason = "fstat failed";
+            return -1;
+        }
+        if ((st.st_mode & S_IFMT) != S_IFREG)
+        {
+            close(fd);
+            reason = "not a regular file";
+            return -1;
+        }
+        return fd;
+    }
+
     /// Measures `path`'s page-cache residency via `mmap` + `mincore`.
     Residency probeResidency(scope const(char)[] path) @trusted nothrow
     {
-        import std.string : toStringz;
-
-        const fd = open(path.toStringz, O_RDONLY);
+        stat_t st;
+        string reason;
+        const fd = openRegular(path, st, reason);
         if (fd < 0)
             return Residency();
         scope (exit)
             close(fd);
-        stat_t st;
-        if (fstat(fd, &st) != 0)
-            return Residency();
         const size = cast(ulong) st.st_size;
         if (size == 0)
             return Residency(0, 0, true); // mmap(0) is EINVAL; nothing to verify
@@ -191,11 +243,11 @@ version (Posix)
     {
         version (linux)
         {
-            import std.string : toStringz;
-
-            const fd = open(path.toStringz, O_RDONLY);
+            stat_t st;
+            string reason;
+            const fd = openRegular(path, st, reason);
             if (fd < 0)
-                return "open failed";
+                return reason;
             scope (exit)
                 close(fd);
             cast(void) fdatasync(fd); // flush dirty pages so they are evictable
@@ -211,11 +263,11 @@ version (Posix)
     /// loop (never async `WILLNEED` advice); `null` = ok, else the reason.
     string applyWarm(scope const(char)[] path) @trusted nothrow
     {
-        import std.string : toStringz;
-
-        const fd = open(path.toStringz, O_RDONLY);
+        stat_t st;
+        string reason;
+        const fd = openRegular(path, st, reason);
         if (fd < 0)
-            return "open failed";
+            return reason;
         scope (exit)
             close(fd);
         ubyte[64 * 1024] buf = void;
@@ -261,7 +313,16 @@ CacheRegimeStamp resolveStamp(CacheRegime requested, FsKind kind,
     s.residentAfter = residentAfter;
 
     if (requested == CacheRegime.steadyState)
-        return s; // nothing was attempted; the probe fractions are disclosure
+    {
+        // Nothing was attempted; the probe fractions are pure disclosure —
+        // but untrustworthy residency still needs its caveat (a confident
+        // 0 % for an ARC-cached zfs file would invert the reader's model).
+        if (kind == FsKind.zfs)
+            s.note = "zfs: page-cache residency does not reflect ARC state";
+        else if (kind == FsKind.unknown)
+            s.note = "fs type unprobed";
+        return s;
+    }
 
     if (prepNote.length)
     {
@@ -347,10 +408,15 @@ unittest
 
     with (CacheRegime) with (FsKind)
     {
-        // steadyState: nothing attempted; fractions are disclosure only.
+        // steadyState: nothing attempted; fractions are disclosure only —
+        // but a residency-blind fs still gets its caveat.
         const steady = resolveStamp(steadyState, other, 0.42, 0.42, null);
         assert(steady.effective == steadyState && steady.note.length == 0);
         assert(steady.residentBefore == 0.42);
+        assert(resolveStamp(steadyState, zfs, 0.0, 0.0, null)
+            .note.canFind("ARC"), "steadyState on zfs discloses the blindness");
+        assert(resolveStamp(steadyState, unknown, 0.5, 0.5, null)
+            .note.canFind("unprobed"));
 
         // tmpfs: cold impossible; warm trivially true.
         const tc = resolveStamp(cold, tmpfs, 1.0, 1.0, null);
@@ -399,10 +465,18 @@ unittest
 {
     version (Posix)
     {
+        import std.algorithm.searching : canFind;
         import std.file : deleteme, remove, write;
 
         // A missing file is !ok, never a fabricated measurement.
         assert(!probeResidency("/nonexistent/definitely/missing").ok);
+
+        // Non-regular files are refused with a reason — a FIFO would block
+        // the runner forever and a device's preload loop never terminates.
+        assert(!probeResidency("/dev/null").ok);
+        assert(applyWarm("/dev/null").canFind("not a regular file"));
+        version (linux)
+            assert(applyCold("/dev/null").canFind("not a regular file"));
 
         // An empty file: ok with 0/0 pages — drops out of aggregation.
         const path = deleteme ~ ".cache-regime-empty";

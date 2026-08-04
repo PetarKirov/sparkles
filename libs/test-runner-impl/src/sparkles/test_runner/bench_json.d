@@ -334,6 +334,27 @@ string benchReportJson(in BenchStats[] rows, in BenchMeta meta,
     return o[];
 }
 
+/// The page-cache regime workloadFiles established for a window
+/// (requested vs verified-effective; fractions nan→null); the note stays
+/// separate from the wall note here even though the table composes them
+/// into one cell. Emitted for error/skip windows too — the stamp predates
+/// the window.
+private void appendRegime(O)(ref O o, in WorkloadWindow w)
+{
+    import std.conv : to;
+
+    if (w.regime.isNull)
+        return;
+    const g = w.regime.get;
+    o ~= "      \"regime\": { \"requested\": \"" ~ g.requested.to!string
+        ~ "\", \"effective\": \"" ~ g.effective.to!string
+        ~ "\", \"residentBefore\": " ~ jsonNumber(g.residentBefore)
+        ~ ", \"residentAfter\": " ~ jsonNumber(g.residentAfter);
+    if (g.note.length)
+        o ~= ", \"note\": \"" ~ jsonEscape(g.note) ~ "\"";
+    o ~= " },\n";
+}
+
 /// One `windows` element. Field order is fixed for byte-stable baselines;
 /// absent sources omit their keys (the `Nullable` contract), `nan`
 /// components emit `null`, and `skipped` appears only when `true`.
@@ -350,6 +371,9 @@ private string windowJson(in WorkloadWindow w) @safe
     {
         // Mirror the error-row shape: every always-present key stays
         // present as null, so consumers can read windows position-blind.
+        // The regime stamp survives — it describes state established
+        // BEFORE the window opened (possibly why the run failed), unlike
+        // the per-source measurements OF the failed window.
         o ~= "      \"wallNs\": null,\n";
         o ~= "      \"scope\": null,\n";
         o ~= "      \"onCpuUserNs\": null,\n";
@@ -357,6 +381,7 @@ private string windowJson(in WorkloadWindow w) @safe
         o ~= "      \"offCpuRunqueueNs\": null,\n";
         o ~= "      \"offCpuDiskNs\": null,\n";
         o ~= "      \"offCpuOtherNs\": null,\n";
+        appendRegime(o, w);
         if (w.skipped)
             o ~= "      \"skipped\": true,\n";
         o ~= "      \"error\": \"" ~ jsonEscape(w.error) ~ "\"\n";
@@ -440,23 +465,7 @@ private string windowJson(in WorkloadWindow w) @safe
             ~ ", \"cpuSomeNs\": " ~ jsonNumber(p.cpuSomeNs) ~ " },\n";
     }
 
-    if (!w.regime.isNull)
-    {
-        import std.conv : to;
-
-        // The page-cache regime workloadFiles established for this window
-        // (requested vs verified-effective; fractions nan→null); the note
-        // stays separate from the wall note here even though the table
-        // composes them into one cell.
-        const g = w.regime.get;
-        o ~= "      \"regime\": { \"requested\": \"" ~ g.requested.to!string
-            ~ "\", \"effective\": \"" ~ g.effective.to!string
-            ~ "\", \"residentBefore\": " ~ jsonNumber(g.residentBefore)
-            ~ ", \"residentAfter\": " ~ jsonNumber(g.residentAfter);
-        if (g.note.length)
-            o ~= ", \"note\": \"" ~ jsonEscape(g.note) ~ "\"";
-        o ~= " },\n";
-    }
+    appendRegime(o, w);
 
     if (w.wall.note.length)
         o ~= "      \"note\": \"" ~ jsonEscape(w.wall.note) ~ "\",\n";
