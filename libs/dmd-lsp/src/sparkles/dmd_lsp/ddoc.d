@@ -481,8 +481,11 @@ private void defineMacros(ref MacroTable t) @safe pure nothrow
 
     // --- code blocks: fence content passes through raw (token-highlight
     // macros inside must not inject markup into a fence).
-    t.define("D_CODE", "\n```d\n$0\n```\n");
-    t.define("OTHER_CODE", "\n```$1\n$+\n```\n");
+    // `$0` already ends with the block's own newline, so the fence follows it
+    // directly — a second one would put a blank line inside the code, which
+    // `DDC31` says is the author's to place, not ours.
+    t.define("D_CODE", "\n```d\n$0```\n");
+    t.define("OTHER_CODE", "\n```$1\n$+```\n");
     foreach (tok; ["D_COMMENT", "D_STRING", "D_KEYWORD", "D_PSYMBOL", "D_PARAM"])
         t.define(tok, "$0");
 
@@ -610,8 +613,12 @@ private string cleanupMarkdown(string s) @safe pure
     import std.string : stripLeft, stripRight;
 
     s = joinModulePaths(stripSentinels(s));
+    // Only the line ending is normalized here: trailing whitespace is content
+    // inside a fence, and the pass below is the one that knows where fences
+    // are (`DDC31`).
+    bool[] fenced;
     auto lines = reflowListsAndTables(
-        s.splitter('\n').map!(l => l.stripRight("\r").stripRight.idup).array);
+        s.splitter('\n').map!(l => l.stripRight("\r").idup).array, fenced);
 
     // Fold runs of blank lines; drop the blank between consecutive list
     // items (the LI macro's newlines would render every list loose) and the
@@ -620,6 +627,14 @@ private string cleanupMarkdown(string s) @safe pure
     bool prevBlank = false;
     foreach (i, l; lines)
     {
+        // Inside a fence every line is the code's own — a run of blanks and a
+        // trailing space are both content, not layout.
+        if (fenced[i])
+        {
+            folded ~= l;
+            prevBlank = false;
+            continue;
+        }
         const blank = l.length == 0;
         if (blank && prevBlank)
             continue;
@@ -634,8 +649,6 @@ private string cleanupMarkdown(string s) @safe pure
             if (j < lines.length && isListItem(lines[j]))
                 continue;
         }
-        if (blank && i + 1 < lines.length && lines[i + 1].startsWith("```"))
-            continue;
         folded ~= l;
         prevBlank = blank;
     }
@@ -648,11 +661,9 @@ private string indentOf(size_t n) @safe pure nothrow
 {
     static immutable string spaces = "                                ";
     const w = n * 4;
-    if (w <= spaces.length)
-        return spaces[0 .. w];
-    auto pad = new char[](w);
-    pad[] = ' ';
-    return () @trusted { return cast(string) pad; }();
+    // Eight levels of list nesting is already past what any doc comment does;
+    // clamping there keeps this a slice rather than an allocation.
+    return spaces[0 .. w <= spaces.length ? w : spaces.length];
 }
 
 /// Whether a line opens a list item — `- ` or `12. `. The blank-line fold uses
@@ -684,17 +695,24 @@ bulleted). And a DDoc table has no delimiter row at all — without one
 CommonMark reads the rows as a paragraph full of pipes — so each header cell
 records its column's alignment and the row is built from those.
 */
-private string[] reflowListsAndTables(string[] lines) @safe pure
+private string[] reflowListsAndTables(string[] lines, out bool[] fenced) @safe pure
 {
     import std.algorithm.searching : endsWith, startsWith;
-    import std.string : stripLeft;
+    import std.string : stripLeft, stripRight;
 
-    static struct Frame { bool ordered; int next; }
+    static struct Frame { bool ordered; uint next; }
 
     Frame[] stack;
     string[] out_;
+    bool[] isCode;
     bool inFence = false;
     bool markNextFence = false;
+
+    void emit(string line, bool code)
+    {
+        out_ ~= line;
+        isCode ~= code;
+    }
 
     foreach (line; lines)
     {
@@ -733,28 +751,30 @@ private string[] reflowListsAndTables(string[] lines) @safe pure
             // fence chrome can say the example is an executable unittest.
             if (inFence && markNextFence)
             {
-                out_ ~= line ~ " unittest";
+                emit(line.stripRight ~ " unittest", false);
                 markNextFence = false;
                 continue;
             }
-            out_ ~= line;
+            emit(line.stripRight, false);
             continue;
         }
         if (inFence)
         {
-            out_ ~= line; // the code's own indentation, not the author's
+            // Verbatim: indentation, trailing spaces and blank runs are all
+            // the code's own (`DDC31`).
+            emit(line, true);
             continue;
         }
 
-        auto body_ = line.stripLeft;
+        auto body_ = line.stripLeft.stripRight;
         if (!body_.length)
         {
-            out_ ~= line;
+            emit("", false);
             continue;
         }
         if (stack.length == 0)
         {
-            out_ ~= body_;
+            emit(body_, false);
             continue;
         }
 
@@ -771,10 +791,10 @@ private string[] reflowListsAndTables(string[] lines) @safe pure
                 body_ = text(stack[$ - 1].next) ~ ". " ~ body_[2 .. $];
                 stack[$ - 1].next++;
             }
-            out_ ~= indentOf(depth) ~ body_;
+            emit(indentOf(depth) ~ body_, false);
         }
         else
-            out_ ~= indentOf(depth + 1) ~ body_;
+            emit(indentOf(depth + 1) ~ body_, false);
     }
 
     // A row carrying alignment markers is a header row: CommonMark needs a
@@ -785,6 +805,8 @@ private string[] reflowListsAndTables(string[] lines) @safe pure
     auto delims = new string[](out_.length);
     foreach (i, ref o; out_)
     {
+        if (isCode[i])
+            continue; // a `|` row inside a fence is code, not a table
         delims[i] = delimiterRow(o);
         o = stripAlignMarks(o);
     }
@@ -794,12 +816,14 @@ private string[] reflowListsAndTables(string[] lines) @safe pure
     // this. Fold a row's continuations back into it, stopping at a blank line
     // so a stray leading `|` cannot swallow the rest of the doc.
     string[] rows;
+    bool[] rowsAreCode;
     for (size_t i = 0; i < out_.length; i++)
     {
         auto l = out_[i];
         const delim = delims[i];
-        if (l.startsWith("|") && !l.endsWith("|"))
-            while (i + 1 < out_.length && out_[i + 1].length)
+        const code = isCode[i];
+        if (!code && l.startsWith("|") && !l.endsWith("|"))
+            while (i + 1 < out_.length && out_[i + 1].length && !isCode[i + 1])
             {
                 l ~= " " ~ out_[i + 1];
                 ++i;
@@ -807,26 +831,39 @@ private string[] reflowListsAndTables(string[] lines) @safe pure
                     break;
             }
         rows ~= l;
+        rowsAreCode ~= code;
         if (delim.length)
+        {
             rows ~= delim;
+            rowsAreCode ~= false;
+        }
     }
-    out_ = rows;
-    return out_;
+    fenced = rowsAreCode;
+    return rows;
 }
 
 /// The `$(OL_START n, …)` index, defaulting to 1 for anything unparseable —
 /// a list that starts at the wrong number still reads; one that throws does not.
-private int startIndex(scope const(char)[] digits) @safe pure nothrow
+///
+/// Hand-rolled rather than `sparkles.base.text.readers.readInteger`, which is
+/// the repo's parser of choice: this package depends on the DMD frontend and
+/// nothing else in the tree, which is what lets `twoslash-d` layer the sparkles
+/// vocabulary on top instead of inheriting it. `std.conv.parse` would do, but
+/// it is not `nothrow`.
+private uint startIndex(scope const(char)[] digits) @safe pure nothrow @nogc
 {
-    int n = 0;
+    ulong n = 0;
     foreach (c; digits)
     {
         if (c < '0' || c > '9')
-            return n > 0 ? n : 1;
+            break;
         n = n * 10 + (c - '0');
+        if (n > uint.max)
+            return 1; // a start index that large is a typo, not an intent
     }
-    return n > 0 ? n : 1;
+    return n > 0 ? cast(uint) n : 1;
 }
+
 
 /// The delimiter row for a header row, one cell per recorded alignment.
 /// Empty when the row carries no markers — then it was never a table header.
@@ -1106,6 +1143,53 @@ version (unittest)
         // `/// ditto` on a unittest means "another example", not prose.
         assert(!doc.canFind("ditto"), doc);
     }, null, ["-unittest"]);
+}
+
+@("ddoc.render.fenceContentIsVerbatim")
+@system unittest
+{
+    // `DDC31`: inside a fence every line is the code's own. Blank runs and
+    // indentation used to be normalized globally — the blank-line fold and the
+    // trailing-space strip ran with no idea where the fences were, so a code
+    // block came out reflowed.
+    const tip = tipIn("/**\n"
+        ~ "Body.\n"
+        ~ "\n"
+        ~ "---\n"
+        ~ "void f()\n"
+        ~ "{\n"
+        ~ "\n"
+        ~ "\n"
+        ~ "    deep();\n"
+        ~ "}\n"
+        ~ "---\n"
+        ~ "*/\n"
+        ~ "int j;\n", 14, 5);
+    // The trailing newline after the closing fence is deliberate: without it a
+    // markdown parser reads the fence marker as part of the code.
+    assert(tip.doc == "Body.\n\n```d\nvoid f()\n{\n\n\n    deep();\n}\n```\n",
+        tip.doc);
+}
+
+@("ddoc.render.strayParensDoNotCorruptTheRest")
+@system unittest
+{
+    // `DDC37`: `renderDdocText` bypasses `Section.write` for non-`Params`
+    // sections, which also skips `escapeStrayParenthesis`. Checked against
+    // `dmd -D` on the same input: prose parens behave identically, so the
+    // divergence is narrower than it looks — it is one malformed macro.
+    const open_ = tipIn("/**\nCounts (approximately and then $(B bold) after.\n*/\n"
+        ~ "int a;\n", 5, 5);
+    assert(open_.doc == "Counts (approximately and then **bold** after.", open_.doc);
+
+    const close_ = tipIn("/**\nCounts approximately) and then $(B bold) after.\n*/\n"
+        ~ "int b;\n", 5, 5);
+    assert(close_.doc == "Counts approximately) and then **bold** after.", close_.doc);
+
+    // The one divergence, pinned so a change is noticed: an unmatched `$(`
+    // leaves its `$` here, where dmd's escape pass renders a bare `(`.
+    const macro_ = tipIn("/**\nText $(B bold (unclosed) tail.\n*/\nint c;\n", 5, 5);
+    assert(macro_.doc == "Text $(B bold (unclosed) tail.", macro_.doc);
 }
 
 @("ddoc.render.tablesGetTheirDelimiterRow")

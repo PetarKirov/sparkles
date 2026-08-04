@@ -127,17 +127,17 @@ syntax (`ddoc.dd:198-432`).
 Code delimiters and the constructs that must pass through untouched
 (`ddoc.dd:437-545`).
 
-| ID    | Requirement                                                                                                                                                    | Status            | Traces to                                           |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | --------------------------------------------------- |
-| DDC29 | A line of at least three hyphens, backticks or tildes (leading whitespace ignored) opens and closes an embedded code block, which renders as a ` ```d ` fence. | full (`d7a33164`) | `ddoc.render.markdownAndFences` (`---` form pinned) |
-| DDC30 | A language string after the opening delimiter (` ``` cpp `) suppresses D highlighting; the block renders as ` ```cpp `.                                        | not started       | `OTHER_CODE` macro; `32-ddoc-fences`                |
-| DDC31 | Fence content is reproduced verbatim — blank lines, indentation and trailing spaces intact.                                                                    | partial           | `cleanupMarkdown` normalizes globally               |
-| DDC32 | A code block indented to a list item's content column stays inside that item (`ddoc.dd:716-727`).                                                              | not started       | `33-ddoc-markdown`                                  |
-| DDC33 | Inline code uses backticks with both delimiters on the **same line**; the span is escaped per the entity rules but macros still expand inside it.              | not started       | `DDOC_BACKQUOTED`; `32-ddoc-fences`                 |
-| DDC34 | An unpaired backtick on a line is a literal backtick, as is the `$(BACKTICK)` macro.                                                                           | not started       | `32-ddoc-fences`                                    |
-| DDC35 | Embedded HTML is passed through unchanged (`ddoc.dd:526-545`).                                                                                                 | partial           | raw into CommonMark; sanitization note below        |
-| DDC36 | `$(DDOC_COMMENT text)` is a comment in the source doc and does not nest.                                                                                       | partial           | defined as empty: the text drops                    |
-| DDC37 | Stray, unbalanced parentheses in section text must not corrupt macro expansion (dmd runs `escapeStrayParenthesis` before highlighting).                        | partial           | applied only on the `Params:` path                  |
+| ID    | Requirement                                                                                                                                                    | Status            | Traces to                                                               |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------- |
+| DDC29 | A line of at least three hyphens, backticks or tildes (leading whitespace ignored) opens and closes an embedded code block, which renders as a ` ```d ` fence. | full (`d7a33164`) | `ddoc.render.markdownAndFences` (`---` form pinned)                     |
+| DDC30 | A language string after the opening delimiter (` ``` cpp `) suppresses D highlighting; the block renders as ` ```cpp `.                                        | not started       | `OTHER_CODE` macro; `32-ddoc-fences`                                    |
+| DDC31 | Fence content is reproduced verbatim — blank lines, indentation and trailing spaces intact.                                                                    | full              | `ddoc.render.fenceContentIsVerbatim`                                    |
+| DDC32 | A code block indented to a list item's content column stays inside that item (`ddoc.dd:716-727`).                                                              | not started       | `33-ddoc-markdown`                                                      |
+| DDC33 | Inline code uses backticks with both delimiters on the **same line**; the span is escaped per the entity rules but macros still expand inside it.              | not started       | `DDOC_BACKQUOTED`; `32-ddoc-fences`                                     |
+| DDC34 | An unpaired backtick on a line is a literal backtick, as is the `$(BACKTICK)` macro.                                                                           | not started       | `32-ddoc-fences`                                                        |
+| DDC35 | Embedded HTML is passed through unchanged (`ddoc.dd:526-545`).                                                                                                 | partial           | raw into CommonMark; sanitization note below                            |
+| DDC36 | `$(DDOC_COMMENT text)` is a comment in the source doc and does not nest.                                                                                       | partial           | defined as empty: the text drops                                        |
+| DDC37 | Stray, unbalanced parentheses in section text must not corrupt macro expansion (dmd runs `escapeStrayParenthesis` before highlighting).                        | partial           | `ddoc.render.strayParensDoNotCorruptTheRest`; one shape diverges, below |
 
 `DDC35` note: `ddoc.dd:1327-1335` flags embedded `<script>` as an XSS vector for
 published DDoc HTML. Here the raw HTML lands in a CommonMark string that a
@@ -147,8 +147,15 @@ this translator. A test should pin which of the two escapes it.
 
 `DDC37` note: `renderDdocText` bypasses `Section.write` for non-`Params`
 sections (it writes `sec.body_` and calls `highlightText` directly), which also
-skips `escapeStrayParenthesis`. An unbalanced `(` in prose therefore reaches
-`MacroTable.expand` unescaped.
+skips `escapeStrayParenthesis`, so an unbalanced paren in prose reaches
+`MacroTable.expand` unescaped. Checked against `dmd -D` on the same inputs: it
+makes no difference to prose — a stray `(` or `)` beside a macro renders
+identically either way. The one shape that differs is a genuinely malformed
+invocation (`$(B bold (unclosed) tail.`), where the unmatched `$(` keeps its
+`$` here and dmd's escape pass renders a bare `(`. Both render the text; the
+row stays `partial` because the difference is real, and the test pins it so a
+change is noticed. Closing it properly needs `escapeStrayParenthesis` exposed
+from the fork, which is not worth a pin bump for one `$`.
 
 ## Markdown constructs (`DDC38`-`DDC57`)
 
