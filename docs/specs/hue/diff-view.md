@@ -1,0 +1,147 @@
+# `hue` diff & PR view — Feature Requirements
+
+_**Status:** planned · **Date:** 2026-08-04 · **Scope:** viewing **diffs** (two
+files, a piped unified patch, git revisions) and — in a second wave — **pull
+requests**, across all four sinks (GUI / TUI / ANSI / HTML), over a new
+`sparkles:diff` engine library. The motivating pain: editing a large markdown
+table and having the formatter re-align **unrelated rows**, drowning the real
+change in alignment noise — so noise classification is a first-class concern,
+not an afterthought._
+
+> [!NOTE]
+> Forward-looking — every row is `not started`. Status legend and IDs: see the
+> [overview](./index.md). The prior-art survey feeding this spec is
+> [`docs/research/diff-review/`](../../research/diff-review/index.md).
+
+## Design & rationale
+
+Seven decisions shape the spec (settled 2026-08-04):
+
+1. **Diffs first, PRs next.** The first wave renders local diffs; PR viewing
+   (`DPR`) is specced now but built as a second wave **on the same diff
+   session** — a PR is "a multi-file diff plus markdown metadata plus anchored
+   comment threads", all three of which hue already knows how to render or will
+   after the first wave.
+2. **Diff is a content kind, not a mode.** Per the dispatch collapse
+   ([`MOD` note](./feature-requirements.md#output-mode-dispatch-mod)), a diff
+   session is a new `ContentKind`-like document value produced once and
+   rendered by every sink — no per-sink diff pipelines. A multi-file diff is a
+   [`SourceSet`](./feature-requirements.md)-style session (`SRC6`) the
+   [explorer](./tree-view.md) navigates.
+3. **The engine is a library.** Diff computation (line diff, patch parsing,
+   word-level refinement, structural classification) lands in a new
+   **`sparkles:diff`** library, not in `apps/hue` — `sparkles:test-utils`
+   today shells out to `delta` for test diffs (`diff_tools.d`) and can migrate,
+   and future tooling (`release`, `ci`) wants the same primitives.
+4. **Noise is layered, all four layers.** Word-level refinement (baseline) →
+   formatting-only hunk classification (cheap, text-level) → structural
+   tree-sitter diff (precise, grammar-gated) → rendered-preview diff (the
+   novel markdown move). Each layer degrades to the one before it.
+5. **`sparkles:diff` is tree-sitter-free.** The engine core (line diff,
+   pairing, patch parsing, word refinement) has no `sparkles:tree-sitter`
+   dependency; the structural pass (`DVN3`) lives where `sparkles:syntax` is
+   already present. `sparkles:test-utils` can then depend on the core cheaply.
+6. **Structural diffing auto-engages when cheap** (`DVN3`): whenever a grammar
+   exists and the file is under the ceilings, with `--diff-structural=on|off`
+   as the override — best-default UX over conservatism.
+7. **PR fetch is native.** hue talks to the GitHub REST/GraphQL API directly
+   from D (no `gh` binary dependency); tokens are discovered, never prompted
+   for (`DPR1`).
+
+## Diff engine & document model (`DVM`)
+
+The proposed `sparkles:diff` library (`libs/diff`).
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                       | Status      | Traces to                      |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------ |
+| DVM1 | A **line-level diff** of two in-memory texts must produce a backend-neutral **diff document**: files → hunks → rows, each row `context` / `added` / `removed` / `changed-pair`, with old/new line numbers. Algorithm: Myers as the baseline; histogram/patience variants are an internal choice, not API surface. | not started | proposed `sparkles:diff` core  |
+| DVM2 | Within a change block the model must carry **alignment pairs** — which removed line corresponds to which added line, chosen by similarity, not naive order — the substrate for side-by-side rows (`DVL2`) and word-level refinement (`DVM4`).                                                                     | not started | proposed pairing pass          |
+| DVM3 | A **unified-patch parser** must ingest `git diff` / `diff -u` output — file headers, hunk headers, `\ No newline at end of file`, rename/copy/mode lines, binary markers — into the **same model**, so a parsed and a computed diff render identically.                                                           | not started | proposed patch parser          |
+| DVM4 | **Word-level refinement**: paired changed lines must get a sub-line diff marking changed segments; word-boundary tokenization as the baseline, with a hook for smarter tokenizers.                                                                                                                                | not started | proposed refine pass           |
+| DVM5 | Diff rendering must **compose with highlighting**, not replace it: both sides of each file flow through the existing engine (`ENG1`–`ENG4`) and the diff decorations layer on top (delta-style).                                                                                                                  | not started | `ENG*`; sink integration       |
+| DVM6 | **Scale guards**: per-file and per-diff ceilings must degrade expensive passes (refinement, structural) to the plain line diff — never a hang or a crash. Binary files render as a one-line notice.                                                                                                               | not started | proposed guards                |
+| DVM7 | The library must be testable without git or a terminal: pure functions over strings, golden tests for the model, and property tests (diff+patch round-trips).                                                                                                                                                     | not started | proposed `libs/diff` unittests |
+
+## Diff sources (`DVS`)
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                        | Status      | Traces to                           |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------- |
+| DVS1 | `hue --diff <old> <new>` with **two file arguments** must compute the diff in-process (`DVM1`) — no VCS involved.                                                                                                                                                                                                                                                                  | not started | proposed CLI + `DVM1`               |
+| DVS2 | A **piped unified diff** must render as a diff: `git diff \| hue` — detected by non-tty stdin + content sniff (`diff --git` / `---` / `+++` / `@@`), or forced with `--patch`. When the new-side files are readable from the worktree, re-highlight from full sources; else highlight the patch text alone. This makes hue usable as a `core.pager`-adjacent viewer, like `delta`. | not started | proposed stdin path + `DVM3`        |
+| DVS3 | **Git revisions**: `hue --diff [<rev>[..<rev>]] [-- <path>…]` must shell out to `git diff` (porcelain, pinned flags, `--no-color`) — worktree vs `HEAD` by default, `--staged` for the index; old-side contents via `git show <rev>:<path>`. No libgit2 dependency in the first wave; repo-root detection reuses `git_status.d`.                                                   | not started | proposed git source; `git_status.d` |
+| DVS4 | A multi-file diff must build **one diff session** (an ordered changed-file list with per-file status), the same session substrate every sink consumes (`SRC6` analog) and the [explorer](./tree-view.md) pane navigates with `GitStatus` glyphs.                                                                                                                                   | not started | proposed session; `explorer.d`      |
+| DVS5 | Degradation: an empty diff renders "no changes" (not a crash or blank screen); unreadable sides report per-file errors and keep the rest of the session.                                                                                                                                                                                                                           | not started | totality                            |
+
+## Layout & rendering (`DVL`)
+
+| ID   | Requirement                                                                                                                                                                                                                                                                           | Status      | Traces to                           |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------- |
+| DVL1 | **Unified layout**: one column; a dual line-number gutter (old · new); `+`/`-`/context markers; add/remove/changed row backgrounds layered over syntax highlighting.                                                                                                                  | not started | proposed diff widget view           |
+| DVL2 | **Side-by-side layout**: two panes with **aligned rows** from `DVM2`, filler rows opposite unmatched lines, and wrapping that keeps the panes in lockstep (a wrapped row advances both panes).                                                                                        | not started | proposed split widget view          |
+| DVL3 | Both layouts ship in the first wave behind `--diff-layout unified\|split` with a **runtime toggle** in GUI/TUI; **auto-degrade** split→unified below a width threshold (à la `git-split-diffs`).                                                                                      | not started | proposed CLI + keymap               |
+| DVL4 | **All four sinks** render the diff session from the one model: GUI and TUI via one shared `sparkles:ui` widget view, non-interactive ANSI whole-emit, and HTML — gallery-integrable, with **selection domains** so copying one side of a split never grabs the other (`HTM8` analog). | not started | `ui-architecture.md` `UIA*`; `HTM8` |
+| DVL5 | Diff colors are **theme slots** (added/removed/changed line backgrounds, emphasized word segments, hunk header, filler) resolved per theme like every other slot — no hardcoded RGB.                                                                                                  | not started | `sparkles:ui` `Slot`/`Palette`      |
+| DVL6 | Intra-line changed segments (`DVM4`) render with a **second emphasis level** above the line background (delta's two-tone emphasis).                                                                                                                                                   | not started | proposed diff widget view           |
+| DVL7 | A markdown file in a diff renders **source** by default (diff of the text); the decorated-preview diff is its own mode (`DVN6`), not the default.                                                                                                                                     | not started | `MOD8` interaction                  |
+
+## Noise handling (`DVN`)
+
+The four-layer strategy; each layer independent and degradable.
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                | Status      | Traces to                                    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------- |
+| DVN1 | **Whitespace toggles**: ignore leading/trailing/all whitespace and blank-line-only changes — CLI flags plus runtime toggles, applied at the engine level (the ignored difference never reaches the model as a change).                                                                                                                                                     | not started | proposed engine options                      |
+| DVN2 | **Formatting-only hunk classification**: a hunk whose sides are equivalent after whitespace collapsing (and, where a grammar exists, after token-stream comparison) is tagged `formatting-only`; it renders **dimmed and folded by default** with a count badge ("3 formatting-only hunks"), expandable per-hunk or globally.                                              | not started | proposed classify pass                       |
+| DVN3 | **Structural diff mode**: parse both sides with tree-sitter (`sparkles:syntax`'s engine), diff at the node level, and classify token-stream-identical changes as unchanged — difftastic's territory. **Auto-engages** when a grammar exists and the file is under the ceilings (`DVM6`); `--diff-structural=on\|off` overrides; always able to fall back to the text diff. | not started | `sparkles:syntax` ts engine; proposed mode   |
+| DVN4 | **Markdown-table cell diffing** — the motivating scenario, golden-tested: a changed pipe-table row highlights only the **changed cells** (cell boundaries from the markdown grammar / `MdDoc`), and rows differing only in cell padding classify as formatting-only (`DVN2`). The golden test is: reformat a large table + edit one cell → exactly one cell lights up.     | not started | proposed table-aware refine; `md/model.d`    |
+| DVN5 | **Moved-code detection** is explicitly **out of scope** for both waves (researched: VS Code / WinMerge prior art); the model must not preclude it (rows carry stable ids).                                                                                                                                                                                                 | not started | deferred                                     |
+| DVN6 | **Rendered-preview diff** for markdown: diff the two `MdDoc` models (block-level alignment + inline text diff within blocks) and render change decorations **in the decorated preview** — changed table cells tinted in the box-drawn table, deleted blocks collapsed/struck. The novel mode: `--diff-preview`.                                                            | not started | `MdDoc`; `viewMarkdown`; proposed model diff |
+
+## Navigation & scale (`DVG`)
+
+| ID   | Requirement                                                                                                                                                                           | Status      | Traces to                   |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------- |
+| DVG1 | **Hunk and file navigation**: next/prev hunk and next/prev file keys in GUI/TUI; the explorer pane lists the session's changed files (`DVS4`) and clicking/selecting one jumps to it. | not started | `keymap.d`; `explorer.d`    |
+| DVG2 | **Unchanged-region collapsing**: context beyond N lines folds with expanders (expand-up / expand-down / expand-all) — VS Code's hidden unchanged regions / Gerrit's context controls. | not started | proposed fold integration   |
+| DVG3 | Per-file sections collapse/expand in the multi-file view.                                                                                                                             | not started | proposed session view       |
+| DVG4 | Search (`FND`/TUI search) works over the visible diff text on both sides.                                                                                                             | not started | existing search + diff view |
+| DVG5 | **Performance**: rendering is viewport-culled (`RND1` analog) — scroll cost does not grow with diff size; the engine guards (`DVM6`) bound compute.                                   | not started | `RND1`; `DVM6`              |
+
+## Pull-request viewing (`DPR`) — second wave
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                              | Status      | Traces to                  |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | -------------------------- |
+| DPR1 | `hue --pr <number\|url>` must fetch a GitHub PR **read-only** and open it as a diff session. Fetch is **native**: GitHub REST/GraphQL directly from D — no `gh` binary dependency; the token is discovered (`$GITHUB_TOKEN` / `$GH_TOKEN`, then `gh`'s own config file as a courtesy), never prompted for interactively. | not started | proposed PR source         |
+| DPR2 | A PR session = **description** (rendered through the markdown preview — dogfooding), **metadata** (author, state, branches, checks), and the **file list** as a `DVS4` diff session.                                                                                                                                     | not started | `DVS4`; `viewMarkdown`     |
+| DPR3 | **Review comment threads** anchored to file+line render as inline blocks under their anchor line in the diff (Gerrit `gr-diff` prior art); resolved threads fold to a one-line badge.                                                                                                                                    | not started | proposed thread blocks     |
+| DPR4 | **Revision comparison** — diff between pushed revisions of the PR, surviving force-pushes (Reviewable prior art) — researched, not in the second wave's first cut.                                                                                                                                                       | not started | deferred                   |
+| DPR5 | **Stacked-PR awareness** (Graphite / av / git-spice / ReviewStack prior art) — researched only; this spec records the model but commits to nothing.                                                                                                                                                                      | not started | deferred; research catalog |
+| DPR6 | Degradation: no network / no auth / not-a-github-remote must produce a clear error, never a crash; rate-limited fetches surface as such.                                                                                                                                                                                 | not started | totality                   |
+
+## Milestones
+
+| Milestone | Scope                                                                                             | Status      | Requirements                                  |
+| --------- | ------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------- |
+| V0        | `sparkles:diff` engine: line diff + alignment + patch parser + word refinement + guards + goldens | not started | `DVM1`–`DVM7`                                 |
+| V1        | Diff content kind in hue: two-file + piped-patch sources, **unified** layout, all four sinks      | not started | `DVS1`, `DVS2`, `DVS5`, `DVL1`, `DVL4`–`DVL7` |
+| V2        | Git revisions + multi-file session + explorer integration + hunk/file navigation                  | not started | `DVS3`, `DVS4`, `DVG1`, `DVG3`                |
+| V3        | **Split** layout + runtime toggle + width degradation + unchanged-region collapsing               | not started | `DVL2`, `DVL3`, `DVG2`, `DVG5`                |
+| V4        | Noise layer 1–2: whitespace toggles + formatting-only classification + **table-cell golden**      | not started | `DVN1`, `DVN2`, `DVN4`                        |
+| V5        | Structural diff mode (tree-sitter)                                                                | not started | `DVN3`                                        |
+| V6        | Rendered-preview diff for markdown                                                                | not started | `DVN6`                                        |
+| P0        | PR fetch + session: description, metadata, file-list diff                                         | not started | `DPR1`, `DPR2`, `DPR6`                        |
+| P1        | Inline review-comment threads                                                                     | not started | `DPR3`                                        |
+
+## Relationship to existing specs
+
+| Piece                                                               | Role                                                          |
+| ------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [feature-requirements.md](./feature-requirements.md) `MOD`/`SRC`    | the dispatch collapse + session substrate diff extends        |
+| [ui-architecture.md](./ui-architecture.md)                          | the shared widget view both interactive sinks paint           |
+| [tree-view.md](./tree-view.md) / `explorer.d`                       | changed-file navigation pane                                  |
+| [folding.md](./folding.md)                                          | the fold mechanics `DVG2`/`DVN2` reuse                        |
+| [gallery.md](./gallery.md) `GAL7` / `HTM8`                          | HTML selection domains for split panes                        |
+| [`sparkles:syntax`](../syntax/index.md)                             | highlighting both sides (`DVM5`); the ts engine behind `DVN3` |
+| [`docs/research/diff-review/`](../../research/diff-review/index.md) | the prior-art survey grounding every "prior art" claim above  |
+
+→ [Overview](./index.md) · [Feature requirements](./feature-requirements.md) · [Tree / DAG view](./tree-view.md)
