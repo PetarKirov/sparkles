@@ -90,6 +90,15 @@ unittest
     }, ["ops-per-iter": "128"]);
 }
 
+/// Ops per measured iteration for the scheduler-backed rows. `benchIter`
+/// **defers** its closure (like `benchCase`), so anything the closure needs
+/// must be built *inside* it — a `Sched` created in the test body is long
+/// destroyed by the time the runner measures, and awaiting on it segfaults.
+/// Each iteration therefore stands up its own scheduler and does `schedOps`
+/// operations inside it, so the one-off setup amortizes to noise (and cancels
+/// outright when two such rows are differenced).
+private enum uint schedOps = 10_000;
+
 @("loop.fiber.await")
 @benchmark
 @system
@@ -97,18 +106,30 @@ unittest
 {
     // The same one-op round trip as `loop.nop.pingPong`, but parked on the
     // fiber seam. The delta between the two rows is the price of direct style.
-    Sched sched;
-    if (Sched.create(sched).hasError)
-        skipTest("io_uring unavailable");
-    scope (exit) sched.destroy();
+    // median/iter covers `schedOps` awaits — divide by it for per-op.
+    {
+        Sched probe;
+        if (Sched.create(probe).hasError)
+            skipTest("io_uring unavailable");
+        probe.destroy();
+    }
 
-    auto r = sched.run(() {
+    benchIter({
         import sparkles.event_horizon.io : nop;
 
-        benchIter({ cast(void) nop(sched); });
-    });
-    assert(!r.hasError);
+        Sched sched;
+        if (Sched.create(sched).hasError)
+            return;
+        scope (exit) sched.destroy();
+        cast(void) sched.run(() {
+            foreach (_; 0 .. schedOps)
+                cast(void) nop(sched);
+        });
+    }, ["ops-per-iter": "10000"]);
 }
+
+/// Chain evaluations per measured iteration for the tier-C rows.
+private enum uint effectOps = 1_000_000;
 
 @("loop.effect.direct")
 @benchmark
@@ -117,12 +138,34 @@ unittest
 {
     // The tier-C baseline: the veneer's arithmetic written directly. Both
     // operands and result go through `blackBox` or the whole chain folds away.
+    // Carries the SAME scheduler+scope wrapper as `loop.effect.veneer` so the
+    // two differ only in the chain — the wrapper cancels in the difference.
+    {
+        Sched probe;
+        if (Sched.create(probe).hasError)
+            skipTest("io_uring unavailable");
+        probe.destroy();
+    }
+
     benchIter({
-        int v = blackBox(2);
-        v = v * 10;
-        v = v + 1;
-        blackBox(v);
-    });
+        import sparkles.event_horizon.scope_ : withScope;
+
+        Sched sched;
+        if (Sched.create(sched).hasError)
+            return;
+        scope (exit) sched.destroy();
+        cast(void) sched.run(() {
+            cast(void) withScope!((ref sc) {
+                foreach (_; 0 .. effectOps)
+                {
+                    int v = blackBox(2);
+                    v = v * 10;
+                    v = v + 1;
+                    blackBox(v);
+                }
+            })(sched);
+        });
+    }, ["ops-per-iter": "1000000"]);
 }
 
 @("loop.effect.veneer")
@@ -133,26 +176,34 @@ unittest
     // The same chain through `Effect!T`. Against `loop.effect.direct` this
     // isolates the per-node `Outcome` construction — the interpreter is a
     // compile-time fold, so this is value cost, not dispatch cost.
-    Sched sched;
-    if (Sched.create(sched).hasError)
-        skipTest("io_uring unavailable");
-    scope (exit) sched.destroy();
+    {
+        Sched probe;
+        if (Sched.create(probe).hasError)
+            skipTest("io_uring unavailable");
+        probe.destroy();
+    }
 
-    auto r = sched.run(() {
+    benchIter({
         import sparkles.event_horizon.effect : map, run, succeed;
         import sparkles.event_horizon.scope_ : withScope;
 
-        cast(void) withScope!((ref sc) {
-            static struct EmptyCtx {}
-            EmptyCtx ctx;
-            benchIter({
-                auto o = run(succeed(blackBox(2)).map!(x => x * 10)
-                    .map!(x => x + 1), sc, ctx);
-                blackBox(o.value);
-            });
-        })(sched);
-    });
-    assert(!r.hasError);
+        Sched sched;
+        if (Sched.create(sched).hasError)
+            return;
+        scope (exit) sched.destroy();
+        cast(void) sched.run(() {
+            cast(void) withScope!((ref sc) {
+                static struct EmptyCtx {}
+                EmptyCtx ctx;
+                foreach (_; 0 .. effectOps)
+                {
+                    auto o = run(succeed(blackBox(2)).map!(x => x * 10)
+                        .map!(x => x + 1), sc, ctx);
+                    blackBox(o.value);
+                }
+            })(sched);
+        });
+    }, ["ops-per-iter": "1000000"]);
 }
 
 // ── A/B controls: the old standalone harness's body shape ───────────────────
@@ -169,12 +220,32 @@ unittest
 @system
 unittest
 {
+    {
+        Sched probe;
+        if (Sched.create(probe).hasError)
+            skipTest("io_uring unavailable");
+        probe.destroy();
+    }
+
     benchIter({
-        int v = 2;
-        v = v * 10;
-        v = v + 1;
-        assert(v == 21); // stripped under releaseMode → body is dead code
-    });
+        import sparkles.event_horizon.scope_ : withScope;
+
+        Sched sched;
+        if (Sched.create(sched).hasError)
+            return;
+        scope (exit) sched.destroy();
+        cast(void) sched.run(() {
+            cast(void) withScope!((ref sc) {
+                foreach (_; 0 .. effectOps)
+                {
+                    int v = 2;
+                    v = v * 10;
+                    v = v + 1;
+                    assert(v == 21); // stripped under releaseMode → dead code
+                }
+            })(sched);
+        });
+    }, ["ops-per-iter": "1000000"]);
 }
 
 @("loop.effect.veneerLiteral")
@@ -182,26 +253,34 @@ unittest
 @system
 unittest
 {
-    Sched sched;
-    if (Sched.create(sched).hasError)
-        skipTest("io_uring unavailable");
-    scope (exit) sched.destroy();
+    {
+        Sched probe;
+        if (Sched.create(probe).hasError)
+            skipTest("io_uring unavailable");
+        probe.destroy();
+    }
 
-    auto r = sched.run(() {
+    benchIter({
         import sparkles.event_horizon.effect : map, run, succeed;
         import sparkles.event_horizon.scope_ : withScope;
 
-        cast(void) withScope!((ref sc) {
-            static struct EmptyCtx {}
-            EmptyCtx ctx;
-            benchIter({
-                auto o = run(succeed(2).map!(x => x * 10).map!(x => x + 1),
-                    sc, ctx);
-                assert(o.value == 21);
-            });
-        })(sched);
-    });
-    assert(!r.hasError);
+        Sched sched;
+        if (Sched.create(sched).hasError)
+            return;
+        scope (exit) sched.destroy();
+        cast(void) sched.run(() {
+            cast(void) withScope!((ref sc) {
+                static struct EmptyCtx {}
+                EmptyCtx ctx;
+                foreach (_; 0 .. effectOps)
+                {
+                    auto o = run(succeed(2).map!(x => x * 10).map!(x => x + 1),
+                        sc, ctx);
+                    assert(o.value == 21);
+                }
+            })(sched);
+        });
+    }, ["ops-per-iter": "1000000"]);
 }
 
 @("loop.read.registeredVsPlain")
@@ -215,19 +294,20 @@ unittest
     // as a regression tracker that the fixed path never falls behind.
     // ~7 µs per read puts these in `benchCase`'s range (µs and up), so each
     // variant gets its own row plus a bytes/s column.
-    const fd = makeTempFile();
-    if (fd < 0)
-        skipTest("cannot create the temp fixture");
-    scope (exit) closeFd(fd);
-
-    registerRead(fd, registered: false);
-    registerRead(fd, registered: true);
+    //
+    // NB the fixture fd is opened in each case's `setup` and closed in its
+    // `teardown`, NOT around these calls: under `--bench` `benchCase` only
+    // *registers*, and the closures run after this body returns — a
+    // `scope (exit)` close here would shut the fd before any read ran (it
+    // deadlocked the loop in `io_cqring_wait` when written that way).
+    registerRead(registered: false);
+    registerRead(registered: true);
 }
 
 /// Registers one read variant as its own `benchCase` row. Takes its state by
 /// value: under `--bench` the closures run after the body returns, so a shared
 /// loop variable would be one slot for every case.
-private void registerRead(int fd, bool registered)
+private void registerRead(bool registered)
 {
     import sparkles.event_horizon.buffer : BufferPool;
 
@@ -236,6 +316,7 @@ private void registerRead(int fd, bool registered)
         DefaultLoop loop;
         BufferPool!() pool;
         ulong done;
+        int fd = -1;
         bool ok;
         bool registered;
     }
@@ -247,6 +328,9 @@ private void registerRead(int fd, bool registered)
         name: registered ? "fixed (READ_FIXED)" : "plain",
         labels: ["buffers": registered ? "registered" : "pool"],
         setup: () {
+            f.fd = makeTempFile();
+            if (f.fd < 0)
+                return;
             if (DefaultLoop.create(f.loop).hasError)
                 return;
             if (BufferPool!().create(f.pool, 1, 4096).hasError)
@@ -261,12 +345,14 @@ private void registerRead(int fd, bool registered)
             f.ok = true;
         },
         timed: () {
+            // Never call `runOnce` without a submission in flight: it would
+            // block in `io_cqring_wait` for a completion that cannot arrive.
             if (!f.ok)
                 return;
             auto b = f.pool.acquire();
             if (b.hasError)
                 return;
-            auto h = f.loop.submit(OpRead(fd, move(b.value), 0), &onRead, &f.done);
+            auto h = f.loop.submit(OpRead(f.fd, move(b.value), 0), &onRead, &f.done);
             if (h.hasError)
                 return;
             cast(void) f.loop.runOnce();
@@ -276,6 +362,8 @@ private void registerRead(int fd, bool registered)
             if (f.ok && f.registered)
                 cast(void) f.loop.unregisterBuffers();
             f.loop.destroy();
+            if (f.fd >= 0)
+                closeFd(f.fd);
         },
         metrics: [Metric(Unit("B"), 4096, Metric.Mode.rate)],
     );
