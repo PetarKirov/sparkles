@@ -197,16 +197,40 @@ private __gshared const(char)*[] _cStringAnchors;
 /**
 Applies the supported `// @dflags:` subset (spec `COR5`). Unknown flags are
 ignored — a sample's flags are advisory analysis configuration, not a build
-system. Supported: the `-preview=*` features this repo builds with plus the
-common analysis-relevant switches.
+system. Supported: the `-preview=*` features this repo builds with, the
+common analysis-relevant switches, and `-edition=<year>`.
+
+`-edition=` is what gates the frontend's edition-only diagnostics (a `Module`
+copies `global.params.edition` at construction, and `Scope.hasEdition` reads
+it), so a sample demonstrating one — e.g. the 2024 edition's discarded
+struct-rvalue assignment — needs it to reproduce at all. An unknown or
+out-of-range year is ignored like any other unsupported flag.
 */
 void applyDflags(scope const string[] dflags) @system
 {
+    import dmd.astenums : Edition;
     import dmd.cond : VersionCondition;
     import dmd.globals : FeatureState, global;
+    import std.algorithm.searching : startsWith;
+    import std.conv : ConvException, to;
 
     foreach (flag; dflags)
     {
+        if (flag.startsWith("-edition="))
+        {
+            try
+            {
+                const year = flag["-edition=".length .. $].to!ushort;
+                if (year >= Edition.min && year <= Edition.max)
+                    global.params.edition = cast(Edition) year;
+            }
+            catch (ConvException)
+            {
+                // Advisory: a malformed year is skipped like any unknown flag.
+            }
+            continue;
+        }
+
         switch (flag)
         {
             case "-preview=in":
