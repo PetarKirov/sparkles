@@ -370,7 +370,7 @@ struct IocpBackend
     }
 
     /// A socket receive into the pinned buffer's capacity (`WSARecv`).
-    bool trySubmit(in OpRecv o, OpToken token, ref OpSlot slot) @trusted nothrow
+    bool trySubmit(in OpRecv o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
         ensureRegistered(cast(SOCKET) o.fd);
         auto op = acquire();
@@ -390,7 +390,7 @@ struct IocpBackend
     }
 
     /// A socket send of the pinned buffer's valid bytes (`WSASend`).
-    bool trySubmit(in OpSend o, OpToken token, ref OpSlot slot) @trusted nothrow
+    bool trySubmit(in OpSend o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
         ensureRegistered(cast(SOCKET) o.fd);
         auto op = acquire();
@@ -423,7 +423,7 @@ struct IocpBackend
 
     /// Async accept via `AcceptEx`: pre-create the accept socket, associate it
     /// with the port, and issue AcceptEx. On completion `res` is the new fd.
-    bool trySubmit(in OpAccept o, OpToken token, ref OpSlot) @trusted nothrow
+    bool trySubmit(in OpAccept o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
         if (_acceptEx is null)
             return false;
@@ -459,7 +459,7 @@ struct IocpBackend
 
     /// Async connect via `ConnectEx`: the socket must be bound first. On
     /// completion `res` is 0 / -errno.
-    bool trySubmit(in OpConnect o, OpToken token, ref OpSlot) @trusted nothrow
+    bool trySubmit(in OpConnect o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
         if (_connectEx is null)
             return false;
