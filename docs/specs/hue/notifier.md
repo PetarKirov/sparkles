@@ -79,6 +79,21 @@ Toggleable per `NTF8`; its theme field tracks live theme cycling.
 > [`gui.md` `FNT6`](./gui.md#font-fnt)); the popup reports a true EGC count even
 > while the v1 grid still advances one cell per codepoint.
 
+## Diff & review adopters
+
+The [diff & PR view](./diff-view.md) brings four future `NTF` consumers, each a
+thin adapter over the shared component (no new requirements here):
+
+- **Destructive-op confirmations** — discard ([`DST4`](./diff-view.md)) and
+  conflict-resolution saves confirm through the popup, with touch-sized
+  targets on Android ([`AND12`](./android.md)).
+- **Conflicts-remaining status** — a collapse-to-icon count while resolving
+  ([`CFV3`](./diff-view.md)).
+- **Review submitted / failed** — the draft-batch submission outcome
+  ([`DCM6`](./diff-view.md)).
+- **Forge degradation notices** — rate limits and missing capabilities
+  ([`DPR6`/`DPR7`](./diff-view.md)).
+
 ## Module coverage (notifier)
 
 Proposed layout — no code on any branch yet.

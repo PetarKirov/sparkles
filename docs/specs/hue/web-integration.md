@@ -63,12 +63,13 @@ same package.
 
 ## Framework integrations (`FWK`)
 
-| ID   | Requirement                                                                                                                                  | Status      | Traces to                           |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------- |
-| FWK1 | **VitePress / Vue** — replace Shiki via `markdown.highlight` (this **absorbs** [twoslash.md `RS3`](./twoslash.md)); light/dark theme parity. | not started | `docs/.vitepress/config.mts`; `RS3` |
-| FWK2 | **Next.js** — a rehype / MDX integration (the `rehype-pretty-code` shape) over `@sparkles/hue`; SSG + RSC/SSR.                               | not started | proposed rehype plugin              |
-| FWK3 | **Solid Start** — a highlighter component/primitive; SSG + SSR.                                                                              | not started | proposed Solid integration          |
-| FWK4 | A **generic** framework-agnostic adapter (a bare `codeToHtml` + a rehype plugin) so other frameworks integrate without bespoke code.         | not started | proposed generic adapter            |
+| ID   | Requirement                                                                                                                                                                                                                                                                                             | Status      | Traces to                             |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------- |
+| FWK1 | **VitePress / Vue** — replace Shiki via `markdown.highlight` (this **absorbs** [twoslash.md `RS3`](./twoslash.md)); light/dark theme parity.                                                                                                                                                            | not started | `docs/.vitepress/config.mts`; `RS3`   |
+| FWK2 | **Next.js** — a rehype / MDX integration (the `rehype-pretty-code` shape) over `@sparkles/hue`; SSG + RSC/SSR.                                                                                                                                                                                          | not started | proposed rehype plugin                |
+| FWK3 | **Solid Start** — a highlighter component/primitive; SSG + SSR.                                                                                                                                                                                                                                         | not started | proposed Solid integration            |
+| FWK4 | A **generic** framework-agnostic adapter (a bare `codeToHtml` + a rehype plugin) so other frameworks integrate without bespoke code.                                                                                                                                                                    | not started | proposed generic adapter              |
+| FWK5 | **Diff rendering for the web** — annotated diff code blocks (the Shiki `transformerNotationDiff` niche) and full-file diff pages rendered through hue's HTML diff sink ([`DVL4`](./diff-view.md)/[`HTM9`](./feature-requirements.md)); a natural follow-on once the HTML sink renders diffs — deferred. | not started | [diff-view.md](./diff-view.md) `DVL4` |
 
 ## Milestones
 
