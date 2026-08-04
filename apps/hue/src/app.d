@@ -373,6 +373,15 @@ struct Gallery
     @(Option("raw", description: "Render raw source without markdown preview."))
     bool raw;
 
+    @(Option("dark-theme", description: "Second theme for dark mode: --theme becomes the light theme and this one's rules are emitted under an html.dark scope in the shared stylesheet, so one page serves both. Implies a shared stylesheet, so the pages carry no style block; pair with --stylesheet or --emit-stylesheet."))
+    string darkTheme;
+
+    @(Option("stylesheet", description: "Link this href from the emitted pages instead of embedding the theme stylesheet in a style block. Write the file itself with --emit-stylesheet."))
+    string stylesheet;
+
+    @(Option("emit-stylesheet", description: "Also write the stylesheet the pages need (both themes when --dark-theme is set) to this file."))
+    string emitStylesheet;
+
     int run(Program)(in Program program)
     {
         return executeGallery(program.value, this);
@@ -545,11 +554,7 @@ private int executeView(in HueCli root, in View view)
         return 1;
 
     const labels = LabelSet.standard();
-    const theme = resolveTheme(builtinThemes.get(root.theme, {
-            warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
-            return builtinDark;
-        }()), labels);
-
+    const theme = resolveNamedTheme(root.theme, labels);
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
     auto pipeline = DocumentPipeline(&registry, &cache, view.markdown, view.raw,
@@ -697,10 +702,7 @@ private int executeDiff(in HueCli root, in Diff diff)
     initLogger(root.logLevel);
 
     const labels = LabelSet.standard();
-    const theme = resolveTheme(builtinThemes.get(root.theme, {
-            warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
-            return builtinDark;
-        }()), labels);
+    const theme = resolveNamedTheme(root.theme, labels);
 
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
@@ -826,12 +828,33 @@ private int executePr(in HueCli root, in Pr pr)
         null, &pipeline, null);
 }
 
+/// Resolves a built-in theme by name against `labels`, warning and falling back
+/// to the default dark theme on a miss — the `--theme` policy, shared with
+/// `--dark-theme`.
+private ResolvedTheme resolveNamedTheme(string name, LabelSet labels)
+{
+    // `.get`'s default is `lazy`, so the warning fires only on a miss.
+    return resolveTheme(builtinThemes.get(name, {
+            warning(i"theme '$(name)' not found; falling back to the default dark theme");
+            return builtinDark;
+        }()), labels);
+}
+
+/// `true` when the run's HTML leaves its rules to a **shared stylesheet**
+/// rather than a per-page `<style>` block: either a second theme has to be
+/// scoped (`--dark-theme`) or the caller named an href to link.
+private bool usesSharedStylesheet(in Gallery g) @safe pure nothrow @nogc
+    => g.darkTheme.length != 0 || g.stylesheet.length != 0;
+
 private int executeGallery(in HueCli root, in Gallery gallery)
 {
     initLogger(root.logLevel);
-    import gallery : GalleryOptions, plainFragment, twoslashFragment, writeGallery;
+    import gallery : FragmentOptions, GalleryOptions, plainFragment, themeBackground,
+        twoslashFragment, writeGallery;
     import source_set : collectSources, SourceEntry;
     import std.path : buildPath;
+    import web_assets : stylesheetAssetPath, StylesheetContent, themeStylesheet,
+        writeStylesheetAsset, writeStylesheetFile;
 
     string dir = gallery.dir.length ? gallery.dir : ".";
     bool twoslash = gallery.twoslash || root.overlay.twoslash.length != 0;
@@ -844,6 +867,15 @@ private int executeGallery(in HueCli root, in Gallery gallery)
             warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
             return builtinDark;
         }()), labels);
+
+    const dark = gallery.darkTheme.length
+        ? resolveNamedTheme(gallery.darkTheme, labels) : ResolvedTheme.init;
+
+    // A shared stylesheet replaces the per-page `<style>` block: at gallery
+    // scale that copy is paid once per page, and a second theme cannot live in
+    // a per-page block at all (its rules need an `html.dark` scope).
+    const sharedCss = usesSharedStylesheet(gallery);
+    const fragOpt = FragmentOptions(embedStyles: !sharedCss);
 
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
@@ -859,27 +891,53 @@ private int executeGallery(in HueCli root, in Gallery gallery)
             const tw = twRes.value;
             if (highlightInjected(cache, tw.effectiveLanguage, tw.code, ev).hasError)
                 ev ~= HighlightEvent.sourceSpan(0, tw.code.length);
-            return twoslashFragment(tw, ev[], theme, cache);
+            return twoslashFragment(tw, ev[], theme, cache, fragOpt);
         }
         const src = readText(e.path);
         const lang = canonicalLanguageOfPath(e.path);
         if (highlightInjected(cache, lang, src, ev).hasError)
             ev ~= HighlightEvent.sourceSpan(0, src.length);
-        return plainFragment(src, ev[], theme);
+        return plainFragment(src, ev[], theme, fragOpt);
     }
 
     const outDir = gallery.outDir.length ? gallery.outDir : buildPath(dir, "html");
+
+    // The page surround comes from the theme (`GAL6`) — the same source the
+    // `.syn-root` rule comes from, so the pane and the surround cannot drift.
+    const bg = themeBackground(theme);
+    const darkBg = gallery.darkTheme.length ? themeBackground(dark) : null;
+
+    // The stylesheet the pages need. `--stylesheet` names an href the caller
+    // will serve; otherwise a shared run self-hosts one beside the pages, so a
+    // gallery is portable on its own.
+    const css = sharedCss || gallery.emitStylesheet.length
+        ? themeStylesheet(theme, dark, StylesheetContent(twoslash: twoslash))
+        : null;
+    string href = gallery.stylesheet;
+    if (sharedCss && href.length == 0)
+    {
+        // Self-host beside the pages and link it *relatively*: the gallery has
+        // to keep working wherever it is copied or served from, so the href is
+        // the in-tree asset path, not the absolute file the writer returns.
+        writeStylesheetAsset(outDir, css);
+        href = stylesheetAssetPath;
+    }
+    if (gallery.emitStylesheet.length)
+        writeStylesheetFile(gallery.emitStylesheet, css);
+
     const gopt = twoslash
         ? GalleryOptions(
             titlePrefix: "twoslash",
             heading: "twoslash overlay examples",
             indexTitle: "twoslash examples",
             blurb: "Rendered by <code>hue gallery --twoslash</code>. Open one and " ~
-                "hover the underlined tokens to see the popups.")
+                "hover the underlined tokens to see the popups.",
+            background: bg, darkBackground: darkBg, stylesheetHref: href)
         : GalleryOptions(
             titlePrefix: "hue",
             heading: "hue gallery",
-            blurb: "Rendered by <code>hue gallery</code>.");
+            blurb: "Rendered by <code>hue gallery</code>.",
+            background: bg, darkBackground: darkBg, stylesheetHref: href);
 
     const n = writeGallery(set, outDir, gopt, &renderOne);
     stderr.writeln("hue: wrote ", n, " page(s) + index.html to ", outDir);
@@ -1062,7 +1120,9 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
         return plainFragment(src, ev[], theme);
     }
 
-    const outDir = outDirParam.length ? outDirParam : buildPath(dir, "html");    // The page surround comes from the theme (`GAL6`) — the same source the
+    const outDir = outDirParam.length ? outDirParam : buildPath(dir, "html");
+
+    // The page surround comes from the theme (`GAL6`) — the same source the
     // `.syn-root` rule comes from, so the pane and the surround cannot drift.
     const bg = themeBackground(theme);
     const opt = twoslash
@@ -1477,7 +1537,6 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
     {
         case twoslash:
             import gallery : twoslashFragment;
-
             write(twoslashFragment(doc.twoslash, doc.events, theme, cache));
             return 0;
         case markdown:
@@ -1563,6 +1622,14 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             write(htmlOut[]);
             return 0;
     }
+}
+
+/// A `<link rel="stylesheet">` for `href` (attribute-escaped).
+private string stylesheetLink(string href) @safe pure
+{
+    import std.array : replace;
+
+    return "<link rel=\"stylesheet\" href=\"" ~ href.replace("\"", "&quot;") ~ "\">\n";
 }
 
 /// The interactive terminal (alt screen). Posix gets the full-screen viewers;
@@ -1901,6 +1968,8 @@ stdout and returns the exit code.
 int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
     ref GrammarRegistry registry, ref TsConfigCache cache) @system
 {
+    import web_assets : markdownPreviewCss;
+
     auto doc = extractMarkdown(registry, source);
     if (doc.root.children.length == 0 && source.length)
         warning(i"no markdown grammar (set SPARKLES_TS_GRAMMAR_PATH) — empty output");
@@ -1923,10 +1992,13 @@ int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
     }
 
     SmallBuffer!char output;
-    output ~= "<style>\n";
-    writeThemeStylesheet(theme, output);
-    output ~= markdownPreviewCss;
-    output ~= "</style>\n<article class=\"syn-root md\">\n";
+    {
+        output ~= "<style>\n";
+        writeThemeStylesheet(theme, output);
+        output ~= markdownPreviewCss;
+        output ~= "</style>\n";
+    }
+    output ~= "<article class=\"syn-root md\">\n";
     renderMarkdownHtml(doc, output, MarkdownHtmlOptions(), &highlightFence);
     output ~= "\n</article>\n";
     write(output[]);
