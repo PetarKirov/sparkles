@@ -2248,6 +2248,12 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
 {
     pragma(inline, true);
     return (() @trusted {
+        // The pragma must be repeated here: the one on the enclosing
+        // function does not reach this lambda, and without it LDC leaves
+        // the validating instantiation (which carries skipUtf8Run) as an
+        // out-of-line call inside scanString — a call-within-a-call per
+        // value string.
+        pragma(inline, true);
         enum ulong ones = 0x0101_0101_0101_0101;
         enum ulong highs = 0x8080_8080_8080_8080;
 
