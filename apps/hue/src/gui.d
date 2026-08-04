@@ -96,7 +96,6 @@ import source_set : SourceEntry, SourceSet;
 import sparkles.twoslash.ingest : loadTwoslashFile;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 
-/// The window's default font size in pixels (Ctrl-±/theme cycling arrive in M3).
 /// Which selection regime a drag runs (`SEL`/`TBL`).
 private enum Regime
 {
@@ -123,6 +122,20 @@ private struct SelectionDrag
         => anchorHi > headHi ? anchorHi : headHi;
 }
 
+/// The live-resize relayout debounce (M15 GROUP-W of the GuiState hoist):
+/// during a drag the column count changes almost every frame, so re-wrap
+/// only once the width has held steady for `settleFrames` frames — the drag
+/// pays one relayout when it settles instead of one per frame. Discrete
+/// width changes (theme / font size / gutter toggles) relayout immediately,
+/// so this only ever debounces a live window resize.
+private struct ResizeDebounce
+{
+    int prevWidthCols = -1;
+    int settle;
+    enum settleFrames = 4; // ~66 ms at 60 FPS
+}
+
+/// The window's default font size in pixels (Ctrl-±/theme cycling arrive in M3).
 private enum defaultFontSize = 18;
 
 
@@ -358,14 +371,7 @@ int runGui(
     vm.listWhitespace = listWhitespace;
     vm.codeLineNumbers = codeLineNumbers;
 
-    // Resize debounce: during a drag the column count changes almost every frame,
-    // so re-wrap only once the width has held steady for a few frames — the drag
-    // pays one relayout when it settles instead of one per frame. Discrete width
-    // changes (theme / font size / gutter toggles) relayout immediately, so this
-    // branch only ever debounces a live window resize.
-    int prevWidthCols = -1;
-    int resizeSettle;
-    enum resizeSettleFrames = 4; // ~66 ms at 60 FPS
+    ResizeDebounce rd;
 
     // Line-number gutter width in cells (0 when off) — a stable size from the
     // source line count so toggling wrapping never oscillates the layout.
@@ -628,15 +634,6 @@ int runGui(
     enum size_t capDivider = 1, capDocSb = 2, capTreeSb = 3,
         capDocHSb = 4, capTreeHSb = 5, capSelection = 6;
     CaptureState capture;
-
-    // Fullscreen (F11): a manual borderless toggle. raylib's
-    // ToggleBorderlessWindowed forces the primary monitor and, on some
-    // compositors, drops the window decorations on the way back. Managing the
-    // undecorated flag + geometry ourselves restores decorations reliably and
-    // keeps the window on its vm.current monitor (on X11; on Wayland the app can't
-    // set its own position, so it stays put — never yanked to the primary).
-    bool isFullscreen;
-    int savedX, savedY, savedW, savedH;
 
     // Code-block copy button: the STM6 timeline for the brief "copied"
     // checkmark feedback (the copied fence itself is `vm.copiedFenceSrc`).
@@ -1065,17 +1062,17 @@ int runGui(
 
 
         // Reflow (both views wrap) when the window width in columns changes — but
-        // debounced: only once the width has held steady for `resizeSettleFrames`
+        // debounced: only once the width has held steady for `settleFrames`
         // frames, so a drag that sweeps many widths re-wraps once at the end. While
         // the drag is in flight the (slightly stale) wrapped lines keep painting.
         const wc = widthCols();
         if (wc != vm.widthCols)
         {
-            resizeSettle = (wc == prevWidthCols) ? resizeSettle + 1 : 0;
-            if (resizeSettle >= resizeSettleFrames)
+            rd.settle = (wc == rd.prevWidthCols) ? rd.settle + 1 : 0;
+            if (rd.settle >= ResizeDebounce.settleFrames)
                 relayout();
         }
-        prevWidthCols = wc;
+        rd.prevWidthCols = wc;
         // The one visual-line space (scroll/selection/search): the active
         // widget tree's rows, whichever view kind built it.
         const total = vm.rows.length;
