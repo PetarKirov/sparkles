@@ -285,6 +285,17 @@ already whole-program within `sparkles:wired`. Against yyjson's 32.08M on
 `canada`, the copy moves the ratio from 1.60× to 1.52× — the remaining 33 %
 is not something any inlining decision can recover.
 
+**The −5.2 % has since been collected without the copy.** `doubleToBits`,
+`bitsToDouble` and `tryFastDouble` (with `eiselLemire`, `mul64x64`,
+`leadingZeros` and `pow2`, which have to follow or the entry point loses
+_them_) were given empty template parameter lists, so they instantiate in
+the caller's translation unit. `wired-native`'s `scanNumber` now retains the
+same single `slowDouble` call the copy has, and the two engines report
+**identical** instruction counts on all four corpora — 48.71M / 10.74M /
+5.13M / 449.1k. Every consumer of `sparkles:base` gets it, with no
+build-system change and no behaviour change. `wired-inline` remains as the
+oracle that keeps the claim honest.
+
 That completes the sweep of build-level levers, all of which are now
 answered:
 
@@ -296,16 +307,26 @@ answered:
 | ThinLTO                        | net negative (canada +2.8 % instructions)                     |
 | PGO / PGO + LTO                | unevaluable — LDC 1.41 is LLVM 20; only compiler-rt 21.x/22.x |
 | single translation unit        | −5.2 % canada, 0 % elsewhere                                  |
+| templating the float kernel    | the same −5.2 %, shipped — no flag, all consumers             |
 
-The actionable residue is narrow and does not need a flag: `doubleToBits`,
-`bitsToDouble` and `tryFastDouble` are small non-template functions in
-`sparkles:base`, so no consumer can inline them without cross-module
-inlining. Making them templates (`ulong doubleToBits()(double d)`) moves
-instantiation into the caller's translation unit and buys the same −5.2 % for
-every consumer, with no build-system change. The rest of the gap remains what
-the disassembly said it was — yyjson resolves digit count at compile time
-through a fully unrolled per-position ladder, against ~210 instructions per
-number of runtime bookkeeping here around a ~35-instruction SWAR core.
+Only the last one is a change anyone has to live with, and it is a source
+change rather than a build-system one. The rest of the gap remains what the
+disassembly said it was — yyjson resolves digit count at compile time through
+a fully unrolled per-position ladder, against ~210 instructions per number of
+runtime bookkeeping here around a ~35-instruction SWAR core.
+
+Post-templating standing on `parse`, retired instructions per byte:
+
+| corpus        | wired | yyjson | ratio |
+| ------------- | ----: | -----: | ----: |
+| canada        | 21.64 |  14.25 | 1.52× |
+| citm_catalog  |  6.22 |   5.13 | 1.21× |
+| twitter       |  8.12 |   4.64 | 1.75× |
+| github_events |  6.90 |   4.44 | 1.55× |
+
+`canada` has moved 23.30 → 22.48 (SWAR fraction tail) → **21.64**
+(templating), a 7.1 % cut since the re-baseline, and is no longer the worst
+lane by ratio — `twitter`'s string copy is.
 
 ## Reproducing
 
