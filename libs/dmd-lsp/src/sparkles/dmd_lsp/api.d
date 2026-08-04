@@ -346,8 +346,10 @@ struct AnalyzedModule
         const doc = paramDocFor(rendered, name);
         if (doc is null)
             return Tip.init;
-        return Tip(kind: data.kind, code: data.code, doc: doc,
-            tags: [["param", doc.length ? name ~ " " ~ doc : name]]);
+        // The row *is* this parameter's documentation, so it lands in `doc`
+        // alone. A `@param` chip beside it repeats the text verbatim and adds
+        // only the name, which the signature line above already shows.
+        return Tip(kind: data.kind, code: data.code, doc: doc);
     }
 
     /**
