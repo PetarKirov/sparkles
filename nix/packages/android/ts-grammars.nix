@@ -28,36 +28,47 @@
       ndk = config.legacyPackages.androidNdk;
       g = pkgs.tree-sitter-grammars;
 
-      # Same language list as nix/packages/ts-grammars.nix.
-      languages = [
-        "bash"
-        "c"
-        "c-sharp"
-        "cpp"
-        "css"
-        "d"
-        "go"
-        "haskell"
-        "html"
-        "java"
-        "javascript"
-        "json"
-        "kotlin"
-        "markdown"
-        "markdown-inline"
-        "nix"
-        "python"
-        "rust"
-        "scala"
-        "sdl"
-        "toml"
-        "typescript"
-        "tsx"
-        "ocaml"
-        "xml"
-        "yaml"
-        "zig"
-      ];
+      # The same language list the desktop bundle ships, from the one shared
+      # source — the two bundles must not drift (a language the desktop
+      # highlights but the APK cannot is a silent per-platform regression).
+      # Cost note: every name here is a parser compiled once per ABI and a
+      # `.so` in the APK, so growing the list grows build time and install
+      # size linearly.
+      langs = import ../ts-grammar-languages.nix;
+      # `extraGrammars` covers the in-house ones (sdl) that live in neither
+      # nixpkgs nor the pinned-source set, so the APK ships them too.
+      languages =
+        langs.plain ++ langs.special ++ builtins.attrNames langs.fetched
+        ++ builtins.attrNames extraGrammars;
+
+      # Where each language's source comes from: a nixpkgs grammar, or — for
+      # the ones nixpkgs does not package — the pinned checkout the desktop
+      # bundle builds from. Only `src` and `version` are needed; this file
+      # compiles `parser.c` itself, per ABI.
+      source =
+        lang:
+        if extraGrammars ? ${lang} then
+          # In-house: only src/version are used — parser.c is compiled per ABI.
+          { inherit (extraGrammars.${lang}) src version; }
+        else if langs.fetched ? ${lang} then
+          let
+            pin = langs.fetched.${lang};
+          in
+          {
+            src = pkgs.fetchFromGitHub {
+              inherit (pin)
+                owner
+                repo
+                rev
+                hash
+                ;
+            };
+            version = "0-unstable-${builtins.substring 0 7 pin.rev}";
+          }
+        else
+          {
+            inherit (g."tree-sitter-${lang}") src version;
+          };
 
       soname = lang: "libtree_sitter_${builtins.replaceStrings [ "-" ] [ "_" ] lang}.so";
 
@@ -73,12 +84,11 @@
       grammarSo =
         lang:
         let
-          grammar = extraGrammars.${lang} or g."tree-sitter-${lang}";
+          from = source lang;
         in
         pkgs.stdenv.mkDerivation {
           pname = "ts-grammar-android-${lang}";
-          version = grammar.version;
-          src = grammar.src;
+          inherit (from) version src;
 
           dontConfigure = true;
 

@@ -11,6 +11,13 @@
 #    (base language first: the engine's same-node last-wins rule makes the
 #    specific file override).
 #  - ocaml's output ships no queries; they live at the src root.
+#  - latex and unison have a nixpkgs grammar but ship no queries anywhere in
+#    their source; nvim-treesitter maintains them out-of-tree, so the queries
+#    come from `vimPlugins.nvim-treesitter` — the same project nixpkgs
+#    generates `tree-sitter-grammars` from, so parser and queries agree.
+#  - `fetched` grammars (racket, objc, starlark, ninja, asm, ebnf, lean) are
+#    not in nixpkgs at all and are built here from a pinned source. They are
+#    what a language gets *instead of* an approximating alias.
 #
 # Grammars not taken from nixpkgs (or pinned ahead of it):
 #  - `sdl` — in-house (nix/packages/tree-sitter-sdl.nix); no SDLang grammar
@@ -23,18 +30,48 @@
     { config, pkgs, ... }:
     let
       g = pkgs.tree-sitter-grammars;
+      langs = import ./ts-grammar-languages.nix;
+
+      # nvim-treesitter's out-of-tree query set: `runtime/queries/<lang>/`.
+      ntsQueries = lang: "${pkgs.vimPlugins.nvim-treesitter}/runtime/queries/${lang}";
+
+      # A grammar nixpkgs does not package, built from the pinned revision.
+      # `buildGrammar` installs `$out/parser` and copies `$out/queries` when
+      # the source has them, so the result drops into `entry` unchanged.
+      fetchedSrc =
+        pin:
+        pkgs.fetchFromGitHub {
+          inherit (pin)
+            owner
+            repo
+            rev
+            hash
+            ;
+        };
+
+      fetchedGrammar =
+        name: pin:
+        pkgs.tree-sitter.buildGrammar (
+          {
+            language = name;
+            version = "0-unstable-${builtins.substring 0 7 pin.rev}";
+            src = fetchedSrc pin;
+          }
+          // pkgs.lib.optionalAttrs (pin ? location) { inherit (pin) location; }
+        );
 
       # Normalize one language directory from a grammar derivation.
       #  - grammar: the derivation providing `parser`
-      #  - queriesFrom: where to copy `queries/` from (defaults to grammar;
-      #    pass e.g. a `src` attr for grammars whose build drops queries)
+      #  - queriesDir: the directory holding the `*.scm` files (defaults to
+      #    `${grammar}/queries`; pass an explicit path for grammars whose
+      #    build drops queries or nests them, e.g. `${g.x.src}/queries/x`)
       #  - highlightsChain: optional list of highlights.scm files concatenated
       #    in order (base language first)
       entry =
         {
           name,
           grammar,
-          queriesFrom ? null,
+          queriesDir ? null,
           highlightsChain ? null,
         }:
         pkgs.runCommand "ts-grammar-${name}" { } (
@@ -43,9 +80,9 @@
             ln -s ${grammar}/parser $out/parser
           ''
           + (
-            if queriesFrom != null then
+            if queriesDir != null then
               ''
-                cp -r ${queriesFrom}/queries/. $out/queries/
+                cp -r ${queriesDir}/. $out/queries/
               ''
             else if highlightsChain == null then
               ''
@@ -67,40 +104,17 @@
           )
         );
 
-      # Languages whose nixpkgs output already carries usable queries.
-      # `d` is pinned separately — see `special` below.
+      # Languages whose nixpkgs output already carries usable queries. The list
+      # is shared with the Android soname bundle — see ts-grammar-languages.nix.
+      # `d`, `xml` and `sdl` are pinned/surgered separately — see `special` below.
       plain = builtins.listToAttrs (
-        map
-          (name: {
+        map (name: {
+          inherit name;
+          value = entry {
             inherit name;
-            value = entry {
-              inherit name;
-              grammar = g."tree-sitter-${name}";
-            };
-          })
-          [
-            "bash"
-            "c"
-            "c-sharp"
-            "cpp"
-            "css"
-            "go"
-            "haskell"
-            "html"
-            "java"
-            "javascript"
-            "json"
-            "kotlin"
-            "markdown"
-            "markdown-inline"
-            "nix"
-            "python"
-            "rust"
-            "scala"
-            "toml"
-            "yaml"
-            "zig"
-          ]
+            grammar = g."tree-sitter-${name}";
+          };
+        }) langs.plain
       );
 
       special = {
@@ -128,7 +142,45 @@
         ocaml = entry {
           name = "ocaml";
           grammar = g.tree-sitter-ocaml;
-          queriesFrom = g.tree-sitter-ocaml.src;
+          queriesDir = "${g.tree-sitter-ocaml.src}/queries";
+        };
+        # A nixpkgs grammar whose queries exist only in nvim-treesitter — the
+        # source tree has no `.scm` at all. Both were plain text before.
+        latex = entry {
+          name = "latex";
+          grammar = g.tree-sitter-latex;
+          queriesDir = ntsQueries "latex";
+        };
+        unison = entry {
+          name = "unison";
+          grammar = g.tree-sitter-unison;
+          queriesDir = ntsQueries "unison";
+        };
+        # Same shape as typescript/tsx: a grammar that extends another one and
+        # whose queries cover only the extension. Upstream expresses that with
+        # neovim's `; inherits:` header comment, which this engine does not
+        # implement — so the inheritance is resolved here, by concatenation.
+        #  - qmljs extends javascript; its own queries know annotations,
+        #    properties and signals but not strings, numbers or comments.
+        #  - vue's whole highlights.scm is one `; inherits: html_tags` line
+        #    plus directive rules; without the base, a SFC is uncolored.
+        qmljs = entry {
+          name = "qmljs";
+          grammar = g.tree-sitter-qmljs;
+          queriesDir = "${g.tree-sitter-qmljs.src}/queries";
+          highlightsChain = [
+            "${g.tree-sitter-javascript}/queries/highlights.scm"
+            "${g.tree-sitter-qmljs.src}/queries/highlights.scm"
+          ];
+        };
+        vue = entry {
+          name = "vue";
+          grammar = g.tree-sitter-vue;
+          queriesDir = "${g.tree-sitter-vue.src}/queries/vue";
+          highlightsChain = [
+            "${g.tree-sitter-vue.src}/queries/html_tags/highlights.scm"
+            "${g.tree-sitter-vue.src}/queries/vue/highlights.scm"
+          ];
         };
         # tree-sitter-xml 0.7 is a multi-language repo (xml + dtd). The
         # compiled `parser` ships alone; highlights live at
@@ -147,9 +199,44 @@
           name = "sdl";
           grammar = config.packages.tree-sitter-sdl;
         };
-      };
+      }
+      # Grammars whose nixpkgs output ships no `queries/`: the .scm files live
+      # in the source tree, either at its root (fsharp) or under a
+      # per-language subdirectory the upstream repo uses to serve several
+      # editors (`queries/<lang>/`, `queries/neovim/`). Point at the directory
+      # that actually holds them.
+      //
+        builtins.mapAttrs
+          (
+            name: subdir:
+            entry {
+              inherit name;
+              grammar = g."tree-sitter-${name}";
+              queriesDir = "${g."tree-sitter-${name}".src}/${subdir}";
+            }
+          )
+          {
+            fsharp = "queries";
+            just = "queries/just";
+            matlab = "queries/neovim";
+            query = "queries/query";
+            tcl = "queries/tcl";
+            typst = "queries/typst";
+          };
 
-      languages = plain // special;
+      # Grammars nixpkgs does not package, built from their pinned source.
+      fetched = builtins.mapAttrs (
+        name: pin:
+        entry {
+          inherit name;
+          grammar = fetchedGrammar name pin;
+          # `buildGrammar` only picks up a `queries/` directly under the
+          # grammar root; asm nests its own one level down.
+          queriesDir = if name == "asm" then "${fetchedSrc pin}/queries/asm" else null;
+        }
+      ) langs.fetched;
+
+      languages = plain // special // fetched;
     in
     {
       packages.ts-grammars = pkgs.linkFarm "sparkles-ts-grammars" (
