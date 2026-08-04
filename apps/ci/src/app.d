@@ -1723,7 +1723,7 @@ private int runDubTestsMode(bool failFast)
             {
                 failureReplay = FailureReplay(
                     header: header,
-                    outputLines: outputLines.formatOutputLines(24).array,
+                    outputLines: outputLines.formatOutputLines(24, keepTail: true).array,
                     footer: styledText(i"{red ✗ FAILED}"),
                 );
                 stoppedEarly = true;
@@ -2037,7 +2037,7 @@ int runDefaultMode(Example[] examples, ExecutionResult[] results, string mdFile,
             {
                 failureReplay = FailureReplay(
                     header: header,
-                    outputLines: outputLines.formatOutputLines.array,
+                    outputLines: outputLines.formatOutputLines(8, keepTail: true).array,
                     footer: styledText(i"{red ✗ FAILED}"),
                 );
                 processed = i + 1;
@@ -2855,17 +2855,45 @@ private string formatExampleFileHeader(string exampleFile, string progress, stri
     return styledText(i"{dim $(progress)} {cyan $(exampleFile.baseName)} {dim › dub $(action) --single $(exampleFile)}");
 }
 
-/// Formats output lines for display, truncating if necessary.
-private string[] formatOutputLines(string[] lines, size_t maxLines = 8)
+/**
+Formats output lines for display, truncating if necessary.
+
+`keepTail` decides *which* end survives, and it matters: a compiler or test
+runner puts the diagnosis at the **end** of its output, so truncating a failure
+to its first lines shows a header and a few passing cases while discarding the
+error — the failure is reported without ever naming its cause. Failing boxes
+therefore keep the tail; passing ones keep the head, where a build's summary
+lives.
+*/
+private string[] formatOutputLines(string[] lines, size_t maxLines = 8,
+    bool keepTail = false)
 in (maxLines > 1, "maxLines must be at least 2 for truncation indicator")
 {
     if (lines.length == 0)
         return [styledText(i"{dim (no output)}")];
 
     if (lines.length > maxLines)
-        return lines[0 .. maxLines - 1] ~ [styledText(i"{dim ...}")];
+        return keepTail
+            ? [styledText(i"{dim ...}")] ~ lines[$ - (maxLines - 1) .. $]
+            : lines[0 .. maxLines - 1] ~ [styledText(i"{dim ...}")];
 
     return lines;
+}
+
+@("ci.formatOutputLines.failureKeepsTheTail")
+@safe
+unittest
+{
+    auto lines = ["a", "b", "c", "d", "e"];
+    // Passing: the head (a build summary) survives.
+    const head = formatOutputLines(lines, 3);
+    assert(head[0] == "a" && head[1] == "b", "head-truncation keeps the first lines");
+    // Failing: the tail (the error) survives — the whole point.
+    const tail = formatOutputLines(lines, 3, keepTail: true);
+    assert(tail[$ - 1] == "e" && tail[$ - 2] == "d", "tail-truncation keeps the last lines");
+    // Short output is untouched either way.
+    assert(formatOutputLines(lines, 99) == lines);
+    assert(formatOutputLines(lines, 99, keepTail: true) == lines);
 }
 
 /// Displays the result box for an example run.
@@ -2876,7 +2904,11 @@ private void displayResultBox(string[] outputLines, string header, bool success)
         : styledText(i"{red ✗ FAILED}");
 
     outputLines
-        .formatOutputLines
+        // A failing box keeps the TAIL: a compiler/test-runner puts its
+        // diagnosis last, so head-truncation reports the failure while hiding
+        // its cause (this box once showed a header and four passing tests for
+        // a failure whose error was three lines further down).
+        .formatOutputLines(8, keepTail: !success)
         .drawBox(header, BoxProps(footer: footer))
         .writeln;
 }
