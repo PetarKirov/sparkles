@@ -86,54 +86,54 @@ private enum char runnableMark = '\x15';
 /// this the first line lands flush and every other keeps its original column.
 private string dedent(const(char)[] code) @safe pure
 {
-    import std.algorithm.iteration : map, splitter;
+    import std.algorithm.comparison : min;
+    import std.algorithm.iteration : filter, fold, map, splitter;
     import std.array : array, join;
-    import std.string : stripRight;
+    import std.string : stripLeft, stripRight;
 
     auto lines = code.splitter('\n').map!(l => l.stripRight).array;
-    size_t common = size_t.max;
-    foreach (l; lines)
-    {
-        if (!l.length)
-            continue;
-        size_t i = 0;
-        while (i < l.length && l[i] == ' ')
-            ++i;
-        if (i < common)
-            common = i;
-    }
-    if (common == size_t.max)
-        common = 0;
 
-    string[] outLines;
-    foreach (l; lines)
-        outLines ~= (l.length > common ? l[common .. $] : "").idup;
-    // Trim the blank lines the braces leave at either end.
-    size_t lo = 0, hi = outLines.length;
-    while (lo < hi && outLines[lo].length == 0)
-        ++lo;
-    while (hi > lo && outLines[hi - 1].length == 0)
-        --hi;
-    return outLines[lo .. hi].join("\n");
+    // The common indent, ignoring blank lines — they carry none to speak of.
+    // An all-blank body folds to `size_t.max`, which the slice below reads as
+    // "nothing to keep", which is the right answer for it.
+    const common = lines.filter!(l => l.length > 0)
+        .map!(l => l.length - l.stripLeft(" ").length)
+        .fold!min(size_t.max);
+
+    // The braces leave a blank line at either end.
+    return lines.map!(l => l.length > common ? l[common .. $] : l[0 .. 0])
+        .array
+        .strippedOfBlankEnds
+        .map!(l => l.idup)
+        .join("\n");
 }
 
+/// The slice with leading and trailing blank lines dropped. `std.string.strip`
+/// works on characters; this is the line-wise twin the same idea needs.
+private inout(T)[] strippedOfBlankEnds(T)(inout(T)[] lines) @safe pure nothrow @nogc
+{
+    size_t lo = 0, hi = lines.length;
+    while (lo < hi && lines[lo].length == 0)
+        ++lo;
+    while (hi > lo && lines[hi - 1].length == 0)
+        --hi;
+    return lines[lo .. hi];
+}
+
+
 /// Whether a doc comment is nothing but `ditto` — case-insensitive, with
-/// whitespace either side (`dmd.doc.isDitto`, which is private to that module).
-private bool isDittoComment(const(char)* comment) @system
+/// whitespace either side. `dmd.doc.isDitto` is private to that module, and
+/// the rule is frozen by `DDC11`, so it is restated here rather than patched
+/// into the fork. Shared with `visitor.dittoTarget`, which resolves what such
+/// a comment points at.
+package bool isDittoComment(const(char)* comment) @system
 {
     import core.stdc.string : strlen;
-    import std.ascii : toLower;
     import std.string : strip;
+    import std.uni : icmp;
 
-    if (comment is null)
-        return false;
-    const c = comment[0 .. strlen(comment)].strip;
-    if (c.length != 5)
-        return false;
-    foreach (i, ch; c)
-        if (ch.toLower != "ditto"[i])
-            return false;
-    return true;
+    return comment !is null
+        && icmp(comment[0 .. strlen(comment)].strip, "ditto") == 0;
 }
 
 /**
@@ -279,12 +279,16 @@ DdocRendered renderDdocText(string comment, Dsymbol sym, Scope* sc = null) @syst
             OutBuffer rows;
             ps.write(loc, dc, sc, &dc.a, rows);
             expandWith(table, rows);
-            foreach (row; splitCtl(stripSentinels(rows[].idup), rowSep))
+            import std.algorithm.iteration : splitter;
+            import std.string : indexOf;
+
+            // `splitter` drops the trailing empty field the final separator
+            // leaves; the `indexOf < 0` guard below skips it either way.
+            foreach (row; stripSentinels(rows[].idup).splitter(rowSep))
             {
-                const at = indexOfCtl(row, idSep);
+                const at = row.indexOf(idSep);
                 if (at < 0)
                     continue;
-                import std.string : strip;
 
                 const id = bareParamName(row[0 .. at]);
                 const desc = collapseWhitespace(row[at + 1 .. $]);
@@ -660,32 +664,30 @@ private string cleanupMarkdown(string s) @safe pure
 
 /// `n` levels of list indentation. Four spaces per level clears the content
 /// column of every marker DDoc can produce, so a nested list nests.
-private string indentOf(size_t n) @safe pure nothrow
+private string indentOf(size_t n) @safe pure
 {
-    static immutable string spaces = "                                ";
-    const w = n * 4;
-    // Eight levels of list nesting is already past what any doc comment does;
-    // clamping there keeps this a slice rather than an allocation.
-    return spaces[0 .. w <= spaces.length ? w : spaces.length];
+    import std.array : replicate;
+
+    return replicate(" ", n * 4);
 }
+
 
 /// Whether a line opens a list item — `- ` or `12. `. The blank-line fold uses
 /// it to keep a list tight; without the ordered form every numbered list
 /// rendered loose, one paragraph per item.
-private bool isListItem(scope const(char)[] line) @safe pure nothrow @nogc
+private bool isListItem(scope const(char)[] line) @safe pure
 {
+    import std.algorithm.searching : countUntil, startsWith;
     import std.ascii : isDigit;
+    import std.string : stripLeft;
 
-    size_t i = 0;
-    while (i < line.length && line[i] == ' ')
-        ++i;
-    if (i + 1 < line.length && line[i] == '-' && line[i + 1] == ' ')
+    const body_ = line.stripLeft;
+    if (body_.startsWith("- "))
         return true;
-    const start = i;
-    while (i < line.length && line[i].isDigit)
-        ++i;
-    return i > start && i + 1 < line.length && line[i] == '.' && line[i + 1] == ' ';
+    const digits = body_.countUntil!(c => !c.isDigit);
+    return digits > 0 && body_[digits .. $].startsWith(". ");
 }
+
 
 /**
 Turns the list/table framing the macro table emits into real CommonMark.
@@ -847,72 +849,76 @@ private string[] reflowListsAndTables(string[] lines, out bool[] fenced) @safe p
 
 /// The `$(OL_START n, …)` index, defaulting to 1 for anything unparseable —
 /// a list that starts at the wrong number still reads; one that throws does not.
-///
-/// Hand-rolled rather than `sparkles.base.text.readers.readInteger`, which is
-/// the repo's parser of choice: this package depends on the DMD frontend and
-/// nothing else in the tree, which is what lets `twoslash-d` layer the sparkles
-/// vocabulary on top instead of inheriting it. `std.conv.parse` would do, but
-/// it is not `nothrow`.
-private uint startIndex(scope const(char)[] digits) @safe pure nothrow @nogc
+private uint startIndex(const(char)[] digits) @safe pure
 {
-    ulong n = 0;
-    foreach (c; digits)
+    import std.conv : ConvException, parse;
+
+    try
     {
-        if (c < '0' || c > '9')
-            break;
-        n = n * 10 + (c - '0');
-        if (n > uint.max)
-            return 1; // a start index that large is a typo, not an intent
+        auto rest = digits;
+        const n = parse!uint(rest);
+        return n > 0 ? n : 1;
     }
-    return n > 0 ? cast(uint) n : 1;
+    catch (ConvException)
+        return 1; // no digits, or an index too large to mean anything
 }
+
 
 
 /// The delimiter row for a header row, one cell per recorded alignment.
 /// Empty when the row carries no markers — then it was never a table header.
-private string delimiterRow(scope const(char)[] header) @safe pure
+/// The alignment word each header cell recorded, in column order. An
+/// unterminated marker is dropped rather than guessed at.
+private auto alignments(const(char)[] header) @safe pure
 {
-    string row;
-    for (size_t i = 0; i < header.length; i++)
-    {
-        if (header[i] != alignOpen)
-            continue;
-        const start = i + 1;
-        size_t end = start;
-        while (end < header.length && header[end] != alignClose)
-            ++end;
-        if (end >= header.length)
-            break;
-        const a = header[start .. end];
-        row ~= a == "left" ? "| :--- "
+    import std.algorithm.iteration : filter, map, splitter;
+    import std.algorithm.searching : findSplit;
+    import std.range : drop;
+
+    // `drop`, not `dropOne`: an empty line splits to an empty range, which
+    // `dropOne` asserts on.
+    return header.splitter(alignOpen)
+        .drop(1)
+        .map!(part => part.findSplit([alignClose]))
+        .filter!(split => cast(bool) split)
+        .map!(split => split[0]);
+}
+
+/// The delimiter row for a header row, one cell per recorded alignment.
+/// Empty when the row carries no markers — then it was never a table header.
+private string delimiterRow(const(char)[] header) @safe pure
+{
+    import std.algorithm.iteration : joiner, map;
+    import std.conv : to;
+
+    const row = header.alignments
+        .map!(a => a == "left" ? "| :--- "
             : a == "right" ? "| ---: "
             : a == "center" ? "| :---: "
-            : "| --- ";
-        i = end;
-    }
+            : "| --- ")
+        .joiner
+        .to!string;
     return row.length ? row ~ "|" : null;
 }
 
 /// Drops the alignment markers a header row carries, leaving the cell text.
 private string stripAlignMarks(string line) @safe pure
 {
-    import std.algorithm.searching : canFind;
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : canFind, findSplitAfter;
+    import std.range : drop;
 
     if (!line.canFind(alignOpen))
         return line;
-    string o;
-    for (size_t i = 0; i < line.length; i++)
-    {
-        if (line[i] == alignOpen)
-        {
-            while (i < line.length && line[i] != alignClose)
-                ++i;
-            continue;
-        }
-        o ~= line[i];
-    }
-    return o;
+
+    auto parts = line.splitter(alignOpen);
+    string kept = parts.front;
+    foreach (part; parts.drop(1))
+        if (auto after = part.findSplitAfter([alignClose]))
+            kept ~= after[1];
+    return kept;
 }
+
 
 /// Removes the macro expander's 0xFF escape sentinels — each 0xFF and the
 /// byte after it — exactly as `gendocfile`'s output pass does.
@@ -1039,26 +1045,7 @@ private string collapseWhitespace(const(char)[] s) @safe pure
     return outp;
 }
 
-private ptrdiff_t indexOfCtl(scope const(char)[] s, char ctl) @safe pure nothrow @nogc
-{
-    foreach (i, c; s)
-        if (c == ctl)
-            return i;
-    return -1;
-}
 
-private const(char)[][] splitCtl(scope const(char)[] s, char ctl) @safe pure
-{
-    const(char)[][] parts;
-    size_t start = 0;
-    foreach (i, c; s)
-        if (c == ctl)
-        {
-            parts ~= s[start .. i].idup;
-            start = i + 1;
-        }
-    return parts;
-}
 
 // -- tests -------------------------------------------------------------------
 // Env-gated (the engine runs inside a live analysis session); each mirrors
