@@ -699,6 +699,24 @@ private NumericArrayScan scanNumericArray(JsonReadOptions opts)(
 }
 
 // ── string scanning (shared by keys and values) ─────────────────────────
+// The common value string is escape-free ASCII. Keep that case in a narrow
+// two-word kernel: unlike scanString below it carries no UTF-8 run decoder,
+// unescape state, or error channel, and the compact body inlines without the
+// four-word expansion's register pressure. A non-ASCII byte (when validation
+// is enabled), backslash, control byte, or padded end returns 0 and the caller
+// retries through scanString, the authoritative validation/error path.
+private size_t scanSimpleString(JsonReadOptions opts)(
+    scope char[] pool, size_t openQuote, JsonCell* cell) @system
+{
+    const start = openQuote + 1;
+    const stop = scanStringBody!(opts.validateUtf8, false, 2)(pool, start).stop;
+    if (pool[stop] != '"')
+        return 0;
+    pool[stop] = '\0';
+    cell.set(JsonKind.string_, stop - start, cast(ulong)(pool.ptr + start));
+    return stop + 1;
+}
+
 // Standalone kernel, same discipline as scanNumber: keeping it out of
 // the grammar loop's nested scope keeps the loop's captured state out
 // of the string lane's register allocation. `pool` is the padded
@@ -1002,17 +1020,25 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     skipWs(pool, i);
 
 value: // parse one value at pool[i]
-    if (i >= n)
     {
-        fail(ParseErrorCode.unexpectedEnd, i);
-        return;
-    }
-    {
-        const c0 = pool[i];
+        // The pool has eight terminating zero bytes. Use that sentinel for
+        // the hot end check instead of comparing the index with n before a
+        // byte load; an embedded NUL is still an unexpected character, while
+        // the sentinel at n retains the exact unexpected-end diagnostic.
+        const c0 = (() @trusted => pool.ptr[i])();
+        if (unlikely(c0 == '\0'))
+        {
+            fail(i >= n ? ParseErrorCode.unexpectedEnd
+                    : ParseErrorCode.unexpectedCharacter, i);
+            return;
+        }
         if (c0 == '"') // most frequent first (string-heavy JSON)
         {
-            const end = (() @trusted => scanString!opts(pool, i,
-                nextCell, &serr))();
+            size_t end = (() @trusted => scanSimpleString!opts(pool, i,
+                nextCell))();
+            if (end == 0)
+                end = (() @trusted => scanString!opts(pool, i,
+                    nextCell, &serr))();
             if (end == 0)
             {
                 fail(serr.code, serr.offset, serr.context);
@@ -1100,7 +1126,8 @@ value: // parse one value at pool[i]
             parentIsObject = isObject;
             i++;
             skipWs(pool, i);
-            if (i < n && pool[i] == (isObject ? '}' : ']'))
+            // `i == n` reads the pool sentinel and cannot equal a close.
+            if ((() @trusted => pool.ptr[i])() == (isObject ? '}' : ']'))
             {
                 i++;
                 goto closeContainer;
@@ -1112,7 +1139,9 @@ value: // parse one value at pool[i]
     }
 
 objectKey: // parse `"key" :` then its value
-    if (i >= n || pool[i] != '"')
+    // `i` can be n after an unterminated object, where the padded sentinel is
+    // safely not a quote. Keep the bounds comparison on the cold diagnostic.
+    if ((() @trusted => pool.ptr[i])() != '"')
     {
         fail(i >= n ? ParseErrorCode.unexpectedEnd
                 : ParseErrorCode.unexpectedCharacter,
@@ -1189,13 +1218,10 @@ afterValue: // a value completed; count it, then continue its container
         // Keep the first delimiter load for the overwhelmingly common
         // immediate comma/close path. Whitespace (and invalid control bytes)
         // takes the exact existing scanner, then reloads at its new position.
+        // The padded sentinel lets the hot valid path defer its end check to
+        // the shared invalid-delimiter lane below.
         skipWs(pool, i);
-        if (unlikely(i >= n))
-        {
-            fail(ParseErrorCode.unexpectedEnd, i);
-            return;
-        }
-        delimiter = pool[i];
+        delimiter = (() @trusted => pool.ptr[i])();
     }
     {
         const isObject = parentIsObject;
@@ -1219,8 +1245,11 @@ afterValue: // a value completed; count it, then continue its container
             i++;
             goto closeContainer;
         }
-        fail(ParseErrorCode.unexpectedCharacter, i,
-            "',' or container close expected");
+        if (unlikely(c == '\0' && i >= n))
+            fail(ParseErrorCode.unexpectedEnd, i);
+        else
+            fail(ParseErrorCode.unexpectedCharacter, i,
+                "',' or container close expected");
         return;
     }
 
@@ -1855,8 +1884,11 @@ unittest
     reject(`{"a" 1}`);
     reject("{a:1}");
     reject(`{"a":1,}`);
-    reject("[");
-    reject("{");
+    rejectAs("[", ParseErrorCode.unexpectedEnd);
+    rejectAs("{", ParseErrorCode.unexpectedEnd);
+    rejectAs("[1 ", ParseErrorCode.unexpectedEnd);
+    rejectAs("[1\0]", ParseErrorCode.unexpectedCharacter);
+    rejectAs("{\0", ParseErrorCode.unexpectedCharacter);
     reject("]");
     reject("[}");
     reject(`"unterminated`);

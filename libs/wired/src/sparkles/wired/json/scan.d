@@ -274,10 +274,12 @@ stop byte speaks for itself). This is the reader's inline key probe: it
 keeps the UTF-8 machinery out of the grammar loop and punts non-ASCII
 keys to the general string kernel, which re-validates from scratch.
 */
-StringScan scanStringBody(bool validate = true, bool resolveNonAscii = true)(
+StringScan scanStringBody(bool validate = true, bool resolveNonAscii = true,
+    size_t unrollWords = 4)(
     scope const(char)[] paddedPool, size_t i)
 in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
 {
+    static assert(unrollWords == 2 || unrollWords == 4);
     pragma(inline, true);
     return (() @trusted {
         // The pragma must be repeated here: the one on the enclosing
@@ -290,10 +292,11 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
         size_t j = i;
         while (true)
         {
-            // Unroll two scalar words. The second load is safe whenever
-            // the first has no stop: that proves eight content bytes are
-            // present, and the existing eight-byte padding covers the
-            // second word's tail at end-of-input.
+            // Probe two scalar words for the compact inline lane, or four
+            // for the full scanner. Every following load is safe whenever
+            // its predecessor has no stop: that proves eight content bytes
+            // are present, and the existing eight-byte padding covers the
+            // final word's tail at end-of-input.
             const firstStops = stringStops!validate(loadWord(p + j));
             if (firstStops != 0)
             {
@@ -328,41 +331,44 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
                 else
                     return StringScan(j, false);
             }
-            const thirdStops = stringStops!validate(loadWord(p + j + 16));
-            if (thirdStops != 0)
+            static if (unrollWords == 4)
             {
-                import core.bitop : bsf;
-
-                j += 16 + bsf(thirdStops) / 8;
-                static if (validate && resolveNonAscii)
+                const thirdStops = stringStops!validate(loadWord(p + j + 16));
+                if (thirdStops != 0)
                 {
-                    if ((p[j] & 0x80) == 0)
-                        return StringScan(j, false);
-                    if (!skipUtf8Run(p, j))
-                        return StringScan(j, true);
-                    continue;
-                }
-                else
-                    return StringScan(j, false);
-            }
-            const fourthStops = stringStops!validate(loadWord(p + j + 24));
-            if (fourthStops != 0)
-            {
-                import core.bitop : bsf;
+                    import core.bitop : bsf;
 
-                j += 24 + bsf(fourthStops) / 8;
-                static if (validate && resolveNonAscii)
-                {
-                    if ((p[j] & 0x80) == 0)
+                    j += 16 + bsf(thirdStops) / 8;
+                    static if (validate && resolveNonAscii)
+                    {
+                        if ((p[j] & 0x80) == 0)
+                            return StringScan(j, false);
+                        if (!skipUtf8Run(p, j))
+                            return StringScan(j, true);
+                        continue;
+                    }
+                    else
                         return StringScan(j, false);
-                    if (!skipUtf8Run(p, j))
-                        return StringScan(j, true);
-                    continue;
                 }
-                else
-                    return StringScan(j, false);
+                const fourthStops = stringStops!validate(loadWord(p + j + 24));
+                if (fourthStops != 0)
+                {
+                    import core.bitop : bsf;
+
+                    j += 24 + bsf(fourthStops) / 8;
+                    static if (validate && resolveNonAscii)
+                    {
+                        if ((p[j] & 0x80) == 0)
+                            return StringScan(j, false);
+                        if (!skipUtf8Run(p, j))
+                            return StringScan(j, true);
+                        continue;
+                    }
+                    else
+                        return StringScan(j, false);
+                }
             }
-            j += 32;
+            j += unrollWords * 8;
         }
     })();
 }
