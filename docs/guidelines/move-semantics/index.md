@@ -21,9 +21,18 @@ verifiable examples are tagged with [`toolchainRequirements`][toolchain-req] so
 > [!NOTE]
 > The examples that demonstrate **bleeding-edge behaviour** (the `@safe`
 > aliasing rule, `ref`-returning `__rvalue` functions, and the 2024-edition
-> assignment check) are shown as plain code blocks rather than `dub`
-> single-file recipes, because they require a frontend newer than any released
-> compiler at the time of writing. Run them with a development DMD.
+> assignment check) are not `dub` single-file recipes, because they require a
+> frontend newer than any released compiler at the time of writing. Run them
+> with a development DMD.
+>
+> The two that are _expected to fail_ ([§10](#_10-safe-and-the-aliasing-hazard-dmd-2-112),
+> [§13](#_13-the-2024-edition-discarded-rvalue-assignment-is-an-error)) are
+> written as **twoslash** samples: the `// @errors:` line states the diagnostic
+> they must produce and `// @dflags:` supplies the flags they need, so
+> `twoslash-extract` reproduces the compiler's real message against the pinned
+> frontend instead of the page quoting it by hand. Until the docs site grows a
+> twoslash renderer those directive lines are visible in the code block; the
+> renderer strips them and shows the diagnostic under the offending line.
 
 ---
 
@@ -483,9 +492,13 @@ void oops()
 
 `__rvalue` is **not** a `@safe` primitive. Because it can alias an lvalue into a
 by-value parameter, it can be used to observe a mutation through what should be
-an immutable binding. The reduced case from [issue 21414][issue-21414]:
+an immutable binding. Since DMD 2.112 ([fix #21414][issue-21414]) the compiler
+**rejects** an `__rvalue` move of a variable inside a `@safe` function, so the
+reduced case from [issue 21414][issue-21414] no longer compiles — one diagnostic
+per aliasing argument:
 
-```d
+```d twoslash
+// @errors: moving{{_}}variable{{_}}with{{_}}`__rvalue`{{_}}is{{_}}not{{_}}allowed{{_}}in{{_}}a{{_}}`@safe`{{_}}function
 @safe:
 struct S { int x; this(int x) { this.x = x; } ~this() {} this(S s) {} }
 
@@ -501,13 +514,6 @@ void main()
     auto s = S(2);
     foo(__rvalue(s), __rvalue(s)); // both params alias `s`
 }
-```
-
-Since DMD 2.112 ([fix #21414][issue-21414]) the compiler **rejects** an
-`__rvalue` move of a variable inside a `@safe` function:
-
-```[Error]
-Error: moving variable `__rvalue(s)` with `__rvalue` is not allowed in a `@safe` function
 ```
 
 > [!DANGER]
@@ -624,7 +630,9 @@ is now an error when the call lowers to `opAssign`/`opOpAssign`/`opUnary` and th
 struct has no tail-mutable pointer fields, because the write almost certainly
 vanishes:
 
-```d
+```d twoslash
+// @dflags: -edition=2024
+// @errors: assignment{{_}}to{{_}}struct{{_}}rvalue{{_}}is{{_}}discarded
 struct S
 {
     int i;
@@ -639,14 +647,10 @@ void main()
 }
 ```
 
-```[Error]
-Error: assignment to struct rvalue `foo()` is discarded
-       if the assignment is needed to modify a global, call `opAssign` directly or use an lvalue
-```
-
-Without `-edition=2024` the code compiles (the silent no-op the rule is meant to
-catch). The gating is deliberate — editions let breaking diagnostics ship
-without disturbing existing code.
+The `// @dflags: -edition=2024` line is load-bearing: **without** it the same
+code compiles clean (the silent no-op the rule is meant to catch), and the
+sample would carry no diagnostic at all. The gating is deliberate — editions let
+breaking diagnostics ship without disturbing existing code.
 
 ---
 
