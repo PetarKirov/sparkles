@@ -61,9 +61,11 @@ trim_trailing_whitespace = unset
 [*.md]
 indent_size = unset
 
-# Also disable charset checking for markdown files in `docs/` as they can
-# contain ```ansi code blocks with raw ANSI escape codes (non-printable chars)
-[docs/**.md]
+# Also disable charset checking for markdown that embeds ```ansi code blocks
+# with raw ANSI escape codes (non-printable chars). The README qualifies too:
+# its OSC 8 example output carries a BEL terminator, which editorconfig-checker
+# 3.7.0 sniffs as "binary" (ESC alone is fine — BEL is what trips it).
+[{README.md,docs/**.md}]
 charset = unset
 
 # The Make deep-dive embeds real Makefile recipes in fenced code blocks, and
