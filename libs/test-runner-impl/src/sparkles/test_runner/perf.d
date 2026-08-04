@@ -739,7 +739,7 @@ else version (OSX)
         /// tier-0 shape — `between()` stays outside the counted window),
         /// per-iteration averages net of the calibrated bracket cost.
         PerfStats count(Timed, Between)(scope Timed timed, scope Between between,
-            uint iters)
+            uint iters, uint batch = 1)
         in (iters > 0)
         {
             import sparkles.test_runner.tier0 : netOfCost;
@@ -752,13 +752,25 @@ else version (OSX)
             // appear (the syscall's cost scales with them).
             double calInstr, calCycles;
             measureBracketCost(calInstr, calCycles);
+            // `batch` brackets that many iterations per snapshot pair so the
+            // bracket's own cost amortizes instead of dominating a fast body
+            // (SPEC §6.1). Sound only where `between()` is a no-op, which is
+            // what the batched rows guarantee; per-call rows pass 1 and get
+            // the original per-iteration bracket.
+            const k = batch == 0 ? 1 : batch;
             double sumInstr = 0, sumCycles = 0;
-            foreach (_; 0 .. iters)
+            uint done, brackets;
+            while (done < iters)
             {
+                const n = k < iters - done ? k : iters - done;
+                done += n;
+                ++brackets;
                 const a = readFixedCounters();
-                timed();
+                foreach (_; 0 .. n)
+                    timed();
                 const b = readFixedCounters();
-                between();
+                foreach (_; 0 .. n)
+                    between();
                 // The monotonicity guard mirrors windowStats: a torn or
                 // reordered bracket must poison the pass to nan — an
                 // unguarded ulong delta would wrap to ~1.8e19 and feed a
@@ -773,8 +785,12 @@ else version (OSX)
                     sumInstr = sumCycles = double.nan; // a failed bracket poisons the pass
             }
             const inv = 1.0 / iters;
-            s.instructions = netOfCost(sumInstr * inv, calInstr);
-            s.cycles = netOfCost(sumCycles * inv, calCycles);
+            // One bracket's calibrated cost, spread over the iterations it
+            // covered — at batch == 1 this is the original per-iteration
+            // subtraction; batching genuinely pays it fewer times.
+            const costShare = double(brackets) / iters;
+            s.instructions = netOfCost(sumInstr * inv, calInstr * costShare);
+            s.cycles = netOfCost(sumCycles * inv, calCycles * costShare);
             return s;
         }
 
