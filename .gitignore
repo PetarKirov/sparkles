@@ -79,3 +79,7 @@ bazel-*
 /apps/hue/tools/preview_widget
 /apps/hue/tools/dub.selections.json
 screenshot*.png
+
+# Compiled output of the wired-inline bench-engine generator (dub run --single)
+/libs/wired/bench/runtime/tools/gen-wired-inline
+/libs/wired/bench/runtime/tools/dub.selections.json
