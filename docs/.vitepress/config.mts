@@ -1489,6 +1489,143 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Diff Viewers & PR Review',
+              link: '/research/diff-review/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Terminal Differs',
+                  collapsed: true,
+                  items: [
+                    { text: 'delta', link: '/research/diff-review/delta' },
+                    {
+                      text: 'git-split-diffs',
+                      link: '/research/diff-review/git-split-diffs',
+                    },
+                  ],
+                },
+                {
+                  text: 'Structural Diff & Merge',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Difftastic',
+                      link: '/research/diff-review/difftastic',
+                    },
+                    {
+                      text: 'Mergiraf',
+                      link: '/research/diff-review/mergiraf',
+                    },
+                    {
+                      text: 'diffoscope',
+                      link: '/research/diff-review/diffoscope',
+                    },
+                    {
+                      text: 'SemanticDiff',
+                      link: '/research/diff-review/semanticdiff',
+                    },
+                  ],
+                },
+                {
+                  text: 'Editor Diff Stacks',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'codediff.nvim',
+                      link: '/research/diff-review/codediff-nvim',
+                    },
+                    {
+                      text: 'diffview.nvim',
+                      link: '/research/diff-review/diffview-nvim',
+                    },
+                    {
+                      text: 'diffview-plus.nvim',
+                      link: '/research/diff-review/diffview-plus-nvim',
+                    },
+                    {
+                      text: 'diffs.nvim',
+                      link: '/research/diff-review/diffs-nvim',
+                    },
+                    {
+                      text: 'VS Code Diff Editor',
+                      link: '/research/diff-review/vscode',
+                    },
+                    { text: 'GitLens', link: '/research/diff-review/gitlens' },
+                  ],
+                },
+                {
+                  text: 'TUI Clients',
+                  collapsed: true,
+                  items: [
+                    { text: 'gitui', link: '/research/diff-review/gitui' },
+                    { text: 'lazygit', link: '/research/diff-review/lazygit' },
+                  ],
+                },
+                {
+                  text: 'Desktop GUI Differs',
+                  collapsed: true,
+                  items: [
+                    { text: 'Meld', link: '/research/diff-review/meld' },
+                    {
+                      text: 'WinMerge',
+                      link: '/research/diff-review/winmerge',
+                    },
+                    {
+                      text: 'Araxis Merge',
+                      link: '/research/diff-review/araxis-merge',
+                    },
+                    {
+                      text: 'Beyond Compare',
+                      link: '/research/diff-review/beyond-compare',
+                    },
+                  ],
+                },
+                {
+                  text: 'Web Review Platforms',
+                  collapsed: true,
+                  items: [
+                    { text: 'Gerrit', link: '/research/diff-review/gerrit' },
+                    {
+                      text: 'ReviewStack (Sapling)',
+                      link: '/research/diff-review/reviewstack',
+                    },
+                    {
+                      text: 'Reviewable',
+                      link: '/research/diff-review/reviewable',
+                    },
+                    { text: 'diffy', link: '/research/diff-review/diffy' },
+                  ],
+                },
+                {
+                  text: 'Stacked PRs & Workflow',
+                  collapsed: true,
+                  items: [
+                    { text: 'av (Aviator)', link: '/research/diff-review/av' },
+                    {
+                      text: 'git-spice',
+                      link: '/research/diff-review/git-spice',
+                    },
+                    {
+                      text: 'git-branchless',
+                      link: '/research/diff-review/git-branchless',
+                    },
+                    {
+                      text: 'GitButler',
+                      link: '/research/diff-review/gitbutler',
+                    },
+                    {
+                      text: 'Graphite',
+                      link: '/research/diff-review/graphite',
+                    },
+                  ],
+                },
+                {
+                  text: 'Comparison (Synthesis)',
+                  link: '/research/diff-review/comparison',
+                },
+              ],
+            },
+            {
               text: 'CPU PMUs',
               link: '/research/cpu-pmu/',
               collapsed: true,
