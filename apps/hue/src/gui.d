@@ -122,6 +122,36 @@ private struct SelectionDrag
         => anchorHi > headHi ? anchorHi : headHi;
 }
 
+/// The transient feedback state (M15 GROUP-T of the GuiState hoist): the
+/// copied-checkmark flash beside a fence's copy button (the copied fence
+/// itself is `vm.copiedFenceSrc`), the copy-mode toast a 'y'/'t' toggle
+/// flashes in the status bar, and the armed vim 'z' fold sequence ('z'
+/// arms it for ~a second; the next key picks the op).
+private struct Flashes
+{
+    Timeline copiedFlash;
+    bool copiedShown; // the ✔ glyph is in the tree; rebuild when the flash ends
+    string copyModeMsg;
+    Timeline toast;
+    int foldSeqFrames;
+}
+
+/// The twoslash hover latch (M15 GROUP-T): the open popup's node (+1;
+/// 0 = none), its rect (pointer hysteresis), the token-underline fade
+/// (STM6), and — per popup, not persistent — which collapsed signature
+/// runs the reader opened, with where they landed so a click can name one.
+private struct HoverPopup
+{
+    size_t hotNode = 0;
+    PixelRect hotPopup;
+    bool havePopup = false;
+    ExpandedRegions expandedRegions;
+    KeyTarget[] popupKeys;
+    size_t popupNode = size_t.max;
+    Timeline fade;
+    int forceHover = -1; // HUE_GUI_HOVER=<n>: force the Nth popup (goldens)
+}
+
 /// The live-resize relayout debounce (M15 GROUP-W of the GuiState hoist):
 /// during a drag the column count changes almost every frame, so re-wrap
 /// only once the width has held steady for `settleFrames` frames — the drag
@@ -635,26 +665,10 @@ int runGui(
         capDocHSb = 4, capTreeHSb = 5, capSelection = 6;
     CaptureState capture;
 
-    // Code-block copy button: the STM6 timeline for the brief "copied"
-    // checkmark feedback (the copied fence itself is `vm.copiedFenceSrc`).
-    Timeline copiedFlash;
-    bool copiedShown; // the ✔ glyph is in the tree; rebuild when the flash ends
-
-    // Twoslash hover latch: the open popup's node (+1; 0 = none), its rect
-    // (pointer hysteresis), and the token-underline fade (STM6).
-    size_t hotNode = 0;
-    PixelRect hotPopup;
-    bool havePopup = false;
-    // Which collapsed runs of the hot popup's signature the reader opened, and
-    // where they landed so a click can name one. Per popup, not persistent:
-    // pointing at another token asks a fresh question.
-    ExpandedRegions expandedRegions;
-    KeyTarget[] popupKeys;
-    size_t popupNode = size_t.max;
-    Timeline fade;
-    int forceHover = -1; // HUE_GUI_HOVER=<n>: force the Nth popup (goldens)
+    Flashes flash;
+    HoverPopup pop;
     try
-        forceHover = environment.get("HUE_GUI_HOVER", null).length
+        pop.forceHover = environment.get("HUE_GUI_HOVER", null).length
             ? environment.get("HUE_GUI_HOVER").to!int : -1;
     catch (Exception)
     {
@@ -668,11 +682,9 @@ int runGui(
     SelectionDrag drag;
 
     // Copy modes (SEL7/TBL2), toggleable at runtime ('y' ANSI, 't' table); a
-    // toggle flashes the new mode in the status bar for a moment.
+    // toggle flashes the new mode in the status bar for a moment (flash.toast).
     bool ansiStrip = ansiCopyStrip;
     TableCopyFormat tableFmt = tableCopy;
-    string copyModeMsg;
-    Timeline toast;
 
     // The text-regime selection as a source range [drag.selMin, drag.selMax) — the union of
     // the anchor and head spans (a char point is a zero-width span).
@@ -747,11 +759,6 @@ int runGui(
         }
         vm.foldAt(off, op);
     }
-
-    // The vim fold family: 'z' arms a pending sequence for ~a second; the
-    // next key picks the op (a/z toggle, c close, o open, R all-open,
-    // M all-fold).
-    int foldSeqFrames;
 
     // A pane's header bar through the SHARED chrome component (the same
     // headerBar + Slot.chromeFocused + bold title the TUI paints): built
@@ -1178,7 +1185,7 @@ int runGui(
             // A pending `z` claims the next key — the same condition the old
             // block computed inline, now an input to the keymap instead of a
             // guard scattered across the sites it affected.
-            const foldSeq = !treeFocused && foldSeqFrames > 0;
+            const foldSeq = !treeFocused && flash.foldSeqFrames > 0;
 
             const kctx = KeyContext(
                 mode: InputMode.normal,
@@ -1193,7 +1200,7 @@ int runGui(
             // The armed fold sequence expires on a frame clock, as before; a
             // recognised fold key clears it early by zeroing the counter.
             if (foldSeq)
-                --foldSeqFrames;
+                --flash.foldSeqFrames;
 
             foreach (kev; keyBuf)
             {
@@ -1366,15 +1373,15 @@ int runGui(
                     break;
                 case Command.toggleAnsiCopy:
                     ansiStrip = !ansiStrip;
-                    copyModeMsg = ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
-                    toast = Timeline.triggered(toastCfg);
+                    flash.copyModeMsg = ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
+                    flash.toast = Timeline.triggered(toastCfg);
                     break;
                 case Command.toggleTableCopy:
                     tableFmt = tableFmt == TableCopyFormat.tsv
                         ? TableCopyFormat.markdown : TableCopyFormat.tsv;
-                    copyModeMsg = tableFmt == TableCopyFormat.tsv
+                    flash.copyModeMsg = tableFmt == TableCopyFormat.tsv
                         ? "table-copy: tsv" : "table-copy: markdown";
-                    toast = Timeline.triggered(toastCfg);
+                    flash.toast = Timeline.triggered(toastCfg);
                     break;
                 case Command.startSearch:
                     mode = Mode.search;
@@ -1386,33 +1393,33 @@ int runGui(
                     query.clear();
                     break;
                 case Command.foldArm:
-                    foldSeqFrames = 60;
+                    flash.foldSeqFrames = 60;
                     break;
 
                 // ── the armed fold sequence (FLD5) ───────────────────────
                 case Command.foldToggle:
                     foldAtCursor(ViewerModel.FoldOp.toggle);
-                    foldSeqFrames = 0;
+                    flash.foldSeqFrames = 0;
                     break;
                 case Command.foldClose:
                     foldAtCursor(ViewerModel.FoldOp.close);
-                    foldSeqFrames = 0;
+                    flash.foldSeqFrames = 0;
                     break;
                 case Command.foldOpen:
                     foldAtCursor(ViewerModel.FoldOp.open);
-                    foldSeqFrames = 0;
+                    flash.foldSeqFrames = 0;
                     break;
                 case Command.foldOpenAll:
                     vm.setAllFolds(false);
-                    foldSeqFrames = 0;
+                    flash.foldSeqFrames = 0;
                     break;
                 case Command.foldCloseAll:
                     vm.setAllFolds(true);
-                    foldSeqFrames = 0;
+                    flash.foldSeqFrames = 0;
                     break;
                 case Command.foldLevel:
                     vm.foldToLevel(kc.arg); // z1–z9, vim's foldlevel
-                    foldSeqFrames = 0;
+                    flash.foldSeqFrames = 0;
                     break;
                 }
             }
@@ -1593,9 +1600,9 @@ int runGui(
 
         // The ✔ glyph lives in the widget tree: rebuild when the flash ends so
         // the header reverts to the copy affordance.
-        if (copiedShown && !copiedFlash.visible)
+        if (flash.copiedShown && !flash.copiedFlash.visible)
         {
-            copiedShown = false;
+            flash.copiedShown = false;
             vm.copiedFenceSrc = size_t.max;
             vm.rebuild();
         }
@@ -1651,8 +1658,8 @@ int runGui(
                                     ? stripSgr(fbody) : fbody;
                                 copyToClipboard(txt);
                                 vm.copiedFenceSrc = bodyStart;
-                                copiedFlash = Timeline.triggered(copiedCfg);
-                                copiedShown = true;
+                                flash.copiedFlash = Timeline.triggered(copiedCfg);
+                                flash.copiedShown = true;
                                 copyClicked = true;
                                 vm.rebuild(); // the header now shows the ✔
                                 break;
@@ -1806,18 +1813,18 @@ int runGui(
             // The popup's geometry is last frame's, which is what the reader
             // aimed at; keys are cell-relative to the box.
             bool popupClicked;
-            if (havePopup && popupKeys.length && clickPressed()
-                && mp.x >= hotPopup.x && mp.x <= hotPopup.x + hotPopup.width
-                && mp.y >= hotPopup.y && mp.y <= hotPopup.y + hotPopup.height)
+            if (pop.havePopup && pop.popupKeys.length && clickPressed()
+                && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
+                && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height)
             {
                 popupClicked = true; // never a selection, hit or miss
-                const k = keyAt(popupKeys,
-                    Point(cast(int)((mp.x - hotPopup.x) / cellW),
-                        cast(int)((mp.y - hotPopup.y) / cellH)));
+                const k = keyAt(pop.popupKeys,
+                    Point(cast(int)((mp.x - pop.hotPopup.x) / cellW),
+                        cast(int)((mp.y - pop.hotPopup.y) / cellH)));
                 if (k != 0)
                 {
                     const r = abbrevRegion(k);
-                    expandedRegions[r] = !expandedRegions.get(r, false);
+                    pop.expandedRegions[r] = !pop.expandedRegions.get(r, false);
                 }
             }
             // Levels, not edges — see `RaylibEvents.modifiers`.
@@ -1976,7 +1983,7 @@ int runGui(
             }
         }
 
-        copiedFlash = copiedFlash.stepped(frameMs(window.frameSeconds), copiedCfg);
+        flash.copiedFlash = flash.copiedFlash.stepped(frameMs(window.frameSeconds), copiedCfg);
         // Selection highlight — a translucent tint. `tintRow` takes content columns
         // (0 = the content origin, i.e. after `gutterPx`).
         void tintRow(long screenRow, int xStartCol, int xEndCol)
@@ -2057,44 +2064,44 @@ int runGui(
                             && off < cast(long)(n.start + n.length))
                             overNode = ni + 1;
             }
-            if (overNode == 0 && hotNode != 0 && havePopup
-                && mp.x >= hotPopup.x && mp.x <= hotPopup.x + hotPopup.width
-                && mp.y >= hotPopup.y && mp.y <= hotPopup.y + hotPopup.height)
-                overNode = hotNode; // still over the open popup → keep it open
+            if (overNode == 0 && pop.hotNode != 0 && pop.havePopup
+                && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
+                && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height)
+                overNode = pop.hotNode; // still over the open popup → keep it open
             bool forced = false;
-            if (forceHover >= 0)
+            if (pop.forceHover >= 0)
             {
                 int seen = 0;
                 foreach (ni, ref const n; vm.tw.nodes)
-                    if (n.type == NodeType.hover && seen++ == forceHover)
+                    if (n.type == NodeType.hover && seen++ == pop.forceHover)
                     {
                         overNode = ni + 1;
                         forced = true;
                         break;
                     }
             }
-            if (overNode != hotNode)
-                fade = Timeline.init;
-            hotNode = overNode;
+            if (overNode != pop.hotNode)
+                pop.fade = Timeline.init;
+            pop.hotNode = overNode;
             // A lazy span (underlined, no text yet) resolves on demand: ask the
             // oracle for this node's tip. The request is deduped per node, so
             // holding the pointer still costs one round trip (~0.6 ms warm);
             // the popup stays empty until the answer lands a frame or two later.
-            if (liveSession !is null && hotNode != 0
-                && !vm.tw.nodes[hotNode - 1].text.length)
-                liveSession.requestTip(hotNode - 1);
-            if (hotNode != 0)
+            if (liveSession !is null && pop.hotNode != 0
+                && !vm.tw.nodes[pop.hotNode - 1].text.length)
+                liveSession.requestTip(pop.hotNode - 1);
+            if (pop.hotNode != 0)
             {
-                if (!fade.visible)
-                    fade = Timeline.triggered(fadeCfg);
-                fade = forced ? Timeline(Timeline.Phase.hold, 0)
-                    : fade.stepped(frameMs(window.frameSeconds), fadeCfg);
+                if (!pop.fade.visible)
+                    pop.fade = Timeline.triggered(fadeCfg);
+                pop.fade = forced ? Timeline(Timeline.Phase.hold, 0)
+                    : pop.fade.stepped(frameMs(window.frameSeconds), fadeCfg);
             }
-            havePopup = false;
-            if (hotNode != 0)
+            pop.havePopup = false;
+            if (pop.hotNode != 0)
             {
                 // The token's geometry through the identity channel.
-                const n = vm.tw.nodes[hotNode - 1];
+                const n = vm.tw.nodes[pop.hotNode - 1];
                 auto rects = selectionRects(vm.tree, vm.frames,
                     n.start, n.start + n.length);
                 if (rects.length)
@@ -2111,7 +2118,7 @@ int runGui(
                     const uv = resolveSlot(
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
                         Slot.hoverUnderline, vm.pageFg, vm.pageBg);
-                    const ua = cast(ubyte)(fade.alphaPercent(fadeCfg) * 255 / 100);
+                    const ua = cast(ubyte)(pop.fade.alphaPercent(fadeCfg) * 255 / 100);
                     for (int i = 0; i + 2 <= hw; i += 4)
                         chrome.fillPixels(hx + i, uy, 2, 1, uv.fg, ua);
                     // Room from the anchor to the document pane's right edge,
@@ -2120,20 +2127,20 @@ int runGui(
                     const availCells = (screenW - cast(int) rightPad - hx) / cellW;
                     // A different token is a different question: drop what the
                     // last popup had opened.
-                    if (popupNode != hotNode)
+                    if (pop.popupNode != pop.hotNode)
                     {
-                        expandedRegions = null;
-                        popupNode = hotNode;
+                        pop.expandedRegions = null;
+                        pop.popupNode = pop.hotNode;
                     }
-                    hotPopup = drawPopup(fonts, buf, vm.tw, hotNode - 1,
+                    pop.hotPopup = drawPopup(fonts, buf, vm.tw, pop.hotNode - 1,
                         cast(float) hx, cast(float)(hy + cellH),
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
                         vm.pageFg, vm.pageBg, availCells,
-                        expandedRegions, popupKeys);
+                        pop.expandedRegions, pop.popupKeys);
                     // Zero width ⇒ a lazy node drew no popup (nothing to keep
                     // the pointer inside yet).
-                    havePopup = hotPopup.width > 0;
+                    pop.havePopup = pop.hotPopup.width > 0;
                 }
             }
         }
@@ -2286,12 +2293,12 @@ int runGui(
             drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), vm.pageBg);
         }
         // Copy-mode toast (when not typing): flashes the mode after a 'y'/'t' toggle.
-        else if (toast.visible)
+        else if (flash.toast.visible)
         {
-            toast = toast.stepped(frameMs(window.frameSeconds), toastCfg);
+            flash.toast = flash.toast.stepped(frameMs(window.frameSeconds), toastCfg);
             const barY = screenH - cellH;
             chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
-            drawText(fonts, cstrOf(buf, copyModeMsg), 4, cast(float) barY, TextStyle(0), vm.pageBg);
+            drawText(fonts, cstrOf(buf, flash.copyModeMsg), 4, cast(float) barY, TextStyle(0), vm.pageBg);
         }
 
         window.resetClip(); // never let a scissor survive the frame
