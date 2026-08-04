@@ -122,6 +122,24 @@ private struct SelectionDrag
         => anchorHi > headHi ? anchorHi : headHi;
 }
 
+/// The workspace panes (M15 GROUP-P of the GuiState hoist): the explorer
+/// tree pane (XPL2) with its visibility and focus, the STM8 tree/document
+/// split, and the four scrollbar hover-expand easings beside the two
+/// VERTICAL STM9 machines — those live here in px track units (offsets
+/// sync from `vm.top` / `tree.top` per frame) while the horizontal
+/// machines live on the models (`vm.hsb` / `tree.hsb`); the px easings
+/// are `ui_raylib.ScrollbarAnim`, drawn by `drawScrollbar` (B-1).
+private struct Panes
+{
+    ExplorerTui tree;
+    bool treeVisible;
+    bool treeFocused;
+    SplitState split;
+    ScrollbarState docSb;
+    ScrollbarState treeVSb;
+    ScrollbarAnim sbAnim, treeSbAnim, treeHAnim, docHAnim;
+}
+
 /// The input-routing state (M15 GROUP-I of the GuiState hoist): which
 /// line-input surface owns the keyboard ('/' search, ':' goto) and its
 /// typed query, pointer-capture ownership (STM11), and the per-frame
@@ -440,16 +458,16 @@ int runGui(
     // workspace's model, painted through RaylibCanvas. 'e' toggles it.
     import std.path : dirName;
 
-    ExplorerTui tree;
-    tree.includeGlobs = includeGlobs;
-    tree.excludeGlobs = excludeGlobs;
-    bool treeVisible = startInTree;
-    bool treeFocused = startInTree;
-    // The tree/document split (STM8): --tree-width seeds it; dragging the
-    // divider resizes it live (cell-granular, like the TUI's).
-    auto split = SplitState(treeWidth < 12 ? 12 : treeWidth);
-    int treeCols() => split.size;
-    int treePx() => treeVisible ? (treeCols + 1) * fonts.cellW() : 0;
+    Panes pn;
+    pn.tree.includeGlobs = includeGlobs;
+    pn.tree.excludeGlobs = excludeGlobs;
+    pn.treeVisible = startInTree;
+    pn.treeFocused = startInTree;
+    // --tree-width seeds the STM8 split; dragging the divider resizes it
+    // live (cell-granular, like the TUI's).
+    pn.split = SplitState(treeWidth < 12 ? 12 : treeWidth);
+    int treeCols() => pn.split.size;
+    int treePx() => pn.treeVisible ? (treeCols + 1) * fonts.cellW() : 0;
 
     int widthCols()
     {
@@ -485,8 +503,8 @@ int runGui(
     // 'e' / the toolbar: toggle the explorer pane (XPL2); focus follows.
     void toggleExplorer()
     {
-        treeVisible = !treeVisible;
-        treeFocused = treeVisible;
+        pn.treeVisible = !pn.treeVisible;
+        pn.treeFocused = pn.treeVisible;
         vm.widthCols = -1;
         relayout();
     }
@@ -509,16 +527,16 @@ int runGui(
             " (", i + 1, "/", names.length, ")").toStringz);
         // The explorer pane follows the theme too — page colors and the
         // palette its slots resolve against, not just the syntax colors.
-        tree.theme = vm.current;
-        tree.themeValue = &themes[i];
-        tree.pageFg = vm.pageFg;
-        tree.pageBg = vm.pageBg;
-        if (tree.root.length)
-            tree.rebuild();
+        pn.tree.theme = vm.current;
+        pn.tree.themeValue = &themes[i];
+        pn.tree.pageFg = vm.pageFg;
+        pn.tree.pageBg = vm.pageBg;
+        if (pn.tree.root.length)
+            pn.tree.rebuild();
     }
 
-    tree.chromeRows = 0; // the GUI pane is all tree rows
-    tree.root = treeRoot.length ? treeRoot
+    pn.tree.chromeRows = 0; // the GUI pane is all tree rows
+    pn.tree.root = treeRoot.length ? treeRoot
         : (docPath.length ? dirName(docPath) : ".");
     applyTheme(vm.themeIdx); // resolves the theme before the first document
     vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
@@ -533,7 +551,7 @@ int runGui(
     }
     vm.top = initialTop;
     if (docPath.length)
-        tree.reveal(docPath);
+        pn.tree.reveal(docPath);
 
     SmallBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
 
@@ -603,7 +621,7 @@ int runGui(
         inp.query.clear();
         inp.mode = Mode.normal;
         window.title(("hue — " ~ name).toStringz);
-        tree.reveal(path); // the explorer follows the open document (XPL3/4)
+        pn.tree.reveal(path); // the explorer follows the open document (XPL3/4)
         startLive(path, vm.tw.code.length != 0);
         return true;
     }
@@ -611,16 +629,16 @@ int runGui(
     // Enter/l/double-click on a tree row opens a file (or toggles a dir).
     void activateTree()
     {
-        if (tree.sel >= cast(long) tree.rows.length)
+        if (pn.tree.sel >= cast(long) pn.tree.rows.length)
             return;
-        if (!tree.activate() && tree.picked.length)
+        if (!pn.tree.activate() && pn.tree.picked.length)
         {
             import std.path : baseName;
 
-            const path = tree.picked;
-            tree.picked = null;
+            const path = pn.tree.picked;
+            pn.tree.picked = null;
             if (openPath(path, baseName(path), ""))
-                treeFocused = false;
+                pn.treeFocused = false;
         }
     }
 
@@ -654,13 +672,6 @@ int runGui(
             vm.top = vm.visualOfMatch(vm.matches[0]);
     }
 
-    // The four bars run the ONE STM9 machine (B-1): the vertical machines
-    // live here in px track units (offsets sync from vm.top / tree.top per
-    // frame), the horizontal ones live on the models; the px hover-expand
-    // easings are ui_raylib.ScrollbarAnim, drawn by drawScrollbar.
-    ScrollbarState docSb;
-    ScrollbarState treeVSb;
-    ScrollbarAnim sbAnim, treeSbAnim, treeHAnim, docHAnim;
 
     // The ONE input source (IXB7/UIA7): raylib's polled state is synthesised
     // into `sparkles:input` events by the backend adapter, drained once per
@@ -678,7 +689,7 @@ int runGui(
     // Pointer capture (STM11, closing IXR6's GUI half). Every draggable
     // affordance takes an id and asks `inp.capture.available(id)` — "free, or
     // already mine" — in place of the allow-list of negations it used to
-    // carry (`!split.dragging && !docSb.dragging && !treeVSb.dragging && …`),
+    // carry (`!pn.split.dragging && !pn.docSb.dragging && !pn.treeVSb.dragging && …`),
     // which every NEW affordance had to be added to inside every OTHER
     // affordance's condition. The Android toolbar became a fourth owner of
     // one screen row and that list did not grow with it.
@@ -1077,7 +1088,7 @@ int runGui(
             // tap landed, so tapping elsewhere already dismisses it.
             if (keyBuf.hasKey(Key.back))
             {
-                if (treeVisible)
+                if (pn.treeVisible)
                     toggleExplorer();
                 else
                     break;
@@ -1115,19 +1126,19 @@ int runGui(
             window.toggleFullscreen();
         }
 
-        if (treeFocused && tree.searching)
+        if (pn.treeFocused && pn.tree.searching)
         {
             // The tree pane's live filter (broot mode): typed chars narrow
             // per keystroke; Enter keeps the filtered tree, Esc clears it.
             foreach (k; keyBuf)
                 if (k.key == Key.char_ && k.ch != '/')
-                    tree.filterInput(k.ch);
+                    pn.tree.filterInput(k.ch);
             if (keyBuf.hasKey(Key.backspace))
-                tree.filterBackspace();
+                pn.tree.filterBackspace();
             if (keyBuf.hasKey(Key.enter))
-                tree.filterAccept();
+                pn.tree.filterAccept();
             if (keyBuf.hasKey(Key.escape))
-                tree.filterCancel();
+                pn.tree.filterCancel();
         }
         else if (inputMode)
         {
@@ -1196,18 +1207,18 @@ int runGui(
             // was untestable.
             // Set exactly where the original did — the tree arms below read
             // it through `clamp`, and they only fire with the tree focused.
-            if (treeFocused && treeVisible)
-                tree.height = visibleRows;
+            if (pn.treeFocused && pn.treeVisible)
+                pn.tree.height = visibleRows;
 
             // A pending `z` claims the next key — the same condition the old
             // block computed inline, now an input to the keymap instead of a
             // guard scattered across the sites it affected.
-            const foldSeq = !treeFocused && flash.foldSeqFrames > 0;
+            const foldSeq = !pn.treeFocused && flash.foldSeqFrames > 0;
 
             const kctx = KeyContext(
                 mode: InputMode.normal,
-                treeFocused: treeFocused,
-                treeVisible: treeVisible,
+                treeFocused: pn.treeFocused,
+                treeVisible: pn.treeVisible,
                 foldArmed: foldSeq,
                 hasMatches: vm.matches.length > 0,
                 hasDocSet: set !is null && !set.empty && loadDoc !is null,
@@ -1245,74 +1256,74 @@ int runGui(
 
                 // ── explorer pane ────────────────────────────────────────
                 case Command.treeDown:
-                    ++tree.sel;
-                    tree.clamp();
+                    ++pn.tree.sel;
+                    pn.tree.clamp();
                     break;
                 case Command.treeUp:
-                    --tree.sel;
-                    tree.clamp();
+                    --pn.tree.sel;
+                    pn.tree.clamp();
                     break;
                 case Command.treeHome:
-                    tree.sel = 0;
-                    tree.clamp();
+                    pn.tree.sel = 0;
+                    pn.tree.clamp();
                     break;
                 case Command.treeEnd:
-                    tree.sel = cast(long) tree.rows.length - 1;
-                    tree.clamp();
+                    pn.tree.sel = cast(long) pn.tree.rows.length - 1;
+                    pn.tree.clamp();
                     break;
                 case Command.treeActivate:
                     activateTree();
                     break;
                 case Command.treeRefresh:
-                    tree.refreshNow(); // XPF4
+                    pn.tree.refreshNow(); // XPF4
                     break;
                 case Command.treeReroot:
-                    tree.rerootSel(); // XPF3
+                    pn.tree.rerootSel(); // XPF3
                     break;
                 case Command.treeToggleIgnored:
-                    tree.toggleIgnored(); // XPF2
+                    pn.tree.toggleIgnored(); // XPF2
                     break;
                 case Command.treeParent:
-                    tree.rerootParent(); // XPF3
+                    pn.tree.rerootParent(); // XPF3
                     break;
                 case Command.treeNextChange:
-                    tree.jumpChange(1); // XPF1
+                    pn.tree.jumpChange(1); // XPF1
                     break;
                 case Command.treePrevChange:
-                    tree.jumpChange(-1); // XPF1
+                    pn.tree.jumpChange(-1); // XPF1
                     break;
                 case Command.treeCloseAll:
-                    tree.closeAll(); // XPF3
+                    pn.tree.closeAll(); // XPF3
                     break;
                 case Command.treeToggleHidden:
-                    tree.toggleHidden(); // XPF2
+                    pn.tree.toggleHidden(); // XPF2
                     break;
                 case Command.treeCollapseOrUp:
                     // Close the selected dir, or jump to the parent row.
-                    if (tree.sel < cast(long) tree.rows.length)
+                    if (pn.tree.sel < cast(long) pn.tree.rows.length)
                     {
-                        const node = tree.rows[cast(size_t) tree.sel].node;
-                        const v = tree.data.nodes[node].value;
-                        if (v.isDir && tree.open.isOpen(v.path))
+                        const node = pn.tree.rows[cast(size_t) pn.tree.sel].node;
+                        const v = pn.tree.data.nodes[node].value;
+                        if (v.isDir && pn.tree.open.isOpen(v.path))
                         {
-                            tree.open = tree.open.closed(v.path);
-                            tree.rebuild();
+                            pn.tree.open = pn.tree.open.closed(v.path);
+                            pn.tree.rebuild();
                         }
-                        else if (tree.data.nodes[node].parent != uint.max)
+                        else if (pn.tree.data.nodes[node].parent != uint.max)
                         {
-                            const par = tree.data.nodes[node].parent;
-                            foreach (i, ref const r; tree.rows)
+                            const par = pn.tree.data.nodes[node].parent;
+                            foreach (i, ref const r; pn.tree.rows)
                                 if (r.node == par)
                                 {
-                                    tree.sel = cast(long) i;
+                                    pn.tree.sel = cast(long) i;
                                     break;
                                 }
-                            tree.clamp();
+                            pn.tree.clamp();
                         }
                     }
                     break;
                 case Command.treeFilter:
-                    tree.filterStart();
+                    pn.tree.filterStart();
                     break;
 
                 // ── viewer ───────────────────────────────────────────────
@@ -1366,8 +1377,8 @@ int runGui(
                         loadSelected();
                     break;
                 case Command.setIndex:
-                    treeVisible = true;
-                    treeFocused = true;
+                    pn.treeVisible = true;
+                    pn.treeFocused = true;
                     vm.widthCols = -1;
                     relayout();
                     break;
@@ -1457,8 +1468,8 @@ int runGui(
             // the same direction, expressed against the other convention.
             if (inp.fin.wheelCells != 0)
             {
-                if (treeVisible && inp.fin.pos.x < treeCols * cellW)
-                    tree.scrollBy(inp.fin.wheelCells);
+                if (pn.treeVisible && inp.fin.pos.x < treeCols * cellW)
+                    pn.tree.scrollBy(inp.fin.wheelCells);
                 else
                     vm.top += inp.fin.wheelCells;
             }
@@ -1486,7 +1497,7 @@ int runGui(
             inp.capture = inp.capture.released();
 
         bool divZone;
-        if (treeVisible)
+        if (pn.treeVisible)
         {
             const mp = inp.fin.pos;
             const divX = treeCols * cellW + cellW / 2;
@@ -1495,16 +1506,16 @@ int runGui(
             if (zone && inp.capture.available(capDivider)
                 && inp.fin.leftPressed)
             {
-                split = split.started(cast(int)(mp.x / cellW));
+                pn.split = pn.split.started(cast(int)(mp.x / cellW));
                 inp.capture = inp.capture.capturedBy(capDivider);
             }
-            if (split.dragging)
+            if (pn.split.dragging)
             {
                 const maxCols = (screenW / cellW) / 2 < 12
                     ? 12 : (screenW / cellW) / 2;
-                split = inp.fin.leftReleased
-                    ? split.released()
-                    : split.draggedTo(cast(int)(mp.x / cellW), 12, maxCols);
+                pn.split = inp.fin.leftReleased
+                    ? pn.split.released()
+                    : pn.split.draggedTo(cast(int)(mp.x / cellW), 12, maxCols);
                 // The width change reflows through the resize debounce.
             }
         }
@@ -1521,42 +1532,42 @@ int runGui(
             // without overlapping text; the idle rail is a thin ~⅓ cell.
             const float hoverW = cast(float) scrollbarGutter();
             const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
-            docSb = docSb.scrolledTo(vm.top);
+            pn.docSb = pn.docSb.scrolledTo(vm.top);
             if (maxTop > 0)
             {
                 const trackH = screenH - docY0;
                 const pos = inp.fin.pos;
                 const hoverTrack = pos.x >= screenW - hoverW;
-                docSb = docSb.hoveredNow(hoverTrack);
+                pn.docSb = pn.docSb.hoveredNow(hoverTrack);
                 if (hoverTrack && inp.capture.available(capDocSb) && clickPressed())
                 {
-                    docSb = docSb.pressed(cast(int)(pos.y - docY0),
+                    pn.docSb = pn.docSb.pressed(cast(int)(pos.y - docY0),
                         total, docRows, trackH, minExtent: 24);
                     inp.capture = inp.capture.capturedBy(capDocSb);
                 }
-                else if (docSb.dragging)
+                else if (pn.docSb.dragging)
                 {
                     if (inp.fin.leftReleased)
-                        docSb = docSb.released();
+                        pn.docSb = pn.docSb.released();
                     else
-                        docSb = docSb.dragged(cast(int)(pos.y - docY0),
+                        pn.docSb = pn.docSb.dragged(cast(int)(pos.y - docY0),
                             total, docRows, trackH, minExtent: 24);
                 }
-                vm.top = docSb.offset;
+                vm.top = pn.docSb.offset;
             }
             else
-                docSb = docSb.hoveredNow(false).released();
-            sbAnim.step(docSb.expanded(caps) ? hoverW : idleW,
+                pn.docSb = pn.docSb.hoveredNow(false).released();
+            pn.sbAnim.step(pn.docSb.expanded(caps) ? hoverW : idleW,
                 window.frameSeconds);
         }
 
         // The tree pane's scrollbar — the SAME hover-expand behavior as the
         // document's (one affordance, two panes): animated width, faint track
         // on hover, draggable thumb, track click centers.
-        tree.height = visibleRows - treeTopRows - 1; // − the header row
-        const treePaneRows = tree.bodyRows;
-        const treeMaxTop = cast(long) tree.rows.length - treePaneRows;
-        if (treeVisible && treeMaxTop > 0 && treePaneRows > 0)
+        pn.tree.height = visibleRows - treeTopRows - 1; // − the header row
+        const treePaneRows = pn.tree.bodyRows;
+        const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
+        if (pn.treeVisible && treeMaxTop > 0 && treePaneRows > 0)
         {
             const float hoverW = cast(float) scrollbarGutter();
             const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
@@ -1566,29 +1577,29 @@ int runGui(
             const edge = treeCols * cellW;
             const hoverTrack = pos.x >= edge - hoverW && pos.x < edge
                 && pos.y >= trackTop;
-            treeVSb = treeVSb.scrolledTo(tree.top).hoveredNow(hoverTrack);
+            pn.treeVSb = pn.treeVSb.scrolledTo(pn.tree.top).hoveredNow(hoverTrack);
             if (hoverTrack && inp.capture.available(capTreeSb) && clickPressed())
             {
-                treeVSb = treeVSb.pressed(cast(int)(pos.y - trackTop),
-                    tree.rows.length, treePaneRows, trackH, minExtent: 24);
+                pn.treeVSb = pn.treeVSb.pressed(cast(int)(pos.y - trackTop),
+                    pn.tree.rows.length, treePaneRows, trackH, minExtent: 24);
                 inp.capture = inp.capture.capturedBy(capTreeSb);
             }
-            else if (treeVSb.dragging)
+            else if (pn.treeVSb.dragging)
             {
                 if (inp.fin.leftReleased)
-                    treeVSb = treeVSb.released();
+                    pn.treeVSb = pn.treeVSb.released();
                 else
-                    treeVSb = treeVSb.dragged(cast(int)(pos.y - trackTop),
-                        tree.rows.length, treePaneRows, trackH,
+                    pn.treeVSb = pn.treeVSb.dragged(cast(int)(pos.y - trackTop),
+                        pn.tree.rows.length, treePaneRows, trackH,
                         minExtent: 24);
             }
-            tree.top = treeVSb.offset;
-            tree.scrollBy(0); // clamp
-            treeSbAnim.step(treeVSb.expanded(caps) ? hoverW : idleW,
+            pn.tree.top = pn.treeVSb.offset;
+            pn.tree.scrollBy(0); // clamp
+            pn.treeSbAnim.step(pn.treeVSb.expanded(caps) ? hoverW : idleW,
                 window.frameSeconds);
         }
         else
-            treeVSb = treeVSb.hoveredNow(false).released();
+            pn.treeVSb = pn.treeVSb.hoveredNow(false).released();
 
         // The one pointer-shape decision (mirrors the TUI workspace): live
         // grabs outrank hover — a scrollbar drag straying over the divider
@@ -1596,8 +1607,8 @@ int runGui(
         // orientation, else the default arrow.
         // The ONE shared decision (IXB4), mapped to the window cursor —
         // the TUI writes the identical result as OSC 22.
-        window.pointerShape((wantedPointerShape(split, divZone,
-            vm.hsb, tree.hsb, docSb, treeVSb)));
+        window.pointerShape((wantedPointerShape(pn.split, divZone,
+            vm.hsb, pn.tree.hsb, pn.docSb, pn.treeVSb)));
 
         vm.top = vm.top < 0 ? 0 : (vm.top > maxTop ? maxTop : vm.top);
         const topLine = cast(size_t) vm.top;
@@ -1742,7 +1753,7 @@ int runGui(
         {
             const mp = inp.fin.pos;
             const overSb = mp.x >= screenW - scrollbarGutter();
-            const overTree = treeVisible && mp.x < treeCols * cellW;
+            const overTree = pn.treeVisible && mp.x < treeCols * cellW;
             // The pane's scrollbar strip is NOT a row: without this gate a
             // scrollbar click also row-selects, and a double click "re-hits"
             // the row under the cursor and opens it.
@@ -1758,7 +1769,7 @@ int runGui(
                         - (vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2) - 4
                     && mp.y < screenH - bottomChromeH;
                 vm.hsb = vm.hsb.hoveredNow(live && (over || vm.hsb.dragging));
-                docHAnim.step(vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2,
+                pn.docHAnim.step(vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2,
                     window.frameSeconds);
                 if (over && inp.capture.available(capDocHSb) && clickPressed())
                 {
@@ -1783,49 +1794,49 @@ int runGui(
             // (the drag itself runs the shared STM9 machine).
             const float hHoverH = cast(float) scrollbarGutter();
             const float hIdleH = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
-            const hLive = tree.hOverflows() && !tree.searching;
+            const hLive = pn.tree.hOverflows() && !pn.tree.searching;
             const overHBar = hLive && overTree
                 && mp.y >= screenH - bottomChromeH
-                    - (tree.hsb.expanded(caps) ? hHoverH : hIdleH) - 4
+                    - (pn.tree.hsb.expanded(caps) ? hHoverH : hIdleH) - 4
                 && mp.y < screenH - bottomChromeH;
-            tree.hsb = tree.hsb.hoveredNow(
-                hLive && (overHBar || tree.hsb.dragging));
-            treeHAnim.step(tree.hsb.expanded(caps) ? hHoverH : hIdleH,
+            pn.tree.hsb = pn.tree.hsb.hoveredNow(
+                hLive && (overHBar || pn.tree.hsb.dragging));
+            pn.treeHAnim.step(pn.tree.hsb.expanded(caps) ? hHoverH : hIdleH,
                 window.frameSeconds);
             if (overHBar && inp.capture.available(capTreeHSb) && clickPressed())
             {
-                tree.hsb = tree.hsb.pressed(cast(int)(mp.x / cellW),
-                    tree.contentCols, treeCols - 1, treeCols - 1);
+                pn.tree.hsb = pn.tree.hsb.pressed(cast(int)(mp.x / cellW),
+                    pn.tree.contentCols, treeCols - 1, treeCols - 1);
                 inp.capture = inp.capture.capturedBy(capTreeHSb);
             }
-            else if (tree.hsb.dragging)
+            else if (pn.tree.hsb.dragging)
             {
                 if (inp.fin.leftReleased)
-                    tree.hsb = tree.hsb.released();
+                    pn.tree.hsb = pn.tree.hsb.released();
                 else
-                    tree.hsb = tree.hsb.dragged(cast(int)(mp.x / cellW),
-                        tree.contentCols, treeCols - 1, treeCols - 1);
+                    pn.tree.hsb = pn.tree.hsb.dragged(cast(int)(mp.x / cellW),
+                        pn.tree.contentCols, treeCols - 1, treeCols - 1);
             }
             // A row click is not a drag, so it takes no id — it only needs
             // the pointer to be unowned.
             if (overTree && !overTreeSb && !overHBar && inp.capture.isFree
                 && clickPressed())
             {
-                treeFocused = true;
-                const row = tree.top
+                pn.treeFocused = true;
+                const row = pn.tree.top
                     + cast(long)((mp.y - (treeTopRows + 1) * cellH) / cellH);
-                if (row >= 0 && row < cast(long) tree.rows.length)
+                if (row >= 0 && row < cast(long) pn.tree.rows.length)
                 {
-                    const again = row == tree.sel;
-                    tree.sel = row;
-                    tree.clamp();
+                    const again = row == pn.tree.sel;
+                    pn.tree.sel = row;
+                    pn.tree.clamp();
                     if (again)
                         activateTree();
                 }
             }
             else if (clickPressed()
                 && !overSb && !overTree)
-                treeFocused = false;
+                pn.treeFocused = false;
             // A click on a collapsed `\u2026` in the open popup opens that one run.
             // The popup's geometry is last frame's, which is what the reader
             // aimed at; keys are cell-relative to the box.
@@ -1936,7 +1947,7 @@ int runGui(
                 text(names[vm.themeIdx], " · ",
                     vm.showPreview ? "preview" : "raw"),
                 text(vm.top + 1, "/", total),
-                focused: !treeFocused || !treeVisible);
+                focused: !pn.treeFocused || !pn.treeVisible);
         }
 
         // The one painter: the active tree's precomputed ops through the
@@ -2165,13 +2176,13 @@ int runGui(
         // The explorer pane (XPL2): the tree's widget view painted through
         // RaylibCanvas at the window's left edge, viewport-sliced, with a
         // hairline divider. The whole pane clips at its own width.
-        if (treeVisible && tree.git.poll())
-            tree.rebuild(); // a finished async git refresh paints this frame
-        if (treeVisible)
+        if (pn.treeVisible && pn.tree.git.poll())
+            pn.tree.rebuild(); // a finished async git refresh paints this frame
+        if (pn.treeVisible)
         {
-            tree.height = visibleRows - treeTopRows - 1; // − the header row
-            tree.width = treeCols; // the shared overflow check uses it
-            tree.scrollBy(0); // bounds only — never yank the view to the cursor
+            pn.tree.height = visibleRows - treeTopRows - 1; // − the header row
+            pn.tree.width = treeCols; // the shared overflow check uses it
+            pn.tree.scrollBy(0); // bounds only — never yank the view to the cursor
             chrome.fillPixels(0, 0, treeCols * cellW, screenH, mix(vm.pageBg, vm.pageFg, 0.03));
             chrome.fillPixels(treeCols * cellW + cellW / 2, 0, 1, screenH, vm.gutterFg);
 
@@ -2181,34 +2192,34 @@ int runGui(
                 import std.conv : text;
                 import std.path : baseName;
 
-                drawChromeBar(0, hdrY, treeCols, baseName(tree.root),
+                drawChromeBar(0, hdrY, treeCols, baseName(pn.tree.root),
                     null,
-                    text(tree.rows.length ? tree.sel + 1 : 0, "/",
-                        tree.rows.length),
-                    focused: treeFocused);
+                    text(pn.tree.rows.length ? pn.tree.sel + 1 : 0, "/",
+                        pn.tree.rows.length),
+                    focused: pn.treeFocused);
             }
 
             import sparkles.ui.geometry : SizeSpec;
             import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
             auto tb = Builder();
-            const tFirst = cast(size_t) tree.top;
-            const tLast = tFirst + visibleRows > tree.rows.length
-                ? tree.rows.length : tFirst + visibleRows;
-            const selNode = tree.sel < cast(long) tree.rows.length
-                ? tree.rows[cast(size_t) tree.sel].node : uint.max;
-            const tv = treeView(tb, tree.data, tree.rows[tFirst .. tLast],
-                (uint i) @safe => tree.open.isOpen(tree.data.nodes[i].value.path),
-                selNode, explorerGlyphs, tree.selBg, hasSelectionBg: true);
+            const tFirst = cast(size_t) pn.tree.top;
+            const tLast = tFirst + visibleRows > pn.tree.rows.length
+                ? pn.tree.rows.length : tFirst + visibleRows;
+            const selNode = pn.tree.sel < cast(long) pn.tree.rows.length
+                ? pn.tree.rows[cast(size_t) pn.tree.sel].node : uint.max;
+            const tv = treeView(tb, pn.tree.data, pn.tree.rows[tFirst .. tLast],
+                (uint i) @safe => pn.tree.open.isOpen(pn.tree.data.nodes[i].value.path),
+                selNode, explorerGlyphs, pn.tree.selBg, hasSelectionBg: true);
             Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
                 width: SizeSpec.fixed(treeCols), clipX: true);
             auto wt = tb.finish(tb.add(paneW));
             auto tOps = buildDisplayList(wt, layout(wt),
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
-            const thx = tree.hOverflows() ? cast(int) tree.hsb.offset : 0;
+            const thx = pn.tree.hOverflows() ? cast(int) pn.tree.hsb.offset : 0;
             auto tCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
                 cast(float)(-thx * cellW), cast(float)((treeTopRows + 1) * cellH));
-            tCanvas.pushClip(Rect(thx, 0, treeCols - thx, tree.bodyRows));
+            tCanvas.pushClip(Rect(thx, 0, treeCols - thx, pn.tree.bodyRows));
             paint(tCanvas, tOps);
             tCanvas.popClip();
 
@@ -2216,23 +2227,23 @@ int runGui(
             // animated-height thumb + hover track as the vertical bars, in
             // the pane's theme tint; the offset comes from the STM9 machine
             // (hidden while the filter line owns the row).
-            if (tree.hOverflows() && !tree.searching)
+            if (pn.tree.hOverflows() && !pn.tree.searching)
             {
-                const l = scrollbarLayout(tree.hsb, treeHAnim,
-                    tree.contentCols, treeCols - 1,
+                const l = scrollbarLayout(pn.tree.hsb, pn.treeHAnim,
+                    pn.tree.contentCols, treeCols - 1,
                     Rect(0, 0, treeCols * cellW, screenH));
-                drawScrollbar(l, tree.hsb, tree.sbTrack, tree.sbThumb);
+                drawScrollbar(l, pn.tree.hsb, pn.tree.sbTrack, pn.tree.sbThumb);
             }
 
             // The live-filter input line, pinned to the pane's bottom row
             // (the GUI pane has no status bar; the TUI shows it there).
-            if (tree.searching)
+            if (pn.tree.searching)
             {
                 const barY = screenH - cellH;
                 chrome.fillPixels(0, barY, treeCols * cellW, cellH, vm.gutterFg);
                 buf.clear();
                 buf ~= "/";
-                buf ~= tree.filterQuery;
+                buf ~= pn.tree.filterQuery;
                 buf ~= "▏\0";
                 drawText(fonts, buf[][0 .. $ - 1], 4, cast(float) barY,
                     TextStyle(0), vm.pageBg);
@@ -2243,17 +2254,17 @@ int runGui(
             if (treeMaxTop > 0 && treePaneRows > 0)
             {
                 const trackTop = (treeTopRows + 1) * cellH;
-                const l = scrollbarLayout(treeVSb.scrolledTo(tree.top),
-                    treeSbAnim, tree.rows.length, treePaneRows,
+                const l = scrollbarLayout(pn.treeVSb.scrolledTo(pn.tree.top),
+                    pn.treeSbAnim, pn.tree.rows.length, treePaneRows,
                     Rect(0, trackTop, treeCols * cellW, screenH - trackTop));
-                drawScrollbar(l, treeVSb, tree.sbTrack, tree.sbThumb);
+                drawScrollbar(l, pn.treeVSb, pn.tree.sbTrack, pn.tree.sbThumb);
             }
         }
 
         // The document pane's horizontal bar (IXB2), over its bottom edge.
         if (vm.hOverflows() && inp.mode == Mode.normal)
         {
-            const l = scrollbarLayout(vm.hsb, docHAnim, vm.contentCols,
+            const l = scrollbarLayout(vm.hsb, pn.docHAnim, vm.contentCols,
                 vm.widthCols, Rect(gutterPx, 0, screenW - gutterPx, screenH));
             drawScrollbar(l, vm.hsb, vm.sbTrack, vm.sbThumb);
         }
@@ -2264,9 +2275,9 @@ int runGui(
         {
             // Distinct link-tinted chrome (the gutter behind it is empty page
             // bg): a subtle full-height track on hover, a brighter thumb.
-            const l = scrollbarLayout(docSb.scrolledTo(vm.top), sbAnim,
+            const l = scrollbarLayout(pn.docSb.scrolledTo(vm.top), pn.sbAnim,
                 total, docRows, Rect(0, docY0, screenW, screenH - docY0));
-            drawScrollbar(l, docSb, vm.sbTrack, vm.sbThumb);
+            drawScrollbar(l, pn.docSb, vm.sbTrack, vm.sbThumb);
         }
 
         // A header bar when navigating a document set (`GNV2`): the entry name and
