@@ -26,7 +26,7 @@ import std.conv : text, to;
 import std.path : baseName, extension;
 import std.string : chompPrefix, endsWith;
 
-import sparkles.syntax : canonicalLanguage;
+import sparkles.syntax : canonicalLanguage, canonicalLanguageOfPath;
 import sparkles.twoslash : Node, NodeType;
 
 /// One document in a $(LREF SourceSet).
@@ -110,13 +110,32 @@ private immutable string[] binaryExtensions = [
 ];
 
 /**
+Extensionless base names that are certainly text. This branch has to be an
+allow-list — the opposite of $(LREF binaryExtensions) — because an extensionless
+file carries no evidence at all: `Makefile` and the stripped ELF a build
+directory holds look identical from the path. Naming the ones worth rendering is
+the only honest filter, so the list covers the conventional extensionless files a
+source tree actually contains (`LNG3`).
+*/
+private immutable string[] textualBasenames = [
+    // build & container recipes
+    "makefile", "gnumakefile", "justfile", "dockerfile", "containerfile",
+    "rakefile", "gemfile", "brewfile", "procfile", "vagrantfile", "cakefile",
+    // repository boilerplate
+    "license", "licence", "copying", "notice", "authors", "contributors",
+    "readme", "changelog", "changes", "news", "todo", "install", "version",
+    "codeowners", "owners",
+];
+
+/**
 `true` iff `path` is a document this set renders: a twoslash payload under
 `twoslash`, else any file with an extension that is not obviously binary
-($(LREF binaryExtensions)).
+($(LREF binaryExtensions)), or an extensionless file whose base name is
+conventionally text ($(LREF textualBasenames)).
 
-Extensionless files (`Makefile`, `LICENSE`) are skipped — they are indistinguishable
-from the extensionless binaries a build directory holds; recognizing them by name is
-deferred with the rest of the richer walk to [`TVU1`](../../../docs/specs/hue/tree-view.md).
+The two branches point opposite ways on purpose: an extension is evidence, so it
+is filtered by deny-list (hue renders unknown text as plain text, `DEG2`); a bare
+name is not, so it is filtered by allow-list.
 */
 bool isRenderable(scope const(char)[] path, bool twoslash) @safe pure nothrow
 {
@@ -125,8 +144,29 @@ bool isRenderable(scope const(char)[] path, bool twoslash) @safe pure nothrow
     if (twoslash)
         return path.endsWith(twoslashSuffix);
 
-    const ext = canonicalLanguage(path.extension.chompPrefix("."));
+    const base = path.baseName;
+    if (base.extension.length == 0)
+        return textualBasenames.canFind!sameAsciiCaseless(base);
+
+    const ext = canonicalLanguage(base.extension.chompPrefix("."));
     return ext.length != 0 && !binaryExtensions.canFind(ext);
+}
+
+/// ASCII case-insensitive equality — enough for `LICENSE` / `Makefile`, and
+/// unlike `std.uni.toLower` it neither allocates nor throws, so the predicate
+/// above keeps `@safe pure nothrow`.
+private bool sameAsciiCaseless(scope const(char)[] a, scope const(char)[] b)
+    @safe pure nothrow @nogc
+{
+    static char lower(char c) @safe pure nothrow @nogc
+        => c >= 'A' && c <= 'Z' ? cast(char)(c + ('a' - 'A')) : c;
+
+    if (a.length != b.length)
+        return false;
+    foreach (i, char c; a)
+        if (lower(c) != lower(b[i]))
+            return false;
+    return true;
 }
 
 /**
@@ -179,7 +219,7 @@ grammar claims the extension) and its physical line count.
 */
 string plainTally(scope const(char)[] path, scope const(char)[] source) @safe pure
 {
-    const lang = canonicalLanguage(path.extension.chompPrefix("."));
+    const lang = canonicalLanguageOfPath(path);
     const n = lineCount(source);
     return text(lang.length ? lang : "text", " · ", n, n == 1 ? " line" : " lines");
 }
@@ -253,13 +293,21 @@ unittest
     assert(!isRenderable("fixtures/app.d", true));
 
     // Plain mode takes any text file — including extensions no grammar claims
-    // (hue degrades those to plain text), but not binaries or extensionless files.
+    // (hue degrades those to plain text), but not binaries.
     assert(isRenderable("src/app.d", false));
     assert(isRenderable("README.md", false));
     assert(isRenderable("config.toml", false));  // no grammar, still text
-    assert(!isRenderable("build/hue", false));   // extensionless (could be a binary)
     assert(!isRenderable("logo.png", false));    // binary
     assert(!isRenderable("dist/app.WASM", false)); // deny-list is case-insensitive
+
+    // Extensionless files are allow-listed by base name (`LNG3`): a
+    // conventional text file is rendered, anything else stays out, because a
+    // bare name is exactly as consistent with a stripped binary.
+    assert(isRenderable("Makefile", false));
+    assert(isRenderable("nix/Dockerfile", false));
+    assert(isRenderable("LICENSE", false));
+    assert(isRenderable("license", false));      // match is case-insensitive
+    assert(!isRenderable("build/hue", false));   // could be the linked binary
 }
 
 @("source_set.entryName.stemAndCollisions")
@@ -300,8 +348,10 @@ unittest
     // The label is normalized (`md` → `markdown`); empty source has no lines.
     assert(plainTally("README.md", "x\n") == "markdown · 1 line");
     assert(plainTally("empty.d", "") == "d · 0 lines");
-    // An extensionless path has no language to name.
-    assert(plainTally("Makefile", "all:\n") == "text · 1 line");
+    // An extensionless path names its language through its base name (`LNG3`).
+    assert(plainTally("Makefile", "all:\n") == "make · 1 line");
+    // …and one no alias claims still degrades to a named plain-text tally.
+    assert(plainTally("LICENSE", "MIT\n") == "license · 1 line");
 }
 
 @("source_set.move.clampsAtBothEnds")

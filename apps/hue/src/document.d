@@ -27,7 +27,8 @@ import sparkles.code_instrumentation : CoverageFormat, CoverageGutterItem,
     formatFromExtension, LineState, loadCoverage, maxCountWidth, planCoverage;
 import sparkles.diff : DiffDoc, DiffOptions, diffText, emitPatch, FileEntry,
     parsePatch, RowKind, WhitespaceMode;
-import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
+import sparkles.syntax : canonicalLanguage, canonicalLanguageOfPath,
+    GrammarRegistry, HighlightEvent, isPlainTextLabel,
     highlightInjected, MdBlock, ResolvedTheme, RgbColor, TsConfigCache;
 import sparkles.syntax.render.widgets : TintedRange;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
@@ -455,7 +456,7 @@ struct DocumentPipeline
             const ext = path.extension.chompPrefix(".");
             if (forcePatch || ext == "patch" || ext == "diff")
                 return ContentKind.diff;
-            if (forceMarkdown || canonicalLanguage(ext) == "markdown")
+            if (forceMarkdown || canonicalLanguageOfPath(path) == "markdown")
                 return ContentKind.markdown;
             if (forceDsv || ext == "csv" || ext == "tsv" || ext == "psv"
                 || ext == "ssv")
@@ -492,7 +493,7 @@ struct DocumentPipeline
                 const ext = path.extension.chompPrefix(".");
                 const contents = readText(path);
                 const lang = language.length ? canonicalLanguage(language)
-                    : canonicalLanguage(ext);
+                    : canonicalLanguageOfPath(path);
                 // Opening a coverage artifact shows the source it describes,
                 // with its own gutter. That means reading a path out of the
                 // file's *contents*, so it is fenced twice: only an extension
@@ -516,7 +517,7 @@ struct DocumentPipeline
                             info(i"$(path) describes $(covered); showing it with coverage");
                             auto realDoc = fromSource(covered, baseName(covered),
                                 readText(covered), language.length ? lang
-                                    : canonicalLanguage(covered.extension.chompPrefix(".")));
+                                    : canonicalLanguageOfPath(covered));
                             realDoc.coverage = planCoverage(fCov);
                             realDoc.hasCoverage = true;
                             return realDoc;
@@ -1164,8 +1165,10 @@ struct DocumentPipeline
         {
             // A synthesized language (the diff documents' "diff") degrades
             // silently — the miss is the expected default, not a user's
-            // grammar gap (`DEG2`).
-            if (!quietFallback)
+            // grammar gap (`DEG2`) — and a label that asks for no highlighting
+            // got exactly what it asked for (`DEG1`: normal operation is
+            // silent), so neither is worth a warning.
+            if (!quietFallback && !isPlainTextLabel(lang))
                 warning(i"no grammar for '$(lang)' — rendering as plain text");
             ev ~= HighlightEvent.sourceSpan(0, source.length);
         }
