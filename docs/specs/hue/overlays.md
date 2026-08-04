@@ -56,14 +56,15 @@ overlay-specific data artifact    ─┘     (per kind)          (uniform)      
 The overlay registry. Twoslash is kind #1 (owned by its own doc); the rest are
 specified in the sections below.
 
-| #   | Kind                      | Area          | Data source                                                             | Annotates                                               | Status              |
-| --- | ------------------------- | ------------- | ----------------------------------------------------------------------- | ------------------------------------------------------- | ------------------- |
-| 1   | **twoslash**              | `TWO` / `TWM` | semantic backend (`sparkles:dmd-lsp`) or a TS-twoslash node JSON        | inferred types, hovers, completions, errors, tags       | planned/branch-only |
-| 2   | **source map**            | `SMP`         | a Source Map v3 (`.map`) — alternative to twoslash                      | provenance: which original file/position a span maps to | not started         |
-| 3   | **code coverage**         | `COV`         | D `-cov` `.lst` listings, lcov `.info`                                  | per-line/region hit counts (covered / uncovered)        | not started         |
-| 4   | **tracing / profiling**   | `TRC`         | a trace/profile JSON in the `sparkles:test-runner` metric-catalog shape | per-function call count + wall-clock decomposition      | not started         |
-| 5   | **tree-sitter inspector** | `TSI`         | the tree-sitter parse tree itself (no external artifact)                | node type / field / S-expression at the cursor          | researched          |
-| 6   | **function code size**    | `CSZ`         | native symbol-size report (nm/bloaty/linker map) or a JS bundle report  | bytes per function (`.text` segment, or minified size)  | not started         |
+| #   | Kind                      | Area                               | Data source                                                                  | Annotates                                                       | Status                                                              |
+| --- | ------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 1   | **twoslash**              | `TWO` / `TWM`                      | semantic backend (`sparkles:dmd-lsp`) or a TS-twoslash node JSON             | inferred types, hovers, completions, errors, tags               | planned/branch-only                                                 |
+| 2   | **source map**            | `SMP`                              | a Source Map v3 (`.map`) — alternative to twoslash                           | provenance: which original file/position a span maps to         | not started                                                         |
+| 3   | **code coverage**         | `COV`                              | D `-cov` `.lst` listings, lcov `.info`                                       | per-line/region hit counts (covered / uncovered)                | not started                                                         |
+| 4   | **tracing / profiling**   | `TRC`                              | a trace/profile JSON in the `sparkles:test-runner` metric-catalog shape      | per-function call count + wall-clock decomposition              | not started                                                         |
+| 5   | **tree-sitter inspector** | `TSI`                              | the tree-sitter parse tree itself (no external artifact)                     | node type / field / S-expression at the cursor                  | researched                                                          |
+| 6   | **function code size**    | `CSZ`                              | native symbol-size report (nm/bloaty/linker map) or a JS bundle report       | bytes per function (`.text` segment, or minified size)          | not started                                                         |
+| 7   | **diff decorations**      | [diff-view](./diff-view.md) `DVM5` | the `sparkles:diff` decoration stream — a second span stream over both sides | added/removed/changed rows, intra-line segments, noise verdicts | future kind — diff **ships standalone first**, never gated on `OVL` |
 
 ## Source-map overlay (`SMP`) — provenance, an alternative to twoslash
 
