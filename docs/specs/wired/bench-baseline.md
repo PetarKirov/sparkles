@@ -7,8 +7,10 @@ replaced it (SPEC §11), and — since the harness moved onto
 validates the runner's measurements against the retired hand-rolled harness.
 Numbers from [`libs/wired/bench/runtime`](../../../libs/wired/bench/runtime/README.md);
 the canonical snapshot is
-[`results/2026-08-03-ryzen9-7940hx-x86-64-v4-rebaseline.json`](../../../libs/wired/bench/runtime/results/2026-08-03-ryzen9-7940hx-x86-64-v4-rebaseline.json),
-re-baselined on current `main`. The runner-validation sections below still cite
+[`results/2026-08-04-ryzen9-7940hx-x86-64-v4-scalar-round1.json`](../../../libs/wired/bench/runtime/results/2026-08-04-ryzen9-7940hx-x86-64-v4-scalar-round1.json),
+taken after the first scalar optimization round; its predecessor
+[`2026-08-03-…-rebaseline.json`](../../../libs/wired/bench/runtime/results/2026-08-03-ryzen9-7940hx-x86-64-v4-rebaseline.json)
+is the "before" it is measured against. The runner-validation sections below still cite
 the [2026-07-11 snapshot](../../../libs/wired/bench/runtime/results/2026-07-11-ryzen9-7940hx-x86-64-v4-runner-inline.json)
 and its B0 predecessor, which are the artifacts that comparison was made
 against._
@@ -213,21 +215,30 @@ performs more work per byte than yyjson's single-visit string machine.
 ## The scalar exit gate (M15)
 
 The engine's own iteration-1 exit gate is wired-native parse **and** decode
-within ±10 % of yyjson. Re-baselined on current `main`
-(`results/2026-08-03-…-rebaseline.json`, 1 500 ms budget, x86-64-v4):
+within ±10 % of yyjson. After the first scalar round
+(`results/2026-08-04-…-scalar-round1.json`, 2 000 ms budget, x86-64-v4):
 
-| corpus (parse, MB/s) | wired-native | yyjson | ±10 % gate |    at |
-| -------------------- | -----------: | -----: | ---------: | ----: |
-| twitter              |        3 142 |  3 664 |      3 298 | 0.86× |
-| citm_catalog         |        4 026 |  3 868 |      3 481 | 1.04× |
-| canada               |          936 |  1 324 |      1 192 | 0.71× |
-| github_events        |        3 671 |  4 296 |      3 866 | 0.85× |
+| corpus (parse, MB/s) | wired-native | yyjson |    at | was (2026-08-03) |
+| -------------------- | -----------: | -----: | ----: | ---------------: |
+| citm_catalog         |        4 171 |  3 797 | 1.10× |            1.04× |
+| twitter              |        3 371 |  3 571 | 0.94× |            0.86× |
+| github_events        |        3 782 |  4 257 | 0.89× |            0.85× |
+| canada               |        1 042 |  1 338 | 0.78× |            0.71× |
 
-Typed decode (twitter): wired-native 2 543 vs yyjson 3 371 (0.75×).
-`wired-native` **clears the gate on citm** (structure-heavy — the arena's
-threaded-parent container build shines) and sits at 0.71–0.86 × elsewhere.
-The standing is unchanged from the previous snapshot within run-to-run noise,
-so the engine did not drift while `main` moved.
+Typed decode (twitter): wired-native 2 684 vs yyjson 3 145 (0.85×, was 0.75×).
+Every lane improved. `citm` clears the ±2 % gate outright, `twitter` clears
+±10 %, `github_events` is a point outside it, and `canada` remains the
+weakest lane by a wide margin.
+
+> Read ratios **within one snapshot only.** yyjson's own wall-clock moves
+> 10–15 % between runs on this host (twitter parse has been measured from
+> 3.57 to 4.04 GB/s), so a ratio built from two different snapshots is
+> mostly noise. Retired instructions are deterministic and are the right
+> cross-snapshot anchor.
+>
+> A row whose `median` is far above its `min` is perturbed, not slow — the
+> allocator-regime effect below. Check `median/min` before believing a
+> regression.
 
 ### What closing the gap actually costs
 
@@ -236,22 +247,25 @@ term outright — so the deficit is entirely work volume:
 
 | op / corpus         | ratio | wired IPC | yyjson IPC | IPC× | wired ins/B | yyjson ins/B | ins/B needed |  cut |
 | ------------------- | ----: | --------: | ---------: | ---: | ----------: | -----------: | -----------: | ---: |
-| parse/canada        | 0.71× |      4.47 |       3.87 | 1.15 |       23.30 |        14.25 |        16.79 | 28 % |
-| parse/citm_catalog  | 1.04× |      5.08 |       4.09 | 1.24 |        6.21 |         5.13 |         6.50 |    — |
-| parse/github_events | 0.85× |      4.65 |       3.48 | 1.34 |        6.90 |         4.45 |         6.06 | 12 % |
-| parse/twitter       | 0.86× |      5.02 |       3.49 | 1.44 |        8.12 |         4.64 |         6.81 | 16 % |
-| decode/twitter      | 0.75× |      4.51 |       3.39 | 1.33 |        8.93 |         5.06 |         6.89 | 23 % |
+| parse/canada        | 0.78× |      4.49 |       3.85 | 1.17 |       21.17 |        14.25 |        17.00 | 20 % |
+| parse/citm_catalog  | 1.10× |      5.14 |       3.82 | 1.35 |        6.21 |         5.13 |         7.06 |    — |
+| parse/github_events | 0.89× |      4.53 |       3.43 | 1.32 |        6.63 |         4.45 |         6.00 |  9 % |
+| parse/twitter       | 0.94× |      4.96 |       3.27 | 1.52 |        7.49 |         4.64 |         7.20 |  4 % |
+| decode/twitter      | 0.85× |      4.41 |       3.02 | 1.46 |        8.30 |         5.06 |         7.54 |  9 % |
 
 ("ins/B needed" is the per-byte instruction budget that reaches 0.98 × yyjson
 at today's IPC; "cut" is the reduction required from the current figure.)
 
-wired retires **1.5–1.8× yyjson's instructions per byte** and claws most of it
-back through IPC. A ≤2 % target therefore means removing **12–16 %** of the
-work per byte on the string/structure-bound corpora, and **23–28 %** on
-`canada` (float-bound) and typed decode — the two lanes that were already the
-weakest. Whether that is reachable without vectorization is the open question
-of iteration 1; the number-parsing and string-copy lanes hold nearly all of
-the residue, so they are where any scalar round has to pay for itself.
+wired retires **1.5–1.6× yyjson's instructions per byte** and claws most of it
+back through IPC.
+
+**Treat this table as a diagnostic, not a plan.** It holds IPC constant while
+spending instructions, and scalar round 1 showed that assumption breaking in
+both directions: wired's IPC advantage partly _is_ the extra work, so changes
+that removed 6 % of instructions gave back more than 6 % of IPC and lost
+throughput. Two of the round's four planned workstreams were rejected on that
+basis after measuring clean instruction wins. Judge every change on MB/s from
+the first measurement; use instructions only to find where to look.
 
 ### The inlining ceiling (`wired-inline`)
 
@@ -327,6 +341,59 @@ Post-templating standing on `parse`, retired instructions per byte:
 `canada` has moved 23.30 → 22.48 (SWAR fraction tail) → **21.64**
 (templating), a 7.1 % cut since the re-baseline, and is no longer the worst
 lane by ratio — `twitter`'s string copy is.
+
+### Scalar round 1
+
+With the build-level levers exhausted, a `perf` profile of the current binary
+retargeted the work. It found the residue was not one algorithmic deficit in
+number parsing but four separable costs, and two of the four were pure
+overhead:
+
+| corpus  | `parseInto` | `scanString` | UTF-8 2nd pass | `scanNumber` |
+| ------- | ----------: | -----------: | -------------: | -----------: |
+| twitter |      52.3 % |       31.6 % |          9.9 % |        5.3 % |
+| github  |      54.7 % |       36.9 % |          1.4 % |        5.3 % |
+| canada  |      17.9 % |            — |              — |       80.4 % |
+
+Shipped:
+
+- **UTF-8 validation fused into the string scan.** The scanner recorded a
+  seen-high flag and the reader then re-walked every string containing a byte
+  ≥ 0x80 through `indexOfInvalidUtf8`. Bytes ≥ 0x80 now join the SWAR stop set
+  and the run is validated in place. twitter **−7.8 %**, github −4.0 %.
+- **One gulp shape for the fraction digits.** `digitRun8` subsumes
+  `allDigits8`, so the aligned and padded reductions collapse into one loop
+  with one `eightDigits` call site — the split had instantiated the reduction
+  and its six SWAR constants twice. canada **−2.2 %**.
+
+Rejected after measuring, and worth not repeating:
+
+- **Inlining the token kernels into the grammar loop** (yyjson's shape).
+  Retires 6–7 % fewer instructions and _loses_ throughput: citm −2.5 % MB/s,
+  IPC 5.12 → 4.85. Tried as a whole-kernel inline and as a fast-lane /
+  cold-tail split; both lose, and LLVM inlines the split fast lane on its own
+  so `pragma(inline, false)` on the tail changes nothing.
+- **An unrolled digit ladder for the integer part.** canada −4.3 %, citm
+  **+5.2 %** — citm is 92 % nine-digit ids, exactly where the SWAR gulp is
+  right and a ladder is worst, while canada is 2–3 digits and never reached
+  the gulp at all. Dispatching between the shapes on `digitRun8` gives
+  canada's win back to pay for the dispatch. The two populations want
+  opposite code and the choice is not cheap enough to make.
+- **`skipWs`.** No headroom: LDC already compiles its four-way compare into a
+  `bt` bitmask test, the same 3–4 instructions yyjson's table lookup costs.
+
+Where that leaves the ≤2 % target: `citm` clears it, `twitter` is 4 % of
+per-byte work away, `github_events` 9 %, and **`canada` 20 %**. The float lane
+is the open question, and the two most promising scalar restructurings for it
+both came back negative above. Reaching ≤2 % there plausibly needs the number
+lane vectorized.
+
+> **The engine set perturbs the measurement.** `wired-inline` holds a second
+> parsed document, and adding it to the matrix pushed `wired-native`'s twitter
+> parse row bimodal — median 354 µs against a 181 µs minimum, while the clone
+> running byte-identical code posted 187 µs. It is now behind
+> `-version=BenchWiredInline`. This is the O11 engine-set-composition effect;
+> when a row looks anomalous, compare its median to its own minimum first.
 
 ## Reproducing
 
