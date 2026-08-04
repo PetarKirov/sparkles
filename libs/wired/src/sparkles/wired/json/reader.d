@@ -21,7 +21,6 @@ import std.experimental.allocator.mallocator : Mallocator;
 import sparkles.base.text.errors : ParseError, ParseErrorCode;
 import sparkles.base.text.float_conv : bitsToDouble, doubleToBits, readDigits,
     slowDouble, tryFastDouble;
-import sparkles.base.text.utf8 : indexOfInvalidUtf8;
 import sparkles.wired.json.document : JsonCell, JsonDocument, JsonKind;
 import sparkles.wired.json.scan : allDigits8, digitRun8, eightDigits, loadWord,
     padDigits8, scanStringBody, skipWs, StringScan;
@@ -424,27 +423,20 @@ private size_t scanString(JsonReadOptions opts)(
     const n = pool.length - 8; // content length; padding beyond
     size_t i = openQuote + 1; // past '"'
     const start = i;
-    const scan = scanStringBody(pool, i);
+    const scan = scanStringBody!(opts.validateUtf8)(pool, i);
     size_t j = scan.stop;
+    if (unlikely(scan.invalidUtf8))
+    {
+        *err = ScanError(ParseErrorCode.invalidUtf8, j);
+        return 0;
+    }
     if (unlikely(j >= n))
     {
         *err = ScanError(ParseErrorCode.unexpectedEnd, openQuote);
         return 0;
     }
-    if (pool[j] == '"') // fast lane: no escapes
-    {
-        static if (opts.validateUtf8)
-        {
-            if (scan.sawHigh)
-            {
-                const bad = indexOfInvalidUtf8(pool[start .. j]);
-                if (bad != j - start)
-                {
-                    *err = ScanError(ParseErrorCode.invalidUtf8, start + bad);
-                    return 0;
-                }
-            }
-        }
+    if (pool[j] == '"') // fast lane: no escapes (and, when validating,
+    { //                   already known to be well-formed UTF-8)
         pool[j] = '\0';
         *cell = JsonCell(JsonKind.string_, j - start);
         cell.bits = cast(ulong)(pool.ptr + start);
@@ -485,7 +477,13 @@ private size_t scanString(JsonReadOptions opts)(
             // safe for a leftward move; ≥8 padding bytes keep the
             // word loads in bounds. Escape-dense strings have tiny
             // segments — avoid the memmove call for them.
-            const seg = scanStringBody(pool, src).stop - src;
+            const run = scanStringBody!(opts.validateUtf8)(pool, src);
+            if (unlikely(run.invalidUtf8))
+            {
+                *err = ScanError(ParseErrorCode.invalidUtf8, run.stop);
+                return 0;
+            }
+            const seg = run.stop - src;
             auto d = pool.ptr + dst;
             auto q = pool.ptr + src;
             if (src - dst >= 8)
@@ -583,15 +581,10 @@ private size_t scanString(JsonReadOptions opts)(
             return 0;
         }
     }
-    static if (opts.validateUtf8)
-    {
-        const bad = indexOfInvalidUtf8(pool[start .. dst]);
-        if (bad != dst - start)
-        {
-            *err = ScanError(ParseErrorCode.invalidUtf8, start + bad);
-            return 0;
-        }
-    }
+    // No trailing validation pass: every byte of the result came either
+    // from a clean run (checked inside `scanStringBody` above) or from
+    // `encodeUtf8`, which emits well-formed UTF-8 by construction — lone
+    // surrogates are rejected in the `\u` case before they reach it.
     pool[dst] = '\0';
     *cell = JsonCell(JsonKind.string_, dst - start);
     cell.bits = cast(ulong)(pool.ptr + start);
