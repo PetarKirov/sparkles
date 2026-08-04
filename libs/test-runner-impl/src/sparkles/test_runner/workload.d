@@ -1350,42 +1350,47 @@ version (linux)
                 "sleep is not runqueue wait");
     }
 
-    @("workload.runWorkload.perfWindowTotals")
-    @system
-    unittest
+}
+
+@("workload.runWorkload.perfWindowTotals")
+@system
+unittest
+{
+    // Un-gated: the darwin PerfGroup (proc_pid_rusage fixed counters, B3)
+    // serves the same window surface, so this is the workload-window
+    // acceptance test on macOS hardware too; VM guests and refused kernels
+    // skip with the group's own reason.
+    import sparkles.test_runner.model : TestTraits;
+    import sparkles.test_runner.skip : skipTest;
+
+    auto counters = CounterGroups.open(true, false, false, null);
+    scope (exit)
+        counters.close();
+    if (!counters.perf.available)
+        skipTest(counters.perf.status());
+
+    static void crunch()
     {
-        import sparkles.test_runner.model : TestTraits;
-        import sparkles.test_runner.skip : skipTest;
-
-        auto counters = CounterGroups.open(true, false, false, null);
-        scope (exit)
-            counters.close();
-        if (!counters.perf.available)
-            skipTest("hardware counters unavailable (perf_event_paranoid?)");
-
-        static void crunch()
-        {
-            static ulong sink;
-            foreach (i; 0 .. 500_000)
-                sink += i * i;
-        }
-
-        auto wall = WallSource.tryOpen(true);
-        auto psi = PsiSource.tryOpen(false);
-        const outcome = runWorkload(
-            Test(fullName: "m.c", name: "crunch", ptr: &crunch,
-                traits: TestTraits(isWorkload: true, workloadReps: 1)),
-            counters, wall, psi);
-
-        assert(outcome.result.succeeded);
-        assert(!outcome.windows[0].perf.isNull, "an open perf group attaches window stats");
-        const p = outcome.windows[0].perf.get;
-        assert(p.iters == 1, "window stats are totals, not per-iteration");
-        if (p.instructions.isNaN)
-            skipTest("window was multiplexed below the reliability gate");
-        assert(p.instructions > 500_000,
-            "a 500k-iteration spin retires at least that many instructions");
+        static ulong sink;
+        foreach (i; 0 .. 500_000)
+            sink += i * i;
     }
+
+    auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false);
+    const outcome = runWorkload(
+        Test(fullName: "m.c", name: "crunch", ptr: &crunch,
+            traits: TestTraits(isWorkload: true, workloadReps: 1)),
+        counters, wall, psi);
+
+    assert(outcome.result.succeeded);
+    assert(!outcome.windows[0].perf.isNull, "an open perf group attaches window stats");
+    const p = outcome.windows[0].perf.get;
+    assert(p.iters == 1, "window stats are totals, not per-iteration");
+    if (p.instructions.isNaN)
+        skipTest("window was multiplexed below the reliability gate");
+    assert(p.instructions > 500_000,
+        "a 500k-iteration spin retires at least that many instructions");
 }
 
 /// Dogfood: the runner's own `--bench` run measures this workload
