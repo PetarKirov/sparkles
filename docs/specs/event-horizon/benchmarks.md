@@ -282,6 +282,30 @@ default `WorkStealingPool` gives every worker its own `io_uring` ring + fiber
 scheduler — machinery _built to be amortized_ over a long-lived server handling
 millions of ops, and dead weight for a short CPU batch fanned to every core.
 
+### The same finding, as a committed `@workload`
+
+The scaling sweep above was hand-run. It now lives in the suite as two
+`@workload`s (`pool.{fanOut,walk}.workerScaling`), one `workloadWindow` per
+worker count, so the evidence is re-runnable and the window model adds a
+wall-clock decomposition the old harness had no way to produce
+(`dub test -b bench -- --bench --perf --metrics=page-faults,minflt`):
+
+| workload (585-dir fixture) | wall   | cpu usr | cpu krn | instr  | **pg-flt** |
+| -------------------------- | ------ | ------- | ------- | ------ | ---------- |
+| `fanOut` workers=1         | 1.1 ms | 1.1 ms  | 0.0 ms  | 6.4 M  | **57**     |
+| `fanOut` workers=8         | 1.3 ms | 1.3 ms  | 0.0 ms  | 6.8 M  | 109        |
+| `fanOut` workers=32        | 3.2 ms | 0.1 ms  | 2.3 ms  | 10.8 M | **354**    |
+| `walk` workers=1           | 9.6 ms | 0.2 ms  | 9.6 ms  | 32.0 M | 32         |
+| `walk` workers=8           | 3.6 ms | 0.1 ms  | 3.4 ms  | 12.4 M | 52         |
+| `walk` workers=32          | 4.5 ms | 1.6 ms  | 2.1 ms  | 13.1 M | **300**    |
+
+Same shape as the hand-run sweep — page faults scale ~6–9× with the worker
+count on identical work — and the decomposition adds the part that was
+previously inferred: at 32 workers `fanOut` spends **2.3 ms of its 3.2 ms in
+the kernel** while user time collapses to 0.1 ms. The cost is thread and ring
+setup, not the tasks. `walk` bottoms out at 8 workers (9.6 → 3.6 ms) and
+degrades past it, which is the same optimum the wall-clock sweep found.
+
 ### The fix: a ring-less CPU path
 
 The counters said exactly what to cut, so the pool gained a **CPU-bound mode**
