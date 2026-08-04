@@ -2102,14 +2102,64 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
 }
 
 /// The result of a string-body scan: the index of the first structural
-/// stop byte (quote, backslash, or control) and whether any byte ≥ 0x80
-/// was seen on the way (may over-report bytes near the stop — callers
-/// use it only to skip UTF-8 validation of pure-ASCII spans).
+/// stop byte (quote, backslash, or control), or — when `invalidUtf8` is
+/// set — the first byte of an ill-formed UTF-8 sequence.
 struct StringScan
 {
     size_t stop;
-    bool sawHigh;
+    bool invalidUtf8;
 }
+
+// ── UTF-8 sequence shapes (Unicode Table 3-7) ────────────────────────────
+// Each predicate tests one candidate sequence in a single 4-byte window:
+// a masked compare for the lead/continuation pattern, then the constraint
+// bits that exclude overlongs, surrogates, and code points above U+10FFFF.
+// Constants are little-endian byte views (byte 0 in the low 8 bits), so a
+// truncated sequence reads the following bytes — a quote, or the pool's
+// zero padding — which fail the continuation mask and correctly report the
+// sequence as ill-formed. This is yyjson's formulation; it validates
+// during the scan instead of re-walking the string afterwards.
+
+/// True when the window starts with an ASCII byte.
+bool isUtf8Seq1(uint w)
+{
+    pragma(inline, true);
+    return (w & 0x0000_0080) == 0;
+}
+
+/// True when the window starts with a well-formed 2-byte sequence
+/// (U+0080–U+07FF; the `0x1E` bits reject the overlong `C0`/`C1` leads).
+bool isUtf8Seq2(uint w)
+{
+    pragma(inline, true);
+    return (w & 0x0000_C0E0) == 0x0000_80C0 && (w & 0x0000_001E) != 0;
+}
+
+/// True when the window starts with a well-formed 3-byte sequence
+/// (U+0800–U+FFFF): the constraint bits must be non-zero (no `E0 80..9F`
+/// overlong) and must not spell the surrogate window (`ED A0..BF`).
+bool isUtf8Seq3(uint w)
+{
+    pragma(inline, true);
+    if ((w & 0x00C0_C0F0) != 0x0080_80E0)
+        return false;
+    const t = w & 0x0000_200F;
+    return t != 0 && t != 0x0000_200D;
+}
+
+/// True when the window starts with a well-formed 4-byte sequence
+/// (U+10000–U+10FFFF): non-zero constraint bits reject the `F0 80..8F`
+/// overlongs, and the two-way test rejects everything above U+10FFFF
+/// (`F4 90..BF` and the never-valid `F5`–`F7` leads).
+bool isUtf8Seq4(uint w)
+{
+    pragma(inline, true);
+    if ((w & 0xC0C0_C0F8) != 0x8080_80F0)
+        return false;
+    const t = w & 0x0000_3007;
+    return t != 0 && ((t & 0x0000_0004) == 0 || (t & 0x0000_3003) == 0);
+}
+
 
 /// True when all eight bytes of `w` are ASCII digits (`'0'..'9'`) — the
 /// gate for $(LREF eightDigits). Two masked compares: every high nibble
@@ -2172,12 +2222,22 @@ in (n < 8)
 
 
 
-/// Scans a string body from `i` (just after the opening quote) to the
-/// first quote, backslash, or control byte (< 0x20) in the reader's
-/// padded pool. SWAR: eight bytes per iteration via the classic
-/// zero-byte/less-than masks; the ≥ 8 zero-padding bytes both terminate
-/// the walk (NUL is a control byte) and keep every word load in bounds.
-StringScan scanStringBody(scope const(char)[] paddedPool, size_t i)
+/**
+Scans a string body from `i` (just after the opening quote) to the first
+quote, backslash, or control byte (< 0x20) in the reader's padded pool.
+SWAR: eight bytes per iteration via the classic zero-byte/less-than masks;
+the ≥ 8 zero-padding bytes both terminate the walk (NUL is a control byte)
+and keep every word load in bounds.
+
+With `validate` set, bytes ≥ 0x80 join the stop set and the non-ASCII run
+is checked in place before the ASCII scan resumes — runs of equal-length
+sequences are consumed in their own tight loop, which suits real text
+(CJK is a long run of 3-byte sequences) and keeps the branch predictable.
+Fusing the check here is what lets the reader validate in one pass instead
+of re-walking every string that contains a high byte.
+*/
+StringScan scanStringBody(bool validate = true)(
+    scope const(char)[] paddedPool, size_t i)
 in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
 {
     pragma(inline, true);
@@ -2187,7 +2247,6 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
 
         auto p = paddedPool.ptr;
         size_t j = i;
-        ulong seenHigh = 0;
         while (true)
         {
             // One unaligned 64-bit load; in bounds while j ≤ content
@@ -2199,21 +2258,71 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
             const zq = (q - ones) & ~q & highs; // zero-byte detect
             const zb = (b - ones) & ~b & highs;
             const ctl = (x - 0x2020_2020_2020_2020) & ~x & highs; // < 0x20
-            const stops = zq | zb | ctl;
+            // A byte ≥ 0x80 is already its own high bit, so joining the
+            // validation stop set costs one `or` — cheaper than the
+            // separate seen-high accumulator it replaces.
+            static if (validate)
+                const stops = zq | zb | ctl | (x & highs);
+            else
+                const stops = zq | zb | ctl;
             if (stops != 0)
             {
                 import core.bitop : bsf;
 
-                const at = j + bsf(stops) / 8;
-                // High bytes strictly before the stop still count.
-                const mask = ~0UL >> (63 - bsf(stops));
-                seenHigh |= x & highs & (mask >> 8);
-                return StringScan(at, seenHigh != 0);
+                j += bsf(stops) / 8;
+                static if (validate)
+                {
+                    if ((p[j] & 0x80) == 0)
+                        return StringScan(j, false);
+                    if (!skipUtf8Run(p, j))
+                        return StringScan(j, true);
+                    continue; // back to the ASCII lane
+                }
+                else
+                    return StringScan(j, false);
             }
-            seenHigh |= x & highs;
             j += 8;
         }
     })();
+}
+
+/// Advances `j` over the run of well-formed non-ASCII sequences starting
+/// at `p[j]` (which must be ≥ 0x80), returning false — with `j` left on
+/// the offending lead — when the first sequence is ill-formed. The 4-byte
+/// window is read with one 8-bit-truncated word load; the pool's padding
+/// keeps it in bounds at every position.
+///
+/// Templated (empty parameter list) so it is code-generated in the
+/// caller's translation unit: `scanStringBody` is itself a template, and a
+/// plain function here stayed an out-of-line call in the reader — 5.7 % of
+/// twitter's instructions — with `pragma(inline, true)` unable to cross the
+/// package boundary.
+private bool skipUtf8Run()(const(char)* p, ref size_t j) @system pure nothrow @nogc
+{
+    pragma(inline, true);
+    const start = j;
+    uint w = cast(uint) loadWord(p + j);
+    // Most-common length first, each in its own loop: text tends to stay
+    // in one script, so the same branch is taken repeatedly.
+    while (isUtf8Seq3(w))
+    {
+        j += 3;
+        w = cast(uint) loadWord(p + j);
+    }
+    if (!isUtf8Seq1(w))
+    {
+        while (isUtf8Seq2(w))
+        {
+            j += 2;
+            w = cast(uint) loadWord(p + j);
+        }
+        while (isUtf8Seq4(w))
+        {
+            j += 4;
+            w = cast(uint) loadWord(p + j);
+        }
+    }
+    return j != start;
 }
 }
 
@@ -2622,27 +2731,20 @@ private size_t scanString(JsonReadOptions opts)(
     const n = pool.length - 8; // content length; padding beyond
     size_t i = openQuote + 1; // past '"'
     const start = i;
-    const scan = scanStringBody(pool, i);
+    const scan = scanStringBody!(opts.validateUtf8)(pool, i);
     size_t j = scan.stop;
+    if (unlikely(scan.invalidUtf8))
+    {
+        *err = ScanError(ParseErrorCode.invalidUtf8, j);
+        return 0;
+    }
     if (unlikely(j >= n))
     {
         *err = ScanError(ParseErrorCode.unexpectedEnd, openQuote);
         return 0;
     }
-    if (pool[j] == '"') // fast lane: no escapes
-    {
-        static if (opts.validateUtf8)
-        {
-            if (scan.sawHigh)
-            {
-                const bad = indexOfInvalidUtf8(pool[start .. j]);
-                if (bad != j - start)
-                {
-                    *err = ScanError(ParseErrorCode.invalidUtf8, start + bad);
-                    return 0;
-                }
-            }
-        }
+    if (pool[j] == '"') // fast lane: no escapes (and, when validating,
+    { //                   already known to be well-formed UTF-8)
         pool[j] = '\0';
         *cell = JsonCell(JsonKind.string_, j - start);
         cell.bits = cast(ulong)(pool.ptr + start);
@@ -2683,7 +2785,13 @@ private size_t scanString(JsonReadOptions opts)(
             // safe for a leftward move; ≥8 padding bytes keep the
             // word loads in bounds. Escape-dense strings have tiny
             // segments — avoid the memmove call for them.
-            const seg = scanStringBody(pool, src).stop - src;
+            const run = scanStringBody!(opts.validateUtf8)(pool, src);
+            if (unlikely(run.invalidUtf8))
+            {
+                *err = ScanError(ParseErrorCode.invalidUtf8, run.stop);
+                return 0;
+            }
+            const seg = run.stop - src;
             auto d = pool.ptr + dst;
             auto q = pool.ptr + src;
             if (src - dst >= 8)
@@ -2781,15 +2889,10 @@ private size_t scanString(JsonReadOptions opts)(
             return 0;
         }
     }
-    static if (opts.validateUtf8)
-    {
-        const bad = indexOfInvalidUtf8(pool[start .. dst]);
-        if (bad != dst - start)
-        {
-            *err = ScanError(ParseErrorCode.invalidUtf8, start + bad);
-            return 0;
-        }
-    }
+    // No trailing validation pass: every byte of the result came either
+    // from a clean run (checked inside `scanStringBody` above) or from
+    // `encodeUtf8`, which emits well-formed UTF-8 by construction — lone
+    // surrogates are rejected in the `\u` case before they reach it.
     pool[dst] = '\0';
     *cell = JsonCell(JsonKind.string_, dst - start);
     cell.bits = cast(ulong)(pool.ptr + start);
