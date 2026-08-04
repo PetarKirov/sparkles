@@ -102,7 +102,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 1.2.3
 true
 1.2.0
@@ -136,11 +136,11 @@ void main()
 }
 ```
 
-```[Output]
-CPU: 75% Status: OK
-ERROR: Connection refused
-Outer inner just cyan
-Press q to quit, h for help
+```ansi
+CPU: [31m75%[39m Status: [32mOK[39m
+[1;31mERROR:[22;39m Connection refused
+[36mOuter [1;4minner[22;24m just cyan[39m
+Press [1;36mq[22;39m to quit, [1;36mh[22;39m for help
 ```
 
 Syntax at a glance:
@@ -198,7 +198,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 Cluster(
   name: "Production",
   servers: [
@@ -251,9 +251,9 @@ void main()
 }
 ```
 
-```[Output]
-Error: something went wrong
-Important
+```ansi
+[31mError: [39msomething went wrong
+[31m[4m[1mImportant[22m[24m[39m
 ```
 
 ### UI Components
@@ -282,7 +282,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 ╭────────┬────────┬──────╮
 │ Name   │ Status │ Load │
 │ web-01 │ UP     │ 23%  │
@@ -328,7 +328,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 ╭──────────────────────╮
 │ Quarterly Sales      │
 │ Region ┃   Q1 │   Q2 │
@@ -364,7 +364,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 ╭──╼ Build Log ╾────────────╮
 │ Build started at 14:32:01 │
 │ Compiling 42 modules...   │
@@ -400,7 +400,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 ── Section Title ──
 ════════════════════════════════════════
                Main Title
@@ -433,9 +433,9 @@ void main()
 }
 ```
 
-```[Output]
-Example
-D Language
+```ansi
+]8;;https://example.comExample]8;;
+]8;;https://dlang.org[34mD Language[39m]8;;
 ```
 
 #### Meters & Progress
@@ -462,7 +462,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 |█████▎          |
 |████████████▌   |
 ██                5/40
@@ -498,7 +498,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 apps
 ├─ ci
 └─ release
@@ -542,7 +542,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 ⠋ build
   compiling module 11
   compiling module 12
@@ -579,7 +579,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 ╭──╼ released ╾──────────────╮  notes:
 │ tag     v0.6.0 (annotated) │  2 feats
 │ pushed  origin ✔           │  1 fix
@@ -622,7 +622,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 bump=2 push=true
 ```
 
@@ -657,10 +657,10 @@ void main()
 [ {{_}} | Δt {{_}} | Δtᵢ {{_}} | ERR | {{_}} ]: Connection to database lost
 -->
 
-```[Output]
-[ 12:42:19 | Δt 128.5µs | Δtᵢ 128.5µs | INF | readme_logger.d:15 ]: Listening on port 8080
-[ 12:42:19 | Δt 240.7µs | Δtᵢ 112.1µs | WRN | readme_logger.d:16 ]: Disk usage above 80%
-[ 12:42:19 | Δt 280.7µs | Δtᵢ 40.0µs | ERR | readme_logger.d:17 ]: Connection to database lost
+```ansi
+[90m[ 23:23:27[39m | Δt [33m158.6µs[39m | Δtᵢ [33m158.6µs[39m | [32mINF[39m | [2mreadme_logger.d:15[22m ]: [1mListening on port 8080[22m
+[90m[ 23:23:27[39m | Δt [33m302.4µs[39m | Δtᵢ [33m143.8µs[39m | [33mWRN[39m | [2mreadme_logger.d:16[22m ]: [1mDisk usage above 80%[22m
+[90m[ 23:23:27[39m | Δt [33m349.3µs[39m | Δtᵢ [33m46.8µs[39m | [31mERR[39m | [2mreadme_logger.d:17[22m ]: [1mConnection to database lost[22m
 ```
 
 The colored output uses `writeStyled` IES for ANSI styling -- log levels are color-coded (green for info, yellow for warnings, red for errors, bold+red for critical/fatal), durations are highlighted, and file locations are dimmed.
@@ -803,7 +803,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 median=20ns/iter min=18 max=22 over 3 samples
 ```
 
