@@ -426,10 +426,16 @@ IoResult!void checkCancellation(X)(ref X exec) if (isFiberExecutor!X)
 // ── the M5 gate: the cancellation/timeout/shutdown matrix ───────────────────
 // Axes: park type (I/O / join / timer) × cancel source (explicit / deadline /
 // sibling failure / shutdown) × race outcome (cancel wins / completion wins)
-// × protect (inside / outside). Driven against the live Sched (SKIPs where
-// io_uring is unavailable).
-
-version (linux) version (unittest)
+// × protect (inside / outside). Driven against the live Sched, and SKIP-degrading
+// wherever the selected backend cannot be created.
+//
+// NB the gate is `unittest`, not `linux`: `Sched` rides whichever backend
+// `backend.select` picks (io_uring on Linux, kqueue on the BSDs/macOS), so
+// gating this helper to Linux while leaving the tests below ungated made the
+// module fail to compile off Linux with `undefined identifier Sched` — a break
+// that stayed latent until macOS CI first ran on this branch. The tests are not
+// Linux-specific; `schedOrSkip` is what makes them portable.
+version (unittest)
 {
     import sparkles.event_horizon.sched : Sched;
 

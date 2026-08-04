@@ -502,7 +502,7 @@ BuildBuddy.
 <!-- References -->
 
 [repo]: https://github.com/buildbuddy-io/buildbuddy
-[docs]: https://www.buildbuddy.io/docs/introduction/
+[docs]: http://web.archive.org/web/20260604135120/https://www.buildbuddy.io/docs/introduction/
 [readme]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/README.md
 [intro]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/docs/introduction.mdx
 [rbe-setup]: https://www.buildbuddy.io/docs/rbe-setup/
