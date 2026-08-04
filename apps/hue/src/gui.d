@@ -122,6 +122,18 @@ private struct SelectionDrag
         => anchorHi > headHi ? anchorHi : headHi;
 }
 
+/// The input-routing state (M15 GROUP-I of the GuiState hoist): which
+/// line-input surface owns the keyboard ('/' search, ':' goto) and its
+/// typed query, pointer-capture ownership (STM11), and the per-frame
+/// `FrameInput` fold carry (IXB7 — the button level lives across frames).
+private struct InputState
+{
+    Mode mode = Mode.normal;
+    SmallBuffer!(char, 256) query;
+    CaptureState capture;
+    FrameInput fin;
+}
+
 /// The copy modes (M15 GROUP-C of the GuiState hoist), toggleable at
 /// runtime and seeded from the CLI: 'y' flips ANSI strip-vs-raw (SEL7),
 /// 't' flips the table serialization (TBL2); a toggle flashes the new
@@ -447,9 +459,9 @@ int runGui(
         return w < 8 ? 8 : w;
     }
 
-    // Search / goto input state; the match set and its rects live in `vm`.
-    Mode mode = Mode.normal;
-    SmallBuffer!(char, 256) query;
+    // Input routing (search/goto line input, pointer capture, the per-frame
+    // event fold); the match set and its rects live in `vm`.
+    InputState inp;
 
     // Every view reflows on resize: the model lays the active widget tree
     // out to the new width (raw source rows wrap greedily; line numbers
@@ -588,8 +600,8 @@ int runGui(
         vm.widthCols = widthCols();
         vm.setDocument(name, summary, doc.source, doc.events, doc.preview,
             doc.twoslash, doc.lang);
-        query.clear();
-        mode = Mode.normal;
+        inp.query.clear();
+        inp.mode = Mode.normal;
         window.title(("hue — " ~ name).toStringz);
         tree.reveal(path); // the explorer follows the open document (XPL3/4)
         startLive(path, vm.tw.code.length != 0);
@@ -634,10 +646,10 @@ int runGui(
     // Debug/CI: HUE_GUI_SEARCH=<text> preselects a search (highlights + jump to
     // the first match) so a golden capture exercises the match overlay.
     foreach (ch; environment.get("HUE_GUI_SEARCH", ""))
-        query ~= ch;
-    if (query.length)
+        inp.query ~= ch;
+    if (inp.query.length)
     {
-        vm.search(query[]);
+        vm.search(inp.query[]);
         if (vm.matches.length)
             vm.top = vm.visualOfMatch(vm.matches[0]);
     }
@@ -662,10 +674,9 @@ int runGui(
     RaylibEvents inputSource;
     Event[] evBuf;
     KeyEvent[] keyBuf;
-    FrameInput fin;
 
     // Pointer capture (STM11, closing IXR6's GUI half). Every draggable
-    // affordance takes an id and asks `capture.available(id)` — "free, or
+    // affordance takes an id and asks `inp.capture.available(id)` — "free, or
     // already mine" — in place of the allow-list of negations it used to
     // carry (`!split.dragging && !docSb.dragging && !treeVSb.dragging && …`),
     // which every NEW affordance had to be added to inside every OTHER
@@ -673,7 +684,6 @@ int runGui(
     // one screen row and that list did not grow with it.
     enum size_t capDivider = 1, capDocSb = 2, capTreeSb = 3,
         capDocHSb = 4, capTreeHSb = 5, capSelection = 6;
-    CaptureState capture;
 
     Flashes flash;
     HoverPopup pop;
@@ -872,8 +882,8 @@ int runGui(
     }
     else
     {
-        bool clickPressed() => fin.leftPressed;
-        bool selectStartPressed() => fin.leftPressed;
+        bool clickPressed() => inp.fin.leftPressed;
+        bool selectStartPressed() => inp.fin.leftPressed;
     }
 
     while (!window.shouldClose())
@@ -886,14 +896,14 @@ int runGui(
             fonts.cellH() / 2.0f > 8 ? fonts.cellH() / 2.0f : 8;
         inputSource.gestures.cfg.cellH = fonts.cellH();
 
-        // Drain, then fold. `fin` carries the button LEVEL across frames, which
+        // Drain, then fold. `inp.fin` carries the button LEVEL across frames, which
         // an event stream reports only as transitions.
         evBuf.length = 0;
         inputSource.poll((Event e) { evBuf ~= e; }, 1, 1);
         keyBuf.length = 0;
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
-        fin = foldFrame(evBuf, fin);
+        inp.fin = foldFrame(evBuf, inp.fin);
 
         // Live D types (`PRJ12`/`PRJ14`): drain the oracle's non-blocking
         // output. The lazy payload attaches to the open document (every hover
@@ -938,7 +948,7 @@ int runGui(
         // paint (which is `if (!inputMode)`), or the bar stays live while the
         // '/' search line covers it. `mode` is not written between here and
         // the block's old position, so this is a pure move.
-        const inputMode = mode != Mode.normal;
+        const inputMode = inp.mode != Mode.normal;
 
         // The bottom band the Android toolbar owns while it is drawn. Both
         // panes' horizontal scrollbars anchor above it, so one press cannot
@@ -998,21 +1008,21 @@ int runGui(
             // travelled off its segment before release does not activate it
             // (IXB9). Positions carry the gesture ANCHOR — `RaylibEvents`
             // stamps it — so a tap acts where it began, not where slop left it.
-            if (fin.leftPressed || fin.leftReleased)
+            if (inp.fin.leftPressed || inp.fin.leftReleased)
             {
-                const cell = barCell(fin.pos);
+                const cell = barCell(inp.fin.pos);
                 HoverState hh;
                 hh.update(PointerEvent(action: PointerAction.move,
                     pos: cell), barTargets);
-                if (fin.leftPressed)
+                if (inp.fin.leftPressed)
                     toolbarPress = toolbarPress.pressed(hh.hot);
-                if (fin.leftReleased)
+                if (inp.fin.leftReleased)
                     toolbarPress = toolbarPress.released(hh.hot);
             }
 
-            touchTap = fin.leftPressed;
-            touchLongPress = fin.longPress;
-            touchPinch = fin.pinch;
+            touchTap = inp.fin.leftPressed;
+            touchLongPress = inp.fin.longPress;
+            touchPinch = inp.fin.pinch;
 
             // Pinch → font size. Which gesture means "zoom", and by how much,
             // is hue's decision; that a pinch happened is the framework's.
@@ -1029,7 +1039,7 @@ int runGui(
             // Drag/fling need no case of their own any more: the recogniser
             // resolves them to `WheelEvent`s on the shared stream, and the
             // wheel block above already routes those by the pane under
-            // `fin.pos` — which for a gesture IS the anchor, because
+            // `inp.fin.pos` — which for a gesture IS the anchor, because
             // `RaylibEvents` stamps resolved events with it. One routing rule,
             // one code path, touch and wheel alike.
 
@@ -1129,22 +1139,22 @@ int runGui(
                 const c = k.ch;
                 if (c < 32 || c >= 127)
                     continue;
-                if (mode == Mode.gotoLine && (c < '0' || c > '9'))
+                if (inp.mode == Mode.gotoLine && (c < '0' || c > '9'))
                     continue;
-                if (query.length < 255)
-                    query ~= cast(char) c;
-                if (mode == Mode.search)
-                    vm.search(query[]);
+                if (inp.query.length < 255)
+                    inp.query ~= cast(char) c;
+                if (inp.mode == Mode.search)
+                    vm.search(inp.query[]);
             }
-            if (keyBuf.hasKey(Key.backspace) && query.length)
+            if (keyBuf.hasKey(Key.backspace) && inp.query.length)
             {
-                query.popBack();
-                if (mode == Mode.search)
-                    vm.search(query[]);
+                inp.query.popBack();
+                if (inp.mode == Mode.search)
+                    vm.search(inp.query[]);
             }
             if (keyBuf.hasKey(Key.enter))
             {
-                if (mode == Mode.search)
+                if (inp.mode == Mode.search)
                 {
                     // Jump to the first match whose visual row is at/after the
                     // vm.current vm.top (vm.matches are in source order → visual order), wrap.
@@ -1153,11 +1163,11 @@ int runGui(
                         ++i;
                     jumpToMatch(i < vm.matches.length ? i : 0, visibleRows);
                 }
-                else if (query.length) // gotoLine → the source line's visual row
+                else if (inp.query.length) // gotoLine → the source line's visual row
                 {
                     try
                     {
-                        const n = query[].to!long;
+                        const n = inp.query[].to!long;
                         const line = cast(size_t)(n > 0 ? n - 1 : 0);
                         if (line < vm.lineStarts.length)
                             vm.revealOffset(vm.lineStarts[line]); // FLD6
@@ -1167,12 +1177,12 @@ int runGui(
                     {
                     }
                 }
-                mode = Mode.normal;
+                inp.mode = Mode.normal;
             }
             if (keyBuf.hasKey(Key.escape))
             {
-                mode = Mode.normal;
-                query.clear(); // cancelling clears the query (and search highlights)
+                inp.mode = Mode.normal;
+                inp.query.clear(); // cancelling clears the query (and search highlights)
                 vm.matches = null;
             }
         }
@@ -1391,13 +1401,13 @@ int runGui(
                     flash.toast = Timeline.triggered(toastCfg);
                     break;
                 case Command.startSearch:
-                    mode = Mode.search;
-                    query.clear();
+                    inp.mode = Mode.search;
+                    inp.query.clear();
                     vm.matches = null;
                     break;
                 case Command.startGoto:
-                    mode = Mode.gotoLine;
-                    query.clear();
+                    inp.mode = Mode.gotoLine;
+                    inp.query.clear();
                     break;
                 case Command.foldArm:
                     flash.foldSeqFrames = 60;
@@ -1445,12 +1455,12 @@ int runGui(
             // scrolling up; `WheelEvent.dy` follows the web's `deltaY`, where
             // up is NEGATIVE. So the two subtractions below become additions —
             // the same direction, expressed against the other convention.
-            if (fin.wheelCells != 0)
+            if (inp.fin.wheelCells != 0)
             {
-                if (treeVisible && fin.pos.x < treeCols * cellW)
-                    tree.scrollBy(fin.wheelCells);
+                if (treeVisible && inp.fin.pos.x < treeCols * cellW)
+                    tree.scrollBy(inp.fin.wheelCells);
                 else
-                    vm.top += fin.wheelCells;
+                    vm.top += inp.fin.wheelCells;
             }
 
             // The mouse back/forward buttons walk the document set regardless
@@ -1458,8 +1468,8 @@ int runGui(
             // dependent and go through the keymap above.
             if (set !is null && !set.empty && loadDoc !is null)
             {
-                const back = fin.backPressed;
-                const fwd = fin.forwardPressed;
+                const back = inp.fin.backPressed;
+                const fwd = inp.fin.forwardPressed;
                 if ((back || fwd) && set.move(back ? -1 : 1))
                     loadSelected();
             }
@@ -1472,27 +1482,27 @@ int runGui(
         // purpose: a per-affordance release is how a capture leaks — the one
         // that forgets leaves the pointer owned and every other affordance
         // dead until the process restarts.
-        if (fin.leftReleased)
-            capture = capture.released();
+        if (inp.fin.leftReleased)
+            inp.capture = inp.capture.released();
 
         bool divZone;
         if (treeVisible)
         {
-            const mp = fin.pos;
+            const mp = inp.fin.pos;
             const divX = treeCols * cellW + cellW / 2;
             const zone = mp.x >= divX - 4 && mp.x <= divX + 4;
             divZone = zone;
-            if (zone && capture.available(capDivider)
-                && fin.leftPressed)
+            if (zone && inp.capture.available(capDivider)
+                && inp.fin.leftPressed)
             {
                 split = split.started(cast(int)(mp.x / cellW));
-                capture = capture.capturedBy(capDivider);
+                inp.capture = inp.capture.capturedBy(capDivider);
             }
             if (split.dragging)
             {
                 const maxCols = (screenW / cellW) / 2 < 12
                     ? 12 : (screenW / cellW) / 2;
-                split = fin.leftReleased
+                split = inp.fin.leftReleased
                     ? split.released()
                     : split.draggedTo(cast(int)(mp.x / cellW), 12, maxCols);
                 // The width change reflows through the resize debounce.
@@ -1515,18 +1525,18 @@ int runGui(
             if (maxTop > 0)
             {
                 const trackH = screenH - docY0;
-                const pos = fin.pos;
+                const pos = inp.fin.pos;
                 const hoverTrack = pos.x >= screenW - hoverW;
                 docSb = docSb.hoveredNow(hoverTrack);
-                if (hoverTrack && capture.available(capDocSb) && clickPressed())
+                if (hoverTrack && inp.capture.available(capDocSb) && clickPressed())
                 {
                     docSb = docSb.pressed(cast(int)(pos.y - docY0),
                         total, docRows, trackH, minExtent: 24);
-                    capture = capture.capturedBy(capDocSb);
+                    inp.capture = inp.capture.capturedBy(capDocSb);
                 }
                 else if (docSb.dragging)
                 {
-                    if (fin.leftReleased)
+                    if (inp.fin.leftReleased)
                         docSb = docSb.released();
                     else
                         docSb = docSb.dragged(cast(int)(pos.y - docY0),
@@ -1552,20 +1562,20 @@ int runGui(
             const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
             const trackTop = (treeTopRows + 1) * cellH;
             const trackH = screenH - trackTop;
-            const pos = fin.pos;
+            const pos = inp.fin.pos;
             const edge = treeCols * cellW;
             const hoverTrack = pos.x >= edge - hoverW && pos.x < edge
                 && pos.y >= trackTop;
             treeVSb = treeVSb.scrolledTo(tree.top).hoveredNow(hoverTrack);
-            if (hoverTrack && capture.available(capTreeSb) && clickPressed())
+            if (hoverTrack && inp.capture.available(capTreeSb) && clickPressed())
             {
                 treeVSb = treeVSb.pressed(cast(int)(pos.y - trackTop),
                     tree.rows.length, treePaneRows, trackH, minExtent: 24);
-                capture = capture.capturedBy(capTreeSb);
+                inp.capture = inp.capture.capturedBy(capTreeSb);
             }
             else if (treeVSb.dragging)
             {
-                if (fin.leftReleased)
+                if (inp.fin.leftReleased)
                     treeVSb = treeVSb.released();
                 else
                     treeVSb = treeVSb.dragged(cast(int)(pos.y - trackTop),
@@ -1621,7 +1631,7 @@ int runGui(
         // ✔ glyph — part of the widget tree — holds for the flash duration.
         // (Views without hit targets — raw, twoslash — have an empty list.)
         {
-            const mp = fin.pos;
+            const mp = inp.fin.pos;
             const dp = Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
                 cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH)));
             // The fold column: a click on a marker toggles its region.
@@ -1730,7 +1740,7 @@ int runGui(
         }
 
         {
-            const mp = fin.pos;
+            const mp = inp.fin.pos;
             const overSb = mp.x >= screenW - scrollbarGutter();
             const overTree = treeVisible && mp.x < treeCols * cellW;
             // The pane's scrollbar strip is NOT a row: without this gate a
@@ -1742,7 +1752,7 @@ int runGui(
             {
                 const float hHoverH2 = cast(float) scrollbarGutter();
                 const float hIdleH2 = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
-                const live = vm.hOverflows() && mode == Mode.normal;
+                const live = vm.hOverflows() && inp.mode == Mode.normal;
                 const over = live && mp.x >= gutterPx
                     && mp.y >= screenH - bottomChromeH
                         - (vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2) - 4
@@ -1750,16 +1760,16 @@ int runGui(
                 vm.hsb = vm.hsb.hoveredNow(live && (over || vm.hsb.dragging));
                 docHAnim.step(vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2,
                     window.frameSeconds);
-                if (over && capture.available(capDocHSb) && clickPressed())
+                if (over && inp.capture.available(capDocHSb) && clickPressed())
                 {
                     vm.hsb = vm.hsb.pressed(
                         cast(int)((mp.x - gutterPx) / cellW),
                         vm.contentCols, vm.widthCols, vm.widthCols);
-                    capture = capture.capturedBy(capDocHSb);
+                    inp.capture = inp.capture.capturedBy(capDocHSb);
                 }
                 else if (vm.hsb.dragging)
                 {
-                    if (fin.leftReleased)
+                    if (inp.fin.leftReleased)
                         vm.hsb = vm.hsb.released();
                     else
                         vm.hsb = vm.hsb.dragged(
@@ -1782,15 +1792,15 @@ int runGui(
                 hLive && (overHBar || tree.hsb.dragging));
             treeHAnim.step(tree.hsb.expanded(caps) ? hHoverH : hIdleH,
                 window.frameSeconds);
-            if (overHBar && capture.available(capTreeHSb) && clickPressed())
+            if (overHBar && inp.capture.available(capTreeHSb) && clickPressed())
             {
                 tree.hsb = tree.hsb.pressed(cast(int)(mp.x / cellW),
                     tree.contentCols, treeCols - 1, treeCols - 1);
-                capture = capture.capturedBy(capTreeHSb);
+                inp.capture = inp.capture.capturedBy(capTreeHSb);
             }
             else if (tree.hsb.dragging)
             {
-                if (fin.leftReleased)
+                if (inp.fin.leftReleased)
                     tree.hsb = tree.hsb.released();
                 else
                     tree.hsb = tree.hsb.dragged(cast(int)(mp.x / cellW),
@@ -1798,7 +1808,7 @@ int runGui(
             }
             // A row click is not a drag, so it takes no id — it only needs
             // the pointer to be unowned.
-            if (overTree && !overTreeSb && !overHBar && capture.isFree
+            if (overTree && !overTreeSb && !overHBar && inp.capture.isFree
                 && clickPressed())
             {
                 treeFocused = true;
@@ -1842,12 +1852,12 @@ int runGui(
             // added here, and to every other affordance's condition. A popup
             // click is not a draggable — it consumes the press outright.
             if (selectStartPressed() && !overSb && !overTree && !copyClicked
-                && !popupClicked && capture.available(capSelection))
+                && !popupClicked && inp.capture.available(capSelection))
             {
                 const h = hitAt(mp.x, mp.y);
                 drag.selecting = h.ok;
                 if (drag.selecting)
-                    capture = capture.capturedBy(capSelection);
+                    inp.capture = inp.capture.capturedBy(capSelection);
                 if (h.table)
                 {
                     drag.regime = Regime.table;
@@ -1864,7 +1874,7 @@ int runGui(
                 else
                     drag.regime = Regime.none;
             }
-            if (drag.selecting && fin.leftDown)
+            if (drag.selecting && inp.fin.leftDown)
             {
                 const h = hitAt(mp.x, mp.y);
                 if (drag.regime == Regime.table && h.table && h.tableIdx == drag.selTable)
@@ -1881,7 +1891,7 @@ int runGui(
                     drag.headHi = h.hi;
                 }
             }
-            if (fin.leftReleased)
+            if (inp.fin.leftReleased)
                 drag.selecting = false;
         }
 
@@ -2058,7 +2068,7 @@ int runGui(
         // hysteresis so moving down into the open popup keeps it open.
         if (vm.showPreview && vm.tw.code.length && tsCache !is null)
         {
-            const mp = fin.pos;
+            const mp = inp.fin.pos;
             size_t overNode = 0;
             if (mp.x >= gutterPx)
             {
@@ -2241,7 +2251,7 @@ int runGui(
         }
 
         // The document pane's horizontal bar (IXB2), over its bottom edge.
-        if (vm.hOverflows() && mode == Mode.normal)
+        if (vm.hOverflows() && inp.mode == Mode.normal)
         {
             const l = scrollbarLayout(vm.hsb, docHAnim, vm.contentCols,
                 vm.widthCols, Rect(gutterPx, 0, screenW - gutterPx, screenH));
@@ -2294,9 +2304,9 @@ int runGui(
         {
             const barY = screenH - cellH;
             chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
-            auto lineText = mode == Mode.search
-                ? text("/", query[], "   ", vm.matches.length, " vm.matches")
-                : text(":", query[]);
+            auto lineText = inp.mode == Mode.search
+                ? text("/", inp.query[], "   ", vm.matches.length, " vm.matches")
+                : text(":", inp.query[]);
             drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), vm.pageBg);
         }
         // Copy-mode toast (when not typing): flashes the mode after a 'y'/'t' toggle.
