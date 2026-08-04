@@ -752,7 +752,10 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
     // after the open probe would otherwise render an all-em-dash column —
     // exactly the "always-empty column is noise" rationale above.
     const hasPsi = rows.canFind!(r => !r.psi.isNull && !r.psi.get.ioSomeNs.isNaN);
-    const hasNote = rows.canFind!(r => r.wall.note.length > 0);
+    const hasRegime = rows.canFind!(r => !r.regime.isNull);
+    // The note cell composes the wall's and the regime stamp's notes.
+    const hasNote = rows.canFind!(r => r.wall.note.length > 0
+        || (!r.regime.isNull && r.regime.get.note.length > 0));
 
     // Named syscall / raw selector columns come from the shared open groups,
     // identical across rows — the first carrier defines them.
@@ -766,8 +769,10 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
             rawSelectors = r.raw.get.selectors;
     }
 
-    string[] headers = ["workload", "reps", "wall", "cpu usr", "cpu krn",
-        "runq", "other"];
+    string[] headers = ["workload", "reps"];
+    if (hasRegime)
+        headers ~= "regime"; // a condition, like reps — conditions cluster left
+    headers ~= ["wall", "cpu usr", "cpu krn", "runq", "other"];
     if (hasPsi)
         headers ~= "io-stall";
     if (hasPerf)
@@ -790,11 +795,40 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
     aligns[] = Align.decimal;
     aligns[0] = Align.left;
     aligns[1] = Align.right;
+    if (hasRegime)
+        aligns[2] = Align.left;
     if (hasNote)
         aligns[$ - 1] = Align.left;
 
     static string durCell(double ns) @safe
         => ns.isNaN ? "—" : benchNs(ns);
+
+    // The compact regime cell: the effective regime's short name, with a
+    // `requested→effective` arrow on downgrade; `—` for stampless rows.
+    static string regimeCell(in WorkloadWindow r) @safe pure nothrow
+    {
+        import sparkles.test_runner.attributes : CacheRegime;
+
+        static string shortName(CacheRegime x) @safe pure nothrow @nogc
+        {
+            final switch (x)
+            {
+            case CacheRegime.steadyState:
+                return "steady";
+            case CacheRegime.warm:
+                return "warm";
+            case CacheRegime.cold:
+                return "cold";
+            }
+        }
+
+        if (r.regime.isNull)
+            return "—";
+        const g = r.regime.get;
+        return g.effective == g.requested
+            ? shortName(g.effective)
+            : shortName(g.requested) ~ "→" ~ shortName(g.effective);
+    }
 
     // Header cells are bolded here like every other runner table —
     // `renderCells` treats `headerRows` as separator geometry only.
@@ -809,7 +843,10 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
             const message = r.skipped
                 ? render(colored, i"{yellow $(r.error)}")
                 : render(colored, i"{red $(r.error)}");
-            string[] errCols = [r.name, r.reps.to!string, message];
+            string[] errCols = [r.name, r.reps.to!string];
+            if (hasRegime)
+                errCols ~= "—";
+            errCols ~= message; // lands in the wall column
             while (errCols.length < headers.length)
                 errCols ~= "—";
             cells ~= errCols;
@@ -819,6 +856,10 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
         string[] cols = [
             r.name,
             r.reps.to!string,
+        ];
+        if (hasRegime)
+            cols ~= regimeCell(r);
+        cols ~= [
             durCell(double(r.wall.wallNs)),
             durCell(r.wall.onCpuUserNs),
             durCell(r.wall.onCpuKernelNs),
@@ -886,8 +927,15 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
             }
         }
         if (hasNote)
-            cols ~= r.wall.note.length
-                ? render(colored, i"{dim $(r.wall.note)}") : "";
+        {
+            // Compose the wall's and the regime stamp's notes into one cell
+            // (JSON keeps them structurally separate).
+            string note = r.wall.note;
+            if (!r.regime.isNull && r.regime.get.note.length)
+                note = note.length
+                    ? note ~ "; " ~ r.regime.get.note : r.regime.get.note;
+            cols ~= note.length ? render(colored, i"{dim $(note)}") : "";
+        }
         cells ~= cols;
     }
 
@@ -1895,4 +1943,53 @@ package struct BenchProgress
             ~ cast(string) CtlSeq.syncEnd;
         writeStderr(eraseSeq);
     }
+}
+
+@("reporting.buildWorkloadTable.regimeColumn")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind, countUntil;
+    import std.typecons : nullable;
+    import sparkles.test_runner.attributes : CacheRegime;
+    import sparkles.test_runner.cache_regime : CacheRegimeStamp;
+
+    WorkloadWindow established;
+    established.name = "cold-ok";
+    established.reps = 1;
+    established.wall.wallNs = 1_000_000;
+    established.regime = nullable(CacheRegimeStamp(
+        requested: CacheRegime.cold, effective: CacheRegime.cold,
+        residentBefore: 1.0, residentAfter: 0.01));
+
+    WorkloadWindow downgraded;
+    downgraded.name = "cold-no";
+    downgraded.reps = 1;
+    downgraded.wall.wallNs = 1_000_000;
+    downgraded.regime = nullable(CacheRegimeStamp(
+        requested: CacheRegime.cold, effective: CacheRegime.steadyState,
+        residentBefore: 1.0, residentAfter: 0.9,
+        note: "posix_fadvise did not evict (90% resident) — ran steady-state"));
+
+    WorkloadWindow stampless;
+    stampless.name = "plain";
+    stampless.reps = 1;
+    stampless.wall.wallNs = 1_000_000;
+
+    const model = buildWorkloadTable([established, downgraded, stampless], false);
+    const header = model.cells[0];
+    // A condition column, clustered left with reps.
+    assert(header.countUntil("regime") == 2);
+    assert(header.countUntil("wall") == 3);
+    assert(model.cells[1][2] == "cold");
+    assert(model.cells[2][2] == "cold→steady", "downgrades carry the arrow");
+    assert(model.cells[3][2] == "—", "stampless rows in a stamped table");
+    // The regime note rides the composed note cell.
+    assert(header.canFind("note"));
+    assert(model.cells[2][$ - 1].canFind("did not evict"));
+
+    // A stampless table has no regime column at all.
+    const bare = buildWorkloadTable([stampless], false);
+    assert(!bare.cells[0].canFind("regime"));
+    assert(bare.cells[0].countUntil("wall") == 2);
 }
