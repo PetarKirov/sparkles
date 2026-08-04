@@ -43,7 +43,9 @@ import std.typecons : Nullable;
 // The `workload` attribute struct shares its name with this module; the
 // rename keeps the dogfood test's UDA unambiguous (discovery matches the
 // UDA by type, not name).
-import sparkles.test_runner.attributes : workloadUda = workload;
+import sparkles.test_runner.attributes : CacheRegime, workloadUda = workload;
+import sparkles.test_runner.cache_regime : applyCold, applyWarm,
+    CacheRegimeStamp, FsKind, fsKind, probeResidency, resolveStamp;
 import sparkles.test_runner.bench : BenchConfig, CounterGroups, elapsedNs, errorCell;
 import sparkles.test_runner.capability : BackendCapabilities, Capability,
     CapabilityAbsence, CapabilityReport;
@@ -607,6 +609,7 @@ struct WorkloadWindow
     Nullable!SyscallStats syscalls;
     Nullable!RawStats raw;
     Nullable!PsiStats psi; /// system-wide stall deltas — diagnostics, not attribution
+    Nullable!CacheRegimeStamp regime; /// what workloadFiles established for this window
     string error; /// non-empty = error (or, with `skipped`, skip) row
     bool skipped;
 }
@@ -628,6 +631,10 @@ private struct WorkloadContext
     WorkloadWindow[] windows;
     uint[string] nameCounts; /// per-resolved-name occurrence counter (#2, #3, …)
     bool measuring; /// a window is open — nested `workloadWindow` calls run inertly
+    WindowEdges candidate; /// the whole-body window's edges (refreshable by workloadFiles)
+    Nullable!CacheRegimeStamp pendingStamp; /// the latest workloadFiles stamp
+    CacheRegime markerRegime; /// the @workload marker's regime default
+    bool prepSkipped; /// a workloadFiles call was refused under `measuring`
 }
 
 /// The active workload measurement, when `runWorkload` is driving this
@@ -667,6 +674,126 @@ if (is(typeof(run()) == void))
     const n = ++ctx.nameCounts.require(base, 0);
     const windowName = n == 1 ? base : base ~ "#" ~ uintString(n);
     measureWindow(ctx, windowName, run);
+}
+
+/// Establishes the workload's page-cache regime for `paths` NOW — prep
+/// (`cold` = fdatasync + fadvise-evict, `warm` = read-through preload,
+/// `steadyState` = nothing) plus `mincore` residency verification before
+/// and after — and stamps every window measured after this call with the
+/// requested-vs-effective outcome. The first overload uses the `@workload`
+/// marker's regime; the second overrides it per call. A later call
+/// REPLACES the pending stamp (windows carry the stamp active at their
+/// open).
+///
+/// Outside a workload measurement the call does NOTHING at all — no
+/// eviction, no preload, no probes (manipulating the page cache during a
+/// foreign runner's ordinary test run would be vandalism). Inside an open
+/// window (or on a whole-body repetition after the first) prep is SKIPPED
+/// and the window's note says so — running it there would sabotage the
+/// measurement in flight.
+void workloadFiles(scope const(string)[] paths...) @system
+{
+    auto ctx = activeWorkloadContext;
+    if (ctx is null)
+        return;
+    workloadFilesImpl(ctx, ctx.markerRegime, paths);
+}
+
+/// ditto
+void workloadFiles(CacheRegime regime, scope const(string)[] paths...) @system
+{
+    auto ctx = activeWorkloadContext;
+    if (ctx is null)
+        return;
+    workloadFilesImpl(ctx, regime, paths);
+}
+
+private void workloadFilesImpl(WorkloadContext* ctx, CacheRegime regime,
+    scope const(string)[] paths) @system
+{
+    import std.math : isNaN;
+
+    if (paths.length == 0)
+        return;
+    if (ctx.measuring)
+    {
+        ctx.prepSkipped = true; // consumed with a context-specific note
+        return;
+    }
+
+    // Filesystem kind across the set: any zfs file makes residency
+    // ARC-blind for the aggregate; all-tmpfs keeps the tmpfs rules;
+    // otherwise the thresholds apply to the page-weighted aggregate (a
+    // mixed set's partial success shows up as a mid-band fraction, which
+    // the downgrade note then discloses with its percentage).
+    FsKind kind = fsKind(paths[0]);
+    bool mixed;
+    foreach (path; paths[1 .. $])
+    {
+        const k = fsKind(path);
+        if (k != kind)
+            mixed = true;
+        if (k == FsKind.zfs)
+            kind = FsKind.zfs;
+    }
+    if (mixed && kind != FsKind.zfs)
+        kind = FsKind.other;
+
+    static double aggregate(scope const(string)[] paths) @system
+    {
+        double total = 0, resident = 0;
+        bool any;
+        foreach (path; paths)
+        {
+            const r = probeResidency(path);
+            if (r.ok)
+            {
+                total += double(r.pagesTotal);
+                resident += double(r.pagesResident);
+                any = true;
+            }
+        }
+        return any && total > 0 ? resident / total : double.nan;
+    }
+
+    const residentBefore = aggregate(paths);
+
+    string prepNote;
+    if (regime == CacheRegime.cold)
+    {
+        foreach (path; paths)
+            if (const err = applyCold(path))
+            {
+                appendNote(prepNote, err);
+                break; // one reason suffices; the stamp downgrades anyway
+            }
+    }
+    else if (regime == CacheRegime.warm)
+    {
+        foreach (path; paths)
+            if (const err = applyWarm(path))
+            {
+                appendNote(prepNote, err);
+                break;
+            }
+    }
+
+    // steadyState provably preserves residency — one probe fills both.
+    const residentAfter = regime == CacheRegime.steadyState
+        ? residentBefore : aggregate(paths);
+
+    auto stamp = resolveStamp(regime, kind, residentBefore, residentAfter, prepNote);
+    if (mixed)
+        appendNote(stamp.note, "mixed filesystems — residency verification approximate");
+    ctx.pendingStamp = Nullable!CacheRegimeStamp(stamp);
+
+    // Prep is setup, never workload: while the whole-body candidate is
+    // still live (no windows recorded), re-open its edges so everything
+    // above — probes, eviction, preload I/O — stays outside the measured
+    // window. The refresh re-reads psi outermost, so prep's own writeback
+    // stall also lands outside `psi0`.
+    if (ctx.windows.length == 0)
+        ctx.candidate = WindowEdges.open(*ctx.counters, *ctx.wall, *ctx.psi);
 }
 
 private string uintString(uint v) @safe pure nothrow
@@ -792,6 +919,7 @@ private struct WindowEdges
 private void measureWindow(DG)(WorkloadContext* ctx, string name, scope DG run)
 {
     auto w = WorkloadWindow(name: name, reps: ctx.reps);
+    w.regime = ctx.pendingStamp; // the regime active at this window's open
     auto edges = WindowEdges.open(*ctx.counters, *ctx.wall, *ctx.psi);
     ctx.measuring = true;
     scope (exit)
@@ -820,6 +948,12 @@ private void measureWindow(DG)(WorkloadContext* ctx, string name, scope DG run)
         throw t;
     }
     edges.closeInto(w, *ctx.counters, *ctx.wall, *ctx.psi);
+    if (ctx.prepSkipped)
+    {
+        appendNote(w.wall.note,
+            "workloadFiles inside a window — prep skipped; call it before the window");
+        ctx.prepSkipped = false;
+    }
     ctx.windows ~= w;
 }
 
@@ -844,12 +978,15 @@ WorkloadOutcome runWorkload(Test test, ref CounterGroups counters,
         counters.endWindows();
 
     auto ctx = WorkloadContext(testName: test.name, reps: reps,
-        counters: &counters, wall: &wall, psi: &psi);
+        counters: &counters, wall: &wall, psi: &psi,
+        markerRegime: test.traits.workloadRegime);
     activeWorkloadContext = &ctx;
     scope (exit)
         activeWorkloadContext = null;
 
-    auto edges = WindowEdges.open(counters, wall, psi);
+    // The whole-body candidate's edges live in the context so a
+    // workloadFiles call can refresh them (prep is setup, not workload).
+    ctx.candidate = WindowEdges.open(counters, wall, psi);
     auto result = executeTest(test);
 
     if (result.succeeded && ctx.windows.length == 0)
@@ -884,7 +1021,11 @@ WorkloadOutcome runWorkload(Test test, ref CounterGroups counters,
         if (!broke)
         {
             auto w = WorkloadWindow(name: test.name, reps: reps);
-            edges.closeInto(w, counters, wall, psi);
+            w.regime = ctx.pendingStamp;
+            ctx.candidate.closeInto(w, counters, wall, psi);
+            if (ctx.prepSkipped)
+                appendNote(w.wall.note, "workloadFiles on a repetition after "
+                    ~ "the first — prep ran only before rep 1");
             ctx.windows ~= w;
         }
     }
@@ -1198,6 +1339,228 @@ version (linux)
         // the decomposition.
         assert(w.wall.offCpuDiskNs.isNaN,
             "disk attribution stays unattributed until M8's cgroup scoping");
+    }
+}
+
+@("workload.workloadFiles.inertDoesNothing")
+@system
+unittest
+{
+    // Outside a measurement the call must be a complete no-op — no
+    // eviction, no preload, no probes. Observable: it neither throws nor
+    // requires the paths to exist.
+    workloadFiles("/nonexistent/never/created");
+    workloadFiles(CacheRegime.cold, "/nonexistent/never/created");
+}
+
+@("workload.workloadFiles.stampsAndReplacement")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : deleteme, remove, write;
+    import sparkles.test_runner.model : TestTraits;
+
+    static string fileA, fileB;
+    fileA = deleteme ~ ".regime-a";
+    fileB = deleteme ~ ".regime-b";
+    write(fileA, new ubyte[](256 * 1024));
+    write(fileB, new ubyte[](256 * 1024));
+    scope (exit)
+    {
+        remove(fileA);
+        remove(fileB);
+    }
+
+    static void body_()
+    {
+        workloadFiles(CacheRegime.warm, fileA);
+        workloadWindow("first", () {});
+        workloadFiles(CacheRegime.steadyState, fileB);
+        workloadWindow("second", () {});
+    }
+
+    auto counters = CounterGroups.none;
+    auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false);
+    const outcome = runWorkload(
+        Test(fullName: "m.st", name: "st", ptr: &body_,
+            traits: TestTraits(isWorkload: true, workloadReps: 1)),
+        counters, wall, psi);
+
+    assert(outcome.result.succeeded);
+    assert(outcome.windows.length == 2);
+    // Each window carries the stamp active at ITS open — replacement, not merge.
+    assert(!outcome.windows[0].regime.isNull);
+    assert(outcome.windows[0].regime.get.requested == CacheRegime.warm);
+    assert(!outcome.windows[1].regime.isNull);
+    assert(outcome.windows[1].regime.get.requested == CacheRegime.steadyState);
+    // A steadyState stamp fills both fractions from one probe.
+    const st = outcome.windows[1].regime.get;
+    version (Posix)
+        assert(st.residentBefore is st.residentAfter
+            || st.residentBefore == st.residentAfter);
+}
+
+@("workload.workloadFiles.wholeBodyStampAndRefresh")
+@system
+unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs, MonoTime;
+    import std.file : deleteme, remove, write;
+    import sparkles.test_runner.model : TestTraits;
+
+    static string file;
+    file = deleteme ~ ".regime-refresh";
+    write(file, new ubyte[](64 * 1024));
+    scope (exit)
+        remove(file);
+
+    // The refresh proof, deterministic and counter-free: the body sleeps
+    // 20 ms BEFORE workloadFiles, then works ~5 ms. Without the candidate
+    // refresh the whole-body window would read ≥ 25 ms; with it, the
+    // sleep and the prep are outside the measured window.
+    static void body_()
+    {
+        Thread.sleep(20.msecs);
+        workloadFiles(file); // marker regime (steadyState here)
+        static ulong sink;
+        const t0 = MonoTime.currTime;
+        while (MonoTime.currTime - t0 < 5.msecs)
+            foreach (i; 0 .. 1000)
+                sink += i * i;
+    }
+
+    auto counters = CounterGroups.none;
+    auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false);
+    const outcome = runWorkload(
+        Test(fullName: "m.rf", name: "rf", ptr: &body_,
+            traits: TestTraits(isWorkload: true, workloadReps: 1)),
+        counters, wall, psi);
+
+    assert(outcome.result.succeeded);
+    assert(outcome.windows.length == 1, "whole-body fallback window");
+    const w = outcome.windows[0];
+    assert(!w.regime.isNull, "the whole-body window carries the stamp");
+    assert(w.wall.wallNs < 20_000_000,
+        "the candidate was refreshed after prep — the pre-prep sleep is setup, not workload");
+    assert(w.wall.wallNs >= 4_000_000, "the post-prep work IS measured");
+}
+
+@("workload.workloadFiles.midWindowPrepSkipped")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : deleteme, remove, write;
+    import sparkles.test_runner.model : TestTraits;
+
+    static string file;
+    file = deleteme ~ ".regime-midwindow";
+    write(file, new ubyte[](64 * 1024));
+    scope (exit)
+        remove(file);
+
+    static void body_()
+    {
+        workloadWindow("w", () {
+            workloadFiles(CacheRegime.cold, file); // mid-window: prep must not run
+        });
+    }
+
+    auto counters = CounterGroups.none;
+    auto wall = WallSource.tryOpen(true);
+    auto psi = PsiSource.tryOpen(false);
+    const outcome = runWorkload(
+        Test(fullName: "m.mw", name: "mw", ptr: &body_,
+            traits: TestTraits(isWorkload: true, workloadReps: 1)),
+        counters, wall, psi);
+
+    assert(outcome.result.succeeded);
+    assert(outcome.windows.length == 1);
+    const w = outcome.windows[0];
+    assert(w.regime.isNull, "no stamp — prep never ran");
+    assert(w.wall.note.canFind("prep skipped"),
+        "the refusal is disclosed on the window, never silent");
+}
+
+version (linux)
+{
+    @("workload.workloadFiles.coldVsWarmAcceptance")
+    @system
+    unittest
+    {
+        import std.conv : text;
+        import std.file : deleteme, remove, tempDir, write;
+        import std.math : isNaN;
+        import sparkles.test_runner.model : TestTraits;
+        import sparkles.test_runner.skip : skipTest;
+
+        // THE M6 acceptance: a cold window's block-device reads dwarf a
+        // warm window's for the same body. Only meaningful on a filesystem
+        // where fadvise evicts AND /proc/self/io sees block reads — tmpfs
+        // has no I/O, zfs serves from ARC (mincore- and io-accounting-blind).
+        const kind = fsKind(tempDir);
+        if (kind != FsKind.other)
+            skipTest(text("tempDir is ", kind, " — cold-vs-warm needs a plain fs"));
+
+        auto counters = CounterGroups.open(false, true, false, null);
+        scope (exit)
+            counters.close();
+        if (!counters.tier0.available)
+            skipTest("tier-0 counters unavailable");
+
+        static string file;
+        file = deleteme ~ ".regime-acceptance";
+        enum size = 64 << 20;
+        write(file, new ubyte[](size));
+        scope (exit)
+            remove(file);
+
+        static void body_()
+        {
+            static void readAll()
+            {
+                import std.stdio : File;
+
+                auto f = File(file, "rb");
+                ubyte[64 * 1024] buf = void;
+                while (f.rawRead(buf[]).length == buf.length)
+                {
+                }
+            }
+
+            workloadFiles(CacheRegime.cold, file);
+            workloadWindow("cold", &readAll);
+            workloadFiles(CacheRegime.warm, file);
+            workloadWindow("warm", &readAll);
+        }
+
+        auto wall = WallSource.tryOpen(true);
+        auto psi = PsiSource.tryOpen(false);
+        const outcome = runWorkload(
+            Test(fullName: "m.cw", name: "cw", ptr: &body_,
+                traits: TestTraits(isWorkload: true, workloadReps: 1)),
+            counters, wall, psi);
+
+        assert(outcome.result.succeeded);
+        const coldW = outcome.windows[0];
+        const warmW = outcome.windows[1];
+        assert(coldW.regime.get.effective == CacheRegime.cold,
+            text("cold established: ", coldW.regime.get.note));
+        assert(warmW.regime.get.effective == CacheRegime.warm,
+            text("warm established: ", warmW.regime.get.note));
+
+        const coldRd = coldW.tier0.get.rdBytes;
+        const warmRd = warmW.tier0.get.rdBytes;
+        if (coldRd.isNaN || warmRd.isNaN)
+            skipTest("block-device read accounting unavailable");
+        assert(coldRd >= size / 2,
+            text("a cold read hits the device: rdBytes=", coldRd));
+        assert(coldRd > 10 * (warmRd + 1),
+            text("cold reads dwarf warm ones: cold=", coldRd, " warm=", warmRd));
     }
 }
 

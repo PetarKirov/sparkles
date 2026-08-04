@@ -1085,7 +1085,11 @@ unittest
     static ulong sink;
     static void body_()
     {
-        benchIter({ foreach (i; 0 .. 1000) sink += i * i; });
+        // 100k multiply-adds: the signal must dwarf the darwin bracket
+        // residue — a ~1k body sits below the calibrated proc_pid_rusage
+        // syscall cost and intermittently nets (clamps) to exactly 0 there.
+        // This test is about the perf CAPTURE plumbing, not precision.
+        benchIter({ foreach (i; 0 .. 100_000) sink += i * i; });
     }
 
     auto counters = CounterGroups.open(true, false, false, null);
@@ -1094,9 +1098,9 @@ unittest
     import sparkles.test_runner.skip : skipTest;
 
     if (!counters.perf.available) // paranoid/sandboxed kernels refuse
-        skipTest("hardware counters unavailable (perf_event_paranoid?)");
+        skipTest(counters.perf.status());
 
-    const config = BenchConfig(iterations: 200, sampleCount: 2, minSampleTime: 1.usecs);
+    const config = BenchConfig(iterations: 20, sampleCount: 2, minSampleTime: 1.usecs);
     auto outcome = runBenchmark(Test(fullName: "m.p", name: "p", ptr: &body_), config, counters);
     assert(outcome.result.succeeded);
     assert(!outcome.rows[0].perf.isNull);
