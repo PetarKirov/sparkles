@@ -20,10 +20,7 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
     Theme, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
-// Cell types only — the terminal, its input reader and its lifecycle are the
-// `sparkles:ui-tui` session's now (UIA8). What is left is the surface hue
-// still paints some chrome into by hand.
-import sparkles.tui.cell : CellStyle, Color, Grid;
+import sparkles.ui_tui : CellStyle, Color, Grid;
 import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
 import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     linesPerNotch, match, PointerAction, PointerButton, PointerEvent,

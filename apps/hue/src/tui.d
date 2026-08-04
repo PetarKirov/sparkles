@@ -24,9 +24,6 @@ import sparkles.twoslash.protocol : NodeType, TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslashDocument;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 
-// Cell types only: the terminal itself, its options and its input reader are
-// the `sparkles:ui-tui` session's (UIA8), and were already unused here.
-import sparkles.tui.cell : Cell, CellStyle, Color, Grid;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
@@ -40,7 +37,7 @@ import sparkles.ui.state : DisclosureState, DocRow, HoverTarget,
 import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot,
     TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
-import sparkles.ui_tui : paintGrid;
+import sparkles.ui_tui : Cell, CellStyle, Color, Grid, paintGrid;
 
 import ansi_model : Attr, BackgroundMode;
 import viewer_model : ViewerModel;
