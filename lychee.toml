@@ -105,6 +105,25 @@ request_interval = "100ms"
 [hosts."gitlab.freedesktop.org"]
 request_interval = "1s"
 
+# ── A recognised class, not a series of one-offs ────────────────────────────
+#
+# Every per-host block below exists for ONE reason: `max_concurrency = 16`
+# against a small documentation host that answers a single client instantly but
+# drops or stalls a burst from one IP. Each was probed directly before being
+# added (HTTP 200 in <0.5 s) — none of them is rot, and replacing the links with
+# archive.org copies would have been wrong twice over, since CI excludes
+# web.archive.org and those references would then go unchecked.
+#
+# Per-host throttles rather than a lower global concurrency: the failures are
+# always a small host we link 10–20 times, while the large hosts (github,
+# docs.rs, crates.io) handle 16 fine. Halving `max_concurrency` would slow the
+# whole 8.5k-link run to fix a handful of hosts, and the run already takes
+# ~16 min against a 35 min cap.
+#
+# The diagnostic trap: a connection-level failure is not covered by
+# `cache_exclude_status`, so ONE unreachable URL is reported as an error at
+# EVERY reference. Enumerate distinct URLs before believing an error count.
+
 # Small, long-lived documentation sites that answer a single client instantly
 # (both measured at HTTP 200 in <0.5 s) but drop or stall connections when 16
 # arrive at once from one runner IP. The symptom is misleading: the first probe
@@ -117,6 +136,10 @@ request_interval = "1s"
 request_interval = "1s"
 
 [hosts."juce.com"]
+request_interval = "1s"
+
+# 20 links, 503 under burst, 200 in 0.31 s to a single client.
+[hosts."sean-parent.stlab.cc"]
 request_interval = "1s"
 
 # The C++ committee papers server is simply slow: it answers, but several
