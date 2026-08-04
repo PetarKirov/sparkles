@@ -18,7 +18,6 @@ module twoslash_tui;
 
 version (Posix):
 
-import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.input : EndOfInput, Event, Key, KeyEvent, match,
     PointerAction, PointerEvent, WheelEvent;
 
@@ -46,7 +45,7 @@ import sparkles.ui.widget : WidgetTree;
 
 import sparkles.base.term_color : Color;
 
-import sparkles.ui_tui : paintGrid;
+import sparkles.ui_tui : CellStyle, Grid, paintGrid;
 
 private enum padCols = 1; // left margin, matching the GUI's twoslashPadCells
 

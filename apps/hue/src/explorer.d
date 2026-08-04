@@ -20,11 +20,6 @@ import git_status : GitBadge, gitBadge, GitStatus, GitStatusCache;
 import sparkles.base.term_color : mix;
 import sparkles.syntax : LabelSet, ResolvedTheme, resolveTheme, RgbColor,
     Theme, toRgb;
-// The narrow cell module, not the `sparkles.tui` package: the package
-// re-exports the raw-termios terminal.d, which must stay out of the Android
-// module graph (druntime's bionic termios bindings are incomplete) — and the
-// explorer needs only the cell vocabulary anyway.
-import sparkles.tui.cell : CellStyle, Color, Grid;
 import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, Point, PointerAction, PointerButton, PointerEvent, ResizeEvent,
     WheelEvent;
@@ -38,7 +33,7 @@ import sparkles.ui.state : DisclosureState, LineEditState, ScrollAxis,
     ScrollbarState, scrollbarThumb, ScrollState;
 import sparkles.ui.style : Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
-import sparkles.ui_tui : paintGrid;
+import sparkles.ui_tui : CellStyle, Color, Grid, paintGrid;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor fallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
