@@ -9,12 +9,14 @@ instead of aborting the matrix. Hardware counters come from the runner's
 `--perf`; there is no private perf backend any more.
 
 The benchmark is one `@benchmark unittest` per op (`wired.parse`,
-`wired.validate`, `wired.serialize`, `wired.decode`): skipped by a normal
-`dub test`, measured by `dub test -b bench -- --bench` (add `--perf` for
-counters) — so `-i 'wired\.serialize'` measures one op, and a registration
-failure in one op's body cannot abort the others. Engines and datasets subset
-at run time via `$WIRED_BENCH_ENGINES` / `$WIRED_BENCH_DATASETS` (comma lists;
-empty = all). Corpora load from `$WIRED_BENCH_DATA` (see
+`wired.parse-stream`, `wired.validate`, `wired.serialize`, `wired.decode`):
+skipped by a normal `dub test`, measured by `dub test -b bench -- --bench`
+(add `--perf` for counters) — so `-i 'wired\.serialize'` measures one op, and
+a registration failure in one op's body cannot abort the others. Engines and
+datasets subset at run time via `$WIRED_BENCH_ENGINES` /
+`$WIRED_BENCH_DATASETS` (comma lists; an empty dataset list selects the bundled
+default). Corpora load from `$WIRED_BENCH_DATA` and
+`$WIRED_BENCH_EXTERNAL_DATA` (see
 $(MREF sparkles,wired_bench,data)).
 */
 module sparkles.wired_bench.runner;
@@ -25,21 +27,21 @@ import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
 
 import sparkles.wired_bench.allocator : allocatorLevelled;
-import sparkles.wired_bench.data : Dataset, loadDatasets, resolveDataDir;
+import sparkles.wired_bench.data : Dataset, DatasetFormat,
+    datasetSource, defaultDatasetNames, loadDatasets, resolveDataDir;
 import sparkles.wired_bench.engines;
 import sparkles.wired_bench.fingerprint : diffFingerprints, Fingerprint,
     referenceFingerprint;
 import sparkles.wired_bench.traits;
 import sparkles.wired_bench.twitter : diffTwitterStats, referenceTwitterStats;
 
-/// The canonical corpora (the old `--datasets` default), loaded from
-/// `$WIRED_BENCH_DATA`. `twitter` is the one with a typed decode path.
-private immutable string[] defaultDatasets =
-    ["twitter", "citm_catalog", "canada", "github_events"];
-
 /// A `B/s` throughput metric for `n` input/output bytes per iteration.
 private Metric bytes(size_t n) @safe pure nothrow
     => Metric(unit: Unit("B"), amount: double(n), mode: Metric.Mode.rate);
+
+/// A documents/s metric for line-oriented corpora.
+private Metric documents(size_t n) @safe pure nothrow
+    => Metric(unit: Unit("doc"), amount: double(n), mode: Metric.Mode.rate);
 
 /// Releases the engine's held document when it exposes the primitive.
 private void freeDocOf(E)(ref E e)
@@ -64,18 +66,36 @@ private bool envListAllows(string envVar, string name) @safe
 private bool engineEnabled(string name) @safe
     => envListAllows("WIRED_BENCH_ENGINES", name);
 
+private string[] selectedDatasetNames() @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.array : array;
+    import std.process : environment;
+
+    const selected = environment.get("WIRED_BENCH_DATASETS", "");
+    return selected.length
+        ? selected.splitter(',').array
+        : defaultDatasetNames.dup;
+}
+
 private bool datasetEnabled(string name) @safe
-    => envListAllows("WIRED_BENCH_DATASETS", name);
+{
+    import std.algorithm.searching : canFind;
+    return selectedDatasetNames.canFind(name);
+}
 
 /// The corpora this run measures: the canonical list filtered by
 /// `$WIRED_BENCH_DATASETS`, freshly loaded (each `@benchmark` body runs once).
-private Dataset[] benchDatasets()
+private Dataset[] benchDatasets(DatasetFormat format = DatasetFormat.document)
 {
     import std.algorithm.iteration : filter;
+    import std.algorithm.searching : any;
     import std.array : array;
 
-    return loadDatasets(defaultDatasets.filter!(n => datasetEnabled(n)).array,
-        resolveDataDir(null));
+    const names = selectedDatasetNames
+        .filter!(n => datasetSource(n).format == format).array;
+    const needsBundled = names.any!(n => datasetSource(n).bundled);
+    return loadDatasets(names, needsBundled ? resolveDataDir(null) : null);
 }
 
 /// The env filters can empty an op's matrix; an explicitly-labeled marker row
@@ -162,6 +182,29 @@ unittest
     }
     if (!registered)
         markFilteredOut("parse");
+}
+
+@("wired.parse-stream")
+@benchmark
+@system
+unittest
+{
+    size_t registered;
+    foreach (format; [DatasetFormat.ndjson, DatasetFormat.jsonArrayLines])
+        foreach (ref ds; benchDatasets(format))
+        {
+            const reference = referenceStream(ds);
+            static foreach (E; AllEngines)
+                static if (isJsonEngine!E)
+                    if (engineEnabled(E.name))
+                    {
+                        isolated(E.name, ds, "parse-stream",
+                            () { registerParseStream!E(ds, reference); });
+                        registered++;
+                    }
+        }
+    if (!registered)
+        markFilteredOut("parse-stream");
 }
 
 static if (anyValidate)
@@ -285,6 +328,77 @@ private void registerParseInsitu(E)(Dataset ds, Fingerprint reference)
         },
         metrics: [bytes(ds.text.length)],
         labels: ["dataset": ds.name, "operation": "parse-insitu"],
+        setup: engineSetup(e),
+        teardown: engineTeardown(e),
+    );
+}
+
+/// parse-stream — parse and release every record in an NDJSON corpus or in a
+/// line-oriented top-level array. Framing and record parsing are both timed;
+/// structural parity against `std.json` is checked once outside the clock.
+private struct StreamReference
+{
+    Fingerprint fingerprint;
+    size_t records;
+}
+
+private StreamReference referenceStream(in Dataset ds)
+{
+    import core.memory : GC;
+
+    // std.json owns its trees on the GC heap. Collect in bounded batches and
+    // return unused pages before measurement, otherwise a multi-gig reference
+    // pass would contaminate both the parser's starting heap and RSS profiling.
+    scope (exit)
+    {
+        GC.collect();
+        GC.minimize();
+    }
+
+    StreamReference result;
+    foreach (record; ds.records)
+    {
+        result.fingerprint.add(referenceFingerprint(record));
+        result.records++;
+        if ((result.records & 255) == 0)
+            GC.collect();
+    }
+    return result;
+}
+
+private void registerParseStream(E)(Dataset ds, StreamReference reference)
+{
+    auto e = new E;
+    bool verified;
+    benchCase(
+        name: E.name,
+        timed: () {
+            foreach (record; ds.records)
+            {
+                e.parse(record);
+                freeDocOf(*e);
+            }
+        },
+        after: () {
+            string error;
+            if (!verified)
+            {
+                verified = true;
+                Fingerprint actual;
+                foreach (record; ds.records)
+                {
+                    e.parse(record);
+                    actual.add(e.fingerprint());
+                    freeDocOf(*e);
+                }
+                if (!reference.fingerprint.matches(actual))
+                    error = "stream fingerprint mismatch vs std.json:"
+                        ~ diffFingerprints(reference.fingerprint, actual);
+            }
+            return error.length ? err!bool(error) : ok!string(true);
+        },
+        metrics: [bytes(ds.text.length), documents(reference.records)],
+        labels: ["dataset": ds.name, "operation": "parse-stream"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
     );

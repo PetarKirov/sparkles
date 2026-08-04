@@ -1127,7 +1127,11 @@ defaults, so the on-disk diff is stable across wired releases.
 Under default options the reader accepts every `y_*` file and rejects every
 `n_*` file of the JSONTestSuite corpus, and never crashes on `i_*` files;
 the corpus is pinned in the repository (devshell `$JSON_TEST_SUITE`) and
-exercised by `dub test :wired`.
+exercised by `dub test :wired`. The independently pinned
+nativejson-benchmark corpus (devshell `$NATIVEJSON_TEST_SUITE`) adds the
+JSON_checker pass/fail set and 27 roundtrip boundary inputs. Its two upstream
+`_EXCLUDE` cases remain excluded: `fail01` rejects RFC-valid top-level scalars,
+while `fail18` asserts a nesting-depth policy JSON does not specify.
 
 ### 11.6 Pending surface changes (land with the switch-over milestone)
 

@@ -32,15 +32,23 @@ WIRED_BENCH_ENGINES=asdf,std.json \
 WIRED_BENCH_DATASETS=twitter \
 dub test -b bench -- --bench                            # engine/dataset subset
 
+# Sustained record stream (external corpus; see Datasets):
+WIRED_BENCH_EXTERNAL_DATA=/data/wired-json \
+WIRED_BENCH_DATASETS=wikidata,cloudtrail \
+dub test -b bench -- --bench -i 'wired\.parse-stream' \
+    --group-by=dataset,operation
+
 # Machine-readable dump (see Recorded results below):
 dub test -b bench -- --bench --perf --bench-min-time=2000 \
     --bench-json=results/$(date -I)-<host>-$WIRED_BENCH_ISA.json
 ```
 
-Each op is its own `@benchmark` test (`wired.parse`, `wired.validate`,
-`wired.serialize`, `wired.decode`), so the runner's `-i`/`-e` select ops;
-engines and datasets subset via the `$WIRED_BENCH_ENGINES` /
-`$WIRED_BENCH_DATASETS` comma lists (empty = all).
+Each op is its own `@benchmark` test (`wired.parse`, `wired.parse-stream`,
+`wired.validate`, `wired.serialize`, `wired.decode`), so the runner's
+`-i`/`-e` select ops. Engines and datasets subset via the
+`$WIRED_BENCH_ENGINES` / `$WIRED_BENCH_DATASETS` comma lists. An empty engine
+list means every compiled engine; an empty dataset list means the six bundled,
+reproducible datasets. The large external corpora must be named explicitly.
 
 Numbers from non-release builds are meaningless; the runner prints a loud
 warning under `--bench` when built with asserts enabled. `dub test` without
@@ -55,6 +63,7 @@ adapter supports.
 | Op             | Contract                                                                                                                                                                                                                 |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `parse`        | immutable input → the engine's document. Any copy or padding the engine requires happens **inside** the timed region — the honest immutable-input service contract. The document is released untimed between iterations. |
+| `parse-stream` | NDJSON, or Wikidata's one-entity-per-line array → parse and release each record. Line framing is timed; structural parity is checked untimed once. Reports both B/s and documents/s.                                     |
 | `parse-insitu` | destructive in-place variants; the engine's scratch copy of the input is made inside the timed region. (No D engine reaches it today.)                                                                                   |
 | `serialize`    | a pre-parsed document (untimed `setup`) → minified JSON string, timed. Throughput is normalized over the engine's own output bytes.                                                                                      |
 | `validate`     | raw bytes → well-formedness verdict, materializing nothing. Only engines with a genuinely cheaper-than-parse path get a row (jsoniopipe's tokenizer drain today) — for the rest it would equal `parse`.                  |
@@ -80,6 +89,8 @@ Every op verifies itself once, in its untimed `after`, against the
   reference **fingerprint** (counts of every value kind, array/object sizes,
   decoded string/key bytes, and the sum of all numbers at 1e-9 relative
   tolerance);
+- `parse-stream` — every physical record contributes to one aggregate
+  reference fingerprint and the document count/byte-rate metrics;
 - `serialize` — the engine's own output is re-fingerprinted through the
   reference parser (structural, format-independent), so wrong _or invalid_
   output is caught (this gate currently flags jsoniopipe: its serialized
@@ -119,9 +130,81 @@ snapshots is
 
 ## Datasets
 
-Pinned by `nix/packages/wired-bench-data.nix` (never committed):
-`twitter.json` (632 KB, string-heavy), `citm_catalog.json` (1.7 MB,
-structure-heavy), `canada.json` (2.2 MB, float-heavy) from
-nativejson-benchmark, and `github_events.json` (65 KB, small-document
-regime) from simdjson. Export `$WIRED_BENCH_DATA` to point elsewhere;
-`$WIRED_BENCH_DATASETS` subsets the list per run.
+The normal matrix is fetched by hash in `nix/packages/wired-bench-data.nix`;
+the files are never copied into Git:
+
+| selector        | file                 | shape                                       |
+| --------------- | -------------------- | ------------------------------------------- |
+| `twitter`       | `twitter.json`       | 632 KB, string-heavy API response           |
+| `citm_catalog`  | `citm_catalog.json`  | 1.7 MB, structure-heavy catalog             |
+| `canada`        | `canada.json`        | 2.2 MB, float-heavy coordinate arrays       |
+| `github_events` | `github_events.json` | 65 KB, small string-heavy document          |
+| `mesh`          | `mesh.json`          | 724 KB, compact mesh / dense numeric arrays |
+| `mesh_pretty`   | `mesh.pretty.json`   | 1.58 MB, the same mesh with whitespace      |
+
+The first three come from
+[nativejson-benchmark](https://github.com/miloyip/nativejson-benchmark/tree/478d5727c2a4048e835a29c65adecc7d795360d5);
+GitHub events and both mesh forms come from
+[simdjson's pre-corpus-removal tree](https://github.com/simdjson/simdjson/tree/19c3b1315a2a6b8ab0a6b7335bb97269cbd0a448/jsonexamples).
+The compact and pretty mesh pair isolates whitespace skipping without changing
+the data.
+
+Large or account-specific datasets are opt-in. Put these exact filenames in
+one directory, export that directory as `$WIRED_BENCH_EXTERNAL_DATA`, and name
+the selectors in `$WIRED_BENCH_DATASETS`:
+
+| selector        | file                   | framing / benchmark op                                                   |
+| --------------- | ---------------------- | ------------------------------------------------------------------------ |
+| `wikidata`      | `wikidata.json`        | top-level array, one entity per physical line; `parse-stream`            |
+| `osm`           | `osm.json`             | one Overpass/OSM JSON document; `parse`                                  |
+| `cloudtrail`    | `cloudtrail.ndjson`    | one compact CloudTrail log-file object per line; `parse-stream`          |
+| `elasticsearch` | `elasticsearch.ndjson` | Bulk API actions/sources or log records, one JSON value per line; stream |
+
+External files are read through a read-only memory map. They do not incur a
+second heap-sized input copy, and record streams release each parsed document
+before advancing. This is important for Wikidata-scale runs: resident input
+pages and the parser's live document allocation remain distinguishable in an
+external RSS profiler.
+
+### Preparing external corpora
+
+- **Wikidata:** use the official [entity dump directory](https://dumps.wikimedia.org/wikidatawiki/entities/).
+  The recommended `latest-all.json.bz2` expands to a single array with one
+  entity per line, exactly the framing the harness expects. For example,
+  `lbzip2 -dc latest-all.json.bz2 > "$WIRED_BENCH_EXTERNAL_DATA/wikidata.json"`.
+  The dump is enormous; a dated dump is preferable when publishing results.
+- **OpenStreetMap:** request JSON from the [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API/Overpass_QL)
+  (`[out:json]`) and save the complete response as `osm.json`. Include geometry
+  (`out geom`) when the goal is a high-density coordinate workload, and use a dated
+  query/bounding box in any published benchmark so the input is reproducible.
+- **CloudTrail:** [AWS delivers](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-log-file-examples.html)
+  gzip-compressed JSON documents whose root has a `Records` array. Compact each
+  decompressed log file to one physical line (for example with `jq -c .`) and
+  concatenate those lines into `cloudtrail.ndjson`. Do not put one `Records`
+  element per line unless that is the service contract being measured.
+- **Elasticsearch/log aggregation:** copy a real [Bulk API NDJSON](https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-bulk.html)
+  body or NDJSON export to `elasticsearch.ndjson`. Every non-empty line must
+  independently be valid JSON; the final newline is optional to the harness.
+
+`wired.parse-stream` folds every record into a `std.json` structural fingerprint
+once outside timing. The reference pass collects in bounded batches and returns
+unused GC pages before measurement, so it does not leave a dump-sized reference
+tree behind. Malformed normalization or a parser that silently skips data fails
+the row instead of producing a throughput number.
+
+## Conformance corpora
+
+Speed inputs and rejection inputs stay separate. `dub test :wired -- -i
+'conformance\.'` runs both pinned robustness suites when inside the devshell:
+
+- nst/JSONTestSuite: all `y_*` inputs accepted, all `n_*` rejected, `i_*`
+  allowed either verdict but never a crash;
+- nativejson-benchmark: JSON_checker `pass*`/`fail*` expectations plus all 27
+  roundtrip inputs. Its two `_EXCLUDE` files remain excluded because one
+  forbids top-level scalars (valid since RFC 7159) and the other imposes an
+  unspecified nesting limit.
+
+Outside the devshell, point `$JSON_TEST_SUITE` and
+`$NATIVEJSON_TEST_SUITE` at checkouts of those repositories. Missing suite
+variables produce an explicit skip rather than making ordinary package tests
+depend on Nix.
