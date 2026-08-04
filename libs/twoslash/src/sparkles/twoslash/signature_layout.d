@@ -330,6 +330,9 @@ private SigRow[] explode(scope const(char)[] text, in SignatureLayout sig,
 }
 
 /// `end`, pulled back over trailing spaces (never past `start`).
+/// `end` moved back over trailing spaces. An offset rather than a slice — and
+/// so not `std.string.stripRight`: every row here is a range into the original
+/// text, which is what keeps `srcStart`/`srcEnd` exact through the split.
 private uint trimEnd(scope const(char)[] text, uint start, uint end) pure nothrow @nogc
 {
     while (end > start && text[end - 1] == ' ')
