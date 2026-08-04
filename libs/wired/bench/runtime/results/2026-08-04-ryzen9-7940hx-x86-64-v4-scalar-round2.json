@@ -1,0 +1,3458 @@
+{
+  "columns": [
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "instr/iter",
+      "name": "instr",
+      "source": "perf"
+    },
+    {
+      "class": "quantitative",
+      "format": "count",
+      "header": "B/s",
+      "name": "B/s",
+      "source": "client"
+    },
+    {
+      "class": "diagnostic",
+      "format": "ratio",
+      "header": "IPC",
+      "name": "ipc",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "percent",
+      "header": "br-miss",
+      "name": "br-miss",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "percent",
+      "header": "cache-miss",
+      "name": "cache-miss",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "cycles/iter",
+      "name": "cycles",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "branch/iter",
+      "name": "branches",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "pgflt/iter",
+      "name": "page-faults",
+      "source": "perf"
+    }
+  ],
+  "meta": {
+    "arch": "x86_64",
+    "compiler": "LDC (front-end 2.111)",
+    "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics",
+    "date": "2026-08-04",
+    "hostname": "petar-kirov-minisforum-bd790i0-se-002",
+    "minSampleTimeMs": 2000,
+    "os": "linux",
+    "sampleCount": 32
+  },
+  "rows": [
+    {
+      "countIterations": 464,
+      "deviationNs": 81128,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 7234019,
+      "medianNs": 4119130.0,
+      "metrics": {
+        "B/s": 153312000.0,
+        "br-miss": 0.258555,
+        "branches": 12093100.0,
+        "cache-miss": null,
+        "cycles": 20835800.0,
+        "instr": 56894900.0,
+        "ipc": 2.73063,
+        "page-faults": 0
+      },
+      "minNs": 3944667,
+      "name": "std.json",
+      "samples": 464
+    },
+    {
+      "countIterations": 10901,
+      "deviationNs": 1764,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 616621,
+      "medianNs": 178317,
+      "metrics": {
+        "B/s": 3541520000.0,
+        "br-miss": 0.0657244,
+        "branches": 912919,
+        "cache-miss": null,
+        "cycles": 905987,
+        "instr": 4362810.0,
+        "ipc": 4.81554,
+        "page-faults": 0
+      },
+      "minNs": 171033,
+      "name": "wired-native",
+      "samples": 10901
+    },
+    {
+      "countIterations": 1497,
+      "deviationNs": 35841,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 5790210,
+      "medianNs": 1218462,
+      "metrics": {
+        "B/s": 518288000.0,
+        "br-miss": 0.438875,
+        "branches": 3425990.0,
+        "cache-miss": null,
+        "cycles": 6568370.0,
+        "instr": 16048000.0,
+        "ipc": 2.44322,
+        "page-faults": 0
+      },
+      "minNs": 1158765,
+      "name": "mir-ion",
+      "samples": 1497
+    },
+    {
+      "countIterations": 7768,
+      "deviationNs": 4920.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 3093621,
+      "medianNs": 212955,
+      "metrics": {
+        "B/s": 2965480000.0,
+        "br-miss": 0.522024,
+        "branches": 821265,
+        "cache-miss": null,
+        "cycles": 1163170.0,
+        "instr": 2856440.0,
+        "ipc": 2.45573,
+        "page-faults": 0.0169928
+      },
+      "minNs": 203636,
+      "name": "asdf",
+      "samples": 7768
+    },
+    {
+      "countIterations": 892,
+      "deviationNs": 57662,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 3610337,
+      "medianNs": 2171370.0,
+      "metrics": {
+        "B/s": 290836000.0,
+        "br-miss": 0.353095,
+        "branches": 8550920.0,
+        "cache-miss": null,
+        "cycles": 10971200.0,
+        "instr": 33318000.0,
+        "ipc": 3.03687,
+        "page-faults": 0
+      },
+      "minNs": 2054058,
+      "name": "jsoniopipe",
+      "samples": 892
+    },
+    {
+      "countIterations": 11992,
+      "deviationNs": 2175,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 681767,
+      "medianNs": 160182,
+      "metrics": {
+        "B/s": 3942480000.0,
+        "br-miss": 0.0858034,
+        "branches": 745044,
+        "cache-miss": null,
+        "cycles": 796399,
+        "instr": 2930820.0,
+        "ipc": 3.68009,
+        "page-faults": 0
+      },
+      "minNs": 153168,
+      "name": "yyjson",
+      "samples": 11992
+    },
+    {
+      "countIterations": 12146,
+      "deviationNs": 1392,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse-insitu"
+      },
+      "maxNs": 530903,
+      "medianNs": 159170,
+      "metrics": {
+        "B/s": 3967540000.0,
+        "br-miss": 0.11818,
+        "branches": 744962,
+        "cache-miss": null,
+        "cycles": 832612,
+        "instr": 2930500.0,
+        "ipc": 3.51965,
+        "page-faults": 0
+      },
+      "minNs": 152737,
+      "name": "yyjson",
+      "samples": 12146
+    },
+    {
+      "countIterations": 16344,
+      "deviationNs": 761,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 448703,
+      "medianNs": 118861,
+      "metrics": {
+        "B/s": 5313050000.0,
+        "br-miss": 0.10268,
+        "branches": 270970,
+        "cache-miss": null,
+        "cycles": 605980,
+        "instr": 2079320.0,
+        "ipc": 3.43134,
+        "page-faults": 0
+      },
+      "minNs": 114794,
+      "name": "simdjson-dom",
+      "samples": 16344
+    },
+    {
+      "countIterations": 13010,
+      "deviationNs": 1623,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 280056,
+      "medianNs": 150162,
+      "metrics": {
+        "B/s": 4205550000.0,
+        "br-miss": 0.112909,
+        "branches": 394311,
+        "cache-miss": null,
+        "cycles": 754101,
+        "instr": 2991820.0,
+        "ipc": 3.9674,
+        "page-faults": 0
+      },
+      "minNs": 146084,
+      "name": "simdjson-ondemand",
+      "samples": 13010
+    },
+    {
+      "countIterations": 2775,
+      "deviationNs": 6552,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 1303928,
+      "medianNs": 709100,
+      "metrics": {
+        "B/s": 890585000.0,
+        "br-miss": 0.164648,
+        "branches": 3337330.0,
+        "cache-miss": null,
+        "cycles": 3527450.0,
+        "instr": 16368400.0,
+        "ipc": 4.6403,
+        "page-faults": 0
+      },
+      "minNs": 675375,
+      "name": "rapidjson",
+      "samples": 2775
+    },
+    {
+      "countIterations": 3709,
+      "deviationNs": 6814,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse-insitu"
+      },
+      "maxNs": 1137133,
+      "medianNs": 527857,
+      "metrics": {
+        "B/s": 1196370000.0,
+        "br-miss": 0.771474,
+        "branches": 1417930.0,
+        "cache-miss": null,
+        "cycles": 2613650.0,
+        "instr": 7407100.0,
+        "ipc": 2.834,
+        "page-faults": 0
+      },
+      "minNs": 499672,
+      "name": "rapidjson",
+      "samples": 3709
+    },
+    {
+      "countIterations": 1289,
+      "deviationNs": 11833,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 4268447,
+      "medianNs": 1526361,
+      "metrics": {
+        "B/s": 413738000.0,
+        "br-miss": 1.66898,
+        "branches": 4464720.0,
+        "cache-miss": null,
+        "cycles": 7580720.0,
+        "instr": 21506100.0,
+        "ipc": 2.83695,
+        "page-faults": 0
+      },
+      "minNs": 1267166,
+      "name": "serde_json",
+      "samples": 1289
+    },
+    {
+      "countIterations": 3203,
+      "deviationNs": 4719,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 1451675,
+      "medianNs": 615578,
+      "metrics": {
+        "B/s": 1025890000.0,
+        "br-miss": 1.17436,
+        "branches": 1037970.0,
+        "cache-miss": null,
+        "cycles": 3108230.0,
+        "instr": 7993890.0,
+        "ipc": 2.57184,
+        "page-faults": 0
+      },
+      "minNs": 601691,
+      "name": "simd-json",
+      "samples": 3203
+    },
+    {
+      "countIterations": 6319,
+      "deviationNs": 3357,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "parse"
+      },
+      "maxNs": 995598,
+      "medianNs": 312459,
+      "metrics": {
+        "B/s": 2021110000.0,
+        "br-miss": 0.0870702,
+        "branches": 574220,
+        "cache-miss": null,
+        "cycles": 1568340.0,
+        "instr": 4408770.0,
+        "ipc": 2.81111,
+        "page-faults": 0
+      },
+      "minNs": 305755,
+      "name": "sonic-rs",
+      "samples": 6319
+    },
+    {
+      "countIterations": 163,
+      "deviationNs": 238294,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 15093747,
+      "medianNs": 12155599,
+      "metrics": {
+        "B/s": 142091000.0,
+        "br-miss": 0.173876,
+        "branches": 26486200.0,
+        "cache-miss": null,
+        "cycles": 61130200.0,
+        "instr": 120368000.0,
+        "ipc": 1.96904,
+        "page-faults": 0
+      },
+      "minNs": 11631629,
+      "name": "std.json",
+      "samples": 163
+    },
+    {
+      "countIterations": 4758,
+      "deviationNs": 6807.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 1170458,
+      "medianNs": 412377,
+      "metrics": {
+        "B/s": 4188410000.0,
+        "br-miss": 0.074625,
+        "branches": 2194260.0,
+        "cache-miss": null,
+        "cycles": 2064820.0,
+        "instr": 10408600.0,
+        "ipc": 5.04096,
+        "page-faults": 0
+      },
+      "minNs": 398806,
+      "name": "wired-native",
+      "samples": 4758
+    },
+    {
+      "countIterations": 480,
+      "deviationNs": 80977.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 8331776,
+      "medianNs": 3982296,
+      "metrics": {
+        "B/s": 433721000.0,
+        "br-miss": 0.140033,
+        "branches": 13087700.0,
+        "cache-miss": null,
+        "cycles": 20576800.0,
+        "instr": 58214500.0,
+        "ipc": 2.82913,
+        "page-faults": 0
+      },
+      "minNs": 3799174,
+      "name": "mir-ion",
+      "samples": 480
+    },
+    {
+      "countIterations": 2476,
+      "deviationNs": 33019,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 3340923,
+      "medianNs": 594933,
+      "metrics": {
+        "B/s": 2903190000.0,
+        "br-miss": 0.319786,
+        "branches": 3598750.0,
+        "cache-miss": null,
+        "cycles": 3508330.0,
+        "instr": 11947000.0,
+        "ipc": 3.40532,
+        "page-faults": 45.3942
+      },
+      "minNs": 548367,
+      "name": "asdf",
+      "samples": 2476
+    },
+    {
+      "countIterations": 303,
+      "deviationNs": 296707,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 8630067,
+      "medianNs": 6606368,
+      "metrics": {
+        "B/s": 261445000.0,
+        "br-miss": 0.588463,
+        "branches": 21453600.0,
+        "cache-miss": null,
+        "cycles": 32937400.0,
+        "instr": 89695400.0,
+        "ipc": 2.72321,
+        "page-faults": 0
+      },
+      "minNs": 5488994,
+      "name": "jsoniopipe",
+      "samples": 303
+    },
+    {
+      "countIterations": 4395,
+      "deviationNs": 4939,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 1732322,
+      "medianNs": 439986,
+      "metrics": {
+        "B/s": 3925590000.0,
+        "br-miss": 0.0872404,
+        "branches": 1905980.0,
+        "cache-miss": null,
+        "cycles": 2182660.0,
+        "instr": 8861790.0,
+        "ipc": 4.06008,
+        "page-faults": 0
+      },
+      "minNs": 421941,
+      "name": "yyjson",
+      "samples": 4395
+    },
+    {
+      "countIterations": 4422,
+      "deviationNs": 4549,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse-insitu"
+      },
+      "maxNs": 1329608,
+      "medianNs": 438543,
+      "metrics": {
+        "B/s": 3938510000.0,
+        "br-miss": 0.0897309,
+        "branches": 1905890.0,
+        "cache-miss": null,
+        "cycles": 2190660.0,
+        "instr": 8861430.0,
+        "ipc": 4.0451,
+        "page-faults": 0
+      },
+      "minNs": 422342,
+      "name": "yyjson",
+      "samples": 4422
+    },
+    {
+      "countIterations": 6285,
+      "deviationNs": 3347,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 567414,
+      "medianNs": 311256,
+      "metrics": {
+        "B/s": 5549140000.0,
+        "br-miss": 0.112332,
+        "branches": 891114,
+        "cache-miss": null,
+        "cycles": 1556450.0,
+        "instr": 6161120.0,
+        "ipc": 3.95844,
+        "page-faults": 0
+      },
+      "minNs": 301367,
+      "name": "simdjson-dom",
+      "samples": 6285
+    },
+    {
+      "countIterations": 4963,
+      "deviationNs": 3557,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 1003393,
+      "medianNs": 395049,
+      "metrics": {
+        "B/s": 4372130000.0,
+        "br-miss": 0.129131,
+        "branches": 1136450.0,
+        "cache-miss": null,
+        "cycles": 1965740.0,
+        "instr": 8105750.0,
+        "ipc": 4.12351,
+        "page-faults": 0
+      },
+      "minNs": 378987,
+      "name": "simdjson-ondemand",
+      "samples": 4963
+    },
+    {
+      "countIterations": 1795,
+      "deviationNs": 6393,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 1927331,
+      "medianNs": 1098628,
+      "metrics": {
+        "B/s": 1572150000.0,
+        "br-miss": 0.0693065,
+        "branches": 4613580.0,
+        "cache-miss": null,
+        "cycles": 5442280.0,
+        "instr": 23264000.0,
+        "ipc": 4.27467,
+        "page-faults": 0
+      },
+      "minNs": 1061847,
+      "name": "rapidjson",
+      "samples": 1795
+    },
+    {
+      "countIterations": 1773,
+      "deviationNs": 8427,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse-insitu"
+      },
+      "maxNs": 1637507,
+      "medianNs": 1114349,
+      "metrics": {
+        "B/s": 1549970000.0,
+        "br-miss": 0.114397,
+        "branches": 3878620.0,
+        "cache-miss": null,
+        "cycles": 5567080.0,
+        "instr": 19366100.0,
+        "ipc": 3.47868,
+        "page-faults": 0
+      },
+      "minNs": 1093498,
+      "name": "rapidjson",
+      "samples": 1773
+    },
+    {
+      "countIterations": 857,
+      "deviationNs": 40999,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 5670917,
+      "medianNs": 2210242,
+      "metrics": {
+        "B/s": 781455000.0,
+        "br-miss": 0.146057,
+        "branches": 9774760.0,
+        "cache-miss": null,
+        "cycles": 10985500.0,
+        "instr": 44650400.0,
+        "ipc": 4.06447,
+        "page-faults": 0
+      },
+      "minNs": 2124515,
+      "name": "serde_json",
+      "samples": 857
+    },
+    {
+      "countIterations": 1029,
+      "deviationNs": 29708,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 5440750,
+      "medianNs": 1866533,
+      "metrics": {
+        "B/s": 925354000.0,
+        "br-miss": 0.211033,
+        "branches": 4712190.0,
+        "cache-miss": null,
+        "cycles": 9320130.0,
+        "instr": 29926000.0,
+        "ipc": 3.2109,
+        "page-faults": 0
+      },
+      "minNs": 1805524,
+      "name": "simd-json",
+      "samples": 1029
+    },
+    {
+      "countIterations": 2170,
+      "deviationNs": 6663.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "parse"
+      },
+      "maxNs": 2932277,
+      "medianNs": 907582,
+      "metrics": {
+        "B/s": 1903080000.0,
+        "br-miss": 0.105298,
+        "branches": 1778820.0,
+        "cache-miss": null,
+        "cycles": 4611670.0,
+        "instr": 13732800.0,
+        "ipc": 2.97782,
+        "page-faults": 0.000921659
+      },
+      "minNs": 881876,
+      "name": "sonic-rs",
+      "samples": 2170
+    },
+    {
+      "countIterations": 65,
+      "deviationNs": 1152553,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 37499766,
+      "medianNs": 30082169,
+      "metrics": {
+        "B/s": 74830100.0,
+        "br-miss": 0.226156,
+        "branches": 98108700.0,
+        "cache-miss": null,
+        "cycles": 145921000.0,
+        "instr": 463595000.0,
+        "ipc": 3.17702,
+        "page-faults": 0.0307692
+      },
+      "minNs": 28382861,
+      "name": "std.json",
+      "samples": 65
+    },
+    {
+      "countIterations": 887,
+      "deviationNs": 38455,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 4340978,
+      "medianNs": 2158792,
+      "metrics": {
+        "B/s": 1042740000.0,
+        "br-miss": 0.547391,
+        "branches": 7763060.0,
+        "cache-miss": null,
+        "cycles": 10854800.0,
+        "instr": 47424800.0,
+        "ipc": 4.36903,
+        "page-faults": 0
+      },
+      "minNs": 2084657,
+      "name": "wired-native",
+      "samples": 887
+    },
+    {
+      "countIterations": 107,
+      "deviationNs": 651128,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 40501438,
+      "medianNs": 13898741,
+      "metrics": {
+        "B/s": 161961000.0,
+        "br-miss": 1.6093,
+        "branches": 32402100.0,
+        "cache-miss": null,
+        "cycles": 101015000.0,
+        "instr": 159825000.0,
+        "ipc": 1.58219,
+        "page-faults": 0
+      },
+      "minNs": 12372821,
+      "name": "mir-ion",
+      "samples": 107
+    },
+    {
+      "countIterations": 741,
+      "deviationNs": 129562,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 11572093,
+      "medianNs": 1000276,
+      "metrics": {
+        "B/s": 2250430000.0,
+        "br-miss": 0.199193,
+        "branches": 2841450.0,
+        "cache-miss": null,
+        "cycles": 4821400.0,
+        "instr": 12549800.0,
+        "ipc": 2.60293,
+        "page-faults": 0.0121457
+      },
+      "minNs": 865835,
+      "name": "asdf",
+      "samples": 741
+    },
+    {
+      "countIterations": 105,
+      "deviationNs": 322336,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 23696450,
+      "medianNs": 18506328,
+      "metrics": {
+        "B/s": 121637000.0,
+        "br-miss": 0.203936,
+        "branches": 69607400.0,
+        "cache-miss": null,
+        "cycles": 92637018,
+        "instr": 306469000.0,
+        "ipc": 3.30828,
+        "page-faults": 0.0761905
+      },
+      "minNs": 17834802,
+      "name": "jsoniopipe",
+      "samples": 105
+    },
+    {
+      "countIterations": 1176,
+      "deviationNs": 14818.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 2929472,
+      "medianNs": 1679620.0,
+      "metrics": {
+        "B/s": 1340210000.0,
+        "br-miss": 0.283214,
+        "branches": 5028500.0,
+        "cache-miss": null,
+        "cycles": 8324970.0,
+        "instr": 32082000.0,
+        "ipc": 3.8537,
+        "page-faults": 0
+      },
+      "minNs": 1614432,
+      "name": "yyjson",
+      "samples": 1176
+    },
+    {
+      "countIterations": 1175,
+      "deviationNs": 11863,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse-insitu"
+      },
+      "maxNs": 2871268,
+      "medianNs": 1681302,
+      "metrics": {
+        "B/s": 1338870000.0,
+        "br-miss": 0.280213,
+        "branches": 5028640.0,
+        "cache-miss": null,
+        "cycles": 8281900.0,
+        "instr": 32082400.0,
+        "ipc": 3.8738,
+        "page-faults": 0
+      },
+      "minNs": 1639421,
+      "name": "yyjson",
+      "samples": 1175
+    },
+    {
+      "countIterations": 1250,
+      "deviationNs": 14958.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 2332169,
+      "medianNs": 1581930.0,
+      "metrics": {
+        "B/s": 1422970000.0,
+        "br-miss": 0.294686,
+        "branches": 4588830.0,
+        "cache-miss": null,
+        "cycles": 7845000.0,
+        "instr": 33279600.0,
+        "ipc": 4.24215,
+        "page-faults": 0
+      },
+      "minNs": 1547843,
+      "name": "simdjson-dom",
+      "samples": 1250
+    },
+    {
+      "countIterations": 992,
+      "deviationNs": 12143.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 2739843,
+      "medianNs": 1999980.0,
+      "metrics": {
+        "B/s": 1125540000.0,
+        "br-miss": 0.215477,
+        "branches": 6250090.0,
+        "cache-miss": null,
+        "cycles": 9941320.0,
+        "instr": 43795100.0,
+        "ipc": 4.40537,
+        "page-faults": 0
+      },
+      "minNs": 1957961,
+      "name": "simdjson-ondemand",
+      "samples": 992
+    },
+    {
+      "countIterations": 314,
+      "deviationNs": 45293,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 7549724,
+      "medianNs": 6319910.0,
+      "metrics": {
+        "B/s": 356184000.0,
+        "br-miss": 0.647096,
+        "branches": 26870400.0,
+        "cache-miss": null,
+        "cycles": 31147400.0,
+        "instr": 143409000.0,
+        "ipc": 4.60421,
+        "page-faults": 0
+      },
+      "minNs": 6193324,
+      "name": "rapidjson",
+      "samples": 314
+    },
+    {
+      "countIterations": 354,
+      "deviationNs": 51255.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse-insitu"
+      },
+      "maxNs": 8189449,
+      "medianNs": 5580547,
+      "metrics": {
+        "B/s": 403375000.0,
+        "br-miss": 0.818047,
+        "branches": 21255000.0,
+        "cache-miss": null,
+        "cycles": 27498600.0,
+        "instr": 124901000.0,
+        "ipc": 4.54209,
+        "page-faults": 0
+      },
+      "minNs": 5427273,
+      "name": "rapidjson",
+      "samples": 354
+    },
+    {
+      "countIterations": 424,
+      "deviationNs": 41275.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 6716963,
+      "medianNs": 4670450,
+      "metrics": {
+        "B/s": 481977000.0,
+        "br-miss": 0.155822,
+        "branches": 15931500.0,
+        "cache-miss": null,
+        "cycles": 23038900.0,
+        "instr": 88823400.0,
+        "ipc": 3.85536,
+        "page-faults": 0
+      },
+      "minNs": 4576687,
+      "name": "serde_json",
+      "samples": 424
+    },
+    {
+      "countIterations": 373,
+      "deviationNs": 87711,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 7778339,
+      "medianNs": 5290557,
+      "metrics": {
+        "B/s": 425485000.0,
+        "br-miss": 0.145356,
+        "branches": 17001900.0,
+        "cache-miss": null,
+        "cycles": 26375800.0,
+        "instr": 101873000.0,
+        "ipc": 3.86235,
+        "page-faults": 0
+      },
+      "minNs": 5052984,
+      "name": "simd-json",
+      "samples": 373
+    },
+    {
+      "countIterations": 1091,
+      "deviationNs": 19698,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "parse"
+      },
+      "maxNs": 2916025,
+      "medianNs": 1791837,
+      "metrics": {
+        "B/s": 1256280000.0,
+        "br-miss": 0.234614,
+        "branches": 5911520.0,
+        "cache-miss": null,
+        "cycles": 8955600.0,
+        "instr": 34849800.0,
+        "ipc": 3.8914,
+        "page-faults": 0
+      },
+      "minNs": 1739686,
+      "name": "sonic-rs",
+      "samples": 1091
+    },
+    {
+      "countIterations": 4874,
+      "deviationNs": 6593,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 1265513,
+      "medianNs": 396642,
+      "metrics": {
+        "B/s": 164209000.0,
+        "br-miss": 0.211911,
+        "branches": 1273810.0,
+        "cache-miss": null,
+        "cycles": 2042920.0,
+        "instr": 6001940.0,
+        "ipc": 2.93792,
+        "page-faults": 0
+      },
+      "minNs": 380240,
+      "name": "std.json",
+      "samples": 4874
+    },
+    {
+      "countIterations": 100000,
+      "deviationNs": 40,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 160823,
+      "medianNs": 16812,
+      "metrics": {
+        "B/s": 3874140000.0,
+        "br-miss": 0.0933008,
+        "branches": 84456.9,
+        "cache-miss": null,
+        "cycles": 92168,
+        "instr": 418101,
+        "ipc": 4.53629,
+        "page-faults": 0
+      },
+      "minNs": 16352,
+      "name": "wired-native",
+      "samples": 115098
+    },
+    {
+      "countIterations": 14810,
+      "deviationNs": 2454,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 3710452,
+      "medianNs": 127618,
+      "metrics": {
+        "B/s": 510367000.0,
+        "br-miss": 0.23674,
+        "branches": 387803,
+        "cache-miss": null,
+        "cycles": 673015,
+        "instr": 1793540.0,
+        "ipc": 2.66494,
+        "page-faults": 0
+      },
+      "minNs": 121065,
+      "name": "mir-ion",
+      "samples": 14810
+    },
+    {
+      "countIterations": 87903,
+      "deviationNs": 280,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 2175885,
+      "medianNs": 20741,
+      "metrics": {
+        "B/s": 3140250000.0,
+        "br-miss": 0.501405,
+        "branches": 69321.3,
+        "cache-miss": null,
+        "cycles": 119503,
+        "instr": 249652,
+        "ipc": 2.08908,
+        "page-faults": 0.00160404
+      },
+      "minNs": 19928,
+      "name": "asdf",
+      "samples": 87903
+    },
+    {
+      "countIterations": 10048,
+      "deviationNs": 4139,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 1189876,
+      "medianNs": 191964,
+      "metrics": {
+        "B/s": 339293000.0,
+        "br-miss": 0.248209,
+        "branches": 832050,
+        "cache-miss": null,
+        "cycles": 979577,
+        "instr": 3102480.0,
+        "ipc": 3.16717,
+        "page-faults": 0
+      },
+      "minNs": 173208,
+      "name": "jsoniopipe",
+      "samples": 10048
+    },
+    {
+      "countIterations": 100000,
+      "deviationNs": 80,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 314703,
+      "medianNs": 14468,
+      "metrics": {
+        "B/s": 4501800000.0,
+        "br-miss": 0.118341,
+        "branches": 77929.2,
+        "cache-miss": null,
+        "cycles": 80134.5,
+        "instr": 289630,
+        "ipc": 3.6143,
+        "page-faults": 0
+      },
+      "minNs": 14138,
+      "name": "yyjson",
+      "samples": 134321
+    },
+    {
+      "countIterations": 100000,
+      "deviationNs": 90,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse-insitu"
+      },
+      "maxNs": 136927,
+      "medianNs": 14488,
+      "metrics": {
+        "B/s": 4495580000.0,
+        "br-miss": 0.126547,
+        "branches": 77854.3,
+        "cache-miss": null,
+        "cycles": 81685.5,
+        "instr": 289296,
+        "ipc": 3.54159,
+        "page-faults": 0
+      },
+      "minNs": 13887,
+      "name": "yyjson",
+      "samples": 133818
+    },
+    {
+      "countIterations": 100000,
+      "deviationNs": 71,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 315525,
+      "medianNs": 11913,
+      "metrics": {
+        "B/s": 5467300000.0,
+        "br-miss": 0.309724,
+        "branches": 24159.3,
+        "cache-miss": null,
+        "cycles": 67095.5,
+        "instr": 193477,
+        "ipc": 2.88361,
+        "page-faults": 0
+      },
+      "minNs": 11382,
+      "name": "simdjson-dom",
+      "samples": 164204
+    },
+    {
+      "countIterations": 100000,
+      "deviationNs": 61,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 190702,
+      "medianNs": 13617,
+      "metrics": {
+        "B/s": 4783140000.0,
+        "br-miss": 0.233197,
+        "branches": 35530.4,
+        "cache-miss": null,
+        "cycles": 75611.8,
+        "instr": 273837,
+        "ipc": 3.62162,
+        "page-faults": 0
+      },
+      "minNs": 13186,
+      "name": "simdjson-ondemand",
+      "samples": 140712
+    },
+    {
+      "countIterations": 25230,
+      "deviationNs": 621,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 397244,
+      "medianNs": 77491,
+      "metrics": {
+        "B/s": 840511000.0,
+        "br-miss": 0.200633,
+        "branches": 378498,
+        "cache-miss": null,
+        "cycles": 390133,
+        "instr": 1851500.0,
+        "ipc": 4.74582,
+        "page-faults": 0
+      },
+      "minNs": 73463,
+      "name": "rapidjson",
+      "samples": 25230
+    },
+    {
+      "countIterations": 45824,
+      "deviationNs": 170,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse-insitu"
+      },
+      "maxNs": 200741,
+      "medianNs": 42753,
+      "metrics": {
+        "B/s": 1523450000.0,
+        "br-miss": 0.182976,
+        "branches": 127733,
+        "cache-miss": null,
+        "cycles": 226545,
+        "instr": 681505,
+        "ipc": 3.00825,
+        "page-faults": 0
+      },
+      "minNs": 41721,
+      "name": "rapidjson",
+      "samples": 45824
+    },
+    {
+      "countIterations": 15649,
+      "deviationNs": 2344,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 437822,
+      "medianNs": 122879,
+      "metrics": {
+        "B/s": 530050000.0,
+        "br-miss": 1.63217,
+        "branches": 362031,
+        "cache-miss": null,
+        "cycles": 638774,
+        "instr": 1790790.0,
+        "ipc": 2.80348,
+        "page-faults": 0
+      },
+      "minNs": 116457,
+      "name": "serde_json",
+      "samples": 15649
+    },
+    {
+      "countIterations": 38795,
+      "deviationNs": 200,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 266488,
+      "medianNs": 50428,
+      "metrics": {
+        "B/s": 1291580000.0,
+        "br-miss": 0.297365,
+        "branches": 89918.4,
+        "cache-miss": null,
+        "cycles": 263310,
+        "instr": 704952,
+        "ipc": 2.67727,
+        "page-faults": 0
+      },
+      "minNs": 49446,
+      "name": "simd-json",
+      "samples": 38795
+    },
+    {
+      "countIterations": 71624,
+      "deviationNs": 120,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "parse"
+      },
+      "maxNs": 175823,
+      "medianNs": 27203,
+      "metrics": {
+        "B/s": 2394290000.0,
+        "br-miss": 0.184584,
+        "branches": 50739.2,
+        "cache-miss": null,
+        "cycles": 146931,
+        "instr": 400442,
+        "ipc": 2.72537,
+        "page-faults": 0
+      },
+      "minNs": 26552,
+      "name": "sonic-rs",
+      "samples": 71624
+    },
+    {
+      "countIterations": 4423,
+      "deviationNs": 8045,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "validate"
+      },
+      "maxNs": 1350679,
+      "medianNs": 430538,
+      "metrics": {
+        "B/s": 1466800000.0,
+        "br-miss": 0.137706,
+        "branches": 3516600.0,
+        "cache-miss": null,
+        "cycles": 2178820.0,
+        "instr": 11256700.0,
+        "ipc": 5.16643,
+        "page-faults": 0
+      },
+      "minNs": 409858,
+      "name": "wired-native",
+      "samples": 4423
+    },
+    {
+      "countIterations": 2127,
+      "deviationNs": 8948,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "validate"
+      },
+      "maxNs": 1503817,
+      "medianNs": 933678,
+      "metrics": {
+        "B/s": 676372000.0,
+        "br-miss": 0.420145,
+        "branches": 4577430.0,
+        "cache-miss": null,
+        "cycles": 4605950.0,
+        "instr": 15837200.0,
+        "ipc": 3.43842,
+        "page-faults": 0
+      },
+      "minNs": 861267,
+      "name": "jsoniopipe",
+      "samples": 2127
+    },
+    {
+      "countIterations": 20898,
+      "deviationNs": 440,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "validate"
+      },
+      "maxNs": 441349,
+      "medianNs": 92650,
+      "metrics": {
+        "B/s": 6816130000.0,
+        "br-miss": 0.104983,
+        "branches": 266571,
+        "cache-miss": null,
+        "cycles": 473943,
+        "instr": 1870750.0,
+        "ipc": 3.9472,
+        "page-faults": 0
+      },
+      "minNs": 89634,
+      "name": "simdjson-ondemand",
+      "samples": 20898
+    },
+    {
+      "countIterations": 3308,
+      "deviationNs": 9914.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "validate"
+      },
+      "maxNs": 1170959,
+      "medianNs": 595674,
+      "metrics": {
+        "B/s": 1060170000.0,
+        "br-miss": 0.175199,
+        "branches": 2920630.0,
+        "cache-miss": null,
+        "cycles": 2922080.0,
+        "instr": 14385400.0,
+        "ipc": 4.92299,
+        "page-faults": 0
+      },
+      "minNs": 563677,
+      "name": "rapidjson",
+      "samples": 3308
+    },
+    {
+      "countIterations": 8336,
+      "deviationNs": 4293.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "validate"
+      },
+      "maxNs": 465195,
+      "medianNs": 234692,
+      "metrics": {
+        "B/s": 2690830000.0,
+        "br-miss": 0.114045,
+        "branches": 1262890.0,
+        "cache-miss": null,
+        "cycles": 1175650.0,
+        "instr": 5779440.0,
+        "ipc": 4.91594,
+        "page-faults": 0
+      },
+      "minNs": 224928,
+      "name": "serde_json",
+      "samples": 8336
+    },
+    {
+      "countIterations": 6754,
+      "deviationNs": 2965,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "validate"
+      },
+      "maxNs": 1225555,
+      "medianNs": 290325,
+      "metrics": {
+        "B/s": 2175200000.0,
+        "br-miss": 0.149711,
+        "branches": 413342,
+        "cache-miss": null,
+        "cycles": 1466700.0,
+        "instr": 4265780.0,
+        "ipc": 2.90842,
+        "page-faults": 0
+      },
+      "minNs": 282029,
+      "name": "simd-json",
+      "samples": 6754
+    },
+    {
+      "countIterations": 6766,
+      "deviationNs": 3837,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "validate"
+      },
+      "maxNs": 593876,
+      "medianNs": 288281,
+      "metrics": {
+        "B/s": 2190620000.0,
+        "br-miss": 0.0923666,
+        "branches": 1030820.0,
+        "cache-miss": null,
+        "cycles": 1452160.0,
+        "instr": 5642940.0,
+        "ipc": 3.8859,
+        "page-faults": 0
+      },
+      "minNs": 277810,
+      "name": "sonic-rs",
+      "samples": 6766
+    },
+    {
+      "countIterations": 2139,
+      "deviationNs": 13577,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "validate"
+      },
+      "maxNs": 1580566,
+      "medianNs": 913909,
+      "metrics": {
+        "B/s": 1889910000.0,
+        "br-miss": 0.0331149,
+        "branches": 8255050.0,
+        "cache-miss": null,
+        "cycles": 4745190.0,
+        "instr": 24003800.0,
+        "ipc": 5.05855,
+        "page-faults": 0
+      },
+      "minNs": 864813,
+      "name": "wired-native",
+      "samples": 2139
+    },
+    {
+      "countIterations": 667,
+      "deviationNs": 45438,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "validate"
+      },
+      "maxNs": 3911714,
+      "medianNs": 3031109,
+      "metrics": {
+        "B/s": 569826000.0,
+        "br-miss": 0.550215,
+        "branches": 10794400.0,
+        "cache-miss": null,
+        "cycles": 13946200.0,
+        "instr": 43497000.0,
+        "ipc": 3.11892,
+        "page-faults": 0
+      },
+      "minNs": 2101590,
+      "name": "jsoniopipe",
+      "samples": 667
+    },
+    {
+      "countIterations": 7752,
+      "deviationNs": 2976.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "validate"
+      },
+      "maxNs": 553637,
+      "medianNs": 248884,
+      "metrics": {
+        "B/s": 6939780000.0,
+        "br-miss": 0.133633,
+        "branches": 719393,
+        "cache-miss": null,
+        "cycles": 1251950.0,
+        "instr": 4914110.0,
+        "ipc": 3.92518,
+        "page-faults": 0
+      },
+      "minNs": 239726,
+      "name": "simdjson-ondemand",
+      "samples": 7752
+    },
+    {
+      "countIterations": 2552,
+      "deviationNs": 7986,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "validate"
+      },
+      "maxNs": 1257607,
+      "medianNs": 776416,
+      "metrics": {
+        "B/s": 2224590000.0,
+        "br-miss": 0.0671414,
+        "branches": 3728100.0,
+        "cache-miss": null,
+        "cycles": 3852000.0,
+        "instr": 18614900.0,
+        "ipc": 4.83251,
+        "page-faults": 0
+      },
+      "minNs": 754318,
+      "name": "rapidjson",
+      "samples": 2552
+    },
+    {
+      "countIterations": 2344,
+      "deviationNs": 30735,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "validate"
+      },
+      "maxNs": 1514077,
+      "medianNs": 836784,
+      "metrics": {
+        "B/s": 2064100000.0,
+        "br-miss": 0.0496865,
+        "branches": 5364960.0,
+        "cache-miss": null,
+        "cycles": 4134700.0,
+        "instr": 20256800.0,
+        "ipc": 4.89922,
+        "page-faults": 0
+      },
+      "minNs": 725582,
+      "name": "serde_json",
+      "samples": 2344
+    },
+    {
+      "countIterations": 2627,
+      "deviationNs": 6351,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "validate"
+      },
+      "maxNs": 2824067,
+      "medianNs": 734028,
+      "metrics": {
+        "B/s": 2353050000.0,
+        "br-miss": 0.129389,
+        "branches": 1250410.0,
+        "cache-miss": null,
+        "cycles": 3689770.0,
+        "instr": 11919800.0,
+        "ipc": 3.23051,
+        "page-faults": 0
+      },
+      "minNs": 710693,
+      "name": "simd-json",
+      "samples": 2627
+    },
+    {
+      "countIterations": 2543,
+      "deviationNs": 6001,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "validate"
+      },
+      "maxNs": 1425404,
+      "medianNs": 770209,
+      "metrics": {
+        "B/s": 2242510000.0,
+        "br-miss": 0.0642742,
+        "branches": 2559530.0,
+        "cache-miss": null,
+        "cycles": 3909490.0,
+        "instr": 14820800.0,
+        "ipc": 3.79098,
+        "page-faults": 0
+      },
+      "minNs": 745331,
+      "name": "sonic-rs",
+      "samples": 2543
+    },
+    {
+      "countIterations": 1341,
+      "deviationNs": 29797,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "validate"
+      },
+      "maxNs": 2793477,
+      "medianNs": 1498015,
+      "metrics": {
+        "B/s": 1502690000.0,
+        "br-miss": 0.106069,
+        "branches": 11212300.0,
+        "cache-miss": null,
+        "cycles": 7236730.0,
+        "instr": 40308500.0,
+        "ipc": 5.56999,
+        "page-faults": 0
+      },
+      "minNs": 1263719,
+      "name": "wired-native",
+      "samples": 1341
+    },
+    {
+      "countIterations": 346,
+      "deviationNs": 144252,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "validate"
+      },
+      "maxNs": 6540129,
+      "medianNs": 5777370.0,
+      "metrics": {
+        "B/s": 389632000.0,
+        "br-miss": 0.0673633,
+        "branches": 21072500.0,
+        "cache-miss": null,
+        "cycles": 27934100.0,
+        "instr": 85824900.0,
+        "ipc": 3.0724,
+        "page-faults": 0
+      },
+      "minNs": 5237062,
+      "name": "jsoniopipe",
+      "samples": 346
+    },
+    {
+      "countIterations": 3050,
+      "deviationNs": 11201.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "validate"
+      },
+      "maxNs": 1365898,
+      "medianNs": 637470,
+      "metrics": {
+        "B/s": 3531220000.0,
+        "br-miss": 0.027681,
+        "branches": 2898350.0,
+        "cache-miss": null,
+        "cycles": 3203300.0,
+        "instr": 15628400.0,
+        "ipc": 4.87884,
+        "page-faults": 0
+      },
+      "minNs": 606620,
+      "name": "simdjson-ondemand",
+      "samples": 3050
+    },
+    {
+      "countIterations": 362,
+      "deviationNs": 75046.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "validate"
+      },
+      "maxNs": 8418725,
+      "medianNs": 5440790.0,
+      "metrics": {
+        "B/s": 413736000.0,
+        "br-miss": 0.68179,
+        "branches": 25458800.0,
+        "cache-miss": null,
+        "cycles": 26857000.0,
+        "instr": 132791000.0,
+        "ipc": 4.94438,
+        "page-faults": 0
+      },
+      "minNs": 5279084,
+      "name": "rapidjson",
+      "samples": 362
+    },
+    {
+      "countIterations": 1735,
+      "deviationNs": 7225,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "validate"
+      },
+      "maxNs": 1952040,
+      "medianNs": 1129528,
+      "metrics": {
+        "B/s": 1992910000.0,
+        "br-miss": 0.15846,
+        "branches": 7457300.0,
+        "cache-miss": null,
+        "cycles": 5631770.0,
+        "instr": 30499700.0,
+        "ipc": 5.41566,
+        "page-faults": 0
+      },
+      "minNs": 1102406,
+      "name": "serde_json",
+      "samples": 1735
+    },
+    {
+      "countIterations": 908,
+      "deviationNs": 22308,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "validate"
+      },
+      "maxNs": 3549719,
+      "medianNs": 2162020.0,
+      "metrics": {
+        "B/s": 1041180000.0,
+        "br-miss": 0.306055,
+        "branches": 5879340.0,
+        "cache-miss": null,
+        "cycles": 10682000.0,
+        "instr": 45312800.0,
+        "ipc": 4.24198,
+        "page-faults": 0
+      },
+      "minNs": 2117190,
+      "name": "simd-json",
+      "samples": 908
+    },
+    {
+      "countIterations": 1956,
+      "deviationNs": 5606.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "validate"
+      },
+      "maxNs": 1606567,
+      "medianNs": 1009530,
+      "metrics": {
+        "B/s": 2229800000.0,
+        "br-miss": 0.0150639,
+        "branches": 6753300.0,
+        "cache-miss": null,
+        "cycles": 4964820.0,
+        "instr": 29446700.0,
+        "ipc": 5.93106,
+        "page-faults": 0
+      },
+      "minNs": 995678,
+      "name": "sonic-rs",
+      "samples": 1956
+    },
+    {
+      "countIterations": 45707,
+      "deviationNs": 1011,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "validate"
+      },
+      "maxNs": 148669,
+      "medianNs": 42542,
+      "metrics": {
+        "B/s": 1531000000.0,
+        "br-miss": 0.140281,
+        "branches": 378024,
+        "cache-miss": null,
+        "cycles": 224865,
+        "instr": 1214610.0,
+        "ipc": 5.40153,
+        "page-faults": 0
+      },
+      "minNs": 40007,
+      "name": "wired-native",
+      "samples": 45707
+    },
+    {
+      "countIterations": 24067,
+      "deviationNs": 671,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "validate"
+      },
+      "maxNs": 1959173,
+      "medianNs": 83322,
+      "metrics": {
+        "B/s": 781690000.0,
+        "br-miss": 0.208526,
+        "branches": 469042,
+        "cache-miss": null,
+        "cycles": 415002,
+        "instr": 1539620.0,
+        "ipc": 3.7099,
+        "page-faults": 0
+      },
+      "minNs": 74235,
+      "name": "jsoniopipe",
+      "samples": 24067
+    },
+    {
+      "countIterations": 100000,
+      "deviationNs": 21,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "validate"
+      },
+      "maxNs": 61519,
+      "medianNs": 8276,
+      "metrics": {
+        "B/s": 7869990000.0,
+        "br-miss": 0.339523,
+        "branches": 24419.1,
+        "cache-miss": null,
+        "cycles": 49831.4,
+        "instr": 169937,
+        "ipc": 3.41024,
+        "page-faults": 0
+      },
+      "minNs": 8085,
+      "name": "simdjson-ondemand",
+      "samples": 236361
+    },
+    {
+      "countIterations": 28617,
+      "deviationNs": 2214,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "validate"
+      },
+      "maxNs": 1692874,
+      "medianNs": 66640,
+      "metrics": {
+        "B/s": 977371000.0,
+        "br-miss": 0.362829,
+        "branches": 337032,
+        "cache-miss": null,
+        "cycles": 352843,
+        "instr": 1663030.0,
+        "ipc": 4.71323,
+        "page-faults": 0
+      },
+      "minNs": 62371,
+      "name": "rapidjson",
+      "samples": 28617
+    },
+    {
+      "countIterations": 91046,
+      "deviationNs": 230,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "validate"
+      },
+      "maxNs": 249716,
+      "medianNs": 21181,
+      "metrics": {
+        "B/s": 3075020000.0,
+        "br-miss": 0.181492,
+        "branches": 109400,
+        "cache-miss": null,
+        "cycles": 118507,
+        "instr": 529213,
+        "ipc": 4.46568,
+        "page-faults": 0
+      },
+      "minNs": 20289,
+      "name": "serde_json",
+      "samples": 91046
+    },
+    {
+      "countIterations": 66666,
+      "deviationNs": 189,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "validate"
+      },
+      "maxNs": 214848,
+      "medianNs": 28585,
+      "metrics": {
+        "B/s": 2278540000.0,
+        "br-miss": 0.345352,
+        "branches": 38511.7,
+        "cache-miss": null,
+        "cycles": 156414,
+        "instr": 407475,
+        "ipc": 2.6051,
+        "page-faults": 0
+      },
+      "minNs": 28055,
+      "name": "simd-json",
+      "samples": 66666
+    },
+    {
+      "countIterations": 72234,
+      "deviationNs": 301,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "validate"
+      },
+      "maxNs": 608003,
+      "medianNs": 25540,
+      "metrics": {
+        "B/s": 2550200000.0,
+        "br-miss": 0.150894,
+        "branches": 93338.1,
+        "cache-miss": null,
+        "cycles": 141616,
+        "instr": 510570,
+        "ipc": 3.60531,
+        "page-faults": 0
+      },
+      "minNs": 24718,
+      "name": "sonic-rs",
+      "samples": 72234
+    },
+    {
+      "countIterations": 807,
+      "deviationNs": 259836,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": 12499477,
+      "medianNs": 2185854,
+      "metrics": {
+        "B/s": 216375000.0,
+        "br-miss": 0.279797,
+        "branches": 7274840.0,
+        "cache-miss": null,
+        "cycles": 10454900.0,
+        "instr": 35689000.0,
+        "ipc": 3.41361,
+        "page-faults": 0
+      },
+      "minNs": 1758172,
+      "name": "std.json",
+      "samples": 807
+    },
+    {
+      "countIterations": 4276,
+      "deviationNs": 9583.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": 1609422,
+      "medianNs": 446409,
+      "metrics": {
+        "B/s": 1045920000.0,
+        "br-miss": 0.301018,
+        "branches": 1950610.0,
+        "cache-miss": null,
+        "cycles": 2510650.0,
+        "instr": 6451570.0,
+        "ipc": 2.56968,
+        "page-faults": 0.00070159
+      },
+      "minNs": 404627,
+      "name": "wired-native",
+      "samples": 4276
+    },
+    {
+      "countIterations": 1823,
+      "deviationNs": 42773,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": 2644486,
+      "medianNs": 1015997,
+      "metrics": {
+        "B/s": 459555000.0,
+        "br-miss": 0.254418,
+        "branches": 4314320.0,
+        "cache-miss": null,
+        "cycles": 5103820.0,
+        "instr": 21743600.0,
+        "ipc": 4.26025,
+        "page-faults": 0
+      },
+      "minNs": 933166,
+      "name": "mir-ion",
+      "samples": 1823
+    },
+    {
+      "countIterations": 3262,
+      "deviationNs": 26441.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": 1710429,
+      "medianNs": 580620,
+      "metrics": {
+        "B/s": 804151000.0,
+        "br-miss": 0.243614,
+        "branches": 2580450.0,
+        "cache-miss": null,
+        "cycles": 3020550.0,
+        "instr": 9570680.0,
+        "ipc": 3.16853,
+        "page-faults": 0
+      },
+      "minNs": 497618,
+      "name": "asdf",
+      "samples": 3262
+    },
+    {
+      "deviationNs": null,
+      "error": "serialize output is not valid JSON: Illegal control character. (Line 2:0)",
+      "iterations": null,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": null,
+      "medianNs": null,
+      "metrics": {},
+      "minNs": null,
+      "name": "jsoniopipe",
+      "samples": null
+    },
+    {
+      "countIterations": 18835,
+      "deviationNs": 4218,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": 255958,
+      "medianNs": 98551,
+      "metrics": {
+        "B/s": 4737710000.0,
+        "br-miss": 0.41161,
+        "branches": 414974,
+        "cache-miss": null,
+        "cycles": 525465,
+        "instr": 2110450.0,
+        "ipc": 4.01636,
+        "page-faults": 0
+      },
+      "minNs": 87510,
+      "name": "yyjson",
+      "samples": 18835
+    },
+    {
+      "countIterations": 8112,
+      "deviationNs": 9794,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": 539781,
+      "medianNs": 236435,
+      "metrics": {
+        "B/s": 1974780000.0,
+        "br-miss": 0.239678,
+        "branches": 911925,
+        "cache-miss": null,
+        "cycles": 1192180.0,
+        "instr": 4177910.0,
+        "ipc": 3.50444,
+        "page-faults": 0
+      },
+      "minNs": 211732,
+      "name": "simdjson-dom",
+      "samples": 8112
+    },
+    {
+      "countIterations": 5212,
+      "deviationNs": 8902.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": 1286193,
+      "medianNs": 372440,
+      "metrics": {
+        "B/s": 1253640000.0,
+        "br-miss": 0.292029,
+        "branches": 1927640.0,
+        "cache-miss": null,
+        "cycles": 1909190.0,
+        "instr": 9312410.0,
+        "ipc": 4.87768,
+        "page-faults": 0
+      },
+      "minNs": 342587,
+      "name": "rapidjson",
+      "samples": 5212
+    },
+    {
+      "countIterations": 5698,
+      "deviationNs": 8196.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": 983915,
+      "medianNs": 338108,
+      "metrics": {
+        "B/s": 1380940000.0,
+        "br-miss": 0.309073,
+        "branches": 1185590.0,
+        "cache-miss": null,
+        "cycles": 1715500.0,
+        "instr": 5810810.0,
+        "ipc": 3.38724,
+        "page-faults": 0
+      },
+      "minNs": 303731,
+      "name": "serde_json",
+      "samples": 5698
+    },
+    {
+      "countIterations": 6057,
+      "deviationNs": 8056,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": 772213,
+      "medianNs": 320544,
+      "metrics": {
+        "B/s": 1456610000.0,
+        "br-miss": 1.30849,
+        "branches": 967896,
+        "cache-miss": null,
+        "cycles": 1698270.0,
+        "instr": 4177040.0,
+        "ipc": 2.45958,
+        "page-faults": 0
+      },
+      "minNs": 296447,
+      "name": "simd-json",
+      "samples": 6057
+    },
+    {
+      "countIterations": 9295,
+      "deviationNs": 11032,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "serialize"
+      },
+      "maxNs": 549920,
+      "medianNs": 205340,
+      "metrics": {
+        "B/s": 2273820000.0,
+        "br-miss": 0.435894,
+        "branches": 676185,
+        "cache-miss": null,
+        "cycles": 1019790.0,
+        "instr": 4170750.0,
+        "ipc": 4.08982,
+        "page-faults": 0
+      },
+      "minNs": 175682,
+      "name": "sonic-rs",
+      "samples": 9295
+    },
+    {
+      "countIterations": 647,
+      "deviationNs": 125885,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": 15614730,
+      "medianNs": 2672291,
+      "metrics": {
+        "B/s": 187371000.0,
+        "br-miss": 0.0803383,
+        "branches": 9303550.0,
+        "cache-miss": null,
+        "cycles": 13314000.0,
+        "instr": 45115400.0,
+        "ipc": 3.38856,
+        "page-faults": 0.0123648
+      },
+      "minNs": 2482151,
+      "name": "std.json",
+      "samples": 647
+    },
+    {
+      "countIterations": 3450,
+      "deviationNs": 44155.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": 2062183,
+      "medianNs": 542731,
+      "metrics": {
+        "B/s": 921818000.0,
+        "br-miss": 0.179841,
+        "branches": 2071090.0,
+        "cache-miss": null,
+        "cycles": 2912760.0,
+        "instr": 8567390.0,
+        "ipc": 2.94134,
+        "page-faults": 0
+      },
+      "minNs": 466638,
+      "name": "wired-native",
+      "samples": 3450
+    },
+    {
+      "countIterations": 1575,
+      "deviationNs": 91919,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": 3361352,
+      "medianNs": 1201949,
+      "metrics": {
+        "B/s": 416240000.0,
+        "br-miss": 0.180861,
+        "branches": 4248540.0,
+        "cache-miss": null,
+        "cycles": 6212070.0,
+        "instr": 23144700.0,
+        "ipc": 3.72577,
+        "page-faults": 0
+      },
+      "minNs": 1070324,
+      "name": "mir-ion",
+      "samples": 1575
+    },
+    {
+      "countIterations": 2054,
+      "deviationNs": 21801.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": 3024376,
+      "medianNs": 927104,
+      "metrics": {
+        "B/s": 539636000.0,
+        "br-miss": 0.116528,
+        "branches": 3205310.0,
+        "cache-miss": null,
+        "cycles": 4840300.0,
+        "instr": 13326100.0,
+        "ipc": 2.75316,
+        "page-faults": 0.0725414
+      },
+      "minNs": 881074,
+      "name": "asdf",
+      "samples": 2054
+    },
+    {
+      "deviationNs": null,
+      "error": "serialize output is not valid JSON: Found 'P' when expecting '}'. (Line 1:532820)",
+      "iterations": null,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": null,
+      "medianNs": null,
+      "metrics": {},
+      "minNs": null,
+      "name": "jsoniopipe",
+      "samples": null
+    },
+    {
+      "countIterations": 11298,
+      "deviationNs": 4629,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": 1240203,
+      "medianNs": 163778,
+      "metrics": {
+        "B/s": 3054730000.0,
+        "br-miss": 0.223074,
+        "branches": 662918,
+        "cache-miss": null,
+        "cycles": 889799,
+        "instr": 4059710.0,
+        "ipc": 4.5625,
+        "page-faults": 0
+      },
+      "minNs": 153799,
+      "name": "yyjson",
+      "samples": 11298
+    },
+    {
+      "countIterations": 4827,
+      "deviationNs": 24398,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": 1302655,
+      "medianNs": 383967,
+      "metrics": {
+        "B/s": 1302970000.0,
+        "br-miss": 0.105425,
+        "branches": 1565770.0,
+        "cache-miss": null,
+        "cycles": 1823570.0,
+        "instr": 7763320.0,
+        "ipc": 4.25721,
+        "page-faults": 0
+      },
+      "minNs": 340864,
+      "name": "simdjson-dom",
+      "samples": 4827
+    },
+    {
+      "countIterations": 3163,
+      "deviationNs": 30860,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": 1462707,
+      "medianNs": 587133,
+      "metrics": {
+        "B/s": 852105000.0,
+        "br-miss": 0.112276,
+        "branches": 2968990.0,
+        "cache-miss": null,
+        "cycles": 2946650.0,
+        "instr": 15459600.0,
+        "ipc": 5.24651,
+        "page-faults": 0
+      },
+      "minNs": 538027,
+      "name": "rapidjson",
+      "samples": 3163
+    },
+    {
+      "countIterations": 4236,
+      "deviationNs": 32458,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": 2416803,
+      "medianNs": 441324,
+      "metrics": {
+        "B/s": 1133630000.0,
+        "br-miss": 0.135151,
+        "branches": 1495690.0,
+        "cache-miss": null,
+        "cycles": 2171460.0,
+        "instr": 7854720.0,
+        "ipc": 3.61725,
+        "page-faults": 0
+      },
+      "minNs": 378938,
+      "name": "serde_json",
+      "samples": 4236
+    },
+    {
+      "countIterations": 4718,
+      "deviationNs": 15305,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": 1729035,
+      "medianNs": 395410,
+      "metrics": {
+        "B/s": 1265270000.0,
+        "br-miss": 0.176287,
+        "branches": 1464340.0,
+        "cache-miss": null,
+        "cycles": 2099670.0,
+        "instr": 6916200.0,
+        "ipc": 3.29395,
+        "page-faults": 0
+      },
+      "minNs": 358929,
+      "name": "simd-json",
+      "samples": 4718
+    },
+    {
+      "countIterations": 4326,
+      "deviationNs": 17940,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "citm_catalog",
+        "operation": "serialize"
+      },
+      "maxNs": 1603390,
+      "medianNs": 436424,
+      "metrics": {
+        "B/s": 1146360000.0,
+        "br-miss": 0.115924,
+        "branches": 1587980.0,
+        "cache-miss": null,
+        "cycles": 2218890.0,
+        "instr": 9353950.0,
+        "ipc": 4.21561,
+        "page-faults": 0
+      },
+      "minNs": 399557,
+      "name": "sonic-rs",
+      "samples": 4326
+    },
+    {
+      "countIterations": 93,
+      "deviationNs": 540933,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": 38266235,
+      "medianNs": 20078147,
+      "metrics": {
+        "B/s": 118274000.0,
+        "br-miss": 0.273745,
+        "branches": 49179300.0,
+        "cache-miss": null,
+        "cycles": 107735000.0,
+        "instr": 287220000.0,
+        "ipc": 2.66597,
+        "page-faults": 0.0752688
+      },
+      "minNs": 19221770,
+      "name": "std.json",
+      "samples": 93
+    },
+    {
+      "countIterations": 734,
+      "deviationNs": 95190.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": 5074466,
+      "medianNs": 2569860.0,
+      "metrics": {
+        "B/s": 813364000.0,
+        "br-miss": 0.34463,
+        "branches": 4977580.0,
+        "cache-miss": null,
+        "cycles": 12908700.0,
+        "instr": 39544600.0,
+        "ipc": 3.0634,
+        "page-faults": 0
+      },
+      "minNs": 2436161,
+      "name": "wired-native",
+      "samples": 734
+    },
+    {
+      "countIterations": 87,
+      "deviationNs": 760621,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": 31801713,
+      "medianNs": 21805759,
+      "metrics": {
+        "B/s": 95857000.0,
+        "br-miss": 0.20694,
+        "branches": 42839800.0,
+        "cache-miss": null,
+        "cycles": 113542000.0,
+        "instr": 263089000.0,
+        "ipc": 2.31711,
+        "page-faults": 0
+      },
+      "minNs": 20559844,
+      "name": "mir-ion",
+      "samples": 87
+    },
+    {
+      "countIterations": 680,
+      "deviationNs": 112760,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": 6337194,
+      "medianNs": 2798827,
+      "metrics": {
+        "B/s": 804275000.0,
+        "br-miss": 0.122937,
+        "branches": 7555030.0,
+        "cache-miss": null,
+        "cycles": 14660900.0,
+        "instr": 35541800.0,
+        "ipc": 2.42427,
+        "page-faults": 0.233824
+      },
+      "minNs": 2622314,
+      "name": "asdf",
+      "samples": 680
+    },
+    {
+      "deviationNs": null,
+      "error": "serialize output mismatch vs std.json: \u2026",
+      "iterations": null,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": null,
+      "medianNs": null,
+      "metrics": {},
+      "minNs": null,
+      "name": "jsoniopipe",
+      "samples": null
+    },
+    {
+      "countIterations": 897,
+      "deviationNs": 68834,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": 4478226,
+      "medianNs": 2164823,
+      "metrics": {
+        "B/s": 965545000.0,
+        "br-miss": 1.33474,
+        "branches": 3368260.0,
+        "cache-miss": null,
+        "cycles": 11576400.0,
+        "instr": 33632800.0,
+        "ipc": 2.90529,
+        "page-faults": 0
+      },
+      "minNs": 2068035,
+      "name": "yyjson",
+      "samples": 897
+    },
+    {
+      "countIterations": 362,
+      "deviationNs": 299253,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": 16402533,
+      "medianNs": 5344076,
+      "metrics": {
+        "B/s": 391144000.0,
+        "br-miss": 1.09302,
+        "branches": 11205000.0,
+        "cache-miss": null,
+        "cycles": 27611700.0,
+        "instr": 82664100.0,
+        "ipc": 2.9938,
+        "page-faults": 0
+      },
+      "minNs": 4909815,
+      "name": "simdjson-dom",
+      "samples": 362
+    },
+    {
+      "countIterations": 316,
+      "deviationNs": 217504,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": 9084731,
+      "medianNs": 6092510.0,
+      "metrics": {
+        "B/s": 343094000.0,
+        "br-miss": 1.70045,
+        "branches": 14769100.0,
+        "cache-miss": null,
+        "cycles": 31033400.0,
+        "instr": 89438300.0,
+        "ipc": 2.882,
+        "page-faults": 0
+      },
+      "minNs": 5808795,
+      "name": "rapidjson",
+      "samples": 316
+    },
+    {
+      "countIterations": 779,
+      "deviationNs": 91608,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": 5705213,
+      "medianNs": 2420160,
+      "metrics": {
+        "B/s": 852617000.0,
+        "br-miss": 0.395697,
+        "branches": 4758360.0,
+        "cache-miss": null,
+        "cycles": 12318700.0,
+        "instr": 32126200.0,
+        "ipc": 2.60792,
+        "page-faults": 0
+      },
+      "minNs": 2279717,
+      "name": "serde_json",
+      "samples": 779
+    },
+    {
+      "countIterations": 672,
+      "deviationNs": 122018,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": 5158990,
+      "medianNs": 2839770.0,
+      "metrics": {
+        "B/s": 736058000.0,
+        "br-miss": 0.576719,
+        "branches": 6361030.0,
+        "cache-miss": null,
+        "cycles": 14934500.0,
+        "instr": 45821000.0,
+        "ipc": 3.06813,
+        "page-faults": 0
+      },
+      "minNs": 2680607,
+      "name": "simd-json",
+      "samples": 672
+    },
+    {
+      "countIterations": 853,
+      "deviationNs": 29528,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "canada",
+        "operation": "serialize"
+      },
+      "maxNs": 3700402,
+      "medianNs": 2279436,
+      "metrics": {
+        "B/s": 916996000.0,
+        "br-miss": 0.336005,
+        "branches": 5442640.0,
+        "cache-miss": null,
+        "cycles": 12441600.0,
+        "instr": 33751200.0,
+        "ipc": 2.71276,
+        "page-faults": 0
+      },
+      "minNs": 2219690,
+      "name": "sonic-rs",
+      "samples": 853
+    },
+    {
+      "countIterations": 9935,
+      "deviationNs": 7255,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": 863731,
+      "medianNs": 188697,
+      "metrics": {
+        "B/s": 296020000.0,
+        "br-miss": 0.366764,
+        "branches": 768141,
+        "cache-miss": null,
+        "cycles": 1031160.0,
+        "instr": 3728410.0,
+        "ipc": 3.61576,
+        "page-faults": 0
+      },
+      "minNs": 171774,
+      "name": "std.json",
+      "samples": 9935
+    },
+    {
+      "countIterations": 34470,
+      "deviationNs": 1934,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": 813934,
+      "medianNs": 52632,
+      "metrics": {
+        "B/s": 1013240000.0,
+        "br-miss": 0.371059,
+        "branches": 227724,
+        "cache-miss": null,
+        "cycles": 288547,
+        "instr": 729162,
+        "ipc": 2.52702,
+        "page-faults": 0
+      },
+      "minNs": 47472,
+      "name": "wired-native",
+      "samples": 34470
+    },
+    {
+      "countIterations": 16564,
+      "deviationNs": 5952,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": 709471,
+      "medianNs": 113110,
+      "metrics": {
+        "B/s": 471479000.0,
+        "br-miss": 0.31326,
+        "branches": 495463,
+        "cache-miss": null,
+        "cycles": 595534,
+        "instr": 2466280.0,
+        "ipc": 4.14129,
+        "page-faults": 0.000905578
+      },
+      "minNs": 102089,
+      "name": "mir-ion",
+      "samples": 16564
+    },
+    {
+      "countIterations": 30396,
+      "deviationNs": 4228,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": 1130640,
+      "medianNs": 62451,
+      "metrics": {
+        "B/s": 853933000.0,
+        "br-miss": 0.248622,
+        "branches": 296651,
+        "cache-miss": null,
+        "cycles": 327930,
+        "instr": 1087110.0,
+        "ipc": 3.31508,
+        "page-faults": 0
+      },
+      "minNs": 52773,
+      "name": "asdf",
+      "samples": 30396
+    },
+    {
+      "deviationNs": null,
+      "error": "serialize output is not valid JSON: Illegal control character. (Line 2:0)",
+      "iterations": null,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": null,
+      "medianNs": null,
+      "metrics": {},
+      "minNs": null,
+      "name": "jsoniopipe",
+      "samples": null
+    },
+    {
+      "countIterations": 100000,
+      "deviationNs": 130,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": 164500,
+      "medianNs": 8637,
+      "metrics": {
+        "B/s": 6174480000.0,
+        "br-miss": 0.284886,
+        "branches": 36013.9,
+        "cache-miss": null,
+        "cycles": 54648,
+        "instr": 193787,
+        "ipc": 3.5461,
+        "page-faults": 0
+      },
+      "minNs": 8276,
+      "name": "yyjson",
+      "samples": 211697
+    },
+    {
+      "countIterations": 79187,
+      "deviationNs": 421,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": 517888,
+      "medianNs": 23095,
+      "metrics": {
+        "B/s": 2309110000.0,
+        "br-miss": 0.211596,
+        "branches": 103372,
+        "cache-miss": null,
+        "cycles": 130702,
+        "instr": 467568,
+        "ipc": 3.57736,
+        "page-faults": 0
+      },
+      "minNs": 22033,
+      "name": "simdjson-dom",
+      "samples": 79187
+    },
+    {
+      "countIterations": 59710,
+      "deviationNs": 1894,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": 138119,
+      "medianNs": 32443,
+      "metrics": {
+        "B/s": 1643780000.0,
+        "br-miss": 0.28962,
+        "branches": 174265,
+        "cache-miss": null,
+        "cycles": 173668,
+        "instr": 845010,
+        "ipc": 4.86566,
+        "page-faults": 0
+      },
+      "minNs": 28376,
+      "name": "rapidjson",
+      "samples": 59710
+    },
+    {
+      "countIterations": 57991,
+      "deviationNs": 2304,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": 552736,
+      "medianNs": 32604,
+      "metrics": {
+        "B/s": 1635660000.0,
+        "br-miss": 0.223769,
+        "branches": 134212,
+        "cache-miss": null,
+        "cycles": 169315,
+        "instr": 647257,
+        "ipc": 3.8228,
+        "page-faults": 0
+      },
+      "minNs": 29117,
+      "name": "serde_json",
+      "samples": 57991
+    },
+    {
+      "countIterations": 78488,
+      "deviationNs": 701,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": 594608,
+      "medianNs": 24017,
+      "metrics": {
+        "B/s": 2220470000.0,
+        "br-miss": 0.418888,
+        "branches": 91341.8,
+        "cache-miss": null,
+        "cycles": 137471,
+        "instr": 404371,
+        "ipc": 2.94151,
+        "page-faults": 0
+      },
+      "minNs": 22103,
+      "name": "simd-json",
+      "samples": 78488
+    },
+    {
+      "countIterations": 100000,
+      "deviationNs": 220,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "github_events",
+        "operation": "serialize"
+      },
+      "maxNs": 180021,
+      "medianNs": 17173,
+      "metrics": {
+        "B/s": 3105400000.0,
+        "br-miss": 0.267223,
+        "branches": 63660,
+        "cache-miss": null,
+        "cycles": 95491.4,
+        "instr": 400812,
+        "ipc": 4.19736,
+        "page-faults": 0
+      },
+      "minNs": 15941,
+      "name": "sonic-rs",
+      "samples": 108406
+    },
+    {
+      "countIterations": 314,
+      "deviationNs": 521816,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "decode"
+      },
+      "maxNs": 429181092,
+      "medianNs": 4723210.0,
+      "metrics": {
+        "B/s": 133704000.0,
+        "br-miss": 0.361792,
+        "branches": 12228300.0,
+        "cache-miss": null,
+        "cycles": 23630900.0,
+        "instr": 57486000.0,
+        "ipc": 2.43266,
+        "page-faults": 0
+      },
+      "minNs": 3963694,
+      "name": "std.json",
+      "samples": 314
+    },
+    {
+      "countIterations": 8207,
+      "deviationNs": 6903,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "decode"
+      },
+      "maxNs": 964737,
+      "medianNs": 229136,
+      "metrics": {
+        "B/s": 2756070000.0,
+        "br-miss": 0.0859488,
+        "branches": 1039310.0,
+        "cache-miss": null,
+        "cycles": 1154230.0,
+        "instr": 4881500.0,
+        "ipc": 4.22924,
+        "page-faults": 0
+      },
+      "minNs": 214698,
+      "name": "wired-native",
+      "samples": 8207
+    },
+    {
+      "countIterations": 5083,
+      "deviationNs": 8536,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "decode"
+      },
+      "maxNs": 1003493,
+      "medianNs": 374378,
+      "metrics": {
+        "B/s": 1686840000.0,
+        "br-miss": 0.280029,
+        "branches": 1068930.0,
+        "cache-miss": null,
+        "cycles": 1974760.0,
+        "instr": 5661300.0,
+        "ipc": 2.86684,
+        "page-faults": 0
+      },
+      "minNs": 357776,
+      "name": "mir-ion",
+      "samples": 5083
+    },
+    {
+      "countIterations": 5355,
+      "deviationNs": 29698,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "decode"
+      },
+      "maxNs": 2938469,
+      "medianNs": 317689,
+      "metrics": {
+        "B/s": 1987840000.0,
+        "br-miss": 0.519913,
+        "branches": 1085860.0,
+        "cache-miss": null,
+        "cycles": 1622680.0,
+        "instr": 3821500.0,
+        "ipc": 2.35506,
+        "page-faults": 0
+      },
+      "minNs": 273352,
+      "name": "asdf",
+      "samples": 5355
+    },
+    {
+      "countIterations": 10000,
+      "deviationNs": 6132,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "decode"
+      },
+      "maxNs": 3464973,
+      "medianNs": 190511,
+      "metrics": {
+        "B/s": 3314840000.0,
+        "br-miss": 0.186766,
+        "branches": 808008,
+        "cache-miss": null,
+        "cycles": 996633,
+        "instr": 3202120.0,
+        "ipc": 3.21294,
+        "page-faults": 0
+      },
+      "minNs": 175732,
+      "name": "yyjson",
+      "samples": 10000
+    },
+    {
+      "countIterations": 21304,
+      "deviationNs": 3787,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "decode"
+      },
+      "maxNs": 358348,
+      "medianNs": 90756,
+      "metrics": {
+        "B/s": 6958370000.0,
+        "br-miss": 0.24744,
+        "branches": 316305,
+        "cache-miss": null,
+        "cycles": 468465,
+        "instr": 1502970.0,
+        "ipc": 3.20829,
+        "page-faults": 0
+      },
+      "minNs": 82611,
+      "name": "simdjson-ondemand",
+      "samples": 21304
+    },
+    {
+      "countIterations": 4882,
+      "deviationNs": 17474,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "decode"
+      },
+      "maxNs": 1113306,
+      "medianNs": 385225,
+      "metrics": {
+        "B/s": 1639340000.0,
+        "br-miss": 0.515178,
+        "branches": 1735070.0,
+        "cache-miss": null,
+        "cycles": 2014520.0,
+        "instr": 7539310.0,
+        "ipc": 3.74248,
+        "page-faults": 0
+      },
+      "minNs": 324461,
+      "name": "serde_json",
+      "samples": 4882
+    },
+    {
+      "countIterations": 5422,
+      "deviationNs": 10189.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "decode"
+      },
+      "maxNs": 1815413,
+      "medianNs": 356714,
+      "metrics": {
+        "B/s": 1770360000.0,
+        "br-miss": 0.235138,
+        "branches": 580425,
+        "cache-miss": null,
+        "cycles": 1774870.0,
+        "instr": 5153280.0,
+        "ipc": 2.90346,
+        "page-faults": 0
+      },
+      "minNs": 337116,
+      "name": "simd-json",
+      "samples": 5422
+    },
+    {
+      "countIterations": 5933,
+      "deviationNs": 12174,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "twitter",
+        "operation": "decode"
+      },
+      "maxNs": 911534,
+      "medianNs": 315504,
+      "metrics": {
+        "B/s": 2001600000.0,
+        "br-miss": 0.139544,
+        "branches": 1080080.0,
+        "cache-miss": null,
+        "cycles": 1585560.0,
+        "instr": 5935120.0,
+        "ipc": 3.74323,
+        "page-faults": 0
+      },
+      "minNs": 298300,
+      "name": "sonic-rs",
+      "samples": 5933
+    }
+  ],
+  "schema": 2
+}
