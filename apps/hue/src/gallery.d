@@ -31,20 +31,45 @@ import source_set : SourceEntry, SourceSet;
 // ── one document → a content fragment ──────────────────────────────────────
 
 /**
-The plain-highlight fragment: a `<style>` block plus `<pre class="syn-root">` with
-CSS-class highlighting (`HTM1`). Shared by the single-file `--html` path and the
-gallery, so both emit byte-identical content.
+How a content fragment is built.
+
+The defaults are the self-contained single-file `--html` document: a `<style>`
+block carrying the whole theme, and no gutter (the page shell adds one). A
+$(I set) of pages — hundreds of pre-rendered listings — turns both off: the
+rules move to one shared stylesheet ([`web_assets`](./web_assets.d)) and the
+gutter is baked into the fragment because there is no shell to add it.
+*/
+struct FragmentOptions
+{
+    /// embed the theme stylesheet in a `<style>` block
+    bool embedStyles = true;
+
+    /// number the physical lines in place (the `<span class="ln">` gutter),
+    /// recording the gutter width on the `<pre>` as `--hue-gutter`
+    bool gutter;
+}
+
+/// The custom property a gutter-carrying fragment records its width in, so the
+/// shared stylesheet can lay the numbers out without a per-page `<style>`.
+enum gutterProperty = "--hue-gutter:";
+
+/**
+The plain-highlight fragment: (optionally) a `<style>` block plus
+`<pre class="syn-root">` with CSS-class highlighting (`HTM1`). Shared by the
+single-file `--html` path and the gallery, so both emit byte-identical content.
 */
 string plainFragment(scope const(char)[] source, scope const(HighlightEvent)[] events,
-    in ResolvedTheme theme) @system
+    in ResolvedTheme theme, in FragmentOptions opt = FragmentOptions.init) @system
 {
-    SmallBuffer!char output;
-    output ~= "<style>\npre { padding: 1em; }\n";
-    writeThemeStylesheet(theme, output);
-    output ~= "</style>\n<pre class=\"syn-root\"><code>";
-    renderHtml(source, events, theme, output, HtmlOptions(mode: HtmlMode.cssClasses));
-    output ~= "</code></pre>\n";
-    return output[].idup;
+    SmallBuffer!char styles;
+    if (opt.embedStyles)
+    {
+        styles ~= "pre { padding: 1em; }\n";
+        writeThemeStylesheet(theme, styles);
+    }
+    SmallBuffer!char code;
+    renderHtml(source, events, theme, code, HtmlOptions(mode: HtmlMode.cssClasses));
+    return assembleFragment(styles[], "syn-root", code[], opt);
 }
 
 /**
@@ -53,16 +78,51 @@ stylesheet, then `<pre class="syn-root twoslash">` with the decorated code
 (`TWM2`).
 */
 string twoslashFragment(in TwoslashReturn tw, scope const(HighlightEvent)[] events,
-    in ResolvedTheme theme, ref TsConfigCache cache) @system
+    in ResolvedTheme theme, ref TsConfigCache cache,
+    in FragmentOptions opt = FragmentOptions.init) @system
 {
-    SmallBuffer!char output;
-    output ~= "<style>\n";
-    writeThemeStylesheet(theme, output);
-    writeTwoslashStyles(output);
-    output ~= "</style>\n<pre class=\"syn-root twoslash\"><code>";
-    renderTwoslashHtml(tw, events, theme, cache, output);
-    output ~= "</code></pre>\n";
-    return output[].idup;
+    SmallBuffer!char styles;
+    if (opt.embedStyles)
+    {
+        writeThemeStylesheet(theme, styles);
+        writeTwoslashStyles(styles);
+    }
+    SmallBuffer!char code;
+    renderTwoslashHtml(tw, events, theme, cache, code);
+    return assembleFragment(styles[], "syn-root twoslash", code[], opt);
+}
+
+/// Wraps rendered `code` in the fragment's `<style>` + `<pre class="…"><code>`
+/// shell. With `opt.gutter` the lines are numbered here and the width is
+/// recorded inline, since a fragment used outside $(LREF pageShell) has no
+/// stylesheet of its own to put it in.
+private string assembleFragment(scope const(char)[] styles, string preClass,
+    scope const(char)[] code, in FragmentOptions opt) @safe pure
+{
+    auto w = appender!string;
+    if (styles.length)
+    {
+        w ~= "<style>\n";
+        w ~= styles;
+        w ~= "</style>\n";
+    }
+    w ~= "<pre class=\"";
+    w ~= preClass;
+    w ~= "\"";
+    if (!opt.gutter)
+    {
+        w ~= "><code>";
+        w ~= code;
+    }
+    else
+    {
+        size_t lines;
+        const inner = relayoutGutter(code, lines);
+        w ~= text(" style=\"", gutterProperty, gutterWidth(lines), "ch\"><code>");
+        w ~= inner;
+    }
+    w ~= "</code></pre>\n";
+    return w[];
 }
 
 // ── the physical-line gutter (GAL4) ────────────────────────────────────────
@@ -224,6 +284,23 @@ rather than corrupts.
 string withLineNumbers(string fragment, out int gutterCols) @safe pure
 {
     gutterCols = 3;
+    // Already numbered by `FragmentOptions.gutter`: re-wrapping would nest the
+    // `.ln` spans and count every line twice. Take the width it recorded.
+    const rec = fragment.indexOf(gutterProperty);
+    if (rec >= 0)
+    {
+        int n;
+        foreach (char c; fragment[cast(size_t) rec + gutterProperty.length .. $])
+        {
+            if (c < '0' || c > '9')
+                break;
+            n = n * 10 + (c - '0');
+        }
+        if (n > 0)
+            gutterCols = n;
+        return fragment;
+    }
+
     const preAt = fragment.indexOf("<pre class=\"syn-root");
     if (preAt < 0)
         return fragment;
@@ -237,9 +314,14 @@ string withLineNumbers(string fragment, out int gutterCols) @safe pure
 
     size_t lines;
     const inner = relayoutGutter(fragment[innerStart .. cast(size_t) closeAt], lines);
-    gutterCols = cast(int)(digits(lines) + 2); // digits + 1ch number-gap + 1ch pad
+    gutterCols = gutterWidth(lines);
     return fragment[0 .. innerStart] ~ inner ~ fragment[cast(size_t) closeAt .. $];
 }
+
+/// The gutter width in `ch` for a `lines`-line document: the widest number
+/// plus a 1ch number-gap and a 1ch pad.
+private int gutterWidth(size_t lines) @safe pure nothrow @nogc
+    => cast(int)(digits(lines) + 2);
 
 /// Decimal digit count of `n` (`0` has one digit).
 private size_t digits(size_t n) @safe pure nothrow @nogc
@@ -262,6 +344,21 @@ struct GalleryOptions
     string heading = "hue gallery";                 /// the index's `<h1>`
     string indexTitle;                              /// the index's `<title>` (default: `heading`)
     string blurb = "Rendered by <code>hue</code>."; /// the index's lead paragraph (raw HTML)
+
+    /**
+    The page surround (`GAL6`) — pass $(LREF themeBackground) of the theme the
+    fragments were rendered with, so the pane and the surround are one surface.
+
+    This used to be scraped back out of each fragment's own `<style>` block. A
+    fragment need not carry one any more (`FragmentOptions.embedStyles`), and a
+    scraper that silently falls back to a hardcoded colour turns that into a
+    visual regression no test catches — so the caller states it.
+    */
+    string background = defaultBackground;
+
+    /// linked from `<head>` when set — the shared stylesheet the fragments
+    /// leave their rules to
+    string stylesheetHref;
 }
 
 /**
@@ -277,7 +374,7 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
 {
     int gutter;
     const body_ = withLineNumbers(fragment, gutter);
-    const bg = synRootBackground(fragment);
+    const bg = opt.background;
 
     auto w = appender!string;
     w ~= "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n";
@@ -286,7 +383,14 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     escapeInto(w, opt.titlePrefix);
     w ~= " · ";
     escapeInto(w, name);
-    w ~= "</title>\n<style>\n";
+    w ~= "</title>\n";
+    if (opt.stylesheetHref.length)
+    {
+        w ~= "<link rel=\"stylesheet\" href=\"";
+        escapeInto(w, opt.stylesheetHref);
+        w ~= "\">\n";
+    }
+    w ~= "<style>\n";
     w ~= "  html, body { height: 100%; }\n";
     w ~= text("  body { margin: 0; background: ", bg, "; color: #cdd6f4;\n");
     w ~= "         font: 14px/1.5 system-ui, sans-serif;\n";
@@ -422,39 +526,32 @@ string galleryIndex(scope const SourceEntry[] entries,
     return w[];
 }
 
-/// The `.syn-root` background color declared in `fragment`'s theme stylesheet, so
-/// the page surround matches the code pane (`GAL6`); falls back to the default
-/// dark backdrop when the rule is absent.
-private string synRootBackground(scope const(char)[] fragment) @safe pure
-{
-    enum fallback = "#1e1e2e";
-    const at = fragment.indexOf(".syn-root");
-    if (at < 0)
-        return fallback;
-    const open = fragment[cast(size_t) at .. $].indexOf('{');
-    if (open < 0)
-        return fallback;
-    const blockStart = cast(size_t) at + cast(size_t) open;
-    const close = fragment[blockStart .. $].indexOf('}');
-    const block = close < 0 ? fragment[blockStart .. $]
-        : fragment[blockStart .. blockStart + cast(size_t) close];
-    const bg = block.indexOf("background-color:");
-    if (bg < 0)
-        return fallback;
-    auto rest = block[cast(size_t) bg + "background-color:".length .. $];
-    size_t s;
-    while (s < rest.length && rest[s] == ' ')
-        ++s;
-    if (s >= rest.length || rest[s] != '#')
-        return fallback;
-    size_t e = s + 1;
-    while (e < rest.length && isHexDigit(rest[e]))
-        ++e;
-    return rest[s .. e].idup;
-}
+/// The backdrop for a theme that declares no background of its own.
+enum defaultBackground = "#1e1e2e";
 
-private bool isHexDigit(char c) @safe pure nothrow @nogc
-    => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+/**
+The background `theme`'s stylesheet puts on `.syn-root`, as `#rrggbb` — the
+colour a page surround must use to be one surface with the code pane (`GAL6`);
+$(LREF defaultBackground) when the theme declares none.
+
+It asks `sparkles:syntax`'s `concreteRgb` rather than re-deciding which colours
+produce a declaration, so this can never disagree with the emitted CSS.
+*/
+string themeBackground(in ResolvedTheme theme) @safe pure
+{
+    import sparkles.base.text.writers : writeHexByte;
+
+    RgbColor rgb;
+    if (!concreteRgb(theme.defaults.bg, rgb))
+        return defaultBackground;
+
+    auto w = appender!string;
+    w ~= '#';
+    writeHexByte(w, rgb.r);
+    writeHexByte(w, rgb.g);
+    writeHexByte(w, rgb.b);
+    return w[];
+}
 
 /// Escapes `&`, `<`, `>`, `"` into `w`.
 private void escapeInto(ref Appender!string w, scope const(char)[] s) @safe pure
@@ -515,6 +612,38 @@ size_t writeGallery(in SourceSet set, string outDir, in GalleryOptions opt,
 }
 
 // ---------------------------------------------------------------------------
+
+@("gallery.plainFragment.embedStylesAndGutter")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+
+    const theme = resolveTheme(Theme(name: "t",
+        defaultBg: Color.fromRgb(0x1e, 0x1e, 0x2e),
+        rules: [ThemeRule("keyword", StyleSpec(fg: Color.fromRgb(0xcb, 0xa6, 0xf7)))]),
+        LabelSet.standard());
+    const events = [HighlightEvent.sourceSpan(0, 4)];
+
+    // The default is the self-contained document, unchanged.
+    const embedded = plainFragment("a\nb\n", events, theme);
+    assert(embedded.startsWith("<style>\npre { padding: 1em; }\n"), embedded);
+    assert(embedded.canFind("<pre class=\"syn-root\"><code>a\nb\n</code></pre>\n"), embedded);
+    assert(!embedded.canFind("class=\"ln\""), embedded);
+
+    // A shared stylesheet carries the rules: no `<style>` block survives.
+    const bare = plainFragment("a\nb\n", events, theme, FragmentOptions(embedStyles: false));
+    assert(!bare.canFind("<style"), bare);
+    assert(bare == "<pre class=\"syn-root\"><code>a\nb\n</code></pre>\n", bare);
+
+    // With no page shell to add one, the gutter is baked in and its width
+    // recorded inline — 2 lines ⇒ 1 digit + 2.
+    const numbered = plainFragment("a\nb\n", events, theme,
+        FragmentOptions(embedStyles: false, gutter: true));
+    assert(numbered == "<pre class=\"syn-root\" style=\"--hue-gutter:3ch\"><code>"
+        ~ "<span class=\"ln\">a</span>\n<span class=\"ln\">b</span>\n"
+        ~ "</code></pre>\n", numbered);
+}
 
 @("gallery.relayoutGutter.physicalLinesAndBlanks")
 @safe pure
@@ -606,6 +735,63 @@ unittest
     assert(withLineNumbers("<p>nope</p>", g2) == "<p>nope</p>");
 }
 
+/// A fragment that already carries the gutter is left alone — nesting `.ln`
+/// spans would number every line twice — and its recorded width is reused.
+@("gallery.withLineNumbers.idempotentOverAGutterFragment")
+@safe pure
+unittest
+{
+    const frag = "<pre class=\"syn-root\" style=\"--hue-gutter:4ch\"><code>"
+        ~ "<span class=\"ln\">a</span>\n</code></pre>\n";
+    int gutter;
+    assert(withLineNumbers(frag, gutter) is frag);
+    assert(gutter == 4);
+}
+
+@("gallery.themeBackground.matchesTheEmittedRule")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // The colour must be the one the stylesheet actually writes on `.syn-root`
+    // — the invariant the old fragment-scraping `synRootBackground` stood for.
+    const theme = Theme(name: "t", defaultFg: Color.fromRgb(0xcd, 0xd6, 0xf4),
+        defaultBg: Color.fromRgb(0x1e, 0x1e, 0x2e));
+    const resolved = resolveTheme(theme, LabelSet.fromNames(["keyword"]));
+    auto sheet = appender!string;
+    writeThemeStylesheet(resolved, sheet);
+    assert(sheet[].canFind("background-color:" ~ themeBackground(resolved)), sheet[]);
+
+    // A theme with no background of its own falls back rather than inventing one
+    // (its stylesheet declares no `background-color` to match).
+    const bare = resolveTheme(Theme(name: "b"), LabelSet.fromNames(["keyword"]));
+    assert(themeBackground(bare) == defaultBackground);
+
+    // A palette colour concretizes exactly as the CSS does.
+    const pal = resolveTheme(Theme(name: "p", defaultBg: Color.fromPalette(8)),
+        LabelSet.fromNames(["keyword"]));
+    auto palSheet = appender!string;
+    writeThemeStylesheet(pal, palSheet);
+    assert(palSheet[].canFind("background-color:" ~ themeBackground(pal)), palSheet[]);
+}
+
+@("gallery.pageShell.linksASharedStylesheet")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const frag = "<pre class=\"syn-root\"><code>x\n</code></pre>\n";
+    const page = pageShell("a", "", frag, "", "",
+        GalleryOptions(background: "#ffffff", stylesheetHref: "assets/hue.css"));
+    assert(page.canFind("<link rel=\"stylesheet\" href=\"assets/hue.css\">"), page);
+    assert(page.canFind("background: #ffffff"), page);
+
+    // Absent, no link is emitted at all.
+    assert(!pageShell("a", "", frag, "", "").canFind("<link"));
+}
+
 @("gallery.pageShell.navSummaryAndTheme")
 @safe pure
 unittest
@@ -615,7 +801,7 @@ unittest
     const frag = "<style>\n.syn-root { background-color: #123456; }\n</style>\n"
         ~ "<pre class=\"syn-root\"><code>x\n</code></pre>\n";
     const page = pageShell("02-query", "hover×2 query", frag, "01-hover", "03-completions",
-        GalleryOptions(titlePrefix: "twoslash"));
+        GalleryOptions(titlePrefix: "twoslash", background: "#123456"));
 
     assert(page.canFind("<title>twoslash · 02-query</title>"), page);
     assert(page.canFind("<b>02-query</b>"), page);
