@@ -195,7 +195,7 @@ because getting it backwards silently moves a `Returns:` chip into the body.
 tooltip is anywhere but that site. `SYMBOL_LINK` renders the name as code and
 drops the target.
 
-`PRE` note (dlang.org, not a compiler builtin): `$(PRE …)` is `<pre>` — its
+`PRE` note (dlang.org, not a compiler builtin; the residue below is what `DOC5` exists to remove): `$(PRE …)` is `<pre>` — its
 line structure and indentation _are_ the content, and Phobos writes the
 `std.conv.to` grammars with it. Undefined, it fell through to
 `DDOC_UNDEFINED_MACRO` and the whole block dissolved into one line of prose. It
