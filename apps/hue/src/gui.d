@@ -2305,7 +2305,7 @@ int runGui(
             const barY = screenH - cellH;
             chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
             auto lineText = inp.mode == Mode.search
-                ? text("/", inp.query[], "   ", vm.matches.length, " vm.matches")
+                ? text("/", inp.query[], "   ", vm.matches.length, " matches")
                 : text(":", inp.query[]);
             drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), vm.pageBg);
         }
