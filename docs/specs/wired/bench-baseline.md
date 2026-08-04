@@ -602,6 +602,79 @@ which is not reachable by ±2 % scalar deltas. The remaining path is the
 fused redesign with SIMD digit/string scanning as a component
 (§ "Canada anatomy", consequence paragraph).
 
+### Scalar round 4: subtree kernels and grammar-boundary fusion
+
+Round 3's conclusion was too local: the general number kernel had reached its
+scalar floor, but a profitable design did not require entering that kernel for
+every coordinate. Round 4 moved dominance out of the generic grammar instead.
+The canonical result is
+[the scalar-round-4 snapshot](../../../libs/wired/bench/runtime/results/2026-08-04-ryzen9-7940hx-x86-64-v4-scalar-round4.json)
+(2 000 ms budget, immutable-input `parse`, `wired-native` and yyjson in one
+run):
+
+| corpus / op         | wired GB/s | yyjson GB/s |  ratio | wired instructions | yyjson instructions |
+| ------------------- | ---------: | ----------: | -----: | -----------------: | ------------------: |
+| canada parse        |      1.549 |       1.334 | 1.161× |            25.84 M |             32.08 M |
+| citm_catalog parse  |      4.153 |       3.924 | 1.058× |             9.96 M |              8.86 M |
+| github_events parse |      4.043 |       4.221 | 0.958× |           373.22 k |            289.23 k |
+| twitter parse       |      3.747 |       3.856 | 0.972× |             3.92 M |              2.93 M |
+| twitter decode      |      3.214 |       3.410 | 0.942× |             4.25 M |              3.20 M |
+
+The four-corpus parse throughput geomean is **1.034× yyjson**. The two small
+string-heavy rows remain within 4.3%; their wall ordering moves between runs
+as yyjson's documented host swing changes (wired won both in separate
+same-code measurements), so the snapshot above remains the comparison of
+record. Canada changed category entirely: round 3 was 0.815× / 44.57 M
+instructions; round 4 is **1.161× / 25.84 M**.
+
+Shipped:
+
+- **A nested numeric-array subtree kernel.** A minified `[[` lookahead routes
+  GeoJSON coordinate matrices into one out-of-line scalar grammar loop. It
+  keeps threaded-parent state local, inlines the dominant short-decimal lane,
+  and amortizes its call frame over the whole subtree. Any other JSON shape or
+  malformed token returns with the caller's arena cursor unchanged, so the
+  general grammar reparses safely. Calling it for flat arrays or broader
+  candidates lost on string corpora; the narrow `[[` gate is load-bearing.
+- **A fused short-decimal lane.** One to three integer digits plus up to 16
+  fraction digits and no exponent are accumulated by two scalar SWAR gulps and
+  sent to the existing exact `tryFastDouble` conversion. Literal `-8`/`-16`
+  exponent instantiations let LLVM specialize the conversion. It is available
+  to the general number scanner, but the matrix kernel is what removes
+  canada's per-number grammar/call glue.
+- **Pointer arena state.** The append cursor and temporary threaded parent are
+  `JsonCell*` values, possible because the arena is pre-sized and never moves.
+  Closing a container is pointer subtraction, with its object/array bit cached
+  in the grammar state. This removed repeated base-plus-index formation without
+  adding live bounds.
+- **Four scalar string words per iteration.** `scanStringBody` probes 32 bytes
+  as four ordered 64-bit words. It remains scalar—no vector type or explicit
+  SIMD intrinsic—and preserves the first-stop and UTF-8 semantics. Extending
+  the same shape to eight words increased work on ordinary strings and lost.
+- **Object grammar boundaries fused to their conventional spelling.** An
+  immediate colon bypasses the whitespace scanner, exactly one post-colon
+  space bypasses its eight-space probe, and `afterValue` keeps its first
+  delimiter load live across the immediate comma/close path. All legal RFC
+  whitespace spellings retain the original fallback. Together these changes
+  moved twitter from about 4.12 M to **3.92 M** instructions and reduced citm
+  too.
+- **Typed field dispatch without libc `memcmp`.** Native struct decode switches
+  first on key length, then emits fixed-size scalar word comparisons for the
+  compile-time field names. Its recursive result now carries only failure
+  status plus value; the full `JsonError` occupies one caller-owned slot and is
+  populated only on failure. In the final decode profile, parser symbols still
+  account for ~92% of retired instructions; codec work is no longer the main
+  gap.
+
+Rejected after measuring (round 4): widening the string probe to 64 bytes;
+calling the numeric subtree kernel for flat arrays; deriving object state from
+the parent tag or tagging it into the parent pointer; replacing the exact
+whitespace kernel with 4-byte tails/newline loops; compact keys that require
+`strlen` during decode; and combining arena/pool allocation. Several reduced
+instructions but also reduced IPC enough to lose wall time. The accepted
+grammar-boundary fast paths are deliberately local rather than changes to
+`skipWs` itself.
+
 ## Reproducing
 
 From the nix devshell (which exports `$WIRED_BENCH_DATA` and puts the ISA-preset
