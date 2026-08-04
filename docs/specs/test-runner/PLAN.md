@@ -302,6 +302,35 @@ note) plus the `macos-latest` CI leg for the VM degrade path.
 
 ## M6 — Page-cache regime control
 
+> **Shipped** (branch `feat/test-runner-cache-regime`, five commits):
+> `CacheRegime {steadyState, warm, cold}` (steadyState first for `.init`
+> correctness — enum-order deviation recorded) + the marker's `regime`
+> field; `cache_regime.d` (local statfs/fadvise declarations — druntime's
+> POSIX_FADV surface is docs-only; fdatasync before DONTNEED, dirty pages
+> don't evict; mincore residency page-weighted with sysconf stride; the
+> pure `resolveStamp` policy); in-body `workloadFiles` with the
+> candidate-refresh (prep is setup — proven by a deterministic
+> sleep-then-prep-then-work test), replace-not-merge stamps, a truly-inert
+> foreign-runner path, and prep-skip notes under `measuring`; the `regime`
+> table column + JSON `regime` object (schema 2, still unreleased).
+> Deviations, all recorded in SPEC §3/§4: **no drop_caches ever**
+> (system-global root-only sledgehammer; fadvise + verify + downgrade-note
+> is the honest per-file scope — cgroup `memory.max` is M8's scoped
+> successor); stamps attach only to rows at/after a `workloadFiles` call
+> (a fabricated "steadyState, verified" on regime-less rows would violate
+> the degradation religion); the post-body residency-verify phase
+> dissolved into the call site; regime is an actuator, not a source — no
+> capability block, and `CacheRegimeStamp` deliberately does not adopt
+> `CapabilityReport`. Empirical guardrails baked into the policy: this
+> dev box's /tmp is **ZFS**, where mincore is blind in BOTH directions
+> (ARC serves reads without populating the page cache) — residency
+> thresholds are suppressed there with notes; the cold-vs-warm acceptance
+> (cold rd-bytes ≥ size/2 and > 10× warm's) is fs-gated to plain
+> filesystems and runs on CI's ext4. The louder suite also exposed two
+> pre-existing load-flaky tests (tier0 calibration comparison; the M4
+> spin-honesty test vs GC stop-the-world) — both de-flaked by asserting
+> their actual contracts.
+
 _(SPEC §4.)_ `CacheRegime { cold, warm, steadyState }`; in-body
 `workloadFiles(regime, paths)`; cold = `posix_fadvise(DONTNEED)` per file
 (drop_caches only as root, else downgrade + note); warm = explicit preload;
