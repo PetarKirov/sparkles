@@ -477,7 +477,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 |█████▎          |
 |############----|
 ██                5/40
@@ -513,7 +513,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 src
 ├─ app.d
 └─ ui
@@ -546,7 +546,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 ╭──╼ server ╾───╮  ╭──╼ health ╾───╮
 │ host  web-01  │  │ ok            │
 │ port  8080    │  ╰───────────────╯
@@ -596,7 +596,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 ⠋ build
   compiling module 12
 ○ publish
@@ -640,7 +640,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 bump=2 push=true
 ```
 

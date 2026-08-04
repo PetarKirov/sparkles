@@ -121,7 +121,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 0.1                      round-trips: true
 0.3333333333333333       round-trips: true
 100000000000000000000.0  round-trips: true

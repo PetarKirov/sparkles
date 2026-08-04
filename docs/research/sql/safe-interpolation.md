@@ -237,7 +237,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 SQL:    INSERT INTO sample (id, name) VALUES ($1, $2)
 params: ["1", "'; DROP TABLE sample; --"]
 ```
