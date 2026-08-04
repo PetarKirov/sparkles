@@ -356,6 +356,11 @@ struct GalleryOptions
     */
     string background = defaultBackground;
 
+    /// the same, for the dark half of a two-theme run — the surround has to
+    /// follow `html.dark` too, or the pane and the page come apart the moment
+    /// the switch is flipped
+    string darkBackground;
+
     /// linked from `<head>` when set — the shared stylesheet the fragments
     /// leave their rules to
     string stylesheetHref;
@@ -405,6 +410,9 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     // The single scroll container: the code pane fills the remaining height, so
     // only ONE scrollbar ever appears (no nested body + pre scrollbars).
     w ~= text("  main { flex: 1; min-height: 0; overflow: auto; background: ", bg, "; }\n");
+    if (opt.darkBackground.length)
+        w ~= text("  html.dark body, html.dark main { background: ",
+            opt.darkBackground, "; }\n");
     w ~= "  main pre.syn-root { margin: 0; padding: 0.6em 1ch; min-height: 100%;\n";
     w ~= "                      box-sizing: border-box; }\n";
     // Line-number gutter: a left pad on <code> holds the numbers; each physical
