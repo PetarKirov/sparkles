@@ -150,21 +150,41 @@ static immutable LabelAlias[] standardAliases = [
     // `function` it inherits the function color through longest-dot-prefix, and
     // a theme that does distinguish constructors can still say so.
     LabelAlias("constructor", "function.constructor"),
+    // The legacy neovim preprocessor pair: `@define` marks a definition site,
+    // `@preproc` the directive itself. Both are directives in this vocabulary.
+    LabelAlias("define", "keyword.directive"),
     LabelAlias("delimiter", "punctuation.delimiter"),
     LabelAlias("escape", "string.escape"),
     LabelAlias("exception", "keyword.control"),
+    // `@field` is the neovim spelling of `@property` — same target.
+    LabelAlias("field", "variable.member"),
     LabelAlias("float", "constant.numeric.float"),
+    // Dart's queries qualify under `identifier.` where the dialects qualify
+    // under the role; chopping would reach a bare `identifier` that no
+    // vocabulary defines, so both spellings are named outright.
+    LabelAlias("identifier.constant", "constant"),
+    LabelAlias("identifier.parameter", "variable.parameter"),
     LabelAlias("import", "keyword.control"),
     LabelAlias("include", "keyword.control"),
+    // Math regions (latex). The vocabulary has no math axis; `markup.raw` is
+    // its "set apart from prose, not prose" bucket, which is what a `$…$` run
+    // is to the surrounding text.
+    LabelAlias("markup.math", "markup.raw"),
+    // `markup.strong` is the newer neovim spelling of `text.strong` above.
+    LabelAlias("markup.strong", "markup.bold"),
     LabelAlias("method", "function.method"),
     LabelAlias("namespace", "module"),
     LabelAlias("number", "constant.numeric"),
     // Explicit: chopping would reach `number` and lose the float distinction.
     LabelAlias("number.float", "constant.numeric.float"),
     LabelAlias("parameter", "variable.parameter"),
+    LabelAlias("preproc", "keyword.directive"),
     LabelAlias("property", "variable.member"),
     LabelAlias("repeat", "keyword.control"),
     LabelAlias("storageclass", "keyword.storage"),
+    // A grammar nonterminal (ebnf). Its `.camel`/`.pascal`/`.upper`/`.lower`
+    // children — the queries color by naming convention — chop onto this one.
+    LabelAlias("symbol.grammar", "variable"),
     // The neovim markdown dialect the bundled markdown grammars still use.
     LabelAlias("text.emphasis", "markup.italic"),
     LabelAlias("text.literal", "markup.raw.inline"),
@@ -172,6 +192,7 @@ static immutable LabelAlias[] standardAliases = [
     LabelAlias("text.strong", "markup.bold"),
     LabelAlias("text.title", "markup.heading"),
     LabelAlias("text.uri", "markup.link.url"),
+    LabelAlias("var.reference", "variable"),
     LabelAlias("variable.other.member", "variable.member"),
 ];
 

@@ -171,10 +171,40 @@ unittest
     static immutable string[] plainText = [
         "none",     // upstream's explicit "do not highlight this"
         "spell",    // a spellchecker hint, not a highlight
+        "nospell",  // …and its negation (cmake, query)
+        "conceal",  // an editor display hint (starlark), not a color
         "text",     // literal trailing text (D's `__EOF__` region)
         "markup",   // XML CharData — document body text, not a highlight
         "embedded", // marks an injected region; the injected grammar colors it
         "label",    // goto labels read as ordinary identifiers in TextMate themes
+        // A parse-failure region. Painting it would be actively harmful: hue
+        // reaches a grammar by deliberate approximation for several labels
+        // (`sdl` → `d`, `racket` → `scheme`), and those files are *mostly*
+        // ERROR nodes. Leaving it unstyled is what makes the approximation
+        // degrade gracefully instead of turning the page one flat color.
+        "error",
+        // Predicate-only helpers upstream forgot to `_`-prefix. Each is paired
+        // with a real capture on the same node, and an unresolved capture emits
+        // no span, so the real one still wins.
+        "clean",    // make: `(word) @clean @string.regex (#match? @clean …)`
+        // Whole-expression captures with no vocabulary counterpart — colouring
+        // an entire array literal or assigned pipeline uniformly is not a thing
+        // this vocabulary expresses, and the tokens inside carry their own.
+        "array",       // powershell: `(array_expression) @array`
+        "assignvalue", // powershell: `value: (pipeline) @assignvalue`
+        // The legacy neovim *diagnostic-severity* captures (make's `$(error …)`
+        // / `$(warning …)` arguments, jsonnet's `error` operand). Unlike the
+        // rest of the `text.*` family these have no markup counterpart — the
+        // vocabulary has no severity axis — and what they mark is ordinary
+        // message text.
+        "text.danger",
+        "text.note",
+        "text.warning",
+        // `<u>` body text (vue's html_tags queries). The vocabulary has a
+        // weight and a slant axis but no decoration one, and what the capture
+        // marks is ordinary text — adding a label only this capture could
+        // reach would mean a rule in every built-in theme for one HTML tag.
+        "markup.underline",
     ];
     auto gaps = coverage
         .filter!(c => !c.styled && !plainText.canFind(c.capture))
