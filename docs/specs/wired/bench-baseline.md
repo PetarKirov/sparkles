@@ -462,6 +462,65 @@ iteration); the structural lever left for the string lanes is a SIMD scan
 (simdjson's 32-byte probe shape), which belongs to the vectorization
 phase, not this scalar round.
 
+### Canada anatomy: where yyjson's 14.25 ins/B actually go
+
+A side-by-side of the two number pipelines — `perf annotate` region
+attribution on canada for both engines (wired's `scanNumber` holds 81 % of
+its samples; yyjson's ladder, fast-path-2, and IEEE-packing blocks are
+recognizable inside `yyjson_read_opts`), normalized per number
+(111 126 numbers, ~20 B each: 2–3 integer digits, ~15 fraction digits, no
+exponent, 0 % whitespace):
+
+| cost region                                      | wired | yyjson |
+| ------------------------------------------------ | ----: | -----: |
+| digit reading + significand accumulation         |  ~148 |   ~145 |
+| decimal→binary conversion (EL vs yy fast-path-2) |   ~30 |    ~55 |
+| kernel entry/exit + sign + sections + decision   |  ~170 |    ~37 |
+| grammar-loop share (dispatch, arrays, append)    |   ~79 |    ~52 |
+| **total ins/number** (= ins/B × bytes ÷ numbers) |  ~427 |   ~289 |
+
+**The digit machinery is at parity and the conversion is a wired win** —
+yyjson's fast path 1 (exact FP multiply) almost never fires on canada
+(17 significant digits ⇒ `sig ≥ 2^53`), so it runs fast path 2, the same
+Eisel-Lemire-class 128-bit multiply `tryFastDouble` implements more
+cheaply. **The entire gap is glue (~130) and grammar (~27).** Four
+structural choices produce yyjson's ~37-instruction glue
+(yyjson.c `read_number`, ~3860 ff):
+
+1. **One fused fully-unrolled 19-slot ladder across integer + dot +
+   fraction** (`repeat_in_1_18` → `digi_sepr_i` → `digi_frac_i`): hitting
+   `.` at slot _i_ jumps into the same unrolled sequence and keeps
+   accumulating into the same `sig`. A 17-digit canada number is
+   straight-line code, one never-taken branch per digit, no counters —
+   the unroll bound _is_ the budget.
+2. **Exponents by pointer subtraction, once, at the end**
+   (`exp_sig = -(i64)((cur - dot_pos) - 1)`), against wired's live
+   counters `taken`/`fracTaken`/`intExtra`/`padded`/`fracExtraNonzero` —
+   the register pressure whose spills and `movabs` rematerialization the
+   annotate shows.
+3. **No call seam** — `read_number` is `static_inline` in the parse loop:
+   no prologue/epilogue (wired: 6 pushes + 6 pops + argument setup
+   ≈ 15 ins/number), no dispatch ladder in front (wired tests
+   `"`/`{`/`[`/`t`/`f`/`n` before the number case; canada is 99 %
+   numbers).
+4. **Branchless sign, single-store finish**
+   (`((u64)sign << 63) | bits`) — wired re-tests the sign character at
+   the end (`cmp $0x2d` = 4.7 % of `scanNumber` samples) and negates
+   through the FP domain, then walks the `truncated`/`decided` flag
+   lattice that exists for the exact fallback even though 17-digit canada
+   numbers never truncate.
+
+Every rejected experiment attacked one slice and paid elsewhere: the
+ladder won canada −4.3 % but lost citm +5.2 % (citm's nine-digit ids
+want the gulp), inlining the kernel collapsed citm's IPC, the goto
+machine and the register member count lost to the same spill pressure
+that makes the counters expensive. **Consequence for the plan:** SIMD
+digit parsing attacks the ~148 that is already at parity — on its own it
+buys at most half the gap. Closing canada means removing glue: pointer-
+derived bookkeeping, a straight-line dominant-shape fast path with the
+current machinery as fallback, cheaper entry/exit — with SIMD as a
+component of that redesign, not a substitute for it.
+
 Within the round-2 canonical snapshot (2 000 ms budget):
 
 | corpus / op         | wired MB/s | yyjson MB/s | ratio | round 1 |
