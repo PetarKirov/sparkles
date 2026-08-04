@@ -117,14 +117,39 @@ MetricCell[] perfCells(in PerfStats p) @safe pure nothrow
 
 /// The perf family as descriptors (for `--list-metrics`), with the given
 /// availability — no rows needed.
-MetricDescriptor[] perfFamily(bool available) @safe pure nothrow
+MetricDescriptor[] perfFamily(bool available, bool fixedOnly = false) @safe pure nothrow
 {
     MetricDescriptor[] result;
     result.reserve(perfInfos.length);
     foreach (ref info; perfInfos)
+    {
+        // A fixed-counters-only backend (macOS proc_pid_rusage) can never
+        // produce the configurable-event columns — advertising them as
+        // available would bypass B1's honest-absence vocabulary.
+        const fixedBacked = info.name == "ipc" || info.name == "instr"
+            || info.name == "cycles";
         result ~= MetricDescriptor(info.name, info.header, info.format,
-            MetricClass.diagnostic, "perf", available, info.isDefault);
+            MetricClass.diagnostic, "perf",
+            available && (!fixedOnly || fixedBacked), info.isDefault);
+    }
     return result;
+}
+
+@("metrics.perfFamily.fixedOnly")
+@safe pure nothrow
+unittest
+{
+    const full = perfFamily(true);
+    foreach (ref d; full)
+        assert(d.available);
+
+    const fixed = perfFamily(true, fixedOnly: true);
+    foreach (ref d; fixed)
+        assert(d.available == (d.name == "ipc" || d.name == "instr" || d.name == "cycles"),
+            "only the fixed-backed columns stay available");
+
+    foreach (ref d; perfFamily(false, fixedOnly: true))
+        assert(!d.available);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

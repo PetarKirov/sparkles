@@ -323,13 +323,21 @@ same reports. Workload-track sources (PSI, cgroup, cache regime) adopt the
 same report when they land — one absence vocabulary program-wide.
 
 **Recorded judgment (B3):** the darwin fixed counters stay `diagnostic`
-class even though they are exact — the catalog entries (`ipc`, `instr`,
-`cycles`) cannot change class per OS without breaking the schema-stability
-contract (§5.2), and process-wide counters polluted by concurrent threads
-are precisely not safe for reported/gated numbers. The process-wide scope
-itself is a permanent `degraded()` condition, disclosed by the bench
-header once per run (with the P/E-core aggregation suffix on
-heterogeneous hosts).
+class — the catalog entries (`ipc`, `instr`, `cycles`) cannot change class
+per OS without breaking the schema-stability contract (§5.2), and
+process-wide counters polluted by concurrent threads are precisely not
+safe for reported/gated numbers. The process-wide scope itself is a
+permanent `degraded()` condition, disclosed by the bench header once per
+run (with the P/E-core aggregation suffix on heterogeneous hosts). Two
+further honesty bounds: the darwin counters are **calibrated-bracket, not
+ioctl-excluded** — they free-run, so each bracket's own `proc_pid_rusage`
+syscalls are counted and removed by subtracting a median empty-bracket
+cost re-measured at the start of every counting pass (the cost scales
+with the process's live thread count) — treat per-iteration differences
+of a few tens of instructions as calibration residue, not signal; and the
+catalog only advertises the fixed-backed columns
+(`perfFamily(fixedOnly:)` — the configurable-event columns are absent,
+not permanently-em-dash "available").
 
 The workload wall source (`WallSource`: rusage + schedstat) reports through
 the same vocabulary, appearing in the `--list-metrics` block as `wall`

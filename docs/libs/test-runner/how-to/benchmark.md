@@ -187,8 +187,12 @@ An individually dropped counter (the last-level-cache pair under PMU
 multiplexing) or an explicitly `--metrics`-selected unavailable column shows
 as `—`; when the whole group can't open (a paranoid kernel's
 `perf_event_paranoid`, or a PMU too busy to ever schedule the group) the
-default perf columns are omitted entirely and a stderr note says why. Off
-Linux the flag is inert.
+default perf columns are omitted entirely and a stderr note says why. On
+macOS the pass runs on the unprivileged `proc_pid_rusage` fixed counters —
+IPC and instructions/iter with the rest `—`, process-wide scope disclosed in
+the header, and the bracket's own syscall cost calibrated out (treat
+differences of a few tens of instructions/iter as noise there). On other
+platforms the flag is inert.
 
 Not all counters are equally trustworthy across runs and hosts: **retired
 instructions** and **page faults** are exact, host-stable anchors — the

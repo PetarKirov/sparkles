@@ -24,7 +24,9 @@
  * (median of several empty brackets) and `count` reports the workload net of it,
  * clamped at zero — so a body that does no I/O reads ≈0, not the instrumentation
  * constant. The getrusage-sourced page-fault and context-switch columns carry no
- * per-bracket cost. Off Linux the group is permanently unavailable.
+ * per-bracket cost. On macOS a darwin body serves the same surface from
+ * `getrusage`'s maintained BSD-tail fields plus `proc_pid_rusage`'s disk-I/O
+ * byte counters; elsewhere the group is permanently unavailable.
  */
 module sparkles.test_runner.tier0;
 
@@ -130,25 +132,26 @@ in (iters > 0)
     const inv = 1.0 / iters;
     Tier0Stats s;
     s.iters = iters;
+
+    // Per-field guard: a reading whose field is absent (a kernel
+    // omitting/restricting it, or a platform whose libc reports but never
+    // maintains it — XNU's rusage tail leaves ru_nvcsw permanently 0) is
+    // -1, and an absent counter must read nan, never a fabricated 0 delta
+    // (which would also feed a fake 100% cache-hit figure).
+    static double guarded(long av, long bv, double inv) @safe pure nothrow @nogc
+        => av >= 0 && bv >= 0 ? (bv - av) * inv : double.nan;
+
     if (a.rusageOk && b.rusageOk)
     {
-        s.minflt = (b.minflt - a.minflt) * inv;
-        s.majflt = (b.majflt - a.majflt) * inv;
-        s.volCs = (b.volCs - a.volCs) * inv;
-        s.involCs = (b.involCs - a.involCs) * inv;
+        s.minflt = guarded(a.minflt, b.minflt, inv);
+        s.majflt = guarded(a.majflt, b.majflt, inv);
+        s.volCs = guarded(a.volCs, b.volCs, inv);
+        s.involCs = guarded(a.involCs, b.involCs, inv);
     }
     else
         s.minflt = s.majflt = s.volCs = s.involCs = double.nan;
     if (a.ioOk && b.ioOk)
     {
-        // Per-field guard on every io field: a reading whose field is absent
-        // (a kernel omitting/restricting it, or a platform with no analog —
-        // macOS has disk-I/O bytes but no syscall/character counters) is -1,
-        // and an absent counter must read nan, never a fabricated 0 delta
-        // (which would also feed a fake 100% cache-hit figure).
-        static double guarded(long av, long bv, double inv) @safe pure nothrow @nogc
-            => av >= 0 && bv >= 0 ? (bv - av) * inv : double.nan;
-
         s.syscr = guarded(a.syscr, b.syscr, inv);
         s.syscw = guarded(a.syscw, b.syscw, inv);
         s.rdChars = guarded(a.rdChars, b.rdChars, inv);
@@ -555,7 +558,11 @@ else version (OSX)
             {
                 r.minflt = ru.ru_minflt;
                 r.majflt = ru.ru_majflt;
-                r.volCs = ru.ru_nvcsw;
+                // XNU reports but never maintains ru_nvcsw (probed live on
+                // Darwin 25.3: 0 → 0 across 32 explicit sleeps, while
+                // minflt/majflt/nivcsw all tick) — a permanently-dead field
+                // must be absent, not a confident 0.00 column.
+                r.volCs = -1;
                 r.involCs = ru.ru_nivcsw;
                 r.rusageOk = true;
             }
@@ -625,13 +632,21 @@ else version (OSX)
         const a = g.snapshot();
         assert(a.rusageOk, "getrusage works on macOS");
         assert(a.syscr == -1, "no /proc/self/io analog — guarded, not zero");
+        assert(a.volCs == -1, "XNU never maintains ru_nvcsw — dead, not zero");
+
+        // Fault in fresh pages so the maintained fields provably MOVE — a
+        // reported-but-dead counter must never masquerade as a live one.
+        auto pages = new ubyte[](4 << 20);
+        pages[] = 0xab;
         const b = g.snapshot();
         import std.math : isNaN;
 
         const s = g.windowStats(a, b);
-        assert(s.syscr.isNaN && s.rdChars.isNaN,
-            "absent fields are nan, never fabricated zeros");
+        assert(s.syscr.isNaN && s.rdChars.isNaN && s.volCs.isNaN,
+            "absent/dead fields are nan, never fabricated zeros");
         assert(!s.minflt.isNaN, "the rusage fields are real");
+        assert(s.minflt > 0, "4 MiB of faulted pages moves minflt");
+        assert(pages[0] == 0xab);
         if (a.ioOk)
             assert(b.rdBytes >= a.rdBytes, "disk-I/O bytes are monotonic");
     }
