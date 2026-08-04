@@ -98,8 +98,15 @@ so each output line stands alone.
 - `HtmlOptions.mode`: `inlineStyles` (self-contained `style="…"`) or
   `cssClasses` (`class="syn-…"`, dots → dashes); `classPrefix` default
   `"syn-"`.
-- `writeThemeStylesheet(theme, writer, prefix)` emits one rule per styled
-  label plus a `syn-root` rule for the theme defaults.
+- `writeThemeStylesheet(theme, writer, StylesheetOptions)` emits one rule per
+  styled label plus a `syn-root` rule for the theme defaults. `StylesheetOptions`
+  carries `classPrefix`, `includeRoot` (drop the `syn-root` rule), and
+  `scopeSelector` — prepended to every selector, so calling it twice
+  (unscoped, then with `scopeSelector: "html.dark "`) puts a light **and** a
+  dark theme in one stylesheet without touching the rendered markup. The
+  scoped rules win on specificity ((0,2,1) vs (0,1,0)); no `!important`.
+- `concreteRgb(color, out rgb)` answers whether a `Color` produces a CSS
+  declaration at all — ask it before deriving anything from the emitted sheet.
 - Source text is escaped via `sparkles.base.text.html.writeHtmlEscaped`.
 - Output is content-only — wrap it in `<pre><code>` yourself.
 
