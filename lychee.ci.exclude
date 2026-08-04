@@ -155,3 +155,21 @@
 # the parsing survey) times out for GitHub Actions' shared IPs (200 locally).
 # Same class as cs.cmu.edu / vis.csail.mit.edu above.
 ^https?://parsing\.stereobooster\.com/
+# forum.scootersoftware.com (Beyond Compare forum threads, cited in
+# diff-review/beyond-compare.md) 403s GitHub Actions' shared IPs (live + 200
+# locally with a browser UA). The main scootersoftware.com help docs pass.
+^https?://forum\.scootersoftware\.com/
+# rfc-editor.org (IETF RFCs, cited heavily across the iroh survey) intermittently
+# 502s under GitHub Actions' concurrency (live + 200 locally after the info/
+# redirect). Same class as sourceware/gnu below.
+^https?://([^/]+\.)?rfc-editor\.org/
+# valgrind.org and sourceware.org (Valgrind docs + gitweb tree, cited across the
+# sanitizers survey) return 500 / time out under GitHub Actions' concurrency
+# (and intermittently from other shared networks); valid canonical citations.
+^https?://([^/]+\.)?valgrind\.org/
+^https?://([^/]+\.)?sourceware\.org/
+# gcc.gnu.org (GNAT dimensionality docs in units-of-measure/ada-gnat-dimensions.md
+# and theory/free-abelian-group.md, plus Instrumentation-Options in sanitizers)
+# times out / 500s under GitHub Actions' concurrency (live locally when the
+# host is healthy). Companion to the gnu.org bison/gpl-faq exclusions above.
+^https?://([^/]+\.)?gcc\.gnu\.org/
