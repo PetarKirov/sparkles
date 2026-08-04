@@ -250,26 +250,136 @@ string canonicalLanguage(scope const(char)[] label) @safe pure nothrow
 
     switch (lowered)
     {
+        case "adb", "ads": return "ada";
+        case "s": return "asm";
         case "c++", "cxx", "cc", "hpp", "hh", "h++": return "cpp";
+        case "h": return "c";
         case "c#", "cs", "csharp": return "c-sharp";
         case "console", "sh", "shell", "zsh": return "bash";
-        case "docker": return "dockerfile";
+        case "docker", "containerfile": return "dockerfile";
         case "dlang": return "d";
+        case "ex", "exs": return "elixir";
+        case "fsi", "fsx", "f#": return "fsharp";
         case "golang": return "go";
+        case "mod": return "gomod";
+        case "work": return "gowork";
         case "hs": return "haskell";
         case "htm": return "html";
-        case "js", "mjs", "cjs", "node": return "javascript";
+        case "jl": return "julia";
+        case "js", "mjs", "cjs", "node", "jsx": return "javascript";
+        case "justfile": return "just";
+        case "kk": return "koka";
         case "kt", "kts": return "kotlin";
+        case "ll": return "llvm";
+        case "makefile", "gnumakefile", "mk": return "make";
         case "md": return "markdown";
         case "markdown_inline", "markdown-inline", "markdown.inline": return "markdown-inline";
+        case "libsonnet": return "jsonnet";
         case "ml", "mli": return "ocaml";
+        case "ps1", "psm1", "psd1": return "powershell";
         case "py", "python3": return "python";
+        case "bzl", "bazel": return "starlark";
+        case "qml": return "qmljs";
+        case "rb", "gemfile", "rakefile": return "ruby";
         case "rs": return "rust";
+        case "rkt": return "racket";
+        case "scm", "ss", "sls": return "scheme";
         case "sdlang": return "sdl";
-        case "ts": return "typescript";
+        // The only approximations left: Eff and Frank are ML-family research
+        // languages nobody has written a tree-sitter grammar for, so they point
+        // at the closest surface syntax. Anything that *has* a grammar gets it
+        // (`nix/packages/ts-grammar-languages.nix` `fetched`, plus the in-house
+        // ones) — which is why racket, objc, starlark, unison, asm and now
+        // SDLang are no longer on this list. `sdl` used to fold onto `d`; the
+        // repo maintains a real SDLang grammar (nix/packages/tree-sitter-sdl.nix),
+        // so folding it away would shadow the better parser.
+        case "eff", "frank": return "ocaml";
+        case "nims": return "nim";
+        case "ts", "mts", "cts": return "typescript";
+        case "typ": return "typst";
+        // XAML *is* XML — same parser, richer vocabulary.
+        case "xaml": return "xml";
         case "yml": return "yaml";
         default: return lowered.idup;
     }
+}
+
+/**
+The grammar language for a file $(I path): its extension, canonicalized as
+above, falling back to the whole base name when there is none — so
+`Makefile` → `make`, `Dockerfile` → `dockerfile` and `Justfile` → `just`
+resolve exactly like an extension would, without a second alias table.
+
+A base name that no alias claims passes through lowercased (`LICENSE` →
+`license`), which the registry then reports as "no grammar" and the caller
+renders as plain text (the totality law).
+*/
+string canonicalLanguageOfPath(scope const(char)[] path) @safe pure nothrow
+{
+    import std.path : baseName, extension;
+    import std.string : chompPrefix;
+
+    const base = path.baseName;
+    const ext = base.extension;
+    return canonicalLanguage(ext.length ? ext.chompPrefix(".") : base);
+}
+
+///
+@("ts.registry.canonicalLanguageOfPath")
+@safe pure nothrow
+unittest
+{
+    assert(canonicalLanguageOfPath("src/app.d") == "d");
+    assert(canonicalLanguageOfPath("libs/base/dub.sdl") == "d");
+    assert(canonicalLanguageOfPath("/tmp/vec.h") == "c");
+
+    // Extensionless files resolve through their base name.
+    assert(canonicalLanguageOfPath("Makefile") == "make");
+    assert(canonicalLanguageOfPath("build/GNUmakefile") == "make");
+    assert(canonicalLanguageOfPath("Dockerfile") == "dockerfile");
+    assert(canonicalLanguageOfPath("Justfile") == "just");
+
+    // Multi-part names still resolve on the extension.
+    assert(canonicalLanguageOfPath("go.mod") == "gomod");
+    assert(canonicalLanguageOfPath("go.work") == "gowork");
+
+    // Unclaimed names pass through for the plain-text fallback.
+    assert(canonicalLanguageOfPath("LICENSE") == "license");
+    assert(canonicalLanguageOfPath("notes.txt") == "txt");
+
+    // A dotfile is a base name, not an extension (std.path's rule).
+    assert(canonicalLanguageOfPath(".gitignore") == ".gitignore");
+}
+
+/**
+`true` for a label that asks for $(I no) highlighting: `text` and its
+spellings, plus `ansi`, whose fences are decoded by the off-screen VT rather
+than a grammar. Plain text is the correct output for these, so a caller must
+not report the missing grammar as a degradation (`DEG1`: normal operation is
+silent).
+*/
+bool isPlainTextLabel(scope const(char)[] canonicalLabel) @safe pure nothrow @nogc
+{
+    switch (canonicalLabel)
+    {
+        case "", "text", "txt", "plain", "plaintext", "none", "ansi":
+            return true;
+        default:
+            return false;
+    }
+}
+
+///
+@("ts.registry.isPlainTextLabel")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(isPlainTextLabel("text"));
+    assert(isPlainTextLabel("txt"));
+    assert(isPlainTextLabel("ansi"));
+    assert(isPlainTextLabel(""));
+    assert(!isPlainTextLabel("d"));
+    assert(!isPlainTextLabel("license"));
 }
 
 ///
@@ -290,6 +400,32 @@ unittest
     assert(canonicalLanguage("sdl") == "sdl"); // the `.sdl` extension needs no alias
     assert(canonicalLanguage("json") == "json");
     assert(canonicalLanguage("SomethingNew") == "somethingnew");
+
+    // Extension folds that reach a grammar under a different name.
+    assert(canonicalLanguage("h") == "c");              // plain C header
+    assert(canonicalLanguage("hpp") == "cpp");          // …unlike a C++ one
+    assert(canonicalLanguage("jsx") == "javascript");   // one grammar, both dialects
+    assert(canonicalLanguage("asm") == "asm");   // a real grammar, not folded
+    assert(canonicalLanguage("Makefile") == "make");
+    assert(canonicalLanguage("work") == "gowork");
+    assert(canonicalLanguage("qml") == "qmljs");        // nixpkgs attribute spelling
+    assert(canonicalLanguage("xaml") == "xml");
+    assert(canonicalLanguage("bzl") == "starlark");
+
+    // Languages that got a real grammar instead of an approximating fold.
+    assert(canonicalLanguage("racket") == "racket");
+    assert(canonicalLanguage("unison") == "unison");
+    assert(canonicalLanguage("objc") == "objc");
+    assert(canonicalLanguage("rkt") == "racket");
+
+    // The only approximations left: no grammar for these exists anywhere.
+    assert(canonicalLanguage("sdl") == "d");
+    assert(canonicalLanguage("eff") == "ocaml");
+
+    // Labels with no grammar stay themselves; the registry reports the miss
+    // and the caller renders plain text.
+    assert(canonicalLanguage("wat") == "wat");
+    assert(canonicalLanguage("text") == "text");
 }
 
 @("ts.registry.missingGrammar")
