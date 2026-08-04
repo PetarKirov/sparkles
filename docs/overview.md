@@ -280,7 +280,7 @@ Custom hooks implement `static void writeSourceUri(string path, size_t line, siz
 
 Render data as ASCII tables with Unicode box-drawing characters.
 
-- **Source Code**: [`table.d`](../libs/core-cli/src/sparkles/core_cli/ui/table/package.d)
+- **Source Code**: [`table.d`](../libs/ui/src/sparkles/ui/components/table/package.d)
 - **Example**: [`table.d`](../libs/core-cli/examples/table.d)
 
 ```d
@@ -316,7 +316,7 @@ void main()
 
 Draw bordered boxes around content with optional titles.
 
-- **Source Code**: [`box.d`](../libs/core-cli/src/sparkles/core_cli/ui/box.d)
+- **Source Code**: [`box.d`](../libs/ui/src/sparkles/ui/components/box.d)
 - **Example**: [`box.d`](../libs/core-cli/examples/box.d)
 
 ```d
@@ -371,7 +371,7 @@ void main()
 
 Create section dividers and banners.
 
-- **Source Code**: [`header.d`](../libs/core-cli/src/sparkles/core_cli/ui/header.d)
+- **Source Code**: [`header.d`](../libs/ui/src/sparkles/ui/components/header.d)
 - **Example**: [`header.d`](../libs/core-cli/examples/header.d)
 
 ```d
@@ -407,7 +407,7 @@ void main()
 
 Make text clickable in terminal emulators that support [OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda).
 
-- **Source Code**: [`osc_link.d`](../libs/core-cli/src/sparkles/core_cli/ui/osc_link.d)
+- **Source Code**: [`osc_link.d`](../libs/ui/src/sparkles/ui/components/osc_link.d)
 - **Example**: [`osc-link.d`](../libs/core-cli/examples/osc-link.d)
 
 ```d
@@ -804,4 +804,4 @@ Available examples:
 - [`layout.d`](../libs/core-cli/examples/layout.d) - `hjoin` side-by-side blocks and `kvList` receipts
 - [`prompts.d`](../libs/core-cli/examples/prompts.d) - Interactive select/confirm/input (run in a terminal)
 - [`live-tasklist.d`](../libs/core-cli/examples/live-tasklist.d) - Live region + task list + streamed child output (run in a terminal)
-- [`term-caps.d`](../libs/core-cli/examples/term-caps.d) - Terminal capability detection and resize handling
+- [`term-caps.d`](../libs/base/examples/term-caps.d) - Terminal capability detection and resize handling
