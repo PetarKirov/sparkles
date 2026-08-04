@@ -261,7 +261,8 @@ silly's successor — same CLI, documented under
 --no-colors        Disable colored output
 --bench             Run @benchmark tests (auto-scaling ns/iter statistics) and
                     @workload tests (single-pass window deltas + wall decomposition)
---perf              With --bench: hardware perf counters (Linux perf_event)
+--perf              With --bench: hardware perf counters (Linux perf_event;
+                    macOS proc_pid_rusage fixed counters)
 --perf-scaled       With --perf: keep a multiplexing group; values render as ≈ estimates
 --perf-iters=N      With --bench: pin the counting-pass iteration count (reproducible totals)
 --syscalls[=LIST]   With --bench: syscalls/iter via perf tracepoints (root-gated)

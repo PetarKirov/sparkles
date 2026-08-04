@@ -253,6 +253,35 @@ absence via B1's vocabulary.
 
 ## B3 — macOS floor
 
+> **Shipped** (branch `feat/test-runner-macos-floor`, three commits +
+> docs): `perf.d` gains a `version (OSX)` body — the same `PerfGroup`
+> surface backed by `proc_pid_rusage(RUSAGE_INFO_V4)`'s
+> `ri_instructions`/`ri_cycles` (ABI pinned by static asserts, sizeof
+> 296 / offsets 248/256, verified against the SDK header and a live
+> probe on the T6041), with tier-0-style per-bracket calibration
+> (`netOfCost` hoisted platform-neutral), an enable/disable
+> window-arming latch (the counters free-run; preserves the SPEC §4
+> never-enabled → nan gate), `degraded() == opened` so every run
+> disclosures the process-wide scope, and the survey-language capability
+> ads (kpc root+allowlist, xctrace-only sampling). Riders: a darwin
+> tier-0 body (getrusage BSD tail declared over druntime's
+> `ru_opaque[14]`, `ri_diskio_*` bytes; `deltaStats`' -1 guard extended
+> to all io fields so absent analogs are nan, never zeros) and the
+> `hw.nperflevels` P/E-core status suffix (M7's provenance stamp
+> supersedes it). Acceptance on the M4 Max (Darwin 25.3): the full impl
+> suite passes live (169, zero skips), `--bench --perf` renders
+> `instr/iter 97.1 │ IPC 0.92` for the median benchmark with br/cache
+> em-dashed and the header line `--perf: process-wide fixed counters
+(proc_pid_rusage) — not per-bracket events; P/E-core host (2 perf
+levels)…`; a `@workload` window reports 646M instructions at IPC 4.77
+> over a 30 ms spin. One recorded judgment (SPEC §6.2): the counters
+> stay `diagnostic` class — per-OS class changes would break schema
+> stability, and process-wide counts are not gate-safe. Stale facts
+> corrected: darwin CI exists (`macos-latest` runs `dub test` — it
+> exercises the VM degrade path), and dub works on mac-bsn again (the
+> fork-ENOMEM is gone; the store `ldc-1.41.0` + `dub-1.39.0` pair built
+> everything directly).
+
 _(backend-proposal §4; SPEC §9.)_ `proc_pid_rusage(RUSAGE_INFO_V4)` →
 `ri_instructions`/`ri_cycles` as a snapshot-pair tier: true unprivileged
 instructions/cycles/IPC — richer than Linux tier-0 — with the honest scope
@@ -267,8 +296,8 @@ common events onto PMUv3 architected numbers while M1–M3 use Apple numbers,
 and the fixed-counter count is itself unresolved
 ([open-issues § O8](./open-issues.md)). Portability rider shared with M7: on
 P/E-core hosts (`hw.nperflevels`) record per-run core-type provenance.
-Verification: mac-bsn transcripts (no darwin CI; build with `ldc2` directly —
-dub fork-ENOMEMs on that box).
+Verification: mac-bsn transcripts for the live path (see the shipped
+note) plus the `macos-latest` CI leg for the VM degrade path.
 
 ## M6 — Page-cache regime control
 
