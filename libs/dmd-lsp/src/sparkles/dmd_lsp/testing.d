@@ -258,4 +258,21 @@ void checkTip(AnalyzedModule m, uint line, uint col, string expected,
     assert(!errors.canFind!(e => e.canFind("#include")),
         text("the C preprocessor did not run: ", errors));
     assert(errors.length == 0, errors.text);
+
+@("dmd_lsp.testing.checkErrors.editionReachesAnalysis")
+@system unittest
+{
+    // The 2024 edition's discarded struct-rvalue assignment: silent by
+    // default, an error under `-edition=2024`. The edition is not a
+    // `-preview=` switch — it is set on `global.params` and copied onto each
+    // `Module` — so this pins that path (COR5).
+    enum src = q{
+        module test;
+        struct S { int i; void opAssign(S s) {} }
+        S foo() { return S(0); }
+        void main() { foo() = S(2); }
+    };
+    checkErrors(src, null);
+    checkErrors(src, ["assignment to struct rvalue `foo()` is discarded"],
+        dflags: ["-edition=2024"]);
 }
