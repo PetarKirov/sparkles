@@ -19,16 +19,16 @@ against._
 
 ## Environment
 
-|                 |                                                                                                                                                   |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CPU             | AMD Ryzen 9 7940HX (Zen 4, AVX-512)                                                                                                               |
-| D toolchain     | LDC, front-end 2.111, `-mcpu=native -O3`, `bench` build type                                                                                      |
-| wired codegen   | `library-inline` (cross-module inlining scoped to `sparkles:wired`; see [Codegen parity](#codegen-parity))                                        |
-| Shim ISA preset | `x86-64-v4` (simdjson: runtime dispatch, icelake kernel)                                                                                          |
-| Engines         | simdjson 4.6.0, rapidjson 1.1.0, yyjson 0.12.0, serde_json 1.0.150, simd-json 0.17.0, sonic-rs 0.5.8, mir-ion 2.3.5, asdf 0.8.0, jsoniopipe 0.2.7 |
-| Corpora         | twitter.json 632 KB (strings), citm_catalog.json 1.7 MB (structure), canada.json 2.2 MB (floats), github_events.json 65 KB (small-doc)            |
-| Allocator       | glibc, `M_TRIM_THRESHOLD`/`M_MMAP_THRESHOLD` raised to 64 MiB at process start (a `shared static this()` in the bench library)                    |
-| Harness         | `sparkles:test-runner` `--bench --perf` — one `@benchmark` per op, `benchCase` per engine×dataset                                                 |
+|                 |                                                                                                                                                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CPU             | AMD Ryzen 9 7940HX (Zen 4, AVX-512)                                                                                                                                                                               |
+| D toolchain     | LDC, front-end 2.111, `-mcpu=native -O3`, `bench` build type                                                                                                                                                      |
+| wired codegen   | `library-inline` (cross-module inlining scoped to `sparkles:wired`; see [Codegen parity](#codegen-parity))                                                                                                        |
+| Shim ISA preset | `x86-64-v4` (simdjson: runtime dispatch, icelake kernel)                                                                                                                                                          |
+| Engines         | simdjson 4.6.0, rapidjson 1.1.0, yyjson 0.12.0, serde_json 1.0.150, simd-json 0.17.0, sonic-rs 0.5.8, mir-ion 2.3.5, asdf 0.8.0, jsoniopipe 0.2.7                                                                 |
+| Corpora         | twitter.json 632 KB (strings), citm_catalog.json 1.7 MB (structure), canada.json 2.2 MB (floats), github_events.json 65 KB (small-doc), mesh.json 724 KB and mesh.pretty.json 1.58 MB (numeric arrays/whitespace) |
+| Allocator       | glibc, `M_TRIM_THRESHOLD`/`M_MMAP_THRESHOLD` raised to 64 MiB at process start (a `shared static this()` in the bench library)                                                                                    |
+| Harness         | `sparkles:test-runner` `--bench --perf` — one `@benchmark` per op, `benchCase` per engine×dataset                                                                                                                 |
 
 Every engine reproduces the `std.json` structural fingerprint on every
 corpus (and the `TwitterStats` checksum on decode) in the untimed `after`
@@ -722,6 +722,49 @@ UTF-8 lane before unescaping (+6 k/+80 k, because escaped strings paid three
 scans); one-, three-, and four-word clean-value widths; and changing the key
 probe to two words (instruction-neutral but GitHub wall regressed from 15.9 µs
 to 16.9 µs through lower IPC).
+
+### Scalar round 6: long numeric arrays and pretty whitespace
+
+Adding simdjson's mesh pair made two blind spots measurable. Compact mesh has
+73 013 numbers in long flat position/index/color buffers, while the existing
+numeric subtree scanner accepted nested coordinate matrices only. Pretty mesh
+is 52% whitespace and uses longer decimal spellings, so blindly reusing the
+compact short-float speculation scans many tokens twice.
+
+The canonical
+[baseline](../../../libs/wired/bench/runtime/results/2026-08-05-ryzen9-7940hx-x86-64-v4-mesh-baseline.json)
+and
+[round-6 snapshot](../../../libs/wired/bench/runtime/results/2026-08-05-ryzen9-7940hx-x86-64-v4-mesh-round1.json)
+use the same 2 000 ms budget and same-process wired/yyjson comparison:
+
+| corpus      | wired baseline | wired round 6 |     yyjson | round-6 ratio | wired instructions baseline → round 6 |
+| ----------- | -------------: | ------------: | ---------: | ------------: | ------------------------------------: |
+| mesh        |     1.148 GB/s |    1.645 GB/s | 1.314 GB/s |        1.252× |                     15.12 M → 10.01 M |
+| mesh_pretty |     1.664 GB/s |    1.899 GB/s | 1.791 GB/s |        1.061× |                     21.40 M → 17.35 M |
+
+Four measured choices produce the result:
+
+- A bounded profitability probe admits nested arrays immediately and flat
+  arrays only after a nine-value numeric-looking prefix. Mixed/malformed
+  candidates remain speculative and fall back to the authoritative grammar.
+- A narrow in-array integer kernel handles one-to-nineteen-digit signed and
+  unsigned values, preserving `-0`, `long.min`, the unsigned range, and the
+  floating policy below `long.min`; fractions, exponents, and 20-digit values
+  retain the full number scanner.
+- Compact and pretty subtree loops are separate template instantiations. The
+  compact loop keeps the short-float converter; the pretty loop avoids that
+  failed speculation and skips complete eight-space words.
+- Pretty acceleration is limited to shallow eight-space-indented numeric
+  buffers. This excludes the measured losing shapes: Twitter's deep short
+  index arrays and citm's deep nine-digit ID arrays. The general grammar's
+  nine-digit SWAR lane remains faster for the latter.
+
+Rejected while converging: accelerating all flat arrays before the integer
+kernel (compact improved modestly but citm gained 3.3% instructions); sending
+all pretty arrays through the compact subtree loop (pretty mesh rose from
+21.40 M to 24.57 M instructions); sharing one runtime-branched compact/pretty
+loop (compact IPC collapsed and Twitter/citm regressed); and accelerating all
+deep pretty numeric arrays (reparsed short/mixed arrays erased the mesh win).
 
 ## Reproducing
 
