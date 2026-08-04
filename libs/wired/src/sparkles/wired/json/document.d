@@ -64,6 +64,20 @@ package struct JsonCell
         tag = kind | (size << 8);
     }
 
+    /// Writes both fields in one shot. The reader's hot paths previously
+    /// constructed via `JsonCell(kind, size)` and then assigned `bits` —
+    /// the construction zero-initializes `bits`, and LLVM does not
+    /// reliably eliminate that dead 8-byte store before the overwrite
+    /// (it was the single hottest instruction in twitter's parse
+    /// profile). Templated (empty parameter list) so it is
+    /// code-generated in the caller's translation unit.
+    void set()(JsonKind kind, ulong size, ulong payload) @safe pure nothrow @nogc
+    {
+        pragma(inline, true);
+        tag = kind | (size << 8);
+        bits = payload;
+    }
+
     JsonKind kind() const @safe pure nothrow @nogc
         => cast(JsonKind)(tag & 0xFF);
 

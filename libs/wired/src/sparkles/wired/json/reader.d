@@ -344,8 +344,7 @@ private size_t scanNumber(JsonReadOptions opts)(
 
     static if (opts.rawNumbers)
     {
-        *cell = JsonCell(JsonKind.rawNumber, k - tokenStart);
-        cell.bits = cast(ulong)(p + tokenStart);
+        cell.set(JsonKind.rawNumber, k - tokenStart, cast(ulong)(p + tokenStart));
         return k;
     }
     else
@@ -357,26 +356,22 @@ private size_t scanNumber(JsonReadOptions opts)(
             {
                 const kind = sig <= long.max
                     ? JsonKind.integer : JsonKind.uinteger;
-                *cell = JsonCell(kind);
-                cell.bits = sig;
+                cell.set(kind, 0, sig);
                 return k;
             }
             if (sig == 0) // "-0": preserve the sign (yyjson behavior)
             {
-                *cell = JsonCell(JsonKind.floating);
-                cell.bits = doubleToBits(-0.0);
+                cell.set(JsonKind.floating, 0, doubleToBits(-0.0));
                 return k;
             }
             if (sig <= 1UL << 63) // down to long.min
             {
-                *cell = JsonCell(JsonKind.integer);
-                cell.bits = 0 - sig;
+                cell.set(JsonKind.integer, 0, 0 - sig);
                 return k;
             }
             // Below long.min: floating (≤19-digit ulong → double is a
             // single correct rounding).
-            *cell = JsonCell(JsonKind.floating);
-            cell.bits = doubleToBits(-cast(double) sig);
+            cell.set(JsonKind.floating, 0, doubleToBits(-cast(double) sig));
             return k;
         }
         if (isInt && intExtra == 1)
@@ -389,9 +384,8 @@ private size_t scanNumber(JsonReadOptions opts)(
                 const wide = sig * 10 + d;
                 const kind = negative ? JsonKind.floating
                     : wide <= long.max ? JsonKind.integer : JsonKind.uinteger;
-                *cell = JsonCell(kind);
-                cell.bits = negative
-                    ? doubleToBits(-cast(double) wide) : wide;
+                cell.set(kind, 0, negative
+                        ? doubleToBits(-cast(double) wide) : wide);
                 return k;
             }
         }
@@ -422,8 +416,7 @@ private size_t scanNumber(JsonReadOptions opts)(
                 fracStart == 0 ? null : p[fracStart .. fracEnd],
                 explicitExp);
 
-        *cell = JsonCell(JsonKind.floating);
-        cell.bits = doubleToBits(negative ? -value : value);
+        cell.set(JsonKind.floating, 0, doubleToBits(negative ? -value : value));
         return k;
     }
 }
@@ -457,8 +450,7 @@ private size_t scanString(JsonReadOptions opts)(
     if (pool[j] == '"') // fast lane: no escapes (and, when validating,
     { //                   already known to be well-formed UTF-8)
         pool[j] = '\0';
-        *cell = JsonCell(JsonKind.string_, j - start);
-        cell.bits = cast(ulong)(pool.ptr + start);
+        cell.set(JsonKind.string_, j - start, cast(ulong)(pool.ptr + start));
         return j + 1;
     }
     if (pool[j] != '\\')
@@ -605,8 +597,7 @@ private size_t scanString(JsonReadOptions opts)(
     // `encodeUtf8`, which emits well-formed UTF-8 by construction — lone
     // surrogates are rejected in the `\u` case before they reach it.
     pool[dst] = '\0';
-    *cell = JsonCell(JsonKind.string_, dst - start);
-    cell.bits = cast(ulong)(pool.ptr + start);
+    cell.set(JsonKind.string_, dst - start, cast(ulong)(pool.ptr + start));
     return src + 1; // past closing quote
 }
 
@@ -666,10 +657,13 @@ private void parseInto(JsonReadOptions opts, Allocator)(
 
     // The arena is pre-sized to the worst case (see cellCapacity), so
     // every append is a checkless store + bump — @trusted on that bound.
-    size_t appendCell(JsonKind kind, ulong size = 0) @trusted
+    // All three write the cell through JsonCell.set: constructing a
+    // JsonCell and assigning bits afterwards leaves a dead 8-byte zero
+    // store that LLVM does not reliably eliminate here.
+    size_t appendContainer(JsonKind kind, ulong parentIdx) @trusted
     {
         const idx = cellCount++;
-        cells.ptr[idx] = JsonCell(kind, size);
+        cells.ptr[idx].set(kind, 0, parentIdx); // bits: threaded parent
         return idx;
     }
 
@@ -678,8 +672,7 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     bool appendScalar(JsonKind kind, ulong payload) @trusted
     {
         const idx = cellCount++;
-        cells.ptr[idx] = JsonCell(kind);
-        cells.ptr[idx].bits = payload;
+        cells.ptr[idx].set(kind, 0, payload);
         return true;
     }
 
@@ -687,8 +680,7 @@ private void parseInto(JsonReadOptions opts, Allocator)(
         JsonKind kind = JsonKind.string_) @trusted
     {
         const idx = cellCount++;
-        cells.ptr[idx] = JsonCell(kind, len);
-        cells.ptr[idx].bits = cast(ulong)(pool.ptr + start);
+        cells.ptr[idx].set(kind, len, cast(ulong)(pool.ptr + start));
         return true;
     }
 
@@ -793,8 +785,8 @@ value: // parse one value at pool[i]
                 return;
             }
             depth++;
-            const idx = appendCell(isObject ? JsonKind.object : JsonKind.array);
-            cells[idx].bits = parent; // threaded parent
+            const idx = appendContainer(
+                isObject ? JsonKind.object : JsonKind.array, parent);
             parent = idx;
             parentIsObject = isObject;
             i++;
