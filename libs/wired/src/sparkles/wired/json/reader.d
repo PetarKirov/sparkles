@@ -200,6 +200,60 @@ private size_t scanShortFloatToken()(const(char)* p, size_t integerStart,
     return scanShortFloat(p, dot, sig, negative, cell);
 }
 
+/**
+Parses an exponent-free integer while already inside a proven numeric-array
+candidate. The narrow interface and single-purpose loop avoid entering the
+large general number kernel for mesh indices and packed scalar attributes.
+Zero means that the token needs the authoritative general path (leading zero,
+fraction/exponent, or more than nineteen digits).
+*/
+private size_t scanArrayIntegerToken()(const(char)* p, size_t integerStart,
+    bool negative, JsonCell* cell) @system pure nothrow @nogc
+{
+    pragma(inline, true);
+    size_t k = integerStart;
+    ulong sig;
+    size_t digits;
+
+    if (p[k] == '0')
+    {
+        k++;
+        if (p[k] >= '0' && p[k] <= '9')
+            return 0;
+    }
+    else
+    {
+        while (digits < 19)
+        {
+            const uint d = cast(uint)(p[k] - '0');
+            if (d > 9)
+                break;
+            sig = sig * 10 + d;
+            digits++;
+            k++;
+        }
+        if (digits == 0 || (p[k] >= '0' && p[k] <= '9'))
+            return 0;
+    }
+
+    if (p[k] == '.' || (p[k] | 0x20) == 'e')
+        return 0;
+    if (!negative)
+    {
+        const kind = sig <= long.max
+            ? JsonKind.integer : JsonKind.uinteger;
+        cell.set(kind, 0, sig);
+    }
+    else if (sig == 0)
+        cell.set(JsonKind.floating, 0, doubleToBits(-0.0));
+    else if (sig <= 1UL << 63)
+        cell.set(JsonKind.integer, 0, 0 - sig);
+    else
+        cell.set(JsonKind.floating, 0,
+            doubleToBits(-cast(double) sig));
+    return k;
+}
+
 // ── number scanning (fused grammar + accumulation) ──────────────────────
 // Standalone pointer kernel with a register-narrow interface (yyjson's
 // read_number discipline): keeping it out of the grammar loop's nested
@@ -578,6 +632,66 @@ private struct NumericArrayScan
 }
 
 /**
+Returns whether an array has a shape worth attempting in the dedicated
+number-only subtree scanner.
+
+Nested arrays amortize immediately. Flat arrays must expose at least nine
+numeric-looking values in a bounded prefix: that keeps the common short and
+mixed arrays in the general grammar while admitting mesh/index buffers and
+other long numeric vectors. This is only a profitability probe; the subtree
+scanner remains authoritative and safely punts malformed or mixed input back
+to the general grammar.
+*/
+private bool shouldScanNumericArray(const(char)* p, size_t start,
+    size_t n, bool pretty) @system pure nothrow @nogc
+{
+    size_t i = start + 1;
+    while (i < n && (p[i] == ' ' || p[i] == '\t'
+        || p[i] == '\n' || p[i] == '\r'))
+        i++;
+    if (i < n && p[i] == '[')
+        return true;
+    if (i >= n)
+        return false;
+
+    const limit = n - i > 512 ? i + 512 : n;
+    uint commas;
+    uint firstDigits;
+    bool firstSpecial;
+    for (; i < limit; i++)
+    {
+        const c = p[i];
+        if (c == ',')
+        {
+            // Pretty nine-digit ID arrays are a measured losing shape: their
+            // SWAR integer lane is faster than the subtree loop, so preserve
+            // that proven general-grammar path.
+            if (pretty && commas == 0 && firstDigits == 9 && !firstSpecial)
+                return false;
+            if (++commas == 8)
+                return true;
+            continue;
+        }
+        if (c >= '0' && c <= '9')
+        {
+            if (commas == 0)
+                firstDigits++;
+            continue;
+        }
+        if (c == '+' || c == '.' || c == 'e' || c == 'E')
+        {
+            if (commas == 0)
+                firstSpecial = true;
+            continue;
+        }
+        if (c == '-' || c == ' ' || c == '\t' || c == '\n' || c == '\r')
+            continue;
+        return false;
+    }
+    return false;
+}
+
+/**
 Parses a complete number-only array subtree in a dedicated scalar loop.
 
 GeoJSON-style coordinate arrays otherwise bounce through the fully general
@@ -588,7 +702,7 @@ short-decimal conversion without inflating the general grammar loop. A zero
 caller safely reparses it through the general grammar. Tentative cells need no
 rollback because they lie at and beyond the caller's unchanged arena cursor.
 */
-private NumericArrayScan scanNumericArray(JsonReadOptions opts)(
+private NumericArrayScan scanNumericArray(JsonReadOptions opts, bool pretty)(
     const(char)* p, size_t start, size_t n, JsonCell* firstCell,
     uint outerDepth) @system pure nothrow @nogc
 {
@@ -597,15 +711,6 @@ private NumericArrayScan scanNumericArray(JsonReadOptions opts)(
         return NumericArrayScan.init;
     else
     {
-        size_t first = start + 1;
-        while (p[first] == ' ' || p[first] == '\t'
-            || p[first] == '\n' || p[first] == '\r')
-            first++;
-        // The dedicated loop amortizes on nested coordinate matrices;
-        // short flat numeric arrays are faster in the general grammar.
-        if (p[first] != '[')
-            return NumericArrayScan.init;
-
         auto nextCell = firstCell;
         JsonCell* parent;
         uint localDepth;
@@ -617,7 +722,14 @@ private NumericArrayScan scanNumericArray(JsonReadOptions opts)(
             pragma(inline, true);
             while (p[i] == ' ' || p[i] == '\t'
                 || p[i] == '\n' || p[i] == '\r')
+            {
                 i++;
+                static if (pretty)
+                {
+                    while (loadWord(p + i) == 0x2020_2020_2020_2020)
+                        i += 8;
+                }
+            }
         }
 
     openArray:
@@ -659,8 +771,14 @@ private NumericArrayScan scanNumericArray(JsonReadOptions opts)(
                 dot = integerStart + 3;
             else if (p[integerStart + 1] == '.')
                 dot = integerStart + 1;
-            if (dot != 0)
-                end = scanShortFloatToken(p, integerStart, dot,
+            static if (!pretty)
+            {
+                if (dot != 0)
+                    end = scanShortFloatToken(p, integerStart, dot,
+                        negative, nextCell);
+            }
+            if (dot == 0)
+                end = scanArrayIntegerToken(p, integerStart,
                     negative, nextCell);
             if (end == 0)
                 end = scanNumber!opts(p, i, nextCell, &ignoredError);
@@ -1098,19 +1216,47 @@ value: // parse one value at pool[i]
             const isObject = c0 == '{';
             static if (!opts.rawNumbers)
             {
-                if (!isObject && pool[i + 1] == '[')
+                if (!isObject)
                 {
-                    // Nested minified arrays are the profitable matrix
-                    // shape; a single lookahead avoids calling the
-                    // subtree kernel for ordinary flat/object arrays.
-                    auto accelerated = (() @trusted =>
-                        scanNumericArray!opts(pool.ptr, i, n,
-                            nextCell, depth))();
-                    if (accelerated.end != 0)
+                    const arrayLead = pool[i + 1];
+                    bool prettyArray;
+                    // The profitable pretty buffers are shallow: newline,
+                    // eight-space indentation, then a number/nested row.
+                    // Deeper short ID/index arrays stay in the general
+                    // grammar, where their probe/reparse cost was measured
+                    // lower than subtree acceleration.
+                    if (arrayLead == '\n' && depth == 1 && i + 10 < n
+                        && (() @trusted => loadWord(pool.ptr + i + 2))()
+                            == 0x2020_2020_2020_2020)
                     {
-                        nextCell = accelerated.nextCell;
-                        i = accelerated.end;
-                        goto afterValue;
+                        const prettyLead = pool[i + 10];
+                        prettyArray = prettyLead == '[' || prettyLead == '-'
+                            || (prettyLead >= '0' && prettyLead <= '9');
+                    }
+                    if ((prettyArray || arrayLead == '[' || arrayLead == '-'
+                        || (arrayLead >= '0' && arrayLead <= '9'))
+                        && (() @trusted => shouldScanNumericArray(
+                            pool.ptr, i, n, prettyArray))())
+                    {
+                        // Nested matrices and long flat numeric buffers
+                        // amortize the dedicated subtree loop; short/mixed
+                        // arrays stay in the general grammar after the
+                        // bounded shape probe.
+                        NumericArrayScan accelerated;
+                        if (prettyArray)
+                            accelerated = (() @trusted =>
+                                scanNumericArray!(opts, true)(pool.ptr, i, n,
+                                    nextCell, depth))();
+                        else
+                            accelerated = (() @trusted =>
+                                scanNumericArray!(opts, false)(pool.ptr, i, n,
+                                    nextCell, depth))();
+                        if (accelerated.end != 0)
+                        {
+                            nextCell = accelerated.nextCell;
+                            i = accelerated.end;
+                            goto afterValue;
+                        }
                     }
                 }
             }
@@ -1843,6 +1989,72 @@ unittest
     assert(rows.front.byElement.front.str == "x");
     rows.popFront();
     assert(rows.empty);
+
+    // Nine values select the flat-array lane. Exercise its integer kind
+    // boundaries plus the authoritative fallback for 20-digit integers,
+    // exponents, and a later mixed value.
+    auto flat = parse(`[0,-0,1,-1,9223372036854775807,-9223372036854775808,`
+        ~ `9223372036854775808,9999999999999999999,18446744073709551615,1e2]`);
+    assert(flat.hasValue && flat.document.root.length == 10);
+    size_t flatIndex;
+    foreach (value; flat.document.root.byElement)
+    {
+        final switch (flatIndex)
+        {
+        case 0:
+            assert(value.kind == JsonKind.integer && value.integer == 0);
+            break;
+        case 1:
+            assert(value.kind == JsonKind.floating
+                && doubleToBits(value.floating) == doubleToBits(-0.0));
+            break;
+        case 2:
+            assert(value.integer == 1);
+            break;
+        case 3:
+            assert(value.integer == -1);
+            break;
+        case 4:
+            assert(value.integer == long.max);
+            break;
+        case 5:
+            assert(value.integer == long.min);
+            break;
+        case 6:
+            assert(value.kind == JsonKind.uinteger
+                && value.uinteger == 9_223_372_036_854_775_808UL);
+            break;
+        case 7:
+            assert(value.kind == JsonKind.uinteger
+                && value.uinteger == 9_999_999_999_999_999_999UL);
+            break;
+        case 8:
+            assert(value.kind == JsonKind.uinteger
+                && value.uinteger == ulong.max);
+            break;
+        case 9:
+            assert(value.kind == JsonKind.floating && value.floating == 100.0);
+            break;
+        }
+        flatIndex++;
+    }
+    assert(flatIndex == 10);
+
+    auto pretty = parse("[\n        0, \n        1, \n        2, \n"
+        ~ "        3, \n        4, \n        5, \n        6, \n"
+        ~ "        7, \n        8\n    ]");
+    assert(pretty.hasValue && pretty.document.root.length == 9);
+
+    auto lateMixed = parse(`[0,1,2,3,4,5,6,7,8,"x"]`);
+    assert(lateMixed.hasValue && lateMixed.document.root.length == 10);
+    auto mixedValues = lateMixed.document.root.byElement;
+    foreach (_; 0 .. 9)
+        mixedValues.popFront();
+    assert(mixedValues.front.str == "x");
+
+    auto invalid = parse(`[0,1,2,3,4,5,6,7,8,01]`);
+    assert(invalid.hasError
+        && invalid.error.code == ParseErrorCode.leadingZero);
 }
 
 @("reader.rejections.strictRfc8259")

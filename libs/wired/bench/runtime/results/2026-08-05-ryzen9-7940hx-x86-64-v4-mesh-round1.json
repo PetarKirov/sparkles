@@ -1,0 +1,223 @@
+{
+  "columns": [
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "instr/iter",
+      "name": "instr",
+      "source": "perf"
+    },
+    {
+      "class": "quantitative",
+      "format": "count",
+      "header": "B/s",
+      "name": "B/s",
+      "source": "client"
+    },
+    {
+      "class": "diagnostic",
+      "format": "ratio",
+      "header": "IPC",
+      "name": "ipc",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "percent",
+      "header": "br-miss",
+      "name": "br-miss",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "percent",
+      "header": "cache-miss",
+      "name": "cache-miss",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "cycles/iter",
+      "name": "cycles",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "branch/iter",
+      "name": "branches",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "pgflt/iter",
+      "name": "page-faults",
+      "source": "perf"
+    }
+  ],
+  "meta": {
+    "arch": "x86_64",
+    "compiler": "LDC (front-end 2.111)",
+    "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics",
+    "date": "2026-08-05",
+    "hostname": "petar-kirov-minisforum-bd790i0-se-002",
+    "minSampleTimeMs": 2000,
+    "os": "linux",
+    "sampleCount": 32
+  },
+  "rows": [
+    {
+      "countIterations": 4393,
+      "deviationNs": 5421,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "mesh",
+        "operation": "parse"
+      },
+      "maxNs": 782914,
+      "medianNs": 439866,
+      "metrics": {
+        "B/s": 1645040000.0,
+        "br-miss": 0.105878,
+        "branches": 2072420.0,
+        "cache-miss": null,
+        "cycles": 2177550.0,
+        "instr": 10013200.0,
+        "ipc": 4.5984,
+        "page-faults": 0
+      },
+      "minNs": 422943,
+      "name": "wired-native",
+      "samples": 4393
+    },
+    {
+      "countIterations": 3555,
+      "deviationNs": 8477,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "mesh",
+        "operation": "parse"
+      },
+      "maxNs": 1080272,
+      "medianNs": 550511,
+      "metrics": {
+        "B/s": 1314410000.0,
+        "br-miss": 0.189323,
+        "branches": 2615100.0,
+        "cache-miss": null,
+        "cycles": 2711450.0,
+        "instr": 12517900.0,
+        "ipc": 4.61668,
+        "page-faults": 0
+      },
+      "minNs": 522186,
+      "name": "yyjson",
+      "samples": 3555
+    },
+    {
+      "countIterations": 3486,
+      "deviationNs": 9238,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "mesh",
+        "operation": "parse-insitu"
+      },
+      "maxNs": 995727,
+      "medianNs": 565821,
+      "metrics": {
+        "B/s": 1278840000.0,
+        "br-miss": 0.224233,
+        "branches": 2615270.0,
+        "cache-miss": null,
+        "cycles": 2795020.0,
+        "instr": 12518600.0,
+        "ipc": 4.47888,
+        "page-faults": 0
+      },
+      "minNs": 533048,
+      "name": "yyjson",
+      "samples": 3486
+    },
+    {
+      "countIterations": 2388,
+      "deviationNs": 8577,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "mesh_pretty",
+        "operation": "parse"
+      },
+      "maxNs": 1257938,
+      "medianNs": 830566,
+      "metrics": {
+        "B/s": 1899130000.0,
+        "br-miss": 0.50431,
+        "branches": 3501960.0,
+        "cache-miss": null,
+        "cycles": 4093330.0,
+        "instr": 17354000.0,
+        "ipc": 4.23957,
+        "page-faults": 0
+      },
+      "minNs": 804876,
+      "name": "wired-native",
+      "samples": 2388
+    },
+    {
+      "countIterations": 2247,
+      "deviationNs": 7645,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "mesh_pretty",
+        "operation": "parse"
+      },
+      "maxNs": 1376458,
+      "medianNs": 880914,
+      "metrics": {
+        "B/s": 1790590000.0,
+        "br-miss": 0.239144,
+        "branches": 3844710.0,
+        "cache-miss": null,
+        "cycles": 4330290.0,
+        "instr": 18370300.0,
+        "ipc": 4.24228,
+        "page-faults": 0
+      },
+      "minNs": 852910,
+      "name": "yyjson",
+      "samples": 2247
+    },
+    {
+      "countIterations": 2224,
+      "deviationNs": 7705,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "mesh_pretty",
+        "operation": "parse-insitu"
+      },
+      "maxNs": 1707543,
+      "medianNs": 882993,
+      "metrics": {
+        "B/s": 1786370000.0,
+        "br-miss": 0.249791,
+        "branches": 3844740.0,
+        "cache-miss": null,
+        "cycles": 4346130.0,
+        "instr": 18370400.0,
+        "ipc": 4.22685,
+        "page-faults": 0
+      },
+      "minNs": 847700,
+      "name": "yyjson",
+      "samples": 2224
+    }
+  ],
+  "schema": 2
+}
