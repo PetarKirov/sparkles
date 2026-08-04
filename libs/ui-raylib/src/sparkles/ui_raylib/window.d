@@ -55,6 +55,26 @@ without importing raylib for the callback type alone.
 alias TraceLogSink = extern (C) void function(int, const(char)*, va_list) @nogc nothrow;
 
 /**
+A short tag for the backend's trace-log level.
+
+The numbering is raylib's, so translating it is the seam's job — a consumer
+bridging the log into its own should not have to name `TraceLogLevel` (`UIA7`).
+*/
+string traceLevelTag(int level) @safe pure nothrow @nogc
+{
+    switch (level)
+    {
+        case TraceLogLevel.LOG_TRACE:   return "trace";
+        case TraceLogLevel.LOG_DEBUG:   return "debug";
+        case TraceLogLevel.LOG_INFO:    return "info";
+        case TraceLogLevel.LOG_WARNING: return "warning";
+        case TraceLogLevel.LOG_ERROR:   return "error";
+        case TraceLogLevel.LOG_FATAL:   return "fatal";
+        default:                        return "log";
+    }
+}
+
+/**
 Routes the backend's own trace log through `sink`.
 
 Call BEFORE $(LREF Window.open): raylib emits its initialisation chatter during

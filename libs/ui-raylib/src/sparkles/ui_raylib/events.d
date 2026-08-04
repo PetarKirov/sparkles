@@ -202,6 +202,16 @@ struct RaylibEvents
                 sink(keyEvent(namedKey(rk), mods));
     }
 
+    /**
+    The modifier keys held right now.
+
+    A LEVEL, not an edge, which is why it is a query rather than an event: a
+    stream reports transitions, and a caller asking "is shift down" at an
+    arbitrary point in a frame has no transition to read. Events still carry
+    their own `mods` for the moment they occurred; this answers for *now*.
+    */
+    Mods modifiers() const @system => currentMods();
+
     private static Mods currentMods() @system
         => Mods(
             ctrl: IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL)

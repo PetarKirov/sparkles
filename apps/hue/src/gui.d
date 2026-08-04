@@ -18,7 +18,6 @@ module gui;
 
 version (HueGui):
 
-import raylib;
 
 import core.stdc.stdarg : va_list; // for the TraceLogCallback bridge (NFR7)
 
@@ -29,7 +28,8 @@ import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
 
 // The shared scroll-step convention: this file is a wheel PRODUCER, so it
 // applies the notch multiplier itself (INP12).
-import sparkles.input.events : Key, KeyEvent, linesPerNotch, Mods;
+import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match, Mods;
+import frame_input : FrameInput, foldFrame;
 import keymap : Command, commandFor, InputMode, KeyContext;
 import sparkles.input.capability : InputCapabilities, mousePointer,
     touchPointer;
@@ -81,8 +81,9 @@ import sparkles.ui.state : CaptureState, hoverTargets, HoverState, keyAt,
     SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
-import sparkles.ui_raylib : drawScrollbar, namedKey, RaylibCanvas, ScrollbarAnim,
-    traceLogTo, Window, WindowRequest,
+import sparkles.ui_raylib : drawScrollbar, namedKey, RaylibCanvas, RaylibEvents,
+    ScrollbarAnim,
+    traceLevelTag, traceLogTo, Window, WindowRequest,
     scrollbarLayout, toRaylibCursor;
 
 // Live D types (`PRJ12`-`PRJ16`): the `twoslash-extract --serve` oracle beside
@@ -98,20 +99,6 @@ import sparkles.syntax.ts.highlighter : highlightInjected;
 /// The window's default font size in pixels (Ctrl-±/theme cycling arrive in M3).
 private enum defaultFontSize = 18;
 
-/// A short tag for a raylib `TraceLogLevel`, embedded in the bridged message.
-private string raylibLevelTag(int logLevel) @safe pure nothrow @nogc
-{
-    switch (logLevel)
-    {
-        case TraceLogLevel.LOG_TRACE:   return "trace";
-        case TraceLogLevel.LOG_DEBUG:   return "debug";
-        case TraceLogLevel.LOG_INFO:    return "info";
-        case TraceLogLevel.LOG_WARNING: return "warning";
-        case TraceLogLevel.LOG_ERROR:   return "error";
-        case TraceLogLevel.LOG_FATAL:   return "fatal";
-        default:                        return "log";
-    }
-}
 
 /// Bridges raylib's `TraceLog` output into `sparkles.base.logger` (hue spec
 /// `NFR7`). raylib hands us a printf-style format + `va_list`; we render it
@@ -131,7 +118,7 @@ extern (C) private void raylibTraceLog(int logLevel, const(char)* text, va_list 
         return;
     const len = written < cast(int) buf.length ? cast(size_t) written : buf.length - 1;
     const msg = () @trusted { return cast(const(char)[]) buf[0 .. len]; }();
-    trace(i"raylib[$(raylibLevelTag(logLevel))]: $(msg)");
+    trace(i"raylib[$(traceLevelTag(logLevel))]: $(msg)");
 }
 
 /// Sane concrete fallbacks when a theme leaves the page fore-/background unset
@@ -591,8 +578,19 @@ int runGui(
     ScrollbarState treeVSb;
     ScrollbarAnim sbAnim, treeSbAnim, treeHAnim, docHAnim;
 
-    // Reused across frames so the per-frame drain does not allocate.
+    // The ONE input source (IXB7/UIA7): raylib's polled state is synthesised
+    // into `sparkles:input` events by the backend adapter, drained once per
+    // frame here, and folded into the flags the sites below read. hue names no
+    // raylib input call.
+    //
+    // `poll(sink, 1, 1)` — a cell of 1×1 px means positions arrive in PIXELS,
+    // which is the unit hue's chrome already works in. Converting coordinates
+    // at the same time as the seam would have made a behaviour change
+    // indistinguishable from a refactor.
+    RaylibEvents inputSource;
+    Event[] evBuf;
     KeyEvent[] keyBuf;
+    FrameInput fin;
 
     // Pointer capture (STM11, closing IXR6's GUI half). Every draggable
     // affordance takes an id and asks `capture.available(id)` — "free, or
@@ -604,7 +602,6 @@ int runGui(
     enum size_t capDivider = 1, capDocSb = 2, capTreeSb = 3,
         capDocHSb = 4, capTreeHSb = 5, capSelection = 6;
     CaptureState capture;
-    float wheelAccum = 0;   // fractional wheel deltas accumulate to whole rows
 
     // Fullscreen (F11): a manual borderless toggle. raylib's
     // ToggleBorderlessWindowed forces the primary monitor and, on some
@@ -623,7 +620,7 @@ int runGui(
     // Twoslash hover latch: the open popup's node (+1; 0 = none), its rect
     // (pointer hysteresis), and the token-underline fade (STM6).
     size_t hotNode = 0;
-    Rectangle hotPopup;
+    PixelRect hotPopup;
     bool havePopup = false;
     // Which collapsed runs of the hot popup's signature the reader opened, and
     // where they landed so a click can name one. Per popup, not persistent:
@@ -802,9 +799,7 @@ int runGui(
         // hue still POLLS raylib rather than consuming `RaylibEvents` (that is
         // IXB7/M17), so it drives the recogniser itself for now; the drain is
         // the same either way, which is what makes that later switch small.
-        GestureRecognizer touch;
         bool touchTap, touchLongPress;
-        long touchScrollRows;
         float touchPinch = 0;
 
         // A tap is the touch spelling of a click; a long-press starts a
@@ -849,12 +844,29 @@ int runGui(
     }
     else
     {
-        bool clickPressed() => IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT);
-        bool selectStartPressed() => IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT);
+        bool clickPressed() => fin.leftPressed;
+        bool selectStartPressed() => fin.leftPressed;
     }
 
     while (!window.shouldClose())
     {
+        // Gesture thresholds are PHYSICAL, so they track the cell size: a
+        // pinch or Ctrl-± changes it, and values fixed before the loop would
+        // misclassify after any zoom. Set before the drain, because the drain
+        // is what advances the recogniser.
+        inputSource.gestures.cfg.slopPx =
+            fonts.cellH() / 2.0f > 8 ? fonts.cellH() / 2.0f : 8;
+        inputSource.gestures.cfg.cellH = fonts.cellH();
+
+        // Drain, then fold. `fin` carries the button LEVEL across frames, which
+        // an event stream reports only as transitions.
+        evBuf.length = 0;
+        inputSource.poll((Event e) { evBuf ~= e; }, 1, 1);
+        keyBuf.length = 0;
+        foreach (e; evBuf)
+            e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
+        fin = foldFrame(evBuf, fin);
+
         // Live D types (`PRJ12`/`PRJ14`): drain the oracle's non-blocking
         // output. The lazy payload attaches to the open document (every hover
         // span gets its underline); each tip answer fills one node in place —
@@ -949,67 +961,30 @@ int runGui(
             Point barCell(in PointF p) => Point(
                 cast(int)(p.x / cellW), cast(int)((p.y - toolbarY) / cellH));
 
-            // Feed the shared recogniser raw samples, then drain what it
-            // resolved. Everything hue used to decide here — is this a tap, a
-            // drag, a fling, a long-press, a pinch; when does a second finger
-            // cancel the first — is `sparkles:input`'s now (IXB8).
+            // hue no longer DRIVES a recogniser — `RaylibEvents` owns the one
+            // in `sparkles:input`, and a second would recognise every gesture
+            // twice. What remains here is hue's policy over resolved results.
             //
-            // Slop and the row height are physical, so they track the cell
-            // size: a pinch or Ctrl-± changes `fonts.cellH()`, and thresholds
-            // computed once before the loop would misclassify after any zoom.
-            touch.cfg.slopPx = cellH / 2.0f > 8 ? cellH / 2.0f : 8;
-            touch.cfg.cellH = cellH;
-
-            const touchCount = GetTouchPointCount();
-            if (touchCount >= 2)
+            // A tap is a press+release pair inside ONE drain, so the toolbar's
+            // STM10 contract sees both edges of the same frame: a press that
+            // travelled off its segment before release does not activate it
+            // (IXB9). Positions carry the gesture ANCHOR — `RaylibEvents`
+            // stamps it — so a tap acts where it began, not where slop left it.
+            if (fin.leftPressed || fin.leftReleased)
             {
-                const p0 = GetTouchPosition(0);
-                const p1 = GetTouchPosition(1);
-                touch.setContacts(cast(ubyte) touchCount,
-                    PointF(p0.x, p0.y), PointF(p1.x, p1.y));
+                const cell = barCell(fin.pos);
+                HoverState hh;
+                hh.update(PointerEvent(action: PointerAction.move,
+                    pos: cell), barTargets);
+                if (fin.leftPressed)
+                    toolbarPress = toolbarPress.pressed(hh.hot);
+                if (fin.leftReleased)
+                    toolbarPress = toolbarPress.released(hh.hot);
             }
-            else
-            {
-                const tp = GetMousePosition();
-                touch.setContacts(cast(ubyte) touchCount, PointF(tp.x, tp.y), PointF());
-                touch.pointer(0, IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT),
-                    PointF(tp.x, tp.y));
-            }
-            touch.tick(window.frameSeconds * 1000);
 
-            touchTap = false;
-            touchLongPress = false;
-            touchScrollRows = 0;
-            touchPinch = 0;
-            for (auto ev = touch.next(); !ev.isNoEvent; ev = touch.next())
-                ev.match!(
-                    // A tap arrives as press+release. `clickPressed()` is a
-                    // one-frame edge, so the panes still react on the press —
-                    // but the toolbar runs the STM10 contract over the same
-                    // pair, so a press that travels off its segment before
-                    // release does NOT activate it (IXB9).
-                    (in PointerEvent p) {
-                        const cell = barCell(touch.anchor());
-                        HoverState hh;
-                        hh.update(PointerEvent(action: PointerAction.move,
-                            pos: cell), barTargets);
-                        if (p.action == PointerAction.press)
-                        {
-                            touchTap = true;
-                            toolbarPress = toolbarPress.pressed(hh.hot);
-                        }
-                        else if (p.action == PointerAction.release)
-                            toolbarPress = toolbarPress.released(hh.hot);
-                    },
-                    (in WheelEvent w) { touchScrollRows += w.dy; },
-                    (in GestureEvent g) {
-                        if (g.gesture == Gesture.longPress)
-                            touchLongPress = true;
-                        else
-                            touchPinch = g.scale;
-                    },
-                    (in _) {},
-                );
+            touchTap = fin.leftPressed;
+            touchLongPress = fin.longPress;
+            touchPinch = fin.pinch;
 
             // Pinch → font size. Which gesture means "zoom", and by how much,
             // is hue's decision; that a pinch happened is the framework's.
@@ -1023,17 +998,12 @@ int runGui(
             else if (touchPinch != 0 && touchPinch < 1)
                 bumpFontSize(-2);
 
-            // Drag/fling → whole rows into the pane under the gesture anchor
-            // (the same routing rule as the wheel). The rows are already
-            // quantised — `WheelEvent.precise` — so nothing multiplies here.
-            if (touchScrollRows != 0)
-            {
-                const anchorX = touch.anchor().x;
-                if (treeVisible && anchorX < treeCols * cellW)
-                    tree.scrollBy(touchScrollRows);
-                else
-                    vm.top += touchScrollRows;
-            }
+            // Drag/fling need no case of their own any more: the recogniser
+            // resolves them to `WheelEvent`s on the shared stream, and the
+            // wheel block above already routes those by the pane under
+            // `fin.pos` — which for a gesture IS the anchor, because
+            // `RaylibEvents` stamps resolved events with it. One routing rule,
+            // one code path, touch and wheel alike.
 
             // Which segments exist and what they do is hue's policy; that a
             // press on one of them activated is the toolkit's (IXB9). No
@@ -1067,7 +1037,7 @@ int runGui(
             // activity finishes). A hover popup needs no case of its own —
             // it follows the pointer, and the pointer is wherever the last
             // tap landed, so tapping elsewhere already dismisses it.
-            if (IsKeyPressed(KeyboardKey.KEY_BACK))
+            if (keyBuf.hasKey(Key.back))
             {
                 if (treeVisible)
                     toggleExplorer();
@@ -1098,7 +1068,7 @@ int runGui(
         // F11 toggles borderless fullscreen on the window's vm.current monitor;
         // active in any input mode. Reflow-on-resize keeps working because the
         // screen size changes.
-        if (IsKeyPressed(KeyboardKey.KEY_F11))
+        if (keyBuf.hasKey(Key.f11))
         {
             // The window owns the manoeuvre AND the saved geometry, and is a
             // no-op where the target has no fullscreen concept — which is what
@@ -1111,21 +1081,24 @@ int runGui(
         {
             // The tree pane's live filter (broot mode): typed chars narrow
             // per keystroke; Enter keeps the filtered tree, Esc clears it.
-            for (int c = GetCharPressed(); c > 0; c = GetCharPressed())
-                if (c != '/')
-                    tree.filterInput(cast(dchar) c);
-            if (IsKeyPressed(KeyboardKey.KEY_BACKSPACE))
+            foreach (k; keyBuf)
+                if (k.key == Key.char_ && k.ch != '/')
+                    tree.filterInput(k.ch);
+            if (keyBuf.hasKey(Key.backspace))
                 tree.filterBackspace();
-            if (IsKeyPressed(KeyboardKey.KEY_ENTER))
+            if (keyBuf.hasKey(Key.enter))
                 tree.filterAccept();
-            if (IsKeyPressed(KeyboardKey.KEY_ESCAPE))
+            if (keyBuf.hasKey(Key.escape))
                 tree.filterCancel();
         }
         else if (inputMode)
         {
             // Typing a search query or a goto-line number.
-            for (int c = GetCharPressed(); c > 0; c = GetCharPressed())
+            foreach (k; keyBuf)
             {
+                if (k.key != Key.char_)
+                    continue;
+                const c = k.ch;
                 if (c < 32 || c >= 127)
                     continue;
                 if (mode == Mode.gotoLine && (c < '0' || c > '9'))
@@ -1135,13 +1108,13 @@ int runGui(
                 if (mode == Mode.search)
                     vm.search(query[]);
             }
-            if (IsKeyPressed(KeyboardKey.KEY_BACKSPACE) && query.length)
+            if (keyBuf.hasKey(Key.backspace) && query.length)
             {
                 query.popBack();
                 if (mode == Mode.search)
                     vm.search(query[]);
             }
-            if (IsKeyPressed(KeyboardKey.KEY_ENTER))
+            if (keyBuf.hasKey(Key.enter))
             {
                 if (mode == Mode.search)
                 {
@@ -1168,7 +1141,7 @@ int runGui(
                 }
                 mode = Mode.normal;
             }
-            if (IsKeyPressed(KeyboardKey.KEY_ESCAPE))
+            if (keyBuf.hasKey(Key.escape))
             {
                 mode = Mode.normal;
                 query.clear(); // cancelling clears the query (and search highlights)
@@ -1208,7 +1181,7 @@ int runGui(
             if (foldSeq)
                 --foldSeqFrames;
 
-            foreach (kev; drainKeys(keyBuf))
+            foreach (kev; keyBuf)
             {
                 const kc = commandFor(kev, kctx);
                 final switch (kc.cmd)
@@ -1435,22 +1408,21 @@ int runGui(
             // The wheel scrolls the pane under the cursor (tree or document).
             // High-resolution wheels deliver FRACTIONAL deltas; accumulate to
             // whole rows so gentle scrolling is never truncated to nothing.
-            const wheel = GetMouseWheelMove();
-            if (wheel != 0)
+            // The producer owns BOTH the notch→cells multiplication (INP12)
+            // and the fractional accumulation (M14's `wheelSteps`), so hue's
+            // own accumulator is gone: multiplying again here is precisely the
+            // double-scaling `frame_input`'s wheel test pins.
+            //
+            // The sign also moves with it. `GetMouseWheelMove` is POSITIVE
+            // scrolling up; `WheelEvent.dy` follows the web's `deltaY`, where
+            // up is NEGATIVE. So the two subtractions below become additions —
+            // the same direction, expressed against the other convention.
+            if (fin.wheelCells != 0)
             {
-                // gui.d is the producer here (RaylibEvents is not yet wired
-                // for pointer input), so the notch→cells multiplication
-                // belongs at this end — INP12.
-                wheelAccum += wheel * linesPerNotch;
-                const steps = cast(long) wheelAccum;
-                if (steps != 0)
-                {
-                    wheelAccum -= steps;
-                    if (treeVisible && GetMousePosition().x < treeCols * cellW)
-                        tree.scrollBy(-steps);
-                    else
-                        vm.top -= steps;
-                }
+                if (treeVisible && fin.pos.x < treeCols * cellW)
+                    tree.scrollBy(fin.wheelCells);
+                else
+                    vm.top += fin.wheelCells;
             }
 
             // The mouse back/forward buttons walk the document set regardless
@@ -1458,8 +1430,8 @@ int runGui(
             // dependent and go through the keymap above.
             if (set !is null && !set.empty && loadDoc !is null)
             {
-                const back = IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_BACK);
-                const fwd = IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_FORWARD);
+                const back = fin.backPressed;
+                const fwd = fin.forwardPressed;
                 if ((back || fwd) && set.move(back ? -1 : 1))
                     loadSelected();
             }
@@ -1472,18 +1444,18 @@ int runGui(
         // purpose: a per-affordance release is how a capture leaks — the one
         // that forgets leaves the pointer owned and every other affordance
         // dead until the process restarts.
-        if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+        if (fin.leftReleased)
             capture = capture.released();
 
         bool divZone;
         if (treeVisible)
         {
-            const mp = GetMousePosition();
+            const mp = fin.pos;
             const divX = treeCols * cellW + cellW / 2;
             const zone = mp.x >= divX - 4 && mp.x <= divX + 4;
             divZone = zone;
             if (zone && capture.available(capDivider)
-                && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                && fin.leftPressed)
             {
                 split = split.started(cast(int)(mp.x / cellW));
                 capture = capture.capturedBy(capDivider);
@@ -1492,7 +1464,7 @@ int runGui(
             {
                 const maxCols = (screenW / cellW) / 2 < 12
                     ? 12 : (screenW / cellW) / 2;
-                split = IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT)
+                split = fin.leftReleased
                     ? split.released()
                     : split.draggedTo(cast(int)(mp.x / cellW), 12, maxCols);
                 // The width change reflows through the resize debounce.
@@ -1515,7 +1487,7 @@ int runGui(
             if (maxTop > 0)
             {
                 const trackH = screenH - docY0;
-                const pos = GetMousePosition();
+                const pos = fin.pos;
                 const hoverTrack = pos.x >= screenW - hoverW;
                 docSb = docSb.hoveredNow(hoverTrack);
                 if (hoverTrack && capture.available(capDocSb) && clickPressed())
@@ -1526,7 +1498,7 @@ int runGui(
                 }
                 else if (docSb.dragging)
                 {
-                    if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+                    if (fin.leftReleased)
                         docSb = docSb.released();
                     else
                         docSb = docSb.dragged(cast(int)(pos.y - docY0),
@@ -1552,7 +1524,7 @@ int runGui(
             const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
             const trackTop = (treeTopRows + 1) * cellH;
             const trackH = screenH - trackTop;
-            const pos = GetMousePosition();
+            const pos = fin.pos;
             const edge = treeCols * cellW;
             const hoverTrack = pos.x >= edge - hoverW && pos.x < edge
                 && pos.y >= trackTop;
@@ -1565,7 +1537,7 @@ int runGui(
             }
             else if (treeVSb.dragging)
             {
-                if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+                if (fin.leftReleased)
                     treeVSb = treeVSb.released();
                 else
                     treeVSb = treeVSb.dragged(cast(int)(pos.y - trackTop),
@@ -1621,7 +1593,7 @@ int runGui(
         // ✔ glyph — part of the widget tree — holds for the flash duration.
         // (Views without hit targets — raw, twoslash — have an empty list.)
         {
-            const mp = GetMousePosition();
+            const mp = fin.pos;
             const dp = Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
                 cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH)));
             // The fold column: a click on a marker toggles its region.
@@ -1730,7 +1702,7 @@ int runGui(
         }
 
         {
-            const mp = GetMousePosition();
+            const mp = fin.pos;
             const overSb = mp.x >= screenW - scrollbarGutter();
             const overTree = treeVisible && mp.x < treeCols * cellW;
             // The pane's scrollbar strip is NOT a row: without this gate a
@@ -1759,7 +1731,7 @@ int runGui(
                 }
                 else if (vm.hsb.dragging)
                 {
-                    if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+                    if (fin.leftReleased)
                         vm.hsb = vm.hsb.released();
                     else
                         vm.hsb = vm.hsb.dragged(
@@ -1790,7 +1762,7 @@ int runGui(
             }
             else if (tree.hsb.dragging)
             {
-                if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+                if (fin.leftReleased)
                     tree.hsb = tree.hsb.released();
                 else
                     tree.hsb = tree.hsb.dragged(cast(int)(mp.x / cellW),
@@ -1834,8 +1806,9 @@ int runGui(
                     expandedRegions[r] = !expandedRegions.get(r, false);
                 }
             }
-            const shiftMod = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
-            const altMod = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
+            // Levels, not edges — see `RaylibEvents.modifiers`.
+            const shiftMod = inputSource.modifiers.shift;
+            const altMod = inputSource.modifiers.alt;
             // The five-term negation chain this replaces was the clearest
             // instance of the allow-list defect: every new draggable had to be
             // added here, and to every other affordance's condition. A popup
@@ -1863,7 +1836,7 @@ int runGui(
                 else
                     regime = Regime.none;
             }
-            if (selecting && IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT))
+            if (selecting && fin.leftDown)
             {
                 const h = hitAt(mp.x, mp.y);
                 if (regime == Regime.table && h.table && h.tableIdx == selTable)
@@ -1880,7 +1853,7 @@ int runGui(
                     headHi = h.hi;
                 }
             }
-            if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+            if (fin.leftReleased)
                 selecting = false;
         }
 
@@ -1962,7 +1935,7 @@ int runGui(
                 drawText(fonts, cstrOf(buf, fm.open ? "▾" : "▸"),
                     cast(float)(treePx() + 2),
                     docY0 + (fm.row - topLine) * cast(float) cellH,
-                    TextStyle(0), rl(vm.gutterFg));
+                    TextStyle(0), vm.gutterFg);
             }
 
             // Source line numbers in the gutter — from the row's source range
@@ -1984,7 +1957,7 @@ int runGui(
                     const s = cstrOf(buf, uintToBuf(ln + 1));
                     drawText(fonts, s,
                         gutterPx - (s.length + 1) * cast(float) cellW,
-                        docY0 + row * cast(float) cellH, TextStyle(0), rl(vm.gutterFg));
+                        docY0 + row * cast(float) cellH, TextStyle(0), vm.gutterFg);
                 }
             }
         }
@@ -2057,7 +2030,7 @@ int runGui(
         // hysteresis so moving down into the open popup keeps it open.
         if (vm.showPreview && vm.tw.code.length && tsCache !is null)
         {
-            const mp = GetMousePosition();
+            const mp = fin.pos;
             size_t overNode = 0;
             if (mp.x >= gutterPx)
             {
@@ -2224,7 +2197,7 @@ int runGui(
                 buf ~= tree.filterQuery;
                 buf ~= "▏\0";
                 drawText(fonts, buf[][0 .. $ - 1], 4, cast(float) barY,
-                    TextStyle(0), rl(vm.pageBg));
+                    TextStyle(0), vm.pageBg);
             }
 
             // The pane's scrollbar: the same animated-width thumb + hover
@@ -2266,10 +2239,10 @@ int runGui(
             chrome.fillPixels(0, 0, screenW, cellH, mix(vm.pageBg, vm.pageFg, 0.12));
             chrome.fillPixels(0, cellH - 1, screenW, 1, vm.gutterFg);
             const left = vm.summary.length ? vm.title ~ "  " ~ vm.summary : vm.title;
-            drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0, TextStyle(0), rl(vm.pageFg));
+            drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0, TextStyle(0), vm.pageFg);
             const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next   i index");
             const px = cast(float)(screenW - cast(int)((pos.length + 1) * cellW));
-            drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), rl(vm.gutterFg));
+            drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), vm.gutterFg);
         }
 
         // Bottom toolbar (Android): the SAME tree and frames the tap handler
@@ -2296,7 +2269,7 @@ int runGui(
             auto lineText = mode == Mode.search
                 ? text("/", query[], "   ", vm.matches.length, " vm.matches")
                 : text(":", query[]);
-            drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), rl(vm.pageBg));
+            drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), vm.pageBg);
         }
         // Copy-mode toast (when not typing): flashes the mode after a 'y'/'t' toggle.
         else if (toast.visible)
@@ -2304,7 +2277,7 @@ int runGui(
             toast = toast.stepped(frameMs(window.frameSeconds), toastCfg);
             const barY = screenH - cellH;
             chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
-            drawText(fonts, cstrOf(buf, copyModeMsg), 4, cast(float) barY, TextStyle(0), rl(vm.pageBg));
+            drawText(fonts, cstrOf(buf, copyModeMsg), 4, cast(float) barY, TextStyle(0), vm.pageBg);
         }
 
         window.resetClip(); // never let a scissor survive the frame
@@ -2356,7 +2329,7 @@ private size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
 /// painted through `RaylibCanvas`. The type signature renders as resolved
 /// syntax-colored spans (`signatureSpans`) inside the widget model itself, so
 /// nothing overpaints the toolkit's output.
-private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
+private PixelRect drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     in TwoslashReturn tw, size_t nodeIndex, float x, float y, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg, int availCells,
@@ -2386,7 +2359,7 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     // arrived yet) views as an EMPTY tree — there is nothing to lay out, and
     // the zero rect tells the caller there is no popup to keep the pointer in.
     if (!tree.nodes.length)
-        return Rectangle(x, y, 0, 0);
+        return PixelRect(x, y, 0, 0);
     auto frames = layout(tree);
     auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
@@ -2409,7 +2382,7 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     // The popup's on-screen rect (px), for the caller's pointer hysteresis —
     // the drawn rect, not the anchor, or the pointer leaves a shifted popup
     // the moment it moves onto it.
-    return Rectangle(px, y, cast(float)(box.width * cellW),
+    return PixelRect(px, y, cast(float)(box.width * cellW),
         cast(float)(box.height * cellH));
 }
 
@@ -2424,62 +2397,6 @@ private size_t maxNameCols(scope const SourceEntry[] entries) @safe pure nothrow
     return w;
 }
 
-/**
-This frame's key events, in the shared `sparkles:input` vocabulary.
-
-The interim seam for `IXB7`: hue consumes `sparkles:input` KEYS here while its
-pointer and touch input still poll raylib directly. Swapping this for
-`RaylibEvents.poll` wholesale has to happen together with the pointer move,
-because that type also owns a `GestureRecognizer` which would otherwise run
-alongside hue's and recognise every Android gesture twice.
-
-The raylib→`Key` table is `sparkles:ui_raylib`'s `namedKey`, so the mapping
-still lives in one place; only the queue drain is local.
-*/
-private KeyEvent[] drainKeys(ref KeyEvent[] buf) @system
-{
-    buf.length = 0;
-    const m = Mods(
-        ctrl: IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL)
-            || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL),
-        alt: IsKeyDown(KeyboardKey.KEY_LEFT_ALT)
-            || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT),
-        shift: IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
-            || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT));
-
-    // Printable input, including the OS auto-repeat raylib delivers natively
-    // through this queue.
-    for (int cp = GetCharPressed(); cp != 0; cp = GetCharPressed())
-        buf ~= KeyEvent(Key.char_, cast(dchar) cp, m);
-
-    for (int k = GetKeyPressed(); k != 0; k = GetKeyPressed())
-    {
-        const key = namedKey(k);
-        if (key != Key.none)
-            buf ~= KeyEvent(key, 0, m);
-        else if (m.ctrl && k >= 32 && k < 127)
-            // A Ctrl chord produces NO character, so the physical key is the
-            // only signal there is — `GetCharPressed` stays silent and the
-            // binding would simply vanish. raylib's letter codes are ASCII
-            // capitals; lower them so the keymap sees `ctrl+c`, not `ctrl+C`.
-            buf ~= KeyEvent(Key.char_,
-                cast(dchar)(k >= 'A' && k <= 'Z' ? k + ('a' - 'A') : k), m);
-    }
-
-    // Named keys repeat only through this call (chars repeat above), so held
-    // navigation keeps firing — what `pressed()` used to provide.
-    static immutable int[] repeatable = [
-        KeyboardKey.KEY_UP, KeyboardKey.KEY_DOWN,
-        KeyboardKey.KEY_LEFT, KeyboardKey.KEY_RIGHT,
-        KeyboardKey.KEY_PAGE_UP, KeyboardKey.KEY_PAGE_DOWN,
-        KeyboardKey.KEY_HOME, KeyboardKey.KEY_END,
-    ];
-    foreach (rk; repeatable)
-        if (IsKeyPressedRepeat(rk))
-            buf ~= KeyEvent(namedKey(rk), 0, m);
-
-    return buf;
-}
 
 // Transient-effect configs (STM6): the copy-✔ flash, the copy-mode toast, and
 // the hover-underline fade — one Timeline machine, three configurations. The
@@ -2534,5 +2451,20 @@ private const(char)[] cstrOf(ref SmallBuffer!(char, 4096) buf, scope const(char)
     return buf[][0 .. $ - 1];
 }
 
-/// An RGB triple as a raylib color (fully opaque).
-Color rl(RgbColor c) pure nothrow @nogc @trusted => Color(c.r, c.g, c.b, 255);
+/// A pixel-space rectangle — the popup's own geometry. Local rather than the
+/// backend's `Rectangle`, so hue names no raylib type; `sparkles.ui.Rect` is
+/// integer CELLS and cannot express a sub-cell popup edge.
+struct PixelRect
+{
+    float x = 0, y = 0, width = 0, height = 0;
+}
+
+/// `true` iff this frame's keys include `k` — the edge query the input-mode
+/// blocks want, over the drained stream rather than a second poll.
+private bool hasKey(scope const KeyEvent[] keys, Key k) @safe pure nothrow @nogc
+{
+    foreach (e; keys)
+        if (e.key == k)
+            return true;
+    return false;
+}

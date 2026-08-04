@@ -11,6 +11,7 @@ import sparkles.raylib_text.font : LoadedFont, glyphIndexFor;
 import sparkles.raylib_text.font_set : FontSet;
 import sparkles.raylib_text.style : TextStyle;
 import sparkles.raylib_text.box : drawBox;
+import sparkles.base.term_color : RgbColor;
 
 /**
 Draw a grapheme cluster (base codepoint plus any combining marks) at `(x, y)`,
@@ -87,6 +88,18 @@ Codepoints are placed one grid column apart (`FontSet.cellW`), matching
 The caller flushes on-demand requests with `FontSet.flushPending` after
 `EndDrawing`.
 */
+/**
+Draws `str` in the toolkit's colour type, opaque.
+
+So a consumer need not name the backend's `Color` just to draw a string —
+that import was the last raylib symbol `apps/hue` needed (`UIA7`). A caller
+that genuinely wants alpha uses the `Color` overload below.
+*/
+void drawText(ref FontSet fonts, scope const(char)[] str, float x, float y,
+    TextStyle style, RgbColor fg) @system
+    => drawText(fonts, str, x, y, style, Color(fg.r, fg.g, fg.b, 255));
+
+/// ditto
 void drawText(ref FontSet fonts, scope const(char)[] str, float x, float y,
     TextStyle style, Color fg) @system
 {
