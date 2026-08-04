@@ -28,12 +28,16 @@ Readings:
 - **Fiber overhead over the callback tier is ~180 ns** (840 − 660): the cost
   of one park/resume plus the mailbox hand-off. That is the price of direct
   style, and it is small against any real I/O.
-- **The `Effect!T` veneer is very nearly free: ~0.27 ns and ~11 retired
-  instructions across the whole three-node chain** (~0.09 ns / ~4 instructions
-  per node). The interpreter is a compile-time fold — static `static if`
-  dispatch, no runtime instruction loop — and with the optimizer able to see
-  through it, that folds essentially to the direct arithmetic. Against a real
-  I/O leaf (µs scale) it is unmeasurable.
+- **The `Effect!T` veneer costs ~1 ns across the whole three-node chain**
+  (2.0 ns direct vs 2.8–3.3 ns veneer over 10⁶ evaluations per measured
+  iteration; the gap is 0.8–1.2 ns across runs, so ~0.3 ns per node). The
+  interpreter is a compile-time fold — static `static if` dispatch, no runtime
+  instruction loop — so what remains is the `Outcome` value per node. Against a
+  real I/O leaf (µs scale) it is unmeasurable. _Retired-instruction attribution
+  for these rows is not currently trustworthy_ (the counting pass's few
+  iterations are dominated by the per-iteration scheduler setup, and its
+  counters disagree with the timing pass) — the wall-clock figure is the
+  supported one. See [test-runner O14](../test-runner/open-issues.md).
 
   > **Correction (2026-08-04).** This row previously read "~30–40 ns per node
   > (~100 ns across three nodes)", from the retired standalone `loop-bench.d`.
@@ -43,16 +47,19 @@ Readings:
   > body became dead code and was eliminated, while the _veneer_ body was not.
   > It compared nothing against something. Re-measured with `blackBox` barriers
   > on both sides (which is what `blackBox` is for), the gap collapses from
-  > ~90 ns to ~0.27 ns. The old shapes are kept as the
-  > `loop.effect.{direct,veneer}Literal` control rows: in the current build
-  > they fold to within 0.9 instructions of each other, which is what pins the
-  > cause to the missing barriers rather than to the veneer.
+  > ~90 ns to ~1 ns. The old shapes are kept as the
+  > `loop.effect.{direct,veneer}Literal` control rows: they now measure
+  > 1.57 ns vs 1.68 ns — indistinguishable, because both fold away — which is
+  > what pins the cause to the missing barriers rather than to the veneer.
 
-- **Registered buffers show ~1.0× on a single small cached read.** Honest: the
-  `get_user_pages` avoidance that `REGISTER_BUFFERS` buys only pays under
-  many-buffer / high-concurrency load, not one 4 KiB page already in cache.
-  The registration path is kept as a regression tracker; the win belongs to
-  the (future) concurrent-echo matrix.
+- **Registered buffers are ~1.36× faster even on a single cached read**
+  (`READ_FIXED` 6.7 µs ±451 ns / 604 MB/s vs plain 9.1 µs ±196 ns / 446 MB/s).
+  This too is a correction: the old harness reported "~1.0×", bouncing
+  0.86×/0.93×/1.04× between runs — it was too noisy to resolve the effect at
+  all. The runner's per-case statistics (n = 663 vs 522 samples, with
+  `setup`/`teardown` giving each variant its own loop and fixture) separate
+  them cleanly, so avoiding `get_user_pages` pays here and not only under the
+  many-buffer load the old note predicted.
 
 ### Running the suite, and reading the hardware counters
 
