@@ -351,6 +351,29 @@ evidence the deadlock is gone; (b) tests should call `pool.run` **once**, which
 is now a stated constraint on writing them. This raises the priority of a
 GC-safe blocking wait from "correctness nicety" to "CI reliability".
 
+**Fix status (2026-08-04), tracked in [#171](https://github.com/PetarKirov/sparkles/issues/171):**
+
+- **(C) mark the thread "in syscall"** so the collector skips signalling it
+  while still scanning its stack — the Go `_Psyscall` / JVM "in native" model.
+  The only option that removes the hazard instead of bounding it, but druntime
+  has no such API; needs an upstream `thread_enterSyscall`/`thread_exitSyscall`
+  (or `thread_suspendAll` honouring an in-syscall flag). **Chosen direction**;
+  #171 is the reminder to file upstream.
+- **Rejected — detach workers from the GC** (`thread_detachThis`). A detached
+  thread's stack is not scanned, so `FiberTask` closures and `Buf`s would sit in
+  unscanned memory: silent use-after-free. Trades a hang for corruption.
+- **(E) bounded wait — attempted and reverted.** Capping each
+  `io_uring_enter` at ~50 ms (looping internally so `runOnce`'s semantics are
+  unchanged) is sound in principle but is **not** a drop-in: routing every wait
+  through the deadline path changes _when SQEs are submitted_. The
+  null-deadline path submits and waits atomically (`submitAndWait(want)`);
+  the deadline path is `flush()` then `wait(want, arg)` — itself a workaround
+  for a `during` 0.5.0 trap. Measured: `io.steadyState.zeroAllocations` went
+  from milliseconds to **~66 ms per round**, every wait burning its full slice
+  instead of waking on a completion. A correct (E) needs a backend primitive
+  that submits _and_ waits with a timeout in one call — a change to the backend
+  seam, not to `runOnce`.
+
 ## O23 — Pool per-worker setup weight vs short batch workloads
 
 **Where:** SPEC §11 (`WorkStealingPool`), `benchmarks.md` §2.
