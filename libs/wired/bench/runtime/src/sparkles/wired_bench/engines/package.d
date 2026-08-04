@@ -10,8 +10,23 @@ module sparkles.wired_bench.engines;
 import std.meta : AliasSeq;
 
 public import sparkles.wired_bench.engines.std_json : StdJsonEngine;
-public import sparkles.wired_bench.engines.wired_inline : WiredInlineEngine;
 public import sparkles.wired_bench.engines.wired_native : WiredNativeEngine;
+
+// The single-TU codegen oracle is opt-in, not part of the competitive
+// field: it holds a second parsed document of its own, and adding that
+// footprint to the matrix shifts the allocator regime for whichever engine
+// runs before it (bench-baseline.md's O11 effect). Measured on twitter
+// parse, `wired-native` went bimodal with it enabled — median 354 µs
+// against a 181 µs minimum, while the clone running the same code posted
+// 187 µs. Build with `-version=BenchWiredInline` to A/B codegen.
+version (BenchWiredInline)
+{
+    public import sparkles.wired_bench.engines.wired_inline : WiredInlineEngine;
+
+    private alias WiredInlineEngines = AliasSeq!WiredInlineEngine;
+}
+else
+    private alias WiredInlineEngines = AliasSeq!();
 
 version (BenchMirIon)
 {
@@ -77,11 +92,12 @@ else
 /// row (std.json parse + the retired Exception walk, 157 MB/s decode) is
 /// gone with that walk — bench-baseline.md preserves its numbers;
 /// `wired-native` is the product row (SPEC §11).
-/// `wired-inline` follows `wired-native` directly: it is the same parser
-/// compiled as one translation unit, so the two rows are read as a pair.
-alias AllEngines = AliasSeq!(StdJsonEngine, WiredNativeEngine, WiredInlineEngine,
-    MirIonEngines, AsdfEngines, JsoniopipeEngines, YyjsonEngines, CppEngines,
-    RustEngines);
+/// `wired-inline`, when built in, follows `wired-native` directly: it is
+/// the same parser compiled as one translation unit, so the two rows are
+/// read as a pair.
+alias AllEngines = AliasSeq!(StdJsonEngine, WiredNativeEngine,
+    WiredInlineEngines, MirIonEngines, AsdfEngines, JsoniopipeEngines,
+    YyjsonEngines, CppEngines, RustEngines);
 
 /// Foreign-toolchain version/provenance lines for the report header.
 string[] engineVersions()

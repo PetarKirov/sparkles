@@ -22,6 +22,16 @@ PGO) that could not be evaluated cleanly on this toolchain.
 Only `parse` and `validate` are offered: those are the reader kernel. The
 copy stops at the reader, so there is no writer or codec here and the
 harness's trait detection simply gives this engine no serialize/decode rows.
+
+Opt-in — it is a diagnostic, not a competitor, and holding a second parsed
+document of its own perturbs the allocator regime of the engine scheduled
+before it. Run the A/B with:
+
+    dub test -b bench --d-version=BenchWiredInline -- --bench --perf \
+        -i 'wired\.parse' --bench-min-time 2000
+
+Its equivalence unittest runs either way, so the copy cannot drift
+unnoticed from the original it is measured against.
 */
 module sparkles.wired_bench.engines.wired_inline;
 
