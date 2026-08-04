@@ -679,6 +679,7 @@ export default withMermaid(
                   text: 'State machines',
                   link: '/specs/ui/state-machines',
                 },
+                { text: 'Editor (planned)', link: '/specs/ui/editor' },
                 { text: 'Backends', link: '/specs/ui/backends' },
                 { text: 'Migration (planned)', link: '/specs/ui/migration' },
               ],

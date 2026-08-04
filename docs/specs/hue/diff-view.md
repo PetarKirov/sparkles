@@ -173,7 +173,8 @@ patch model, gitui's hash identities, Meld's editable panes.
 > component** that `sparkles:ui` does not have (hue's only text input today is
 > the single-line search field) — cursor/insert/undo state machine, edit-aware
 > layout, IME on desktop GUI, soft keyboard on Android, terminal input in the
-> TUI. It is specced as [`UIA9`](./ui-architecture.md) and is the **critical
+> TUI. It is specced as [`UIA9`](./ui-architecture.md) /
+> [`docs/specs/ui/editor.md`](../ui/editor.md) and is the **critical
 > path of the write wave**: schedule it before W1/W2.
 
 | ID   | Requirement                                                                                                                                                                                                                                                                                           | Status      | Traces to                                                                            |
