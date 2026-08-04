@@ -131,15 +131,22 @@ BufResult!B recv(B)(ref Stream s, B buf) if (isOwnedIoBuf!B)
 BufResult!B send(B)(ref Stream s, B buf) if (isOwnedIoBuf!B)
     => rw!(OpSend, Yes.sized)(s.fd, move(buf));
 
+private import sparkles.event_horizon.backend.concept : canSubmitOp;
+private import sparkles.event_horizon.backend.select : DefaultBackend;
+private import sparkles.event_horizon.op : OpRecvSelect;
+
 /// Hot receive path (SPEC §6.4): the kernel picks a buffer from `ring` at
 /// completion — nothing is committed while idle. The returned `Buf` is a
 /// ring lease (origin `ringLease`); releasing it republishes the slot to
 /// the kernel with no syscall. `maxLen` caps the receive at the ring's
 /// buffer size.
+/// Present only where the backend lowers `OpRecvSelect` (SPEC §3.1 — absence
+/// degrades, never breaks): provided buffer rings are an io_uring Tier-3
+/// feature, so on kqueue/IOCP this verb is simply absent and callers use the
+/// owned-buffer `recv` instead.
+static if (canSubmitOp!(DefaultBackend, OpRecvSelect))
 IoResult!Buf recvSelect(Ring)(ref Stream s, ref Ring ring, uint maxLen)
 {
-    import sparkles.event_horizon.op : OpRecvSelect;
-
     auto o = currentSched().await(OpRecvSelect(s.fd, ring.group, maxLen));
     if (o.res < 0)
         return ioErr!Buf(-o.res, OpKind.recvSelect);
@@ -154,9 +161,6 @@ IoResult!Buf recvSelect(Ring)(ref Stream s, ref Ring ring, uint maxLen)
 // Windows these verbs are simply absent and callers set connections up
 // synchronously. `DefaultBackend` is the fiber tier's backend (`Sched` rides
 // `DefaultLoop`).
-private import sparkles.event_horizon.backend.concept : canSubmitOp;
-private import sparkles.event_horizon.backend.select : DefaultBackend;
-
 static if (canSubmitOp!(DefaultBackend, OpAccept))
 {
     /// Parks until a connection arrives; the result is the connected stream.
@@ -509,6 +513,10 @@ unittest
         "only setup draws from the allocator");
 }
 
+// Compile-time, not the runtime `caps()` check alone: on a backend without
+// provided buffer rings `registerBufRing`/`unregisterBufRing` do not exist, so
+// the body would fail to COMPILE off io_uring however it guarded at run time.
+static if (canSubmitOp!(DefaultBackend, OpRecvSelect))
 @("io.providedBufferRing.leaseRecvRepublish")
 @safe
 unittest
