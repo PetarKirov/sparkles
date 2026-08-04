@@ -462,6 +462,30 @@ iteration); the structural lever left for the string lanes is a SIMD scan
 (simdjson's 32-byte probe shape), which belongs to the vectorization
 phase, not this scalar round.
 
+Within the round-2 canonical snapshot (2 000 ms budget):
+
+| corpus / op         | wired MB/s | yyjson MB/s | ratio | round 1 |
+| ------------------- | ---------: | ----------: | ----: | ------: |
+| citm_catalog parse  |      4 188 |       3 926 | 1.07× |   1.10× |
+| twitter parse       |      3 542 |       3 942 | 0.90× |   0.94× |
+| github_events parse |      3 874 |       4 502 | 0.86× |   0.89× |
+| twitter decode      |      2 756 |       3 315 | 0.83× |   0.85× |
+| canada parse        |      1 043 |       1 340 | 0.78× |   0.78× |
+
+wired's own throughput rose on every string lane vs round 1 (twitter
+parse **+5.1 %**, twitter decode +2.7 %, github +2.4 %; canada flat) —
+the twitter/github _ratios_ still moved the wrong way because yyjson
+posted 8–10 % hotter walls in this snapshot than in round 1's (its
+documented 10–15 % swing; ratios only compare within one snapshot).
+Per-byte instructions, the deterministic axis: twitter 7.49 → **6.91**,
+github 6.63 → 6.42, citm 6.21 → 6.03, twitter decode 8.30 → 7.73,
+canada 21.17 → 21.07. At this snapshot's IPCs the cut still needed for
+0.98× is ~10 % on twitter, ~11 % on github, ~22 % on canada — numbers
+that moved little despite the instruction wins, because yyjson's IPC
+also ran higher here; the gate arithmetic is hostage to yyjson's
+run-to-run behaviour, which is itself an argument for judging progress
+on wired's own per-byte instructions and wall.
+
 ### Canada anatomy: where yyjson's 14.25 ins/B actually go
 
 A side-by-side of the two number pipelines — `perf annotate` region
@@ -521,29 +545,62 @@ derived bookkeeping, a straight-line dominant-shape fast path with the
 current machinery as fallback, cheaper entry/exit — with SIMD as a
 component of that redesign, not a substitute for it.
 
-Within the round-2 canonical snapshot (2 000 ms budget):
+### Scalar round 3: probing the glue
 
-| corpus / op         | wired MB/s | yyjson MB/s | ratio | round 1 |
-| ------------------- | ---------: | ----------: | ----: | ------: |
-| citm_catalog parse  |      4 188 |       3 926 | 1.07× |   1.10× |
-| twitter parse       |      3 542 |       3 942 | 0.90× |   0.94× |
-| github_events parse |      3 874 |       4 502 | 0.86× |   0.89× |
-| twitter decode      |      2 756 |       3 315 | 0.83× |   0.85× |
-| canada parse        |      1 043 |       1 340 | 0.78× |   0.78× |
+Round 3 worked the canada-anatomy conclusion directly — eight targeted
+attempts at the ~170 ins/number of kernel glue. Two shipped, six came
+back flat or negative; together they establish the scalar floor
+empirically.
 
-wired's own throughput rose on every string lane vs round 1 (twitter
-parse **+5.1 %**, twitter decode +2.7 %, github +2.4 %; canada flat) —
-the twitter/github _ratios_ still moved the wrong way because yyjson
-posted 8–10 % hotter walls in this snapshot than in round 1's (its
-documented 10–15 % swing; ratios only compare within one snapshot).
-Per-byte instructions, the deterministic axis: twitter 7.49 → **6.91**,
-github 6.63 → 6.42, citm 6.21 → 6.03, twitter decode 8.30 → 7.73,
-canada 21.17 → 21.07. At this snapshot's IPCs the cut still needed for
-0.98× is ~10 % on twitter, ~11 % on github, ~22 % on canada — numbers
-that moved little despite the instruction wins, because yyjson's IPC
-also ran higher here; the gate arithmetic is hostage to yyjson's
-run-to-run behaviour, which is itself an argument for judging progress
-on wired's own per-byte instructions and wall.
+Shipped:
+
+- **Numbers dispatched before literals on one compare.** The value
+  dispatch tested `t`/`f`/`n` before the number fall-through; digits and
+  `'-'` (0x2D–0x39) sit below `'f'` (0x66), so one compare splits the
+  classes with error codes/offsets unchanged. canada **−0.95 %**
+  instructions, citm −0.6 %, others neutral; wall flat-to-better.
+- **Dot-peek fast lane for short integer parts.** Float corpora put the
+  dot 1–3 digits in (canada's 2–3 digit coordinates), where the 8-wide
+  gulp probe always failed before the pair loop ran. Two peeks at the
+  dot position route those shapes straight to the fraction. canada
+  **−5.1 %** instructions (46.98 M → 44.57 M, 21.0 → 19.8 ins/B), wall
+  **+4 %** (0.78× → 0.815× within-snapshot). citm pays +2.2 %
+  instructions (≈ −2 % wall, still 1.04× ahead); peek-after-failed-probe
+  ordering keeps citm clean but forfeits most of the canada win (−1.6 %)
+  — measured both, took canada.
+
+Rejected after measuring (round 3):
+
+- **One-gulp shape for the integer lead** (the fraction's winning shape
+  applied to the integer part): canada instructions −0.4 % but wall
+  **−9 %** (1.07 → 0.97 GB/s, IPC 4.35 → 4.20). The
+  `digitRun8 → shift → reduce` serial dependency chain in front of every
+  number loses to the pair loop's short, overlapped, predicted branches
+  on 2–3-digit runs — the same failure mode as the SWAR `skipWs`.
+- **Counters → pointer bounds** (`taken` ⇒ `k − intStart` with hoisted
+  budget positions, yyjson's pointer discipline): instructions **up
+  +3.1 %** on canada _and_ citm. The counter compiled to an
+  immediate-operand compare; the pointer form traded one live counter
+  for two live 64-bit bounds plus reg-reg compares. yyjson's pointer
+  discipline only works because its unrolled ladder has **no loop bounds
+  at all** — the unroll is the budget.
+- **Float-tail restructure** (early returns instead of the
+  `decided`/`truncated` flags, sign as an OR into IEEE bit 63): flat on
+  every lane, measured twice — once as the full restructure, once as the
+  minimal sign-bit-only delta (identical instruction count; the
+  annotate's hot `cmp $0x2d` was sampling skid, not a real sign
+  re-test). LLVM already generates equivalent code for both forms.
+
+**Where this leaves the scalar campaign: at its floor, now empirically.**
+Every glue region the anatomy identified has been attacked directly:
+restructures that add or move live values lose to the kernel's spill
+pressure, SWAR consolidations on short runs lose to dependency-chain
+latency, and the flag/sign tails are already optimal in LLVM's hands.
+canada stands at **0.815×** within-snapshot (44.57 M instructions,
+19.8 ins/B vs yyjson's 14.25); reaching 0.98× needs ~18 % more wall,
+which is not reachable by ±2 % scalar deltas. The remaining path is the
+fused redesign with SIMD digit/string scanning as a component
+(§ "Canada anatomy", consequence paragraph).
 
 ## Reproducing
 
