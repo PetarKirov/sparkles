@@ -28,15 +28,18 @@ $(LIST
 */
 module sparkles.dmd_lsp.ddoc;
 
+import std.array : replicate;
+import std.conv : text;
+
 import dmd.common.outbuffer : OutBuffer;
 import dmd.dmacro : MacroTable;
 import dmd.doc : DocComment, escapetable, highlightText, isIdStart, isIdTail,
     ParamSection, Section;
 import dmd.dscope : Scope;
-import dmd.location : Loc;
 import dmd.dsymbol : Dsymbol;
 import dmd.dsymbolsem : scopeCreateGlobal;
 import dmd.globals : global;
+import dmd.location : Loc;
 
 /// The translated documentation of one symbol.
 struct DdocRendered
@@ -110,7 +113,7 @@ private string dedent(const(char)[] code) @safe pure
 
 /// The slice with leading and trailing blank lines dropped. `std.string.strip`
 /// works on characters; this is the line-wise twin the same idea needs.
-private inout(T)[] strippedOfBlankEnds(T)(inout(T)[] lines) @safe pure nothrow @nogc
+private inout(T)[] strippedOfBlankEnds(T)(inout(T)[] lines)
 {
     size_t lo = 0, hi = lines.length;
     while (lo < hi && lines[lo].length == 0)
@@ -202,12 +205,12 @@ private string documentedUnittests(Dsymbol sym) @system
         const prose = isDittoComment(utd.comment)
             ? null : utd.comment[0 .. strlen(utd.comment)].strip;
         if (prose.length)
-            body_ ~= "\n" ~ prose ~ "\n";
+            body_ ~= i"\n$(prose)\n".text;
         if (utd.codedoc !is null)
         {
             const code = dedent(utd.codedoc[0 .. strlen(utd.codedoc)]);
             if (code.length)
-                body_ ~= "\n" ~ runnableMark ~ "\n```d\n" ~ code ~ "\n```\n";
+                body_ ~= i"\n$(runnableMark)\n```d\n$(code)\n```\n".text;
         }
     }
     return body_.length ? "\n\nExamples:\n" ~ body_ : null;
@@ -294,7 +297,7 @@ DdocRendered renderDdocText(string comment, Dsymbol sym, Scope* sc = null) @syst
                 const desc = collapseWhitespace(row[at + 1 .. $]);
                 if (!id.length)
                     continue;
-                result.tags ~= ["param", desc.length ? id ~ " " ~ desc : id];
+                result.tags ~= ["param", desc.length ? i"$(id) $(desc)".text : id];
             }
             continue;
         }
@@ -664,12 +667,7 @@ private string cleanupMarkdown(string s) @safe pure
 
 /// `n` levels of list indentation. Four spaces per level clears the content
 /// column of every marker DDoc can produce, so a nested list nests.
-private string indentOf(size_t n) @safe pure
-{
-    import std.array : replicate;
-
-    return replicate(" ", n * 4);
-}
+private string indentOf(size_t n) @safe pure => replicate(" ", n * 4);
 
 
 /// Whether a line opens a list item — `- ` or `12. `. The blank-line fold uses
@@ -791,9 +789,7 @@ private string[] reflowListsAndTables(string[] lines, out bool[] fenced) @safe p
         {
             if (stack[$ - 1].ordered)
             {
-                import std.conv : text;
-
-                body_ = text(stack[$ - 1].next) ~ ". " ~ body_[2 .. $];
+                body_ = i"$(stack[$ - 1].next). $(body_[2 .. $])".text;
                 stack[$ - 1].next++;
             }
             emit(indentOf(depth) ~ body_, false);
