@@ -602,18 +602,34 @@ else version (OSX)
             return r;
         }
 
-        /// The counting pass: per-iteration snapshot pairs, per-iteration
-        /// averages (nan propagates through the sum for absent fields).
-        Tier0Stats count(Timed, Between)(scope Timed timed, scope Between between, uint iters)
+        /// The counting pass: snapshot pairs bracketing `batch` iterations
+        /// each, per-iteration averages (nan propagates through the sum for
+        /// absent fields).
+        ///
+        /// `batch` amortizes the bracket's own two snapshots, which would
+        /// otherwise dominate a fast body — the same reason the perf tier
+        /// batches its ioctl pair (SPEC §6.1). Reordering `between()` after
+        /// its batch is only sound when it is a no-op, so per-call rows keep
+        /// `batch == 1`, which is exactly the original per-iteration loop.
+        Tier0Stats count(Timed, Between)(scope Timed timed, scope Between between,
+            uint iters, uint batch = 1)
         in (iters > 0)
         {
             Tier0Stats sum;
-            foreach (_; 0 .. iters)
+            const k = batch == 0 ? 1 : batch;
+            uint done;
+            while (done < iters)
             {
+                const n = k < iters - done ? k : iters - done;
+                done += n;
                 const start = snapshot();
-                timed();
+                foreach (_; 0 .. n)
+                    timed();
                 const end = snapshot();
-                between();
+                foreach (_; 0 .. n)
+                    between();
+                // Raw (divisor 1): `sum` accumulates the whole pass, which the
+                // 1/iters below averages — correct for any batch size.
                 const one = deltaStats(start, end, 1);
                 sum.minflt += one.minflt;
                 sum.majflt += one.majflt;
