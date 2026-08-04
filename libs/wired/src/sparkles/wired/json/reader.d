@@ -109,7 +109,20 @@ private struct ScanError
 // Standalone pointer kernel with a register-narrow interface (yyjson's
 // read_number discipline): keeping it out of the grammar loop's nested
 // scope keeps the loop's captured state out of the kernel's register
-// allocation. `p` is the padded pool base — the ≥ 8 zero bytes
+// allocation.
+//
+// Do not "fix" this by inlining the kernels into the loop — measured, and
+// it loses. yyjson inlines both of its readers into one function, and the
+// call frames plus the rematerialized SWAR constants are worth ~6-7 % of
+// retired instructions here, so the change looks free on the instruction
+// counter. It is not: IPC falls further than the instruction count does,
+// because the kernels' live values evict the loop's. Both shapes were
+// tried — whole kernel inlined, and a fast-lane/cold-tail split with only
+// the fast lane inlined — and both cost citm ~2.5 % MB/s (5.12 IPC → 4.85)
+// to buy a 2.9 % instruction cut. The throughput gate is MB/s; instructions
+// are only the diagnostic.
+//
+// `p` is the padded pool base — the ≥ 8 zero bytes
 // terminate every digit run, so the hot loops carry no bounds checks
 // (the same invariant as the scan seams). The parsed value cell is
 // stored straight into `*cell`; returns the index just past the token,
