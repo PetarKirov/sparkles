@@ -358,27 +358,6 @@ version (linux)
         }
     }
 
-    /// A counter net of its calibrated per-bracket cost, clamped at zero;
-    /// `nan` (source unavailable) passes through untouched.
-    package double netOfCost(double total, double cost) @safe pure nothrow @nogc
-    {
-        import std.algorithm.comparison : max;
-        import std.math : isNaN;
-
-        return total.isNaN ? total : max(0.0, total - cost);
-    }
-
-    @("tier0.netOfCost")
-    @safe pure nothrow @nogc
-    unittest
-    {
-        import std.math : isNaN;
-
-        assert(netOfCost(3.0, 1.0) == 2.0);
-        assert(netOfCost(0.5, 1.0) == 0.0, "clamped: never negative");
-        assert(netOfCost(double.nan, 1.0).isNaN, "unavailable stays unavailable");
-    }
-
     /// Reads `/proc/self/io` into `buf` via a raw `open`/`read`/`close`; returns
     /// the filled slice (empty on failure). `std.file` reports size 0 for `/proc`,
     /// so a direct read is required.
@@ -511,6 +490,29 @@ else
             const @safe pure nothrow @nogc
             => assert(false, "Tier-0 counters are Linux-only");
     }
+}
+
+/// A counter net of its calibrated per-bracket cost, clamped at zero;
+/// `nan` (source unavailable) passes through untouched. Platform-neutral:
+/// the darwin perf body (proc_pid_rusage fixed counters) nets its bracket
+/// cost through the same helper.
+package double netOfCost(double total, double cost) @safe pure nothrow @nogc
+{
+    import std.algorithm.comparison : max;
+    import std.math : isNaN;
+
+    return total.isNaN ? total : max(0.0, total - cost);
+}
+
+@("tier0.netOfCost")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.math : isNaN;
+
+    assert(netOfCost(3.0, 1.0) == 2.0);
+    assert(netOfCost(0.5, 1.0) == 0.0, "clamped: never negative");
+    assert(netOfCost(double.nan, 1.0).isNaN, "unavailable stays unavailable");
 }
 
 // Whichever body the platform built (real or stub) satisfies the backend
