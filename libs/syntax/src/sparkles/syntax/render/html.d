@@ -6,8 +6,14 @@ Consumes the $(B raw) event stream (nesting preserved — nested labels become
 nested tags) in two modes: $(LREF HtmlMode.inlineStyles) (self-contained
 `style="…"` attributes) and $(LREF HtmlMode.cssClasses) (label-derived class
 names, dots → dashes: `string.special.key` → `class="syn-string-special-key"`,
-styled by a $(LREF writeThemeStylesheet) stylesheet). A CSS-variables
-multi-theme mode (the Shiki doctrine) is a planned third mode.
+styled by a $(LREF writeThemeStylesheet) stylesheet).
+
+$(B Light/dark without a third mode:) a CSS-variables multi-theme mode (the
+Shiki doctrine) would need `renderHtml` to emit `var(--…)` indirections. It
+does not — $(LREF StylesheetOptions.scopeSelector) puts a second theme's rules
+under a scope (`html.dark `) in the $(I same) stylesheet instead, so the
+rendered markup is byte-identical between the two themes and only the sheet
+knows there are two.
 
 $(B Per-line validity:) at every `'\n'` all open tags are closed and
 re-opened after it (the reference tree-sitter `HtmlRenderer` rule), so each
@@ -172,19 +178,43 @@ if (isHighlightEventRange!Events)
     return w;
 }
 
+/// Options for $(LREF writeThemeStylesheet).
+struct StylesheetOptions
+{
+    /// class-name prefix; must match the $(LREF HtmlOptions) the markup was
+    /// rendered with
+    const(char)[] classPrefix = "syn-";
+
+    /**
+    Prepended verbatim to every selector — e.g. `"html.dark "`, so a second
+    theme's rules can live in the same stylesheet as the first and win by
+    specificity: `html.dark .syn-keyword` is (0,2,1) against an unscoped
+    `.syn-keyword`'s (0,1,0), so no `!important` is needed. Include the
+    trailing separator (space, `>`, …) — nothing is inserted for you.
+    */
+    const(char)[] scopeSelector;
+
+    /// emit the `<prefix>root` rule carrying the theme's default fore-/background
+    bool includeRoot = true;
+}
+
 /**
 Writes one CSS rule per styled label of `theme` (class names as in
 $(LREF renderHtml)'s `cssClasses` mode), preceded by a `<prefix>root` rule
 carrying the theme's default fore-/background when set — pair it with a
 `class="<prefix>root"` wrapper element.
+
+Call it twice with different $(LREF StylesheetOptions.scopeSelector)s to put a
+light and a dark theme in one sheet; see the module header.
 */
 ref Writer writeThemeStylesheet(Writer)(in ResolvedTheme theme, return ref Writer w,
-    scope const(char)[] classPrefix = "syn-")
+    in StylesheetOptions opt = StylesheetOptions.init)
 {
-    if (!theme.defaults.empty)
+    if (opt.includeRoot && !theme.defaults.empty)
     {
+        put(w, opt.scopeSelector);
         put(w, '.');
-        put(w, classPrefix);
+        put(w, opt.classPrefix);
         put(w, "root{");
         writeStyleDeclarations(w, theme.defaults);
         put(w, "}\n");
@@ -194,14 +224,43 @@ ref Writer writeThemeStylesheet(Writer)(in ResolvedTheme theme, return ref Write
         const spec = theme.styles[i];
         if (spec.empty)
             continue;
+        put(w, opt.scopeSelector);
         put(w, '.');
-        put(w, classPrefix);
+        put(w, opt.classPrefix);
         writeClassName(w, theme.labels.name(LabelId(cast(ushort) i)));
         put(w, '{');
         writeStyleDeclarations(w, spec);
         put(w, "}\n");
     }
     return w;
+}
+
+/// Prefix-only overload (the pre-$(LREF StylesheetOptions) spelling).
+ref Writer writeThemeStylesheet(Writer)(in ResolvedTheme theme, return ref Writer w,
+    scope const(char)[] classPrefix)
+    => writeThemeStylesheet(theme, w, StylesheetOptions(classPrefix: classPrefix));
+
+/**
+`true` iff `c` concretizes to an RGB value the HTML backend can write — rgb
+directly, `palette` through the xterm defaults; `default_`/`unset` do not
+(they emit no declaration). A caller that must agree with the emitted CSS —
+e.g. deriving a page background from a theme's `.syn-root` rule — asks here
+rather than re-deriving the rule.
+*/
+bool concreteRgb(in Color c, out RgbColor rgb) @safe pure nothrow @nogc
+{
+    final switch (c.kind)
+    {
+        case Color.Kind.unset:
+        case Color.Kind.default_:
+            return false;
+        case Color.Kind.palette:
+            rgb = xterm256ToRgb(c.index);
+            return true;
+        case Color.Kind.rgb:
+            rgb = c.rgb;
+            return true;
+    }
 }
 
 /// Writes `spec` as `;`-separated CSS declarations (no trailing `;`).
@@ -274,24 +333,6 @@ private void writeStyleDeclarations(Writer)(ref Writer w, in StyleSpec spec)
         sep();
         put(w, "text-decoration-color:#");
         writeHexRgb(w, rgb);
-    }
-}
-
-/// `true` iff `c` concretizes to an RGB value (rgb directly; palette through
-/// the xterm defaults).
-private bool concreteRgb(in Color c, out RgbColor rgb) @safe pure nothrow @nogc
-{
-    final switch (c.kind)
-    {
-        case Color.Kind.unset:
-        case Color.Kind.default_:
-            return false;
-        case Color.Kind.palette:
-            rgb = xterm256ToRgb(c.index);
-            return true;
-        case Color.Kind.rgb:
-            rgb = c.rgb;
-            return true;
     }
 }
 
@@ -529,4 +570,71 @@ unittest
         ".syn-root{color:#cdd6f4;background-color:#1e1e2e}\n" ~
         ".syn-keyword{color:#cba6f7;font-weight:bold}\n" ~
         ".syn-string{color:#a6e3a1}\n");
+
+    // The prefix-only overload is the same sheet under another prefix.
+    checkWriter!((ref w) => writeThemeStylesheet(resolved, w, "hl-"))(
+        ".hl-root{color:#cdd6f4;background-color:#1e1e2e}\n" ~
+        ".hl-keyword{color:#cba6f7;font-weight:bold}\n" ~
+        ".hl-string{color:#a6e3a1}\n");
+}
+
+/// A second theme goes in the same sheet under a scope selector: every
+/// selector is prefixed, so the scoped rules out-specify the unscoped ones
+/// ((0,2,1) vs (0,1,0)) without `!important`. `includeRoot: false` drops the
+/// `root` rule for a caller that paints the page surround itself.
+@("render.html.writeThemeStylesheet.scopedAndRootless")
+@safe pure nothrow
+unittest
+{
+    const theme = Theme(
+        name: "dark",
+        defaultFg: Color.fromRgb(0xcd, 0xd6, 0xf4),
+        rules: [ThemeRule("keyword", StyleSpec(fg: Color.fromRgb(0xcb, 0xa6, 0xf7)))]);
+    const resolved = resolveTheme(theme, LabelSet.fromNames(["keyword"]));
+
+    checkWriter!((ref w) => writeThemeStylesheet(resolved, w,
+        StylesheetOptions(scopeSelector: "html.dark ")))(
+        "html.dark .syn-root{color:#cdd6f4}\n" ~
+        "html.dark .syn-keyword{color:#cba6f7}\n");
+
+    // No rule may escape the scope — the check the dual-theme sheet relies on.
+    SmallBuffer!(char, 512) buf;
+    writeThemeStylesheet(resolved, buf, StylesheetOptions(scopeSelector: "html.dark "));
+    bool atLineStart = true;
+    foreach (char c; buf[])
+    {
+        assert(!atLineStart || c == 'h', "a rule escaped the scope selector");
+        atLineStart = c == '\n';
+    }
+
+    checkWriter!((ref w) => writeThemeStylesheet(resolved, w,
+        StylesheetOptions(includeRoot: false)))(
+        ".syn-keyword{color:#cba6f7}\n");
+}
+
+/// `concreteRgb` answers exactly what the emitted CSS does: a colour it
+/// rejects produces no declaration.
+@("render.html.concreteRgb.agreesWithEmittedCss")
+@safe pure nothrow
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    RgbColor rgb;
+    assert(!concreteRgb(Color.init, rgb));
+    assert(!concreteRgb(Color.defaultColor, rgb));
+    assert(concreteRgb(Color.fromRgb(0x1e, 0x1e, 0x2e), rgb)
+        && rgb == RgbColor(0x1e, 0x1e, 0x2e));
+    assert(concreteRgb(Color.fromPalette(8), rgb) && rgb == xterm256ToRgb(8));
+
+    // A theme whose default bg is the terminal default emits no
+    // `background-color` — so a caller must not read one out of the sheet.
+    const theme = Theme(name: "t", defaultFg: Color.fromRgb(1, 2, 3),
+        defaultBg: Color.defaultColor);
+    const resolved = resolveTheme(theme, LabelSet.fromNames(["keyword"]));
+    SmallBuffer!(char, 256) buf;
+    writeThemeStylesheet(resolved, buf);
+    const(char)[] sheet = buf[];
+    assert(!sheet.canFind("background-color"));
+    assert(!concreteRgb(resolved.defaults.bg, rgb));
 }
