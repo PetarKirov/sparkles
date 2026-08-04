@@ -440,6 +440,24 @@ private string windowJson(in WorkloadWindow w) @safe
             ~ ", \"cpuSomeNs\": " ~ jsonNumber(p.cpuSomeNs) ~ " },\n";
     }
 
+    if (!w.regime.isNull)
+    {
+        import std.conv : to;
+
+        // The page-cache regime workloadFiles established for this window
+        // (requested vs verified-effective; fractions nan→null); the note
+        // stays separate from the wall note here even though the table
+        // composes them into one cell.
+        const g = w.regime.get;
+        o ~= "      \"regime\": { \"requested\": \"" ~ g.requested.to!string
+            ~ "\", \"effective\": \"" ~ g.effective.to!string
+            ~ "\", \"residentBefore\": " ~ jsonNumber(g.residentBefore)
+            ~ ", \"residentAfter\": " ~ jsonNumber(g.residentAfter);
+        if (g.note.length)
+            o ~= ", \"note\": \"" ~ jsonEscape(g.note) ~ "\"";
+        o ~= " },\n";
+    }
+
     if (w.wall.note.length)
         o ~= "      \"note\": \"" ~ jsonEscape(w.wall.note) ~ "\",\n";
     o ~= "      \"error\": \"\"\n";
@@ -777,4 +795,43 @@ unittest
     assert("cpuFullNs" !in psi, "pinned-zero system cpu-full is not emitted");
     // The decomposition slot stays honest: no attribution from system scope.
     assert(doc["windows"][0]["offCpuDiskNs"].type == JSONType.null_);
+}
+
+@("benchJson.windows.regimeObject")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.json : JSONType, parseJSON;
+    import std.typecons : nullable;
+    import sparkles.test_runner.attributes : CacheRegime;
+    import sparkles.test_runner.cache_regime : CacheRegimeStamp;
+
+    WorkloadWindow w;
+    w.name = "cold-run";
+    w.reps = 1;
+    w.wall.wallNs = 5_000_000;
+    w.wall.scope_ = "thread";
+    w.regime = nullable(CacheRegimeStamp(
+        requested: CacheRegime.cold, effective: CacheRegime.steadyState,
+        residentBefore: 1.0, residentAfter: double.nan,
+        note: "cold impossible on tmpfs (the pages ARE the file) — ran steady-state"));
+
+    const doc = parseJSON(benchReportJson(null, BenchMeta(date: "2026-08-05"), [w]));
+    const g = doc["windows"][0]["regime"];
+    assert(g["requested"].str == "cold");
+    assert(g["effective"].str == "steadyState");
+    assert(g["residentBefore"].integer == 1);
+    assert(g["residentAfter"].type == JSONType.null_, "nan fraction → null");
+    assert(g["note"].str.canFind("tmpfs"));
+
+    // Stampless windows omit the key — and the whole document stays free
+    // of it (the byte-identity contract for regime-less runs).
+    WorkloadWindow plain;
+    plain.name = "plain";
+    plain.reps = 1;
+    plain.wall.wallNs = 1;
+    plain.wall.scope_ = "thread";
+    assert(!benchReportJson(null, BenchMeta(date: "2026-08-05"), [plain])
+        .canFind("\"regime\""));
 }
