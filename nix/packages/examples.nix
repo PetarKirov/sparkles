@@ -277,6 +277,11 @@
         if result.mode == null then "run" else result.mode;
 
       # Every example paired with its derivation and ci-equivalent mode.
+      # Filtered exactly like `examplesByLib`: a manifest that restricts its
+      # `platforms` has no derivation on other systems, so mapping over the
+      # unfiltered list would look up a missing attribute (every
+      # event-horizon example is `platforms "linux"`, so on Darwin the whole
+      # `event-horizon` group is absent — `attribute 'event-horizon' missing`).
       annotatedExamples = map (
         path:
         let
@@ -287,7 +292,7 @@
           mode = exampleMode path;
           drv = examplesByLib.${info.libName}.${info.fileBase};
         }
-      ) allExampleFiles;
+      ) (builtins.filter buildableHere allExampleFiles);
     in
     {
       legacyPackages.examples = examplesByLib;
