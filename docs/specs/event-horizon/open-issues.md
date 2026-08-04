@@ -413,3 +413,38 @@ cross-check of the runner's numbers.
 
 **Leaning:** (A) — two harnesses measuring the same thing drift, and the
 runner's is the one with statistics.
+
+## O25 — Peer-backend attribute parity is uneven (and CI cannot see most of it)
+
+**Where:** `backend/{uring,kqueue,iocp}.d`; SPEC §3.1, §13.
+
+macOS CI running for the first time exposed that the peer backends had drifted
+from `uring`'s attribute surface, in ways Linux-only development cannot catch.
+Fixed on this branch: every `trySubmit` overload plus kqueue's
+`armFilter`/`armTimer`/`setNonBlocking` were missing `@nogc`, so
+`EventLoop.submit` inferred non-`@nogc` off Linux and `callback-echo.d` — whose
+point is a `@nogc` completion callback — failed to compile there. IOCP had the
+identical gap and **no CI job would ever have shown it**: the Windows job builds
+one OS-API example, not the example set.
+
+Remaining, verified as inconsistent but not currently breaking (nothing requires
+`run`/`runOnce` to be `@nogc`):
+
+| member          | uring   | kqueue  | iocp |
+| --------------- | ------- | ------- | ---- |
+| `submitAndWait` | `@nogc` | —       | —    |
+| `open`          | `@nogc` | `@nogc` | —    |
+
+**Options:** (A) annotate to match `uring` and let the compiler hold the line;
+(B) assert parity structurally — a `static assert` in the backend concept that
+each required member carries the attributes the tier-A contract advertises, so
+drift fails at the seam instead of at a distant call site; (C) leave it, and
+accept that the attribute surface is per-backend.
+
+**Leaning:** (B) over (A). (A) fixes today's drift; only (B) stops it
+recurring, and this entry exists precisely because the drift went unnoticed
+across three backends until a first-ever macOS run. The concept
+(`isCompletionBackend`) is the natural carrier and already enumerates the
+required members. Note (B) needs a decision on what tier-A actually promises:
+`@nogc` on the submit path is the documented headline property, so that is the
+minimum the seam should enforce.
