@@ -862,7 +862,7 @@ private int executeGallery(in HueCli root, in Gallery gallery)
             return twoslashFragment(tw, ev[], theme, cache);
         }
         const src = readText(e.path);
-        const lang = canonicalLanguage(e.path.extension.chompPrefix("."));
+        const lang = canonicalLanguageOfPath(e.path);
         if (highlightInjected(cache, lang, src, ev).hasError)
             ev ~= HighlightEvent.sourceSpan(0, src.length);
         return plainFragment(src, ev[], theme);
