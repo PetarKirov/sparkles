@@ -466,6 +466,8 @@ else version (OSX)
     // on Darwin 25.3 / xnu-12377 (T6041) — pinned by the static asserts
     // below, the event_naming.d pfm_perf_encode_arg_t precedent.
     extern (C) private int proc_pid_rusage(int pid, int flavor, void* buffer) @nogc nothrow;
+    extern (C) private int sysctlbyname(const(char)* name, void* oldp,
+        size_t* oldlenp, void* newp, size_t newlen) @nogc nothrow;
 
     private enum int rusageInfoV4 = 4;
 
@@ -529,13 +531,20 @@ else version (OSX)
         bool ok;
     }
 
-    /// Reads the process's cumulative retired-instruction/cycle counters.
-    package RusageReading readFixedCounters() @trusted nothrow @nogc
+    /// Reads the full accounting struct; `false` = the syscall failed.
+    /// Shared with the darwin tier-0 body (disk-I/O byte counters).
+    package bool readRusageInfo(out rusage_info_v4 info) @trusted nothrow @nogc
     {
         import core.sys.posix.unistd : getpid;
 
+        return proc_pid_rusage(getpid(), rusageInfoV4, &info) == 0;
+    }
+
+    /// Reads the process's cumulative retired-instruction/cycle counters.
+    package RusageReading readFixedCounters() @safe nothrow @nogc
+    {
         rusage_info_v4 info;
-        if (proc_pid_rusage(getpid(), rusageInfoV4, &info) != 0)
+        if (!readRusageInfo(info))
             return RusageReading();
         return RusageReading(info.ri_instructions, info.ri_cycles, true);
     }
@@ -559,6 +568,7 @@ else version (OSX)
         private bool countersZero; /// counters flat across the probe spin (VM guest)
         private double selfInstr = 0; /// calibrated per-bracket snapshot cost
         private double selfCycles = 0;
+        private string peSuffix; /// P/E-core disclosure, precomputed at open
 
         /// Whether the fixed counters tick on this host.
         bool available() const @safe pure nothrow @nogc => opened;
@@ -584,7 +594,8 @@ else version (OSX)
         {
             if (!opened)
                 return "unavailable (" ~ countingAbsence() ~ ")";
-            return "process-wide fixed counters (proc_pid_rusage) — not per-bracket events";
+            return "process-wide fixed counters (proc_pid_rusage) — not per-bracket events"
+                ~ peSuffix;
         }
 
         /// What this backend can deliver on this host (SPEC §6.2): scalar
@@ -640,7 +651,30 @@ else version (OSX)
             }
             g.opened = true;
             g.calibrate();
+            // The M7-shared portability rider: on P/E-core hosts the fixed
+            // counters aggregate across core types — disclose it on the
+            // same status line (a run-level provenance stamp is M7's job;
+            // benchProvenance stays suite-controlled by contract).
+            const levels = perfLevels();
+            if (levels > 1)
+            {
+                import std.conv : text;
+
+                g.peSuffix = text("; P/E-core host (", levels,
+                    " perf levels) — fixed counters aggregate across core types");
+            }
             return g;
+        }
+
+        /// `hw.nperflevels`: the number of distinct core performance levels
+        /// (2 on P/E-core Apple Silicon); 0 when the sysctl is absent.
+        private static uint perfLevels() @safe nothrow
+        {
+            uint levels;
+            size_t len = levels.sizeof;
+            const rc = (() @trusted => sysctlbyname("hw.nperflevels",
+                &levels, &len, null, 0))();
+            return rc == 0 ? levels : 0;
         }
 
         /// ~1 ms of unmistakable retirement for the probe.

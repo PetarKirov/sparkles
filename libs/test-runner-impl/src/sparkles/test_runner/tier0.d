@@ -141,16 +141,20 @@ in (iters > 0)
         s.minflt = s.majflt = s.volCs = s.involCs = double.nan;
     if (a.ioOk && b.ioOk)
     {
-        s.syscr = (b.syscr - a.syscr) * inv;
-        s.syscw = (b.syscw - a.syscw) * inv;
-        s.rdChars = (b.rdChars - a.rdChars) * inv;
-        s.wrChars = (b.wrChars - a.wrChars) * inv;
-        // Defensive per-field guard: any reading whose parse failed (a field
-        // the kernel omits or restricts) is -1, and an absent block-device
-        // counter must read nan, not a bogus 0-byte delta feeding a fake
-        // 100% cache-hit figure.
-        s.rdBytes = a.rdBytes >= 0 && b.rdBytes >= 0 ? (b.rdBytes - a.rdBytes) * inv : double.nan;
-        s.wrBytes = a.wrBytes >= 0 && b.wrBytes >= 0 ? (b.wrBytes - a.wrBytes) * inv : double.nan;
+        // Per-field guard on every io field: a reading whose field is absent
+        // (a kernel omitting/restricting it, or a platform with no analog —
+        // macOS has disk-I/O bytes but no syscall/character counters) is -1,
+        // and an absent counter must read nan, never a fabricated 0 delta
+        // (which would also feed a fake 100% cache-hit figure).
+        static double guarded(long av, long bv, double inv) @safe pure nothrow @nogc
+            => av >= 0 && bv >= 0 ? (bv - av) * inv : double.nan;
+
+        s.syscr = guarded(a.syscr, b.syscr, inv);
+        s.syscw = guarded(a.syscw, b.syscw, inv);
+        s.rdChars = guarded(a.rdChars, b.rdChars, inv);
+        s.wrChars = guarded(a.wrChars, b.wrChars, inv);
+        s.rdBytes = guarded(a.rdBytes, b.rdBytes, inv);
+        s.wrBytes = guarded(a.wrBytes, b.wrBytes, inv);
     }
     else
         s.syscr = s.syscw = s.rdChars = s.wrChars = s.rdBytes = s.wrBytes = double.nan;
@@ -463,9 +467,179 @@ version (linux)
                 "gross=", gross.syscr, " net=", net.syscr));
     }
 }
+else version (OSX)
+{
+    import core.stdc.config : c_long;
+    import core.sys.posix.sys.resource : rusage, RUSAGE_SELF;
+    import core.sys.posix.sys.time : timeval;
+
+    import sparkles.test_runner.perf : readRusageInfo, rusage_info_v4;
+
+    /// druntime's Darwin `rusage` hides the BSD tail as `ru_opaque[14]`,
+    /// but the kernel always fills it — this is the full `__DARWIN_C_FULL`
+    /// layout from the SDK's `sys/resource.h`, bound to the same symbol.
+    private struct darwinRusage
+    {
+        timeval ru_utime;
+        timeval ru_stime;
+        c_long ru_maxrss;
+        c_long ru_ixrss;
+        c_long ru_idrss;
+        c_long ru_isrss;
+        c_long ru_minflt;
+        c_long ru_majflt;
+        c_long ru_nswap;
+        c_long ru_inblock;
+        c_long ru_oublock;
+        c_long ru_msgsnd;
+        c_long ru_msgrcv;
+        c_long ru_nsignals;
+        c_long ru_nvcsw;
+        c_long ru_nivcsw;
+    }
+
+    static assert(darwinRusage.sizeof == rusage.sizeof,
+        "the named tail must overlay druntime's ru_opaque[14] exactly");
+
+    pragma(mangle, "getrusage")
+    private extern (C) int darwinGetrusage(int who, darwinRusage* usage) @nogc nothrow;
+
+    /// The Tier-0 counter group (macOS): `getrusage`'s fault/context-switch
+    /// counters plus `proc_pid_rusage`'s lifetime disk-I/O byte counters.
+    /// The `/proc/self/io` syscall/character fields have no macOS analog —
+    /// they stay `-1` in every reading and `deltaStats`' per-field guard
+    /// renders them nan, never fabricated zeros. No calibration: neither
+    /// source carries a per-bracket read cost worth netting (the same
+    /// reasoning the linux body applies to its fault counters).
+    struct Tier0Group
+    {
+        private bool enabled;
+
+        private static immutable CapabilityAbsence[1] notRequestedAbsence = [
+            CapabilityAbsence(Capability.counting, "not requested"),
+        ];
+
+        /// Whether Tier-0 counters will be collected (requested).
+        bool available() const @safe pure nothrow @nogc => enabled;
+
+        /// Human-readable availability, for a report header.
+        string status() const @safe pure nothrow
+            => enabled
+                ? "getrusage + proc_pid_rusage disk I/O"
+                : "unavailable (not requested)";
+
+        /// What this backend can deliver: scalar counting.
+        CapabilityReport capabilities() const @safe nothrow
+        {
+            if (enabled)
+                return CapabilityReport(Capability.counting, null);
+            return CapabilityReport(Capability.none, notRequestedAbsence[]);
+        }
+
+        /// Opens the group unless disabled — nothing can fail here.
+        static Tier0Group tryOpen(bool enabled) @safe pure nothrow @nogc
+            => Tier0Group(enabled);
+
+        /// Releases nothing — the group holds no descriptors.
+        void close() @safe pure nothrow @nogc
+        {
+        }
+
+        /// Captures one instant's cumulative counters.
+        Tier0Reading snapshot() const @safe nothrow @nogc
+        {
+            Tier0Reading r;
+            r.syscr = r.syscw = r.rdChars = r.wrChars = -1; // no macOS analog
+            darwinRusage ru;
+            if ((() @trusted => darwinGetrusage(RUSAGE_SELF, &ru))() == 0)
+            {
+                r.minflt = ru.ru_minflt;
+                r.majflt = ru.ru_majflt;
+                r.volCs = ru.ru_nvcsw;
+                r.involCs = ru.ru_nivcsw;
+                r.rusageOk = true;
+            }
+            rusage_info_v4 info;
+            if (readRusageInfo(info))
+            {
+                r.rdBytes = info.ri_diskio_bytesread;
+                r.wrBytes = info.ri_diskio_byteswritten;
+                r.ioOk = true;
+            }
+            else
+                r.rdBytes = r.wrBytes = -1;
+            return r;
+        }
+
+        /// The counting pass: per-iteration snapshot pairs, per-iteration
+        /// averages (nan propagates through the sum for absent fields).
+        Tier0Stats count(Timed, Between)(scope Timed timed, scope Between between, uint iters)
+        in (iters > 0)
+        {
+            Tier0Stats sum;
+            foreach (_; 0 .. iters)
+            {
+                const start = snapshot();
+                timed();
+                const end = snapshot();
+                between();
+                const one = deltaStats(start, end, 1);
+                sum.minflt += one.minflt;
+                sum.majflt += one.majflt;
+                sum.volCs += one.volCs;
+                sum.involCs += one.involCs;
+                sum.syscr += one.syscr;
+                sum.syscw += one.syscw;
+                sum.rdChars += one.rdChars;
+                sum.wrChars += one.wrChars;
+                sum.rdBytes += one.rdBytes;
+                sum.wrBytes += one.wrBytes;
+            }
+            const inv = 1.0 / iters;
+            sum.iters = iters;
+            sum.minflt *= inv;
+            sum.majflt *= inv;
+            sum.volCs *= inv;
+            sum.involCs *= inv;
+            sum.syscr *= inv;
+            sum.syscw *= inv;
+            sum.rdChars *= inv;
+            sum.wrChars *= inv;
+            sum.rdBytes *= inv;
+            sum.wrBytes *= inv;
+            return sum;
+        }
+
+        /// The tier-0 deltas across one window, as window totals.
+        Tier0Stats windowStats(in Tier0Reading a, in Tier0Reading b)
+            const @safe pure nothrow @nogc
+            => deltaStats(a, b, 1);
+    }
+
+    @("tier0.Tier0Group.darwinSnapshotMonotonic")
+    @system
+    unittest
+    {
+        auto g = Tier0Group.tryOpen(true);
+        assert(g.available);
+        const a = g.snapshot();
+        assert(a.rusageOk, "getrusage works on macOS");
+        assert(a.syscr == -1, "no /proc/self/io analog — guarded, not zero");
+        const b = g.snapshot();
+        import std.math : isNaN;
+
+        const s = g.windowStats(a, b);
+        assert(s.syscr.isNaN && s.rdChars.isNaN,
+            "absent fields are nan, never fabricated zeros");
+        assert(!s.minflt.isNaN, "the rusage fields are real");
+        if (a.ioOk)
+            assert(b.rdBytes >= a.rdBytes, "disk-I/O bytes are monotonic");
+    }
+}
 else
 {
-    /// Non-Linux stub: Tier-0 counters are permanently unavailable.
+    /// Non-Linux, non-macOS stub: Tier-0 counters are permanently
+    /// unavailable.
     struct Tier0Group
     {
         private static immutable CapabilityAbsence[1] stubAbsence = [
@@ -525,9 +699,17 @@ static assert(!hasNamedColumns!Tier0Group);
 @safe
 unittest
 {
+    // Linux and macOS both have real bodies with the same contract; every
+    // other platform is the permanently-unavailable stub.
+    bool realBody;
+    version (linux)
+        realBody = true;
+    version (OSX)
+        realBody = true;
+
     auto off = Tier0Group.tryOpen(false);
     assert(!off.capabilities.has(Capability.counting));
-    version (linux)
+    if (realBody)
     {
         assert(off.capabilities.reasonFor(Capability.counting) == "not requested");
         auto on = Tier0Group.tryOpen(true);
