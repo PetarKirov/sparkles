@@ -12,16 +12,16 @@ section.
 
 ## 1. Loop & tier microbenchmarks
 
-`libs/event-horizon/bench/loop-bench.d` (`dub run --single loop-bench.d`):
+`libs/event-horizon/bench/suite/` (`dub test -b bench -- --bench`):
 
 | Benchmark                       | Result       | What it measures                                                     |
 | ------------------------------- | ------------ | -------------------------------------------------------------------- |
 | batched NOP throughput (×128)   | ~5.3 M ops/s | amortized submit + `io_uring_enter` + dispatch (loop-overhead floor) |
 | ping-pong NOP latency (×1)      | ~660 ns/op   | un-amortized round-trip: one `io_uring_enter` per op                 |
 | fiber await ping-pong (×1)      | ~840 ns/op   | + the tier-B seam: submit → park → CQE → enqueue → resume            |
-| effect veneer — direct baseline | ~1.24 ns/op  | a pure `map`/`map` chain written directly                            |
-| effect veneer — `Effect!T`      | ~1.51 ns/op  | the same chain through the tier-C interpreter                        |
-| registered vs plain 4 KiB read  | ~1.0×        | `READ_FIXED` vs plain read on a single cached page                   |
+| effect veneer — direct baseline | ~2.0 ns/op   | a pure `map`/`map` chain written directly                            |
+| effect veneer — `Effect!T`      | ~2.8 ns/op   | the same chain through the tier-C interpreter                        |
+| registered vs plain 4 KiB read  | ~1.36×       | `READ_FIXED` vs plain read on a single cached page                   |
 
 Readings:
 
@@ -33,11 +33,10 @@ Readings:
   iteration; the gap is 0.8–1.2 ns across runs, so ~0.3 ns per node). The
   interpreter is a compile-time fold — static `static if` dispatch, no runtime
   instruction loop — so what remains is the `Outcome` value per node. Against a
-  real I/O leaf (µs scale) it is unmeasurable. _Retired-instruction attribution
-  for these rows is not currently trustworthy_ (the counting pass's few
-  iterations are dominated by the per-iteration scheduler setup, and its
-  counters disagree with the timing pass) — the wall-clock figure is the
-  supported one. See [test-runner O14](../test-runner/open-issues.md).
+  real I/O leaf (µs scale) it is unmeasurable. (Retired-instruction attribution for these
+  particular rows stays advisory: each measured iteration stands up its own
+  scheduler, so the counting pass's ring-setup noise swamps an ~11-instruction
+  difference. The wall-clock figure is the supported one.)
 
   > **Correction (2026-08-04).** This row previously read "~30–40 ns per node
   > (~100 ns across three nodes)", from the retired standalone `loop-bench.d`.
@@ -78,18 +77,7 @@ runner warns when it detects them. The runner supplies the counting pass, the
 metric catalog (`--list-metrics`), and the JSON snapshots, so the
 hand-rolled `perf_event_open` harness this suite used to carry is gone.
 
-> **Reading `instr/iter` on the sub-nanosecond rows — don't.** The runner's
-> counting pass brackets **each iteration** with an ENABLE/DISABLE ioctl pair
-> costing ~3 270 retired instructions. For the ~1.2 ns tier-C bodies that
-> floor _is_ the reported cell (`3286.4` for a body retiring ~3 instructions),
-> and `--perf-iters` does not amortize it — it pins the iteration count, not
-> the bracketing granularity. Two rows measured in the same run still difference
-> correctly (the common floor cancels), which is how the veneer's ~11
-> instructions above were obtained. Filed as
-> [test-runner O14](../test-runner/open-issues.md) with a batching proposal;
-> the µs-scale rows (`loop.read.*`, the pool workloads) are unaffected.
-
-With that caveat, the counters answer "why" on the rows big enough to carry
+The counters answer "why" on the rows big enough to carry
 them — and retired instructions and page faults are the host-stable anchors a
 cross-build comparison should rest on. That property is what verified the
 `origin/main` rebase was performance-neutral: all four tier anchors came back

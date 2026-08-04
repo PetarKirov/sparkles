@@ -210,6 +210,16 @@ with a one-time cost amortized inside the counting window, like a buffer
 grown on the first iteration — reproducible across runs. The effective
 count lands in every `--bench-json` row as `countIterations`.
 
+The pass **batches** its brackets: an ioctl ENABLE/DISABLE pair costs ~2.2 µs,
+so bracketing every single iteration would make a nanosecond-scale body's
+counters report the apparatus rather than the body (three ~10–14 ns codec rows
+read an identical 3.5k instr/iter that way; batched they separate into
+233/266/284). The runner sizes the batch from the timing pass so one bracket
+spans ~1 ms; `--perf-batch=N` pins it and `--perf-batch=1` disables batching.
+Batched rows only — a per-call `benchCase` keeps its `after` interleaved and is
+never batched, which is harmless because those rows are µs-and-up by
+construction.
+
 Add `--perf-scaled` to keep the full group even when the PMU would multiplex
 it: instead of dropping the LLC pair, the group stays whole and its scaled
 values render as **labeled estimates** (`≈4.10k`), named in `--bench-json`'s

@@ -71,6 +71,7 @@ private struct RunnerOptions
     bool perf;
     bool perfScaled; /// keep the full group when it multiplexes; label estimates
     uint perfIters;  /// pin the counting-pass iteration count (0 = auto)
+    uint perfBatch;  /// pin counting-pass iterations per bracket (0 = auto)
     string syscalls;
     string metrics;
     string sortBy;
@@ -205,6 +206,11 @@ private auto parseInto(ref string[] args, ref RunnerOptions options)
             "the timing pass's count, capped) — makes per-pass counter totals " ~
             "and amortized one-time costs reproducible across runs",
             &options.perfIters,
+        "perf-batch",
+            "With --bench: pin how many iterations share one counting-pass " ~
+            "bracket (default: auto-sized so a bracket spans ~1ms, so the " ~
+            "bracket's own cost cannot dominate a fast body). 1 disables batching",
+            &options.perfBatch,
         "syscalls",
             "With --bench: count syscalls per iteration (Linux perf tracepoints). " ~
             "Bare adds a total column; =futex,sched_yield adds one column each",
@@ -813,7 +819,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     foreach (test; benchTests)
     {
         const config = benchConfigFor(options.benchMinTime, test.traits.benchIterations,
-            options.perfIters);
+            options.perfIters, options.perfBatch);
         auto reg = registerBenchmark(test, config);
         if (reg.result.skipped)
         {
@@ -1180,7 +1186,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         // a valid document, deterministic for tooling) plus any registered
         // suite-provenance lines, so the artifact is self-describing.
         auto meta = collectBenchMeta(benchConfigFor(options.benchMinTime, 0,
-            options.perfIters));
+            options.perfIters, options.perfBatch));
         {
             import sparkles.test_runner.bench : provenanceLines;
 
@@ -1211,11 +1217,12 @@ private enum bool hasTermCaps = __traits(compiles, {
 /// `@benchmark(iterations: N)` count threads through unchanged;
 /// `--perf-iters` pins the counting-pass count (0 = follow the timing pass).
 private BenchConfig benchConfigFor(uint benchMinTimeMs, uint iterations,
-    uint perfItersPin = 0) @safe pure nothrow @nogc
+    uint perfItersPin = 0, uint perfBatchPin = 0) @safe pure nothrow @nogc
 {
     import core.time : msecs;
 
-    auto config = BenchConfig(iterations: iterations, perfIters: perfItersPin);
+    auto config = BenchConfig(iterations: iterations, perfIters: perfItersPin,
+        perfBatch: perfBatchPin);
     if (benchMinTimeMs)
         config.minSampleTime = benchMinTimeMs.msecs;
     return config;
