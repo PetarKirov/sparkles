@@ -2417,7 +2417,20 @@ private struct ScanError
 // Standalone pointer kernel with a register-narrow interface (yyjson's
 // read_number discipline): keeping it out of the grammar loop's nested
 // scope keeps the loop's captured state out of the kernel's register
-// allocation. `p` is the padded pool base — the ≥ 8 zero bytes
+// allocation.
+//
+// Do not "fix" this by inlining the kernels into the loop — measured, and
+// it loses. yyjson inlines both of its readers into one function, and the
+// call frames plus the rematerialized SWAR constants are worth ~6-7 % of
+// retired instructions here, so the change looks free on the instruction
+// counter. It is not: IPC falls further than the instruction count does,
+// because the kernels' live values evict the loop's. Both shapes were
+// tried — whole kernel inlined, and a fast-lane/cold-tail split with only
+// the fast lane inlined — and both cost citm ~2.5 % MB/s (5.12 IPC → 4.85)
+// to buy a 2.9 % instruction cut. The throughput gate is MB/s; instructions
+// are only the diagnostic.
+//
+// `p` is the padded pool base — the ≥ 8 zero bytes
 // terminate every digit run, so the hot loops carry no bounds checks
 // (the same invariant as the scan seams). The parsed value cell is
 // stored straight into `*cell`; returns the index just past the token,
@@ -2515,37 +2528,43 @@ private size_t scanNumber(JsonReadOptions opts)(
             // moving index.
             const fs = k;
             const budgetEnd = k + (19 - taken);
-            // Eight fraction digits per SWAR gulp first — the dominant
-            // shape in geo data (canada: 2-3 integer digits then 15-17
-            // fraction digits).
+            // One gulp shape for both the full and the partial run: the
+            // digit count `digitRun8` already reports subsumes the
+            // all-eight test, and padding a short run to a full gulp keeps
+            // it on the same reduction. `padDigits8` appends `8 - n`
+            // decimal zeros, scaling `sig` by that power of ten, and
+            // counting the padding as consumed fraction digits subtracts
+            // the same power from `exp10` — the value is unchanged.
+            //
+            // Written as one `eightDigits` call site on purpose. The
+            // previous full/partial split instantiated the reduction (and
+            // `allDigits8`) twice, and its six 64-bit SWAR constants were
+            // rematerialized with `movabs` at each copy — fifteen of them
+            // in this region alone, plus the spills that the register
+            // demand forced.
+            //
+            // The loop guard is the whole budget check: `k + 8 <=
+            // budgetEnd` already implies both `k + run <= budgetEnd` and
+            // that a padded gulp still fits the 19-digit significand.
+            size_t padded = 0;
             while (k + 8 <= budgetEnd)
             {
                 const w = loadWord(p + k);
-                if (!allDigits8(w))
+                const run = digitRun8(w);
+                if (run == 0)
                     break;
-                sig = sig * 100_000_000 + eightDigits(w);
-                k += 8;
-            }
-            // Tail (1–7 digits — the shape geo data always ends on: canada
-            // is 15 fraction digits, so one gulp then a short remainder).
-            // Padding the remainder to a full gulp keeps it on the SWAR
-            // path: `padDigits8` appends `8 - n` decimal zeros, scaling
-            // `sig` by that power of ten, and counting the padding as
-            // consumed fraction digits subtracts the same power from
-            // `exp10` — the value is unchanged and the scalar pair loop
-            // disappears. Only worth it while the padded run still fits
-            // the 19-digit significand budget.
-            size_t padded = 0;
-            const w = loadWord(p + k);
-            const run = digitRun8(w);
-            if (run != 0 && run < 8 && k + run <= budgetEnd
-                && taken + (k - fs) + 8 <= 19)
-            {
-                sig = sig * 100_000_000 + eightDigits(padDigits8(w, run));
+                sig = sig * 100_000_000
+                    + eightDigits(run == 8 ? w : padDigits8(w, run));
                 k += run;
-                padded = 8 - run;
+                if (run != 8)
+                {
+                    padded = 8 - run;
+                    break;
+                }
             }
-            else
+            // Scalar tail: only reachable with fewer than eight budget
+            // slots left (a padded gulp consumed the rest).
+            if (padded == 0)
             {
                 while (k + 2 <= budgetEnd)
                 {

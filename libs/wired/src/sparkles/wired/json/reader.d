@@ -220,37 +220,43 @@ private size_t scanNumber(JsonReadOptions opts)(
             // moving index.
             const fs = k;
             const budgetEnd = k + (19 - taken);
-            // Eight fraction digits per SWAR gulp first — the dominant
-            // shape in geo data (canada: 2-3 integer digits then 15-17
-            // fraction digits).
+            // One gulp shape for both the full and the partial run: the
+            // digit count `digitRun8` already reports subsumes the
+            // all-eight test, and padding a short run to a full gulp keeps
+            // it on the same reduction. `padDigits8` appends `8 - n`
+            // decimal zeros, scaling `sig` by that power of ten, and
+            // counting the padding as consumed fraction digits subtracts
+            // the same power from `exp10` — the value is unchanged.
+            //
+            // Written as one `eightDigits` call site on purpose. The
+            // previous full/partial split instantiated the reduction (and
+            // `allDigits8`) twice, and its six 64-bit SWAR constants were
+            // rematerialized with `movabs` at each copy — fifteen of them
+            // in this region alone, plus the spills that the register
+            // demand forced.
+            //
+            // The loop guard is the whole budget check: `k + 8 <=
+            // budgetEnd` already implies both `k + run <= budgetEnd` and
+            // that a padded gulp still fits the 19-digit significand.
+            size_t padded = 0;
             while (k + 8 <= budgetEnd)
             {
                 const w = loadWord(p + k);
-                if (!allDigits8(w))
+                const run = digitRun8(w);
+                if (run == 0)
                     break;
-                sig = sig * 100_000_000 + eightDigits(w);
-                k += 8;
-            }
-            // Tail (1–7 digits — the shape geo data always ends on: canada
-            // is 15 fraction digits, so one gulp then a short remainder).
-            // Padding the remainder to a full gulp keeps it on the SWAR
-            // path: `padDigits8` appends `8 - n` decimal zeros, scaling
-            // `sig` by that power of ten, and counting the padding as
-            // consumed fraction digits subtracts the same power from
-            // `exp10` — the value is unchanged and the scalar pair loop
-            // disappears. Only worth it while the padded run still fits
-            // the 19-digit significand budget.
-            size_t padded = 0;
-            const w = loadWord(p + k);
-            const run = digitRun8(w);
-            if (run != 0 && run < 8 && k + run <= budgetEnd
-                && taken + (k - fs) + 8 <= 19)
-            {
-                sig = sig * 100_000_000 + eightDigits(padDigits8(w, run));
+                sig = sig * 100_000_000
+                    + eightDigits(run == 8 ? w : padDigits8(w, run));
                 k += run;
-                padded = 8 - run;
+                if (run != 8)
+                {
+                    padded = 8 - run;
+                    break;
+                }
             }
-            else
+            // Scalar tail: only reachable with fewer than eight budget
+            // slots left (a padded gulp consumed the rest).
+            if (padded == 0)
             {
                 while (k + 2 <= budgetEnd)
                 {
