@@ -25,7 +25,7 @@ import sparkles.syntax : LabelSet, ResolvedTheme, resolveTheme, RgbColor,
 // module graph (druntime's bionic termios bindings are incomplete) — and the
 // explorer needs only the cell vocabulary anyway.
 import sparkles.tui.cell : CellStyle, Color, Grid;
-import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
+import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, Point, PointerAction, PointerButton, PointerEvent, ResizeEvent,
     WheelEvent;
 import sparkles.ui.components.chrome : headerBar;

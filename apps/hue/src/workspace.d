@@ -20,9 +20,12 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
     Theme, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
-import sparkles.tui : CellStyle, Color, Grid, PosixEvents, Terminal,
-    TerminalOptions;
-import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
+// Cell types only — the terminal, its input reader and its lifecycle are the
+// `sparkles:ui-tui` session's now (UIA8). What is left is the surface hue
+// still paints some chrome into by hand.
+import sparkles.tui.cell : CellStyle, Color, Grid;
+import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
+import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     linesPerNotch, match, PointerAction, PointerButton, PointerEvent,
     ResizeEvent, WheelEvent;
 import sparkles.ui.geometry : Point;
@@ -537,15 +540,14 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     {
         // Any-event tracking (1003): bare pointer motion reports too, so the
         // divider can show a hover resize cursor.
-        auto term = Terminal.open(TerminalOptions(motion: true));
+        // The session owns raw-mode entry and restore, the surface and the
+        // input reader (UIA8) — hue names no `sparkles:tui` type for any of
+        // it. The grid is still handed out, because hue paints some chrome by
+        // hand; folding it in is the same change as widget-ising that chrome.
+        auto term = TerminalSession.open(TerminalRequest(motion: true));
         if (!term.active)
             return 1;
-        scope (exit) term.close();
         scope (exit) w.stopLive();
-
-        auto events = PosixEvents.start();
-
-        Grid g;
         // Every event repaints; a live tick only does when it changed the
         // document, so an idle session emits nothing to the terminal.
         bool dirty = true;
@@ -557,27 +559,26 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
 
             if (dirty)
             {
-                const sz = term.size();
+                const sz = term.resizeToTerminal();
                 if (sz.width != w.width || sz.height != w.height)
                     w.arrange(sz.width, sz.height);
 
-                g.resize(sz.width, sz.height);
-                w.paint(g);
-                term.draw(g);
+                w.paint(term.grid);
+                term.present();
                 dirty = false;
             }
 
             const clip = w.viewer.takeClipboard();
             if (clip.length)
-                term.writeRaw(clip); // OSC 52 clipboard write (out of band)
+                term.writeOutOfBand(clip); // OSC 52 clipboard (out of band)
             const shape = w.takeCursorShape();
             if (shape.length)
-                term.writeRaw(shape); // OSC 22 pointer shape (out of band)
+                term.writeOutOfBand(shape); // OSC 22 pointer shape
 
             // While a git-status refresh is in flight, wait in short slices so
             // the finished snapshot paints without requiring a keypress.
             bool gitApplied;
-            while (w.tree.git.refreshing && !events.ready(150.msecs))
+            while (w.tree.git.refreshing && !term.ready(150))
                 if (w.tree.git.poll())
                 {
                     gitApplied = true;
@@ -593,7 +594,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             // With an oracle running the loop wakes on a deadline as well as
             // on input, so the analysis lands without a keystroke; with none it
             // blocks exactly as it always has (no idle wakeups).
-            const ev = w.liveActive ? events.next(liveTick) : events.next();
+            const ev = w.liveActive
+                ? term.next(cast(int) liveTick.total!"msecs") : term.next();
             if (ev.isEndOfInput)
                 break;
             if (ev == Event.init)

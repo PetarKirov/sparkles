@@ -19,9 +19,8 @@ module twoslash_tui;
 version (Posix):
 
 import sparkles.tui.cell : CellStyle, Grid;
-import sparkles.tui.input : EndOfInput, Event, Key, KeyEvent, match,
+import sparkles.input : EndOfInput, Event, Key, KeyEvent, match,
     PointerAction, PointerEvent, WheelEvent;
-import sparkles.tui.terminal : TerminalOptions;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_caps : TermSize;
