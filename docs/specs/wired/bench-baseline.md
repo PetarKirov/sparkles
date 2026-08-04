@@ -395,6 +395,33 @@ lane vectorized.
 > `-version=BenchWiredInline`. This is the O11 engine-set-composition effect;
 > when a row looks anomalous, compare its median to its own minimum first.
 
+### Scalar round 2
+
+The next block by size was `parseInto` itself (52–55 % of twitter/github, ~98
+instructions per value token against yyjson's 107 for its _entire_ parse), and
+its hottest region was the `objectKey` fast path.
+
+Shipped:
+
+- **The `objectKey` probe folded onto `scanStringBody`.** The key fast path
+  was a hand-rolled two-word probe that recomputed the scanner's four SWAR
+  stop masks with a 15-byte cap — so every longer key (twitter's snake*case
+  vocabulary: `in_reply_to_status_id_str`, `profile_background_color`, …)
+  paid the probe \_and* an out-of-line `scanString` rescan from the opening
+  quote. `scanStringBody` gained a `resolveNonAscii = false` mode (a byte
+  ≥ 0x80 stops the scan unresolved instead of pulling the UTF-8 machinery
+  into the caller), and the key site now runs one inline pass of the shared
+  scanner for keys of any length, punting to the general kernel only on
+  escape / non-ASCII / control / end-of-input. Two details mattered: the
+  stop-byte test and NUL store go through the pool _pointer_ — the `@safe`
+  slice forms re-added a bounds check the old probe's `@trusted` lambda
+  didn't pay (≈ 1 % on github) — and non-ASCII stays out of the inline path
+  exactly as the probe left it.
+  Retired instructions per parse: twitter **−5.1 %** (4.73 M → 4.49 M), citm
+  −0.9 %, github +0.3 % (its keys all fit the old probe; neutral), canada
+  unchanged. twitter wall −3.6 % (186.7 µs → 180.0 µs median);
+  per-byte instruction ratio vs yyjson 1.61× → 1.53×.
+
 ## Reproducing
 
 From the nix devshell (which exports `$WIRED_BENCH_DATA` and puts the ISA-preset

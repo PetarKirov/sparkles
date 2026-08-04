@@ -267,8 +267,14 @@ sequences are consumed in their own tight loop, which suits real text
 (CJK is a long run of 3-byte sequences) and keeps the branch predictable.
 Fusing the check here is what lets the reader validate in one pass instead
 of re-walking every string that contains a high byte.
+
+With `validate` set but `resolveNonAscii` cleared, a byte ≥ 0x80 still
+stops the scan but is returned unresolved (`invalidUtf8` stays false; the
+stop byte speaks for itself). This is the reader's inline key probe: it
+keeps the UTF-8 machinery out of the grammar loop and punts non-ASCII
+keys to the general string kernel, which re-validates from scratch.
 */
-StringScan scanStringBody(bool validate = true)(
+StringScan scanStringBody(bool validate = true, bool resolveNonAscii = true)(
     scope const(char)[] paddedPool, size_t i)
 in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
 {
@@ -302,7 +308,7 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
                 import core.bitop : bsf;
 
                 j += bsf(stops) / 8;
-                static if (validate)
+                static if (validate && resolveNonAscii)
                 {
                     if ((p[j] & 0x80) == 0)
                         return StringScan(j, false);

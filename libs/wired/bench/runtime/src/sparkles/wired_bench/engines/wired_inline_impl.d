@@ -2235,8 +2235,14 @@ sequences are consumed in their own tight loop, which suits real text
 (CJK is a long run of 3-byte sequences) and keeps the branch predictable.
 Fusing the check here is what lets the reader validate in one pass instead
 of re-walking every string that contains a high byte.
+
+With `validate` set but `resolveNonAscii` cleared, a byte ≥ 0x80 still
+stops the scan but is returned unresolved (`invalidUtf8` stays false; the
+stop byte speaks for itself). This is the reader's inline key probe: it
+keeps the UTF-8 machinery out of the grammar loop and punts non-ASCII
+keys to the general string kernel, which re-validates from scratch.
 */
-StringScan scanStringBody(bool validate = true)(
+StringScan scanStringBody(bool validate = true, bool resolveNonAscii = true)(
     scope const(char)[] paddedPool, size_t i)
 in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
 {
@@ -2270,7 +2276,7 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
                 import core.bitop : bsf;
 
                 j += bsf(stops) / 8;
-                static if (validate)
+                static if (validate && resolveNonAscii)
                 {
                     if ((p[j] & 0x80) == 0)
                         return StringScan(j, false);
@@ -3127,47 +3133,23 @@ objectKey: // parse `"key" :` then its value
         return;
     }
     {
-        // Short-key fast path: keys are overwhelmingly ≤15 bytes of
-        // escape-free ASCII — find the quote in two word loads and skip
-        // the general machinery (which remains the fallback).
-        const quick = (() @trusted {
-            enum ulong ones = 0x0101_0101_0101_0101;
-            enum ulong highs = 0x8080_8080_8080_8080;
-            auto p = pool.ptr + i + 1;
-            static ulong stopsOf(ulong x)
-            {
-                const q = x ^ 0x2222_2222_2222_2222; // '"'
-                const b = x ^ 0x5C5C_5C5C_5C5C_5C5C; // '\\'
-                return ((q - ones) & ~q & highs)
-                    | ((b - ones) & ~b & highs)
-                    | ((x - 0x2020_2020_2020_2020) & ~x & highs)
-                    | (x & highs);
-            }
-
-            import core.bitop : bsf;
-
-            const x0 = loadWord(p);
-            const s0 = stopsOf(x0);
-            if (s0 != 0)
-            {
-                const at = bsf(s0) / 8;
-                return p[at] == '"' ? at : size_t.max;
-            }
-            const x1 = loadWord(p + 8);
-            const s1 = stopsOf(x1);
-            if (s1 != 0)
-            {
-                const at = 8 + bsf(s1) / 8;
-                return p[at] == '"' ? at : size_t.max;
-            }
-            return size_t.max; // long/escaped/non-ASCII key: general path
-        })();
-        if (quick != size_t.max)
+        // Key fast path: keys are overwhelmingly escape-free ASCII of any
+        // length — one inline pass of the shared string scanner (with the
+        // UTF-8 machinery left out: `resolveNonAscii` cleared) finds the
+        // closing quote; anything else at the stop byte (escape, control,
+        // non-ASCII, end of input) punts to the general kernel, which
+        // rescans and reports. This replaced a hand-rolled two-word probe
+        // that recomputed the same stop masks and capped the fast lane at
+        // 15 bytes — twitter's long snake_case keys paid the probe *and*
+        // the out-of-line rescan.
+        const stopAt = (() @trusted =>
+            scanStringBody!(opts.validateUtf8, false)(pool, i + 1).stop)();
+        if ((() @trusted => pool.ptr[stopAt])() == '"')
         {
             const start = i + 1;
-            pool[start + quick] = '\0';
-            i = start + quick + 1;
-            if (!appendStringCell(start, quick))
+            (() @trusted { pool.ptr[stopAt] = '\0'; })();
+            i = stopAt + 1;
+            if (!appendStringCell(start, stopAt - start))
                 return;
         }
         else
