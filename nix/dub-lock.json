@@ -9,17 +9,21 @@
       "repository": "https://github.com/PetarKirov/dmd.git",
       "sha256": "152aj2bhz2k4xfp9qpnjcnmbrcafl8vzirny7r7gagzsr4b6d5jp"
     },
+    "during": {
+      "version": "0.5.0",
+      "sha256": "02dv1sppninznkshiczhhh7vjlk9jc9dznbl0cnra2by9wkmjiyd"
+    },
     "expected": {
       "version": "0.4.1",
       "sha256": "1ahr7gbjl6dgw1qs9x5yzcwhbzfg7ygdlsm9gw4hgmm1xrfcpri0"
     },
-    "raylib-d": {
-      "version": "6.0.1",
-      "sha256": "1v2fkdf4lgh055667nkfmwpnkmrvmyiwrqnh4ypsfw8ifyxn3rib"
-    },
     "optional": {
       "sha256": "1ab3x96ax5jsb4zayfw3akppqp3mg42p2d847p3ahrj1zmn3hid9",
       "version": "1.3.1"
+    },
+    "raylib-d": {
+      "version": "6.0.1",
+      "sha256": "1v2fkdf4lgh055667nkfmwpnkmrvmyiwrqnh4ypsfw8ifyxn3rib"
     },
     "silly": {
       "version": "1.1.1",

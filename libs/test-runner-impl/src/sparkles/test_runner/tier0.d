@@ -692,7 +692,7 @@ else
         static Tier0Group tryOpen(bool) @safe pure nothrow @nogc => Tier0Group();
         void close() @safe pure nothrow @nogc {}
 
-        Tier0Stats count(Timed, Between)(scope Timed, scope Between, uint)
+        Tier0Stats count(Timed, Between)(scope Timed, scope Between, uint, uint = 1)
         {
             assert(false, "Tier-0 counters are Linux-only");
         }
