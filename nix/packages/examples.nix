@@ -79,11 +79,44 @@
               fileBase
             else
               builtins.head (builtins.match nameRe (builtins.head nameMatches));
+          # dub's `platforms "linux"` restricts where a recipe is buildable.
+          # Honour it here: without this, an example that imports Linux-only
+          # modules (inotify/proc/watch — the M7 agent-tooling demo) is still
+          # handed to the Darwin builder and fails the whole example set, even
+          # though its own manifest says it is Linux-only.
+          platformsRe = "[[:space:]]*platforms[[:space:]]+(.*)";
+          platformsMatches = builtins.filter (l: builtins.match platformsRe l != null) (
+            lib.splitString "\n" (builtins.readFile examplePath)
+          );
+          platforms =
+            if platformsMatches == [ ] then
+              [ ] # unrestricted
+            else
+              # `platforms "linux" "windows"` → the quoted words
+              builtins.filter (m: builtins.isString m) (
+                builtins.split "[^[:alnum:]_-]+" (
+                  builtins.head (builtins.match platformsRe (builtins.head platformsMatches))
+                )
+              );
         in
         {
-          inherit libName fileBase dubName;
+          inherit
+            libName
+            fileBase
+            dubName
+            platforms
+            ;
           examplesRel = "libs/${libName}/examples";
         };
+
+      # Does this example's manifest allow the system we are building for?
+      # An empty `platforms` means unrestricted.
+      buildableHere =
+        examplePath:
+        let
+          p = builtins.filter (x: x != "") (exampleInfo examplePath).platforms;
+        in
+        p == [ ] || builtins.any (want: lib.hasInfix want pkgs.stdenv.hostPlatform.system) p;
 
       mkExamplePackage =
         examplePath:
@@ -187,7 +220,7 @@
 
       # Group example derivations by their owning lib:
       # `examples.<lib>.<exampleName>`.
-      examplesByLib = lib.pipe allExampleFiles [
+      examplesByLib = lib.pipe (builtins.filter buildableHere allExampleFiles) [
         (lib.groupBy (path: (exampleInfo path).libName))
         (lib.mapAttrs (
           _: paths:
