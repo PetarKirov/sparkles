@@ -13,10 +13,20 @@ is designing a replacement for the event loop, and a seam that guessed at a
 richer abstraction now would be re-cut then.
 
 $(B What it does not yet own:) the $(REF Grid, sparkles,tui,cell) itself. An
-application that still paints cells by hand needs one, and hue does — 24 direct
-writes beside its 16 `paintGrid` calls. Moving the grid in here is the same
-change as widget-ising that chrome (`UIA2`), so it waits for it; until then
-`session.grid` hands the surface out deliberately rather than by omission.
+application that still paints cells by hand needs one, and hue does — though
+less than a raw grep suggests: $(B eight) production paint sites — two
+`fillRect` and two `clearTo` (pane and page backgrounds), one `fill` and two
+`putText` (a status bar and the pane divider), and one cell-style write (the
+selection tint) — beside 16 `paintGrid` calls.
+
+Most other `g[x, y]` uses are $(I reads), and they are not violations: a dozen
+in unittests, which is exactly what a test verifying painting must do, plus one
+loop in `twoslash_tui` that serializes the surface to HTML and belongs beside
+`sparkles.ui.interp.html` rather than here.
+
+Moving the grid in here is therefore the same change as widget-ising those eight
+sites (`UIA2`), so it waits for it; until then `session.grid` hands the surface
+out deliberately rather than by omission.
 */
 module sparkles.ui_tui.session;
 
