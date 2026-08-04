@@ -78,6 +78,15 @@ private enum char listClose = '\x11';
 private enum char alignOpen = '\x13';
 private enum char alignClose = '\x14';
 
+/// Brackets an inline code span. A backtick cannot nest, but the macros that
+/// produce these can: DDoc's auto-emphasis fires *inside* a backquoted span, so
+/// `` `to!int(42.0)` `` on a declaration named `to` expanded to
+/// ``` ``to`!int(42.0)` ``` — three spans where the author wrote one.
+/// `collapseCodeSpans` turns each outermost pair into one backtick and drops
+/// the rest.
+private enum char codeOpen = '\x16';
+private enum char codeClose = '\x17';
+
 /// Marks the fence on the line after it as coming from a documented unittest.
 /// The engine keeps only the first word of a fence's info string (`d`), so the
 /// label cannot be written into the fence directly; `reflowListsAndTables`
@@ -287,7 +296,10 @@ DdocRendered renderDdocText(string comment, Dsymbol sym, Scope* sc = null) @syst
 
             // `splitter` drops the trailing empty field the final separator
             // leaves; the `indexOf < 0` guard below skips it either way.
-            foreach (row; stripSentinels(rows[].idup).splitter(rowSep))
+            // This path builds tags directly rather than going through
+            // `cleanupMarkdown`, so it collapses the code spans itself —
+            // `bareParamName` sheds backticks and would not know a sentinel.
+            foreach (row; collapseCodeSpans(stripSentinels(rows[].idup)).splitter(rowSep))
             {
                 const at = row.indexOf(idSep);
                 if (at < 0)
@@ -484,7 +496,7 @@ private void defineMacros(ref MacroTable t) @safe pure nothrow
     foreach (code; ["DDOC_BACKQUOTED", "D_INLINECODE", "DDOC_PARAM",
         "DDOC_PSYMBOL", "DDOC_PSUPER_SYMBOL", "DDOC_KEYWORD",
         "DDOC_AUTO_PSYMBOL", "DDOC_AUTO_KEYWORD", "DDOC_AUTO_PARAM", "D"])
-        t.define(code, "`$0`");
+        t.define(code, codeOpen ~ "$0" ~ codeClose);
 
     // --- code blocks: fence content passes through raw (token-highlight
     // macros inside must not inject markup into a fence).
@@ -523,7 +535,7 @@ private void defineMacros(ref MacroTable t) @safe pure nothrow
     // A `[Symbol]` reference resolves to a *dlang.org* URL (`object.html#.Object`),
     // which is a dead link anywhere else — and a tooltip is anywhere else. The
     // name is what the reader wanted; render it as code and drop the target.
-    t.define("SYMBOL_LINK", "`$+`");
+    t.define("SYMBOL_LINK", codeOpen ~ "$+" ~ codeClose);
 
     // --- lists / tables: emit markdown line-wise
     //
@@ -626,7 +638,7 @@ private string cleanupMarkdown(string s) @safe pure
     import std.array : array, join;
     import std.string : stripLeft, stripRight;
 
-    s = joinModulePaths(stripSentinels(s));
+    s = collapseCodeSpans(joinModulePaths(stripSentinels(s)));
     // Only the line ending is normalized here: trailing whitespace is content
     // inside a fence, and the pass below is the one that knows where fences
     // are (`DDC31`).
@@ -923,6 +935,47 @@ private string stripAlignMarks(string line) @safe pure
 /// Removes the macro expander's 0xFF escape sentinels — each 0xFF and the
 /// byte after it — exactly as `gendocfile`'s output pass does.
 /**
+One backtick per outermost code span, none for the nested ones.
+
+DDoc's inline-code macros nest: auto-emphasis of a declaration's own name fires
+inside a backquoted span, and `$(MREF …)` can appear in one. HTML nests happily
+(`<code><span>to</span>!int(…)</code>`); backticks do not, so the naive
+expansion of `` `to!int(42.0)` `` on a declaration named `to` was
+``` ``to`!int(42.0)` ``` — which CommonMark reads as a double-backtick span
+followed by loose text, and the reader sees the delimiters.
+
+Unbalanced markers are dropped rather than guessed at, so a half-expanded macro
+never leaves a stray backtick behind.
+*/
+private string collapseCodeSpans(string s) @safe pure nothrow
+{
+    import std.string : indexOf;
+
+    if (s.indexOf(codeOpen) < 0)
+        return s;
+
+    auto o = new char[](0);
+    o.reserve(s.length);
+    size_t depth;
+    foreach (c; s)
+    {
+        if (c == codeOpen)
+        {
+            if (depth++ == 0)
+                o ~= '`';
+        }
+        else if (c == codeClose)
+        {
+            if (depth > 0 && --depth == 0)
+                o ~= '`';
+        }
+        else
+            o ~= c;
+    }
+    return () @trusted { return cast(string) o; }();
+}
+
+/**
 Rewrites each `MREF`-marked span into a dotted module path in code ticks:
 `$(MREF std, algorithm, iteration)` reaches here as the argument list
 `std, algorithm, iteration` between `pathOpen`/`pathClose` and leaves as
@@ -956,9 +1009,9 @@ private string joinModulePaths(string s) @safe pure
             break; // unterminated: drop the marker and everything after it
 
         auto parts = s[i + 1 .. end].splitter(',').map!strip;
-        o ~= '`';
+        o ~= codeOpen;
         o ~= parts.joiner(".");
-        o ~= '`';
+        o ~= codeClose;
         i = end + 1;
     }
     return o[];
@@ -981,9 +1034,11 @@ private string joinModulePaths(string s) @safe pure
 @("dmd_lsp.ddoc.joinModulePaths")
 @safe pure unittest
 {
-    assert(joinModulePaths("see " ~ pathOpen ~ "std, algorithm" ~ pathClose ~ ".")
+    // `joinModulePaths` emits code-span sentinels; `collapseCodeSpans` turns
+    // them into backticks once, at the outermost pair.
+    assert(collapseCodeSpans(joinModulePaths("see " ~ pathOpen ~ "std, algorithm" ~ pathClose ~ "."))
         == "see `std.algorithm`.");
-    assert(joinModulePaths(pathOpen ~ "std, algorithm, iteration" ~ pathClose)
+    assert(collapseCodeSpans(joinModulePaths(pathOpen ~ "std, algorithm, iteration" ~ pathClose))
         == "`std.algorithm.iteration`");
     assert(joinModulePaths("plain text") == "plain text");
     assert(joinModulePaths("half " ~ pathOpen ~ "std, algorithm") == "half ");
@@ -1133,6 +1188,24 @@ version (unittest)
         // `/// ditto` on a unittest means "another example", not prose.
         assert(!doc.canFind("ditto"), doc);
     }, null, ["-unittest"]);
+}
+
+@("ddoc.render.nestedCodeSpansCollapseToOne")
+@system unittest
+{
+    // DDoc's auto-emphasis fires *inside* a backquoted span, and unlike HTML
+    // a backtick cannot nest. `std.conv.to`'s own summary is the worst case:
+    // `` `to!int(42.0)` `` on a declaration named `to` expanded to
+    // ``` ``to`!int(42.0)` ```, which CommonMark reads as a double-backtick
+    // span followed by loose text — the reader sees the delimiters.
+    const tip = tipIn("/**\nThe expression `to!int(42.0)` converts it; `int` fits.\n*/\n"
+        ~ "T to(T)(int x) => T.init;\n", 5, 3);
+    assert(tip.doc == "The expression `to!int(42.0)` converts it; `int` fits.", tip.doc);
+
+    // The nested span at both ends is the shape that *looked* harmless.
+    const ends = tipIn("/**\nApplies to `value` only.\n*/\n"
+        ~ "int value(int value) => value;\n", 5, 5);
+    assert(ends.doc == "Applies to `value` only.", ends.doc);
 }
 
 @("ddoc.render.preservesPreformattedBlocks")
@@ -1540,11 +1613,13 @@ private string toDebugString(in string[][] tags) @safe pure
         ~ "int scale(int factor, int value) => factor * value;\n", (m) {
         const tip = m.tipAt(8, 40); // `factor` in the body expression
         assert(tip.kind == "parameter", tip.kind);
-        // ``value``: the engine auto-emphasizes the parameter name inside the
-        // author's own backticks — a double-backtick code span, which is
-        // valid CommonMark and renders identically to `value`.
-        assert(tip.doc == "the multiplier applied to ``value``", tip.doc);
+        // The engine auto-emphasizes the parameter name inside the author's
+        // own backticks. That used to surface as ``value`` — harmless here,
+        // because the nested span sat at both ends, and broken as soon as it
+        // did not: `to!int(42.0)` on a declaration named `to` came out as
+        // ``to`!int(42.0)`. `collapseCodeSpans` emits one pair either way.
+        assert(tip.doc == "the multiplier applied to `value`", tip.doc);
         assert(tip.tags == [["param",
-            "factor the multiplier applied to ``value``"]], tip.tags.toDebugString);
+            "factor the multiplier applied to `value`"]], tip.tags.toDebugString);
     });
 }
