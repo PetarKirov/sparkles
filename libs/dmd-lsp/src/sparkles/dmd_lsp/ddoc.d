@@ -957,8 +957,9 @@ private string collapseCodeSpans(string s) @safe pure nothrow
     auto o = new char[](0);
     o.reserve(s.length);
     size_t depth;
-    foreach (c; s)
+    for (size_t i = 0; i < s.length; i++)
     {
+        const c = s[i];
         if (c == codeOpen)
         {
             if (depth++ == 0)
@@ -966,7 +967,18 @@ private string collapseCodeSpans(string s) @safe pure nothrow
         }
         else if (c == codeClose)
         {
-            if (depth > 0 && --depth == 0)
+            if (depth == 0)
+                continue;
+            // Adjacent spans are one span. DDoc pairs backticks left to right,
+            // so `[0, `total`]` becomes three abutting code runs; emitting a
+            // delimiter at each seam would write ``` `[0, ``total``]` ```,
+            // which re-parses as something else entirely.
+            if (depth == 1 && i + 1 < s.length && s[i + 1] == codeOpen)
+            {
+                i++; // consume the reopen and stay inside the span
+                continue;
+            }
+            if (--depth == 0)
                 o ~= '`';
         }
         else
@@ -1206,6 +1218,18 @@ version (unittest)
     const ends = tipIn("/**\nApplies to `value` only.\n*/\n"
         ~ "int value(int value) => value;\n", 5, 5);
     assert(ends.doc == "Applies to `value` only.", ends.doc);
+
+    // Abutting spans are one span. DDoc pairs backticks left to right, so
+    // `[0, `total`]` arrives as three code runs with nothing between them;
+    // a delimiter at each seam would write ``` `[0, ``total``]` ```, which
+    // re-parses as something else entirely. `dmd -D` emits the same three
+    // runs — adjacency is the part CommonMark cannot spell.
+    const abut = tipIn("/**\nParams:\n    v = within `[0, `total`]` only\n"
+        ~ "    total = the end\n*/\nint f(int v, int total) => v;\n", 7, 5);
+    assert(abut.tags == [
+        ["param", "v within `[0, total]` only"],
+        ["param", "total the end"],
+    ], abut.tags.toDebugString);
 }
 
 @("ddoc.render.preservesPreformattedBlocks")
