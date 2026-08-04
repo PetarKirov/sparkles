@@ -186,7 +186,7 @@ struct KqueueBackend
     }
 
     /// A socket receive: register `EVFILT_READ`, one-shot.
-    bool trySubmit(in OpRecv o, OpToken token, ref OpSlot slot) @trusted nothrow
+    bool trySubmit(in OpRecv o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
         auto op = acquire();
         if (op is null)
@@ -198,7 +198,7 @@ struct KqueueBackend
     }
 
     /// A socket send: register `EVFILT_WRITE`, one-shot.
-    bool trySubmit(in OpSend o, OpToken token, ref OpSlot slot) @trusted nothrow
+    bool trySubmit(in OpSend o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
         auto op = acquire();
         if (op is null)
@@ -210,7 +210,7 @@ struct KqueueBackend
     }
 
     /// A positioned read (pipe/socket): `EVFILT_READ` + `read`.
-    bool trySubmit(in OpRead o, OpToken token, ref OpSlot slot) @trusted nothrow
+    bool trySubmit(in OpRead o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
         auto op = acquire();
         if (op is null)
@@ -222,7 +222,7 @@ struct KqueueBackend
     }
 
     /// A positioned write (pipe/socket): `EVFILT_WRITE` + `write`.
-    bool trySubmit(in OpWrite o, OpToken token, ref OpSlot slot) @trusted nothrow
+    bool trySubmit(in OpWrite o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
         auto op = acquire();
         if (op is null)
@@ -234,7 +234,7 @@ struct KqueueBackend
     }
 
     /// Accept: register `EVFILT_READ` on the listener; on readiness `accept`.
-    bool trySubmit(in OpAccept o, OpToken token, ref OpSlot) @trusted nothrow
+    bool trySubmit(in OpAccept o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
         auto op = acquire();
         if (op is null)
@@ -247,7 +247,7 @@ struct KqueueBackend
     /// Connect: start a non-blocking `connect`; if it is still in progress,
     /// register `EVFILT_WRITE` and check `SO_ERROR` on writability. `addr` is
     /// consumed synchronously here, so the descriptor may die immediately.
-    bool trySubmit(in OpConnect o, OpToken token, ref OpSlot) @trusted nothrow
+    bool trySubmit(in OpConnect o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
         import core.sys.posix.netinet.in_ : sockaddr;
 
@@ -275,7 +275,7 @@ struct KqueueBackend
     }
 
     /// A relative timer via `EVFILT_TIMER` (unique ident from the op index).
-    bool trySubmit(in OpTimeout o, OpToken token, ref OpSlot) @trusted nothrow
+    bool trySubmit(in OpTimeout o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
         auto op = acquire();
         if (op is null)
@@ -382,7 +382,7 @@ private:
         }
     }
 
-    bool armFilter(KqOp* op, short filter) @trusted nothrow
+    bool armFilter(KqOp* op, short filter) @trusted nothrow @nogc
     {
         kevent_t change;
         change.ident = cast(size_t) op.fd;
@@ -398,7 +398,7 @@ private:
         return true;
     }
 
-    bool armTimer(KqOp* op, long ms) @trusted nothrow
+    bool armTimer(KqOp* op, long ms) @trusted nothrow @nogc
     {
         kevent_t change;
         change.ident = cast(size_t) op.fd; // the unique timer ident
@@ -415,7 +415,7 @@ private:
         return true;
     }
 
-    static void setNonBlocking(int fd) @trusted nothrow
+    static void setNonBlocking(int fd) @trusted nothrow @nogc
     {
         import core.sys.posix.fcntl : F_GETFL, F_SETFL, fcntl, O_NONBLOCK;
 
