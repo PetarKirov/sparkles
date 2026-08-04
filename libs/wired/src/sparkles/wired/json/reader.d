@@ -2,12 +2,12 @@
 The strict RFC 8259 arena reader (SPEC §11.3).
 
 `parseJsonDocument` turns JSON text into a $(LREF JsonDocument) in one
-pass: the input is copied into the document's string pool with four
+pass: the input is copied into the document's string pool with eight
 bytes of zero padding (so every scan is termination-safe and strings
 unescape in place), and values append to the cell arena with the
 threaded-parent scheme — an open container's payload temporarily stores
-its parent's cell $(I index), so there is neither host recursion nor a
-separate stack, and a growing arena needs no pointer fixups.
+its parent cell pointer, so there is neither host recursion nor a separate
+stack. The arena is sized before parsing, keeping those pointers stable.
 
 Defaults are strict RFC 8259: invalid UTF-8, trailing commas, comments,
 `inf`/`nan` literals, leading zeros, bare `.5`/`1.` numbers, and
@@ -105,6 +105,101 @@ private struct ScanError
     string context;
 }
 
+/**
+The dominant coordinate shape: one to three integer digits, a fraction of up
+to sixteen digits, and no exponent. Two scalar SWAR gulps cover the complete
+token and feed the regular exact fast conversion. A short final gulp is padded
+with decimal zeroes; counting those zeroes in `exp10` cancels the scaling.
+
+Returns zero when the shape or conversion does not fit this lane, leaving the
+general number kernel to rescan it.
+*/
+private size_t scanShortFloat()(const(char)* p, size_t dot, ulong sig,
+    bool negative, JsonCell* cell) @system pure nothrow @nogc
+{
+    pragma(inline, true);
+    size_t k = dot + 1;
+    auto w = loadWord(p + k);
+    uint run = digitRun8(w);
+    if (run == 0)
+        return 0;
+
+    sig = sig * 100_000_000
+        + eightDigits(run == 8 ? w : padDigits8(w, run));
+    k += run;
+    int fracSlots = 8;
+
+    if (run == 8)
+    {
+        w = loadWord(p + k);
+        run = digitRun8(w);
+        if (run != 0)
+        {
+            // Three integer digits plus two full gulps is the 19-digit
+            // significand ceiling; all shorter integer leads have slack.
+            sig = sig * 100_000_000
+                + eightDigits(run == 8 ? w : padDigits8(w, run));
+            k += run;
+            fracSlots = 16;
+        }
+    }
+
+    // A third digit run or an exponent belongs to the general path.
+    if ((p[k] >= '0' && p[k] <= '9') || (p[k] | 0x20) == 'e')
+        return 0;
+
+    double value;
+    if (fracSlots == 16)
+    {
+        if (!tryFastDouble(sig, -16, value))
+            return 0;
+    }
+    else if (!tryFastDouble(sig, -8, value))
+        return 0;
+    cell.set(JsonKind.floating, 0,
+        doubleToBits(negative ? -value : value));
+    return k;
+}
+
+/**
+Routes an already-located one-to-three-digit decimal into
+$(LREF scanShortFloat). Keeping this narrow kernel separate means the dominant
+coordinate shape never pays the general number scanner's large register-save
+frame and cold grammar setup.
+*/
+private size_t scanShortFloatToken()(const(char)* p, size_t integerStart,
+    size_t dot, bool negative, JsonCell* cell) @system pure nothrow @nogc
+{
+    pragma(inline, true);
+    const uint e0 = cast(uint)(p[integerStart] - '0');
+    if (e0 > 9)
+        return 0;
+
+    ulong sig;
+    switch (dot - integerStart)
+    {
+    case 1:
+        sig = e0;
+        break;
+    case 2:
+        const uint e1 = cast(uint)(p[integerStart + 1] - '0');
+        if (e0 == 0 || e1 > 9)
+            return 0;
+        sig = e0 * 10 + e1;
+        break;
+    case 3:
+        const uint e1 = cast(uint)(p[integerStart + 1] - '0');
+        const uint e2 = cast(uint)(p[integerStart + 2] - '0');
+        if (e0 == 0 || e1 > 9 || e2 > 9)
+            return 0;
+        sig = e0 * 100 + e1 * 10 + e2;
+        break;
+    default:
+        return 0;
+    }
+    return scanShortFloat(p, dot, sig, negative, cell);
+}
+
 // ── number scanning (fused grammar + accumulation) ──────────────────────
 // Standalone pointer kernel with a register-narrow interface (yyjson's
 // read_number discipline): keeping it out of the grammar loop's nested
@@ -144,6 +239,15 @@ private size_t scanNumber(JsonReadOptions opts)(
     size_t taken = 0;
     if (p[k] == '0')
     {
+        static if (!opts.rawNumbers)
+        {
+            if (p[k + 1] == '.')
+            {
+                const end = scanShortFloat(p, k + 1, 0, negative, cell);
+                if (end != 0)
+                    return end;
+            }
+        }
         k++;
         taken = 1;
         if (unlikely(p[k] >= '0' && p[k] <= '9'))
@@ -156,19 +260,19 @@ private size_t scanNumber(JsonReadOptions opts)(
     {
         // Short-int fast lane: float corpora put the dot one to three
         // digits in (canada: 2–3 digit coordinates), where the 8-wide
-        // gulp probe below always fails before the pair loop runs. Two
-        // peeks at the dot position route those shapes straight to the
-        // fraction with probe and pair loop skipped entirely. Integer
-        // corpora pay two predictable not-taken compares; the
-        // peek-after-failed-probe ordering was also measured and keeps
-        // citm cleaner but forfeits most of canada's win (−1.6 % vs
-        // −5.1 % instructions) — canada is the lane this trades for.
+        // gulp probe below always fails before the pair loop runs.
         const uint e0 = cast(uint)(p[k] - '0');
         const uint e1 = cast(uint)(p[k + 1] - '0');
         if (e0 <= 9 && p[k + 1] == '.')
         {
             sig = e0;
             taken = 1;
+            static if (!opts.rawNumbers)
+            {
+                const end = scanShortFloat(p, k + 1, sig, negative, cell);
+                if (end != 0)
+                    return end;
+            }
             k += 1;
             goto intDone;
         }
@@ -176,7 +280,27 @@ private size_t scanNumber(JsonReadOptions opts)(
         {
             sig = e0 * 10 + e1;
             taken = 2;
+            static if (!opts.rawNumbers)
+            {
+                const end = scanShortFloat(p, k + 2, sig, negative, cell);
+                if (end != 0)
+                    return end;
+            }
             k += 2;
+            goto intDone;
+        }
+        const uint e2 = cast(uint)(p[k + 2] - '0');
+        if (e0 <= 9 && e1 <= 9 && e2 <= 9 && p[k + 3] == '.')
+        {
+            sig = e0 * 100 + e1 * 10 + e2;
+            taken = 3;
+            static if (!opts.rawNumbers)
+            {
+                const end = scanShortFloat(p, k + 3, sig, negative, cell);
+                if (end != 0)
+                    return end;
+            }
+            k += 3;
             goto intDone;
         }
         // Accumulate up to 19 digits: eight per SWAR gulp while the
@@ -447,6 +571,133 @@ intDone:
     }
 }
 
+private struct NumericArrayScan
+{
+    size_t end;
+    JsonCell* nextCell;
+}
+
+/**
+Parses a complete number-only array subtree in a dedicated scalar loop.
+
+GeoJSON-style coordinate arrays otherwise bounce through the fully general
+object/array grammar once per number. This lane keeps their threaded-parent
+state local, amortizes its call frame over the whole subtree, and inlines the
+short-decimal conversion without inflating the general grammar loop. A zero
+`end` means the subtree contains another JSON shape (or malformed input); the
+caller safely reparses it through the general grammar. Tentative cells need no
+rollback because they lie at and beyond the caller's unchanged arena cursor.
+*/
+private NumericArrayScan scanNumericArray(JsonReadOptions opts)(
+    const(char)* p, size_t start, size_t n, JsonCell* firstCell,
+    uint outerDepth) @system pure nothrow @nogc
+{
+    pragma(inline, false);
+    static if (opts.rawNumbers)
+        return NumericArrayScan.init;
+    else
+    {
+        size_t first = start + 1;
+        while (p[first] == ' ' || p[first] == '\t'
+            || p[first] == '\n' || p[first] == '\r')
+            first++;
+        // The dedicated loop amortizes on nested coordinate matrices;
+        // short flat numeric arrays are faster in the general grammar.
+        if (p[first] != '[')
+            return NumericArrayScan.init;
+
+        auto nextCell = firstCell;
+        JsonCell* parent;
+        uint localDepth;
+        size_t i = start;
+        ScanError ignoredError;
+
+        void skipWhitespace()
+        {
+            pragma(inline, true);
+            while (p[i] == ' ' || p[i] == '\t'
+                || p[i] == '\n' || p[i] == '\r')
+                i++;
+        }
+
+    openArray:
+        if (outerDepth + localDepth >= opts.maxDepth)
+            return NumericArrayScan.init;
+        {
+            auto opened = nextCell++;
+            opened.set(JsonKind.array, 0, cast(ulong) parent);
+            parent = opened;
+        }
+        localDepth++;
+        i++; // '['
+        skipWhitespace();
+        if (i >= n)
+            return NumericArrayScan.init;
+        if (p[i] == ']')
+        {
+            i++;
+            goto closeArray;
+        }
+
+    value:
+        if (i >= n)
+            return NumericArrayScan.init;
+        if (p[i] == '[')
+            goto openArray;
+        {
+            const c0 = p[i];
+            if (c0 != '-' && (c0 < '0' || c0 > '9'))
+                return NumericArrayScan.init;
+
+            size_t end;
+            const negative = c0 == '-';
+            const integerStart = i + negative;
+            size_t dot;
+            if (p[integerStart + 2] == '.')
+                dot = integerStart + 2;
+            else if (p[integerStart + 3] == '.')
+                dot = integerStart + 3;
+            else if (p[integerStart + 1] == '.')
+                dot = integerStart + 1;
+            if (dot != 0)
+                end = scanShortFloatToken(p, integerStart, dot,
+                    negative, nextCell);
+            if (end == 0)
+                end = scanNumber!opts(p, i, nextCell, &ignoredError);
+            if (end == 0)
+                return NumericArrayScan.init;
+            nextCell++;
+            i = end;
+        }
+
+    afterValue:
+        parent.tag += 1UL << 8;
+        skipWhitespace();
+        if (i >= n)
+            return NumericArrayScan.init;
+        if (p[i] == ',')
+        {
+            i++;
+            skipWhitespace();
+            goto value;
+        }
+        if (p[i] != ']')
+            return NumericArrayScan.init;
+        i++;
+
+    closeArray:
+        {
+            auto closed = parent;
+            parent = cast(JsonCell*) closed.bits;
+            closed.bits = nextCell - closed;
+        }
+        localDepth--;
+        if (parent is null)
+            return NumericArrayScan(i, nextCell);
+        goto afterValue;
+    }
+}
+
 // ── string scanning (shared by keys and values) ─────────────────────────
 // Standalone kernel, same discipline as scanNumber: keeping it out of
 // the grammar loop's nested scope keeps the loop's captured state out
@@ -674,10 +925,9 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     // force conservative reloads of every document field on each append;
     // the document is synced on completion.
     auto cells = doc.cells;
-    size_t cellCount = 0;
+    auto nextCell = (() @trusted => cells.ptr)();
 
-    enum size_t noParent = size_t.max;
-    size_t parent = noParent;
+    JsonCell* parent;
     bool parentIsObject = false; // cells[parent].kind cached (hot loop)
     uint depth = 0;
 
@@ -686,28 +936,33 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     // All three write the cell through JsonCell.set: constructing a
     // JsonCell and assigning bits afterwards leaves a dead 8-byte zero
     // store that LLVM does not reliably eliminate here.
-    size_t appendContainer(JsonKind kind, ulong parentIdx) @trusted
+    JsonCell* appendContainer(JsonKind kind, JsonCell* parentPtr) @trusted
     {
-        const idx = cellCount++;
-        cells.ptr[idx].set(kind, 0, parentIdx); // bits: threaded parent
-        return idx;
+        auto cell = nextCell++;
+        cell.set(kind, 0, cast(ulong) parentPtr); // bits: threaded parent
+        return cell;
     }
 
     // Appends a scalar cell with a u64/i64/f64 payload (always true —
     // the bool shape matches the grammar loop's return discipline).
     bool appendScalar(JsonKind kind, ulong payload) @trusted
     {
-        const idx = cellCount++;
-        cells.ptr[idx].set(kind, 0, payload);
+        nextCell.set(kind, 0, payload);
+        nextCell++;
         return true;
     }
 
     bool appendStringCell(size_t start, size_t len,
         JsonKind kind = JsonKind.string_) @trusted
     {
-        const idx = cellCount++;
-        cells.ptr[idx].set(kind, len, cast(ulong)(pool.ptr + start));
+        nextCell.set(kind, len, cast(ulong)(pool.ptr + start));
+        nextCell++;
         return true;
+    }
+
+    void finishToken() @trusted
+    {
+        nextCell++;
     }
 
 
@@ -715,6 +970,7 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     // shared rare-path error channel lives here so the hot call sites
     // carry no per-call initialization.
     ScanError serr;
+    char delimiter;
 
 
     // ── literals ─────────────────────────────────────────────────────────
@@ -756,13 +1012,13 @@ value: // parse one value at pool[i]
         if (c0 == '"') // most frequent first (string-heavy JSON)
         {
             const end = (() @trusted => scanString!opts(pool, i,
-                cells.ptr + cellCount, &serr))();
+                nextCell, &serr))();
             if (end == 0)
             {
                 fail(serr.code, serr.offset, serr.context);
                 return;
             }
-            cellCount++;
+            finishToken();
             i = end;
             goto afterValue;
         }
@@ -781,13 +1037,13 @@ value: // parse one value at pool[i]
                 // of its register allocation; @trusted on the padded
                 // pool and the pre-sized arena slot.
                 const end = (() @trusted => scanNumber!opts(pool.ptr, i,
-                    cells.ptr + cellCount, &serr))();
+                    nextCell, &serr))();
                 if (end == 0)
                 {
                     fail(serr.code, serr.offset, serr.context);
                     return;
                 }
-                cellCount++;
+                finishToken();
                 i = end;
                 goto afterValue;
             }
@@ -814,15 +1070,33 @@ value: // parse one value at pool[i]
         }
         {
             const isObject = c0 == '{';
+            static if (!opts.rawNumbers)
+            {
+                if (!isObject && pool[i + 1] == '[')
+                {
+                    // Nested minified arrays are the profitable matrix
+                    // shape; a single lookahead avoids calling the
+                    // subtree kernel for ordinary flat/object arrays.
+                    auto accelerated = (() @trusted =>
+                        scanNumericArray!opts(pool.ptr, i, n,
+                            nextCell, depth))();
+                    if (accelerated.end != 0)
+                    {
+                        nextCell = accelerated.nextCell;
+                        i = accelerated.end;
+                        goto afterValue;
+                    }
+                }
+            }
             if (depth >= opts.maxDepth)
             {
                 fail(ParseErrorCode.depthExceeded, i);
                 return;
             }
             depth++;
-            const idx = appendContainer(
+            auto opened = appendContainer(
                 isObject ? JsonKind.object : JsonKind.array, parent);
-            parent = idx;
+            parent = opened;
             parentIsObject = isObject;
             i++;
             skipWs(pool, i);
@@ -868,41 +1142,64 @@ objectKey: // parse `"key" :` then its value
         else
         {
             const end = (() @trusted => scanString!opts(pool, i,
-                cells.ptr + cellCount, &serr))();
+                nextCell, &serr))();
             if (end == 0)
             {
                 fail(serr.code, serr.offset, serr.context);
                 return;
             }
-            cellCount++;
+            finishToken();
             i = end;
         }
     }
-    skipWs(pool, i);
-    if (i >= n || pool[i] != ':')
+    // The conventional (and minifier-emitted) shape has the colon directly
+    // after the closing quote. Only enter the whitespace grammar when this
+    // first probe misses; JSON still permits spaces, tabs, CR, and LF here.
+    if (pool[i] != ':')
     {
-        fail(i >= n ? ParseErrorCode.unexpectedEnd
-                : ParseErrorCode.unexpectedCharacter,
-            i, "':' expected after object key");
-        return;
+        skipWs(pool, i);
+        if (i >= n || pool[i] != ':')
+        {
+            fail(i >= n ? ParseErrorCode.unexpectedEnd
+                    : ParseErrorCode.unexpectedCharacter,
+                i, "':' expected after object key");
+            return;
+        }
     }
     i++;
+    // Pretty-printed object corpora overwhelmingly use exactly one space
+    // after the colon. Avoid entering the general whitespace scanner (and
+    // its eight-space probe) for that one-byte gap; a second whitespace byte
+    // or end-of-input falls through to the full grammar-preserving path.
+    if (pool[i] == ' ' && pool[i + 1] > ' ')
+    {
+        i++;
+        goto value;
+    }
     skipWs(pool, i);
     goto value;
 
 afterValue: // a value completed; count it, then continue its container
-    if (parent == noParent)
+    if (parent is null)
         goto endCheck;
-    cells[parent].tag += 1UL << 8; // one more member
-    skipWs(pool, i);
-    if (unlikely(i >= n))
+    (() @trusted { parent.tag += 1UL << 8; })(); // one more member
+    delimiter = pool[i];
+    if (delimiter <= ' ')
     {
-        fail(ParseErrorCode.unexpectedEnd, i);
-        return;
+        // Keep the first delimiter load for the overwhelmingly common
+        // immediate comma/close path. Whitespace (and invalid control bytes)
+        // takes the exact existing scanner, then reloads at its new position.
+        skipWs(pool, i);
+        if (unlikely(i >= n))
+        {
+            fail(ParseErrorCode.unexpectedEnd, i);
+            return;
+        }
+        delimiter = pool[i];
     }
     {
         const isObject = parentIsObject;
-        const c = pool[i];
+        const c = delimiter;
         if (c == ',')
         {
             // Minified object hot path: `,"` starts the next key.
@@ -929,11 +1226,13 @@ afterValue: // a value completed; count it, then continue its container
 
 closeContainer: // finalize cells[parent], pop the threaded parent
     {
-        const idx = parent;
-        parent = cast(size_t) cells[idx].bits;
-        parentIsObject = parent != noParent
-            && cells[parent].kind == JsonKind.object;
-        cells[idx].bits = cellCount - idx;
+        (() @trusted {
+            auto closed = parent;
+            parent = cast(JsonCell*) closed.bits;
+            parentIsObject = parent !is null
+                && parent.kind == JsonKind.object;
+            closed.bits = nextCell - closed;
+        })();
         depth--;
         goto afterValue;
     }
@@ -945,7 +1244,8 @@ endCheck:
         fail(ParseErrorCode.trailingContent, i);
         return;
     }
-    doc.cellCount = cellCount; // success: nonzero ⇒ hasValue
+    doc.cellCount = (() @trusted => nextCell - cells.ptr)();
+    // success: nonzero ⇒ hasValue
 }
 
 /// Copies one 8-byte word (used by the escape lane's segment moves;
@@ -1471,6 +1771,49 @@ unittest
     assert(parse(`{}`).document.root.length == 0);
     assert(parse(`[[[[[]]]]]`).hasValue);
     assert(parse(`[{"k":[{"deep":[1,2,[3]]}]}]`).hasValue);
+}
+
+@("reader.containers.numericMatrixAccelerator")
+@safe pure nothrow @nogc
+unittest
+{
+    // The minified nested-array shape enters scanNumericArray and must retain
+    // the same extents/member counts as the general grammar.
+    auto matrix = parse(`[[1,2],[-3.5,4.25]]`);
+    assert(matrix.hasValue);
+    assert(matrix.document.root.length == 2);
+
+    size_t rowIndex;
+    foreach (row; matrix.document.root.byElement)
+    {
+        assert(row.kind == JsonKind.array && row.length == 2);
+        size_t columnIndex;
+        foreach (value; row.byElement)
+        {
+            if (rowIndex == 0)
+                assert(value.integer == cast(long) columnIndex + 1);
+            else if (columnIndex == 0)
+                assert(value.floating == -3.5);
+            else
+                assert(value.floating == 4.25);
+            columnIndex++;
+        }
+        assert(columnIndex == 2);
+        rowIndex++;
+    }
+    assert(rowIndex == 2);
+
+    // Tentative accelerator writes are beyond the unchanged arena cursor.
+    // A non-numeric subtree must roll back by falling through to the general
+    // parser, with no stale cells visible in the resulting document.
+    auto mixed = parse(`[[1],["x"]]`);
+    assert(mixed.hasValue && mixed.document.root.length == 2);
+    auto rows = mixed.document.root.byElement;
+    assert(rows.front.byElement.front.integer == 1);
+    rows.popFront();
+    assert(rows.front.byElement.front.str == "x");
+    rows.popFront();
+    assert(rows.empty);
 }
 
 @("reader.rejections.strictRfc8259")

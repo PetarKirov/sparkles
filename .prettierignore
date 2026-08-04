@@ -7,3 +7,6 @@
 # pretty-format-json hook ignores it, so Prettier keeps managing it.
 docs/research/monorepo-tooling/*/sample/**/*.json
 !docs/research/monorepo-tooling/*/sample/**/package.json
+
+# Benchmark snapshots use pretty-format-json's sorted canonical form.
+libs/wired/bench/runtime/results/*.json

@@ -291,18 +291,20 @@ Expected!(T, JsonError) fromJSON(T)(scope const(char)[] text)
     auto parsed = parseJsonDocument(text);
     if (parsed.hasError)
         return err!T(parseStageError(parsed.error, text));
-    auto r = decodeNative!T(parsed.document.root);
+    JsonError decodeFailure;
+    auto r = decodeNative!T(parsed.document.root, decodeFailure);
     if (r.failed)
-        return err!T(r.error);
+        return err!T(decodeFailure);
     return ok!JsonError(r.value);
 }
 
 /// Decodes one parsed subtree (a borrowed view) into a `T`.
 Expected!(T, JsonError) fromJSON(T)(scope JsonValue view)
 {
-    auto r = decodeNative!T(view);
+    JsonError decodeFailure;
+    auto r = decodeNative!T(view, decodeFailure);
     if (r.failed)
-        return err!T(r.error);
+        return err!T(decodeFailure);
     return ok!JsonError(r.value);
 }
 
@@ -325,14 +327,19 @@ Expected!(void, JsonError) writeJSON(JsonWriteOptions opts = JsonWriteOptions.in
 private struct NRes(T)
 {
     bool failed;
-    JsonError error;
     static if (!is(T == void))
         T value;
 }
 
-private NRes!T nOk(T)(T value) => NRes!T(false, JsonError.init, value);
+private NRes!T nOk(T)(T value) => NRes!T(false, value);
 
-private NRes!T nFail(T)(JsonError e) => NRes!T(true, e);
+private NRes!T nFail(T)(ref JsonError failure, JsonError e)
+{
+    failure = e;
+    return NRes!T(true);
+}
+
+private NRes!T nFailed(T)() => NRes!T(true);
 
 /// Builds a leaf decode error: target/kind/reason (+ a compact value
 /// summary when the view is a scalar).
@@ -393,7 +400,7 @@ private void summarizeInto(scope JsonValue v, ref JsonError e) @safe pure nothro
 }
 
 /// The recursive native decode walk (mirrors `decodeImpl` over views).
-private NRes!T decodeNative(T)(scope JsonValue v)
+private NRes!T decodeNative(T)(scope JsonValue v, ref JsonError failure)
 {
     alias U = Unqual!T;
 
@@ -401,27 +408,28 @@ private NRes!T decodeNative(T)(scope JsonValue v)
         return nOk(toStdJson(v)); // §4.2 passthrough: materialize the subtree
 
     else static if (hasConvert!(Json, U))
-        return decodeViaNative!(convertOf!(Json, U), U)(v);
+        return decodeViaNative!(convertOf!(Json, U), U)(v, failure);
 
     else static if (is(U == bool))
     {
         if (v.kind != JsonKind.bool_)
-            return nFail!T(decodeError!T(v, "expected a JSON boolean"));
+            return nFail!T(failure, decodeError!T(v, "expected a JSON boolean"));
         return nOk(v.boolean);
     }
 
     else static if (is(U == string))
     {
         if (v.kind != JsonKind.string_)
-            return nFail!T(decodeError!T(v, "expected a JSON string"));
+            return nFail!T(failure, decodeError!T(v, "expected a JSON string"));
         return nOk(v.str.idup); // borrowed view → owned string
     }
 
     else static if (is(U == enum))
-        return decodeEnumNative!(U, resolveRepr!(Json, U), resolveCaseStyle!(Json, U))(v);
+        return decodeEnumNative!(U, resolveRepr!(Json, U), resolveCaseStyle!(Json, U))(
+            v, failure);
 
     else static if (isIntegral!U)
-        return decodeIntegralNative!T(v);
+        return decodeIntegralNative!T(v, failure);
 
     else static if (isFloatingPoint!U)
     {
@@ -434,7 +442,7 @@ private NRes!T decodeNative(T)(scope JsonValue v)
         case uinteger:
             return nOk(cast(T) v.uinteger);
         default:
-            return nFail!T(decodeError!T(v, "expected a JSON number"));
+            return nFail!T(failure, decodeError!T(v, "expected a JSON number"));
         }
     }
 
@@ -443,28 +451,29 @@ private NRes!T decodeNative(T)(scope JsonValue v)
         static if (isSomeChar!E)
         {
             if (v.kind != JsonKind.string_)
-                return nFail!T(decodeError!T(v, "expected a JSON string"));
+                return nFail!T(failure, decodeError!T(v, "expected a JSON string"));
             import std.conv : to;
 
             try
                 return nOk(v.str.to!U);
             catch (Exception)
-                return nFail!T(decodeError!T(v, "string does not fit the character type"));
+                return nFail!T(failure,
+                    decodeError!T(v, "string does not fit the character type"));
         }
         else
         {
             if (v.kind != JsonKind.array)
-                return nFail!T(decodeError!T(v, "expected a JSON array"));
+                return nFail!T(failure, decodeError!T(v, "expected a JSON array"));
             U result;
             result.reserve(v.length);
             size_t idx;
             foreach (elem; v.byElement)
             {
-                auto r = decodeNative!E(elem);
+                auto r = decodeNative!E(elem, failure);
                 if (r.failed)
                 {
-                    r.error.prependIndex(idx);
-                    return nFail!T(r.error);
+                    failure.prependIndex(idx);
+                    return nFailed!T();
                 }
                 result ~= r.value;
                 idx++;
@@ -474,15 +483,15 @@ private NRes!T decodeNative(T)(scope JsonValue v)
     }
 
     else static if (is(U == V[K], V, K))
-        return decodeAANative!U(v);
+        return decodeAANative!U(v, failure);
 
     else static if (is(U == Nullable!N, N))
     {
         if (v.kind == JsonKind.null_)
             return nOk(U.init);
-        auto r = decodeNative!N(v);
+        auto r = decodeNative!N(v, failure);
         if (r.failed)
-            return nFail!T(r.error);
+            return nFailed!T();
         return nOk(U(r.value));
     }
 
@@ -490,9 +499,9 @@ private NRes!T decodeNative(T)(scope JsonValue v)
     {
         if (v.kind == JsonKind.null_)
             return nOk(U.init);
-        auto r = decodeNative!N(v);
+        auto r = decodeNative!N(v, failure);
         if (r.failed)
-            return nFail!T(r.error);
+            return nFailed!T();
         return nOk(some(r.value));
     }
 
@@ -505,35 +514,37 @@ private NRes!T decodeNative(T)(scope JsonValue v)
         case bool_:
             return nOk(v.boolean ? Ternary.yes : Ternary.no);
         default:
-            return nFail!T(decodeError!T(v, "expected null, true, or false"));
+            return nFail!T(failure,
+                decodeError!T(v, "expected null, true, or false"));
         }
     }
 
     else static if (is(U == SysTime))
     {
         if (v.kind != JsonKind.string_)
-            return nFail!T(decodeError!T(v, "expected a JSON string"));
+            return nFail!T(failure, decodeError!T(v, "expected a JSON string"));
         const s = v.str;
         if (!hasZoneOffset(cast(string) s))
-            return nFail!T(decodeError!T(v,
+            return nFail!T(failure, decodeError!T(v,
                 "timestamp must include an explicit UTC marker or offset"));
         try
             return nOk(SysTime.fromISOExtString(s).toUTC);
         catch (Exception e)
-            return nFail!T(decodeError!T(v, "not an ISO-8601 extended timestamp"));
+            return nFail!T(failure,
+                decodeError!T(v, "not an ISO-8601 extended timestamp"));
     }
 
     else static if (isSumType!U)
-        return decodeSumTypeNative!(U, MatchStrategy.exactlyOne)(v);
+        return decodeSumTypeNative!(U, MatchStrategy.exactlyOne)(v, failure);
 
     else static if (is(U == struct))
-        return decodeStructNative!T(v);
+        return decodeStructNative!T(v, failure);
 
     else
         static assert(false, "wired: unsupported type for fromJSON: " ~ T.stringof);
 }
 
-private NRes!T decodeIntegralNative(T)(scope JsonValue v)
+private NRes!T decodeIntegralNative(T)(scope JsonValue v, ref JsonError failure)
 {
     // The reader classifies exactly: integer fits long, uinteger only ulong.
     if (v.kind == JsonKind.integer)
@@ -542,12 +553,12 @@ private NRes!T decodeIntegralNative(T)(scope JsonValue v)
         static if (__traits(isUnsigned, T))
         {
             if (x < 0 || x > T.max)
-                return nFail!T(decodeError!T(v, "value out of range"));
+                return nFail!T(failure, decodeError!T(v, "value out of range"));
         }
         else
         {
             if (x < T.min || x > T.max)
-                return nFail!T(decodeError!T(v, "value out of range"));
+                return nFail!T(failure, decodeError!T(v, "value out of range"));
         }
         return nOk(cast(T) x);
     }
@@ -555,51 +566,111 @@ private NRes!T decodeIntegralNative(T)(scope JsonValue v)
     {
         const x = v.uinteger;
         if (x > T.max)
-            return nFail!T(decodeError!T(v, "value out of range"));
+            return nFail!T(failure, decodeError!T(v, "value out of range"));
         return nOk(cast(T) x);
     }
-    return nFail!T(decodeError!T(v, "expected an integer"));
+    return nFail!T(failure, decodeError!T(v, "expected an integer"));
 }
 
-private NRes!E decodeEnumNative(E, Repr repr, CaseStyle style)(scope JsonValue v)
+private NRes!E decodeEnumNative(E, Repr repr, CaseStyle style)(
+    scope JsonValue v, ref JsonError failure)
 if (is(E == enum))
 {
     static if (repr == Repr.value)
     {
-        auto orig = decodeNative!(OriginalType!E)(v);
+        auto orig = decodeNative!(OriginalType!E)(v, failure);
         if (orig.failed)
         {
-            orig.error.targetType = E.stringof;
-            return nFail!E(orig.error);
+            failure.targetType = E.stringof;
+            return nFailed!E();
         }
         auto member = enumFromValue!E(orig.value);
         if (member.hasError)
-            return nFail!E(decodeError!E(v, member.error.context));
+            return nFail!E(failure, decodeError!E(v, member.error.context));
         return nOk(member.value);
     }
     else
     {
         if (v.kind != JsonKind.string_)
-            return nFail!E(decodeError!E(v, "expected a JSON string"));
+            return nFail!E(failure, decodeError!E(v, "expected a JSON string"));
 
         alias names = wireNames!(Json, E, style);
         static foreach (i, m; __traits(allMembers, E))
             if (v.str == names[i])
                 return nOk(__traits(getMember, E, m));
 
-        return nFail!E(decodeError!E(v, "expected one of: " ~ nameList!(E, style)));
+        return nFail!E(failure,
+            decodeError!E(v, "expected one of: " ~ nameList!(E, style)));
     }
 }
 
+/// Whether field `i` is the first policy with its key length. Used to emit
+/// one integral switch case per distinct length at compile time.
+private enum bool firstFieldKeyLength(alias policies, size_t i) = () {
+    static foreach (j; 0 .. i)
+        if (policies[j].key.length == policies[i].key.length)
+            return false;
+    return true;
+}();
+
+/**
+Compares a runtime key with a compile-time literal in fixed scalar words.
+
+The language runtime's string switch reaches libc `memcmp` even for the short
+JSON field names that dominate typed decode. Once a length bucket matches,
+constant-sized `memcpy` calls lower to one or two integer loads with no call.
+*/
+private bool fieldKeyEquals(string expected)(scope const(char)[] actual)
+    @trusted pure nothrow @nogc
+{
+    pragma(inline, true);
+    if (actual.length != expected.length)
+        return false;
+
+    import core.stdc.string : memcpy;
+
+    static foreach (wordIndex; 0 .. expected.length / 8)
+    {{
+        enum offset = wordIndex * 8;
+        enum ulong wanted = () {
+            ulong word;
+            static foreach (j; 0 .. 8)
+                word |= cast(ulong) cast(ubyte) expected[offset + j] << (j * 8);
+            return word;
+        }();
+        ulong got;
+        memcpy(&got, actual.ptr + offset, 8);
+        if (got != wanted)
+            return false;
+    }}
+
+    enum tail = expected.length % 8;
+    static if (tail != 0)
+    {{
+        enum offset = expected.length - tail;
+        enum ulong wanted = () {
+            ulong word;
+            static foreach (j; 0 .. tail)
+                word |= cast(ulong) cast(ubyte) expected[offset + j] << (j * 8);
+            return word;
+        }();
+        ulong got = 0;
+        memcpy(&got, actual.ptr + offset, tail);
+        if (got != wanted)
+            return false;
+    }}
+    return true;
+}
+
 /// Single-pass struct decode: one `byKeyValue` walk with a compile-time
-/// string switch over the resolved field keys and a seen-mask for the
+/// length switch over the resolved field keys and a seen-mask for the
 /// required-field check — unknown keys hop over their extent for free
 /// (the old walk did one object lookup per field instead).
-private NRes!T decodeStructNative(T)(scope JsonValue v)
+private NRes!T decodeStructNative(T)(scope JsonValue v, ref JsonError failure)
 if (is(T == struct))
 {
     if (v.kind != JsonKind.object)
-        return nFail!T(decodeError!T(v, "expected a JSON object"));
+        return nFail!T(failure, decodeError!T(v, "expected a JSON object"));
 
     alias policies = fieldPolicies!(Json, T);
     T result;
@@ -607,47 +678,65 @@ if (is(T == struct))
 
     foreach (m; v.byKeyValue)
     {
-        sw: switch (m.key)
+        fieldDispatch: switch (m.key.length)
         {
             static foreach (i; 0 .. policies.length)
             {
-        case policies[i].key:
+                static if (firstFieldKeyLength!(policies, i))
+                case policies[i].key.length:
+                static foreach (j; 0 .. policies.length)
                 {
-                    alias V = typeof(T.tupleof[i]);
-
-                    static if (policies[i].hasConvert)
-                        auto r = decodeViaNative!(convertOf!(Json, T.tupleof[i]), V)(m.value);
-                    else static if (is(V == enum))
-                        auto r = decodeEnumNative!(V,
-                            policies[i].reprFor(WireTarget.all, resolveRepr!(Json, V)),
-                            policies[i].caseFor(WireTarget.all, resolveCaseStyle!(Json, V)))(
-                            m.value);
-                    else static if (is(V == E[], E) && is(E == enum))
-                        auto r = decodeEnumArrayNative!(E,
-                            policies[i].reprFor(WireTarget.value, resolveRepr!(Json, E)),
-                            policies[i].caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(
-                            m.value);
-                    else static if (isSumType!V)
-                        auto r = decodeSumTypeNative!(V, policies[i].match)(m.value);
-                    else
-                        auto r = decodeNative!V(m.value);
-
-                    if (r.failed)
+                    static if (policies[j].key.length == policies[i].key.length)
                     {
-                        // Present but invalid under `useDefault` keeps the
-                        // default (§5.4); otherwise propagate with the path.
-                        static if (!(policies[i].optional
-                                && policies[i].onInvalid == WireInvalid.useDefault))
+                        if (fieldKeyEquals!(policies[j].key)(m.key))
                         {
-                            r.error.prependKey(policies[i].key);
-                            return nFail!T(r.error);
+                            alias V = typeof(T.tupleof[j]);
+
+                            static if (policies[j].hasConvert)
+                                auto r = decodeViaNative!(
+                                    convertOf!(Json, T.tupleof[j]), V)(
+                                    m.value, failure);
+                            else static if (is(V == enum))
+                                auto r = decodeEnumNative!(V,
+                                    policies[j].reprFor(WireTarget.all,
+                                        resolveRepr!(Json, V)),
+                                    policies[j].caseFor(WireTarget.all,
+                                        resolveCaseStyle!(Json, V)))(
+                                    m.value, failure);
+                            else static if (is(V == E[], E) && is(E == enum))
+                                auto r = decodeEnumArrayNative!(E,
+                                    policies[j].reprFor(WireTarget.value,
+                                        resolveRepr!(Json, E)),
+                                    policies[j].caseFor(WireTarget.value,
+                                        resolveCaseStyle!(Json, E)))(
+                                    m.value, failure);
+                            else static if (isSumType!V)
+                                auto r = decodeSumTypeNative!(V,
+                                    policies[j].match)(m.value, failure);
+                            else
+                                auto r = decodeNative!V(m.value, failure);
+
+                            if (r.failed)
+                            {
+                                // Present but invalid under `useDefault`
+                                // keeps the default (§5.4); otherwise
+                                // propagate with the field path.
+                                static if (!(policies[j].optional
+                                        && policies[j].onInvalid
+                                            == WireInvalid.useDefault))
+                                {
+                                    failure.prependKey(policies[j].key);
+                                    return nFailed!T();
+                                }
+                            }
+                            else
+                                result.tupleof[j] = r.value;
+                            seen[j] = true;
+                            break fieldDispatch;
                         }
                     }
-                    else
-                        result.tupleof[i] = r.value;
-                    seen[i] = true;
-                    break sw;
                 }
+                break fieldDispatch;
             }
         default:
             break; // unknown key: skipped (extent hop)
@@ -666,28 +755,30 @@ if (is(T == struct))
                 e.targetType = T.stringof;
                 e.reason = "missing required field";
                 e.prependKey(policies[i].key);
-                return nFail!T(e);
+                return nFail!T(failure, e);
             }
         }
     }}
     return nOk(result);
 }
 
-private NRes!(E[]) decodeEnumArrayNative(E, Repr repr, CaseStyle style)(scope JsonValue v)
+private NRes!(E[]) decodeEnumArrayNative(E, Repr repr, CaseStyle style)(
+    scope JsonValue v, ref JsonError failure)
 if (is(E == enum))
 {
     if (v.kind != JsonKind.array)
-        return nFail!(E[])(decodeError!(E[])(v, "expected a JSON array"));
+        return nFail!(E[])(failure,
+            decodeError!(E[])(v, "expected a JSON array"));
     E[] result;
     result.reserve(v.length);
     size_t idx;
     foreach (elem; v.byElement)
     {
-        auto r = decodeEnumNative!(E, repr, style)(elem);
+        auto r = decodeEnumNative!(E, repr, style)(elem, failure);
         if (r.failed)
         {
-            r.error.prependIndex(idx);
-            return nFail!(E[])(r.error);
+            failure.prependIndex(idx);
+            return nFailed!(E[])();
         }
         result ~= r.value;
         idx++;
@@ -695,7 +786,8 @@ if (is(E == enum))
     return nOk(result);
 }
 
-private NRes!ST decodeSumTypeNative(ST, MatchStrategy strat)(scope JsonValue v)
+private NRes!ST decodeSumTypeNative(ST, MatchStrategy strat)(
+    scope JsonValue v, ref JsonError failure)
 if (isSumType!ST)
 {
     alias Types = TemplateArgsOf!ST;
@@ -704,11 +796,11 @@ if (isSumType!ST)
     {
         static foreach (V; Types)
         {{
-            auto r = decodeNative!V(v);
+            auto r = decodeNative!V(v, failure);
             if (!r.failed)
                 return nOk(ST(r.value));
         }}
-        return nFail!ST(decodeError!ST(v, "no variant matched"));
+        return nFail!ST(failure, decodeError!ST(v, "no variant matched"));
     }
     else
     {
@@ -716,7 +808,7 @@ if (isSumType!ST)
         size_t matches = 0;
         static foreach (V; Types)
         {{
-            auto r = decodeNative!V(v);
+            auto r = decodeNative!V(v, failure);
             if (!r.failed)
             {
                 matches++;
@@ -728,12 +820,13 @@ if (isSumType!ST)
         }}
         if (matches == 1)
             return nOk(result);
-        return nFail!ST(decodeError!ST(v, matches == 0
+        return nFail!ST(failure, decodeError!ST(v, matches == 0
                 ? "no variant matched" : "ambiguous — multiple variants matched"));
     }
 }
 
-private NRes!V decodeViaNative(alias Conv, V)(scope JsonValue v)
+private NRes!V decodeViaNative(alias Conv, V)(
+    scope JsonValue v, ref JsonError failure)
 {
     static assert(!is(Conv.from == void),
         "wired: a serialize-only @WireConvert cannot decode " ~ V.stringof);
@@ -744,51 +837,52 @@ private NRes!V decodeViaNative(alias Conv, V)(scope JsonValue v)
     else
         alias WireT = Raw;
 
-    auto raw = decodeNative!WireT(v);
+    auto raw = decodeNative!WireT(v, failure);
     if (raw.failed)
     {
-        raw.error.targetType = V.stringof;
-        return nFail!V(raw.error);
+        failure.targetType = V.stringof;
+        return nFailed!V();
     }
 
     auto back = Conv.from(raw.value);
     static if (isExpectedLike!(typeof(back)))
     {
         if (back.hasError)
-            return nFail!V(decodeError!V(v, back.error.msg));
+            return nFail!V(failure, decodeError!V(v, back.error.msg));
         return nOk(back.value);
     }
     else
         return nOk(back);
 }
 
-private NRes!T decodeAANative(T)(scope JsonValue v)
+private NRes!T decodeAANative(T)(scope JsonValue v, ref JsonError failure)
 if (is(T == V[K], V, K))
 {
     alias V = typeof(T.init.values[0]);
     alias K = typeof(T.init.keys[0]);
 
     if (v.kind != JsonKind.object)
-        return nFail!T(decodeError!T(v, "expected a JSON object"));
+        return nFail!T(failure, decodeError!T(v, "expected a JSON object"));
 
     T result;
     foreach (m; v.byKeyValue)
     {
-        auto k = aaKeyParseNative!K(m.key);
+        auto k = aaKeyParseNative!K(m.key, failure);
         if (k.failed)
-            return nFail!T(k.error);
-        auto rv = decodeNative!V(m.value);
+            return nFailed!T();
+        auto rv = decodeNative!V(m.value, failure);
         if (rv.failed)
         {
-            rv.error.prependKey(m.key);
-            return nFail!T(rv.error);
+            failure.prependKey(m.key);
+            return nFailed!T();
         }
         result[k.value] = rv.value;
     }
     return nOk(result);
 }
 
-private NRes!K aaKeyParseNative(K)(scope const(char)[] keyStr)
+private NRes!K aaKeyParseNative(K)(
+    scope const(char)[] keyStr, ref JsonError failure)
 {
     static if (is(K == string))
         return nOk(keyStr.idup);
@@ -807,7 +901,7 @@ private NRes!K aaKeyParseNative(K)(scope const(char)[] keyStr)
             e.targetType = K.stringof;
             e.reason = "expected one of: " ~ nameList!(K, style);
             e.prependKey(keyStr);
-            return nFail!K(e);
+            return nFail!K(failure, e);
         }
         else
         {
@@ -827,7 +921,7 @@ private NRes!K aaKeyParseNative(K)(scope const(char)[] keyStr)
                     e.targetType = K.stringof;
                     e.reason = "key is not a value of the enum's underlying type";
                     e.prependKey(keyStr);
-                    return nFail!K(e);
+                    return nFail!K(failure, e);
                 }
             }
             auto member = enumFromValue!K(orig);
@@ -838,7 +932,7 @@ private NRes!K aaKeyParseNative(K)(scope const(char)[] keyStr)
                 e.targetType = K.stringof;
                 e.reason = member.error.context;
                 e.prependKey(keyStr);
-                return nFail!K(e);
+                return nFail!K(failure, e);
             }
             return nOk(member.value);
         }
@@ -892,9 +986,13 @@ private JSONValue toStdJson(scope JsonValue v) @trusted
 
 // ── native encode (streaming, writer-based) ──────────────────────────────────
 
-private alias EncRes = NRes!void;
+private struct EncRes
+{
+    bool failed;
+    JsonError error;
+}
 
-private EncRes encOk() @safe pure nothrow @nogc => EncRes(false);
+private EncRes encOk() @safe pure nothrow @nogc => EncRes(false, JsonError.init);
 
 private JsonError encodeError(T)(string reason)
 {

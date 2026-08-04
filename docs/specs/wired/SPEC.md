@@ -1067,6 +1067,12 @@ JsonParseResult!Allocator parseJsonDocument
   rejected.
 - The input needs no padding or NUL termination and is never modified; the
   reader takes its own padded copy (which then becomes the string pool).
+- The cell arena is sized before the grammar walk and never moves. Open
+  containers temporarily thread stable parent-cell pointers through their
+  payloads; closing a container replaces that pointer with its subtree extent.
+  A dedicated scalar lane may consume a complete nested number-only array
+  subtree, but it is speculative only in unused arena slots: any other shape
+  falls back to the same general grammar with the public cursor unchanged.
 - `JsonParseResult` carries either the document or a
   `ParseError {code, offset, context}` from `sparkles.base.text.errors`
   (byte offset into the input; `hasValue`/`hasError`/`value`/`error`

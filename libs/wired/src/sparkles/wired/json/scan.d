@@ -286,34 +286,20 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
         // out-of-line call inside scanString — a call-within-a-call per
         // value string.
         pragma(inline, true);
-        enum ulong ones = 0x0101_0101_0101_0101;
-        enum ulong highs = 0x8080_8080_8080_8080;
-
         auto p = paddedPool.ptr;
         size_t j = i;
         while (true)
         {
-            // One unaligned 64-bit load; in bounds while j ≤ content
-            // length (the padding NUL stops the loop at the boundary).
-            const x = loadWord(p + j);
-
-            const q = x ^ 0x2222_2222_2222_2222; // '"'
-            const b = x ^ 0x5C5C_5C5C_5C5C_5C5C; // '\\'
-            const zq = (q - ones) & ~q & highs; // zero-byte detect
-            const zb = (b - ones) & ~b & highs;
-            const ctl = (x - 0x2020_2020_2020_2020) & ~x & highs; // < 0x20
-            // A byte ≥ 0x80 is already its own high bit, so joining the
-            // validation stop set costs one `or` — cheaper than the
-            // separate seen-high accumulator it replaces.
-            static if (validate)
-                const stops = zq | zb | ctl | (x & highs);
-            else
-                const stops = zq | zb | ctl;
-            if (stops != 0)
+            // Unroll two scalar words. The second load is safe whenever
+            // the first has no stop: that proves eight content bytes are
+            // present, and the existing eight-byte padding covers the
+            // second word's tail at end-of-input.
+            const firstStops = stringStops!validate(loadWord(p + j));
+            if (firstStops != 0)
             {
                 import core.bitop : bsf;
 
-                j += bsf(stops) / 8;
+                j += bsf(firstStops) / 8;
                 static if (validate && resolveNonAscii)
                 {
                     if ((p[j] & 0x80) == 0)
@@ -325,9 +311,80 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
                 else
                     return StringScan(j, false);
             }
-            j += 8;
+            const secondStops = stringStops!validate(loadWord(p + j + 8));
+            if (secondStops != 0)
+            {
+                import core.bitop : bsf;
+
+                j += 8 + bsf(secondStops) / 8;
+                static if (validate && resolveNonAscii)
+                {
+                    if ((p[j] & 0x80) == 0)
+                        return StringScan(j, false);
+                    if (!skipUtf8Run(p, j))
+                        return StringScan(j, true);
+                    continue;
+                }
+                else
+                    return StringScan(j, false);
+            }
+            const thirdStops = stringStops!validate(loadWord(p + j + 16));
+            if (thirdStops != 0)
+            {
+                import core.bitop : bsf;
+
+                j += 16 + bsf(thirdStops) / 8;
+                static if (validate && resolveNonAscii)
+                {
+                    if ((p[j] & 0x80) == 0)
+                        return StringScan(j, false);
+                    if (!skipUtf8Run(p, j))
+                        return StringScan(j, true);
+                    continue;
+                }
+                else
+                    return StringScan(j, false);
+            }
+            const fourthStops = stringStops!validate(loadWord(p + j + 24));
+            if (fourthStops != 0)
+            {
+                import core.bitop : bsf;
+
+                j += 24 + bsf(fourthStops) / 8;
+                static if (validate && resolveNonAscii)
+                {
+                    if ((p[j] & 0x80) == 0)
+                        return StringScan(j, false);
+                    if (!skipUtf8Run(p, j))
+                        return StringScan(j, true);
+                    continue;
+                }
+                else
+                    return StringScan(j, false);
+            }
+            j += 32;
         }
     })();
+}
+
+/// Stop-byte mask for one scalar string-scan word.
+private ulong stringStops(bool validate)(ulong x) @safe pure nothrow @nogc
+{
+    pragma(inline, true);
+    enum ulong ones = 0x0101_0101_0101_0101;
+    enum ulong highs = 0x8080_8080_8080_8080;
+
+    const q = x ^ 0x2222_2222_2222_2222; // '"'
+    const b = x ^ 0x5C5C_5C5C_5C5C_5C5C; // '\\'
+    const zq = (q - ones) & ~q & highs; // zero-byte detect
+    const zb = (b - ones) & ~b & highs;
+    const ctl = (x - 0x2020_2020_2020_2020) & ~x & highs; // < 0x20
+    // A byte ≥ 0x80 is already its own high bit, so joining the
+    // validation stop set costs one `or`.
+    static if (validate)
+        return zq | zb | ctl | (x & highs);
+    else
+        return zq | zb | ctl;
 }
 
 /// Advances `j` over the run of well-formed non-ASCII sequences starting
