@@ -2488,6 +2488,31 @@ private size_t scanNumber(JsonReadOptions opts)(
     }
     else
     {
+        // Short-int fast lane: float corpora put the dot one to three
+        // digits in (canada: 2–3 digit coordinates), where the 8-wide
+        // gulp probe below always fails before the pair loop runs. Two
+        // peeks at the dot position route those shapes straight to the
+        // fraction with probe and pair loop skipped entirely. Integer
+        // corpora pay two predictable not-taken compares; the
+        // peek-after-failed-probe ordering was also measured and keeps
+        // citm cleaner but forfeits most of canada's win (−1.6 % vs
+        // −5.1 % instructions) — canada is the lane this trades for.
+        const uint e0 = cast(uint)(p[k] - '0');
+        const uint e1 = cast(uint)(p[k + 1] - '0');
+        if (e0 <= 9 && p[k + 1] == '.')
+        {
+            sig = e0;
+            taken = 1;
+            k += 1;
+            goto intDone;
+        }
+        if (e0 <= 9 && e1 <= 9 && p[k + 2] == '.')
+        {
+            sig = e0 * 10 + e1;
+            taken = 2;
+            k += 2;
+            goto intDone;
+        }
         // Accumulate up to 19 digits: eight per SWAR gulp while the
         // budget allows (long ids), then unrolled two at a time.
         while (taken + 8 <= 18)
@@ -2532,6 +2557,7 @@ private size_t scanNumber(JsonReadOptions opts)(
             return 0;
         }
     }
+intDone:
     // Integer digits beyond the 19-digit accumulator (cold).
     size_t intExtra = 0;
     while (unlikely(p[k] >= '0' && p[k] <= '9'))
