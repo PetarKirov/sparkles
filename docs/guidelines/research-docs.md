@@ -227,11 +227,13 @@ strongest grounding the corpus has. The engine is the repository's **`ci` helper
 (`apps/ci`), which makes example code self-testing in two ways, both run in CI:
 
 - **Markdown-embedded examples.** A fenced `d` block written as a single-file `dub`
-  program, immediately followed by an `[Output]` block. `ci --verify` **extracts the
+  program, immediately followed by an `ansi` block. `ci --verify` **extracts the
   snippet from the `.md`, compiles and runs it, and diffs its stdout/stderr against the
-  `[Output]` block** — so the numbers and text quoted in the prose are provably what
-  the code actually prints. For dynamic output, a `<!-- md-example-expected -->` comment
-  carries a wildcard pattern while the `[Output]` block keeps reader-friendly literals.
+  `ansi` block** — so the numbers and text quoted in the prose are provably what
+  the code actually prints. The block holds the output verbatim, escape sequences
+  included, so colored samples render in color. For dynamic output, a
+  `<!-- md-example-expected -->` comment carries a wildcard pattern (matched against
+  the ANSI-stripped text) while the `ansi` block keeps reader-friendly literals.
   Full convention: [AGENTS § Runnable README examples](./AGENTS.md#runnable-readme-examples).
 - **Standalone `examples/` programs.** A directory of single-file `dub` programs
   (`#!/usr/bin/env dub` + an embedded `dub.sdl`), each demonstrating one claim from the
@@ -324,7 +326,7 @@ unset` override in `.editorconfig`.
 - **fix-markdown-reference-links** de-duplicates reference URLs; **pretty-format-json**
   and the `check-*` validators police the sample configs.
 - **lychee** (external links) and **verify-md-examples** (OOM-prone; a no-op when a
-  doc has no `[Output]` examples) are the two it's reasonable to bypass for a large
+  doc has no `ansi` output examples) are the two it's reasonable to bypass for a large
   docs drop: `SKIP=lychee,verify-md-examples git commit …`.
 
 Commit the catalog as a coherent unit (the deep-dives and synthesis docs cross-link
@@ -347,7 +349,7 @@ commits `docs` or `research`.
 - [ ] Every term links to its definition — a same-doc section, another `docs/` page, or
       the canonical external reference (the [`expected` cheat sheet](./idioms/expected/index.md#cheat-sheet-d-expected-vs-rust-result) is the model).
 - [ ] Demonstrable claims are backed by a runnable example the `ci` helper compiles and
-      runs — a markdown `[Output]` example (`ci --verify`) or a standalone `examples/*.d`
+      runs — a markdown `ansi` output example (`ci --verify`) or a standalone `examples/*.d`
       (`ci --example-files`); examples stay green cross-platform (`SKIP:` / `platforms`).
 - [ ] Samples are source-only illustrative fixtures; artifacts git-ignored; hooks pass.
 - [ ] Flaky external links pinned to `web.archive.org` or excluded in `lychee.exclude`.

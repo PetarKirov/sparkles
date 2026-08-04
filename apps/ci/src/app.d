@@ -54,13 +54,19 @@ The script looks for D code blocks starting with:
 +/
 ---
 
-When a `[Output]`-labelled fenced block immediately follows a runnable code
+When an `ansi`-labelled fenced block immediately follows a runnable code
 block, it is treated as the expected output for that example:
 ---
-```[Output]
+```ansi
 expected output here
 ```
 ---
+
+An `ansi` block stores the output verbatim, escape sequences included, so a
+colored example keeps its color. `[Output]` (and the alias `[Output:ansi]`)
+are also recognised; `[Output]` is the legacy spelling and stores
+ANSI-stripped text. New blocks — including those `--update` inserts — use
+`ansi`.
 
 For examples with dynamic output (timestamps, file locations, etc.), place a
 `<!-- md-example-expected -->` HTML comment directive between the code block
@@ -72,13 +78,15 @@ that matches any non-empty text:
 <!-- md-example-expected
 [ {{_}} | info ]: Listening on port 8080
 -->
-```[Output]
+```ansi
 [ 14:32:01 | info ]: Listening on port 8080
 ```
 ---
 
 The literal output block is kept for display in rendered markdown, while the
 wildcard pattern handles verification against the actual (dynamic) output.
+The pattern is matched against the ANSI-stripped output, so write it in plain
+text even next to an `ansi` block.
 
 To park a runnable example whose dependency does not exist yet (for example, a
 spec written before its implementation lands), place a `<!-- md-example-skip -->`
@@ -320,7 +328,7 @@ struct Example
     string code;
     string expectedOutput;
     string verifyPattern; /// Wildcard pattern from `<!-- md-example-expected -->` directive
-    string outputFenceType; /// "[Output]" or "ansi" or null if no output block
+    string outputFenceType; /// "ansi", "[Output:ansi]", legacy "[Output]", or null if no output block
     size_t codeBlockStart;
     size_t codeBlockEnd;
     size_t outputBlockStart;

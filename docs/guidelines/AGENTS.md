@@ -809,17 +809,27 @@ void main()
 ```
 ````
 
-Follow it with a `[Output]`-labelled fenced block showing the expected output:
+Follow it with an `ansi`-labelled fenced block showing the expected output:
 
 ````markdown
-```[Output]
+```ansi
 Expected output here
 ```
 ````
 
-The `[Output]` label is the **required convention**: `--verify` only treats
-`[Output]` fences as expected output (a bare ` ``` ` fence is ignored). It renders
-as a labelled "Output" panel under VitePress and as a plain block on GitHub.
+The `ansi` label is the **required convention**: `--verify` only treats an
+output-labelled fence as expected output (a bare ` ``` ` fence is ignored). An
+`ansi` block stores the program's output **verbatim, escape sequences included**,
+so a colored example keeps its color — VitePress renders the SGR codes as real
+color, and GitHub renders `ansi` blocks colored too. Paste the bytes the program
+actually wrote; `--update` does that for you.
+
+> [!NOTE]
+> ` ```[Output] ` is the **legacy** spelling. It is still recognised by
+> `--verify`/`--update` so old blocks keep verifying, but it stores
+> **ANSI-stripped** text and therefore throws away color. Don't write new
+> `[Output]` blocks; convert any you touch to `ansi` and regenerate them with
+> `--update`. (` ```[Output:ansi] ` is an accepted alias for `ansi`.)
 
 ### Verifying examples
 
@@ -827,7 +837,7 @@ as a labelled "Output" panel under VitePress and as a plain block on GitHub.
 # Verify examples match their expected output
 nix run .#ci -- --verify --files README.md
 
-# Update output blocks with actual output (golden-snapshot update; writes ```[Output])
+# Update output blocks with actual output (golden-snapshot update; writes ```ansi)
 nix run .#ci -- --update --files README.md
 
 # Just run examples and display results
@@ -846,7 +856,7 @@ nix run .#ci -- --files README.md
 
 For dynamic output (timestamps, paths, durations), put a `<!-- md-example-expected -->`
 HTML-comment directive between the code block and the output block. It holds a
-wildcard pattern used by `--verify`, while the literal `[Output]` block is kept for
+wildcard pattern used by `--verify`, while the literal `ansi` block is kept for
 readers. Use `{{_}}` to match any non-empty text:
 
 ````markdown
@@ -854,10 +864,13 @@ readers. Use `{{_}}` to match any non-empty text:
 [ {{_}} | info | {{_}} ]: Server started
 -->
 
-```[Output]
+```ansi
 [ 14:32:01 | info | app.d:12 ]: Server started
 ```
 ````
+
+The wildcard pattern is matched against the **ANSI-stripped** output, so write it
+in plain text even though the `ansi` block beside it keeps the escape sequences.
 
 The comment is invisible in rendered markdown, so readers see the nice hardcoded
 values while `--verify` uses the wildcard pattern.
@@ -924,7 +937,7 @@ Bare top-level scopes (`base`, `core-cli`, `docs`, `research`, `tui`, `wired`, .
 | `feat`     | new user-facing capability               | `feat(base.smallbuffer): add SmallBuffer with small-buffer optimization` |
 | `fix`      | bug fix                                  | `fix(core-cli): handle empty arrays in prettyPrint`                      |
 | `refactor` | behavior-preserving restructuring        | `refactor(ci): extract dub dependency helpers into a testable module`    |
-| `docs`     | documentation only                       | `docs(guidelines): document the [Output] example convention`             |
+| `docs`     | documentation only                       | `docs(guidelines): document the ansi example-output convention`          |
 | `build`    | build system / dependencies              | `build(dub): add expected as a runtime dependency of versions`           |
 | `ci`       | CI/CD pipelines & tooling                | `ci(gh-actions): add DC (D compiler) dimension to the test matrix`       |
 | `test`     | tests only                               | `test(base): add checkWriter for testing writer functions`               |
@@ -1034,7 +1047,8 @@ A quick scan of the gotchas above plus a few more:
 - [ ] Don't force `@safe`/`@trusted` on templates; let attributes infer.
 - [ ] `dip1000`/`in` can reject `scope` for some Phobos calls — relax to `const(char)[]`.
 - [ ] `splitter`/`std.utf`/`.text`/`std.conv` break `nothrow @nogc` — use the `text` package.
-- [ ] Example output blocks must be ` ```[Output] `, never bare ` ``` `.
+- [ ] Example output blocks must be ` ```ansi `, never bare ` ``` ` (and no new
+      ` ```[Output] ` — it strips color).
 - [ ] Cross-module-but-internal symbols use `package` visibility, not `private`.
 - [ ] Symbols used only as UDAs are camelCase (lowercase first letter).
 - [ ] Don't search `/nix/store` for C headers/libraries — use `pkg-config --cflags <pkg>` / `pkg-config --libs <pkg>`.
