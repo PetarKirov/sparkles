@@ -90,6 +90,7 @@ struct KqOp
     OpKindLocal kind;
     short filter;  // the registered filter (for EV_DELETE on cancel)
     uint nextFree; // freelist link (uint.max = none)
+    bool live;     // acquired and not yet released — the cancel lookup's guard
 }
 
 enum OpKindLocal : ubyte
@@ -345,9 +346,51 @@ struct KqueueBackend
         return n;
     }
 
-    /// Cancel: delete the registered filter (best-effort). The op slot's
-    /// lifetime is the loop's concern (detach discipline).
-    bool trySubmitCancel(OpToken, OpToken) @safe nothrow @nogc => true;
+    /**
+    Cancels an in-flight op: `EV_DELETE` its registered filter, then synthesize
+    the two completions io_uring's `ASYNC_CANCEL` would have produced — a
+    terminal `-ECANCELED` for the target, and success for the cancel op itself.
+
+    The synthetic completions are what make this work: `submitAndWait`
+    short-circuits while `_synthCount > 0`, so the loop wakes immediately
+    instead of staying in `kevent` until the target's own timeout. That
+    unblocking is the whole point — a fiber parked on a long sleep must unwind
+    when a sibling fails (SPEC §8), and it is why this must not be a stub.
+
+    Returns `false` when the target is not live (already completed, or an
+    unknown token) or when the synth ring cannot take both completions — a
+    truthful `false`, because a cancel that reports success while doing
+    nothing fails silently at the call site.
+    */
+    bool trySubmitCancel(OpToken cancelSlot, OpToken target) @trusted nothrow @nogc
+    {
+        auto op = findLive(target.raw);
+        if (op is null)
+            return false; // already completed, or never ours
+        // Both completions must fit, or the target would be cancelled with no
+        // terminal completion — a permanently parked fiber.
+        if (_synthCount + 2 > _synth.length)
+            return false;
+
+        // Timer idents live in their own range (see `armTimer`); everything
+        // else is registered by fd.
+        const ident = op.kind == OpKindLocal.timer
+            ? cast(size_t)(_timerBase + (op - _ops.ptr))
+            : cast(size_t) op.fd;
+        kevent_t ev;
+        ev.ident = ident;
+        ev.filter = op.filter;
+        ev.flags = EV_DELETE;
+        // Best-effort: ENOENT simply means it already fired and is queued —
+        // the synthetic completion below is still the op's terminal one, so the
+        // slot is released exactly once either way.
+        cast(void) kevent(_kq, &ev, 1, null, 0, null);
+
+        _synth[_synthCount++] = RawCompletion(op.token, -ECANCELED, 0);
+        release(op);
+        _synth[_synthCount++] = RawCompletion(cancelSlot.raw, 0, 0);
+        return true;
+    }
 
 private:
     /// Performs the actual syscall for a now-ready op; returns the completion
@@ -433,12 +476,31 @@ private:
             return null;
         auto op = &_ops[_freeHead];
         _freeHead = op.nextFree;
+        op.live = true;
         return op;
+    }
+
+    /// The live op carrying `token`, or `null`. A linear scan over the slab —
+    /// cancellation is rare (a failing sibling, an expiring deadline), so this
+    /// stays off the hot path and needs no second index to keep in sync.
+    /// `live` is the guard that matters: a released slot has already delivered
+    /// its terminal completion, and cancelling it again would double-release
+    /// it onto the freelist.
+    KqOp* findLive(ulong token) @trusted nothrow @nogc
+    {
+        foreach (i; 0 .. _cap)
+        {
+            auto op = &_ops[i];
+            if (op.live && op.token == token)
+                return op;
+        }
+        return null;
     }
 
     void release(KqOp* op) @trusted nothrow @nogc
     {
         const idx = cast(uint)(op - _ops.ptr);
+        op.live = false;
         op.nextFree = _freeHead;
         _freeHead = idx;
         if (_pendCount > 0)

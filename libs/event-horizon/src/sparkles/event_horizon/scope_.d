@@ -443,20 +443,6 @@ version (unittest)
         => !Sched.create(s).hasError;
 }
 
-// The M5 matrix is gated to Linux until the kqueue backend can actually
-// cancel. `KqueueBackend.trySubmitCancel` is a stub that returns `true`
-// without deleting the registered filter, so a cancelled in-flight op is never
-// woken: `scope.siblingFailure.cancelsIoPark` blocks in `kevent` for the
-// original timeout (`minutes`) instead of unwinding. Verified on real macOS
-// arm64 — the binary builds and then hangs, stack pinned to
-// `KqueueBackend.submitAndWait → kevent`.
-//
-// The gate is here, on the tests, NOT on `schedOrSkip` above: gating the
-// helper is what made this module fail to compile off Linux in the first
-// place. Lift this when kqueue's cancel is implemented (see open-issues O26).
-version (linux)
-{
-
 @("scope.join.basicValueAndOrdering")
 @safe
 unittest
@@ -768,5 +754,3 @@ unittest
     assert(!r.hasError);
     assert(i == 2 && order[0] == 2 && order[1] == 1, "LIFO");
 }
-
-} // version (linux) — the M5 cancellation matrix (see O26)
