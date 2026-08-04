@@ -122,6 +122,16 @@ private struct SelectionDrag
         => anchorHi > headHi ? anchorHi : headHi;
 }
 
+/// The copy modes (M15 GROUP-C of the GuiState hoist), toggleable at
+/// runtime and seeded from the CLI: 'y' flips ANSI strip-vs-raw (SEL7),
+/// 't' flips the table serialization (TBL2); a toggle flashes the new
+/// mode in the status bar (`Flashes.toast`).
+private struct CopyModes
+{
+    bool ansiStrip;
+    TableCopyFormat tableFmt;
+}
+
 /// The transient feedback state (M15 GROUP-T of the GuiState hoist): the
 /// copied-checkmark flash beside a fence's copy button (the copied fence
 /// itself is `vm.copiedFenceSrc`), the copy-mode toast a 'y'/'t' toggle
@@ -681,10 +691,7 @@ int runGui(
     //    head cells (from the table map) under Shift/Alt.
     SelectionDrag drag;
 
-    // Copy modes (SEL7/TBL2), toggleable at runtime ('y' ANSI, 't' table); a
-    // toggle flashes the new mode in the status bar for a moment (flash.toast).
-    bool ansiStrip = ansiCopyStrip;
-    TableCopyFormat tableFmt = tableCopy;
+    auto cm = CopyModes(ansiStrip: ansiCopyStrip, tableFmt: tableCopy);
 
     // The text-regime selection as a source range [drag.selMin, drag.selMax) — the union of
     // the anchor and head spans (a char point is a zero-width span).
@@ -709,7 +716,7 @@ int runGui(
     }
 
     // Copy the current selection: a text range → `vm.source[min..max]`
-    // (SGR-stripped when `ansiStrip`); a table region → TSV / markdown cells
+    // (SGR-stripped when `cm.ansiStrip`); a table region → TSV / markdown cells
     // (SEL7/TBL2). Always slices `vm.source` — the DISPLAYED document — not
     // the `source` parameter hue launched with: after navigating a set or
     // opening a file from the explorer the two differ, and the selection/
@@ -720,7 +727,7 @@ int runGui(
             && drag.selMax() <= vm.source.length)
         {
             auto txt = vm.source[cast(size_t) drag.selMin() .. cast(size_t) drag.selMax()];
-            copyToClipboard(ansiStrip ? stripSgr(txt) : txt);
+            copyToClipboard(cm.ansiStrip ? stripSgr(txt) : txt);
         }
         else if (drag.regime == Regime.table && drag.selTable >= 0)
         {
@@ -737,7 +744,7 @@ int runGui(
                         return vm.source[mc.span.start .. mc.span.end];
                 return "";
             }
-            const txt = serializeTable(reg, &cellText, tableFmt);
+            const txt = serializeTable(reg, &cellText, cm.tableFmt);
             if (txt.length)
                 copyToClipboard(txt);
         }
@@ -1372,14 +1379,14 @@ int runGui(
                     relayout();
                     break;
                 case Command.toggleAnsiCopy:
-                    ansiStrip = !ansiStrip;
-                    flash.copyModeMsg = ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
+                    cm.ansiStrip = !cm.ansiStrip;
+                    flash.copyModeMsg = cm.ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
                     flash.toast = Timeline.triggered(toastCfg);
                     break;
                 case Command.toggleTableCopy:
-                    tableFmt = tableFmt == TableCopyFormat.tsv
+                    cm.tableFmt = cm.tableFmt == TableCopyFormat.tsv
                         ? TableCopyFormat.markdown : TableCopyFormat.tsv;
-                    flash.copyModeMsg = tableFmt == TableCopyFormat.tsv
+                    flash.copyModeMsg = cm.tableFmt == TableCopyFormat.tsv
                         ? "table-copy: tsv" : "table-copy: markdown";
                     flash.toast = Timeline.triggered(toastCfg);
                     break;
@@ -1654,7 +1661,7 @@ int runGui(
                                 // rebinds it).
                                 auto fbody = vm.source[f.body.start .. f.body.end];
                                 // Match the selection copy mode (SEL7).
-                                const txt = (ansiStrip && f.isAnsi)
+                                const txt = (cm.ansiStrip && f.isAnsi)
                                     ? stripSgr(fbody) : fbody;
                                 copyToClipboard(txt);
                                 vm.copiedFenceSrc = bodyStart;
