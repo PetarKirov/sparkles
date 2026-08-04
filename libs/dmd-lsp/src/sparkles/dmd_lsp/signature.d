@@ -681,11 +681,26 @@ private size_t skipLiteral(scope const(char)[] text, size_t i) @safe pure nothro
     return i; // unterminated: consume the rest rather than rescan it as code
 }
 
-private bool isIdentStart(char c) @safe pure nothrow @nogc
-    => c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+/// The engine's own identifier predicates, so a scan over hdrgen's output
+/// agrees with the lexer that produced it. `dmd.doc` takes a pointer because it
+/// decodes UTF-8 for the non-ASCII ranges; these signatures are ASCII by
+/// construction, so a one-character view is enough.
+private bool isIdentStart(char c) @trusted pure nothrow @nogc
+{
+    import dmd.doc : isIdStart;
 
-private bool isIdentChar(char c) @safe pure nothrow @nogc
-    => isIdentStart(c) || (c >= '0' && c <= '9');
+    const char[2] buf = [c, '\0'];
+    return isIdStart(buf.ptr);
+}
+
+/// ditto
+private bool isIdentChar(char c) @trusted pure nothrow @nogc
+{
+    import dmd.doc : isIdTail;
+
+    const char[2] buf = [c, '\0'];
+    return isIdTail(buf.ptr);
+}
 
 /// The staging order the renderer walks: the runtime list explodes before the
 /// template one.

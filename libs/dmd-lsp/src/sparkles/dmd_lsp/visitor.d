@@ -50,6 +50,7 @@ them lets the file be diffed against upstream wholesale.
 */
 module sparkles.dmd_lsp.visitor;
 
+import sparkles.dmd_lsp.ddoc : isDittoComment;
 import sparkles.dmd_lsp.signature : renderSignature, SignatureInfo;
 import sparkles.dmd_lsp.support : contains, DenseSet, TypeReferenceKind;
 import dmd.access;
@@ -1517,26 +1518,6 @@ TipData tipForTemplate(TemplateExp te)
     return TipData(kind, tip);
 }
 
-/// Whether a doc comment is nothing but `ditto` — case-insensitive, with
-/// whitespace either side (`dmd.doc.isDitto`, which is private to that module;
-/// the rule is frozen by `DDC11` and is five lines, so it is restated rather
-/// than patched into the fork).
-private bool isDitto(const(char)* comment) @system
-{
-    import core.stdc.string : strlen;
-    import std.ascii : toLower;
-    import std.string : strip;
-
-    if (comment is null)
-        return false;
-    auto c = comment[0 .. strlen(comment)].strip;
-    if (c.length != 5)
-        return false;
-    foreach (i, ch; c)
-        if (ch.toLower != "ditto"[i])
-            return false;
-    return true;
-}
 
 /**
 The comment a `/// ditto` declaration inherits: the nearest preceding sibling
@@ -1591,7 +1572,7 @@ private const(char)[] dittoTarget(Dsymbol s) @system
         return null;
 
     foreach_reverse (m; flat[0 .. at])
-        if (m.comment !is null && !isDitto(m.comment))
+        if (m.comment !is null && !isDittoComment(m.comment))
             return m.comment[0 .. strlen(m.comment)];
     return null;
 }
@@ -1649,7 +1630,7 @@ string docForSymbol(Dsymbol var)
         // `/// ditto` means "the previous declaration's docs". DMD resolves it
         // in `emitComment` via `sc.lastdc`, which this translator never runs,
         // so a ditto'd overload used to render the literal word.
-        if (isDitto(s.comment))
+        if (isDittoComment(s.comment))
             return dittoTarget(s);
         return s.comment[0 .. strlen(s.comment)];
     }
