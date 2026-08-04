@@ -195,6 +195,16 @@ because getting it backwards silently moves a `Returns:` chip into the body.
 tooltip is anywhere but that site. `SYMBOL_LINK` renders the name as code and
 drops the target.
 
+`PRE` note (dlang.org, not a compiler builtin): `$(PRE …)` is `<pre>` — its
+line structure and indentation _are_ the content, and Phobos writes the
+`std.conv.to` grammars with it. Undefined, it fell through to
+`DDOC_UNDEFINED_MACRO` and the whole block dissolved into one line of prose. It
+renders as an unlabelled fence now. The inner `$(I …)`/`$(B …)` expand before
+`PRE` wraps them and a fence cannot carry emphasis, so their markers survive as
+text (`*Integer*:`) where dlang.org shows italics; pinned as a divergence rather
+than stripped, since undoing them would also eat a literal `*` in someone's
+grammar.
+
 `DDC57` note: only the underscore form survives inside `/** */`. `* * *` is
 eaten by the same rule `DDC51` documents — the line's first `*` is comment
 margin, so what reaches the markdown parser is a bullet list, not a rule.
