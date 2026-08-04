@@ -739,7 +739,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         auto probe = CounterGroups.open(true, true, true, null, rawWanted: true);
         scope (exit)
             probe.close();
-        auto cat = perfFamily(probe.perf.available)
+        auto cat = perfFamily(probe.perf.available,
+            fixedOnly: probe.perf.fixedCountersOnly)
             ~ tier0Family(probe.tier0.available)
             ~ syscallFamily(probe.syscalls.available);
         stdout.write(formatMetricCatalog(cat, colored));

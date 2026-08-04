@@ -56,8 +56,9 @@ The test is a benchmark.
   `sparkles.test_runner.bench`: `benchIter` measures a sub-section, `benchCase`
   emits many rows from one test (a matrix, with `Metric` throughput columns),
   and `blackBox` is the optimizer barrier.
-- `--perf` adds Linux `perf_event` hardware-counter columns (IPC,
-  instructions/iter, cache/branch miss rates) to the `--bench` table.
+- `--perf` adds hardware-counter columns to the `--bench` table: Linux
+  `perf_event` (IPC, instructions/iter, cache/branch miss rates) or macOS
+  `proc_pid_rusage` fixed counters (IPC + instructions/iter, process-wide).
 
 ## `@workload` / `@workload(reps: N)`
 

@@ -146,8 +146,10 @@ named `Unit`; rate = quantity ÷ time) aligned to the forthcoming
 brackets only the timed body with `ENABLE`/`DISABLE` ioctls, so the
 per-iteration syscalls never pollute the wall-clock medians. Unavailable
 counters — a paranoid kernel, or the last-level-cache pair dropped to avoid PMU
-multiplexing — degrade to `—` rather than failing, and off Linux the pass is
-skipped entirely.
+multiplexing — degrade to `—` rather than failing. On macOS the same pass
+runs on `proc_pid_rusage`'s free-running fixed counters (per-bracket
+snapshot pairs with the bracket's own syscall cost calibrated out — not
+ioctl-excluded like Linux); on other platforms it is skipped entirely.
 
 ## Live progress: three displays, one policy
 

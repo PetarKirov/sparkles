@@ -168,14 +168,17 @@ $ dub test -- --bench
 ╰────────────┴─────────┴─────────────────┴─────────┴─────────╯
 ```
 
-Add `--perf` for hardware performance counters (Linux `perf_event`): a separate
-counting pass brackets each benchmark's timed body — so the counter ioctls never
-perturb the ns/iter numbers — and the table gains instructions/iter (placed
+Add `--perf` for hardware performance counters: a separate counting pass
+brackets each benchmark's timed body — so the counter instrumentation never
+perturbs the ns/iter numbers — and the table gains instructions/iter (placed
 first, as the deterministic machine-independent anchor), IPC, and branch/cache
-miss-rate columns. An individually dropped counter (the
-last-level-cache pair under PMU multiplexing) shows as `—`; when the whole
-group can't open (a paranoid kernel) the perf columns are omitted with a
-stderr note. Off Linux the flag is inert.
+miss-rate columns. On Linux the source is a `perf_event` group; on macOS the
+unprivileged `proc_pid_rusage` fixed counters serve IPC + instructions/iter
+(process-wide — the header discloses the scope — with the other columns
+honestly `—`). An individually dropped counter (the last-level-cache pair
+under PMU multiplexing) shows as `—`; when the whole group can't open (a
+paranoid kernel, a virtualized macOS guest) the perf columns are omitted with
+a stderr note. On other platforms the flag is inert.
 
 ```console
 $ dub test -- --bench --perf

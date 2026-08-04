@@ -11,9 +11,9 @@
  * Counters answer *why* two implementations differ: IPC, cycles and
  * instructions per iteration, branch/cache miss rates, and the page-fault
  * (allocation) signature. On kernels that refuse `perf_event_open`
- * (`perf_event_paranoid`, seccomp) — and everywhere off Linux — this degrades
- * gracefully: `PerfGroup.available` is `false` and callers simply omit the
- * counter columns.
+ * (`perf_event_paranoid`, seccomp) — and on platforms with no backend at
+ * all — this degrades gracefully: `PerfGroup.available` is `false` and
+ * callers simply omit the counter columns.
  *
  * The binding is pure D over druntime's `core.sys.linux.perf_event` (which
  * carries the arch-specific syscall numbers, the `perf_event_attr` layout, and
@@ -131,6 +131,10 @@ version (linux)
         /// silently narrowed or rescoped run never passes for a default one.
         package bool degraded() const @safe pure nothrow @nogc
             => userOnly || cacheDropped || scaledMode;
+
+        /// Whether only the fixed-backed columns (ipc/instr/cycles) can
+        /// carry values — false here: perf_event events are configurable.
+        package bool fixedCountersOnly() const @safe pure nothrow @nogc => false;
 
         /// The bare reason counting is unavailable — single-sourced between
         /// `status()` and `capabilities()` so the two never diverge.
@@ -578,6 +582,10 @@ else version (OSX)
         /// the bench header's degraded-mode line.
         package bool degraded() const @safe pure nothrow @nogc => opened;
 
+        /// Only ipc/instr/cycles can ever carry values here — the metric
+        /// catalog must not advertise the configurable-event columns.
+        package bool fixedCountersOnly() const @safe pure nothrow @nogc => true;
+
         /// The bare reason counting is unavailable — single-sourced between
         /// `status()` and `capabilities()`.
         private string countingAbsence() const @safe pure nothrow @nogc
@@ -644,13 +652,18 @@ else version (OSX)
             }
             probeSpin();
             const b = readFixedCounters();
-            if (!b.ok || b.instructions == a.instructions)
+            if (!b.ok)
+            {
+                g.probeFailed = true; // a syscall failure is not a dead counter
+                return g;
+            }
+            if (b.instructions == a.instructions)
             {
                 g.countersZero = true;
                 return g;
             }
             g.opened = true;
-            g.calibrate();
+            measureBracketCost(g.selfInstr, g.selfCycles);
             // The M7-shared portability rider: on P/E-core hosts the fixed
             // counters aggregate across core types — disclose it on the
             // same status line (a run-level provenance stamp is M7's job;
@@ -689,25 +702,32 @@ else version (OSX)
 
         /// Median empty-bracket cost of the two `proc_pid_rusage` syscalls
         /// (they retire kernel-mode instructions attributed to this
-        /// process), mirroring `Tier0Group`'s calibration; subtracted from
-        /// each pass's per-iteration average, clamped by `netOfCost`.
-        private void calibrate() @safe
+        /// process), mirroring `Tier0Group`'s calibration shape; subtracted
+        /// per pass, clamped by `netOfCost`. The cost is NOT a constant —
+        /// XNU walks the task's live threads under the proc lock — so
+        /// `count()` re-measures it at the start of every pass (the process
+        /// may have spun up threads since open); the open-time value serves
+        /// `windowStats`, where one bracket against a long window makes the
+        /// residue immaterial.
+        private static void measureBracketCost(out double instr, out double cycles) @safe
         {
             import std.algorithm.sorting : sort;
 
             enum rounds = 9;
-            double[rounds] instr, cyc;
+            double[rounds] instrs, cycs;
             foreach (r; 0 .. rounds)
             {
                 const a = readFixedCounters();
                 const b = readFixedCounters();
-                instr[r] = a.ok && b.ok ? double(b.instructions - a.instructions) : 0;
-                cyc[r] = a.ok && b.ok ? double(b.cycles - a.cycles) : 0;
+                const ok = a.ok && b.ok && b.instructions >= a.instructions
+                    && b.cycles >= a.cycles;
+                instrs[r] = ok ? double(b.instructions - a.instructions) : 0;
+                cycs[r] = ok ? double(b.cycles - a.cycles) : 0;
             }
-            instr[].sort;
-            cyc[].sort;
-            selfInstr = instr[rounds / 2];
-            selfCycles = cyc[rounds / 2];
+            instrs[].sort;
+            cycs[].sort;
+            instr = instrs[rounds / 2];
+            cycles = cycs[rounds / 2];
         }
 
         /// Releases nothing — the group holds no descriptors.
@@ -727,6 +747,11 @@ else version (OSX)
             PerfStats s;
             s.iters = iters;
             fillNonFixed(s);
+            // Re-measure the bracket cost with the process's CURRENT thread
+            // population — the open-time constant goes stale as threads
+            // appear (the syscall's cost scales with them).
+            double calInstr, calCycles;
+            measureBracketCost(calInstr, calCycles);
             double sumInstr = 0, sumCycles = 0;
             foreach (_; 0 .. iters)
             {
@@ -734,7 +759,12 @@ else version (OSX)
                 timed();
                 const b = readFixedCounters();
                 between();
-                if (a.ok && b.ok)
+                // The monotonicity guard mirrors windowStats: a torn or
+                // reordered bracket must poison the pass to nan — an
+                // unguarded ulong delta would wrap to ~1.8e19 and feed a
+                // plausible-looking mean into the table and JSON.
+                if (a.ok && b.ok && b.instructions >= a.instructions
+                    && b.cycles >= a.cycles)
                 {
                     sumInstr += double(b.instructions - a.instructions);
                     sumCycles += double(b.cycles - a.cycles);
@@ -743,8 +773,8 @@ else version (OSX)
                     sumInstr = sumCycles = double.nan; // a failed bracket poisons the pass
             }
             const inv = 1.0 / iters;
-            s.instructions = netOfCost(sumInstr * inv, selfInstr);
-            s.cycles = netOfCost(sumCycles * inv, selfCycles);
+            s.instructions = netOfCost(sumInstr * inv, calInstr);
+            s.cycles = netOfCost(sumCycles * inv, calCycles);
             return s;
         }
 
@@ -820,6 +850,7 @@ else
         {
             bool available() const => false;
             package bool degraded() const => false;
+            package bool fixedCountersOnly() const => false;
             string status() const => "unavailable (not Linux)";
             CapabilityReport capabilities() const
                 => CapabilityReport(Capability.none, stubAbsence[]);
@@ -930,8 +961,12 @@ version (OSX)
         const instr = b.instructions - a.instructions;
         if (instr == 0)
             skipTest("fixed counters read zero — virtualized guest");
-        assert(instr > 10_000 && instr < 1_000_000_000,
-            "the instruction delta of a 100k spin is plausible");
+        // No upper bound: the counters are process-wide and this test runs
+        // in the parallel worker pool — other threads only ADD instructions,
+        // so a busy host must never turn an alignment check red. The lower
+        // bound plus the zero-skip already distinguish a misaligned read
+        // (garbage or dead field) from a live counter.
+        assert(instr > 10_000, "the instruction delta of a 100k spin is plausible");
         assert(b.cycles > a.cycles, "cycles advance with instructions");
     }
 }
