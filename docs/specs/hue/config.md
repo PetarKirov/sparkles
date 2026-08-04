@@ -226,6 +226,23 @@ that ignores the preference and says so.
 is that hue _surfaces_ it (a startup warning through the existing degradation
 channel) rather than swallowing it.
 
+**Verified against the library** (`libs/wired/src/sparkles/wired/json/error.d`),
+because a spec that assumes a dependency's capability is a spec that discovers
+at implementation time that it does not have it. `JsonError` carries rather more
+than this requirement asks for:
+
+| Field                      | Gives `CFG8`                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------ |
+| `offset`, `line`, `column` | the position — 1-based, derived eagerly so the error does not borrow the input |
+| `path`                     | the `$…` value path from the root to the failing location                      |
+| `targetType`               | the D type being decoded into, as a compile-time literal                       |
+| `valueSummary`             | the offending value                                                            |
+| `filePath`, `cause`        | which file, and an errno-style cause for the read stages                       |
+
+So `CFG8` is a matter of _rendering_ a value hue already receives — `path` and
+`targetType` mean the message can name the setting (`$.panes.viewer.tabWidth`),
+not merely a line number.
+
 ## Requirements
 
 | ID      | Requirement                                                                                                                                                                                                                                              | Status      |
@@ -267,10 +284,41 @@ channel) rather than swallowing it.
    rewrites a file it did not generate, and `--save-config` (`CFG11`) — the one
    command that _does_ rewrite — must therefore preserve unknown text or refuse.
    That last consequence is the part to settle before implementing, not after.
+
+   **The "lexer concession" is not one.** `sparkles.wired.json.reader` already
+   exposes `allowComments` (and `allowTrailingCommas`) as reader options,
+   defaulting to strict RFC 8259. So reading JSONC is a flag at the call site,
+   not a change to `sparkles:wired` — which removes the only implementation cost
+   weighing against the recommendation. What remains open is purely the
+   `--save-config` rewrite policy, which is a **design** decision and still has
+   to be made before `C5`.
+
 2. **Themes.** `appearance.theme` names a built-in today. Whether a user may
    _define_ a theme in the config, or only reference one, is a larger question
    that belongs with `sparkles:syntax`'s theme layer rather than here.
-3. **`CFG11` and precedence.** If a runtime toggle is persisted while a CLI flag
+3. **`CFG1` and `CFG2` pull in opposite directions, and `C1` has to resolve it.**
+   `CFG2` wants each layer to be a **sparse overlay** — a `Nullable`-shaped
+   field, so _unset_ differs from _set to the default_. `CFG1` wants the
+   compiled defaults to be **the struct's field initialisers**, so there is no
+   second declaration of any field. A field cannot be both: `Nullable!int width`
+   has no initialiser to read a default from.
+
+   Three ways out, and the choice shapes the struct `C1` writes:
+
+   | Option                                                      | Cost                                                                              |
+   | ----------------------------------------------------------- | --------------------------------------------------------------------------------- |
+   | Two types — resolved `HueConfig` + sparse `HueOverlay`      | every field declared twice; exactly what `CFG1` exists to prevent                 |
+   | One sparse type + a separate defaults table                 | defaults leave the declaration; `--write-config`'s "default" column drifts        |
+   | One plain type, **derive** the sparse overlay by reflection | one declaration; costs a small mapping template (`T` → `Nullable!T`, recursively) |
+
+   **Recommendation: derive it.** `sparkles:wired` is already compile-time
+   reflection over the same aggregate, so the overlay type is the same trick
+   applied once more, and it keeps the single-declaration property that makes
+   `CFG9`'s generated schema honest. Verified as feasible: `wired`'s codec
+   handles `Nullable!T`/`Optional!T`/`Ternary` (`json/codec.d`), so a derived
+   overlay decodes without further work.
+
+4. **`CFG11` and precedence.** If a runtime toggle is persisted while a CLI flag
    set that same value, saving must write the _toggled_ value, not the flag —
    otherwise the save silently bakes in a one-off invocation. Needs stating as a
    rule before implementation.
