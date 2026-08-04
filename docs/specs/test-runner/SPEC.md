@@ -322,6 +322,15 @@ prints one line per absent-but-requested capability, re-derived from the
 same reports. Workload-track sources (PSI, cgroup, cache regime) adopt the
 same report when they land — one absence vocabulary program-wide.
 
+**Recorded judgment (B3):** the darwin fixed counters stay `diagnostic`
+class even though they are exact — the catalog entries (`ipc`, `instr`,
+`cycles`) cannot change class per OS without breaking the schema-stability
+contract (§5.2), and process-wide counters polluted by concurrent threads
+are precisely not safe for reported/gated numbers. The process-wide scope
+itself is a permanent `degraded()` condition, disclosed by the bench
+header once per run (with the P/E-core aggregation suffix on
+heterogeneous hosts).
+
 The workload wall source (`WallSource`: rusage + schedstat) reports through
 the same vocabulary, appearing in the `--list-metrics` block as `wall`
 (inserted at render time — it has no counting pass, so it is deliberately
@@ -472,7 +481,7 @@ research [capability matrix](../../research/cpu-pmu/comparison.md).
 | Platform              | Floor (unprivileged)                                                      | Beyond the floor                                                                                                                      | Status                                           |
 | --------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
 | Linux x86_64          | tier-0 (`getrusage` + `/proc/self/io`); perf counting at `paranoid ≤ 2`\* | tracepoints (tracefs, usually root); precise memory (B5); sampling (B6)                                                               | shipped / targets                                |
-| macOS (Apple Silicon) | `proc_pid_rusage` → true instructions/cycles/IPC, process-scope           | kpc: root-or-blessed-pid + kernel allowlist, single-owner `EBUSY`; sampling via xctrace only; **no DTrace cpc provider**              | target — B3                                      |
+| macOS (Apple Silicon) | `proc_pid_rusage` → true instructions/cycles/IPC, process-scope\*\*       | kpc: root-or-blessed-pid + kernel allowlist, single-owner `EBUSY`; sampling via xctrace only; **no DTrace cpc provider**              | shipped                                          |
 | Windows               | `CycleTime` via thread profiling (driver-free)                            | ETW PMC counting (admin + `SeSystemProfilePrivilege`, 3–4 PMC hard budget, no multiplex scaling); public precise sampling: **absent** | target — B4 (blocked: no hardware bed)           |
 | ARM-Linux             | generic events port as-is (PMUv3)                                         | big.LITTLE: events must open on the pinned core's PMU (wrong cluster counts silent zero); SPE/BRBE gated                              | target — M11 (source-verified only)              |
 | RISC-V                | counting always (SBI-mediated)                                            | sampling iff Sscofpmf; `exclude_*` iff Sscofpmf; precise/data-source: **permanently absent**; branch records: no kernel consumer      | target — M11 (capability subset by construction) |
@@ -480,6 +489,15 @@ research [capability matrix](../../research/cpu-pmu/comparison.md).
 \* All hardware verification to date ran at `perf_event_paranoid = −1`;
 behavior at stricter levels is literature-derived until probed
 ([open-issues.md § O1](./open-issues.md)).
+
+\*\* The macOS floor is `perf.d`'s darwin body: the same `PerfGroup`
+surface backed by the XNU monotonic fixed counters (user+kernel, all
+threads, free-running — `enable`/`disable` degrade to a window-arming
+latch), verified live on the T6041 bed; a darwin tier-0 body adds the
+getrusage fault/context-switch fields plus `ri_diskio_*` byte counters.
+Virtualization.framework guests (GitHub's macOS runners) read flat fixed
+counters — the open probe degrades to a reasoned absence there, so CI
+exercises the degrade path and real hardware the live path.
 
 Normative portability rules:
 
