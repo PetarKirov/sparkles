@@ -427,6 +427,11 @@ private:
 
     bool armFilter(KqOp* op, short filter) @trusted nothrow @nogc
     {
+        // Mark liveness HERE, not in `acquire`: every `trySubmit` overwrites
+        // the slot wholesale (`*op = KqOp(…)`), which would clear a flag set
+        // at acquisition. `armFilter`/`armTimer` are the single point every
+        // submit path converges on, after that assignment.
+        op.live = true;
         kevent_t change;
         change.ident = cast(size_t) op.fd;
         change.filter = filter;
@@ -443,6 +448,7 @@ private:
 
     bool armTimer(KqOp* op, long ms) @trusted nothrow @nogc
     {
+        op.live = true; // see the note in `armFilter`
         kevent_t change;
         change.ident = cast(size_t) op.fd; // the unique timer ident
         change.filter = EVFILT_TIMER;
@@ -476,7 +482,6 @@ private:
             return null;
         auto op = &_ops[_freeHead];
         _freeHead = op.nextFree;
-        op.live = true;
         return op;
     }
 
