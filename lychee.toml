@@ -12,11 +12,24 @@ cache_exclude_status = [401, 403, 429, "500.."]
 
 #############################  Requests  ############################
 
-# Timeout per request (seconds). Kept generous: some doc hosts behind Cloudflare
-# (e.g. docs.appimage.org) or GitHub Pages answer a browser in <0.5s but stall a
-# bot request for several seconds before the challenge clears, tripping a tight
-# timeout in CI even though the link is live.
-timeout = 20
+# Timeout per request (seconds). Kept generous for two distinct reasons — both
+# about links that are LIVE, which is why a tight timeout produces false errors:
+#
+#  1. Slow to ANSWER. Some doc hosts behind Cloudflare (e.g. docs.appimage.org)
+#     or GitHub Pages answer a browser in <0.5s but stall a bot request for
+#     several seconds before the challenge clears.
+#
+#  2. Slow to TRANSFER. lychee reads the response body, so the timeout covers
+#     the download — and a link can point at something large. The measured case:
+#     nick-black.com/htp-notcurses.pdf answers in 0.38s and is 27.8 MB, so on a
+#     runner sharing bandwidth 16 ways it timed out at 20s while being perfectly
+#     reachable (the run reported "0 Errors, 1 Timeout" and still failed).
+#
+# Case 2 is why this is a timeout bump rather than a per-host `request_interval`
+# like the blocks below: pacing requests does not make a 27 MB file smaller. The
+# cost is bounded — only genuinely slow requests use the extra budget, and the
+# run is ~16 min against a 35 min cap.
+timeout = 45
 
 # Present as a real browser. Cloudflare / ReadTheDocs-fronted hosts bot-score the
 # default `lychee/<ver>` agent and slow-walk or challenge it (manifesting as a
@@ -103,6 +116,23 @@ request_interval = "200ms"
 request_interval = "100ms"
 
 [hosts."gitlab.freedesktop.org"]
+request_interval = "1s"
+
+# nick-black.com and notcurses.com are ONE server (both 173.230.130.29), and one
+# of them serves a 27.8 MB PDF. That combination starves the other: notcurses.com
+# is a 6.7 KB page answering in 0.7s to a single client, yet it timed out in CI
+# while the PDF was being pulled alongside it.
+#
+# Worth generalising, because it is a hole in the strategy below: lychee paces
+# per HOSTNAME, but the bottleneck is the SERVER. Two names resolving to one
+# address get twice the intended concurrency, and no single `[hosts."…"]` block
+# can see that. Pacing BOTH names is the available approximation — so when a
+# throttle does not seem to help, check whether the host shares an IP with
+# another one we link.
+[hosts."nick-black.com"]
+request_interval = "1s"
+
+[hosts."notcurses.com"]
 request_interval = "1s"
 
 # ── A recognised class, not a series of one-offs ────────────────────────────
