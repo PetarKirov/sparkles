@@ -742,6 +742,29 @@ value: // parse one value at pool[i]
         }
         if (c0 != '{' && c0 != '[')
         {
+            // Numbers before literals: every corpus has far more numbers
+            // than true/false/null (canada is 99 % numbers). One compare
+            // splits the two classes — digits and '-' (0x2D–0x39) sit
+            // below 'f'/'n'/'t' (≥ 0x66); every other byte below 'f' was
+            // already routed into scanNumber's unexpected-character error
+            // before this split, so error codes and offsets are unchanged.
+            if (c0 < 'f')
+            {
+                // The number kernel is a file-scope function (see
+                // scanNumber) so the grammar loop's live state stays out
+                // of its register allocation; @trusted on the padded
+                // pool and the pre-sized arena slot.
+                const end = (() @trusted => scanNumber!opts(pool.ptr, i,
+                    cells.ptr + cellCount, &serr))();
+                if (end == 0)
+                {
+                    fail(serr.code, serr.offset, serr.context);
+                    return;
+                }
+                cellCount++;
+                i = end;
+                goto afterValue;
+            }
             if (c0 == 't')
             {
                 if (!parseLiteral!"true"(JsonKind.bool_, 1))
@@ -760,22 +783,8 @@ value: // parse one value at pool[i]
                     return;
                 goto afterValue;
             }
-            {
-                // The number kernel is a file-scope function (see
-                // scanNumber) so the grammar loop's live state stays out
-                // of its register allocation; @trusted on the padded
-                // pool and the pre-sized arena slot.
-                const end = (() @trusted => scanNumber!opts(pool.ptr, i,
-                    cells.ptr + cellCount, &serr))();
-                if (end == 0)
-                {
-                    fail(serr.code, serr.offset, serr.context);
-                    return;
-                }
-                cellCount++;
-                i = end;
-                goto afterValue;
-            }
+            fail(ParseErrorCode.unexpectedCharacter, i);
+            return;
         }
         {
             const isObject = c0 == '{';
