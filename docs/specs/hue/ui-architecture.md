@@ -176,9 +176,38 @@ it has no cell counterpart and stays a backend detail.
 **This is exactly the divergence `UIA2` exists to prevent.** The rationale at the
 top of this page cites two scrollbars whose thumb formulas scroll the same
 document differently; a divider drawn as a 1 px rule on one backend and a `│`
-column on the other is the same defect earlier in its life. Six widgets replace
-twelve implementations, and the pairing is how to sequence the work — one widget
-at a time, deleting **both** predecessors in the same change (`UIA4`).
+column on the other is the same defect earlier in its life. The pairing is how
+to sequence the work — one element at a time, deleting **both** predecessors in
+the same change (`UIA4`).
+
+#### It is not six new widgets — it is a geometry decision
+
+The toolkit already has the pieces: `WidgetKind.box` is a leaf rectangle with a
+slot background, `line` is a stroked rule, and `chrome.d` already ships
+`headerBar`, `actionBar`, `gutter`, `scrollbar` and `scrollView`. The display
+list already carries `fillRect`/`line`/`textRun`, and both backends already
+interpret them. So this is hue **consuming** what exists, not `sparkles:ui`
+growing six components.
+
+What blocks it is one property: **`Point` and `Size` are `int` — whole cells**
+(`geometry.d`). hue's GUI chrome is deliberately _sub-cell_, and that is not an
+accident of implementation but the reason `RaylibCanvas.fillPixels` takes pixels
+at all. That splits the six cleanly:
+
+| Cell-aligned — can be widget-ised today | Sub-cell — needs a toolkit decision first   |
+| --------------------------------------- | ------------------------------------------- |
+| viewer pane background                  | pane divider (1 px rule, `gui.d:2138`)      |
+| tree pane background                    | header hairline (`cellH - 1`, `gui.d:2240`) |
+| page fill                               | undercurl dashes (2 px, `gui.d:2102`)       |
+| status / bottom bar                     | toolbar separator (`gui.d:2255`)            |
+| selection fill                          |                                             |
+
+For the right-hand column the choice is real and should be made once, not per
+site: either the toolkit's geometry gains a sub-cell notion, or those elements
+quantise to whole cells and the GUI's appearance changes — a 1 px divider
+becoming a full column is visible. Neither is obviously right, which is exactly
+why it is a decision rather than a refactor, and why the left-hand column should
+not wait on it.
 
 #### What each side costs
 
