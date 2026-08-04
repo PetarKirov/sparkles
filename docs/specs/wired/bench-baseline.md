@@ -7,10 +7,12 @@ replaced it (SPEC §11), and — since the harness moved onto
 validates the runner's measurements against the retired hand-rolled harness.
 Numbers from [`libs/wired/bench/runtime`](../../../libs/wired/bench/runtime/README.md);
 the canonical snapshot is
-[`results/2026-08-04-ryzen9-7940hx-x86-64-v4-scalar-round1.json`](../../../libs/wired/bench/runtime/results/2026-08-04-ryzen9-7940hx-x86-64-v4-scalar-round1.json),
-taken after the first scalar optimization round; its predecessor
+[`results/2026-08-04-ryzen9-7940hx-x86-64-v4-scalar-round2.json`](../../../libs/wired/bench/runtime/results/2026-08-04-ryzen9-7940hx-x86-64-v4-scalar-round2.json),
+taken after the second scalar optimization round; its predecessors
+[`…-scalar-round1.json`](../../../libs/wired/bench/runtime/results/2026-08-04-ryzen9-7940hx-x86-64-v4-scalar-round1.json)
+and
 [`2026-08-03-…-rebaseline.json`](../../../libs/wired/bench/runtime/results/2026-08-03-ryzen9-7940hx-x86-64-v4-rebaseline.json)
-is the "before" it is measured against. The runner-validation sections below still cite
+are the "before"s they are measured against. The runner-validation sections below still cite
 the [2026-07-11 snapshot](../../../libs/wired/bench/runtime/results/2026-07-11-ryzen9-7940hx-x86-64-v4-runner-inline.json)
 and its B0 predecessor, which are the artifacts that comparison was made
 against._
@@ -421,6 +423,68 @@ Shipped:
   −0.9 %, github +0.3 % (its keys all fit the old probe; neutral), canada
   unchanged. twitter wall −3.6 % (186.7 µs → 180.0 µs median);
   per-byte instruction ratio vs yyjson 1.61× → 1.53×.
+- **The inline pragma repeated on the scanner's lambda.**
+  `pragma(inline, true)` on `scanStringBody` does not reach the `@trusted`
+  lambda holding its whole body, and LDC left the validating instantiation
+  (the one carrying `skipUtf8Run`) as an out-of-line call _inside_
+  `scanString` — a call within a call per value string, 17 % of twitter's
+  parse samples on the lambda symbol. One repeated pragma folds it. github
+  **−2.4 %**, twitter −1.3 % instructions; wall flat everywhere (twitter
+  IPC 4.91 → 4.79 absorbed the cut) — kept as a free seam removal.
+- **Cells written via `JsonCell.set`, killing a dead zero store.** Every
+  hot site did `*cell = JsonCell(kind, size); cell.bits = payload;` — the
+  construction zero-initializes `bits` and LLVM does not reliably
+  eliminate the dead 8-byte store before the overwrite. In twitter's
+  profile the `movq $0` was the **single hottest instruction** (14.7 % of
+  `parseInto` samples, wedged between the tag store and the payload
+  store). `JsonCell.set()()` (empty template parameter list, so it
+  code-generates in the instantiating TU) writes both fields in one shot.
+  citm **−1.9 %** instructions / **−2.4 % wall** (4.21 GB/s, clear of
+  yyjson's 3.92), github −1.1 % / −2.3 %, twitter −1.6 % / −1.6 %, canada
+  −0.6 %. The rare instruction cut that wall-clock paid out in full.
+
+Rejected after measuring (round 2):
+
+- **The member count in a register.** Replacing `afterValue`'s
+  `cells[parent].tag += 1 << 8` (a load-modify-store per value) with a
+  local counter, stashing the outer count in the container cell's size
+  bits across an open and restoring it at close. Instructions went **up**
+  on every lane (citm +4.5 %, twitter +1.8 %, github +1.4 %, canada
+  +1.6 %) and wall followed: the grammar loop is already spilling — the
+  "register" lives on the stack, so the swap dance costs more than the
+  arena RMW it replaced, which hits a cache line the loop owns anyway.
+
+Cumulative for the round (twitter): 4.73 M → 4.36 M instructions
+(**−7.8 %**), 186.7 µs → 177.7 µs wall (**−4.8 %**). The remaining
+`parseInto` profile is store-bound (the key cell's two arena stores) and
+register-pressure-bound (the key scan's SWAR constants rematerialize per
+iteration); the structural lever left for the string lanes is a SIMD scan
+(simdjson's 32-byte probe shape), which belongs to the vectorization
+phase, not this scalar round.
+
+Within the round-2 canonical snapshot (2 000 ms budget):
+
+| corpus / op         | wired MB/s | yyjson MB/s | ratio | round 1 |
+| ------------------- | ---------: | ----------: | ----: | ------: |
+| citm_catalog parse  |      4 188 |       3 926 | 1.07× |   1.10× |
+| twitter parse       |      3 542 |       3 942 | 0.90× |   0.94× |
+| github_events parse |      3 874 |       4 502 | 0.86× |   0.89× |
+| twitter decode      |      2 756 |       3 315 | 0.83× |   0.85× |
+| canada parse        |      1 043 |       1 340 | 0.78× |   0.78× |
+
+wired's own throughput rose on every string lane vs round 1 (twitter
+parse **+5.1 %**, twitter decode +2.7 %, github +2.4 %; canada flat) —
+the twitter/github _ratios_ still moved the wrong way because yyjson
+posted 8–10 % hotter walls in this snapshot than in round 1's (its
+documented 10–15 % swing; ratios only compare within one snapshot).
+Per-byte instructions, the deterministic axis: twitter 7.49 → **6.91**,
+github 6.63 → 6.42, citm 6.21 → 6.03, twitter decode 8.30 → 7.73,
+canada 21.17 → 21.07. At this snapshot's IPCs the cut still needed for
+0.98× is ~10 % on twitter, ~11 % on github, ~22 % on canada — numbers
+that moved little despite the instruction wins, because yyjson's IPC
+also ran higher here; the gate arithmetic is hostage to yyjson's
+run-to-run behaviour, which is itself an argument for judging progress
+on wired's own per-byte instructions and wall.
 
 ## Reproducing
 
