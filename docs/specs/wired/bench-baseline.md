@@ -675,6 +675,54 @@ instructions but also reduced IPC enough to lose wall time. The accepted
 grammar-boundary fast paths are deliberately local rather than changes to
 `skipWs` itself.
 
+### Scalar round 5: narrow clean strings and padded grammar sentinels
+
+Round 5 targeted twitter and github-events without giving back the canada/citm
+wins. The canonical result is
+[the scalar-round-5 snapshot](../../../libs/wired/bench/runtime/results/2026-08-05-ryzen9-7940hx-x86-64-v4-scalar-round5.json)
+(2 000 ms budget, immutable-input `parse`, `wired-native` and yyjson in one
+run):
+
+| corpus / op         | wired GB/s | yyjson GB/s |  ratio | wired instructions | yyjson instructions |
+| ------------------- | ---------: | ----------: | -----: | -----------------: | ------------------: |
+| canada parse        |      1.554 |       1.327 | 1.171× |            25.84 M |             32.08 M |
+| citm_catalog parse  |      4.253 |       3.807 | 1.117× |             9.42 M |              8.86 M |
+| github_events parse |      4.151 |       3.951 | 1.050× |           333.98 k |            289.24 k |
+| twitter parse       |      3.706 |       3.597 | 1.031× |             3.64 M |              2.93 M |
+| twitter decode      |      3.144 |       3.190 | 0.985× |             3.97 M |              3.20 M |
+
+The four-corpus parse throughput geomean is **1.091× yyjson**, with wired
+ahead on every parse row in the same run. The deterministic instruction delta
+from round 4 is −10.5% on GitHub (373.22 k → 333.98 k), −7.1% on Twitter parse
+(3.92 M → 3.64 M), −6.6% on Twitter decode (4.25 M → 3.97 M), and −5.4% on
+citm (9.96 M → 9.42 M). Canada remains at 25.84 M.
+
+Two changes account for the reduction:
+
+- **A narrow clean-value string lane.** Corpus measurement found 752 GitHub
+  value strings (mean raw length 50.6 bytes), only 0.66% escaped and 0.27%
+  non-ASCII; Twitter has 4 754 value strings (mean 42.5 bytes), 6.56% escaped
+  and 15.88% non-ASCII. Before entering the full Unicode/unescape kernel,
+  values now probe ordered scalar words with non-ASCII left unresolved. A
+  quote completes the cell immediately; every other stop retries through the
+  authoritative general scanner, so validation/error semantics are unchanged.
+  Two words is load-bearing: it stays small enough for LDC to inline without
+  the four-word register expansion, while avoiding the loop frequency of one
+  word. General strings and object keys retain four words.
+- **The existing zero padding is also the grammar sentinel.** The parser
+  already owns eight trailing zero bytes for safe scalar word loads. Value,
+  empty-container, object-key, and whitespace-delimited post-value paths now
+  read that sentinel instead of comparing `i` with `n` before the read. Cold
+  failures still compare the offset, distinguishing true end-of-input from an
+  embedded NUL and retaining the previous error code/offset.
+
+Rejected after measuring (round 5): passing the first clean-scan stop into the
+general fallback (+5 k GitHub, +40 k Twitter instructions); a second clean
+UTF-8 lane before unescaping (+6 k/+80 k, because escaped strings paid three
+scans); one-, three-, and four-word clean-value widths; and changing the key
+probe to two words (instruction-neutral but GitHub wall regressed from 15.9 µs
+to 16.9 µs through lower IPC).
+
 ## Reproducing
 
 From the nix devshell (which exports `$WIRED_BENCH_DATA` and puts the ISA-preset
