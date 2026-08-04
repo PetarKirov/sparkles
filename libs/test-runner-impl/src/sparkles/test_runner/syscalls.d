@@ -242,12 +242,12 @@ version (linux)
         /// `between()` runs uncounted, then reads the group. Returns per-iteration
         /// counts; the `named` tracepoints are exact.
         SyscallStats count(Timed, Between)(scope Timed timed, scope Between between,
-            uint iters)
+            uint iters, uint batch = 1)
         in (iters > 0)
         {
             import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
 
-            const base = bracketCountingPass(fds[0], timed, between, iters);
+            const base = bracketCountingPass(fds[0], timed, between, iters, batch);
 
             SyscallStats s;
             s.iters = iters;
@@ -399,7 +399,7 @@ else
         SyscallSnapshot snapshot() const @safe pure nothrow @nogc
             => SyscallSnapshot();
 
-        SyscallStats count(Timed, Between)(scope Timed, scope Between, uint)
+        SyscallStats count(Timed, Between)(scope Timed, scope Between, uint, uint = 1)
         {
             assert(false, "syscall counters are Linux-only");
         }

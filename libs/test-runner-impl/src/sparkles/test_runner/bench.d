@@ -103,6 +103,56 @@ struct BenchConfig
     /// with a one-time cost amortized inside the counting window —
     /// reproducible across runs by construction.
     uint perfIters = 0;
+
+    /// Iterations bracketed together per counting-pass measurement
+    /// (`--perf-batch`); `0` auto-sizes from the timing pass so one bracket
+    /// spans about `perfBatchTargetNs`. The bracket itself costs ~2.2 µs (an
+    /// ioctl ENABLE/DISABLE pair) and the tier-0 equivalent two `/proc` reads,
+    /// so without batching a nanosecond-scale body's counters report the
+    /// apparatus rather than the body. Applies to batched
+    /// (`benchIter`/whole-body) rows only — per-call `benchCase` rows must
+    /// keep their release interleaved and always use 1.
+    uint perfBatch = 0;
+}
+
+/// Auto-batching target: one counting-pass bracket spans about this long, so
+/// the bracket's own ~2.2 µs sits near 0.2 % of the measured window.
+private enum double perfBatchTargetNs = 1_000_000.0;
+
+/// Iterations to bracket together for a body measured at `nsPerIter`. Clamped
+/// to `[1, iters]`; `1` (no batching, the original pass) for bodies already at
+/// least `perfBatchTargetNs` long, so slow benchmarks are untouched.
+private uint perfBatchFor(double nsPerIter, uint iters, in BenchConfig config)
+    @safe pure nothrow @nogc
+{
+    if (config.perfBatch)
+        return config.perfBatch < iters ? config.perfBatch : iters;
+    if (!(nsPerIter > 0)) // nan/0 → cannot size; keep the unbatched pass
+        return 1;
+    const wanted = perfBatchTargetNs / nsPerIter;
+    if (!(wanted > 1))
+        return 1;
+    return wanted < iters ? cast(uint) wanted : iters;
+}
+
+@("bench.perfBatchFor.sizesAndClamps")
+@safe pure nothrow @nogc
+unittest
+{
+    // A 1 ns body wants ~10^6 per bracket, clamped to the pass's iterations.
+    assert(perfBatchFor(1.0, 100_000, BenchConfig()) == 100_000);
+    // A body already at/over the target never batches (the original pass).
+    assert(perfBatchFor(perfBatchTargetNs, 100_000, BenchConfig()) == 1);
+    assert(perfBatchFor(2 * perfBatchTargetNs, 100_000, BenchConfig()) == 1);
+    // 1 µs → ~1000 iterations per bracket; 10 µs → ~100.
+    assert(perfBatchFor(1_000.0, 100_000, BenchConfig()) == 1_000);
+    assert(perfBatchFor(10_000.0, 100_000, BenchConfig()) == 100);
+    // Pinned, and pins clamp to the iteration count too.
+    assert(perfBatchFor(1.0, 100_000, BenchConfig(perfBatch: 64)) == 64);
+    assert(perfBatchFor(1.0, 10, BenchConfig(perfBatch: 64)) == 10);
+    // Degenerate timings never batch.
+    assert(perfBatchFor(0.0, 100, BenchConfig()) == 1);
+    assert(perfBatchFor(double.nan, 100, BenchConfig()) == 1);
 }
 
 /// A unit of measure for a benchmark metric. A forward-compatible stand-in for
@@ -443,21 +493,22 @@ struct CounterGroups
     /// Runs each available source's counting pass over `timed`/`between` (the
     /// iteration count capped once) and fills `row`'s perf/tier0/syscall fields.
     void countInto(Timed, Between)(ref BenchStats row, scope Timed timed,
-        scope Between between, ulong iterations, in BenchConfig config)
+        scope Between between, ulong iterations, in BenchConfig config,
+        uint batch = 1)
     {
         const iters = perfIters(iterations, config);
         if (perf.available)
-            row.perf = perf.count(timed, between, iters);
+            row.perf = perf.count(timed, between, iters, batch);
         if (tier0.available)
-            row.tier0 = tier0.count(timed, between, iters);
+            row.tier0 = tier0.count(timed, between, iters, batch);
         if (syscalls.available)
-            row.syscalls = syscalls.count(timed, between, iters);
+            row.syscalls = syscalls.count(timed, between, iters, batch);
         // Raw rows attach whenever events were *requested*, not only when one
         // opened: a fully-refused group still yields all-nan stats, so every
         // selected raw column keeps its em-dash presence (the same
         // selected-but-unavailable contract the static families honor).
         if (raw.available || raw.names.length)
-            row.raw = raw.count(timed, between, iters);
+            row.raw = raw.count(timed, between, iters, batch);
     }
 
     /// Every backend's capability report in field order, plus the
@@ -896,7 +947,15 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c) @system
         row.labels = c.labels;
         row.metrics = c.metrics;
         if (context.counters !is null)
-            context.counters.countInto(row, c.runTimed, () {}, m.iterations, context.config);
+        {
+            // Batched row (`between` is a no-op), so the counting pass may
+            // bracket many iterations at once — without which a fast body's
+            // counters are all bracket. Sized from the timing pass we just ran.
+            const batch = perfBatchFor(row.nsPerIterMedian,
+                perfIters(m.iterations, context.config), context.config);
+            context.counters.countInto(row, c.runTimed, () {}, m.iterations,
+                context.config, batch);
+        }
         return row;
     }
 

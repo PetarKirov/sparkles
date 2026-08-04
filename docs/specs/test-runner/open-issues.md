@@ -19,6 +19,13 @@ their done-parts annotated. The
 [validation cross-references](#validation-cross-references) map the
 remaining findings onto work that already covers them._
 
+_O14 (unbatched counting pass) was surfaced by `sparkles:event-horizon`'s
+bench port and is **resolved** — `count` gained a `batch` parameter, auto-sized
+from the timing pass and pinnable with `--perf-batch` (SPEC §6.1) — so it is
+deleted per the lifecycle. It also closes O2's option (C): that entry keeps its
+`Update` note, since the rdpmc switch remains worthwhile and composes with
+batching._
+
 ## O1 — The paranoid degradation matrix is unprobed
 
 **Where:** SPEC §9.
@@ -60,9 +67,10 @@ continuous-enable semantics are provably equivalent.
 **Update:** option (C)'s condition is met — `sparkles:event-horizon`'s tier-C
 benchmarks (~1.2 ns bodies) are a real measurement where the ioctl bracket
 does not merely dominate but _is_ the entire reported figure (~3 270 of
-3 286 instructions). See [O14](#o14--the-counting-pass-is-unbatched-so-sub-µs-bodies-read-only-the-bracket),
-which also argues rdpmc alone is insufficient at that body size (30 ns still
-swamps 1.2 ns ~25×) — the two fixes compose rather than compete.
+3 286 instructions). That regime is now handled by counting-pass **batching**
+(SPEC §6.1), which amortizes the bracket by the batch size; rdpmc would shrink
+the bracket itself ~70× on top, and the two compose rather than compete — a
+30 ns rdpmc bracket still swamps a 1.2 ns body ~25× without batching.
 
 ## O3 — The thread-coverage contract
 
@@ -197,69 +205,57 @@ summary set but warn when a `--metrics` selector names a column outside it;
 window column control. (M5 and M6 confirmed the prediction that the
 window column set grows — `io-stall`, then `regime`.)
 
-## O14 — The counting pass is unbatched, so sub-µs bodies read only the bracket
+## O14 — Deferred bench closures are a pit of failure
 
-**Where:** SPEC §7 (counting pass), §8.3 (`--perf-iters`);
-[benchmark how-to](../../libs/test-runner/how-to/benchmark.md) `--perf`.
+**Where:** SPEC §2 (`benchIter`/`benchCase` registration); the
+[benchmark how-to](../../libs/test-runner/how-to/benchmark.md).
 
-The **timing** pass is batched (`n = 32×4194304`: samples × iterations, one
-clock read per sample). The **counting** pass is not — it brackets _each_
-iteration with an ENABLE/DISABLE ioctl pair, whose cost O2 measured at
-2.2 µs. For a body far below that, every perf cell is the bracket, not the
-body.
+Under `--bench`, **both** `benchIter` and `benchCase` only _register_ their
+closures; the runner measures them after the test body returns. Anything the
+closure captures must therefore outlive the body — but the body's natural
+shape (`scope (exit)`, RAII handles, a `ref` scope object) tears state down at
+exactly the wrong moment, and nothing at the call site says so. The failure is
+silent-to-violent and never names its cause.
 
-Measured on `sparkles:event-horizon`'s tier-C benchmarks (`-b bench`,
-Zen 4, `--perf-iters=20000`, medians of 3):
+Three instances hit while porting `sparkles:event-horizon`, all by authors who
+had read the how-to's warning:
 
-| row                         | median/iter | reported `instr/iter` |
-| --------------------------- | ----------- | --------------------- |
-| `loop.effect.direct`        | 1.238 ns    | 3286.4                |
-| `loop.effect.veneer`        | 1.508 ns    | 3297.5                |
-| `loop.effect.directLiteral` | 1.222 ns    | 3276.8                |
+| written                                           | happens                                                            |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| fixture `fd` opened in body, `scope (exit)` close | every case reads a closed fd → loop wedges in `io_cqring_wait`     |
+| `benchIter` called inside `sched.run(…)`          | closure awaits a destroyed `Sched` → SIGSEGV                       |
+| `benchIter` inside `withScope!((ref sc) …)`       | closure uses a dangling `RootScope` → silent UB, plausible numbers |
 
-A ~1.2 ns body cannot retire 3 286 instructions: the floor is ≈ 3 270
-(the ioctl pair — consistent with O2's 2.2 µs at this IPC), so the **signal
-is ~0.3 % of the reported cell**. Two implementations differing 4× in real
-instructions both render "3.3k". The failure is silent: nothing marks the
-cell as floor-dominated, and
-[benchmark how-to](../../libs/test-runner/how-to/benchmark.md) currently
-offers retired instructions as "exact, host-stable anchors — the columns a
-correctness comparison between two builds can rest on", which does not hold
-in this regime.
+The third is the dangerous one: it _produced numbers_, they were committed, and
+only a later crash in the sibling row prompted re-measurement. A benchmark
+harness whose failure mode is "publishes a wrong number quietly" is the wrong
+default. Note also that the trap is invisible outside `--bench`: with no active
+context both helpers run inline, so a plain `dub test` passes.
 
-`--perf-iters` does **not** help: it pins how many bracketed iterations run,
-not the bracketing granularity. Sweeping it 1 → 10⁷ left `instr/iter` flat at
-3.20k–3.28k. (Differencing two rows does cancel the common floor — that is
-how the veneer question above was settled — but that is a workaround a
-consumer has to know to apply, and it only works for rows measured in the
-same run.)
+The docs already warn ("register each case from a helper taking its varying
+state **by value**", "put per-case setup/release in `setup`/`teardown`"). That
+the same team tripped three times anyway is the argument that documentation is
+not the fix — the API should make the wrong thing hard to write.
 
-O2's rdpmc bracket (~30 ns) shrinks the floor ~70× but does not remove the
-regime: 30 ns still swamps a 1.2 ns body ~25×. The orthogonal fix is to give
-the counting pass the **same batched shape the timing pass already has**.
+**Options:** (A) make the lifetime explicit in the type — have `benchIter`/
+`benchCase` take a `setup` returning a state value that is passed _into_ the
+timed closure (`benchIter!(() => makeState(), (ref s) { … })`), so captured
+locals are structurally unnecessary and the state's lifetime is the runner's;
+(B) keep the shape but reject the common mistakes at compile time — e.g.
+require the timed delegate be `static`/non-capturing unless it goes through the
+state seam, turning "captured a `scope` local" into a compile error; (C) run a
+**probe iteration eagerly** at registration (inside the body, where the state
+is still alive) and again at measurement time, comparing a cheap invariant
+(e.g. the `after` verdict) — a state-lifetime bug then reports as a bench error
+row instead of UB; (D) documentation only (status quo).
 
-**Options:** (A) batch the counting pass — bracket K iterations, divide
-counters by K, with K auto-derived from the timing pass's per-sample
-iteration count (the floor then amortizes as 1/K, independent of the bracket
-primitive, and composes with O2's rdpmc rather than competing with it);
-(B) calibrate the empty-bracket cost once per run and subtract it from each
-cell (cheaper, but subtraction near equality is numerically poor and cannot
-recover IPC); (C) keep per-iteration bracketing but **detect** the regime —
-when a cell is within, say, 5× of the calibrated floor, render `—` (or an
-`≈`-style label, reusing the multiplex-estimate convention) instead of a
-misleading number, and say so in `--bench-json`; (D) document the limitation
-and leave it to consumers.
+**Leaning:** (A) as the real fix — it is the only option that makes the failure
+_unwritable_ rather than merely detected — with (C) as an interim guard that is
+cheap and catches the silent-UB case that (D) demonstrably does not. (B) is
+attractive but likely too strict for the matrix-registration pattern
+(`benchCase` helpers deliberately capture their per-case state by value).
 
-**Leaning:** (A) as the fix, with (C) as the guard that should land
-regardless — a floor-dominated cell rendering a confident number is the part
-that actually misleads, and (C) is cheap next to (A). (A) needs a decision on
-what a batched pass means for `between()`/per-call `benchCase` rows, which is
-presumably why the pass is per-iteration today; batching is naturally
-available for the `benchIter`/whole-body (batched) rows, which is exactly the
-regime where the floor bites.
-
-**Raised by:** `sparkles:event-horizon`'s bench port (this is the consumer
-O2's option (C) was waiting for).
+**Raised by:** `sparkles:event-horizon`'s bench port.
 
 ## Validation cross-references
 

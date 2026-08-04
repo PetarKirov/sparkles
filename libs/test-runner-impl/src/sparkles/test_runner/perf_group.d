@@ -64,12 +64,27 @@ version (linux)
         ulong running;
     }
 
-    /// The counting pass's ioctl bracket: `RESET` once, then per iteration
-    /// `ENABLE`, `timed()`, `DISABLE`, `between()` — so only `timed()` is counted
-    /// and `between()` (a benchmark's result release) runs uncounted. Returns the
-    /// pass's time baseline for `readScaledGroup`.
+    /**
+    The counting pass's ioctl bracket: `RESET` once, then per **batch**
+    `ENABLE`, `batch`×`timed()`, `DISABLE`, `batch`×`between()` — so only
+    `timed()` is counted and `between()` (a benchmark's result release) runs
+    uncounted. Returns the pass's time baseline for `readScaledGroup`.
+
+    `batch` exists because the bracket is not free: an ENABLE/DISABLE ioctl
+    pair costs ~2.2 µs (~3 300 retired instructions) on the Zen 4 dev box, so a
+    one-iteration bracket around a nanosecond-scale body reports the apparatus
+    rather than the body. Bracketing `batch` iterations together amortizes that
+    cost by `batch` while leaving the divisor (`iters`) untouched, because the
+    total number of `timed()` calls is exactly `iters` either way.
+
+    `batch > 1` reorders `between()` to *after* its batch's `timed()` calls, so
+    it is only sound when `between` is a no-op — i.e. the batched
+    (`benchIter`/whole-body) rows, which is precisely the regime where the
+    floor bites. Per-call `benchCase` rows keep `batch == 1`, where this is
+    byte-for-byte the original per-iteration bracket.
+    */
     package GroupTimeBase bracketCountingPass(Timed, Between)(int leaderFd,
-        scope Timed timed, scope Between between, uint iters)
+        scope Timed timed, scope Between between, uint iters, uint batch = 1)
     {
         groupIoctl(leaderFd, PERF_EVENT_IOC_RESET);
         const base = readGroupTimes(leaderFd);
@@ -79,12 +94,18 @@ version (linux)
         // counting for the rest of the run.
         scope (failure)
             groupIoctl(leaderFd, PERF_EVENT_IOC_DISABLE);
-        foreach (_; 0 .. iters)
+        const k = batch == 0 ? 1 : batch;
+        uint done;
+        while (done < iters)
         {
+            const n = k < iters - done ? k : iters - done;
             groupIoctl(leaderFd, PERF_EVENT_IOC_ENABLE);
-            timed();
+            foreach (_; 0 .. n)
+                timed();
             groupIoctl(leaderFd, PERF_EVENT_IOC_DISABLE);
-            between();
+            foreach (_; 0 .. n)
+                between();
+            done += n;
         }
         return base;
     }

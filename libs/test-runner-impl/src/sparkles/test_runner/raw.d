@@ -241,7 +241,7 @@ version (linux)
         /// so `between()` runs uncounted, then reads the group. Returns
         /// per-iteration averages scaled by the pass's own time deltas.
         RawStats count(Timed, Between)(scope Timed timed, scope Between between,
-            uint iters)
+            uint iters, uint batch = 1)
         in (iters > 0)
         {
             import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
@@ -256,7 +256,7 @@ version (linux)
             if (leader < 0)
                 return s;
 
-            const base = bracketCountingPass(leader, timed, between, iters);
+            const base = bracketCountingPass(leader, timed, between, iters, batch);
 
             double[maxEvents] values;
             if (!readScaledGroup(leader, nOpen, iters, s.scale, values[], base))
@@ -405,7 +405,7 @@ else
         void disable() @safe pure nothrow @nogc {}
         RawSnapshot snapshot() const @safe pure nothrow @nogc => RawSnapshot();
 
-        RawStats count(Timed, Between)(scope Timed, scope Between, uint)
+        RawStats count(Timed, Between)(scope Timed, scope Between, uint, uint = 1)
         {
             assert(false, "raw counters are Linux-only");
         }

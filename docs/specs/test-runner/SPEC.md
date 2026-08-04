@@ -296,8 +296,23 @@ close()
 
 with a `version (linux)` (or per-OS) real body and an identical-surface stub
 elsewhere. Two source shapes exist: _bracketed_ (ioctl ENABLE → body →
-DISABLE per iteration: perf, syscalls) and _snapshot/delta_ (pairs around the
-pass: tier-0; window-friendly for M4+).
+DISABLE: perf, syscalls, raw) and _snapshot/delta_ (a reading pair around the
+body: tier-0; window-friendly for M4+).
+
+**Batching.** A bracket is not free — an ioctl ENABLE/DISABLE pair costs
+~2.2 µs (~3 300 retired instructions), and a tier-0 snapshot pair two `/proc`
+reads — so a bracket per iteration makes a nanosecond-scale body's counters
+report the apparatus instead of the body. `count` therefore takes a `batch`:
+it brackets `batch` iterations together, running exactly `iterations`
+`timed()` calls either way, so the divisor is unchanged and the bracket's cost
+amortizes by `batch`. Batching reorders `between()` to after its batch, so it
+is used **only for batched rows** (`benchIter`/whole-body, where `between` is a
+no-op); per-call `benchCase` rows keep `batch == 1`, which is exactly the
+original per-iteration bracket. The runner auto-sizes `batch` from the timing
+pass so one bracket spans ~1 ms (`--perf-batch=N` pins it; `1` disables).
+Measured effect, three ~10–14 ns codec rows: `instr/iter` 3.52k/3.55k/3.57k
+(indistinguishable — all bracket) → 233/266/284 (separated, ordered with
+their timings, self-consistent at IPC ≈ 4.4), with the timing pass unchanged.
 
 ### 6.2 The capability model
 

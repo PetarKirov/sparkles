@@ -306,17 +306,33 @@ version (linux)
         /// snapshots so `between()` runs outside the counted window, sums the
         /// per-call deltas, and averages once. Returns per-iteration deltas; an
         /// unavailable source reads `nan` (it propagates through the sum).
-        Tier0Stats count(Timed, Between)(scope Timed timed, scope Between between, uint iters)
+        /// `batch` brackets that many iterations per snapshot pair, so the two
+        /// `/proc` reads amortize instead of dominating a fast body (the tier-0
+        /// analogue of the perf bracket's ioctl cost). Only sound when
+        /// `between` is a no-op — the batched rows — so per-call rows keep
+        /// `batch == 1`, where this is the original per-iteration loop.
+        Tier0Stats count(Timed, Between)(scope Timed timed, scope Between between,
+            uint iters, uint batch = 1)
         in (iters > 0)
         {
-            Tier0Stats sum; // running sum of per-call deltas (nan propagates)
-            foreach (_; 0 .. iters)
+            Tier0Stats sum; // running sum of raw deltas (nan propagates)
+            const k = batch == 0 ? 1 : batch;
+            uint done, brackets;
+            while (done < iters)
             {
+                const n = k < iters - done ? k : iters - done;
+                done += n;
+                ++brackets;
                 const start = snapshot();
-                timed();
+                foreach (_; 0 .. n)
+                    timed();
                 const end = snapshot();
-                between(); // untimed teardown, outside the start..end window
-                const one = deltaStats(start, end, 1); // this call's counts, with validity
+                foreach (_; 0 .. n)
+                    between(); // untimed teardown, outside the start..end window
+                // Raw (divisor 1): `sum` accumulates the whole pass's counts,
+                // which the `1/iters` below turns into a per-iteration average
+                // — correct for any batch size.
+                const one = deltaStats(start, end, 1);
                 sum.minflt += one.minflt;
                 sum.majflt += one.majflt;
                 sum.volCs += one.volCs;
@@ -344,10 +360,18 @@ version (linux)
             // without this a no-I/O body reads ~1 syscr and a few hundred
             // rchar bytes per iteration, and `cacheHitPercent`'s "nothing was
             // read → nan" branch is unreachable (rchar always > 0).
-            sum.syscr = netOfCost(sum.syscr, selfCost.syscr);
-            sum.syscw = netOfCost(sum.syscw, selfCost.syscw);
-            sum.rdChars = netOfCost(sum.rdChars, selfCost.rdChars);
-            sum.wrChars = netOfCost(sum.wrChars, selfCost.wrChars);
+            //
+            // The calibration is the cost of ONE bracket, and `sum` is now
+            // per-iteration — so the amount to remove is one bracket's cost
+            // spread over the iterations it covered. At `batch == 1` that is
+            // `brackets == iters` and the factor is 1 (the original behaviour);
+            // batching lowers it, because a batched pass really does pay the
+            // snapshot cost fewer times.
+            const costShare = double(brackets) / iters;
+            sum.syscr = netOfCost(sum.syscr, selfCost.syscr * costShare);
+            sum.syscw = netOfCost(sum.syscw, selfCost.syscw * costShare);
+            sum.rdChars = netOfCost(sum.rdChars, selfCost.rdChars * costShare);
+            sum.wrChars = netOfCost(sum.wrChars, selfCost.wrChars * costShare);
             return sum;
         }
 

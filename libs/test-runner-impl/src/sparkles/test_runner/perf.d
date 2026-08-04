@@ -352,12 +352,12 @@ version (linux)
          * averages.
          */
         PerfStats count(Timed, Between)(scope Timed timed, scope Between between,
-            uint iters)
+            uint iters, uint batch = 1)
         in (iters > 0)
         {
             import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
 
-            const base = bracketCountingPass(fds[0], timed, between, iters);
+            const base = bracketCountingPass(fds[0], timed, between, iters, batch);
 
             PerfStats s;
             s.iters = iters;
@@ -861,7 +861,7 @@ else
             PerfSnapshot snapshot() const => PerfSnapshot();
         }
 
-        PerfStats count(Timed, Between)(scope Timed, scope Between, uint)
+        PerfStats count(Timed, Between)(scope Timed, scope Between, uint, uint = 1)
             => assert(false, "perf counters are Linux-only");
 
         PerfStats windowStats(in PerfSnapshot, in PerfSnapshot)
