@@ -139,7 +139,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 {
     "name": "widget",
     "9": "older",
