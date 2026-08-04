@@ -26,9 +26,10 @@ module sparkles.dmd_lsp.signature;
 import dmd.astenums : LINK, MODFlags, STC, VarArg;
 import dmd.common.outbuffer : OutBuffer;
 import dmd.declaration : Declaration;
+import dmd.doc : isIdStart, isIdTail;
 import dmd.dtemplate : TemplateDeclaration;
-import dmd.func : FuncDeclaration;
 import dmd.expression : Expression;
+import dmd.func : FuncDeclaration;
 import dmd.hdrgen : HdrGenState, stcToBuffer, toCBuffer;
 import dmd.id : Id;
 import dmd.mtype : attributesApply, MODtoBuffer, Type, TypeFunction;
@@ -684,23 +685,21 @@ private size_t skipLiteral(scope const(char)[] text, size_t i) @safe pure nothro
 /// The engine's own identifier predicates, so a scan over hdrgen's output
 /// agrees with the lexer that produced it. `dmd.doc` takes a pointer because it
 /// decodes UTF-8 for the non-ASCII ranges; these signatures are ASCII by
-/// construction, so a one-character view is enough.
-private bool isIdentStart(char c) @trusted pure nothrow @nogc
+/// construction, so a NUL-terminated one-character view is enough. Only the
+/// pointer hand-off is `@trusted`, not the function.
+private bool isIdentStart(char c) @safe pure nothrow @nogc
 {
-    import dmd.doc : isIdStart;
-
-    const char[2] buf = [c, '\0'];
-    return isIdStart(buf.ptr);
+    const char[2] view = [c, '\0'];
+    return (() @trusted => isIdStart(view.ptr))();
 }
 
 /// ditto
-private bool isIdentChar(char c) @trusted pure nothrow @nogc
+private bool isIdentChar(char c) @safe pure nothrow @nogc
 {
-    import dmd.doc : isIdTail;
-
-    const char[2] buf = [c, '\0'];
-    return isIdTail(buf.ptr);
+    const char[2] view = [c, '\0'];
+    return (() @trusted => isIdTail(view.ptr))();
 }
+
 
 /// The staging order the renderer walks: the runtime list explodes before the
 /// template one.
