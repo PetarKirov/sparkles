@@ -464,10 +464,46 @@ each required member carries the attributes the tier-A contract advertises, so
 drift fails at the seam instead of at a distant call site; (C) leave it, and
 accept that the attribute surface is per-backend.
 
-**Leaning:** (B) over (A). (A) fixes today's drift; only (B) stops it
-recurring, and this entry exists precisely because the drift went unnoticed
-across three backends until a first-ever macOS run. The concept
-(`isCompletionBackend`) is the natural carrier and already enumerates the
-required members. Note (B) needs a decision on what tier-A actually promises:
-`@nogc` on the submit path is the documented headline property, so that is the
-minimum the seam should enforce.
+**Decided: (B), preceded by CI coverage.** Two parts, in this order.
+
+**1. Compile-only CI per backend — do this first.** The concept assert below
+only fires when something compiles that backend, and today nothing does: **no
+job builds the example set on Windows** (the Windows job is a single OS-API
+example), which is exactly why IOCP's gap was undetectable. Both checks are
+cheap (`-o- -c`, no macOS/Windows runner needed) and are already possible from
+one Linux runner:
+
+```bash
+bash libs/event-horizon/scripts/verify-kqueue-linux.sh          # kqueue, via libkqueue
+nix develop .#win32 -c win32-ldc2 -o- -c -unittest …            # IOCP, via the cross toolchain
+```
+
+This ordering matters because CI coverage would have caught **every** break
+found on this branch, including the ones an attribute assert cannot see (the
+`scope_.d` version gate, `io.d`'s ungated bufRing surface).
+
+**2. Assert the attribute contract at the seam.** In `isCompletionBackend`,
+for each op the backend claims to lower:
+
+```d
+enum submitIsNoGcNothrow(B, Op) =
+    __traits(compiles, () @nogc nothrow {
+        B b = B.init; OpSlot s;
+        cast(void) b.trySubmit(Op.init, OpToken.init, s);
+    });
+
+static assert(submitIsNoGcNothrow!(B, Op),
+    B.stringof ~ ".trySubmit(" ~ Op.stringof ~ ") is not @nogc nothrow"
+    ~ " — tier A promises a @nogc submit path (SPEC §13)");
+```
+
+A `static assert`, **not** a `bool` folded into the constraint: a failed
+constraint makes the backend silently _not a backend_, surfacing as a baffling
+"no matching overload" far from the cause. The assert names the backend, the
+op, and the promise broken.
+
+What tier A actually promises needs stating in SPEC §13 as part of this: the
+`@nogc nothrow` submit path is the documented headline property, so that is the
+minimum the seam enforces. `submitAndWait`/`open` are deliberately **not**
+included — nothing requires `run`/`runOnce` to be `@nogc`, and asserting more
+than is promised would block backends for no user-visible gain.
