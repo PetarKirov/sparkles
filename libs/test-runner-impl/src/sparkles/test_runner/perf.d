@@ -19,6 +19,14 @@
  * carries the arch-specific syscall numbers, the `perf_event_attr` layout, and
  * a `perf_event_open` wrapper) plus `ioctl`/`read`/`close` — no ImportC, so the
  * module source-includes cleanly into every host package's test build.
+ *
+ * On macOS the same `PerfGroup` surface is backed by
+ * `proc_pid_rusage(RUSAGE_INFO_V4)` — the unprivileged XNU fixed counters:
+ * true retired instructions and core cycles (process-wide, user+kernel, all
+ * threads), so `--perf` renders IPC and instr/iter with the other columns
+ * honestly absent. Everything richer is a capability ad, not a backend: kpc
+ * is root-or-blessed with the `RESTRICT_TO_KNOWN` allowlist, and sampling is
+ * Instruments/xctrace-brokered only.
  */
 module sparkles.test_runner.perf;
 
@@ -448,9 +456,324 @@ version (linux)
         package GroupSnapshot g;
     }
 }
+else version (OSX)
+{
+    import core.time : MonoTime, msecs;
+
+    // ── The libproc surface. druntime has no binding; `proc_pid_rusage`
+    // lives in libSystem (no extra link flags). Layout verified against the
+    // macOS SDK header (`$(xcrun --show-sdk-path)/usr/include/sys/resource.h`)
+    // on Darwin 25.3 / xnu-12377 (T6041) — pinned by the static asserts
+    // below, the event_naming.d pfm_perf_encode_arg_t precedent.
+    extern (C) private int proc_pid_rusage(int pid, int flavor, void* buffer) @nogc nothrow;
+
+    private enum int rusageInfoV4 = 4;
+
+    /// xnu `bsd/sys/resource.h` `struct rusage_info_v4` (name kept C-style
+    /// for the 1:1 field mapping): a 16-byte uuid then 35 × uint64. The two
+    /// fields this backend reads — `ri_instructions`/`ri_cycles` — are the
+    /// XNU "monotonic" fixed counters (`MT_CORE_INSTRS`/`MT_CORE_CYCLES`):
+    /// true retired instructions and core cycles, per process, user+kernel,
+    /// with no root and no entitlement.
+    package struct rusage_info_v4
+    {
+        ubyte[16] ri_uuid;
+        ulong ri_user_time;
+        ulong ri_system_time;
+        ulong ri_pkg_idle_wkups;
+        ulong ri_interrupt_wkups;
+        ulong ri_pageins;
+        ulong ri_wired_size;
+        ulong ri_resident_size;
+        ulong ri_phys_footprint;
+        ulong ri_proc_start_abstime;
+        ulong ri_proc_exit_abstime;
+        ulong ri_child_user_time;
+        ulong ri_child_system_time;
+        ulong ri_child_pkg_idle_wkups;
+        ulong ri_child_interrupt_wkups;
+        ulong ri_child_pageins;
+        ulong ri_child_elapsed_abstime;
+        ulong ri_diskio_bytesread;
+        ulong ri_diskio_byteswritten;
+        ulong ri_cpu_time_qos_default;
+        ulong ri_cpu_time_qos_maintenance;
+        ulong ri_cpu_time_qos_background;
+        ulong ri_cpu_time_qos_utility;
+        ulong ri_cpu_time_qos_legacy;
+        ulong ri_cpu_time_qos_user_initiated;
+        ulong ri_cpu_time_qos_user_interactive;
+        ulong ri_billed_system_time;
+        ulong ri_serviced_system_time;
+        ulong ri_logical_writes;
+        ulong ri_lifetime_max_phys_footprint;
+        ulong ri_instructions;
+        ulong ri_cycles;
+        ulong ri_billed_energy;
+        ulong ri_serviced_energy;
+        ulong ri_interval_max_phys_footprint;
+        ulong ri_runnable_time;
+    }
+
+    static assert(rusage_info_v4.sizeof == 296,
+        "rusage_info_v4 must match xnu bsd/sys/resource.h (16-byte uuid + 35 × uint64)");
+    static assert(rusage_info_v4.ri_instructions.offsetof == 248
+        && rusage_info_v4.ri_cycles.offsetof == 256,
+        "the fixed-counter fields moved — re-verify against the SDK header");
+
+    /// One cumulative fixed-counter reading; `ok == false` = syscall failed.
+    package struct RusageReading
+    {
+        ulong instructions;
+        ulong cycles;
+        bool ok;
+    }
+
+    /// Reads the process's cumulative retired-instruction/cycle counters.
+    package RusageReading readFixedCounters() @trusted nothrow @nogc
+    {
+        import core.sys.posix.unistd : getpid;
+
+        rusage_info_v4 info;
+        if (proc_pid_rusage(getpid(), rusageInfoV4, &info) != 0)
+            return RusageReading();
+        return RusageReading(info.ri_instructions, info.ri_cycles, true);
+    }
+
+    /// The process-wide fixed-counter group (macOS): `proc_pid_rusage`'s
+    /// `ri_instructions`/`ri_cycles` delivered through the same `PerfStats`
+    /// surface as Linux's perf_event group — IPC, instructions and cycles
+    /// per iteration; every other field explicitly unavailable. Scope
+    /// honesty: these are process-wide free-running counters (user+kernel,
+    /// all threads), not per-bracket configurable events — `degraded()`
+    /// holds whenever the group is open, so every run discloses it once.
+    /// kpc (the configurable per-thread tier) is deliberately not a
+    /// backend: root-or-blessed-pid, the RESTRICT_TO_KNOWN allowlist, and
+    /// single-owner EBUSY make it a capability ad, not a floor.
+    struct PerfGroup
+    {
+        private bool requested;
+        private bool opened;
+        private bool armed; /// enable()/disable() window latch — the counters free-run
+        private bool probeFailed; /// proc_pid_rusage itself failed
+        private bool countersZero; /// counters flat across the probe spin (VM guest)
+        private double selfInstr = 0; /// calibrated per-bracket snapshot cost
+        private double selfCycles = 0;
+
+        /// Whether the fixed counters tick on this host.
+        bool available() const @safe pure nothrow @nogc => opened;
+
+        /// Process-wide scope is a permanent departure from the Linux
+        /// default (per-bracket events) — always disclosed once per run via
+        /// the bench header's degraded-mode line.
+        package bool degraded() const @safe pure nothrow @nogc => opened;
+
+        /// The bare reason counting is unavailable — single-sourced between
+        /// `status()` and `capabilities()`.
+        private string countingAbsence() const @safe pure nothrow @nogc
+        {
+            if (!requested)
+                return "not requested";
+            if (countersZero)
+                return "fixed counters read zero — virtualized guest, or monotonic disabled";
+            return "proc_pid_rusage failed";
+        }
+
+        /// Human-readable availability, for a report header.
+        string status() const @safe pure nothrow
+        {
+            if (!opened)
+                return "unavailable (" ~ countingAbsence() ~ ")";
+            return "process-wide fixed counters (proc_pid_rusage) — not per-bracket events";
+        }
+
+        /// What this backend can deliver on this host (SPEC §6.2): scalar
+        /// counting of the two fixed counters; reasoned absences for the
+        /// rest, in the survey's language.
+        CapabilityReport capabilities() const @safe nothrow
+        {
+            Capability present;
+            CapabilityAbsence[] absences;
+            if (opened)
+                present |= Capability.counting;
+            else
+                absences ~= CapabilityAbsence(Capability.counting, countingAbsence());
+            absences ~= CapabilityAbsence(Capability.countingRaw,
+                "kpc requires root ('root or the blessed pid', xnu kern_kpc.c); "
+                ~ "event allowlist RESTRICT_TO_KNOWN");
+            absences ~= CapabilityAbsence(Capability.countingScaled,
+                "two fixed counters, never multiplexed — no scaled mode on macOS");
+            absences ~= CapabilityAbsence(Capability.selfMonitoring,
+                "no user-space read path — fixed counters are read via the "
+                ~ "proc_pid_rusage syscall");
+            absences ~= CapabilityAbsence(Capability.ipSampling,
+                "via Instruments/xctrace only (kperf is root-or-blessed; "
+                ~ "no unprivileged sampling door)");
+            absences ~= CapabilityAbsence(Capability.preciseMemory,
+                "absent on macOS — kpc/kperf expose PC-capture only, no data-source packets");
+            return CapabilityReport(present, absences);
+        }
+
+        /// Opens the group unless disabled. The probe reads, spins ~1 ms of
+        /// real work, and reads again: a flat instruction counter means the
+        /// monotonic counters are not ticking — Virtualization.framework
+        /// guests (GitHub's macOS CI runners) — and the group degrades to a
+        /// reasoned absence rather than fabricating zeros.
+        static PerfGroup tryOpen(bool enabled, bool allowScaled = false) @safe
+        {
+            PerfGroup g;
+            g.requested = enabled;
+            if (!enabled)
+                return g;
+            const a = readFixedCounters();
+            if (!a.ok)
+            {
+                g.probeFailed = true;
+                return g;
+            }
+            probeSpin();
+            const b = readFixedCounters();
+            if (!b.ok || b.instructions == a.instructions)
+            {
+                g.countersZero = true;
+                return g;
+            }
+            g.opened = true;
+            g.calibrate();
+            return g;
+        }
+
+        /// ~1 ms of unmistakable retirement for the probe.
+        private static void probeSpin() @safe nothrow
+        {
+            static ulong sink;
+            const t0 = MonoTime.currTime;
+            while (MonoTime.currTime - t0 < 1.msecs)
+                foreach (i; 0 .. 1000)
+                    sink += i * i;
+        }
+
+        /// Median empty-bracket cost of the two `proc_pid_rusage` syscalls
+        /// (they retire kernel-mode instructions attributed to this
+        /// process), mirroring `Tier0Group`'s calibration; subtracted from
+        /// each pass's per-iteration average, clamped by `netOfCost`.
+        private void calibrate() @safe
+        {
+            import std.algorithm.sorting : sort;
+
+            enum rounds = 9;
+            double[rounds] instr, cyc;
+            foreach (r; 0 .. rounds)
+            {
+                const a = readFixedCounters();
+                const b = readFixedCounters();
+                instr[r] = a.ok && b.ok ? double(b.instructions - a.instructions) : 0;
+                cyc[r] = a.ok && b.ok ? double(b.cycles - a.cycles) : 0;
+            }
+            instr[].sort;
+            cyc[].sort;
+            selfInstr = instr[rounds / 2];
+            selfCycles = cyc[rounds / 2];
+        }
+
+        /// Releases nothing — the group holds no descriptors.
+        void close() @safe pure nothrow @nogc
+        {
+        }
+
+        /// The counting pass: per-iteration snapshot-pair brackets (the
+        /// tier-0 shape — `between()` stays outside the counted window),
+        /// per-iteration averages net of the calibrated bracket cost.
+        PerfStats count(Timed, Between)(scope Timed timed, scope Between between,
+            uint iters)
+        in (iters > 0)
+        {
+            import sparkles.test_runner.tier0 : netOfCost;
+
+            PerfStats s;
+            s.iters = iters;
+            fillNonFixed(s);
+            double sumInstr = 0, sumCycles = 0;
+            foreach (_; 0 .. iters)
+            {
+                const a = readFixedCounters();
+                timed();
+                const b = readFixedCounters();
+                between();
+                if (a.ok && b.ok)
+                {
+                    sumInstr += double(b.instructions - a.instructions);
+                    sumCycles += double(b.cycles - a.cycles);
+                }
+                else
+                    sumInstr = sumCycles = double.nan; // a failed bracket poisons the pass
+            }
+            const inv = 1.0 / iters;
+            s.instructions = netOfCost(sumInstr * inv, selfInstr);
+            s.cycles = netOfCost(sumCycles * inv, selfCycles);
+            return s;
+        }
+
+        /// The non-fixed fields must be explicitly unavailable: `PerfStats`
+        /// defaults are 0, and zeros here would be fabricated counts.
+        private static void fillNonFixed(ref PerfStats s) @safe pure nothrow @nogc
+        {
+            s.branches = s.branchMisses = s.cacheReferences = s.cacheMisses
+                = s.pageFaults = double.nan;
+        }
+
+        /// The window-arming latch: darwin's fixed counters cannot be
+        /// disabled, so `enable`/`disable` record intent into each snapshot
+        /// — preserving the SPEC §4 never-enabled → nan gate.
+        void enable() @safe pure nothrow @nogc
+        {
+            if (opened)
+                armed = true;
+        }
+
+        /// ditto
+        void disable() @safe pure nothrow @nogc
+        {
+            armed = false;
+        }
+
+        /// Captures one window-edge reading, stamped with the latch.
+        PerfSnapshot snapshot() const @safe nothrow @nogc
+            => opened ? PerfSnapshot(readFixedCounters(), armed) : PerfSnapshot();
+
+        /// The fixed-counter deltas across one window, as window totals
+        /// (`iters = 1`), net of one bracket's calibrated cost.
+        PerfStats windowStats(in PerfSnapshot a, in PerfSnapshot b)
+            const @safe pure nothrow @nogc
+        {
+            import sparkles.test_runner.tier0 : netOfCost;
+
+            PerfStats s;
+            s.iters = 1;
+            fillNonFixed(s);
+            if (!(a.armed && b.armed && a.r.ok && b.r.ok
+                    && b.r.instructions >= a.r.instructions && b.r.cycles >= a.r.cycles))
+            {
+                s.instructions = s.cycles = double.nan;
+                return s;
+            }
+            s.instructions = netOfCost(double(b.r.instructions - a.r.instructions), selfInstr);
+            s.cycles = netOfCost(double(b.r.cycles - a.r.cycles), selfCycles);
+            return s;
+        }
+    }
+
+    /// One cumulative fixed-counter window edge, with the arming latch.
+    struct PerfSnapshot
+    {
+        package RusageReading r;
+        package bool armed;
+    }
+}
 else
 {
-    /// Off Linux: a permanently-unavailable stub with the same surface.
+    /// Off Linux and macOS: a permanently-unavailable stub with the same
+    /// surface.
     struct PerfGroup
     {
         private static immutable CapabilityAbsence[1] stubAbsence = [
@@ -503,8 +826,80 @@ unittest
     assert(!r.has(Capability.counting));
     version (linux)
         assert(r.reasonFor(Capability.counting) == "not requested");
+    else version (OSX)
+        assert(r.reasonFor(Capability.counting) == "not requested");
     else
         assert(r.reasonFor(Capability.counting) == "not Linux");
+}
+
+version (OSX)
+{
+    @("perf.PerfGroup.darwin.capabilities")
+    @system
+    unittest
+    {
+        import std.algorithm.searching : canFind;
+        import sparkles.test_runner.skip : skipTest;
+
+        auto g = PerfGroup.tryOpen(true);
+        scope (exit)
+            g.close();
+        // The kpc/xctrace capability ads hold whether or not the fixed
+        // counters tick (a VM guest still explains the whole domain).
+        const r = g.capabilities;
+        assert(r.reasonFor(Capability.countingRaw).canFind("RESTRICT_TO_KNOWN"));
+        assert(r.reasonFor(Capability.ipSampling).canFind("xctrace"));
+        assert(r.reasonFor(Capability.selfMonitoring) !is null);
+        assert(r.reasonFor(Capability.preciseMemory) !is null);
+        assert(r.reasonFor(Capability.countingScaled) !is null);
+        if (!g.available)
+            skipTest(g.status()); // Virtualization.framework guest
+        assert(r.has(Capability.counting));
+        assert(g.degraded, "process-wide scope is always disclosed");
+    }
+
+    @("perf.PerfGroup.darwin.statusByteIdentity")
+    @safe pure nothrow
+    unittest
+    {
+        PerfGroup g;
+        g.requested = true;
+        assert(g.status == "unavailable (proc_pid_rusage failed)");
+        g.countersZero = true;
+        assert(g.status
+            == "unavailable (fixed counters read zero — virtualized guest, or monotonic disabled)");
+        g.countersZero = false;
+        g.opened = true;
+        assert(g.status
+            == "process-wide fixed counters (proc_pid_rusage) — not per-bracket events");
+        assert(g.degraded == g.opened);
+    }
+
+    @("perf.PerfGroup.darwin.abiSanity")
+    @system
+    unittest
+    {
+        import sparkles.test_runner.skip : skipTest;
+
+        // A live layout cross-check: a ~100k-iteration spin between two raw
+        // readings must move ri_instructions by a plausible amount — a
+        // misaligned struct reads garbage (absurd deltas) or dead fields
+        // (zero deltas) instead.
+        const a = readFixedCounters();
+        if (!a.ok)
+            skipTest("proc_pid_rusage failed");
+        static ulong sink;
+        foreach (i; 0 .. 100_000)
+            sink += i * i;
+        const b = readFixedCounters();
+        assert(b.ok);
+        const instr = b.instructions - a.instructions;
+        if (instr == 0)
+            skipTest("fixed counters read zero — virtualized guest");
+        assert(instr > 10_000 && instr < 1_000_000_000,
+            "the instruction delta of a 100k spin is plausible");
+        assert(b.cycles > a.cycles, "cycles advance with instructions");
+    }
 }
 
 version (linux)
@@ -585,18 +980,20 @@ unittest
     assert(empty.ipc.isNaN && empty.branchMissPercent.isNaN);
 }
 
-version (linux)
 @("perf.PerfGroup.countSmoke")
 @system
 unittest
 {
+    // Un-gated: runs the perf_event path on Linux and the proc_pid_rusage
+    // path on macOS; skips with the group's own reason elsewhere (stub) or
+    // when the host refuses (paranoid kernels, VM guests).
     auto g = PerfGroup.tryOpen(true);
     scope (exit)
         g.close();
     import sparkles.test_runner.skip : skipTest;
 
-    if (!g.available) // sandboxed kernels may refuse
-        skipTest("hardware counters unavailable (perf_event_paranoid?)");
+    if (!g.available)
+        skipTest(g.status());
 
     static ulong sink;
     const stats = g.count(() {
@@ -624,7 +1021,7 @@ unittest
     import sparkles.test_runner.skip : skipTest;
 
     if (!g.available)
-        skipTest("hardware counters unavailable (perf_event_paranoid?)");
+        skipTest(g.status());
 
     static ulong sink;
     bool threw;
@@ -658,7 +1055,7 @@ unittest
     import sparkles.test_runner.skip : skipTest;
 
     if (!g.available)
-        skipTest("hardware counters unavailable (perf_event_paranoid?)");
+        skipTest(g.status());
 
     static ulong sink;
     static void spin()
