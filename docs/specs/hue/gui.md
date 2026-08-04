@@ -34,7 +34,10 @@ syntax spec reserved: `toRgb(Color, palette, default)` and `byStyledLine`.
 previewer and a render-markdown.nvim-style markdown preview. **It is deliberately
 not** a text editor, an incremental/LSP-backed surface, a terminal emulator, or
 the Vulkan engine (#47) — it is the smallest honest GPU consumer of the styled-run
-API, hosted in the app that already produces it.
+API, hosted in the app that already produces it. (The diff **write wave**
+later adds **bounded editing surfaces** — an editable diff pane, a comment
+composer — via the toolkit [editor component](../ui/editor.md)
+([`UIA9`](./ui-architecture.md)); the not-an-editor-_app_ doctrine stands.)
 
 > [!NOTE]
 > Most GUI areas below — `SEL` (selection), `MDP` (markdown constructs), `NUM`
