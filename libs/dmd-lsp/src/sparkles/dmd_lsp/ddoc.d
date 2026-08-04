@@ -508,6 +508,10 @@ private void defineMacros(ref MacroTable t) @safe pure nothrow
         static immutable prefixes = ["# ", "## ", "### ", "#### ", "##### ", "###### "];
         t.define(h, "\n" ~ prefixes[i] ~ "$0\n");
     }
+    // dlang.org's `<pre>`: line structure and indentation are the content —
+    // Phobos writes the `std.conv.to` grammars with it. Undefined, it fell
+    // through to `DDOC_UNDEFINED_MACRO` and dissolved into one prose line.
+    t.define("PRE", "\n```\n$0\n```\n");
     t.define("HR", "\n---\n");
     t.define("BLOCKQUOTE", "\n> $0\n");
     t.define("LINK", "[$0]($0)");
@@ -1129,6 +1133,38 @@ version (unittest)
         // `/// ditto` on a unittest means "another example", not prose.
         assert(!doc.canFind("ditto"), doc);
     }, null, ["-unittest"]);
+}
+
+@("ddoc.render.preservesPreformattedBlocks")
+@system unittest
+{
+    // dlang.org's `$(PRE …)` is `<pre>`: the line structure and indentation
+    // *are* the content. Undefined, it fell through to the undefined-macro
+    // path and its whole body dissolved into one line of prose — which is how
+    // `std.conv.to`'s two grammars reached the tooltip.
+    import std.algorithm.searching : count;
+
+    static void check(string label, string body_, string want)
+    {
+        const line = cast(uint)(4 + body_.count('\n'));
+        const t = tipIn("/**\n" ~ body_ ~ "*/\nint k;\n", line, 5);
+        assert(t.doc == want, label ~ ": " ~ t.doc);
+    }
+
+    // NB: the lead-in deliberately has no `Word:` shape — that is a section
+    // name (`DDC17`), not prose, and would swallow the block into a heading.
+    check("PRE keeps its lines",
+        "The grammar is\n$(PRE Integer:\n    Sign UnsignedInteger\n    UnsignedInteger)\n",
+        "The grammar is\n\n```\nInteger:\n    Sign UnsignedInteger\n    UnsignedInteger\n```\n");
+
+    // The inner `$(I …)`/`$(B …)` expand before `PRE` wraps them, and a fence
+    // cannot carry emphasis — so their markers survive as text. dlang.org
+    // renders them italic/bold inside the `<pre>`; pinned as the divergence it
+    // is rather than stripped, since undoing them would also eat a literal `*`
+    // in someone's grammar.
+    check("emphasis inside PRE is literal",
+        "$(PRE $(I Integer):\n    $(B +))\n",
+        "```\n*Integer*:\n    **+**\n```\n");
 }
 
 @("ddoc.render.markdownConstructs")
