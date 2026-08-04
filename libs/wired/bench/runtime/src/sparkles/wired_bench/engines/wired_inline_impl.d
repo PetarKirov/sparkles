@@ -109,8 +109,20 @@ ParseExpected!T parseErr(T)(ParseErrorCode code, size_t offset, string context) 
 // Bit and wide-multiply kernels
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The IEEE-754 bit pattern of `d` (CTFE-safe).
-ulong doubleToBits(double d) @trusted pure nothrow @nogc
+/**
+The IEEE-754 bit pattern of `d` (CTFE-safe).
+
+Declared as a template with an empty parameter list — not for genericity,
+but so the body is instantiated in the *caller's* translation unit. As a
+plain function it lives only in this package's object file, and a consumer
+cannot inline a one-`movq` reinterpretation without
+`-enable-cross-module-inlining` (which is not a flag a library can require
+of its users). Measured on the wired JSON reader's number kernel: this and
+its neighbours below are worth ~5 % of retired instructions on a
+float-heavy parse — see
+$(LINK2 ../../../../docs/specs/wired/bench-baseline.md, the wired bench baseline).
+*/
+ulong doubleToBits()(double d) @trusted pure nothrow @nogc
 {
     if (__ctfe)
     {
@@ -148,7 +160,8 @@ ulong doubleToBits(double d) @trusted pure nothrow @nogc
 }
 
 /// The `double` with the IEEE-754 bit pattern `bits` (CTFE-safe).
-double bitsToDouble(ulong bits) @trusted pure nothrow @nogc
+/// Templated for caller-side instantiation, as $(LREF doubleToBits).
+double bitsToDouble()(ulong bits) @trusted pure nothrow @nogc
 {
     if (__ctfe)
     {
@@ -169,8 +182,9 @@ double bitsToDouble(ulong bits) @trusted pure nothrow @nogc
 }
 
 /// `2.0 ^^ e` by squaring — exact for `e ≥ -1074` (all powers of two down
-/// to the smallest subnormal are representable).
-private double pow2(int e) @safe pure nothrow @nogc
+/// to the smallest subnormal are representable). Templated so it follows
+/// $(LREF bitsToDouble) into the caller's translation unit.
+private double pow2()(int e) @safe pure nothrow @nogc
 {
     double base = e < 0 ? 0.5 : 2.0;
     uint n = e < 0 ? -e : e;
@@ -196,7 +210,7 @@ struct U128
 /// `i128 mul` (a single widening `mul`/`umulh` pair — the four-multiply
 /// decomposition demonstrably does not fold); elsewhere and at CTFE the
 /// portable decomposition runs (bare `ucent` is deprecated as of D 2.111).
-U128 mul64x64(ulong a, ulong b) @safe pure nothrow @nogc
+U128 mul64x64()(ulong a, ulong b) @safe pure nothrow @nogc
 {
     pragma(inline, true);
     version (LDC)
@@ -232,7 +246,8 @@ U128 mul64x64(ulong a, ulong b) @safe pure nothrow @nogc
 }
 
 /// Count of leading zero bits (defined for `x != 0`; CTFE-compatible).
-private int leadingZeros(ulong x) @safe pure nothrow @nogc
+/// Templated for caller-side instantiation, as $(LREF doubleToBits).
+private int leadingZeros()(ulong x) @safe pure nothrow @nogc
 in (x != 0)
 {
     if (!__ctfe)
@@ -346,8 +361,13 @@ subnormal results, values at the overflow boundary, and unprovable ties.
 
 `sig10` must carry at most 19 significant digits (a full `ulong`
 accumulation); `exp10` is the decimal exponent of its last digit.
+
+Templated (empty parameter list) so the whole fast path — this, $(LREF
+eiselLemire) and $(LREF mul64x64) — is code-generated in the caller's
+translation unit and can fold into a number-scanning loop. See
+$(LREF doubleToBits).
 */
-bool tryFastDouble(ulong sig10, int exp10, out double result)
+bool tryFastDouble()(ulong sig10, int exp10, out double result)
     @safe pure nothrow @nogc
 {
     pragma(inline, true);
@@ -381,7 +401,7 @@ normalized significand by the 128-bit truncated power-of-ten significand
 and prove the truncation cannot affect the rounded result. Correctly
 rounded whenever it returns `true`; conservative `false` otherwise.
 */
-private bool eiselLemire(ulong sig10, int exp10, out double result)
+private bool eiselLemire()(ulong sig10, int exp10, out double result)
     @safe pure nothrow @nogc
 in (sig10 != 0 && minExp10 <= exp10 && exp10 <= maxExp10)
 {
