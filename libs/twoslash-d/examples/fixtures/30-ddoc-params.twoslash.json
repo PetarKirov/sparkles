@@ -1,12 +1,12 @@
 {
-    "code": "// NB: `total` is backticked below on purpose — DDoc auto-emphasis wraps the\n// parameter name again, so the popup shows a nested code span.\n/++\nRenders a progress meter.\n\nParams:\n    value = the current position; values outside `[0, `total`]` are\n            silently clamped rather than rejected\n    total = the end of the range; must be positive\n    width = the meter's width in cells\nReturns: The rendered bar, exactly width characters wide.\n+/\nstring meter(double value, double total, size_t width)\n    => value >= total ? \"full\" : \"partial\";\n",
+    "code": "// NB: `total` is backticked below on purpose. DDoc pairs backticks left to\n// right and auto-emphasizes the parameter name on top, so the row arrives as\n// three abutting code runs — the case `collapseCodeSpans` merges into one.\n/++\nRenders a progress meter.\n\nParams:\n    value = the current position; values outside `[0, `total`]` are\n            silently clamped rather than rejected\n    total = the end of the range; must be positive\n    width = the meter's width in cells\nReturns: The rendered bar, exactly width characters wide.\n+/\nstring meter(double value, double total, size_t width)\n    => value >= total ? \"full\" : \"partial\";\n",
     "language": "d",
     "nodes": [
         {
             "character": 0,
             "length": 6,
-            "line": 12,
-            "start": 451,
+            "line": 13,
+            "start": 540,
             "text": "(alias) object.string = string",
             "type": "hover"
         },
@@ -14,7 +14,7 @@
             "character": 7,
             "docs": "Renders a progress `meter`.",
             "length": 5,
-            "line": 12,
+            "line": 13,
             "signature": {
                 "abbrevs": [
                     {
@@ -44,11 +44,11 @@
                     }
                 ]
             },
-            "start": 458,
+            "start": 547,
             "tags": [
                 [
                     "param",
-                    "value the current position; values outside `[0, ``total``]` are silently clamped rather than rejected"
+                    "value the current position; values outside `[0, total]` are silently clamped rather than rejected"
                 ],
                 [
                     "param",
@@ -70,12 +70,12 @@
             "character": 7,
             "docs": "Renders a progress `meter`.",
             "length": 5,
-            "line": 12,
-            "start": 458,
+            "line": 13,
+            "start": 547,
             "tags": [
                 [
                     "param",
-                    "value the current position; values outside `[0, ``total``]` are silently clamped rather than rejected"
+                    "value the current position; values outside `[0, total]` are silently clamped rather than rejected"
                 ],
                 [
                     "param",
@@ -95,14 +95,14 @@
         },
         {
             "character": 20,
-            "docs": "the current position; values outside `[0, ``total``]` are silently clamped rather than rejected",
+            "docs": "the current position; values outside `[0, total]` are silently clamped rather than rejected",
             "length": 5,
-            "line": 12,
-            "start": 471,
+            "line": 13,
+            "start": 560,
             "tags": [
                 [
                     "param",
-                    "value the current position; values outside `[0, ``total``]` are silently clamped rather than rejected"
+                    "value the current position; values outside `[0, total]` are silently clamped rather than rejected"
                 ]
             ],
             "text": "(parameter) double value",
@@ -112,8 +112,8 @@
             "character": 34,
             "docs": "the end of the range; must be positive",
             "length": 5,
-            "line": 12,
-            "start": 485,
+            "line": 13,
+            "start": 574,
             "tags": [
                 [
                     "param",
@@ -126,8 +126,8 @@
         {
             "character": 41,
             "length": 6,
-            "line": 12,
-            "start": 492,
+            "line": 13,
+            "start": 581,
             "text": "(alias) object.size_t = ulong",
             "type": "hover"
         },
@@ -135,8 +135,8 @@
             "character": 48,
             "docs": "the `meter`'s `width` in cells",
             "length": 5,
-            "line": 12,
-            "start": 499,
+            "line": 13,
+            "start": 588,
             "tags": [
                 [
                     "param",
@@ -148,14 +148,14 @@
         },
         {
             "character": 7,
-            "docs": "the current position; values outside `[0, ``total``]` are silently clamped rather than rejected",
+            "docs": "the current position; values outside `[0, total]` are silently clamped rather than rejected",
             "length": 5,
-            "line": 13,
-            "start": 513,
+            "line": 14,
+            "start": 602,
             "tags": [
                 [
                     "param",
-                    "value the current position; values outside `[0, ``total``]` are silently clamped rather than rejected"
+                    "value the current position; values outside `[0, total]` are silently clamped rather than rejected"
                 ]
             ],
             "text": "(parameter) double value",
@@ -163,14 +163,14 @@
         },
         {
             "character": 7,
-            "docs": "the current position; values outside `[0, ``total``]` are silently clamped rather than rejected",
+            "docs": "the current position; values outside `[0, total]` are silently clamped rather than rejected",
             "length": 5,
-            "line": 13,
-            "start": 513,
+            "line": 14,
+            "start": 602,
             "tags": [
                 [
                     "param",
-                    "value the current position; values outside `[0, ``total``]` are silently clamped rather than rejected"
+                    "value the current position; values outside `[0, total]` are silently clamped rather than rejected"
                 ]
             ],
             "text": "(parameter) double value",
@@ -180,8 +180,8 @@
             "character": 16,
             "docs": "the end of the range; must be positive",
             "length": 5,
-            "line": 13,
-            "start": 522,
+            "line": 14,
+            "start": 611,
             "tags": [
                 [
                     "param",
