@@ -449,25 +449,30 @@ version (linux)
         import std.conv : text;
         import std.math : isNaN;
 
-        // tryOpen calibrates the per-bracket snapshot cost; count reports net of
-        // it. A raw group (constructed without calibration, selfCost = 0) sees
-        // the gross ~1 syscr/iter instrumentation constant that the calibrated
-        // group subtracts. Compare the two so process-wide noise from parallel
-        // test threads (which only adds reads to both) doesn't flake the test.
+        // tryOpen calibrates the per-bracket snapshot cost; count reports net
+        // of it. Assert the calibration CONSTANT directly (same-module access
+        // to the private field): each empty bracket's own /proc read costs
+        // ~1 syscr, so a calibration that measured nothing is broken. The
+        // old form compared two sequentially-run count() passes, whose
+        // process-wide cross-thread read noise differs between the passes —
+        // under a loud parallel suite the comparison flaked.
         auto calibrated = Tier0Group.tryOpen(true);
         import sparkles.test_runner.skip : skipTest;
 
         if (!calibrated.available)
             skipTest("tier-0 counters unavailable");
-        auto raw = Tier0Group(true); // bypasses calibration: gross counts
         static void nop() {}
         const net = calibrated.count(&nop, &nop, 64);
-        const gross = raw.count(&nop, &nop, 64);
-        if (net.syscr.isNaN || gross.syscr.isNaN)
+        if (net.syscr.isNaN)
             skipTest("/proc/self/io unavailable (no per-task I/O accounting)");
-        assert(gross.syscr > net.syscr + 0.5,
-            text("the calibrated group must subtract the bracket's own read; ",
-                "gross=", gross.syscr, " net=", net.syscr));
+        assert(calibrated.selfCost.syscr > 0.5,
+            text("calibration must measure the bracket's own read; selfCost.syscr=",
+                calibrated.selfCost.syscr));
+        // And the subtraction engages: a no-op body nets close to zero, far
+        // under the ~1 syscr/iter gross instrumentation constant.
+        assert(net.syscr < calibrated.selfCost.syscr,
+            text("net (", net.syscr, ") sits below the subtracted constant (",
+                calibrated.selfCost.syscr, ")"));
     }
 }
 else version (OSX)

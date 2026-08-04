@@ -1666,6 +1666,16 @@ version (linux)
                     sink += i * i;
         }
 
+        // Neighboring parallel tests allocate tens of MiB; a GC
+        // stop-the-world during the spin window suspends this thread and
+        // the pause lands (honestly) in `other` — disable collections for
+        // the window so the test measures the spin, not the suite.
+        import core.memory : GC;
+
+        GC.disable();
+        scope (exit)
+            GC.enable();
+
         auto counters = CounterGroups.none;
         auto wall = WallSource.tryOpen(true);
         auto psi = PsiSource.tryOpen(false);
@@ -1677,8 +1687,14 @@ version (linux)
         const d = outcome.windows[0].wall;
         assert(d.wallNs >= 25_000_000);
         const onCpu = d.onCpuUserNs + d.onCpuKernelNs;
-        assert(onCpu > double(d.wallNs) * 0.5,
-            "a spin window is dominated by on-CPU time");
+        // Preemption-robust: under the parallel test pool the spin thread
+        // can spend real wall time preempted on the runqueue — which the
+        // thread-scoped decomposition correctly attributes to `runq`, not
+        // on-CPU. The honesty claim is that a spin's NON-WAITING time is
+        // on-CPU (never mis-attributed to the residual).
+        const runq = d.offCpuRunqueueNs.isNaN ? 0.0 : d.offCpuRunqueueNs;
+        assert(onCpu > (double(d.wallNs) - runq) * 0.5,
+            "a spin's non-runqueue time is on-CPU time");
     }
 
     @("workload.decomposition.sleepIsOther")
