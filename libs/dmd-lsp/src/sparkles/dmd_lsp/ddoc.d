@@ -509,7 +509,10 @@ private void defineMacros(ref MacroTable t) @safe pure nothrow
     t.define("DDOC_LINK_AUTODETECT", "$0");
     t.define("IMAGE", "![$+]($1)");
     t.define("IMAGE_TITLE", "![$3]($1)");
-    t.define("SYMBOL_LINK", "[$+]($1)");
+    // A `[Symbol]` reference resolves to a *dlang.org* URL (`object.html#.Object`),
+    // which is a dead link anywhere else — and a tooltip is anywhere else. The
+    // name is what the reader wanted; render it as code and drop the target.
+    t.define("SYMBOL_LINK", "`$+`");
 
     // --- lists / tables: emit markdown line-wise
     //
@@ -1143,6 +1146,154 @@ version (unittest)
         // `/// ditto` on a unittest means "another example", not prose.
         assert(!doc.canFind("ditto"), doc);
     }, null, ["-unittest"]);
+}
+
+@("ddoc.render.markdownConstructs")
+@system unittest
+{
+    // `DDC39`, `DDC42`, `DDC44`, `DDC46`, `DDC48`, `DDC49`, `DDC51`, `DDC56`.
+    // The engine's markdown subset, none of it previously pinned.
+    import std.algorithm.searching : count;
+
+    // The declaration follows the closing `*/`, so its line is derived rather
+    // than counted by hand: miscounting yields `Tip.init`, which reads exactly
+    // like a rendering failure and cost an hour to see through once.
+    static void check(string label, string body_, string want)
+    {
+        const line = cast(uint)(4 + body_.count('\n'));
+        const t = tipIn("/**\n" ~ body_ ~ "*/\nint k;\n", line, 5);
+        assert(t.doc == want, label ~ ": " ~ t.doc);
+    }
+
+    check("DDC39 heading levels", "## Two\n\n###### Six ###\n", "## Two\n\n###### Six");
+    check("DDC42 escaped asterisk", "A \\* literal star.\n", "A * literal star.");
+    check("DDC44 inline link", "See [the docs](https://dlang.org) here.\n",
+        "See [the docs](https://dlang.org) here.");
+    // `DDC46`: a `[Symbol]` reference resolves to a dlang.org URL, which is a
+    // dead link in a tooltip — the name renders as code instead.
+    check("DDC46 symbol reference", "See [Object] for the root.\n",
+        "See `Object` for the root.");
+    check("DDC48 bare url", "Visit https://dlang.org now.\n", "Visit https://dlang.org now.");
+    check("DDC49 image", "![alt](https://dlang.org/logo.png)\n",
+        "![alt](https://dlang.org/logo.png)");
+    // `DDC51`: inside `/** */` the first `*` of a line is comment margin, so a
+    // single-star bullet loses its marker and must be doubled.
+    check("DDC51 single star loses the bullet", " * one\n * two\n", "one\ntwo");
+    check("DDC51 doubled star is a bullet", " ** one\n ** two\n", "- one\n- two");
+    check("DDC56 blockquote with lazy continuation", "> quoted line\nlazy continuation\n",
+        "> quoted line\nlazy continuation");
+}
+
+@("ddoc.render.markdownConstructsThatDiverge")
+@system unittest
+{
+    // Pinned as they are, not as the plan wishes: each of these is a real
+    // divergence and the assertions say what actually happens, so a fix shows
+    // up as a failing test rather than as a silent change.
+    import std.algorithm.searching : count;
+
+    static void check(string label, string body_, string want)
+    {
+        const line = cast(uint)(4 + body_.count('\n'));
+        const t = tipIn("/**\n" ~ body_ ~ "*/\nint k;\n", line, 5);
+        assert(t.doc == want, label ~ ": " ~ t.doc);
+    }
+
+    // `DDC45`: a reference definition is not applied — the link stays literal.
+    check("DDC45 reference link unresolved",
+        "See [the docs][d] here.\n\n[d]: https://dlang.org\n",
+        "See [the docs][d] here.");
+
+    // `DDC53`: block content indented under a list item detaches from it.
+    check("DDC53 item continuation detaches",
+        "- item\n\n    a paragraph in the item\n",
+        "- item\n\na paragraph in the item");
+
+    // `DDC57`: the underscore rule survives; the star form is eaten by the
+    // same margin rule as `DDC51` — the leading `*` is comment margin, so
+    // `* * *` parses as a bullet list rather than a thematic break.
+    check("DDC57 underscore rule", "before\n\n___\n\nafter\n", "before\n\n---\n\nafter");
+    check("DDC57 star rule is a bullet", "before\n\n* * *\n\nafter\n",
+        "before\n\n-\n        -\n\nafter");
+}
+
+@("ddoc.render.sectionNameRulesAndParamRows")
+@system unittest
+{
+    // `DDC17`, `DDC18`, `DDC21`, `DDC25`, `DDC26`.
+    //
+    // `DDC17` as written ("matched case-insensitively, `returns:` ==
+    // `Returns:`") is not what the engine does: `doc.d:484` gates the whole
+    // section scan on `isupper(*p)`, so the *first* letter must be uppercase
+    // and only the rest is case-insensitive. `ReTurNs:` is a section;
+    // `returns:` is prose. Pinned both ways round, because getting this wrong
+    // silently moves a `Returns:` chip into the description.
+    static void check(string label, string src, uint line, string wantDocs,
+        string[][] wantTags = null, uint col = 5)
+    {
+        const t = tipIn(src, line, col);
+        assert(t.doc == wantDocs, label ~ " docs: " ~ t.doc);
+        assert(t.tags == wantTags, label ~ " tags");
+    }
+
+    check("Returns", "/**\nSummary.\nReturns: the answer.\n*/\nint a;\n", 6,
+        "Summary.", [["returns", "the answer."]]);
+    check("ReTurNs", "/**\nSummary.\nReTurNs: the answer.\n*/\nint b;\n", 6,
+        "Summary.", [["returns", "the answer."]]);
+    check("lowercase is prose", "/**\nSummary.\nreturns: the answer.\n*/\nint c;\n",
+        6, "Summary.\nreturns: the answer.");
+
+    // `DDC18`: the colon in a URL must not start a section.
+    check("url", "/**\nSee https://dlang.org for details.\n*/\nint d;\n", 5,
+        "See https://dlang.org for details.");
+
+    // `DDC21`: a non-standard section becomes a heading, underscores as spaces.
+    check("custom section",
+        "/**\nSummary.\nMy_Own_Section: body text.\n*/\nint e;\n", 6,
+        "Summary.\n\n### My Own Section\n\nbody text.");
+
+    // `DDC25`: text before the first `name =` row is dropped by the engine's
+    // row parser. `DDC26`: a name matching no parameter still becomes a chip,
+    // so documentation drift loses the binding but never the text.
+    check("param rows",
+        "/**\nSummary.\nParams:\n    stray text with no equals\n"
+        ~ "    gone = removed long ago\n*/\nint f(int x) => x;\n", 8,
+        "Summary.", [["param", "gone removed long ago"]]);
+}
+
+@("ddoc.render.commentFormsAndAttachment")
+@system unittest
+{
+    // `DDC2`-`DDC4`, `DDC6`, `DDC8`-`DDC10`, `DDC12`, `DDC13`: the lexer-level
+    // shapes a doc comment can take. The engine handles all of these; nothing
+    // pinned them, so a regression in the comment plumbing (the margin strip,
+    // the `///` run, the postfix form) would have surfaced as missing docs
+    // rather than as a failing test.
+    static void check(string label, string src, uint line, string want, uint col = 5)
+    {
+        const t = tipIn(src, line, col);
+        assert(t.doc == want, label ~ ": " ~ t.doc);
+    }
+
+    check("DDC2 /++ with extra +", "/++++\nSummary here.\n+/\nint a;\n", 5,
+        "Summary here.");
+    check("DDC3 consecutive ///", "/// First line.\n/// Second line.\nint b;\n", 4,
+        "First line.\nSecond line.");
+    check("DDC4 `*` margin stripped", "/**\n * One.\n * Two.\n */\nint c;\n", 6,
+        "One.\nTwo.");
+    // A blank line inside an embedded code block does not end the Summary.
+    check("DDC6 blank in code", "/**\n---\nint x;\n\nint y;\n---\nAfter.\n*/\nint d;\n",
+        10, "```d\nint x;\n\nint y;\n```\n\nAfter.");
+    check("DDC8 two comments concatenate", "/** One. */\n/** Two. */\nint e;\n", 4,
+        "One.\nTwo.");
+    check("DDC9 postfix documents the decl", "int f; /// To the right.\n", 2,
+        "To the right.");
+    check("DDC10 prefix and postfix both apply", "/** Before. */ int g; /// After.\n",
+        2, "Before.\n\nAfter.", 20);
+    check("DDC12 enum member", "enum E\n{\n    /// The first one.\n    a,\n}\n", 5,
+        "The first one.");
+    // Legal, and must yield empty docs rather than a crash or a stray heading.
+    check("DDC13 empty comment", "///\nint h;\n", 3, "");
 }
 
 @("ddoc.render.fenceContentIsVerbatim")
