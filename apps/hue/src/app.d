@@ -1011,7 +1011,7 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
     import std.path : buildPath;
     import std.stdio : writeln;
 
-    import gallery : GalleryOptions, plainFragment, twoslashFragment, writeGallery;
+    import gallery : GalleryOptions, plainFragment, themeBackground, twoslashFragment, writeGallery;
     import source_set : collectSources, SourceEntry;
 
     auto set = collectSources(dir, twoslash);
@@ -1062,18 +1062,22 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
         return plainFragment(src, ev[], theme);
     }
 
-    const outDir = outDirParam.length ? outDirParam : buildPath(dir, "html");
+    const outDir = outDirParam.length ? outDirParam : buildPath(dir, "html");    // The page surround comes from the theme (`GAL6`) — the same source the
+    // `.syn-root` rule comes from, so the pane and the surround cannot drift.
+    const bg = themeBackground(theme);
     const opt = twoslash
         ? GalleryOptions(
             titlePrefix: "twoslash",
             heading: "twoslash overlay examples",
             indexTitle: "twoslash examples",
             blurb: "Rendered by <code>hue --twoslash --html</code>. Open one and " ~
-                "hover the underlined tokens to see the popups.")
+                "hover the underlined tokens to see the popups.",
+            background: bg)
         : GalleryOptions(
             titlePrefix: "hue",
             heading: "hue gallery",
-            blurb: "Rendered by <code>hue --html</code>.");
+            blurb: "Rendered by <code>hue --html</code>.",
+            background: bg);
 
     const n = writeGallery(set, outDir, opt, &renderOne);
     stderr.writeln("hue: wrote ", n, " page(s) + index.html to ", outDir);
