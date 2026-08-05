@@ -29,6 +29,7 @@ import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : layout;
+import sparkles.ui.scroll_view : ScrollView;
 import sparkles.ui.state : DisclosureState, LineEditState, ScrollAxis,
     ScrollbarState, scrollbarThumb, ScrollState;
 import sparkles.ui.style : Palette, Slot, TextStyle;
@@ -147,11 +148,14 @@ struct ExplorerTui
     /// The live filter's editor — the one line-edit machine (STM10);
     /// `filter.active` IS filter mode.
     LineEditState filter;
-    /// The scrollbar as one machine (STM9) — see the viewer's twin.
-    ScrollbarState sb;
-    /// The horizontal bar (IXB2): live when a visible label overflows the
-    /// pane; scrolls the tree columns. Same machine, horizontal axis.
-    ScrollbarState hsb = ScrollbarState(ScrollAxis.horizontal);
+    /// The pane's ScrollView (SCV1): the vertical machine (`sb`) and the
+    /// horizontal bar (IXB2, live when a visible label overflows) as one
+    /// value BOTH backends step; the old names remain as accessors.
+    ScrollView scroll;
+    ref inout(ScrollbarState) sb() inout return @safe pure nothrow @nogc
+        => scroll.v;
+    ref inout(ScrollbarState) hsb() inout return @safe pure nothrow @nogc
+        => scroll.h;
     int contentCols; // widest visible row, recomputed per rebuild
 
     // Visibility toggles (XPF2), state shown in the status bar: dotfiles are

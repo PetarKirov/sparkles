@@ -27,6 +27,7 @@ import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Rect;
 import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.scroll_view : ScrollView;
 import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, HoverTarget,
     hoverTargets, KeyedRect, keyedRects, selectionRects;
 import sparkles.base.term_color : Color;
@@ -149,9 +150,12 @@ struct ViewerModel
     DisclosureState!size_t folds = DisclosureState!size_t(true);
     Span[] foldable;
     /// Horizontal overflow (IXB2): the widest laid-out right edge in doc
-    /// cells, and the horizontal bar's machine (offset in cells).
+    /// cells, and the document's ScrollView (SCV1) — BOTH backends step
+    /// the same machines; `hsb` remains the horizontal bar's short name.
     int contentCols;
-    ScrollbarState hsb = ScrollbarState(ScrollAxis.horizontal);
+    ScrollView scroll;
+    ref inout(ScrollbarState) hsb() inout return @safe pure nothrow @nogc
+        => scroll.h;
     FoldMarker[] foldMarkers;       /// gutter markers, derived with the rows
     int widthCols = -1;             /// the width the pipeline is laid out for
 
