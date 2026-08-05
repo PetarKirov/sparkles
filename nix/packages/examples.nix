@@ -1,8 +1,10 @@
 { lib, ... }:
 {
   perSystem =
-    { pkgs, ... }:
+    { config, pkgs, ... }:
     let
+      inherit (config.legacyPackages.dubBuilder) mkDubDerivation buildDubDeps;
+
       fs = lib.fileset;
       root = ../..;
       fromRoot = lib.path.append root;
@@ -118,116 +120,155 @@
         in
         p == [ ] || builtins.any (want: lib.hasInfix want pkgs.stdenv.hostPlatform.system) p;
 
+      # The source tree an example compiles from. It is a function of the
+      # *lib*, not of the individual example — every example of a lib sees the
+      # same files — and that is exactly what lets them share one compiled
+      # dependency bundle: `nix/packages/dub-builder` requires a bundle and its
+      # consumers to be built from the same `src`, since normalising dub's
+      # mtimes disables its own staleness check.
+      srcForLib =
+        libName:
+        fs.toSource {
+          inherit root;
+          fileset = fs.unions [
+            # Dub validates every sub-package declared in the root `dub.sdl`,
+            # so all sibling manifests must be present even when only one
+            # example is being built.
+            (fs.fileFilter isDubManifest root)
+            # Library sources the example links against via
+            # `dependency "sparkles:<lib>" path="../../.."` — plus the impl
+            # runner sources `base`/`core-cli` import unconditionally, and
+            # `math` which `core-cli` reaches via importPaths. See allLibSources.
+            allLibSources
+            # The full `examples/` subtree — this brings in the shared
+            # `views/` string-import assets alongside the script itself.
+            (fromRoot "libs/${libName}/examples")
+          ];
+        };
+
+      # Arguments shared by an example and by the deps bundle it inherits.
+      # These must agree: the build type and compiler are part of dub's build
+      # ID, so a mismatch turns every cache hit into a rebuild.
+      commonExampleArgs = {
+        version = "0.1.0";
+
+        # The examples currently depend on the same set of packages as
+        # the `ci` helper, so we share a single Nix-format lockfile
+        # under `nix/dub-lock.json` instead of generating (and
+        # regenerating) one per example. If a future example pulls in
+        # an additional dependency, that dep needs to be added to the
+        # shared lockfile or split out into its own.
+        dubLock = fromRoot "nix/dub-lock.json";
+        compiler = pkgs.ldc;
+        dubBuildType = "release";
+
+        # Examples that depend on sparkles:syntax (or other ImportC bindings)
+        # need pkg-config + the C library so dub#3085 can feed -P-I...
+        # to ImportC for headers like <tree_sitter/api.h>.
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.tree-sitter ];
+      };
+
+      # One bundle per lib, primed by compiling every one of that lib's
+      # examples. Each primer after the first is nearly free (it reuses what
+      # the ones before it built), so the bundle costs about one example's
+      # full build and saves that cost in each of the N per-example
+      # derivations, which then only recompile their own module and link.
+      depsForLib =
+        libName: paths:
+        buildDubDeps (
+          commonExampleArgs
+          // {
+            pname = "${libName}-example-deps";
+            src = srcForLib libName;
+            dubPrimers = map (path: {
+              subdir = (exampleInfo path).examplesRel;
+              single = "${(exampleInfo path).fileBase}.d";
+            }) paths;
+          }
+        );
+
       mkExamplePackage =
-        examplePath:
+        artifacts: examplePath:
         let
           info = exampleInfo examplePath;
-
-          src = fs.toSource {
-            inherit root;
-            fileset = fs.unions [
-              # Dub validates every sub-package declared in the root `dub.sdl`,
-              # so all sibling manifests must be present even when only one
-              # example is being built.
-              (fs.fileFilter isDubManifest root)
-              # Library sources the example links against via
-              # `dependency "sparkles:<lib>" path="../../.."` — plus the impl
-              # runner sources `base`/`core-cli` import unconditionally, and
-              # `math` which `core-cli` reaches via importPaths. See allLibSources.
-              allLibSources
-              # The full `examples/` subtree — this brings in the shared
-              # `views/` string-import assets alongside the script itself.
-              (fromRoot info.examplesRel)
-            ];
-          };
         in
-        pkgs.buildDubPackage (finalAttrs: {
-          pname = "${info.libName}-example-${info.fileBase}";
-          version = "0.1.0";
+        mkDubDerivation (
+          commonExampleArgs
+          // {
+            pname = "${info.libName}-example-${info.fileBase}";
 
-          inherit src;
-          sourceRoot = "${finalAttrs.src.name}/${info.examplesRel}";
+            src = srcForLib info.libName;
+            # Where to build inside the normalised source tree (the vendored
+            # builder's replacement for `sourceRoot`, which cannot vary: the
+            # tree root is pinned so artifacts hash identically).
+            dubSubdir = info.examplesRel;
+            dubArtifacts = artifacts;
 
-          # The examples currently depend on the same set of packages as
-          # the `ci` helper, so we share a single Nix-format lockfile
-          # under `nix/dub-lock.json` instead of generating (and
-          # regenerating) one per example. If a future example pulls in
-          # an additional dependency, that dep needs to be added to the
-          # shared lockfile or split out into its own.
-          dubLock = fromRoot "nix/dub-lock.json";
-          compiler = pkgs.ldc;
+            # Phobos bakes store paths into every binary that must not leak into
+            # the runtime closure: assert/`__FILE__` strings referencing ldc's
+            # separate `include` output (~19 MiB; the builder scrubs and
+            # disallows only the compiler's `out` — same story as `release` in
+            # ./default.nix), plus the nixpkgs-patched `libcurl.so.4` dlopen
+            # path (which alone pulls the ~18 MiB openssl/krb5/nghttp tail) and
+            # the tzdata dir. The curl/tzdata paths are phobos *service* paths,
+            # but no example touches std.net.curl or named time zones — the
+            # run-all-examples runner exercises them all — so scrub and
+            # disallow all three. NB: `pkgs.curl.out` — libcurl's output; bare
+            # `pkgs.curl` coerces to the `-bin` output.
+            disallowedReferences = [
+              pkgs.ldc
+              pkgs.ldc.include
+              pkgs.curl.out
+              pkgs.tzdata
+            ];
+            preFixup = ''
+              find "$out" -type f -exec remove-references-to \
+                -t ${pkgs.ldc} -t ${pkgs.ldc.include} -t ${pkgs.curl.out} -t ${pkgs.tzdata} '{}' +
+            '';
 
-          # Examples that depend on sparkles:syntax (or other ImportC bindings)
-          # need pkg-config + the C library so dub#3085 can feed -P-I...
-          # to ImportC for headers like <tree_sitter/api.h>.
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [ pkgs.tree-sitter ];
+            # The example carries its own inline `dub.sdl` block, so this is
+            # `--single` mode against the specific .d file rather than the
+            # builder's default package-rooted build.
+            buildPhase = ''
+              runHook preBuild
 
-          # The unpacked source is read-only by default; dub needs to write
-          # build artifacts into the package's `targetPath "build"` directory.
-          preBuild = ''chmod -R u+w "$NIX_BUILD_TOP"'';
+              dub build \
+                --single ${info.fileBase}.d \
+                --compiler="$dubCompiler" \
+                --skip-registry=all \
+                --build="$dubBuildType"
 
-          # Phobos bakes store paths into every binary that must not leak into
-          # the runtime closure: assert/`__FILE__` strings referencing ldc's
-          # separate `include` output (~19 MiB; buildDubPackage scrubs and
-          # disallows only the compiler's `out` — same story as `release` in
-          # ./default.nix), plus the nixpkgs-patched `libcurl.so.4` dlopen
-          # path (which alone pulls the ~18 MiB openssl/krb5/nghttp tail) and
-          # the tzdata dir. The curl/tzdata paths are phobos *service* paths,
-          # but no example touches std.net.curl or named time zones — the
-          # run-all-examples runner exercises them all — so scrub and
-          # disallow all three. NB: `pkgs.curl.out` — libcurl's output; bare
-          # `pkgs.curl` coerces to the `-bin` output.
-          disallowedReferences = [
-            pkgs.ldc
-            pkgs.ldc.include
-            pkgs.curl.out
-            pkgs.tzdata
-          ];
-          postFixup = ''
-            find "$out" -type f -exec remove-references-to \
-              -t ${pkgs.ldc.include} -t ${pkgs.curl.out} -t ${pkgs.tzdata} '{}' +
-          '';
+              runHook postBuild
+            '';
 
-          # Override the default `dub build` invocation: the example carries
-          # its own inline `dub.sdl` block, so we need `--single` mode against
-          # the specific .d file instead of a package-rooted build.
-          dontDubBuild = true;
-          buildPhase = ''
-            runHook preBuild
+            # The inline `dub.sdl` sets `targetPath "build"`, so the binary is
+            # `build/<dubName>` — the dub package name, which may differ from the
+            # file's basename (see `dubName` in exampleInfo).
+            installPhase = ''
+              install -Dm755 build/${info.dubName} $out/bin/${info.dubName}
+            '';
 
-            dub build \
-              --single ${info.fileBase}.d \
-              --compiler=${lib.getExe pkgs.ldc} \
-              --skip-registry=all \
-              --build=release
-
-            runHook postBuild
-          '';
-
-          # The inline `dub.sdl` sets `targetPath "build"`, so the binary is
-          # `build/<dubName>` — the dub package name, which may differ from the
-          # file's basename (see `dubName` in exampleInfo).
-          installPhase = ''
-            install -Dm755 build/${info.dubName} $out/bin/${info.dubName}
-          '';
-
-          meta = {
-            description = "Standalone example: ${info.libName}/examples/${info.fileBase}.d";
-            mainProgram = info.dubName;
-          };
-        });
+            meta = {
+              description = "Standalone example: ${info.libName}/examples/${info.fileBase}.d";
+              mainProgram = info.dubName;
+            };
+          }
+        );
 
       # Group example derivations by their owning lib:
-      # `examples.<lib>.<exampleName>`.
+      # `examples.<lib>.<exampleName>`. Each group shares one deps bundle.
       examplesByLib = lib.pipe (builtins.filter buildableHere allExampleFiles) [
         (lib.groupBy (path: (exampleInfo path).libName))
         (lib.mapAttrs (
-          _: paths:
+          libName: paths:
+          let
+            artifacts = depsForLib libName paths;
+          in
           lib.listToAttrs (
             map (path: {
               name = (exampleInfo path).fileBase;
-              value = mkExamplePackage path;
+              value = mkExamplePackage artifacts path;
             }) paths
           )
         ))
