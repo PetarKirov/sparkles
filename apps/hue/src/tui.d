@@ -97,9 +97,11 @@ struct PreviewTui
     BackgroundMode background;      // (kept for the caller; the viewer paints full-bg)
     ColorDepth depth;               // (unused: the cell renderer emits truecolor)
 
-    /// The scrollbar as one machine (STM9): grab/hover/shape — the
-    /// workspace reads `sb.dragging`/`sb.shape` for capture and pointers.
-    ScrollbarState sb;
+    /// The vertical scrollbar machine — the model's ScrollView axis
+    /// (SCV1: one value, both backends), kept under its pane-local name;
+    /// the workspace reads `sb.dragging`/`sb.shape` for capture/pointers.
+    ref inout(ScrollbarState) sb() inout return @safe pure nothrow @nogc
+        => vm.scroll.v;
     private int width, height;      // pane size in cells
     /// Grid column of the pane's left edge — 0 when full-screen; the split
     /// workspace places the viewer right of the explorer. Pointer events are
