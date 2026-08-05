@@ -272,6 +272,23 @@ in
               pass_filenames = true;
               require_serial = true;
             };
+
+            # Every published docs/**/*.md page must appear in the VitePress
+            # sidebar (docs/.vitepress/config.mts). Logic lives in D (apps/ci
+            # --check-docs-sidebar) per the project guideline that substantial
+            # hook logic must not be shell. pass_filenames=false: the check is
+            # whole-tree (orphans are about files *not* staged), and runs when
+            # any path under docs/ changes — including the sidebar config.
+            check-docs-sidebar = {
+              enable = true;
+              name = "check-docs-sidebar";
+              files = "^docs/";
+              entry = lib.getExe config.packages.ci;
+              args = [ "--check-docs-sidebar" ];
+              language = "system";
+              pass_filenames = false;
+              require_serial = true;
+            };
           };
 
           # Prek built-in hooks:
