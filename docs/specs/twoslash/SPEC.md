@@ -34,6 +34,10 @@ that way. A flat struct decodes uniformly (present fields fill, absent ones defa
 (`target`, `tags`, `filename`, `meta`, `flags`, …), and the lowercase enum members
 map the `type` strings verbatim under wired's default `CaseStyle.original`.
 
+Replacing this model with **SARIF 2.1.0** was evaluated and rejected — see
+[sarif.md](./sarif.md), which also records where SARIF _is_ adopted (as an
+overlay **input** and as a lossy one-way **output** of the `error` channel).
+
 ## 2. Overlay planner (`overlay.d`)
 
 `planTwoslash` partitions `nodes` into two sorted work-lists shared by all three
