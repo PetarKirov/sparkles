@@ -887,7 +887,7 @@ unittest
 }
 
 /**
-One line editor for every query / filter / goto input (`STM10`, `IXB6`):
+One line editor for every query / filter / goto input (`STM13`, `IXB6`):
 a Regular value — the buffer plus whether the editor is capturing input —
 advanced by transformations. Hosts render `text` and their own caret;
 `typed` appends any printable codepoint (UTF-8-encoded), `erased` drops a
