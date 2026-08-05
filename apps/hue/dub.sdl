@@ -15,6 +15,7 @@ stringImportPaths "src"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:syntax" path="../.."
+dependency "sparkles:diff" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:twoslash" path="../.."
 // The terminal UI stack: the interactive viewer (src/tui.d) and the `--twoslash`
