@@ -40,7 +40,7 @@ $(LIST
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
     $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
-    $(ITEM `--check-docs-sidebar` — verify every published `docs/**/*.md` page is linked from the VitePress sidebar in `docs/.vitepress/config.mts` (respects `srcExclude`; home page is implicit))
+    $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/config.mts` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
 )
 
 The script looks for D code blocks starting with:
@@ -117,8 +117,8 @@ import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 
 // in-app modules
 import docs_sidebar :
-    defaultVitePressConfig,
-    unlinkedDocsFromConfig;
+    checkDocsSidebarFromConfig,
+    defaultVitePressConfig;
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import example_manifest : exampleRunsOnHost;
 
@@ -188,9 +188,10 @@ struct CliParams
     bool checkVcsUrls;
 
     @CliOption(`check-docs-sidebar`,
-        "Verify every published docs/**/*.md page is linked from the VitePress "
-        ~ "sidebar (docs/.vitepress/config.mts). Respects srcExclude; the home "
-        ~ "page (docs/index.md) is always considered linked.")
+        "Verify the VitePress sidebar (docs/.vitepress/config.mts) is consistent "
+        ~ "with published docs/**/*.md pages: every page is linked, and every "
+        ~ "sidebar link resolves to a page. Respects srcExclude; the home page "
+        ~ "(docs/index.md) is always considered linked.")
     bool checkDocsSidebar;
 
     @CliOption(`C|ci-stats`,
@@ -1193,9 +1194,10 @@ private int runCheckVcsUrls(string[] files)
     return 0;
 }
 
-/// Verify every published `docs/**/*.md` page appears in the VitePress
-/// sidebar. Invoked by the pre-commit `check-docs-sidebar` hook.
-/// Returns 0 when the sidebar is complete, 1 when pages are missing.
+/// Verify the VitePress sidebar is consistent with published docs pages
+/// (pages → sidebar and sidebar → pages). Invoked by the pre-commit
+/// `check-docs-sidebar` hook. Returns 0 when both directions are clean, 1
+/// when pages are missing from the sidebar or sidebar links are dangling.
 private int runCheckDocsSidebar()
 {
     import std.file : exists, readText;
@@ -1237,27 +1239,51 @@ private int runCheckDocsSidebar()
         .map!(line => line.idup)
         .array;
 
-    const missing = unlinkedDocsFromConfig(configText, mdFiles);
-    if (missing.length == 0)
+    const report = checkDocsSidebarFromConfig(configText, mdFiles);
+    if (report.ok)
     {
-        info(i"{green ✓} All $(mdFiles.length) docs markdown pages are linked from the VitePress sidebar.");
+        info(i"{green ✓} Docs sidebar is consistent: every published page is linked, and every sidebar link resolves ($(mdFiles.length) markdown files checked).");
         return 0;
     }
 
-    stderr.writefln(
-        "✗ %d docs page(s) are not linked from the VitePress sidebar in %s:",
-        missing.length,
-        defaultVitePressConfig,
-    );
-    stderr.writeln;
-    foreach (path; missing)
-        stderr.writefln("  %s", path);
-    stderr.writeln;
-    stderr.writeln(
-        "Add each page under themeConfig.sidebar (or exclude it via srcExclude "
-        ~ "if it must not be published). The home page docs/index.md is always "
-        ~ "considered linked.",
-    );
+    if (report.unlinkedPages.length != 0)
+    {
+        stderr.writefln(
+            "✗ %d docs page(s) are not linked from the VitePress sidebar in %s:",
+            report.unlinkedPages.length,
+            defaultVitePressConfig,
+        );
+        stderr.writeln;
+        foreach (path; report.unlinkedPages)
+            stderr.writefln("  %s", path);
+        stderr.writeln;
+        stderr.writeln(
+            "Add each page under themeConfig.sidebar (or exclude it via srcExclude "
+            ~ "if it must not be published). The home page docs/index.md is always "
+            ~ "considered linked.",
+        );
+        if (report.danglingLinks.length != 0)
+            stderr.writeln;
+    }
+
+    if (report.danglingLinks.length != 0)
+    {
+        stderr.writefln(
+            "✗ %d sidebar link(s) in %s do not resolve to a published docs page:",
+            report.danglingLinks.length,
+            defaultVitePressConfig,
+        );
+        stderr.writeln;
+        foreach (link; report.danglingLinks)
+            stderr.writefln("  %s", link);
+        stderr.writeln;
+        stderr.writeln(
+            "Point each link at an existing docs/**/*.md page (or remove the "
+            ~ "entry). Links that only match an srcExclude-d path are treated "
+            ~ "as dangling.",
+        );
+    }
+
     return 1;
 }
 
