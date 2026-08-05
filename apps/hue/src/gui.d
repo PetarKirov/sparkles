@@ -28,8 +28,10 @@ import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
 
 // The shared scroll-step convention: this file is a wheel PRODUCER, so it
 // applies the notch multiplier itself (INP12).
-import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match, Mods;
-import frame_input : FrameInput, foldFrame;
+import sparkles.base.term_control : PointerShape;
+import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
+    Mods, PointerAction, PointerButton, PointerEvent;
+import frame_input : FrameInput, foldFrame, pointerFor;
 import keymap : Command, commandFor, InputMode, KeyContext;
 import sparkles.input.capability : InputCapabilities, mousePointer,
     touchPointer;
@@ -72,6 +74,7 @@ import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
     resolveSlot, schemeForBackground, Slot, UiTextStyle = TextStyle;
 import sparkles.ui.components.chrome : actionBar, headerBar;
+import sparkles.ui.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : layout;
@@ -123,17 +126,41 @@ private struct SelectionDrag
         => anchorHi > headHi ? anchorHi : headHi;
 }
 
+/// The two panes this host composes. Identities, not indices: the
+/// container resolves them to frames.
+private enum PaneId treePane = 1, docPane = 2;
+
 /// The workspace panes (M15 GROUP-P of the GuiState hoist): the explorer
-/// tree pane (XPL2) with its visibility and focus, and the STM8
-/// tree/document split. Scrolling moved OFF this struct with C-1: each
-/// scrollable model owns its `ScrollView` (`vm.scroll` / `tree.scroll`) —
-/// machines, offsets and px easings as one value both backends step.
+/// tree pane (XPL2), and the dock container that arranges it beside the
+/// document (C-2a) — the container owns the tiling, the STM8 divider
+/// drag, focus and its own pointer capture. Scrolling moved off with C-1:
+/// each scrollable model owns its `ScrollView` (`vm.scroll` /
+/// `tree.scroll`) — machines, offsets and px easings as one value both
+/// backends step.
 private struct Panes
 {
     ExplorerTui tree;
-    bool treeVisible;
-    bool treeFocused;
-    SplitState split;
+    DockContainer dock;
+
+    /// Whether the explorer pane is shown at all ('e' toggles it).
+    bool treeVisible() const @safe pure nothrow
+        => dock.layout.visible(treePane);
+
+    /// ditto
+    void treeVisible(bool v) @safe pure nothrow
+    {
+        dock.layout.setVisible(treePane, v);
+    }
+
+    /// Whether the explorer pane holds focus (`DCK6`, container-owned).
+    bool treeFocused() const @safe pure nothrow @nogc
+        => dock.focused == treePane;
+
+    /// ditto
+    void treeFocused(bool v) @safe pure nothrow @nogc
+    {
+        dock.focused = v ? treePane : docPane;
+    }
 }
 
 /// The input-routing state (M15 GROUP-I of the GuiState hoist): which
@@ -457,13 +484,34 @@ int runGui(
     Panes pn;
     pn.tree.includeGlobs = includeGlobs;
     pn.tree.excludeGlobs = excludeGlobs;
+    // The pane arrangement is the toolkit's dock container (C-2a), run in
+    // CELLS exactly as the terminal host runs it — the pointer is
+    // converted at the boundary, which is the only difference a pixel
+    // target makes here. --tree-width seeds the sidebar's extent; the
+    // container's STM8 divider drag moves it.
+    {
+        const t = pn.dock.layout.addLeaf(treePane,
+            extent: treeWidth < 12 ? 12 : treeWidth, minExtent: 12);
+        const d = pn.dock.layout.addLeaf(docPane);
+        pn.dock.layout.root = pn.dock.layout.addSplit(DockAxis.horizontal,
+            [t, d]);
+    }
     pn.treeVisible = startInTree;
     pn.treeFocused = startInTree;
-    // --tree-width seeds the STM8 split; dragging the divider resizes it
-    // live (cell-granular, like the TUI's).
-    pn.split = SplitState(treeWidth < 12 ? 12 : treeWidth);
-    int treeCols() => pn.split.size;
-    int treePx() => pn.treeVisible ? (treeCols + 1) * fonts.cellW() : 0;
+
+    // The container's frames, refreshed only when an input to them moves —
+    // the arrangement is read many times a frame and changes rarely.
+    void arrangePanes()
+    {
+        const cw = fonts.cellW();
+        const ch = fonts.cellH();
+        pn.dock.layout.nodes[pn.dock.layout.nodeOf(treePane)].maxExtent =
+            (window.width / cw) / 2 < 12 ? 12 : (window.width / cw) / 2;
+        pn.dock.arrange(Rect(0, 0, window.width / cw, window.height / ch));
+    }
+
+    int treeCols() => pn.dock.paneExtent(treePane);
+    int treePx() => pn.dock.paneOrigin(docPane) * fonts.cellW();
 
     int widthCols()
     {
@@ -534,6 +582,10 @@ int runGui(
     pn.tree.chromeRows = 0; // the GUI pane is all tree rows
     pn.tree.root = treeRoot.length ? treeRoot
         : (docPath.length ? dirName(docPath) : ".");
+    // The frames must exist before the first layout: everything below reads
+    // the document pane's width through the container, and an unarranged
+    // container reports nothing.
+    arrangePanes();
     applyTheme(vm.themeIdx); // resolves the theme before the first document
     vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
         source, events, preview, twoslash, docLang);
@@ -685,11 +737,16 @@ int runGui(
     // Pointer capture (STM11, closing IXR6's GUI half). Every draggable
     // affordance takes an id and asks `inp.capture.available(id)` — "free, or
     // already mine" — in place of the allow-list of negations it used to
-    // carry (`!pn.split.dragging && !pn.docSb.dragging && !pn.treeVSb.dragging && …`),
+    // carry (`!split.dragging && !docSb.dragging && !treeVSb.dragging && …`),
     // which every NEW affordance had to be added to inside every OTHER
     // affordance's condition. The Android toolbar became a fourth owner of
     // one screen row and that list did not grow with it.
-    enum size_t capDivider = 1, capDocSb = 2, capTreeSb = 3,
+    //
+    // These are the WITHIN-pane affordances. Pane- and chrome-level
+    // ownership (which pane the pointer is in, the divider between them)
+    // is the container's own capture — the same two levels the terminal
+    // host has, where a pane's grabs live inside its `handle`.
+    enum size_t capContainer = 1, capDocSb = 2, capTreeSb = 3,
         capDocHSb = 4, capTreeHSb = 5, capSelection = 6;
 
     Flashes flash;
@@ -1492,31 +1549,25 @@ int runGui(
         if (inp.fin.leftReleased)
             inp.capture = inp.capture.released();
 
-        bool divZone;
-        if (pn.treeVisible)
-        {
-            const mp = inp.fin.pos;
-            const divX = treeCols * cellW + cellW / 2;
-            const zone = mp.x >= divX - 4 && mp.x <= divX + 4;
-            divZone = zone;
-            if (zone && inp.capture.available(capDivider)
-                && inp.fin.leftPressed)
-            {
-                pn.split = pn.split.started(cast(int)(mp.x / cellW));
-                inp.capture = inp.capture.capturedBy(capDivider);
-            }
-            if (pn.split.dragging)
-            {
-                const maxCols = (screenW / cellW) / 2 < 12
-                    ? 12 : (screenW / cellW) / 2;
-                pn.split = inp.fin.leftReleased
-                    ? pn.split.released()
-                    : pn.split.draggedTo(cast(int)(mp.x / cellW), 12, maxCols);
-                // The width change reflows through the resize debounce.
-            }
-        }
-        else
-            divZone = false;
+        // The pane arrangement, and the divider drag inside it, belong to
+        // the container (DCK3). This host reads a polled pointer rather
+        // than an event queue, so it synthesises the one event the
+        // container needs — in cells, its unit — and lets the routing
+        // decide. A frame the container consumed is a frame the panes'
+        // own affordances sit out, which is how the divider drag keeps
+        // the pointer without any of them naming it.
+        arrangePanes();
+        const dockRoute = pn.dock.handle(
+            Event(pointerFor(inp.fin, cellW, cellH)));
+        if (dockRoute.relayout)
+            arrangePanes(); // the width change reflows via the debounce
+        // The container owns the pointer during a divider drag. Mirror that
+        // into the pane-level machine so every affordance's existing
+        // `available` gate still sees a busy pointer — one ownership fact,
+        // asked at two levels, instead of a second negation chain. The
+        // central release above frees it.
+        if (dockRoute.kind == RouteKind.container)
+            inp.capture = inp.capture.capturedBy(capContainer);
 
         // Interactive scrollbar (hover-expand + thumb grab + track jump):
         // the ONE STM9 machine in px track units (a thumb press grabs in
@@ -1574,14 +1625,28 @@ int runGui(
             }
         }
 
-        // The one pointer-shape decision (mirrors the TUI workspace): live
-        // grabs outrank hover — a scrollbar drag straying over the divider
-        // stays ns-resize, a divider drag stays ew-resize — then hover by
-        // orientation, else the default arrow.
-        // The ONE shared decision (IXB4), mapped to the window cursor —
-        // the TUI writes the identical result as OSC 22.
-        window.pointerShape((wantedPointerShape(pn.split, divZone,
-            vm.scroll.h, pn.tree.scroll.h, vm.scroll.v, pn.tree.scroll.v)));
+        // The one pointer-shape decision, composed by the container
+        // (DCK9) from its dividers and the shapes this host's panes want:
+        // live grabs outrank hover — a scrollbar drag straying over the
+        // divider stays ns-resize, a divider drag stays ew-resize — then
+        // hover by orientation, else the default arrow. The terminal host
+        // composes the identical result and writes it as OSC 22.
+        PointerShape paneGrab()
+        {
+            if (vm.scroll.grabbing)
+                return vm.scroll.shape();
+            if (pn.tree.scroll.grabbing)
+                return pn.tree.scroll.shape();
+            return PointerShape.default_;
+        }
+
+        PointerShape paneHover()
+        {
+            const v = vm.scroll.shape();
+            return v != PointerShape.default_ ? v : pn.tree.scroll.shape();
+        }
+
+        window.pointerShape(pn.dock.shape(paneGrab(), paneHover()));
 
         vm.top = vm.top < 0 ? 0 : (vm.top > maxTop ? maxTop : vm.top);
         const topLine = cast(size_t) vm.top;
@@ -1769,11 +1834,12 @@ int runGui(
                     treeCols - 1));
             pn.tree.scroll.easeH(hHoverH, hIdleH, caps, window.frameSeconds);
             // A row click is not a drag, so it takes no id — it only needs
-            // the pointer to be unowned.
+            // the pointer to be unowned. Focus is NOT set here: the press
+            // already moved it to the pane it landed in, which is the
+            // container's click-to-focus (DCK6).
             if (overTree && !overTreeSb && !overHBar && inp.capture.isFree
                 && clickPressed())
             {
-                pn.treeFocused = true;
                 const row = pn.tree.top
                     + cast(long)((mp.y - (treeTopRows + 1) * cellH) / cellH);
                 if (row >= 0 && row < cast(long) pn.tree.rows.length)
@@ -1785,9 +1851,6 @@ int runGui(
                         activateTree();
                 }
             }
-            else if (clickPressed()
-                && !overSb && !overTree)
-                pn.treeFocused = false;
             // A click on a collapsed `\u2026` in the open popup opens that one run.
             // The popup's geometry is last frame's, which is what the reader
             // aimed at; keys are cell-relative to the box.
