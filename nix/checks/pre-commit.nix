@@ -273,12 +273,12 @@ in
               require_serial = true;
             };
 
-            # Every published docs/**/*.md page must appear in the VitePress
-            # sidebar (docs/.vitepress/config.mts). Logic lives in D (apps/ci
-            # --check-docs-sidebar) per the project guideline that substantial
-            # hook logic must not be shell. pass_filenames=false: the check is
-            # whole-tree (orphans are about files *not* staged), and runs when
-            # any path under docs/ changes — including the sidebar config.
+            # VitePress sidebar ↔ published docs/**/*.md consistency (pages must
+            # appear in the sidebar; sidebar links must resolve to pages). Logic
+            # lives in D (apps/ci --check-docs-sidebar) per the project guideline
+            # that substantial hook logic must not be shell. pass_filenames=false:
+            # the check is whole-tree (orphans are about files *not* staged), and
+            # runs when any path under docs/ changes — including the sidebar config.
             check-docs-sidebar = {
               enable = true;
               name = "check-docs-sidebar";

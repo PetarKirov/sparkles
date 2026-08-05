@@ -1,6 +1,11 @@
 /++
-Verify every published markdown page under `docs/` is linked from the
-VitePress sidebar in `docs/.vitepress/config.mts`.
+Verify the VitePress sidebar in `docs/.vitepress/config.mts` is consistent
+with the published markdown pages under `docs/`:
+
+$(LIST
+    $(ITEM pages → sidebar: every published page is linked from the sidebar)
+    $(ITEM sidebar → pages: every sidebar link points at an existing published page)
+)
 
 Split out from `app.d` so the pure parsers and matchers can be unit-tested
 (the main source file is excluded from the auto-generated test runner).
@@ -18,6 +23,20 @@ enum defaultVitePressConfig = "docs/.vitepress/config.mts";
 /// Route key for the VitePress home page (`docs/index.md`).
 /// It is reachable as `/` even when not listed in the sidebar.
 enum homePageRoute = "";
+
+/// Combined result of a bidirectional sidebar check.
+struct DocsSidebarReport
+{
+    /// Repo-relative `docs/**/*.md` paths with no matching sidebar link.
+    string[] unlinkedPages;
+
+    /// Raw sidebar `link` values that do not resolve to a published page.
+    string[] danglingLinks;
+
+    /// True when both directions are clean.
+    @safe pure nothrow @nogc
+    bool ok() const => unlinkedPages.length == 0 && danglingLinks.length == 0;
+}
 
 /// Normalize a VitePress sidebar `link` (e.g. `/libs/base/`, `/overview`)
 /// or a repo-relative docs path (e.g. `docs/libs/base/index.md`) to a
@@ -216,6 +235,28 @@ string docsFileToRoute(string repoPath)
     return normalizeDocsRoute(repoPath);
 }
 
+/// Build the set of normalized routes that correspond to published pages
+/// (tracked markdown under `docs/`, minus `srcExclude` and non-page paths).
+@safe
+bool[string] publishedRouteSet(string[] mdFiles, string[] srcExcludePatterns)
+{
+    bool[string] routes;
+    foreach (file; mdFiles)
+    {
+        const route = docsFileToRoute(file);
+        if (route is null)
+            continue;
+
+        // Path relative to docs/ for srcExclude matching.
+        const rel = file["docs/".length .. $];
+        if (isSrcExcluded(rel, srcExcludePatterns))
+            continue;
+
+        routes[route] = true;
+    }
+    return routes;
+}
+
 /// Compute the sorted list of docs markdown paths that are not linked from
 /// the sidebar (and not covered by `srcExclude` or the implicit home page).
 ///
@@ -255,9 +296,54 @@ string[] findUnlinkedDocsPages(
     return result;
 }
 
-/// Parse a full VitePress config source and return unlinked docs pages.
+/// Compute the sorted list of sidebar links that do not resolve to a
+/// published page. Deduplicates by normalized route, keeping the first raw
+/// link form seen. Links that only match an `srcExclude`-d path are treated
+/// as dangling (the page is not published).
+///
+/// `mdFiles` — repo-relative paths (`docs/…/*.md`).
+/// `sidebarLinks` — raw sidebar `link` values (`/foo`, `/bar/`).
+/// `srcExcludePatterns` — globs relative to the docs root.
+@safe
+string[] findDanglingSidebarLinks(
+    string[] mdFiles,
+    string[] sidebarLinks,
+    string[] srcExcludePatterns,
+)
+{
+    auto existing = publishedRouteSet(mdFiles, srcExcludePatterns);
+
+    bool[string] seen;
+    auto dangling = appender!(string[]);
+    foreach (link; sidebarLinks)
+    {
+        const route = normalizeDocsRoute(link);
+        if (route in seen)
+            continue;
+        seen[route] = true;
+
+        if (route !in existing)
+            dangling.put(link.idup);
+    }
+
+    auto result = dangling[];
+    result.sort;
+    return result;
+}
+
+/// Parse a full VitePress config source and return unlinked docs pages
+/// (pages → sidebar direction only). Prefer `checkDocsSidebarFromConfig`
+/// for the bidirectional check used by the CLI.
 @safe
 string[] unlinkedDocsFromConfig(string configText, string[] mdFiles)
+{
+    return checkDocsSidebarFromConfig(configText, mdFiles).unlinkedPages;
+}
+
+/// Parse a full VitePress config source and run both directions of the
+/// sidebar consistency check against the given docs markdown inventory.
+@safe
+DocsSidebarReport checkDocsSidebarFromConfig(string configText, string[] mdFiles)
 {
     const sidebarSection = extractArrayField(configText, "sidebar");
     string[] links;
@@ -269,7 +355,10 @@ string[] unlinkedDocsFromConfig(string configText, string[] mdFiles)
     if (srcExcludeSection !is null)
         excludes = extractSrcExcludePatterns(srcExcludeSection);
 
-    return findUnlinkedDocsPages(mdFiles, links, excludes);
+    return DocsSidebarReport(
+        unlinkedPages: findUnlinkedDocsPages(mdFiles, links, excludes),
+        danglingLinks: findDanglingSidebarLinks(mdFiles, links, excludes),
+    );
 }
 
 // ── unittests ──────────────────────────────────────────────────────────────
@@ -395,6 +484,66 @@ unittest
     assert(missing == ["docs/libs/base/orphan.md"]);
 }
 
+@("docs_sidebar.findDanglingSidebarLinks")
+@safe
+unittest
+{
+    const mdFiles = [
+        "docs/index.md",
+        "docs/overview.md",
+        "docs/libs/base/index.md",
+        "docs/research/parsing/grounding/claim.md",
+    ];
+    // /ghost is missing entirely; /research/... is srcExcluded so also dangling;
+    // /overview and /libs/base/ resolve; duplicate raw forms of the same route
+    // should only appear once.
+    const links = [
+        "/overview",
+        "/libs/base/",
+        "/ghost",
+        "/libs/base",
+        "/research/parsing/grounding/claim",
+    ];
+    const excludes = ["**/research/parsing/grounding/**"];
+
+    const dangling = findDanglingSidebarLinks(mdFiles.dup, links.dup, excludes.dup);
+    assert(dangling == [
+        "/ghost",
+        "/research/parsing/grounding/claim",
+    ]);
+}
+
+@("docs_sidebar.checkDocsSidebarFromConfig.bidirectional")
+@safe
+unittest
+{
+    const cfg = q"EOS
+export default defineConfig({
+    srcExclude: ['**/secret/**'],
+    themeConfig: {
+        sidebar: [
+            { text: 'Home-ish', link: '/overview' },
+            { text: 'Ghost', link: '/does-not-exist' },
+            { text: 'Hidden', link: '/secret/hidden' },
+        ],
+    },
+});
+EOS";
+    const mdFiles = [
+        "docs/index.md",
+        "docs/overview.md",
+        "docs/missing.md",
+        "docs/secret/hidden.md",
+    ];
+    const report = checkDocsSidebarFromConfig(cfg, mdFiles.dup);
+    assert(report.unlinkedPages == ["docs/missing.md"]);
+    assert(report.danglingLinks == [
+        "/does-not-exist",
+        "/secret/hidden",
+    ]);
+    assert(!report.ok);
+}
+
 @("docs_sidebar.unlinkedDocsFromConfig")
 @safe
 unittest
@@ -417,4 +566,14 @@ EOS";
     ];
     const missing = unlinkedDocsFromConfig(cfg, mdFiles.dup);
     assert(missing == ["docs/missing.md"]);
+}
+
+@("docs_sidebar.DocsSidebarReport.ok")
+@safe pure nothrow
+unittest
+{
+    DocsSidebarReport clean;
+    assert(clean.ok);
+    assert(!DocsSidebarReport(unlinkedPages: ["docs/x.md"]).ok);
+    assert(!DocsSidebarReport(danglingLinks: ["/x"]).ok);
 }
