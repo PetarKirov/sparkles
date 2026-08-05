@@ -63,6 +63,18 @@ enum Slot : ubyte
     thumb,           /// scrollbar thumb
     selection,       /// selected-content tint (background only)
     chromeFocused,   /// the focused pane's header band (accented background)
+
+    // Diff slots (the diff viewer's design language — hue diff-view `DVL5`):
+    // row tints layered OVER syntax colors (alpha-composited, the
+    // git-split-diffs recipe), a second emphasis tier for changed word
+    // segments (delta's two-tone emphasis), the hunk header, and the filler
+    // opposite unmatched split rows.
+    diffAdded,       /// added-row tint (background only)
+    diffRemoved,     /// removed-row tint (background only)
+    diffEmphAdded,   /// changed word segments within an added/paired row
+    diffEmphRemoved, /// changed word segments within a removed/paired row
+    diffHunk,        /// hunk-header line (`@@ … @@`) text + faint band
+    diffFill,        /// filler opposite an unmatched row in a split layout
 }
 
 private enum slotCount = Slot.max + 1;
@@ -330,6 +342,25 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.fg[thumb] = Color.fromRgb(0x88, 0x88, 0x88);
         p.bg[selection] = Color.fromRgb(0x37, 0x72, 0xcf);
         p.bgAlpha[selection] = 0x30;
+
+        // Diff rows: the shared brand green/red as translucent row tints,
+        // with a stronger second tier for word-level emphasis (delta's
+        // emph/non-emph distinction as alpha, not a second hue). The hunk
+        // header reads as chrome-adjacent info text; the split-layout filler
+        // is a faint neutral wash.
+        p.bg[diffAdded] = Color.fromRgb(0x1b, 0xa6, 0x73);
+        p.bgAlpha[diffAdded] = 0x24;
+        p.bg[diffRemoved] = Color.fromRgb(0xd4, 0x56, 0x56);
+        p.bgAlpha[diffRemoved] = 0x24;
+        p.bg[diffEmphAdded] = Color.fromRgb(0x1b, 0xa6, 0x73);
+        p.bgAlpha[diffEmphAdded] = 0x58;
+        p.bg[diffEmphRemoved] = Color.fromRgb(0xd4, 0x56, 0x56);
+        p.bgAlpha[diffEmphRemoved] = 0x58;
+        p.fg[diffHunk] = Color.fromRgb(0x37, 0x72, 0xcf);
+        p.bg[diffHunk] = Color.fromRgb(0x37, 0x72, 0xcf);
+        p.bgAlpha[diffHunk] = 0x14;
+        p.bg[diffFill] = Color.fromRgb(0x7f, 0x7f, 0x7f);
+        p.bgAlpha[diffFill] = 0x14;
     }
     return p;
 }
