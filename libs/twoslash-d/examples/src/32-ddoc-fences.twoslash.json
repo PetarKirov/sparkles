@@ -1,0 +1,83 @@
+{
+    "code": "/++\nCopies src over dst — D's answer to `memcpy`.\n\nExamples:\n---\nauto dst = new ubyte[4];\ncopyInto(dst, [1, 2, 3, 4]);\n---\n\n```c\nvoid *memcpy(void *dst, const void *src, size_t n); /* returns dst */\n```\n+/\nvoid copyInto(ubyte[] dst, const(ubyte)[] src) { dst[] = src[]; }\n",
+    "language": "d",
+    "nodes": [
+        {
+            "character": 5,
+            "docs": "Copies `src` over `dst` — D's answer to `memcpy`.\n\n### Examples\n\n```d\nauto dst = new ubyte[4];\ncopyInto(dst, [1, 2, 3, 4]);\n```\n\n```c\nvoid *memcpy(void *dst, const void *src, size_t n); /* returns dst */\n```\n",
+            "length": 8,
+            "line": 13,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 5
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 21
+                    },
+                    {
+                        "offset": 34
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 52,
+                        "open": 20
+                    }
+                ]
+            },
+            "start": 213,
+            "text": "void sample.copyInto(ubyte[] dst, const(ubyte)[] src)",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "docs": "Copies `src` over `dst` — D's answer to `memcpy`.\n\n### Examples\n\n```d\nauto dst = new ubyte[4];\ncopyInto(dst, [1, 2, 3, 4]);\n```\n\n```c\nvoid *memcpy(void *dst, const void *src, size_t n); /* returns dst */\n```\n",
+            "length": 8,
+            "line": 13,
+            "start": 213,
+            "text": "void sample.copyInto(ubyte[] dst, const(ubyte)[] src)",
+            "type": "query"
+        },
+        {
+            "character": 22,
+            "length": 3,
+            "line": 13,
+            "start": 230,
+            "text": "(parameter) ubyte[] dst",
+            "type": "hover"
+        },
+        {
+            "character": 42,
+            "length": 3,
+            "line": 13,
+            "start": 250,
+            "text": "(parameter) const(ubyte)[] src",
+            "type": "hover"
+        },
+        {
+            "character": 49,
+            "length": 3,
+            "line": 13,
+            "start": 257,
+            "text": "(parameter) ubyte[] dst",
+            "type": "hover"
+        },
+        {
+            "character": 57,
+            "length": 3,
+            "line": 13,
+            "start": 265,
+            "text": "(parameter) const(ubyte)[] src",
+            "type": "hover"
+        }
+    ],
+    "offsetEncoding": "utf-8"
+}
