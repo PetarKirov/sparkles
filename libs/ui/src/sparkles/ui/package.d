@@ -25,6 +25,7 @@ public import sparkles.ui.layout;
 public import sparkles.ui.tracks;
 public import sparkles.ui.state;
 public import sparkles.ui.scroll_view;
+public import sparkles.ui.dock;
 public import sparkles.ui.display_list;
 public import sparkles.ui.interp.immediate;
 public import sparkles.ui.interp.cells;
