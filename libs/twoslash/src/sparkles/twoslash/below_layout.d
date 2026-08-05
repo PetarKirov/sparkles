@@ -137,6 +137,7 @@ BelowLineLayout layoutBelowLine(in TwoslashReturn tw,
     scope const(BelowBlock)[] blocks, int availWidth) @safe
 {
     import std.algorithm.iteration : filter, map, uniq;
+    import std.algorithm.searching : canFind;
     import std.algorithm.sorting : sort;
     import std.array : array;
 
@@ -199,10 +200,16 @@ BelowLineLayout layoutBelowLine(in TwoslashReturn tw,
 
     // A row's guides are the anchors of every block on a *later* row — all of
     // them to its left, since placement ran right to left.
+    //
+    // Minus the row's own anchors: two blocks can share a column (a query and
+    // the error on the same token, with a third anchor elsewhere on the line).
+    // On the row where that column is labelled, the elbow *is* its connector; a
+    // guide beside it would push the elbow a cell right, out of its own column.
     foreach (r, ref rowSpec; layout.rows)
         rowSpec.guides = order
             .filter!(n => rowOf[indexIn(order, n)] > r)
             .map!(n => anchorCol(tw.nodes[n]))
+            .filter!(c => !rowSpec.blocks.canFind!(bn => anchorCol(tw.nodes[bn]) == c))
             .array
             .sort
             .uniq
@@ -471,4 +478,33 @@ unittest
     assert(g.anchor == "^" && g.fill == "~" && g.guide == "|");
     assert(g.elbow.length == elbowCells, "the elbow must keep its cell budget");
     assert(ConnectorGlyphs.init.guide == "│");
+}
+
+@("below_layout.aSharedColumnIsElbowedTwiceNotGuided")
+@safe unittest
+{
+    // Three blocks over two columns: a query and an error on one token, plus a
+    // second query elsewhere. The shared column is labelled on two consecutive
+    // rows, and on each of them the elbow *is* the connector — a guide beside
+    // it would push the elbow out of its own column.
+    const tw = TwoslashReturn(code: "enum first = head(letters);\n", nodes: [
+        Node(type: NodeType.query, start: 5, length: 5, line: 0, character: 5,
+            text: "(constant) ubyte first"),
+        Node(type: NodeType.query, start: 18, length: 7, line: 0, character: 18,
+            text: "(thread local global) string letters"),
+        Node(type: NodeType.error, start: 18, length: 7, line: 0, character: 18,
+            text: "cannot be read at compile time", level: "error"),
+    ]);
+    const layout = layoutBelowLine(tw, blocksOn(tw, 0), 0);
+    assert(layout.connected);
+    assert(layout.markers.length == 2, "one marker per distinct column");
+
+    assert(layout.rows.length == 3);
+    assert(layout.rows[0].blocks == [1UL] && layout.rows[1].blocks == [2UL]);
+    assert(layout.rows[2].blocks == [0UL]);
+
+    // Column 18 is labelled on rows 0 and 1, so neither draws a guide there.
+    assert(layout.rows[0].guides == [5]);
+    assert(layout.rows[1].guides == [5]);
+    assert(layout.rows[2].guides.length == 0);
 }
