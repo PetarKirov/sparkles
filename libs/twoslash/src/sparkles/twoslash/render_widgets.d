@@ -36,6 +36,8 @@ import sparkles.ui.wrap : TextWrap;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
+import sparkles.twoslash.below_layout : AnchorMarker, anchorCol, AnnotationRow,
+    BelowLineLayout, ConnectorGlyphs, elbowCells, layoutBelowLine, payloadCells;
 import sparkles.twoslash.overlay : BelowBlock, errIsWarning,
     highlightSignature, planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
 import sparkles.twoslash.protocol : Completion, Effects, Node, NodeType,
@@ -211,7 +213,8 @@ uint decorateCodeRow(ref Builder b, uint code, const TwoslashReturn tw,
 
 WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
     const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
-    RgbColor pageFg, TsConfigCache* cache = null, int maxWidth = 0)
+    RgbColor pageFg, TsConfigCache* cache = null, int maxWidth = 0,
+    bool unicode = true)
 {
     import sparkles.ui.canvas : LineStyle;
     import sparkles.ui.geometry : Point, SizeSpec;
@@ -253,10 +256,8 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
 
         rows ~= decorateCodeRow(b, code, tw, plan, line);
 
-        foreach (ref const blk; plan.belowBlocks)
-            if (blk.line == line)
-                rows ~= buildBelowBlock(b, tw.nodes[blk.node], blk.node,
-                    sigSpans(tw.nodes[blk.node]), maxWidth);
+        rows ~= buildBelowLine(b, tw, blocksOn(plan.belowBlocks, line),
+            &sigSpans, maxWidth, unicode);
     }
 
     return b.finish(b.container(WidgetKind.column, rows));
@@ -273,9 +274,18 @@ WidgetTree viewTwoslash(const TwoslashReturn tw)
     auto plan = planTwoslash(tw);
     auto b = Builder();
 
+    TextSpan[] noSpans(const Node) @safe => null;
+
     uint[] blocks;
-    foreach (ref const blk; plan.belowBlocks)
-        blocks ~= buildBelowBlock(b, tw.nodes[blk.node], blk.node);
+    for (size_t i = 0; i < plan.belowBlocks.length;)
+    {
+        size_t j = i;
+        while (j < plan.belowBlocks.length
+            && plan.belowBlocks[j].line == plan.belowBlocks[i].line)
+            ++j;
+        blocks ~= buildBelowLine(b, tw, plan.belowBlocks[i .. j], &noSpans, 0, true);
+        i = j;
+    }
 
     // A childless column is a well-formed empty overlay.
     const col = b.container(WidgetKind.column, blocks);
@@ -296,6 +306,207 @@ in (nodeIndex < tw.nodes.length)
     const root = buildBelowBlock(b, tw.nodes[nodeIndex], nodeIndex,
         maxWidth: maxWidth);
     return b.finish(root);
+}
+
+/// The below-blocks of `line`, in plan order (`below` is sorted by line).
+private const(BelowBlock)[] blocksOn(return scope const(BelowBlock)[] below, size_t line)
+    pure nothrow @nogc
+{
+    size_t first = below.length, last;
+    foreach (i, ref const b; below)
+        if (b.line == line)
+        {
+            if (first == below.length)
+                first = i;
+            last = i + 1;
+        }
+    return first == below.length ? null : below[first .. last];
+}
+
+/**
+The below-line blocks anchored to one source line, as document rows.
+
+Two or more $(B distinct) anchor columns get the connected diagnostic layout of
+$(MREF sparkles,twoslash,below_layout) — a shared marker row, then labels peeled
+off right to left with vertical connectors carrying the anchors that have not
+been labelled yet. Anything else keeps the plain stacked shape, one block per
+caret row, so the overwhelmingly common single-annotation line is untouched.
+*/
+private uint[] buildBelowLine(ref Builder b, const TwoslashReturn tw,
+    scope const(BelowBlock)[] blocks, scope TextSpan[] delegate(const Node) @safe sigSpans,
+    int maxWidth, bool unicode)
+{
+    const layout = layoutBelowLine(tw, blocks, maxWidth);
+
+    uint[] rows;
+    if (!layout.connected)
+    {
+        foreach (ref const blk; blocks)
+            rows ~= buildBelowBlock(b, tw.nodes[blk.node], blk.node,
+                sigSpans(tw.nodes[blk.node]), maxWidth);
+        return rows;
+    }
+
+    // A `// @tag` points at nothing, so it sits above the art, not inside it.
+    foreach (n; layout.unanchored)
+        rows ~= buildBelowBlock(b, tw.nodes[n], n, null, maxWidth);
+
+    const g = unicode ? ConnectorGlyphs.init : ConnectorGlyphs.ascii;
+    rows ~= buildMarkerRow(b, tw, layout, g);
+    foreach (ref const row; layout.rows)
+        rows ~= buildAnnotationRow(b, tw, layout, row, g, sigSpans, maxWidth);
+    return rows;
+}
+
+/// `piece`, offset `gap` cells from whatever precedes it in a `row`. Padding
+/// rather than spaces: a synthetic space would enter the identity channel and
+/// land in a selection or a copy.
+private uint offsetBy(ref Builder b, int gap, uint piece)
+    => b.container(WidgetKind.column, [piece],
+        padding: Insets(0, 0, 0, gap > 0 ? gap : 0));
+
+/// The brand slot coloring `node`'s marker, connector, and label.
+private Slot connectorSlot(const Node node) pure nothrow @nogc
+    => node.type == NodeType.error
+        ? (errIsWarning(node.level) ? Slot.warn : Slot.error)
+        : Slot.caret;
+
+/// The shared marker row: every anchored span's run, left to right, each in its
+/// own brand color and clipped so neighbours stay distinct.
+private uint buildMarkerRow(ref Builder b, const TwoslashReturn tw,
+    in BelowLineLayout layout, ConnectorGlyphs g)
+{
+    uint[] parts;
+    int cur;
+    foreach (ref const m; layout.markers)
+    {
+        parts ~= offsetBy(b, m.col - cur,
+            b.add(Widget(kind: WidgetKind.text, text: markerRun(g, m.width),
+                slot: connectorSlot(tw.nodes[m.node]), hitId: hitOf(m.node))));
+        cur = m.col + m.width;
+    }
+    return b.container(WidgetKind.row, parts);
+}
+
+/// A marker run: the anchor glyph then `width - 1` fill glyphs.
+private const(char)[] markerRun(ConnectorGlyphs g, int width) pure nothrow
+{
+    auto run = g.anchor.dup;
+    foreach (_; 1 .. width)
+        run ~= g.fill;
+    return run;
+}
+
+/**
+One annotation row: the guides still owed a label, then each block's elbow and
+payload.
+
+A guide is a `column` of connector glyphs as tall as the payload beside it, so a
+multi-row payload (a completion list, a broken signature) keeps its neighbours'
+connectors running the whole way down. The count comes from the payload's own
+row widgets, which is exact unless one of them wraps further — in which case the
+guide falls a row short rather than drifting out of column.
+*/
+private uint buildAnnotationRow(ref Builder b, const TwoslashReturn tw,
+    in BelowLineLayout layout, in AnnotationRow row, ConnectorGlyphs g,
+    scope TextSpan[] delegate(const Node) @safe sigSpans, int maxWidth)
+{
+    import std.algorithm.comparison : max;
+
+    auto payloads = new uint[][](row.blocks.length);
+    int height = 1;
+    foreach (i, n; row.blocks)
+    {
+        payloads[i] = buildPayloadRows(b, tw.nodes[n], n, sigSpans(tw.nodes[n]),
+            maxWidth, anchorCol(tw.nodes[n]) + elbowCells);
+        height = max(height, cast(int) payloads[i].length);
+    }
+
+    uint[] parts;
+    int cur;
+    foreach (col; row.guides)
+    {
+        parts ~= offsetBy(b, col - cur, buildGuide(b, tw, layout, col, g, height));
+        cur = col + 1;
+    }
+    foreach (i, n; row.blocks)
+    {
+        const node = tw.nodes[n];
+        const col = anchorCol(node);
+        const elbow = b.add(Widget(kind: WidgetKind.text, text: g.elbow,
+            slot: connectorSlot(node), hitId: hitOf(n)));
+        // The elbow sits beside the payload's *first* row (a `row` start-aligns
+        // its children), so a multi-row payload hangs under its own label.
+        parts ~= offsetBy(b, col - cur,
+            b.container(WidgetKind.row, [elbow, b.container(WidgetKind.column, payloads[i])]));
+        cur = col + elbowCells + payloadCells(node);
+    }
+    return b.container(WidgetKind.row, parts);
+}
+
+/// A vertical connector `height` rows tall, in the color of the label its
+/// anchor is still owed.
+private uint buildGuide(ref Builder b, const TwoslashReturn tw,
+    in BelowLineLayout layout, int col, ConnectorGlyphs g, int height)
+{
+    uint[] glyphs;
+    foreach (_; 0 .. height)
+        glyphs ~= b.add(Widget(kind: WidgetKind.text, text: g.guide,
+            slot: guideSlot(tw, layout, col)));
+    return b.container(WidgetKind.column, glyphs);
+}
+
+/// The slot coloring the guide at `col` — the block that anchor still owes a
+/// label to.
+private Slot guideSlot(const TwoslashReturn tw, in BelowLineLayout layout, int col)
+{
+    foreach (ref const m; layout.markers)
+        if (m.col == col)
+            return connectorSlot(tw.nodes[m.node]);
+    return Slot.caret;
+}
+
+/// `node`'s payload without its caret row: the error message block, the query
+/// signature's rows, or one row per completion candidate. `indent` is the cell
+/// column the payload starts at, which is what is left of `maxWidth` for it.
+private uint[] buildPayloadRows(ref Builder b, const Node node, size_t nodeIndex,
+    TextSpan[] sigSpans, int maxWidth, int indent)
+{
+    const hit = hitOf(nodeIndex);
+    final switch (node.type)
+    {
+        case NodeType.error:
+            const slot = errIsWarning(node.level) ? Slot.warn : Slot.error;
+            const msg = b.add(Widget(kind: WidgetKind.text, text: node.text,
+                slot: slot, hitId: hit));
+            return [b.add(Widget(kind: WidgetKind.panel, slot: slot,
+                paintBackground: true, decoration: accentDeco(slot),
+                padding: Insets.symmetric(0, 1), children: [msg], hitId: hit))];
+
+        case NodeType.query:
+            auto qWidth = SizeSpec.fit_;
+            const avail = maxWidth - indent;
+            if (maxWidth > 0 && avail > 0)
+                qWidth.max = avail;
+            // `TextWrap.none`: the staged breaking already targets `avail`, and
+            // a row that wrapped *again* would push the payload below the
+            // guides counted for it. A residual overlong row runs to the right,
+            // where nothing sits.
+            return signatureBlock(b, node, hit,
+                HoverViewOptions(maxWidth: avail > 0 ? avail : 0, sigSpans: sigSpans),
+                TextStyle.init, qWidth, TextWrap.none);
+
+        case NodeType.completion:
+            uint[] rows;
+            foreach (ref const Completion c; node.completions)
+                rows ~= buildCompletionRow(b, c, node.completionsPrefix, hit);
+            return rows;
+
+        case NodeType.tag:
+        case NodeType.hover:
+        case NodeType.highlight:
+            return null;
+    }
 }
 
 /// One below-line block: a left-indented `column` of a caret row + payload.
@@ -381,18 +592,22 @@ private uint buildCompletionRow(ref Builder b, const Completion c,
     const matchedLen = c.name.length >= prefix.length
         && c.name[0 .. prefix.length] == prefix ? prefix.length : 0;
 
-    uint[] parts;
-    // A per-kind completion icon (◰ class, ƒ method, ▪ property, …), matching the
-    // HTML overlay's icon column; unknown kinds fall back to `•`.
-    parts ~= b.add(Widget(kind: WidgetKind.text, text: completionIconGlyph(c.kind),
-        slot: Slot.muted, hitId: hit));
+    // The name's two halves are one word, so they sit in their own gapless row:
+    // a gap between them would render `alphabet` as `alpha bet`.
+    uint[] name;
     if (matchedLen)
-        parts ~= b.add(Widget(kind: WidgetKind.text, text: c.name[0 .. matchedLen],
+        name ~= b.add(Widget(kind: WidgetKind.text, text: c.name[0 .. matchedLen],
             slot: Slot.matched, hitId: hit));
     if (matchedLen < c.name.length)
-        parts ~= b.add(Widget(kind: WidgetKind.text, text: c.name[matchedLen .. $],
+        name ~= b.add(Widget(kind: WidgetKind.text, text: c.name[matchedLen .. $],
             slot: Slot.unmatched, hitId: hit));
-    return b.container(WidgetKind.row, parts, gap: 1);
+
+    // A per-kind completion icon (◰ class, ƒ method, ▪ property, …), matching the
+    // HTML overlay's icon column; unknown kinds fall back to `•`.
+    const icon = b.add(Widget(kind: WidgetKind.text, text: completionIconGlyph(c.kind),
+        slot: Slot.muted, hitId: hit));
+    return b.container(WidgetKind.row,
+        [icon, b.container(WidgetKind.row, name)], gap: 1);
 }
 
 /**
@@ -1676,4 +1891,84 @@ version (unittest)
             sawNewlineGlyph = true; // the OLD single-run bug
     }
     assert(sawFirst && sawSecond && !sawNewlineGlyph);
+}
+
+@("render_widgets.viewTwoslash.crowdedLineConnectsRightToLeft")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.algorithm.iteration : filter, map;
+    import std.array : array;
+
+    // Two `^?` on one line: a shared marker row, then the rightmost label
+    // first with a connector carrying the left anchor down to the last row.
+    const tw = TwoslashReturn(code: "auto width = spread(lo, hi);\n", nodes: [
+        Node(type: NodeType.query, start: 5, length: 5, line: 0, character: 5,
+            text: "double width"),
+        Node(type: NodeType.query, start: 13, length: 6, line: 0, character: 13,
+            text: "double spread(double, double)"),
+    ]);
+    const c = render(viewTwoslash(tw));
+    auto text = c.ops.filter!(op => op.text.length).array;
+
+    // The marker runs, each anchored at its own source column.
+    auto anchors = text.filter!(op => op.text.canFind("┬")).array;
+    assert(anchors.length == 2);
+    assert(anchors[0].rect.x == 5 && anchors[0].text == "┬────");
+    assert(anchors[1].rect.x == 13 && anchors[1].text == "┬─────");
+
+    // One guide, in the left anchor's column, on the row above the label it
+    // is still carrying.
+    auto guides = text.filter!(op => op.text == "│").array;
+    assert(guides.length == 1);
+    assert(guides[0].rect.x == 5);
+
+    // Right label first, left label last, each elbowed at its own column.
+    auto elbows = text.filter!(op => op.text == "╰─ ").array;
+    assert(elbows.length == 2);
+    assert(elbows[0].rect.x == 13 && elbows[1].rect.x == 5);
+    assert(elbows[0].rect.y < elbows[1].rect.y, "the rightmost span is labelled first");
+    assert(guides[0].rect.y == elbows[0].rect.y, "the guide runs beside the first label");
+}
+
+@("render_widgets.viewTwoslash.guidesRunBesideAMultiRowPayload")
+@safe unittest
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
+
+    // A completion list is several rows; the query's anchor keeps its
+    // connector running beside every one of them.
+    const tw = TwoslashReturn(code: "auto o = t.op;\n", nodes: [
+        Node(type: NodeType.query, start: 5, length: 1, line: 0, character: 5, text: "T o"),
+        Node(type: NodeType.completion, start: 11, length: 0, line: 0, character: 11,
+            completions: [Completion(name: "map"), Completion(name: "filter"),
+                Completion(name: "each")]),
+    ]);
+    const c = render(viewTwoslash(tw));
+    auto guides = c.ops.filter!(op => op.text == "│").array;
+    assert(guides.length == 3, "one guide per candidate row");
+    foreach (gOp; guides)
+        assert(gOp.rect.x == 5);
+}
+
+@("render_widgets.viewTwoslash.singleAnchorKeepsTheStackedShape")
+@safe unittest
+{
+    import std.algorithm.iteration : filter;
+    import std.algorithm.searching : canFind;
+    import std.array : array;
+
+    // A query and an error on the same token: one anchor, so the classic
+    // caret-per-block shape is untouched — no marker row, no connectors.
+    const tw = TwoslashReturn(code: "    render();\n", nodes: [
+        Node(type: NodeType.query, start: 4, length: 6, line: 0, character: 4,
+            text: "void render()"),
+        Node(type: NodeType.error, start: 4, length: 6, line: 0, character: 4,
+            text: "deprecated", level: "warning"),
+    ]);
+    const c = render(viewTwoslash(tw));
+    assert(!c.ops.canFind!(op => op.text.canFind("┬") || op.text == "│"));
+    auto carets = c.ops.filter!(op => op.text == "^?" || op.text == "^^^^^^").array;
+    assert(carets.length == 2, "both blocks keep their own caret row");
 }
