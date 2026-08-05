@@ -196,12 +196,36 @@ private void walk(in DockLayout l, uint idx, in Rect area,
     }
 
     // Visible children only: a hidden pane costs neither space nor divider.
-    uint[] vis;
+    // Stack buffers, because a GPU host re-arranges every frame and a
+    // container that allocated per split would be a per-frame allocation
+    // in the steady state ([`NFR2`](feature-requirements)). A split wider
+    // than the buffer falls back to the heap rather than truncating.
+    enum stackChildren = 32;
+    uint[stackChildren] visBuf;
+    int[stackChildren] extBuf;
+    uint[] visHeap;
+    int[] extHeap;
+    size_t nvis;
     foreach (c; n.children)
-        if (l.nodes[c].visible)
-            vis ~= c;
-    if (!vis.length)
+    {
+        if (!l.nodes[c].visible)
+            continue;
+        if (nvis < stackChildren)
+            visBuf[nvis] = c;
+        else
+        {
+            if (!visHeap.length)
+                visHeap = visBuf[].dup;
+            visHeap ~= c;
+        }
+        ++nvis;
+    }
+    if (!nvis)
         return;
+    uint[] vis = visHeap.length ? visHeap : visBuf[0 .. nvis];
+    if (visHeap.length)
+        extHeap = new int[nvis];
+    int[] ext = extHeap.length ? extHeap : extBuf[0 .. nvis];
 
     const horiz = n.axis == DockAxis.horizontal;
     const total = horiz ? area.width : area.height;
@@ -223,7 +247,6 @@ private void walk(in DockLayout l, uint idx, in Rect area,
     if (remaining < 0)
         remaining = 0;
 
-    auto ext = new int[vis.length];
     foreach (i, c; vis)
     {
         ext[i] = l.nodes[c].extent;
@@ -340,6 +363,38 @@ struct DockContainer
                 n.extent = n.maxExtent;
         }
         dockFrames(layout, area, paneFrames, dividers);
+    }
+
+    /// A pane's laid-out extent along its split's axis, or `0` when it is
+    /// hidden — the arrangement's answer to "how wide is the sidebar".
+    int paneExtent(PaneId pane) const pure nothrow @nogc
+    {
+        foreach (ref f; paneFrames)
+            if (f.pane == pane)
+                return layout.nodes[layout.nodeOf(pane)].kind == DockKind.leaf
+                    && isVerticalStack(pane) ? f.rect.height : f.rect.width;
+        return 0;
+    }
+
+    /// A pane's origin along its split's axis (`0` when hidden), so a host
+    /// can place content without re-deriving the tiling.
+    int paneOrigin(PaneId pane) const pure nothrow @nogc
+    {
+        foreach (ref f; paneFrames)
+            if (f.pane == pane)
+                return isVerticalStack(pane) ? f.rect.y : f.rect.x;
+        return 0;
+    }
+
+    private bool isVerticalStack(PaneId pane) const pure nothrow @nogc
+    {
+        const leaf = layout.nodeOf(pane);
+        foreach (ref n; layout.nodes)
+            if (n.kind == DockKind.split)
+                foreach (c; n.children)
+                    if (c == leaf)
+                        return n.axis == DockAxis.vertical;
+        return false;
     }
 
     /// The pane whose frame contains `p`, or `false` when none does.
