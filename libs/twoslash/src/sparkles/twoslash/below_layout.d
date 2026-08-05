@@ -232,7 +232,7 @@ private int clampWidth(int width, int limit) @safe pure nothrow @nogc
 /// The cells `node`'s payload occupies on its widest row, ignoring the elbow.
 /// A completion list is measured by its longest candidate; it never shares a
 /// row (see $(LREF fitsFlat)), so the figure only bounds the row.
-private int payloadCells(in Node node) @safe
+int payloadCells(in Node node) @safe
 {
     final switch (node.type)
     {
