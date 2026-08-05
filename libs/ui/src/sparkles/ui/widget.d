@@ -1,9 +1,9 @@
 /**
-The widget level (WGT) of $(MREF sparkles,ui): a $(LREF Widget) is a
-$(B tagged-union node in a flat arena), each container referencing its children
-by an explicit index list — not a class hierarchy. The whole tree is one
-relocatable buffer ($(LREF WidgetTree)), cheap to diff and (later)
-`SmallBuffer`-back for `@nogc`.
+The widget level (WGT) of $(MREF sparkles,ui): a $(LREF Widget) is currently a
+tagged record in a flat arena, each container referencing its children by an
+explicit index list — not a class hierarchy. `WGT3` / `UI-O2` replace the record
+with the required closed sum. The whole tree is one relocatable buffer
+($(LREF WidgetTree)), cheap to diff and (later) `SmallBuffer`-back for `@nogc`.
 
 A widget names a semantic $(REF Slot, sparkles,ui,style), $(B never) a concrete
 color, keeping presentation out of the tree (the palette resolves slots during
@@ -104,7 +104,8 @@ struct Widget
     /// animation phase survive a rebuild. $(B Identity) decides "is this the
     /// same element" (state carries over); $(B equality) decides "may I skip
     /// repainting" — element state lives in the store, never in this value,
-    /// which is what keeps `==` total.
+    /// which keeps backend-owned state out of structural equality. Totality and
+    /// copy independence still require every payload to satisfy `PRN6`.
     size_t key;
 
     /// Scroll offset subtracted from every child's origin, in cells (`LAY7`).

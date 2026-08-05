@@ -18,16 +18,16 @@ color — the `Palette` resolves it to a `Visual` during display-list constructi
 | `geometry`         | `Point`/`Size` (specializing `sparkles:math`'s `Vector`, like `TermSize`/`TermPosition`), `Rect`/`Insets` in abstract cells; `SizeSpec`; `cellsOf` — the **one** width authority |
 | `style`            | `Slot`, the resolved `Visual` (color + border/radius/shadow/font), authoring `Decoration`/`TextStyle`, `Palette`, `defaultTwoslashPalette`, `resolveSlot`/`resolveVisual`        |
 | `canvas`           | the DbI `isCanvas!T` capability concept (not an interface), `DrawOp`, the `@safe` `RecordingCanvas`                                                                              |
-| `widget`           | the flat-arena tagged-union `Widget` (children as `uint[]` index lists) + `Builder`                                                                                              |
+| `widget`           | the flat-arena `Widget` (currently a tagged record; `WGT3` targets a closed sum) with explicit `uint[]` child-index lists + `Builder`                                            |
 | `layout`           | the two-pass box-flow layout (`row`/`column`/`stack`/`panel`/`popup`)                                                                                                            |
-| `state`            | `HoverState` — a presentation-free hit-test                                                                                                                                      |
+| `state`            | presentation-free interaction machines for hover, scroll, selection, disclosure, focus, activation and pointer capture                                                           |
 | `display_list`     | `buildDisplayList` — resolves each node's slot + decoration + text style into `DrawOp`s                                                                                          |
 | `interp/immediate` | `paint(canvas, ops)` — the immediate-mode replay (attributes inferred from the canvas)                                                                                           |
 | `interp/cells`     | a retained cell-grid interpreter (diffed minimal updates)                                                                                                                        |
 | `interp/html`      | the **widget → semantic HTML + inline CSS** emitter — the parity ground-truth oracle (see below)                                                                                 |
 
-The concrete canvases are adapters that depend on `sparkles:ui`: `RaylibCanvas`
-(`apps/hue/src/gui_canvas.d`) and `GridCanvas` (`apps/hue/src/tui_canvas.d`).
+The concrete canvases are sibling adapters that depend on `sparkles:ui`:
+`RaylibCanvas` in `sparkles:ui-raylib` and `GridCanvas` in `sparkles:ui-tui`.
 
 ## The two-direction parity harness
 

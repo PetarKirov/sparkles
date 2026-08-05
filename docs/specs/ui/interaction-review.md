@@ -1,6 +1,6 @@
 # `sparkles:ui` interaction architecture review (`IXR`)
 
-_**Status:** review complete; Android addendum 2026-08-02 · **Date:**
+_**Status:** review complete; implementation roll-up 2026-08-05 · **Date:**
 2026-07-31 · **Scope:** every pointer/keyboard interaction behavior hue
 implements, audited for where it lives (toolkit vs `apps/hue`) and where the
 GUI and TUI diverge._
@@ -25,23 +25,23 @@ The stack levels referenced below: **STM** (level 1, pure state machines in
 
 ## Findings
 
-| ID    | Behavior              | Toolkit today                                       | TUI host                                                                    | GUI host                                                                                                                           | Verdict                                                                                                            |
-| ----- | --------------------- | --------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| IXR1  | Scrollbar geometry    | `scrollbarThumb` (STM2) — shared, property-tested   | uses it                                                                     | RESOLVED (B-1): `thumbGeometry` deleted; px layout via `ui_raylib.scrollbarLayout` over STM2                                       | resolved — one formula; the hover-expand easing is the reusable `ScrollbarAnim`                                    |
-| IXR2  | Scrollbar interaction | `ScrollState.pressedAt`/`draggedTo` (grab-relative) | `sbDragging`+`sbGrab` duplicated in `tui.d` AND `explorer.d`                | RESOLVED (B-1): all four bars run `ScrollbarState.pressed/dragged/released` (px track units; 24 px thumb minimum threaded through) | resolved — one machine, one click semantics (thumb grabs in place, track jumps the leading edge)                   |
-| IXR3  | Scrollbar painting    | none                                                | RESOLVED (B-1): both panes paint the WGT10 component                        | RESOLVED (B-1): all four bars draw via `ui_raylib.drawScrollbar`                                                                   | resolved — the cell component + its px twin; palette `track`/`thumb` entries are the one color authority           |
-| IXR4  | Horizontal scrolling  | none                                                | none — wide content clips (explorer labels, fence panels, tables)           | none — same clipping                                                                                                               | **feature gap on every target**                                                                                    |
-| IXR5  | Pane split            | `SplitState` (STM8) — shared                        | divider = exact column; `│` glyph paint                                     | divider = ±4 px zone; 1 px `DrawRectangle`                                                                                         | STM shared ✓; grab zone, paint, and hit metrics per host                                                           |
-| IXR6  | Pointer capture       | `CaptureState` (STM11)                              | RESOLVED: `workspace.d` runs the machine (press owns the drag)              | RESOLVED: all six draggables take an id and ask `available(id)`; one central release                                               | resolved — one capture model on both targets; a new affordance takes an id instead of joining a negation chain     |
-| IXR7  | Click-to-focus        | none                                                | on press, via the capture block                                             | two branches inside the selection click block                                                                                      | same intent, two code paths, historically inconsistent (the TUI's arrived in a bug fix)                            |
-| IXR8  | Wheel routing         | none                                                | pane-under-cursor, 3 rows/notch, `workspace.d` block                        | pane-under-cursor by `mp.x`, fractional accumulation host-side                                                                     | policy duplicated; the GUI's fractional accumulation belongs in `RaylibEvents` (M14)                               |
-| IXR9  | Pointer shape         | `PointerShape` + OSC 22 writers (`term_control`)    | grab-state decision + re-assertion in `workspace.d`; loop writes OSC 22     | the mirrored decision maps to raylib `MOUSE_CURSOR_*` in `gui.d`                                                                   | the decision logic is **copy-pasted**; only the vocabulary is shared                                               |
-| IXR10 | Focus chrome          | `Slot.chromeFocused` + `headerBar(focused)`         | panes stamp `focused` in `workspace.paint`                                  | headers built inline per frame with `focused:` args                                                                                | component shared ✓ (PR #143/#144); stamping still per host                                                         |
-| IXR11 | Document-pane state   | `ViewerModel` (`viewer_model.d`, raylib-free)       | **not used** — `PreviewTui` re-implements top/selection/search/folds/fences | uses it                                                                                                                            | **the biggest split**: the C1 Whole exists but only one backend consumes it                                        |
-| IXR12 | Selection             | `Selection!T` (STM3) — shared                       | line-granular                                                               | char-precise + table regime + ANSI/strip copy modes                                                                                | STM shared ✓; the feature gap (TUI char-precision) is a consequence of IXR11                                       |
-| IXR13 | Search/goto input     | none                                                | `searchKey` editing in `tui.d`                                              | `Mode.search/goto` + `GetCharPressed` editing in `gui.d`                                                                           | two line-editor implementations (the tree filter already shows the fix: shared `filter*` methods on `ExplorerTui`) |
-| IXR14 | Key vocabulary        | `sparkles:input` events; `RaylibEvents` adapter     | `PosixEvents` decodes to it                                                 | ~35 raw raylib polls; `RaylibEvents` written but **unwired** (INP8)                                                                | the M17 milestone; blocks sharing every keyboard behavior above                                                    |
-| IXR15 | Fold interaction      | `DisclosureState` (STM5) + `ViewerModel.foldAt`     | own fold state in `PreviewTui` (IXR11 again)                                | via `ViewerModel`                                                                                                                  | converges automatically when IXR11 is resolved                                                                     |
+| ID    | Behavior              | Toolkit today                                     | TUI host                                                         | GUI host                                                                                                                           | Verdict                                                                                                            |
+| ----- | --------------------- | ------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| IXR1  | Scrollbar geometry    | `scrollbarThumb` (STM2) — shared, property-tested | uses it                                                          | RESOLVED (B-1): `thumbGeometry` deleted; px layout via `ui_raylib.scrollbarLayout` over STM2                                       | resolved — one formula; the hover-expand easing is the reusable `ScrollbarAnim`                                    |
+| IXR2  | Scrollbar interaction | `ScrollbarState` (STM9; grab-relative)            | RESOLVED (B-1): document/explorer bars run the shared machine    | RESOLVED (B-1): all four bars run `ScrollbarState.pressed/dragged/released` (px track units; 24 px thumb minimum threaded through) | resolved — one machine, one click semantics (thumb grabs in place, track jumps the leading edge)                   |
+| IXR3  | Scrollbar painting    | WGT10 cell component + `ui_raylib.scrollbar`      | RESOLVED (B-1): both panes paint the WGT10 component             | RESOLVED (B-1): all four bars draw via `ui_raylib.drawScrollbar`                                                                   | resolved — target-specific paint over one state/geometry model and one palette authority                           |
+| IXR4  | Horizontal scrolling  | `ScrollbarState(ScrollAxis.horizontal)`           | RESOLVED (IXB2): document/explorer horizontal bars               | RESOLVED (IXB2): document/explorer horizontal bars                                                                                 | resolved — wide content is reachable on both interactive targets                                                   |
+| IXR5  | Pane split            | `SplitState` (STM8) — shared                      | divider = exact column; `│` glyph paint                          | divider = ±4 px zone; 1 px `DrawRectangle`                                                                                         | STM shared ✓; grab zone, paint, and hit metrics per host                                                           |
+| IXR6  | Pointer capture       | `CaptureState` (STM11)                            | RESOLVED: `workspace.d` runs the machine (press owns the drag)   | RESOLVED: all six draggables take an id and ask `available(id)`; one central release                                               | resolved — one capture model on both targets; a new affordance takes an id instead of joining a negation chain     |
+| IXR7  | Click-to-focus        | none                                              | on press, via the capture block                                  | two branches inside the selection click block                                                                                      | same intent, two code paths, historically inconsistent (the TUI's arrived in a bug fix)                            |
+| IXR8  | Wheel routing         | none                                              | pane-under-cursor, 3 rows/notch, `workspace.d` block             | pane-under-cursor by `mp.x`, fractional accumulation host-side                                                                     | policy duplicated; the GUI's fractional accumulation belongs in `RaylibEvents` (M14)                               |
+| IXR9  | Pointer shape         | `PointerShape` + `wantedPointerShape` (STM)       | shared decision; workspace writes OSC 22 and re-asserts mid-grab | shared decision mapped through `Window.pointerShape`                                                                               | resolved semantic priority; each adapter still performs its native write                                           |
+| IXR10 | Focus chrome          | `Slot.chromeFocused` + `headerBar(focused)`       | panes stamp `focused` in `workspace.paint`                       | headers built inline per frame with `focused:` args                                                                                | component shared ✓ (PR #143/#144); stamping still per host                                                         |
+| IXR11 | Document-pane state   | `ViewerModel` (`viewer_model.d`, raylib-free)     | RESOLVED (IXB5): `PreviewTui.vm` owns the shared pipeline        | uses it                                                                                                                            | resolved — document/theme/layout/fold/search state has one shared owner; GUI shell state remains `HUE-O1`          |
+| IXR12 | Selection             | `Selection!T` (STM3) — shared                     | line-granular over shared `ViewerModel` rows                     | char-precise + table regime + ANSI/strip copy modes                                                                                | state model shared; TUI char/table precision remains a declared feature-parity gap                                 |
+| IXR13 | Search/goto input     | none                                              | `searchKey` editing in `tui.d`                                   | `Mode.search/goto` + `GetCharPressed` editing in `gui.d`                                                                           | two line-editor implementations (the tree filter already shows the fix: shared `filter*` methods on `ExplorerTui`) |
+| IXR14 | Key vocabulary        | `sparkles:input` events; `RaylibEvents` adapter   | `PosixEvents` decodes to it                                      | RESOLVED (M17): `RaylibEvents` is the one mouse/touch/key producer consumed by the GUI                                             | resolved — both interactive hosts feed the shared vocabulary; native pointer grabbing remains `INP9`               |
+| IXR15 | Fold interaction      | `DisclosureState` (STM5) + `ViewerModel.foldAt`   | RESOLVED (IXB5): via `ViewerModel`                               | via `ViewerModel`                                                                                                                  | resolved — one fold state and transition surface                                                                   |
 
 ## Addendum: the Android surface (IXR16–IXR27)
 
@@ -78,18 +78,15 @@ Two further gaps the same audit surfaced, outside the pointer story:
 | IXR28 | DPI / cell metrics | `apps/terminal` (pt→px, no DPI) and `gui.d` (pt→px, plus an Android-only DPI scale) | two apps, two policies, zero libraries — while `FontSet` already owns `cellW`/`cellH`          |
 | IXR29 | Font discovery     | `libs/raylib-text/…/font_set.d`, a module whose first import is `raylib`            | right library, wrong module: the discovery half is raylib-free and is the only half under test |
 
-## The inconsistency list (user-visible today)
+## Remaining user-visible target differences
 
-- Track click: GUI **centers** the viewport on the click; TUI jumps the
-  thumb's **leading edge** to the pointer (IXR2).
 - The GUI scrollbar hover-expands with an animated width; the TUI's is a
-  fixed column (IXR1/IXR3 — acceptable divergence, but it should be a
-  component parameter, not two programs).
+  fixed column (IXR1/IXR3 — declared target-specific presentation over the
+  same machine).
 - TUI selection is line-granular; GUI is char-precise with table and
   ANSI-copy regimes (IXR11/IXR12).
-- The divider grab zone is one cell in the TUI, ±4 px in the GUI (IXR5).
-- Wide content (explorer labels, fence panels, tables) silently clips on
-  both targets with no way to reach it (IXR4).
+- The divider grab zone is one cell in the TUI and ±4 px in the GUI (IXR5), a
+  target hit-metric difference over the same `SplitState` transition.
 
 ## What the redesign must produce (Phase B scope)
 
@@ -123,7 +120,8 @@ IXB11/IXB12 are independent of all of it.
 branch was in flight, so the ordering below has already partly resolved: IXB1
 shipped with B-1 (`ScrollbarState` + `ui_raylib.scrollbar`, closing
 IXR1–IXR3), IXB2 with PR #150, IXB4 as `wantedPointerShape`, IXB5 as
-`PreviewTui`'s `ViewerModel` adoption, and IXB6 as `LineEditState`. IXR22 is
+`PreviewTui`'s `ViewerModel` adoption, and the IXB6 primitive as
+`LineEditState` (document search/goto consumers remain duplicated). IXR22 is
 discharged too — the wheel multiplier is producer-side (`INP12`), which is
 what unblocked the touch work. **IXB9 is therefore no longer blocked**: the
 shared scrollbar it wanted to arbitrate the bottom row with now exists.
@@ -134,8 +132,8 @@ third bottom-edge affordance on a device where the pointer is a fingertip
 several cells wide — and IXR27 is the proof that two ad-hoc owners of one press
 is not a hypothetical. Order: ~~IXB1~~ (done) → IXB9 → IXB3.
 
-Original sequencing note: IXB1/IXB4 are independent and small; IXB3 wants IXB7 for
-the GUI side but its TUI half can land first (the TUI workspace already
-consumes `Event`s); IXB5 is the largest single move and unlocks IXR12/IXR15
-convergence; IXB2 builds on IXB1 plus a layout-overflow report. The M14–M20
-MVU/RPC plan then lands on top of a hue that is mostly shell + model.
+Original sequencing note: IXB1/IXB4 are independent and small; IXB3 wants IXB7
+for the GUI side but its TUI half can land first (the TUI workspace already
+consumes `Event`s); IXB5 was the largest single move and closed IXR11/IXR15;
+IXB2 builds on IXB1 plus a layout-overflow report. The M14–M20 MVU/RPC plan then
+lands on top of a hue that is mostly shell + model.

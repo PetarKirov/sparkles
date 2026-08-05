@@ -125,4 +125,4 @@ ButtonRelease | PointerMotion)` via GLFW's native handles; native-Wayland:
   `zwp_pointer_constraints`), so every event reaches the app and the cursor can't
   reach the decorations. It is unverified against the actual compositor — exactly
   what the Layer-2 harness is for. Tracked in
-  [hue open issues](../../apps/hue/open-issues.md).
+  [`sparkles:ui` open issue `UI-O3`](../../specs/ui/open-issues.md#ui-o3).

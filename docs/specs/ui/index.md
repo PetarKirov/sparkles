@@ -1,6 +1,6 @@
 # `sparkles:ui` — Feature Specification
 
-_**Status:** living inventory · **Date:** 2026-07-29 · **Scope:** `libs/ui`
+_**Status:** living inventory · **Date:** 2026-08-05 · **Scope:** `libs/ui`
 (`libs/ui/src/sparkles/ui/*.d`), the sibling backend adapters
 (`sparkles:ui-raylib`, `sparkles:ui-tui`), and `sparkles:input` — the shared
 visual language behind every sparkles UI._
@@ -50,6 +50,7 @@ the _decision_.
 | [Containers](./containers.md)                     | the container tier: `ScrollView` (owned scrolling) and the single-window docking layout (splits, tabbed groups, drag-to-redock, focus/capture ownership) — `SCV`/`DCK`                                                                                                            |
 | [Editor](./editor.md) _(planned)_                 | the **editable-text component** — the `EditorState` machine (`EDT`), per-backend text input incl. IME/soft-keyboard phasing (`EDI`), the editor widget (`EDR`), and its consumers (`EDU`) — the capability behind hue's diff **write wave** ([`UIA9`](../hue/ui-architecture.md)) |
 | [Backends](./backends.md)                         | the `isCanvas` seam, the shipped targets, per-backend declared capabilities, and forward-compatibility rules for additional GPU backends                                                                                                                                          |
+| [Open implementation issues](./open-issues.md)    | concrete deferred gaps: Whole/copy semantics, the closed widget sum, and the native pointer grab                                                                                                                                                                                  |
 | [Interaction review](./interaction-review.md)     | the 2026-07-31 audit of every pointer/keyboard behavior: where it lives (toolkit vs `apps/hue`), the GUI/TUI divergences, and the Phase B redesign scope (`IXR`/`IXB`)                                                                                                            |
 | [Migration](./migration.md)                       | absorbing `core-cli`'s UI components and porting `apps/hue` onto the toolkit — the milestone plan                                                                                                                                                                                 |
 
@@ -127,7 +128,7 @@ own it, so coverage is auditable in both directions: requirement → code (the
 | `libs/ui/src/sparkles/ui/interp/cells.d`     | [backends](./backends.md) — `TGT6`; superseded by the cell adapter and retired with it |
 | `libs/ui/src/sparkles/ui/interp/html.d`      | [backends](./backends.md) — `TGT4`, `TGT7`                                             |
 | `libs/ui/src/sparkles/ui/components/`        | [widgets](./widgets.md) — `VMD*`, `WGT7`+                                              |
-| `libs/input/src/sparkles/input/`             | [input](./input.md) — `INP1`–`INP8`                                                    |
+| `libs/input/src/sparkles/input/`             | [input](./input.md) — `INP1`–`INP9`                                                    |
 | `libs/ui-tui/src/`                           | [backends](./backends.md) — `TGT6`                                                     |
 | `libs/ui-raylib/src/`                        | [backends](./backends.md) — `TGT6`                                                     |
 

@@ -1,6 +1,6 @@
 # `sparkles:ui` — Library-wide Feature Requirements
 
-_**Status:** living inventory · **Date:** 2026-07-29 · **Scope:** requirements
+_**Status:** living inventory · **Date:** 2026-08-05 · **Scope:** requirements
 common to the whole toolkit — the architecture (`UIA`), the package graph and
 its build constraints (`PKG`), and non-functional properties (`NFR`)._
 
@@ -8,7 +8,7 @@ its build constraints (`PKG`), and non-functional properties (`NFR`)._
 
 | ID   | Requirement                                                                                                                                                                                                                                                                                    | Status      | Traces to                                                                        |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------- |
-| UIA1 | The toolkit must be **canvas-first**: backends supply only draw primitives and input events, and the library owns everything above that. No native OS widgets, on any target.                                                                                                                  | full        | `canvas.d` `isCanvas`                                                            |
+| UIA1 | The toolkit must be **canvas-first**: the library owns semantic behavior and widget composition, while target adapters provide drawing, native-input translation, device measurement and declared capabilities. No native OS widget may replace a toolkit widget on any target.                | full        | `canvas.d` `isCanvas`; `ui-raylib`; `ui-tui`                                     |
 | UIA2 | It must be structured in **three levels** — state machines (`STM`), layout (`LAY`), widgets (`WGT`) — each usable independently, each lower level free of presentation.                                                                                                                        | partial     | `state.d`; `layout.d`; `widget.d`                                                |
 | UIA3 | The backend contract must be a **capability concept** (`isCanvas!T`, checked structurally with `__traits(compiles)`), not an interface or class hierarchy — so attributes infer, there is no vtable cost, and a backend need not inherit anything.                                             | full        | `canvas.d` `isCanvas`                                                            |
 | UIA4 | The pipeline must be **`view() → layout() → buildDisplayList() → paint(canvas)`**, with every stage before `paint` `@safe` and free of GPU/terminal state, so the whole toolkit is testable through a recording canvas with no window and no tty.                                              | full        | `layout.d`; `display_list.d`; `interp/immediate.d`; `canvas.d` `RecordingCanvas` |
