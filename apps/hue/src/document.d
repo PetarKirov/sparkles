@@ -19,7 +19,8 @@ import std.string : chompPrefix;
 
 import sparkles.base.logger : warning;
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.diff : DiffDoc, diffText, emitPatch, parsePatch;
+import sparkles.diff : DiffDoc, diffText, emitPatch, FileEntry, parsePatch,
+    RowKind;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
     highlightInjected, MdBlock, ResolvedTheme, RgbColor, TsConfigCache;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
@@ -52,7 +53,9 @@ struct Document
     /// `kind == diff`: the diff model; `source` holds the patch text (the
     /// raw / fallback view)
     DiffDoc diffDoc;
-    DiffSides diffSides;     /// `kind == diff`: per-side texts for `DVM5`
+    /// `kind == diff`: per-file side texts for `DVM5` composition,
+    /// parallel to `diffDoc.files` (an empty entry renders plain rows).
+    DiffSides[] diffSides;
 }
 
 /// The per-side full texts of a diff document (`DVM5` syntax composition):
@@ -137,8 +140,139 @@ struct DocumentPipeline
             path: path, title: title, kind: ContentKind.diff,
             source: patchText, lang: "diff", diffDoc: res.value,
         };
+        doc.diffSides = sidesFromWorktree(doc.diffDoc);
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
+    }
+
+    /// `DVS2`'s re-highlight half: for each file of a parsed patch whose
+    /// new side is readable from the worktree, read it and reconstruct the
+    /// old side by reverse-applying the hunks — validated against the
+    /// worktree, so a stale checkout degrades that file to plain rows
+    /// (an empty entry) rather than mislabeled colors.
+    private static DiffSides[] sidesFromWorktree(in DiffDoc dd)
+    {
+        import std.file : exists, isFile;
+
+        auto sides = new DiffSides[](dd.files.length);
+        foreach (fi; 0 .. dd.files.length)
+        {
+            const file = dd.files[fi];
+            if (file.binary || file.hunksCount == 0)
+                continue;
+            const newPath = dd.pathText(file.newPath).idup;
+            if (newPath == "/dev/null" || !newPath.exists || !newPath.isFile)
+                continue;
+            string newText;
+            try
+                newText = readText(newPath);
+            catch (Exception)
+                continue;
+            const oldText = reconstructOldText(dd, file, newText);
+            if (oldText is null)
+                continue; // patch does not match the worktree
+            sides[fi] = DiffSides(
+                canonicalLanguage(newPath.extension.chompPrefix(".")),
+                oldText, newText);
+        }
+        return sides;
+    }
+
+    /// Reconstructs the old side of `file` from the new side's full text by
+    /// reverse-applying its hunks. Context and added rows are validated
+    /// against `newText`; any mismatch returns `null`.
+    package static string reconstructOldText(in DiffDoc dd, in FileEntry file,
+        string newText) @safe
+    {
+        bool newMissing;
+        auto newLines = splitTextLines(newText, newMissing);
+
+        char[] outp;
+        size_t j = 1; // 1-based cursor into newLines
+
+        foreach (ref hunk; dd.fileHunks(file))
+        {
+            // The hunk's first line on the new side (for a pure-removal hunk
+            // the unified header names the line BEFORE the removal point).
+            uint anchor = 0;
+            foreach (ref row; dd.hunkRows(hunk))
+                if (row.newLine != 0)
+                {
+                    anchor = row.newLine;
+                    break;
+                }
+            if (anchor == 0)
+                anchor = hunk.newStart + 1;
+            if (anchor > newLines.length + 1)
+                return null;
+            while (j < anchor)
+            {
+                if (j > newLines.length)
+                    return null;
+                outp ~= newLines[j - 1];
+                outp ~= '\n';
+                j++;
+            }
+            foreach (ref row; dd.hunkRows(hunk))
+            {
+                const rowText = dd.rowText(row);
+                final switch (row.kind)
+                {
+                case RowKind.context:
+                    if (j > newLines.length || newLines[j - 1] != rowText)
+                        return null;
+                    outp ~= rowText;
+                    outp ~= '\n';
+                    j++;
+                    break;
+                case RowKind.added:
+                    if (j > newLines.length || newLines[j - 1] != rowText)
+                        return null;
+                    j++; // present on the new side only
+                    break;
+                case RowKind.removed:
+                    outp ~= rowText;
+                    outp ~= '\n';
+                    break;
+                }
+            }
+        }
+        while (j <= newLines.length)
+        {
+            outp ~= newLines[j - 1];
+            outp ~= '\n';
+            j++;
+        }
+        // The old side's trailing newline is governed by its own flag; when
+        // the file tail is shared (no hunk touches it), the new side's
+        // missing final newline is that shared tail's, so it applies too.
+        if (outp.length && (file.oldMissingNewline || newMissing))
+            outp = outp[0 .. $ - 1];
+        return (() @trusted => cast(string) outp)();
+    }
+
+    /// Line split retaining the final-newline fact (GC twin of the engine's
+    /// span-based splitter, for app-side reconstruction).
+    private static const(char)[][] splitTextLines(const(char)[] text,
+        out bool missingNewline) @safe pure nothrow
+    {
+        missingNewline = false;
+        const(char)[][] lines;
+        if (text.length == 0)
+            return lines;
+        size_t start = 0;
+        foreach (i, c; text)
+            if (c == '\n')
+            {
+                lines ~= text[start .. i];
+                start = i + 1;
+            }
+        if (start < text.length)
+        {
+            lines ~= text[start .. $];
+            missingNewline = true;
+        }
+        return lines;
     }
 
     /// A diff document from two files, computed in-process (`DVS1`) — no VCS
@@ -158,7 +292,7 @@ struct DocumentPipeline
         };
         Document doc = {
             path: newPath, title: text(oldPath, " → ", newPath),
-            kind: ContentKind.diff, lang: "diff", diffSides: sides,
+            kind: ContentKind.diff, lang: "diff", diffSides: [sides],
             diffDoc: diffText(sides.oldText, sides.newText, oldPath, newPath),
         };
         SmallBuffer!char patchBuf;
@@ -269,6 +403,24 @@ bool looksLikePatch(scope const(char)[] content) @safe pure nothrow @nogc
             sawOldHeader = false;
     }
     return false;
+}
+
+
+@("document.reconstructOldText.reverse-apply")
+@safe unittest
+{
+    import sparkles.diff : parsePatch;
+
+    // The worktree's new side + the patch reconstruct the old side.
+    enum patch = "--- a/f.txt\n+++ b/f.txt\n@@ -1,4 +1,4 @@\n one\n-two\n+2\n three\n-four\n+4\n";
+    enum newText = "one\n2\nthree\n4\ntail\n";
+    const dd = parsePatch(patch).value;
+    const old_ = DocumentPipeline.reconstructOldText(dd, dd.files[0], newText);
+    assert(old_ == "one\ntwo\nthree\nfour\ntail\n");
+
+    // A stale worktree (context mismatch) yields null, never wrong colors.
+    assert(DocumentPipeline.reconstructOldText(dd, dd.files[0],
+        "one\nDIFFERENT\nthree\n4\n") is null);
 }
 
 @("document.looksLikePatch.sniff")

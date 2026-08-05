@@ -301,7 +301,7 @@ int runGui(
     string[] codepointMaps = null,       // --font-codepoint-map entries (Android defaults)
     bool liveTypes = true,               // live D types via the oracle (PRJ12)
     DiffDoc initialDiff = DiffDoc.init,  // diff document payload (ContentKind.diff)
-    DiffSides initialDiffSides = DiffSides.init, // per-side texts (DVM5)
+    DiffSides[] initialDiffSides = null, // per-file side texts (DVM5)
 ) @system
 {
     import std.stdio : stderr;

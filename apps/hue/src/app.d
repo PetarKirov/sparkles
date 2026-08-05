@@ -655,14 +655,8 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
 
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-            DiffViewOptions dopt;
-            if (doc.diffSides.oldText.length || doc.diffSides.newText.length)
-            {
-                auto style = highlightedFenceRenderer(&cache, &theme, pageFg);
-                dopt.oldStyled = style(doc.diffSides.lang, doc.diffSides.oldText);
-                dopt.newStyled = style(doc.diffSides.lang, doc.diffSides.newText);
-            }
-            auto tree = viewDiffDoc(doc.diffDoc, dopt);
+            auto tree = viewDiffDoc(doc.diffDoc, DiffViewOptions.init,
+                doc.diffSides, highlightedFenceRenderer(&cache, &theme, pageFg));
             auto frames = layout(tree, Constraints(maxW: previewWidth()));
             const r = frames[tree.root].rect;
             auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
@@ -710,15 +704,10 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
 
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-            DiffViewOptions dopt;
-            if (doc.diffSides.oldText.length || doc.diffSides.newText.length)
-            {
-                auto style = highlightedFenceRenderer(&cache, &theme, pageFg);
-                dopt.oldStyled = style(doc.diffSides.lang, doc.diffSides.oldText);
-                dopt.newStyled = style(doc.diffSides.lang, doc.diffSides.newText);
-            }
             SmallBuffer!char htmlOut;
-            writeWidgetHtmlPage(htmlOut, viewDiffDoc(doc.diffDoc, dopt),
+            writeWidgetHtmlPage(htmlOut,
+                viewDiffDoc(doc.diffDoc, DiffViewOptions.init, doc.diffSides,
+                    highlightedFenceRenderer(&cache, &theme, pageFg)),
                 defaultTwoslashPalette(), pageFg, pageBg, doc.title);
             write(htmlOut[]);
             return 0;
