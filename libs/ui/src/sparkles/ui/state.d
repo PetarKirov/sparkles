@@ -4,9 +4,12 @@ state machines fed the shared `sparkles:input` events — pure logic over
 abstract input, producing state and derived geometry in abstract units, with
 no draw calls and no device units.
 
-Every machine is a $(B Regular value) advanced by transformations
-(`state.stepped(…) → state`; the caller assigns), never by mutating shared
-locals — so behavior can be snapshotted, replayed and diffed in tests. And
+Machines are advanced by transformations and are intended to be $(B Regular
+values). Scalar and immutable-payload machines meet that contract;
+`DisclosureState`'s exposed slice still needs the ownership/copy policy tracked
+by `UI-O1`. They advance as `state.stepped(…) → state` (the caller assigns),
+never by mutating shared locals — so behavior can be snapshotted, replayed and
+diffed in tests. And
 every machine exists $(B once): where behavior was written per backend it
 diverged (two scrollbar thumb formulas scrolling the same document
 differently; one copy affordance flashing on a timer while another held until
@@ -1066,8 +1069,11 @@ closed, opening nodes) and a folded document (default open, closing regions)
 share the machine, and "open all" / "close all" are O(1) resets rather than
 enumerations.
 
-Transformations return new values (the exception set is copied on change), so
-the state is Regular: snapshot it, compare it, replay it.
+Transformations return new values and copy the exception set on change, so the
+public operations support snapshot/replay without mutating an earlier state.
+The exposed D slice still aliases under a default struct copy; `UI-O1` tracks
+the representation work required before this type can claim full Regular value
+semantics.
 */
 struct DisclosureState(Key)
 {
@@ -1166,7 +1172,7 @@ unittest
     assert(!f.isOpen(120) && f.isOpen(300));
     assert(Folds.allOpen.isOpen(120)); // zR: O(1) reset, not an enumeration
 
-    // Regular: value copies compare and diverge independently.
+    // Functional updates compare and leave the earlier snapshot unchanged.
     const snapshot = f;
     f = f.toggled(300);
     assert(snapshot != f && !snapshot.isOpen(120) && snapshot.isOpen(300));

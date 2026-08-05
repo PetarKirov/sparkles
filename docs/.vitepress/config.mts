@@ -673,6 +673,10 @@ export default withMermaid(
                   text: 'Transformer pipeline',
                   link: '/specs/hue/pipeline',
                 },
+                {
+                  text: 'Open implementation issues',
+                  link: '/specs/hue/open-issues',
+                },
               ],
             },
             {
@@ -765,6 +769,10 @@ export default withMermaid(
                 { text: 'Editor (planned)', link: '/specs/ui/editor' },
                 { text: 'Backends', link: '/specs/ui/backends' },
                 { text: 'Migration (planned)', link: '/specs/ui/migration' },
+                {
+                  text: 'Open implementation issues',
+                  link: '/specs/ui/open-issues',
+                },
               ],
             },
             {

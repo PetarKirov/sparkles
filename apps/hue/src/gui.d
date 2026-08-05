@@ -422,10 +422,10 @@ int runGui(
     else if (windowWidth > 0 && windowHeight > 0)
         window.resize(windowWidth * fonts.cellW(), windowHeight * fonts.cellH());
 
-    // The viewer's Whole (PRN1 / the C1 diagnosis): one value owns the
-    // document, its theme-resolved colors, the widget pipeline, folding,
-    // scroll and search — everything the painters and interactions read.
-    // The window, fonts, explorer pane and input translation stay here.
+    // The document pipeline's Whole (PRN1 / the C1 diagnosis): one value owns
+    // the document, its theme-resolved colors, widget pipeline, folding,
+    // document scroll and search. Window resources and the still-separate
+    // interaction groups remain here until HUE-O1 consolidates their ownership.
     ViewerModel vm;
     vm.names = names;
     vm.themes = themes;

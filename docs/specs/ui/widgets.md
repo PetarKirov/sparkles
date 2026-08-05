@@ -1,6 +1,6 @@
 # `sparkles:ui` widgets — Feature Requirements (`WGT`, `VMD`)
 
-_**Status:** partial · **Date:** 2026-07-29 · **Scope:** the widget level — the
+_**Status:** partial · **Date:** 2026-08-05 · **Scope:** the widget level — the
 tree representation, props and identity, and the component catalog, split into
 backend-independent **view models** (`VMD`) and **views** (`WGT`)._
 
@@ -26,11 +26,11 @@ becomes uncopyable.
 
 The tree component is therefore the **exemplar** every other component follows:
 
-| Layer       | Content                                                                         |
-| ----------- | ------------------------------------------------------------------------------- |
-| data        | flat node arena with index links — copy is one array duplication                |
-| interaction | opened set, selection, scroll offset — keyed by identity, _not_ stored on nodes |
-| view        | borrows both, owns glyphs and slots only                                        |
+| Layer       | Content                                                                                        |
+| ----------- | ---------------------------------------------------------------------------------------------- |
+| data        | flat node arena with index links — an independent structural snapshot is one arena duplication |
+| interaction | opened set, selection, scroll offset — keyed by identity, _not_ stored on nodes                |
+| view        | borrows both, owns glyphs and slots only                                                       |
 
 with the flatten step — hierarchy to a linear list of visible rows — as a **pure
 free function**, not a method that also lazily loads children and applies
@@ -40,8 +40,10 @@ filters.
 
 A recursive node type makes the structure an incidental one: ownership is
 unclear, copying is a deep traversal, and every consumer writes its own walk. A
-flat arena with index links is copyable as a value, cache-friendly, `@nogc`-able,
-and lets a single traversal serve every algorithm.
+flat arena with index links can be duplicated in one pass, is cache-friendly and
+`@nogc`-able, and lets a single traversal serve every algorithm. The current D
+slices still alias under default copy; independent value semantics are tracked as
+[`UI-O1`](./open-issues.md#ui-o1).
 
 ## Widget tree (`WGT1`–`WGT6`)
 
@@ -50,7 +52,7 @@ and lets a single traversal serve every algorithm.
 | WGT1 | A widget tree must be a **flat arena** — one relocatable buffer of nodes, containers referencing children by explicit index list — not a class hierarchy or a recursive value.                                                            | full              | `widget.d` `Widget`, `WidgetTree`                                                                                                                                                                                                                              |
 | WGT2 | A view must be a **pure function** `view(model, ctx) → WidgetTree`, with no dependence on frame state, so it is **re-entrant**: any view may embed the output of another view at any depth.                                               | partial           | `widget.d` `Builder`                                                                                                                                                                                                                                           |
 | WGT3 | A widget's payload must be a **sum type** over the widget kinds, so only the fields meaningful for a kind exist, the compiler enforces exhaustive handling, and adding a kind cannot silently skip a backend.                             | not started       | deliberately sequenced **after** W2–W5: freezing the payload sum before the component catalog exists would mean re-cutting it per component. Exhaustiveness is meanwhile enforced by `final switch` over `WidgetKind`.                                         |
-| WGT4 | Widget **props must be Regular** with total structural equality; handlers and other non-comparable payloads must be excluded from the compared value.                                                                                     | full (`00b331ad`) | `Widget.==` is total today (the tree carries no handlers); element state lives in the store, keeping it so                                                                                                                                                     |
+| WGT4 | Widget **props must be Regular** with total, substitutive structural equality and copy independence; handlers and other non-comparable payloads must be excluded from the compared value.                                                 | partial           | handlers and element state are excluded (`00b331ad`), but mutable slice payloads still alias under default copy ([`UI-O1`](./open-issues.md#ui-o1))                                                                                                            |
 | WGT5 | A widget may carry a **key**, and the renderer must maintain a store of per-element state addressed by key, so scroll offsets, focus and animation phase survive a rebuild. Element state lives in that store, never in the widget value. | full (`00b331ad`) | `Widget.key`; `state.d` `ElementStore`/`elementKeys`                                                                                                                                                                                                           |
 | WGT6 | Text must support **styled runs within a single node** — a sequence of (text, slot) spans — so syntax-highlighted content is expressible directly, without a backend overpainting the toolkit's own output to re-colour it.               | partial           | `WidgetKind.rich` + `TextSpan` end to end (`a6c6c69f`), wrapping included (`wrapSpans`, `407bce58` — the twoslash docs/tag paths now wrap as rich runs with inline pills); the GUI signature overpaint retires when the view emits highlighted rich signatures |
 
@@ -58,8 +60,9 @@ and lets a single traversal serve every algorithm.
 > `WGT5` deliberately separates two different relationships. **Equality** decides
 > "may I skip repainting"; **identity** decides "is this the same element, so its
 > state carries over". Conflating them is the classic reconciliation bug, and
-> keeping element state out of the widget value is what keeps `WGT4`'s equality
-> total.
+> keeping element state out of the widget value removes one source of dishonest
+> equality. Totality and copy independence still depend on every payload meeting
+> `PRN6`.
 
 ## Component catalog (`WGT7`+)
 
@@ -107,14 +110,14 @@ consumer.
 
 The exemplar of the view-model/view split.
 
-| ID   | Requirement                                                                                                                                                                                              | Status                                                                                                                | Traces to                                                                                                                 |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| VMD1 | Tree **data** must be a flat node arena with parent/child/sibling indices, copyable as a value, holding no interaction state and no decoration.                                                          | full (`4e3ad035`)                                                                                                     | `tree_widget.d` `TreeData!T`                                                                                              |
-| VMD2 | Tree **interaction state** — opened set, selection, scroll offset — must live in a separate value keyed by node **identity** (a path of identifiers), so one tree can back several independent views.    | partial                                                                                                               | `DisclosureState` + caller-owned selection (`4e3ad035`); path-keyed identity lands with the explorer's stable keys        |
-| VMD3 | **Flatten** must be a pure free function `(data, state) → range of (depth, node, isLastChild)`, with no lazy loading and no filtering mixed in. It must be testable in isolation.                        | full (`4e3ad035`)                                                                                                     | `tree_widget.d` `flatten`                                                                                                 |
-| VMD4 | Guide characters must follow the **four-state model** — space, continue, fork, end — accumulated per depth level, with the per-depth state precomputed during flatten rather than recomputed per render. | full (`4e3ad035`)                                                                                                     | `tree_widget.d` `Guide`/`FlatTreeRow.guides`                                                                              |
-| VMD5 | Lazy children must separate **user intent** ("this should be open") from **loaded state** ("children have been read"), so the tree knows what should be expanded before it has read it.                  | full (`d47a0d01`) — the explorer's open (DisclosureState intent) / expanded (children read one level past open) split | proposed lazy provider                                                                                                    |
-| VMD6 | Node capabilities — has children, has an icon, has a status badge — must be detected by **introspection**, so a filesystem tree and a syntax-tree share one renderer without a type hierarchy.           | partial                                                                                                               | `treeView` introspects optional `label`/`icon`/`slot` (`4e3ad035`); status badges join with the explorer's git decoration |
+| ID   | Requirement                                                                                                                                                                                              | Status                                                                                                                | Traces to                                                                                                                                    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| VMD1 | Tree **data** must be a flat node arena with parent/child/sibling indices, independently snapshot-able as a value, holding no interaction state and no decoration.                                       | partial                                                                                                               | flat arena and separation shipped (`4e3ad035`); explicit copy/alias semantics for its slice and `T` remain [`UI-O1`](./open-issues.md#ui-o1) |
+| VMD2 | Tree **interaction state** — opened set, selection, scroll offset — must live in a separate value keyed by node **identity** (a path of identifiers), so one tree can back several independent views.    | partial                                                                                                               | `DisclosureState` + caller-owned selection (`4e3ad035`); path-keyed identity lands with the explorer's stable keys                           |
+| VMD3 | **Flatten** must be a pure free function `(data, state) → range of (depth, node, isLastChild)`, with no lazy loading and no filtering mixed in. It must be testable in isolation.                        | full (`4e3ad035`)                                                                                                     | `tree_widget.d` `flatten`                                                                                                                    |
+| VMD4 | Guide characters must follow the **four-state model** — space, continue, fork, end — accumulated per depth level, with the per-depth state precomputed during flatten rather than recomputed per render. | full (`4e3ad035`)                                                                                                     | `tree_widget.d` `Guide`/`FlatTreeRow.guides`                                                                                                 |
+| VMD5 | Lazy children must separate **user intent** ("this should be open") from **loaded state** ("children have been read"), so the tree knows what should be expanded before it has read it.                  | full (`d47a0d01`) — the explorer's open (DisclosureState intent) / expanded (children read one level past open) split | proposed lazy provider                                                                                                                       |
+| VMD6 | Node capabilities — has children, has an icon, has a status badge — must be detected by **introspection**, so a filesystem tree and a syntax-tree share one renderer without a type hierarchy.           | partial                                                                                                               | `treeView` introspects optional `label`/`icon`/`slot` (`4e3ad035`); status badges join with the explorer's git decoration                    |
 
 > [!NOTE]
 > An alternative traversal mode, where the visible tree is rebuilt as a function
@@ -124,15 +127,15 @@ The exemplar of the view-model/view split.
 
 ## Milestones
 
-| Milestone | Scope                                                             | Status                                              | Requirements                     |
-| --------- | ----------------------------------------------------------------- | --------------------------------------------------- | -------------------------------- |
-| W0        | Sum-typed payload, Regular props, keys and element state          | partial (`00b331ad`; the payload sum follows W2–W5) | `WGT3`–`WGT5`                    |
-| W1        | Styled-run text; hit identity through the pipeline                | full (`a6c6c69f`, `f166e099`)                       | `WGT6`                           |
-| W2        | Chrome components — scroll view, scrollbar, header/status, gutter | partial (views shipped; hue consumes them in M9)    | `WGT9`–`WGT10`, `WGT17`–`WGT18`  |
-| W3        | Content components — table, list, rich text                       | not started                                         | `WGT11`, `WGT13`                 |
-| W4        | Tree component per the case study                                 | partial (`4e3ad035`; VMD5 with the explorer)        | `WGT12`, `VMD1`–`VMD6`           |
-| W5        | Interactive components — input, button, tabs, disclosure, toast   | not started                                         | `WGT14`–`WGT16`, `WGT23`–`WGT24` |
-| W6        | Media and links                                                   | not started                                         | `WGT21`, `WGT22`                 |
+| Milestone | Scope                                                             | Status                                                                                         | Requirements                     |
+| --------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------- |
+| W0        | Sum-typed payload, Regular props, keys and element state          | partial (`00b331ad`; payload sum is [`UI-O2`](./open-issues.md#ui-o2), copy policy is `UI-O1`) | `WGT3`–`WGT5`                    |
+| W1        | Styled-run text; hit identity through the pipeline                | full (`a6c6c69f`, `f166e099`)                                                                  | `WGT6`                           |
+| W2        | Chrome components — scroll view, scrollbar, header/status, gutter | partial (views shipped; hue consumes them in M9)                                               | `WGT9`–`WGT10`, `WGT17`–`WGT18`  |
+| W3        | Content components — table, list, rich text                       | not started                                                                                    | `WGT11`, `WGT13`                 |
+| W4        | Tree component per the case study                                 | partial (`4e3ad035`; VMD5 with the explorer)                                                   | `WGT12`, `VMD1`–`VMD6`           |
+| W5        | Interactive components — input, button, tabs, disclosure, toast   | not started                                                                                    | `WGT14`–`WGT16`, `WGT23`–`WGT24` |
+| W6        | Media and links                                                   | not started                                                                                    | `WGT21`, `WGT22`                 |
 
 ## Module coverage
 
@@ -144,12 +147,14 @@ The exemplar of the view-model/view split.
 
 ## Relationship to existing specs
 
-| Piece                                                                        | Role                                                      |
-| ---------------------------------------------------------------------------- | --------------------------------------------------------- |
-| [Tree-view case study](../../research/tui-libraries/tree-view-case-study.md) | the design record behind `VMD1`–`VMD6`                    |
-| [layout.md](./layout.md) `LAY`                                               | the sizing, clipping and track facilities components need |
-| [state-machines.md](./state-machines.md) `STM`                               | the behavior half of every interactive component          |
-| [theme.md](./theme.md) `THM2`                                                | the widened slot vocabulary the catalog requires          |
-| [input.md](./input.md) `INP5`                                                | the tier a component declares                             |
+| Piece                                                                        | Role                                                       |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [Tree-view case study](../../research/tui-libraries/tree-view-case-study.md) | the design record behind `VMD1`–`VMD6`                     |
+| [layout.md](./layout.md) `LAY`                                               | the sizing, clipping and track facilities components need  |
+| [state-machines.md](./state-machines.md) `STM`                               | the behavior half of every interactive component           |
+| [theme.md](./theme.md) `THM2`                                                | the widened slot vocabulary the catalog requires           |
+| [input.md](./input.md) `INP5`                                                | the tier a component declares                              |
+| [principles.md](./principles.md) `PRN1`, `PRN5`, `PRN6`, `PRN12`             | ownership, sum-payload and Regular-value rules             |
+| [open-issues.md](./open-issues.md) `UI-O1`, `UI-O2`                          | deferred ownership/copy and widget-sum implementation gaps |
 
 → [Overview](./index.md) · [Layout](./layout.md) · [State machines](./state-machines.md) · [Theme](./theme.md)

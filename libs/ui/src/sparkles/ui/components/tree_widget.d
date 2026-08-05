@@ -4,8 +4,10 @@ view-model/view split, built to the tree-view case study's three-layer design:
 
 $(LIST
     * $(B data) ($(LREF TreeData)) — a flat node arena with parent/child/sibling
-        index links. No interaction state, no decoration: copying the tree is
-        one array duplication, so it is a value.
+        index links. No interaction state, no decoration: an independent
+        structural snapshot needs one explicit arena duplication. The current D
+        slice aliases under default copy (`UI-O1`), and `T` supplies its own copy
+        contract.
     * $(B interaction) — an opened set ($(REF DisclosureState,
         sparkles,ui,state)), a selection, a scroll offset — lives $(B beside)
         the data, keyed by identity, so one tree can back several independent

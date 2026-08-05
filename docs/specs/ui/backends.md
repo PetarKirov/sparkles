@@ -1,22 +1,30 @@
 # `sparkles:ui` backends — Feature Requirements (`TGT`)
 
-_**Status:** partial · **Date:** 2026-07-29 · **Scope:** the `isCanvas` seam, the
+_**Status:** partial · **Date:** 2026-08-05 · **Scope:** the `isCanvas` seam, the
 shipped render targets, per-target declared capabilities, and the rules that keep
 additional backends droppable-in._
 
 ## Design & rationale
 
-A backend supplies **draw primitives and input events, and nothing else.** Every
-decision above that — what to draw, where, in what colour — belongs to the
-toolkit. The contract is a capability concept checked structurally, not an
-interface: attributes infer correctly, there is no dispatch cost, and a backend
-need not inherit anything to qualify.
+A backend supplies **target adaptation, not semantic behavior**. It translates
+native input into the shared vocabulary, measures and paints in device terms,
+reports capabilities and owns device caches. Decisions about widget
+composition, semantic state and transitions belong to the toolkit. The drawing
+contract is a capability concept checked structurally, not an interface:
+attributes infer correctly, there is no dispatch cost, and a backend need not
+inherit anything to qualify.
 
 Backends genuinely differ in what they can render, and the honest response is to
 **declare** those differences rather than document them in prose and hope. A
 cell grid cannot draw a corner radius; a fixed-size bitmap font cannot honour a
 font scale; static HTML cannot express a drag. Each of those is a capability, and
 a target that cannot serve one should say so where the toolkit can act on it.
+
+This is the boundary `PRN8` draws: semantic state and transitions are defined
+once above the backend. A backend still owns native-input translation,
+measurement, painting and device caches, and may report a declared degradation;
+none of those responsibilities licenses a second selection, scroll or activation
+model.
 
 ## The canvas seam (`TGT1`–`TGT2`)
 
@@ -94,11 +102,13 @@ the existing ones **without editing `sparkles:ui`**. That holds only if:
 
 ## Relationship to existing specs
 
-| Piece                                   | Role                                                         |
-| --------------------------------------- | ------------------------------------------------------------ |
-| [layout.md](./layout.md) `LAY3`, `LAY5` | the integer-unit rule and the injected measurement primitive |
-| [input.md](./input.md) `INP6`–`INP9`    | the input half of a target's capabilities and its adapters   |
-| [theme.md](./theme.md) `THM3`           | the resolved appearance a canvas consumes                    |
-| `sparkles:tui`, `sparkles:raylib-text`  | the drawing substrates the adapters wrap                     |
+| Piece                                           | Role                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------ |
+| [layout.md](./layout.md) `LAY3`, `LAY5`         | the integer-unit rule and the injected measurement primitive |
+| [input.md](./input.md) `INP6`–`INP9`            | the input half of a target's capabilities and its adapters   |
+| [theme.md](./theme.md) `THM3`                   | the resolved appearance a canvas consumes                    |
+| [principles.md](./principles.md) `PRN8`, `PRN9` | the shared-semantics and semantic-state boundary             |
+| [open-issues.md](./open-issues.md) `UI-O3`      | the missing native pointer grab in the window/input backend  |
+| `sparkles:tui`, `sparkles:raylib-text`          | the drawing substrates the adapters wrap                     |
 
 → [Overview](./index.md) · [Layout](./layout.md) · [Input](./input.md)

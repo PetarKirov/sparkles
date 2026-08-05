@@ -1,21 +1,19 @@
 # `sparkles:input` — Feature Requirements (`INP`)
 
-_**Status:** partial — the vocabulary, the tier ladder and the terminal
-adapter are shipped; the GPU adapter and declared target tiers are M7 work ·
-**Date:** 2026-07-29 · **Scope:** `libs/input` — the abstract,
+_**Status:** partial — the vocabulary, tier ladder, terminal/GPU adapters and
+input capability declarations are shipped; widget tier declarations and the
+native pointer grab remain open · **Date:** 2026-08-05 · **Scope:** `libs/input` — the abstract,
 capability-tiered input vocabulary shared by every `sparkles:ui` target, and
 the contracts backend adapters satisfy._
 
 ## Design & rationale
 
-Interaction is the other half of "one definition, three targets", and it is
-currently unbuilt. `sparkles:ui` declares pointer, wheel and key event types that
-**nothing in the repository ever constructs**. Meanwhile the terminal library has
-a complete SGR-mouse and key model the toolkit cannot see, the GPU backend polls
-its windowing library directly inside the frame loop, and the HTML target has no
-event model at all. The visible consequence is that the shipped hover state
-machine has zero consumers and each interactive backend hand-rolls its own
-hit-testing.
+Interaction is the other half of "one definition, three targets". It previously
+diverged: the terminal had a private SGR-mouse/key model, the GPU host polled its
+windowing library directly inside the frame loop, and each interactive backend
+hand-rolled hit testing. The shared vocabulary and adapters now translate both
+native sources into the same values; the remaining target differences are
+declared capabilities, not competing semantic models.
 
 `sparkles:input` fixes the shape rather than the symptom: **events are values**,
 in one vocabulary, in a package both the toolkit and the terminal library can
@@ -50,18 +48,18 @@ interaction — instead of aspirational.
 
 ## Capability tiers (`INP5`–`INP6`)
 
-| ID   | Requirement                                                                                                                                                                | Status      | Traces to                                                                                                            |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------- |
-| INP5 | Every interaction must be classified into **tier 0, 1 or 2**, and a widget must declare the highest tier it requires.                                                      | partial     | `sparkles.input.tier` `InteractionTier`/`tierOf` (`97f931e5`); the widget declaration lands with the M6 widget model |
-| INP6 | A target must **declare** which tiers it serves. Emitting a widget that requires a tier above the target's capability must be a reported degradation, never a silent drop. | not started | [backends.md](./backends.md) `TGT5`                                                                                  |
+| ID   | Requirement                                                                                                                                                                | Status  | Traces to                                                                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| INP5 | Every interaction must be classified into **tier 0, 1 or 2**, and a widget must declare the highest tier it requires.                                                      | partial | `sparkles.input.tier` `InteractionTier`/`tierOf` (`97f931e5`); the widget declaration lands with the M6 widget model                                       |
+| INP6 | A target must **declare** which tiers it serves. Emitting a widget that requires a tier above the target's capability must be a reported degradation, never a silent drop. | partial | `InputCapabilities` is exposed by the terminal/GPU adapters (`IXB10`); widget-side tier declaration/reporting remains [`INP5`](#capability-tiers-inp5inp6) |
 
 ## Adapters (`INP7`–`INP9`)
 
-| ID   | Requirement                                                                                                                                                                                                                                                                                                        | Status            | Traces to                                                                                      |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ---------------------------------------------------------------------------------------------- |
-| INP7 | The **terminal** library must decode its wire formats (SGR mouse, key sequences) directly into the shared event vocabulary, retiring its private key/modifier/event types. No separate adapter layer is needed there.                                                                                              | full (`b9aeb102`) | `tui/input.d` (decodes 1-based wire → 0-based `Point`; web-sign wheel deltas incl. horizontal) |
-| INP8 | The **GPU** backend must synthesize events from its windowing library's polled state, since that library has no event queue — including press/release edges, drag tracking and wheel deltas.                                                                                                                       | not started       | proposed `ui-raylib` input adapter                                                             |
-| INP9 | The GPU backend must hold a **real pointer grab for the duration of a drag**, so motion and release are delivered even over window decorations or outside the window. Passive cursor-confinement modes are insufficient; this is a windowing-system concern owned by the adapter, not by application state checks. | not started       | proposed `ui-raylib` pointer grab                                                              |
+| ID   | Requirement                                                                                                                                                                                                                                                                                                        | Status                        | Traces to                                                                                      |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------- |
+| INP7 | The **terminal** library must decode its wire formats (SGR mouse, key sequences) directly into the shared event vocabulary, retiring its private key/modifier/event types. No separate adapter layer is needed there.                                                                                              | full (`b9aeb102`)             | `tui/input.d` (decodes 1-based wire → 0-based `Point`; web-sign wheel deltas incl. horizontal) |
+| INP8 | The **GPU** backend must synthesize events from its windowing library's polled state, since that library has no event queue — including press/release edges, drag tracking and wheel deltas.                                                                                                                       | full (`bbf85c7c`, `8837f3e9`) | `ui_raylib.events` `RaylibEvents` (mouse, touch and hardware-key synthesis)                    |
+| INP9 | The GPU backend must hold a **real pointer grab for the duration of a drag**, so motion and release are delivered even over window decorations or outside the window. Passive cursor-confinement modes are insufficient; this is a windowing-system concern owned by the adapter, not by application state checks. | not started                   | [`UI-O3`](./open-issues.md#ui-o3)                                                              |
 
 > [!IMPORTANT]
 > `INP9` is a known open bug, not a hypothetical: without a grab, a drag released
@@ -73,9 +71,9 @@ interaction — instead of aspirational.
 
 ## Hit testing (`INP10`)
 
-| ID    | Requirement                                                                                                                                                                                                                                       | Status  | Traces to                                                                                                                                                                                                                                                                                                                                                            |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| INP10 | A widget's **hit identity must survive the pipeline** — from the widget, through layout frames, into the display list — so hit testing is done once by the toolkit and every backend consumes the result, instead of each rebuilding its own map. | partial | `state.d` `hoverTargets` (`f166e099` — visibility- and clip-aware, sharing `childClipOf` with the scissor emission) and its per-element twin `keyTargets`/`keyAt`, which is how a click resolves to one collapsible signature region (hue `SIG4`); the hue backends still derive hit maps from overlay-plan decorations until the document is a widget tree (M9/M10) |
+| ID    | Requirement                                                                                                                                                                                                                                       | Status  | Traces to                                                                                                                                                                                                     |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| INP10 | A widget's **hit identity must survive the pipeline** — from the widget, through layout frames, into the display list — so hit testing is done once by the toolkit and every backend consumes the result, instead of each rebuilding its own map. | partial | `state.d` `hoverTargets`/`keyTargets` (`f166e099`) are visibility- and clip-aware and consumed by the shared document tree; non-widget pane/chrome routing remains until the container tier owns it (`DCK13`) |
 
 ### The hit-testing model
 
@@ -108,13 +106,13 @@ order, or equivalently a culled top-down frame-tree descent. The rules:
 
 ## Milestones
 
-| Milestone | Scope                                                    | Status                                           | Requirements   |
-| --------- | -------------------------------------------------------- | ------------------------------------------------ | -------------- |
-| N0        | Package + event vocabulary + tier classification         | full (`97f931e5`; widget declaration in M6)      | `INP1`–`INP5`  |
-| N1        | Terminal decoding retargeted to the shared vocabulary    | full (`b9aeb102`)                                | `INP7`         |
-| N2        | Hit identity plumbed through layout and the display list | partial (`f166e099`; backends consume in M9/M10) | `INP10`        |
-| N3        | GPU adapter: event synthesis + pointer grab              | not started                                      | `INP8`, `INP9` |
-| N4        | Declared target tiers, with reported degradation         | not started                                      | `INP6`         |
+| Milestone | Scope                                                    | Status                                                                        | Requirements   |
+| --------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- | -------------- |
+| N0        | Package + event vocabulary + tier classification         | full (`97f931e5`; widget declaration in M6)                                   | `INP1`–`INP5`  |
+| N1        | Terminal decoding retargeted to the shared vocabulary    | full (`b9aeb102`)                                                             | `INP7`         |
+| N2        | Hit identity plumbed through layout and the display list | partial (`f166e099`; shared document consumes it, container routing remains)  | `INP10`        |
+| N3        | GPU adapter: event synthesis + pointer grab              | partial (`INP8` full; pointer grab remains [`UI-O3`](./open-issues.md#ui-o3)) | `INP8`, `INP9` |
+| N4        | Declared target tiers, with reported degradation         | partial (`IXB10`; widget declaration/reporting remains)                       | `INP6`         |
 
 ## Module coverage
 
@@ -127,11 +125,11 @@ order, or equivalently a culled top-down frame-tree descent. The rules:
 
 ## Relationship to existing specs
 
-| Piece                                          | Role in input                                                         |
-| ---------------------------------------------- | --------------------------------------------------------------------- |
-| [state-machines.md](./state-machines.md) `STM` | the consumers of events — hover, selection, scroll, focus, disclosure |
-| [backends.md](./backends.md) `TGT5`            | declared per-target capabilities, of which input tiers are half       |
-| [widgets.md](./widgets.md) `WGT`               | where a widget declares its required tier                             |
-| End-to-end windowing test harness research     | the validation route for `INP9`                                       |
+| Piece                                                                                                 | Role in input                                                         |
+| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [state-machines.md](./state-machines.md) `STM`                                                        | the consumers of events — hover, selection, scroll, focus, disclosure |
+| [backends.md](./backends.md) `TGT5`                                                                   | declared per-target capabilities, of which input tiers are half       |
+| [widgets.md](./widgets.md) `WGT`                                                                      | where a widget declares its required tier                             |
+| [End-to-end windowing test harness research](../../research/window-system-integration/e2e-testing.md) | the validation route for `INP9` / [`UI-O3`](./open-issues.md#ui-o3)   |
 
 → [Overview](./index.md) · [State machines](./state-machines.md) · [Backends](./backends.md)

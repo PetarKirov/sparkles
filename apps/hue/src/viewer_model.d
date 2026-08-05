@@ -1,9 +1,9 @@
-// The GUI viewer's Whole (`PRN1`/`MIG9`, Sean Parent's C1 diagnosis): one
-// value that owns the document, its theme-resolved colors, the widget-pipeline
-// artifacts, folding, scroll, and search — the state `runGui` used to keep as
-// ~25 free locals related only by lexical scope. Raylib-free, so the whole
-// view/relayout/search/fold surface is unit-testable without a window; gui.d
-// keeps windowing, input translation, and painting.
+// The shared document pipeline's Whole (`PRN1`/`MIG9`, Sean Parent's C1
+// diagnosis): one value owns the document, its theme-resolved colors, widget
+// artifacts, folding, document scroll and search for both GUI and TUI.
+// Raylib-free, so the whole view/relayout/search/fold surface is unit-testable
+// without a window. The remaining window-level interaction groups still live
+// in gui.d (`HUE-O1`), beside windowing, native-input translation and painting.
 module viewer_model;
 
 import ansi_model : AnsiLine, Attr;
@@ -88,12 +88,13 @@ TextStyle attrsToTextStyle(ubyte attrs) pure nothrow @nogc @safe
 }
 
 /**
-The viewer's document + view-state Whole. The host configures the theme
+The shared document-pipeline Whole. The host configures the theme
 list once, feeds documents through $(LREF setDocument), and drives
 $(LREF applyTheme) / $(LREF relayout); every derived artifact (the laid-out
 tree, its ops, the row identity index, hit targets, keyed cells, fence and
-cell structure, match rects) is owned here and stays mutually consistent —
-there is no second copy for a painter to disagree with.
+cell structure, match rects) is owned here and stays mutually consistent. GUI
+interaction groups outside the document pipeline remain host-owned until
+`HUE-O1`; no painter owns a second copy of document state.
 */
 struct ViewerModel
 {

@@ -57,10 +57,10 @@ Containers follow the toolkit's existing split — a presentation-free
 **view** (widget subtrees per pane region, chrome from the existing
 component catalog: `headerBar`, `actionBar`-style tab strips, `scrollbar`).
 Both hue hosts consume `sparkles:input` events since `UIA7`/`UIA8`, so a
-container handles events **once** — there is no per-backend input story,
-only per-backend paint (cells vs px) behind the established seams
-(`WGT10` cell scrollbar / `ui_raylib.drawScrollbar`; `GridCanvas` /
-`RaylibCanvas`).
+container handles semantic events **once**. Backend adapters still translate
+native input, measure and paint in their own device units (cells vs px) behind
+the established seams (`WGT10` cell scrollbar /
+`ui_raylib.drawScrollbar`; `GridCanvas` / `RaylibCanvas`).
 
 Nothing below invents a new state machine: the containers **compose**
 `STM7` (focus), `STM8` (splitter), `STM9` (scrollbar), `STM10` (press),
