@@ -1,0 +1,346 @@
+{
+ "code": "// Crowded lines: several annotations anchored to one line of code. Each is a\n// showcase for the connected below-line layout — a shared marker row, then the\n// labels peeled off right to left with a connector per anchor still owed one.\n\nconst readings = [3, 7, 11]\n\n// Four anchors. The rightmost label is drawn first and the leftmost last, so a\n// connector only ever runs down past anchors whose labels are still to come.\nconst loud = readings.filter(x => x > 3).map(x => x * 10).join(\", \")\n\n// Two anchors far enough apart that both labels fit on one row: vertical space\n// is the scarce resource on a crowded line, so a pair that provably does not\n// overlap costs one row, not two.\nconst tail = \"the quick brown fox jumps over the lazy dog\".split(\" \").at(-1)\n\n// Three anchors of two kinds — two queries and a completion list — each\n// connector in the brand colour of the label it is still carrying, and the\n// list keeping its guides beside every candidate.\n\nconst scale = { linear: 1, logarithmic: 2 }\nconst chosen = scale.linear\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "const readings: number[]",
+   "start": 244,
+   "length": 8,
+   "target": "readings",
+   "line": 4,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "const loud: string",
+   "start": 431,
+   "length": 4,
+   "target": "loud",
+   "line": 8,
+   "character": 6
+  },
+  {
+   "type": "query",
+   "text": "const loud: string",
+   "start": 431,
+   "length": 4,
+   "target": "loud",
+   "line": 8,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "const readings: number[]",
+   "start": 438,
+   "length": 8,
+   "target": "readings",
+   "line": 8,
+   "character": 13
+  },
+  {
+   "type": "query",
+   "text": "const readings: number[]",
+   "start": 438,
+   "length": 8,
+   "target": "readings",
+   "line": 8,
+   "character": 13
+  },
+  {
+   "type": "hover",
+   "text": "(method) Array<number>.filter(predicate: (value: number, index: number, array: number[]) => unknown, thisArg?: any): number[] (+1 overload)",
+   "docs": "Returns the elements of an array that meet the condition specified in a callback function.",
+   "tags": [
+    [
+     "param",
+     "predicate A function that accepts up to three arguments. The filter method calls the predicate function one time for each element in the array."
+    ],
+    [
+     "param",
+     "thisArg An object to which the this keyword can refer in the predicate function. If thisArg is omitted, undefined is used as the this value."
+    ]
+   ],
+   "start": 447,
+   "length": 6,
+   "target": "filter",
+   "line": 8,
+   "character": 22
+  },
+  {
+   "type": "query",
+   "text": "(method) Array<number>.filter(predicate: (value: number, index: number, array: number[]) => unknown, thisArg?: any): number[] (+1 overload)",
+   "docs": "Returns the elements of an array that meet the condition specified in a callback function.",
+   "tags": [
+    [
+     "param",
+     "predicate A function that accepts up to three arguments. The filter method calls the predicate function one time for each element in the array."
+    ],
+    [
+     "param",
+     "thisArg An object to which the this keyword can refer in the predicate function. If thisArg is omitted, undefined is used as the this value."
+    ]
+   ],
+   "start": 447,
+   "length": 6,
+   "target": "filter",
+   "line": 8,
+   "character": 22
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) x: number",
+   "start": 454,
+   "length": 1,
+   "target": "x",
+   "line": 8,
+   "character": 29
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) x: number",
+   "start": 459,
+   "length": 1,
+   "target": "x",
+   "line": 8,
+   "character": 34
+  },
+  {
+   "type": "hover",
+   "text": "(method) Array<number>.map<number>(callbackfn: (value: number, index: number, array: number[]) => number, thisArg?: any): number[]",
+   "docs": "Calls a defined callback function on each element of an array, and returns an array that contains the results.",
+   "tags": [
+    [
+     "param",
+     "callbackfn A function that accepts up to three arguments. The map method calls the callbackfn function one time for each element in the array."
+    ],
+    [
+     "param",
+     "thisArg An object to which the this keyword can refer in the callbackfn function. If thisArg is omitted, undefined is used as the this value."
+    ]
+   ],
+   "start": 466,
+   "length": 3,
+   "target": "map",
+   "line": 8,
+   "character": 41
+  },
+  {
+   "type": "query",
+   "text": "(method) Array<number>.map<number>(callbackfn: (value: number, index: number, array: number[]) => number, thisArg?: any): number[]",
+   "docs": "Calls a defined callback function on each element of an array, and returns an array that contains the results.",
+   "tags": [
+    [
+     "param",
+     "callbackfn A function that accepts up to three arguments. The map method calls the callbackfn function one time for each element in the array."
+    ],
+    [
+     "param",
+     "thisArg An object to which the this keyword can refer in the callbackfn function. If thisArg is omitted, undefined is used as the this value."
+    ]
+   ],
+   "start": 466,
+   "length": 3,
+   "target": "map",
+   "line": 8,
+   "character": 41
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) x: number",
+   "start": 470,
+   "length": 1,
+   "target": "x",
+   "line": 8,
+   "character": 45
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) x: number",
+   "start": 475,
+   "length": 1,
+   "target": "x",
+   "line": 8,
+   "character": 50
+  },
+  {
+   "type": "hover",
+   "text": "(method) Array<number>.join(separator?: string): string",
+   "docs": "Adds all the elements of an array into a string, separated by the specified separator string.",
+   "tags": [
+    [
+     "param",
+     "separator A string used to separate one element of the array from the next in the resulting string. If omitted, the array elements are separated with a comma."
+    ]
+   ],
+   "start": 483,
+   "length": 4,
+   "target": "join",
+   "line": 8,
+   "character": 58
+  },
+  {
+   "type": "hover",
+   "text": "const tail: string | undefined",
+   "start": 694,
+   "length": 4,
+   "target": "tail",
+   "line": 13,
+   "character": 6
+  },
+  {
+   "type": "query",
+   "text": "const tail: string | undefined",
+   "start": 694,
+   "length": 4,
+   "target": "tail",
+   "line": 13,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "(method) String.split(separator: string | RegExp, limit?: number): string[] (+1 overload)",
+   "docs": "Split a string into substrings using the specified separator and return them as an array.",
+   "tags": [
+    [
+     "param",
+     "separator A string that identifies character or characters to use in separating the string. If omitted, a single-element array containing the entire string is returned."
+    ],
+    [
+     "param",
+     "limit A value used to limit the number of elements returned in the array."
+    ]
+   ],
+   "start": 747,
+   "length": 5,
+   "target": "split",
+   "line": 13,
+   "character": 59
+  },
+  {
+   "type": "hover",
+   "text": "(method) Array<string>.at(index: number): string | undefined",
+   "docs": "Returns the item located at the specified index.",
+   "tags": [
+    [
+     "param",
+     "index The zero-based index of the desired code unit. A negative index will count back from the last item."
+    ]
+   ],
+   "start": 758,
+   "length": 2,
+   "target": "at",
+   "line": 13,
+   "character": 70
+  },
+  {
+   "type": "query",
+   "text": "(method) Array<string>.at(index: number): string | undefined",
+   "docs": "Returns the item located at the specified index.",
+   "tags": [
+    [
+     "param",
+     "index The zero-based index of the desired code unit. A negative index will count back from the last item."
+    ]
+   ],
+   "start": 758,
+   "length": 2,
+   "target": "at",
+   "line": 13,
+   "character": 70
+  },
+  {
+   "type": "hover",
+   "text": "const scale: {\n    linear: number;\n    logarithmic: number;\n}",
+   "start": 973,
+   "length": 5,
+   "target": "scale",
+   "line": 19,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "(property) linear: number",
+   "start": 983,
+   "length": 6,
+   "target": "linear",
+   "line": 19,
+   "character": 16
+  },
+  {
+   "type": "hover",
+   "text": "(property) logarithmic: number",
+   "start": 994,
+   "length": 11,
+   "target": "logarithmic",
+   "line": 19,
+   "character": 27
+  },
+  {
+   "type": "hover",
+   "text": "const chosen: number",
+   "start": 1017,
+   "length": 6,
+   "target": "chosen",
+   "line": 20,
+   "character": 6
+  },
+  {
+   "type": "query",
+   "text": "const chosen: number",
+   "start": 1017,
+   "length": 6,
+   "target": "chosen",
+   "line": 20,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "const scale: {\n    linear: number;\n    logarithmic: number;\n}",
+   "start": 1026,
+   "length": 5,
+   "target": "scale",
+   "line": 20,
+   "character": 15
+  },
+  {
+   "type": "query",
+   "text": "const scale: {\n    linear: number;\n    logarithmic: number;\n}",
+   "start": 1026,
+   "length": 5,
+   "target": "scale",
+   "line": 20,
+   "character": 15
+  },
+  {
+   "type": "completion",
+   "start": 1032,
+   "length": 0,
+   "completions": [
+    {
+     "name": "linear",
+     "kind": "property",
+     "kindModifiers": "",
+     "sortText": "11"
+    },
+    {
+     "name": "logarithmic",
+     "kind": "property",
+     "kindModifiers": "",
+     "sortText": "11"
+    }
+   ],
+   "completionsPrefix": ".",
+   "line": 20,
+   "character": 21
+  },
+  {
+   "type": "hover",
+   "text": "(property) linear: number",
+   "start": 1032,
+   "length": 6,
+   "target": "linear",
+   "line": 20,
+   "character": 21
+  }
+ ]
+}
