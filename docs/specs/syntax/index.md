@@ -98,7 +98,10 @@ palette)` concretizer and a `byStyledLine` per-line adapter are recorded seams.
 - **Grammars are supplied, not vendored.** A Nix bundle (`ts-grammars`) links
   `<lang>/parser` + `<lang>/queries/` per language from `nixpkgs#tree-sitter-grammars`
   (D built from `gdamore/tree-sitter-d`, Helix's pin), exported to tests and tools via
-  `SPARKLES_TS_GRAMMAR_PATH`. Query files are consumed as shipped (upstream dialect =
+  `SPARKLES_TS_GRAMMAR_PATH`. Two grammars come from outside nixpkgs, both pinned
+  through `pkgs.tree-sitter.buildGrammar`: D, and SDLang — the latter maintained
+  in-house at [`PetarKirov/tree-sitter-sdl`][ts-sdl] because none existed, which is
+  what makes the repo's own `dub.sdl` files highlight. Query files are consumed as shipped (upstream dialect =
   the reference semantics we implement); per-language packaging quirks are normalized in
   the bundle derivation, keeping supply-chain mess out of D code.
 
@@ -184,6 +187,7 @@ The milestones that build this — bottom-up, each independently useful — are 
 [helix]: ../../research/parsing/helix.md
 [linguist]: ../../research/parsing/linguist.md
 [lsp-st]: ../../research/parsing/lsp-semantic-tokens.md
+[ts-sdl]: https://github.com/PetarKirov/tree-sitter-sdl
 
 <!-- Guidelines & in-tree sources -->
 
