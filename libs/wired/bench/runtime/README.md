@@ -8,12 +8,13 @@ engines × datasets × ops, one row per case.
 | Ecosystem | Engines                                                | Integration      |
 | --------- | ------------------------------------------------------ | ---------------- |
 | D         | `std.json` (baseline), `mir-ion`, `asdf`, `jsoniopipe` | dub dependencies |
-| D (SUT)   | `wired` (typed `decode` only today)                    | in-tree          |
+| D (SUT)   | `wired`                                                | in-tree          |
+| C/C++     | yyjson, simdjson, rapidjson                            | nix-built shims  |
+| Rust      | serde_json, simd-json, sonic-rs                        | nix-built shims  |
 
-The old bespoke executable harness also drove C/C++/Rust engines (yyjson,
-simdjson, rapidjson, serde_json, simd-json, sonic-rs) through nix-built
-shims; those adapters are **not wired up** on the runner port yet — the
-historical numbers live in `results/` and
+The default unittest configuration builds the D field. Use
+`-c unittest-foreign` inside the devshell for the full competitive matrix.
+Historical findings and every accepted/rejected optimization are recorded in
 [`docs/specs/wired/bench-baseline.md`](../../../../docs/specs/wired/bench-baseline.md).
 
 ## Running
@@ -25,6 +26,10 @@ cd libs/wired/bench/runtime
 
 # Canonical run: release codegen tuned to the host CPU (-mcpu=native).
 dub test -b bench -- --bench --perf --group-by=dataset,operation
+
+# Full competitive field (nix-built foreign shims):
+dub test -b bench -c unittest-foreign -- \
+    --bench --perf --bench-min-time=2000 --group-by=dataset,operation
 
 # Useful subsets while iterating:
 dub test -b bench -- --bench -i 'wired\.serialize'      # one op
@@ -80,6 +85,25 @@ calibration shows the group would multiplex. `--syscalls` and the tier-0
 `/proc` counters (`--metrics=syscr,cache-hit,…`) work too — see the
 [test-runner docs](../../../../docs/libs/test-runner/how-to/benchmark.md).
 
+For instruction attribution, record one wired row and demangle the D symbols:
+
+```sh
+WIRED_BENCH_ENGINES=wired-native WIRED_BENCH_DATASETS=mesh \
+perf record -e instructions:u -o /tmp/wired-instructions.data -- \
+    build/wired-runtime-bench-test-unittest-foreign \
+    --bench -i 'wired\.parse$' --bench-min-time=3000 --no-colors
+
+perf report -i /tmp/wired-instructions.data --stdio --no-children \
+    --percent-limit=1 | ddemangle
+```
+
+Compare engines within one snapshot: yyjson wall time has moved by 10–15%
+between otherwise identical runs on the benchmark host. Retired instructions
+are the stable cross-run diagnostic, but throughput remains the acceptance
+gate. If a median is unexpectedly slow while its own minimum is normal, rerun
+the row—the engine set can perturb allocator/cache state enough to make a row
+bimodal.
+
 ## Verification
 
 Every op verifies itself once, in its untimed `after`, against the
@@ -127,6 +151,30 @@ short budgets under-report allocation-heavy paths. Old → new field mapping:
 cells (`ipc`, `instr`, …). The findings note that reads the recorded
 snapshots is
 [`docs/specs/wired/bench-baseline.md`](../../../../docs/specs/wired/bench-baseline.md).
+
+The snapshot writer does not emit repository-canonical JSON: keys may be in
+insertion order and large integral metrics may use exponent notation. Before
+committing a new result, sort its keys, use plain decimal notation for those
+metrics, retain the trailing newline, and reparse/compare the normalized file
+to ensure formatting did not change its data. Both `prettier` and the
+`pretty-format-json` commit hook must accept the result.
+
+## Generated single-TU oracle
+
+`wired-inline` is an opt-in code-generation oracle: it builds a generated
+single-translation-unit copy of the parser and verifies that its structural
+fingerprint agrees with `wired-native`. Regenerate the copy whenever a module
+on the wired parse path or its base float-conversion dependency changes:
+
+```sh
+cd libs/wired/bench/runtime
+dub run --single tools/gen-wired-inline.d
+```
+
+Its equivalence unittest is part of the ordinary runtime-benchmark test suite.
+For a measured native/oracle comparison, additionally enable
+`--d-version=BenchWiredInline`; keep that engine out of normal matrices because
+its second retained document changes the allocator regime of neighboring rows.
 
 ## Datasets
 
