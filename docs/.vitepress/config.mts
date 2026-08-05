@@ -197,7 +197,7 @@ export default withMermaid(
               items: [
                 {
                   text: 'Open issues',
-                  link: '/apps/hue/open-issues',
+                  link: '/specs/hue/open-issues',
                 },
               ],
             },
