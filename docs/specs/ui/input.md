@@ -77,6 +77,35 @@ interaction — instead of aspirational.
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | INP10 | A widget's **hit identity must survive the pipeline** — from the widget, through layout frames, into the display list — so hit testing is done once by the toolkit and every backend consumes the result, instead of each rebuilding its own map. | partial | `state.d` `hoverTargets` (`f166e099` — visibility- and clip-aware, sharing `childClipOf` with the scissor emission) and its per-element twin `keyTargets`/`keyAt`, which is how a click resolves to one collapsible signature region (hue `SIG4`); the hue backends still derive hit maps from overlay-plan decorations until the document is a widget tree (M9/M10) |
 
+### The hit-testing model
+
+Positional hit-testing is a **pure query over per-frame derived data**:
+the flat hit list (`hoverTargets`/`keyTargets`) scanned in reverse paint
+order, or equivalently a culled top-down frame-tree descent. The rules:
+
+- **Hit geometry is derived, never registered.** Hit rects come from the
+  same laid-out frames as the paint, computed as a by-product of display-
+  list emission with visibility and clips applied — one source, so paint
+  and hit cannot drift (the `IXR27` invariant).
+- **Hit order is reverse paint order.** Stacking is hierarchical and the
+  display list is its ground truth; there is no separate z coordinate.
+  Topmost-wins falls out of iterating the list backwards.
+- **Targets are indices** (hit ids), not pointers — Regular, lifetime-free,
+  assertable in tests.
+- **Out-of-bounds content is a top layer.** Popups and overlays, which
+  escape their parent's bounds, keep explicit rects and are tested before
+  the tree/list, front to back.
+- **Events route against the last painted frame's data** — the layout the
+  user saw — never against a mid-rebuild state.
+- **Positional hits are the last resort in routing precedence**: pointer
+  capture (`STM11`) first, then the gesture owner, then top layers, then
+  the positional query (see [containers](./containers.md) `DCK13`).
+- **Scaling escalation is bounded**: if a profile ever shows the query hot
+  (a canvas with ~10⁴+ simultaneously visible targets), the escalation is
+  a bucketed uniform grid built from the same derived list, behind the
+  same pure query function — an implementation detail, not an
+  architecture.
+
 ## Milestones
 
 | Milestone | Scope                                                    | Status                                           | Requirements   |
