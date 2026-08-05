@@ -69,7 +69,7 @@ struct YyjsonEngine
     const(char)[] serialize() @trusted
     {
         releaseRendered();
-        size_t len;
+        object.size_t len;
         rendered = yyjson_write(doc, 0, &len);
         enforce(rendered !is null, "yyjson_write failed");
         return rendered[0 .. len];
