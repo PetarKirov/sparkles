@@ -11,13 +11,15 @@
 // paint the same value — the backend is a sink choice, not a pipeline.
 module document;
 
-import std.algorithm.searching : endsWith;
+import std.algorithm.searching : endsWith, startsWith;
+import std.conv : text;
 import std.file : readText;
 import std.path : baseName, extension;
 import std.string : chompPrefix;
 
 import sparkles.base.logger : warning;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.diff : DiffDoc, diffText, emitPatch, parsePatch;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
     highlightInjected, MdBlock, ResolvedTheme, RgbColor, TsConfigCache;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
@@ -32,6 +34,7 @@ enum ContentKind : ubyte
     code,     /// syntax-highlighted source
     markdown, /// the decorated markdown preview (a `.md` file's default)
     twoslash, /// a TypeScript twoslash payload rendered as a type overlay
+    diff,     /// a computed or parsed diff rendered as the diff view (`MOD9`)
 }
 
 /// One loaded document: the Whole that owns everything the old pipelines kept
@@ -46,6 +49,9 @@ struct Document
     HighlightEvent[] events; /// highlight stream over `source`
     TwoslashReturn twoslash; /// `kind == twoslash`: the node payload
     PreviewModel preview;    /// `kind == markdown`: the structural model
+    /// `kind == diff`: the diff model; `source` holds the patch text (the
+    /// raw / fallback view)
+    DiffDoc diffDoc;
 }
 
 /**
@@ -59,7 +65,8 @@ struct DocumentPipeline
     GrammarRegistry* registry;
     TsConfigCache* cache;
     bool forceMarkdown; /// `--markdown`
-    bool raw;           /// `--raw` (wins over `forceMarkdown`)
+    bool raw;           /// `--raw` (wins over `forceMarkdown`/`forcePatch`)
+    bool forcePatch;    /// `--patch`: the input is a unified diff
 
 @system:
 
@@ -69,9 +76,14 @@ struct DocumentPipeline
     {
         if (forceTwoslash || path.endsWith(".twoslash.json"))
             return ContentKind.twoslash;
-        if (!raw && (forceMarkdown
-                || canonicalLanguage(path.extension.chompPrefix(".")) == "markdown"))
-            return ContentKind.markdown;
+        if (!raw)
+        {
+            const ext = path.extension.chompPrefix(".");
+            if (forcePatch || ext == "patch" || ext == "diff")
+                return ContentKind.diff;
+            if (forceMarkdown || canonicalLanguage(ext) == "markdown")
+                return ContentKind.markdown;
+        }
         return ContentKind.code;
     }
 
@@ -91,11 +103,58 @@ struct DocumentPipeline
                 };
                 doc.events = highlight(doc.lang, doc.source);
                 return doc;
+            case diff:
+                return fromPatchSource(path, baseName(path), readText(path));
             case markdown:
             case code:
                 return fromSource(path, baseName(path), readText(path),
                     canonicalLanguage(path.extension.chompPrefix(".")));
         }
+    }
+
+    /// A diff document from unified-patch text (`DVS2`: a `.patch`/`.diff`
+    /// file, `--patch`, or sniffed stdin). `source` keeps the raw patch — the
+    /// `--raw` view and the not-yet-diff-aware interactive panes show it.
+    Document fromPatchSource(string path, string title, string patchText)
+    {
+        auto res = parsePatch(patchText);
+        if (res.hasError)
+            throw new Exception(text("invalid patch at byte ", res.error.offset,
+                res.error.context.length ? ": " ~ res.error.context : ""));
+        Document doc = {
+            path: path, title: title, kind: ContentKind.diff,
+            source: patchText, lang: "diff", diffDoc: res.value,
+        };
+        doc.events = highlight(doc.lang, doc.source, quietFallback: true);
+        return doc;
+    }
+
+    /// A diff document from two files, computed in-process (`DVS1`) — no VCS
+    /// involved. `source` carries the equivalent emitted patch so raw views,
+    /// selection and `--diff-copy=patch` all have a textual identity — and,
+    /// since the `@nogc` model **borrows** its backing text (`DVM8`), the
+    /// document re-parses that owned patch so `diffDoc` references `source`
+    /// (which this `Document` keeps alive) rather than transient file reads.
+    Document loadDiffPair(string oldPath, string newPath)
+    {
+        const oldText = readText(oldPath);
+        const newText = readText(newPath);
+        auto computed = diffText(oldText, newText, oldPath, newPath);
+        SmallBuffer!char patchBuf;
+        emitPatch(computed, patchBuf);
+        string source = patchBuf[].idup;
+
+        auto res = parsePatch(source);
+        if (res.hasError) // emitter output always parses; stay total anyway
+            throw new Exception(text("internal: emitted patch failed to parse at byte ",
+                res.error.offset));
+        Document doc = {
+            path: newPath, title: text(oldPath, " → ", newPath),
+            kind: ContentKind.diff, source: source, lang: "diff",
+            diffDoc: res.value,
+        };
+        doc.events = highlight(doc.lang, doc.source, quietFallback: true);
+        return doc;
     }
 
     /// A document from in-memory source (the embedded self-view). Detection
@@ -137,12 +196,17 @@ struct DocumentPipeline
         return false;
     }
 
-    private HighlightEvent[] highlight(string lang, scope const(char)[] source)
+    private HighlightEvent[] highlight(string lang, scope const(char)[] source,
+        bool quietFallback = false)
     {
         SmallBuffer!HighlightEvent ev;
         if (highlightInjected(*cache, lang, source, ev).hasError)
         {
-            warning(i"no grammar for '$(lang)' — rendering as plain text");
+            // A synthesized language (the diff documents' "diff") degrades
+            // silently — the miss is the expected default, not a user's
+            // grammar gap (`DEG2`).
+            if (!quietFallback)
+                warning(i"no grammar for '$(lang)' — rendering as plain text");
             ev ~= HighlightEvent.sourceSpan(0, source.length);
         }
         return ev[].dup;
@@ -167,6 +231,47 @@ struct DocumentPipeline
     }
 }
 
+/**
+`DVS2`'s stdin content sniff: does this text look like a unified diff?
+Line-anchored within the first 64 lines — a `diff --git` header, a hunk
+header, or a `--- ` line later followed by `+++ `.
+*/
+bool looksLikePatch(scope const(char)[] content) @safe pure nothrow @nogc
+{
+    bool sawOldHeader = false;
+    size_t lineStart = 0, lines = 0;
+    foreach (i; 0 .. content.length + 1)
+    {
+        if (i != content.length && content[i] != '\n')
+            continue;
+        auto line = content[lineStart .. i];
+        lineStart = i + 1;
+        if (++lines > 64)
+            return false;
+        if (line.startsWith("diff --git ") || line.startsWith("@@ -"))
+            return true;
+        if (line.startsWith("--- "))
+            sawOldHeader = true;
+        else if (sawOldHeader && line.startsWith("+++ "))
+            return true;
+        else if (!line.startsWith("--- "))
+            sawOldHeader = false;
+    }
+    return false;
+}
+
+@("document.looksLikePatch.sniff")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(looksLikePatch("diff --git a/x b/x\n--- a/x\n"));
+    assert(looksLikePatch("--- a/x\n+++ b/x\n@@ -1 +1 @@\n"));
+    assert(looksLikePatch("@@ -1,2 +1,2 @@\n x\n"));
+    assert(!looksLikePatch("just some text\nwith --- dashes inline\n"));
+    assert(!looksLikePatch("# markdown\n\n--- \n")); // separator, no +++ after
+    assert(!looksLikePatch(""));
+}
+
 @("document.detect.kindFromContentNotFlags")
 @system unittest
 {
@@ -179,9 +284,16 @@ struct DocumentPipeline
     // The compatibility flag forces the twoslash kind for any path.
     assert(p.detect("payload.json", forceTwoslash: true) == ContentKind.twoslash);
 
+    // A `.patch`/`.diff` extension is a diff document; `--patch` forces it.
+    assert(p.detect("fix.patch") == ContentKind.diff);
+    assert(p.detect("changes.diff") == ContentKind.diff);
+    DocumentPipeline patchP = { forcePatch: true };
+    assert(patchP.detect("captured.txt") == ContentKind.diff);
+
     // `--raw` wins over the extension; `--markdown` forces the preview.
     DocumentPipeline rawP = { raw: true };
     assert(rawP.detect("notes.md") == ContentKind.code);
+    assert(rawP.detect("fix.patch") == ContentKind.code);
     DocumentPipeline mdP = { forceMarkdown: true };
     assert(mdP.detect("README") == ContentKind.markdown);
 }
