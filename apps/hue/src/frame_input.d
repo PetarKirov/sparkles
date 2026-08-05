@@ -22,6 +22,7 @@ module frame_input;
 import sparkles.input.events : Event, GestureEvent, Gesture, KeyEvent, match,
     PointerAction, PointerButton, PointerEvent, WheelEvent;
 import sparkles.input.gesture : PointF;
+import sparkles.ui.geometry : Point;
 
 @safe:
 
@@ -205,4 +206,57 @@ version (unittest)
     // handler reacting one frame later still knows where it happened.
     const after = foldFrame(Event[].init, lp);
     assert(!after.longPress && after.anchor == PointF(40, 90));
+}
+
+/**
+The frame's pointer state as the single event a container consumes, in
+CELLS (`C-2a`).
+
+A container — the dock, a pane — is written against an event stream, but
+this host polls. The gap is exactly this projection: the fold's level and
+edge flags pick one action (a press and a release in the same frame
+resolve to the press, because the press is what starts a gesture the
+release then completes), and the pixel position divides down into the
+container's unit.
+
+Pure, so the wiring a GPU host cannot unit-test — `gui.d` is excluded
+from the test build — is checkable here instead.
+*/
+PointerEvent pointerFor(in FrameInput f, int cellW, int cellH)
+    pure nothrow @nogc
+{
+    const action = f.leftPressed ? PointerAction.press
+        : f.leftReleased ? PointerAction.release
+            : f.leftDown ? PointerAction.drag
+                : PointerAction.move;
+    return PointerEvent(action: action, button: PointerButton.left,
+        pos: Point(cast(int)(f.pos.x / (cellW < 1 ? 1 : cellW)),
+            cast(int)(f.pos.y / (cellH < 1 ? 1 : cellH))));
+}
+
+@("frame_input.pointerForProjectsFlagsAndCells")
+@safe unittest
+{
+    // The four actions, in the priority a polled frame implies.
+    FrameInput f;
+    f.pos = PointF(325, 300);
+    assert(pointerFor(f, 10, 19).action == PointerAction.move);
+    f.leftDown = true;
+    assert(pointerFor(f, 10, 19).action == PointerAction.drag);
+    f.leftPressed = true;
+    assert(pointerFor(f, 10, 19).action == PointerAction.press);
+    // A press and a release in one frame is a press: the gesture starts
+    // here, and the release that ends it is the next frame's business.
+    f.leftReleased = true;
+    assert(pointerFor(f, 10, 19).action == PointerAction.press);
+    f.leftPressed = false;
+    assert(pointerFor(f, 10, 19).action == PointerAction.release);
+
+    // Pixels divide into cells: 325 px is the 32nd cell of a 10 px grid —
+    // hue's divider column at the default sidebar width.
+    const e = pointerFor(f, 10, 19);
+    assert(e.pos == Point(32, 15) && e.button == PointerButton.left);
+
+    // A degenerate cell size must not divide by zero.
+    assert(pointerFor(f, 0, 0).pos == Point(325, 300));
 }
