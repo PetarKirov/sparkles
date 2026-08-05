@@ -75,6 +75,7 @@ import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : layout;
+import sparkles.ui.scroll_view : ScrollExtents, ScrollPointer;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, keyAt,
     keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
     scrollbarThumb, selectionRects, sourceOffsetAt, wantedPointerShape,
@@ -123,21 +124,16 @@ private struct SelectionDrag
 }
 
 /// The workspace panes (M15 GROUP-P of the GuiState hoist): the explorer
-/// tree pane (XPL2) with its visibility and focus, the STM8 tree/document
-/// split, and the four scrollbar hover-expand easings beside the two
-/// VERTICAL STM9 machines — those live here in px track units (offsets
-/// sync from `vm.top` / `tree.top` per frame) while the horizontal
-/// machines live on the models (`vm.hsb` / `tree.hsb`); the px easings
-/// are `ui_raylib.ScrollbarAnim`, drawn by `drawScrollbar` (B-1).
+/// tree pane (XPL2) with its visibility and focus, and the STM8
+/// tree/document split. Scrolling moved OFF this struct with C-1: each
+/// scrollable model owns its `ScrollView` (`vm.scroll` / `tree.scroll`) —
+/// machines, offsets and px easings as one value both backends step.
 private struct Panes
 {
     ExplorerTui tree;
     bool treeVisible;
     bool treeFocused;
     SplitState split;
-    ScrollbarState docSb;
-    ScrollbarState treeVSb;
-    ScrollbarAnim sbAnim, treeSbAnim, treeHAnim, docHAnim;
 }
 
 /// The input-routing state (M15 GROUP-I of the GuiState hoist): which
@@ -1532,33 +1528,18 @@ int runGui(
             // without overlapping text; the idle rail is a thin ~⅓ cell.
             const float hoverW = cast(float) scrollbarGutter();
             const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
-            pn.docSb = pn.docSb.scrolledTo(vm.top);
-            if (maxTop > 0)
-            {
-                const trackH = screenH - docY0;
-                const pos = inp.fin.pos;
-                const hoverTrack = pos.x >= screenW - hoverW;
-                pn.docSb = pn.docSb.hoveredNow(hoverTrack);
-                if (hoverTrack && inp.capture.available(capDocSb) && clickPressed())
-                {
-                    pn.docSb = pn.docSb.pressed(cast(int)(pos.y - docY0),
-                        total, docRows, trackH, minExtent: 24);
-                    inp.capture = inp.capture.capturedBy(capDocSb);
-                }
-                else if (pn.docSb.dragging)
-                {
-                    if (inp.fin.leftReleased)
-                        pn.docSb = pn.docSb.released();
-                    else
-                        pn.docSb = pn.docSb.dragged(cast(int)(pos.y - docY0),
-                            total, docRows, trackH, minExtent: 24);
-                }
-                vm.top = pn.docSb.offset;
-            }
-            else
-                pn.docSb = pn.docSb.hoveredNow(false).released();
-            pn.sbAnim.step(pn.docSb.expanded(caps) ? hoverW : idleW,
-                window.frameSeconds);
+            const pos = inp.fin.pos;
+            const docVLive = maxTop > 0;
+            inp.capture = vm.scroll.stepV(inp.capture, capDocSb, docVLive,
+                ScrollPointer(over: pos.x >= screenW - hoverW,
+                    pressed: clickPressed(), released: inp.fin.leftReleased,
+                    trackPos: cast(int)(pos.y - docY0)),
+                vm.top,
+                ScrollExtents(total, docRows, cast(int)(screenH - docY0),
+                    minExtent: 24));
+            if (docVLive)
+                vm.top = vm.scroll.v.offset;
+            vm.scroll.easeV(hoverW, idleW, caps, window.frameSeconds);
         }
 
         // The tree pane's scrollbar — the SAME hover-expand behavior as the
@@ -1567,39 +1548,31 @@ int runGui(
         pn.tree.height = visibleRows - treeTopRows - 1; // − the header row
         const treePaneRows = pn.tree.bodyRows;
         const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
-        if (pn.treeVisible && treeMaxTop > 0 && treePaneRows > 0)
         {
             const float hoverW = cast(float) scrollbarGutter();
             const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
             const trackTop = (treeTopRows + 1) * cellH;
-            const trackH = screenH - trackTop;
             const pos = inp.fin.pos;
             const edge = treeCols * cellW;
-            const hoverTrack = pos.x >= edge - hoverW && pos.x < edge
-                && pos.y >= trackTop;
-            pn.treeVSb = pn.treeVSb.scrolledTo(pn.tree.top).hoveredNow(hoverTrack);
-            if (hoverTrack && inp.capture.available(capTreeSb) && clickPressed())
+            const treeVLive = pn.treeVisible && treeMaxTop > 0
+                && treePaneRows > 0;
+            inp.capture = pn.tree.scroll.stepV(inp.capture, capTreeSb,
+                treeVLive,
+                ScrollPointer(over: pos.x >= edge - hoverW && pos.x < edge
+                        && pos.y >= trackTop,
+                    pressed: clickPressed(), released: inp.fin.leftReleased,
+                    trackPos: cast(int)(pos.y - trackTop)),
+                pn.tree.top,
+                ScrollExtents(pn.tree.rows.length, treePaneRows,
+                    cast(int)(screenH - trackTop), minExtent: 24));
+            if (treeVLive)
             {
-                pn.treeVSb = pn.treeVSb.pressed(cast(int)(pos.y - trackTop),
-                    pn.tree.rows.length, treePaneRows, trackH, minExtent: 24);
-                inp.capture = inp.capture.capturedBy(capTreeSb);
+                pn.tree.top = pn.tree.scroll.v.offset;
+                pn.tree.scrollBy(0); // clamp
+                pn.tree.scroll.easeV(hoverW, idleW, caps,
+                    window.frameSeconds);
             }
-            else if (pn.treeVSb.dragging)
-            {
-                if (inp.fin.leftReleased)
-                    pn.treeVSb = pn.treeVSb.released();
-                else
-                    pn.treeVSb = pn.treeVSb.dragged(cast(int)(pos.y - trackTop),
-                        pn.tree.rows.length, treePaneRows, trackH,
-                        minExtent: 24);
-            }
-            pn.tree.top = pn.treeVSb.offset;
-            pn.tree.scrollBy(0); // clamp
-            pn.treeSbAnim.step(pn.treeVSb.expanded(caps) ? hoverW : idleW,
-                window.frameSeconds);
         }
-        else
-            pn.treeVSb = pn.treeVSb.hoveredNow(false).released();
 
         // The one pointer-shape decision (mirrors the TUI workspace): live
         // grabs outrank hover — a scrollbar drag straying over the divider
@@ -1608,7 +1581,7 @@ int runGui(
         // The ONE shared decision (IXB4), mapped to the window cursor —
         // the TUI writes the identical result as OSC 22.
         window.pointerShape((wantedPointerShape(pn.split, divZone,
-            vm.hsb, pn.tree.hsb, pn.docSb, pn.treeVSb)));
+            vm.scroll.h, pn.tree.scroll.h, vm.scroll.v, pn.tree.scroll.v)));
 
         vm.top = vm.top < 0 ? 0 : (vm.top > maxTop ? maxTop : vm.top);
         const topLine = cast(size_t) vm.top;
@@ -1768,25 +1741,13 @@ int runGui(
                     && mp.y >= screenH - bottomChromeH
                         - (vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2) - 4
                     && mp.y < screenH - bottomChromeH;
-                vm.hsb = vm.hsb.hoveredNow(live && (over || vm.hsb.dragging));
-                pn.docHAnim.step(vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2,
-                    window.frameSeconds);
-                if (over && inp.capture.available(capDocHSb) && clickPressed())
-                {
-                    vm.hsb = vm.hsb.pressed(
-                        cast(int)((mp.x - gutterPx) / cellW),
-                        vm.contentCols, vm.widthCols, vm.widthCols);
-                    inp.capture = inp.capture.capturedBy(capDocHSb);
-                }
-                else if (vm.hsb.dragging)
-                {
-                    if (inp.fin.leftReleased)
-                        vm.hsb = vm.hsb.released();
-                    else
-                        vm.hsb = vm.hsb.dragged(
-                            cast(int)((mp.x - gutterPx) / cellW),
-                            vm.contentCols, vm.widthCols, vm.widthCols);
-                }
+                inp.capture = vm.scroll.stepH(inp.capture, capDocHSb, live,
+                    ScrollPointer(over: over, pressed: clickPressed(),
+                        released: inp.fin.leftReleased,
+                        trackPos: cast(int)((mp.x - gutterPx) / cellW)),
+                    vm.hsb.offset,
+                    ScrollExtents(vm.contentCols, vm.widthCols, vm.widthCols));
+                vm.scroll.easeH(hHoverH2, hIdleH2, caps, window.frameSeconds);
             }
 
             // The tree's horizontal bar (IXB2): the pane's bottom edge,
@@ -1799,24 +1760,14 @@ int runGui(
                 && mp.y >= screenH - bottomChromeH
                     - (pn.tree.hsb.expanded(caps) ? hHoverH : hIdleH) - 4
                 && mp.y < screenH - bottomChromeH;
-            pn.tree.hsb = pn.tree.hsb.hoveredNow(
-                hLive && (overHBar || pn.tree.hsb.dragging));
-            pn.treeHAnim.step(pn.tree.hsb.expanded(caps) ? hHoverH : hIdleH,
-                window.frameSeconds);
-            if (overHBar && inp.capture.available(capTreeHSb) && clickPressed())
-            {
-                pn.tree.hsb = pn.tree.hsb.pressed(cast(int)(mp.x / cellW),
-                    pn.tree.contentCols, treeCols - 1, treeCols - 1);
-                inp.capture = inp.capture.capturedBy(capTreeHSb);
-            }
-            else if (pn.tree.hsb.dragging)
-            {
-                if (inp.fin.leftReleased)
-                    pn.tree.hsb = pn.tree.hsb.released();
-                else
-                    pn.tree.hsb = pn.tree.hsb.dragged(cast(int)(mp.x / cellW),
-                        pn.tree.contentCols, treeCols - 1, treeCols - 1);
-            }
+            inp.capture = pn.tree.scroll.stepH(inp.capture, capTreeHSb, hLive,
+                ScrollPointer(over: overHBar, pressed: clickPressed(),
+                    released: inp.fin.leftReleased,
+                    trackPos: cast(int)(mp.x / cellW)),
+                pn.tree.hsb.offset,
+                ScrollExtents(pn.tree.contentCols, treeCols - 1,
+                    treeCols - 1));
+            pn.tree.scroll.easeH(hHoverH, hIdleH, caps, window.frameSeconds);
             // A row click is not a drag, so it takes no id — it only needs
             // the pointer to be unowned.
             if (overTree && !overTreeSb && !overHBar && inp.capture.isFree
@@ -2229,7 +2180,7 @@ int runGui(
             // (hidden while the filter line owns the row).
             if (pn.tree.hOverflows() && !pn.tree.searching)
             {
-                const l = scrollbarLayout(pn.tree.hsb, pn.treeHAnim,
+                const l = scrollbarLayout(pn.tree.hsb, pn.tree.scroll.hAnim,
                     pn.tree.contentCols, treeCols - 1,
                     Rect(0, 0, treeCols * cellW, screenH));
                 drawScrollbar(l, pn.tree.hsb, pn.tree.sbTrack, pn.tree.sbThumb);
@@ -2254,17 +2205,19 @@ int runGui(
             if (treeMaxTop > 0 && treePaneRows > 0)
             {
                 const trackTop = (treeTopRows + 1) * cellH;
-                const l = scrollbarLayout(pn.treeVSb.scrolledTo(pn.tree.top),
-                    pn.treeSbAnim, pn.tree.rows.length, treePaneRows,
+                const l = scrollbarLayout(
+                    pn.tree.scroll.v.scrolledTo(pn.tree.top),
+                    pn.tree.scroll.vAnim, pn.tree.rows.length, treePaneRows,
                     Rect(0, trackTop, treeCols * cellW, screenH - trackTop));
-                drawScrollbar(l, pn.treeVSb, pn.tree.sbTrack, pn.tree.sbThumb);
+                drawScrollbar(l, pn.tree.scroll.v, pn.tree.sbTrack,
+                    pn.tree.sbThumb);
             }
         }
 
         // The document pane's horizontal bar (IXB2), over its bottom edge.
         if (vm.hOverflows() && inp.mode == Mode.normal)
         {
-            const l = scrollbarLayout(vm.hsb, pn.docHAnim, vm.contentCols,
+            const l = scrollbarLayout(vm.hsb, vm.scroll.hAnim, vm.contentCols,
                 vm.widthCols, Rect(gutterPx, 0, screenW - gutterPx, screenH));
             drawScrollbar(l, vm.hsb, vm.sbTrack, vm.sbThumb);
         }
@@ -2275,9 +2228,10 @@ int runGui(
         {
             // Distinct link-tinted chrome (the gutter behind it is empty page
             // bg): a subtle full-height track on hover, a brighter thumb.
-            const l = scrollbarLayout(pn.docSb.scrolledTo(vm.top), pn.sbAnim,
-                total, docRows, Rect(0, docY0, screenW, screenH - docY0));
-            drawScrollbar(l, pn.docSb, vm.sbTrack, vm.sbThumb);
+            const l = scrollbarLayout(vm.scroll.v.scrolledTo(vm.top),
+                vm.scroll.vAnim, total, docRows,
+                Rect(0, docY0, screenW, screenH - docY0));
+            drawScrollbar(l, vm.scroll.v, vm.sbTrack, vm.sbThumb);
         }
 
         // A header bar when navigating a document set (`GNV2`): the entry name and
