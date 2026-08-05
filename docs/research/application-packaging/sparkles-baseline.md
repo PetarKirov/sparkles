@@ -161,7 +161,7 @@ indexes. The [comparison delta][comparison-delta] maps those gaps to surveyed pr
 - [`docs/specs/release/SPEC.md`][release-spec]
 - [`docs/guidelines/release.md`][release-guide]
 - [`.github/workflows/ci.yml`][ci-workflow], [`release.yml`][release-workflow],
-  [`docs.yml`][docs-workflow], and [`lint.yml`][lint-workflow]
+  and [`docs.yml`][docs-workflow]
 
 <!-- References -->
 
@@ -182,4 +182,3 @@ indexes. The [comparison delta][comparison-delta] maps those gaps to surveyed pr
 [ci-workflow]: ../../../.github/workflows/ci.yml
 [release-workflow]: ../../../.github/workflows/release.yml
 [docs-workflow]: ../../../.github/workflows/docs.yml
-[lint-workflow]: ../../../.github/workflows/lint.yml
