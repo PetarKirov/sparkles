@@ -403,9 +403,8 @@ private PayloadLine[] payloadLines(in TwoslashReturn tw, in ResolvedTheme theme,
     ref TsConfigCache cache, in Palette pal, in Node node, bool styled,
     in TwoslashAnsiOptions options) @system
 {
+    import std.algorithm.iteration : splitter;
     import std.array : appender;
-
-    import sparkles.ui.geometry : cellsOf;
 
     SmallBuffer!(char, 32) seqBuf;
     auto out_ = appender!string;
@@ -413,12 +412,20 @@ private PayloadLine[] payloadLines(in TwoslashReturn tw, in ResolvedTheme theme,
     final switch (node.type)
     {
         case NodeType.error:
-            if (styled)
-                out_ ~= slotFgSeq(seqBuf, pal, connectorSlot(node), options.depth);
-            out_ ~= node.text;
-            if (styled)
-                out_ ~= sgrReset;
-            return [PayloadLine(out_[], cast(int) cellsOf(node.text))];
+            // A D diagnostic often carries `called from here:` continuations.
+            // Each is its own row, or the raw newline would tear the art open.
+            PayloadLine[] lines;
+            foreach (msg; node.text.splitter('\n'))
+            {
+                auto row = appender!string;
+                if (styled)
+                    row ~= slotFgSeq(seqBuf, pal, connectorSlot(node), options.depth);
+                row ~= msg;
+                if (styled)
+                    row ~= sgrReset;
+                lines ~= PayloadLine(row[], cast(int) cellsOf(msg));
+            }
+            return lines;
 
         case NodeType.query:
             SmallBuffer!HighlightEvent sig;
@@ -426,7 +433,19 @@ private PayloadLine[] payloadLines(in TwoslashReturn tw, in ResolvedTheme theme,
             renderAnsi(node.text, sig[], theme, out_,
                 AnsiOptions(depth: styled ? options.depth : ColorDepth.none,
                     italics: options.italics));
-            return [PayloadLine(out_[], cast(int) cellsOf(node.text))];
+            // TypeScript prints an object type one member to a line. `renderAnsi`
+            // emits per-line-valid SGR, so the rendered stream splits cleanly;
+            // the cell widths come from the source lines beside it.
+            PayloadLine[] sigLines;
+            auto plain = node.text.splitter('\n');
+            foreach (rendered; out_[].splitter('\n'))
+            {
+                sigLines ~= PayloadLine(rendered,
+                    plain.empty ? 0 : cast(int) cellsOf(plain.front));
+                if (!plain.empty)
+                    plain.popFront();
+            }
+            return sigLines;
 
         case NodeType.completion:
             PayloadLine[] lines;
@@ -823,4 +842,49 @@ version (unittest)
         "@log hi\n" ~
         "     ┬     ┬\n" ~
         "     ╰─ A  ╰─ B\n");
+}
+
+@("render_ansi.crowdedLineKeepsAMultiLinePayloadInsideTheArt")
+@system unittest
+{
+    // D reports a CTFE failure as the error plus a `called from here:` chain,
+    // and TypeScript prints an object type one member to a line. Either way a
+    // raw newline would tear the art open, so each line is its own row and the
+    // guides keep running beside them.
+    const tw = TwoslashReturn(code: "enum first = head(letters);\n", nodes: [
+        Node(type: NodeType.query, start: 5, length: 5, line: 0, character: 5,
+            text: "ubyte first"),
+        Node(type: NodeType.error, start: 18, length: 7, line: 0, character: 18,
+            text: "cannot be read at compile time\ncalled from here: `head(letters)`",
+            level: "error"),
+    ]);
+    assert(renderTw(tw, null, TwoslashAnsiOptions(depth: ColorDepth.none)) ==
+        "enum first = head(letters);\n" ~
+        "     ┬────        ┬──────\n" ~
+        "     │            ╰─ cannot be read at compile time\n" ~
+        "     │               called from here: `head(letters)`\n" ~
+        "     ╰─ ubyte first\n");
+}
+
+@("render_ansi.crowdedLineKeepsBothLabelsOnASharedColumn")
+@system unittest
+{
+    // A query and an error on one token, plus a third anchor elsewhere: the
+    // shared column is elbowed on two consecutive rows. Neither draws a guide
+    // there — on the row where a column is labelled, the elbow is its
+    // connector, and a guide beside it would push the elbow a cell right.
+    const tw = TwoslashReturn(code: "enum first = head(letters);\n", nodes: [
+        Node(type: NodeType.query, start: 5, length: 5, line: 0, character: 5,
+            text: "ubyte first"),
+        Node(type: NodeType.query, start: 18, length: 7, line: 0, character: 18,
+            text: "string letters"),
+        Node(type: NodeType.error, start: 18, length: 7, line: 0, character: 18,
+            text: "not readable at compile time", level: "error"),
+    ]);
+    assert(renderTw(tw, null, TwoslashAnsiOptions(depth: ColorDepth.none)) ==
+        "enum first = head(letters);\n" ~
+        "     ┬────        ┬──────\n" ~
+        "     │            ╰─ string letters\n" ~
+        "     │            ╰─ not readable at compile time\n" ~
+        "     ╰─ ubyte first\n");
 }
