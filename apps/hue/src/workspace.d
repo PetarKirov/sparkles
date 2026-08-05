@@ -25,8 +25,8 @@ import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
 import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     linesPerNotch, match, PointerAction, PointerButton, PointerEvent,
     ResizeEvent, WheelEvent;
-import sparkles.ui.geometry : Point;
-import sparkles.ui.state : CaptureState, SplitState, wantedPointerShape;
+import sparkles.ui.dock : DockAxis, DockContainer, PaneId, RouteKind;
+import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.style : Slot;
 
 import ansi_model : BackgroundMode;
@@ -60,8 +60,6 @@ struct WorkspaceTui
 {
     ExplorerTui tree;
     PreviewTui viewer;
-    bool treeVisible;
-    bool treeFocused;
     WsLoader loadDoc;
     /// Live D types (`PRJ12`-`PRJ16`): a `twoslash-extract --dub --serve`
     /// oracle for the open `.d` document. The session belongs to the document
@@ -74,24 +72,47 @@ struct WorkspaceTui
     private RgbColor pageFg, pageBg;
     private size_t lastThemeIdx = size_t.max;
 
-    /// The tree/document split (STM8): `--tree-width` seeds it; dragging
-    /// the divider column resizes it live. `size` is the sidebar width in
-    /// cells (incl. its own chrome).
-    SplitState split = SplitState(32);
+    /**
+    The pane composition (`C-2a`): the toolkit's dock container owns the
+    arrangement (a fixed-width sidebar left of the flexing document), the
+    STM8 divider drag, the STM11 capture, focus, wheel routing and the
+    coordinate translation. What is left here is what is genuinely hue's:
+    which panes exist, what its keys mean, and how a pane paints.
+    */
+    DockContainer dock;
+    private enum PaneId treePane = 1, docPane = 2;
     private enum minTreeCols = 12;
 
-    // Pointer capture (STM11): the pane that took the press owns every drag
-    // until release, so a grab (a scrollbar thumb, a selection) never leaks
-    // into the neighbouring pane when the drag crosses the divider.
-    //
-    // The machine holds WHICH pane owns it; this pane vocabulary is the only
-    // local part. The GUI's own capture is still the allow-list chain it
-    // always was — converting it needs `RaylibEvents` wired (IXB7), because
-    // the gates are spread across ~35 raw polls rather than one event stream.
-    private enum size_t capTree = 1, capViewer = 2;
-    private CaptureState capture;
-    // Where an UNcaptured pointer currently is; frozen while a drag owns it.
-    private size_t paneUnderPointer = capViewer;
+    /// The sidebar's width in cells (incl. its own chrome) — `--tree-width`
+    /// seeds it, the divider drag moves it.
+    int treeCols() const @safe pure nothrow
+        => dock.layout.nodes[dock.layout.nodeOf(treePane)].extent;
+
+    /// ditto
+    void treeCols(int cols) @safe pure nothrow
+    {
+        dock.layout.nodes[dock.layout.nodeOf(treePane)].extent = cols;
+    }
+
+    /// Whether the explorer pane is shown at all ('e' toggles it).
+    bool treeVisible() const @safe pure nothrow
+        => dock.layout.visible(treePane);
+
+    /// ditto
+    void treeVisible(bool v) @safe pure nothrow
+    {
+        dock.layout.setVisible(treePane, v);
+    }
+
+    /// Whether the explorer pane holds focus (`DCK6`, container-owned).
+    bool treeFocused() const @safe pure nothrow @nogc
+        => dock.focused == treePane;
+
+    /// ditto
+    void treeFocused(bool v) @safe pure nothrow @nogc
+    {
+        dock.focused = v ? treePane : docPane;
+    }
 
     // Pointer shape (OSC 22): grab state first — an active divider or
     // scrollbar grab HOLDS its shape until release, wherever the pointer
@@ -110,18 +131,45 @@ struct WorkspaceTui
         return s;
     }
 
-    /// Recomputes the pane geometry for the current terminal size.
+    /// Builds the two-pane arrangement — called once, before `arrange`.
+    private void buildLayout(int treeWidth) @safe
+    {
+        if (dock.layout.nodes.length)
+            return;
+        const t = dock.layout.addLeaf(treePane,
+            extent: treeWidth < minTreeCols ? minTreeCols : treeWidth,
+            minExtent: minTreeCols);
+        const d = dock.layout.addLeaf(docPane);
+        dock.layout.root = dock.layout.addSplit(DockAxis.horizontal, [t, d]);
+        dock.focused = docPane;
+    }
+
+    /// Recomputes the pane geometry for the current terminal size: the
+    /// container tiles the area, the panes are told the rects it produced.
     void arrange(int w, int h) @system
     {
         width = w;
         height = h;
-        split = split.clamped(minTreeCols, w / 2 < minTreeCols ? minTreeCols : w / 2);
-        const tw = treeVisible ? split.size : 0;
-        tree.width = tw;
-        tree.height = h;
-        // One divider column between the panes.
-        viewer.originX = tw > 0 ? tw + 1 : 0;
-        viewer.resize(w - viewer.originX, h);
+        buildLayout(32);
+        // The sidebar never takes more than half the terminal; the
+        // container re-clamps the extent against this on every arrange.
+        dock.layout.nodes[dock.layout.nodeOf(treePane)].maxExtent =
+            w / 2 < minTreeCols ? minTreeCols : w / 2;
+        dock.arrange(Rect(0, 0, w, h));
+
+        foreach (ref f; dock.paneFrames)
+            if (f.pane == treePane)
+            {
+                tree.width = f.rect.width;
+                tree.height = f.rect.height;
+            }
+            else
+            {
+                viewer.originX = f.rect.x;
+                viewer.resize(f.rect.width, f.rect.height);
+            }
+        if (!treeVisible)
+            tree.width = 0; // the paint/hit helpers read this as "no pane"
         if (treeVisible)
             tree.rebuild();
         viewer.relayout();
@@ -143,14 +191,15 @@ struct WorkspaceTui
         if (treeVisible)
         {
             tree.paint(g);
-            // The divider: a full-height │ rule between the panes, tinted
-            // toward the focused side — the tree's accent when the tree
-            // holds focus, the muted chrome color otherwise.
+            // The dividers the container placed: a full-height │ rule,
+            // tinted toward the focused side — the tree's accent when the
+            // tree holds focus, the muted chrome color otherwise.
             CellStyle div = page;
             div.fg = Color.fromRgb(treeFocused
                 ? tree.accent : toRgb(tree.theme.defaults.fg, pageFg));
-            foreach (y; 0 .. g.rows)
-                g.putText(cast(ushort) tree.width, cast(ushort) y, "│", div);
+            foreach (ref d; dock.dividers)
+                foreach (y; d.rect.y .. d.rect.y + d.rect.height)
+                    g.putText(cast(ushort) d.rect.x, cast(ushort) y, "│", div);
         }
         viewer.paint(g);
     }
@@ -294,18 +343,35 @@ struct WorkspaceTui
         tree.rebuild();
     }
 
+    // The shape a live PANE grab wants (empty when none is grabbing) and
+    // the one a mere hover wants — apart, because the container's
+    // precedence (DCK9) puts every grab above every hover.
+    private PointerShape paneGrabShape() @safe pure nothrow @nogc
+    {
+        if (viewer.vm.scroll.grabbing)
+            return viewer.vm.scroll.shape();
+        if (tree.scroll.grabbing)
+            return tree.scroll.shape();
+        return PointerShape.default_;
+    }
+
+    /// ditto
+    private PointerShape paneHoverShape() @safe pure nothrow @nogc
+    {
+        const v = viewer.vm.scroll.shape();
+        return v != PointerShape.default_ ? v : tree.scroll.shape();
+    }
+
     /// Applies one event; returns false to quit.
     bool handle(in Event e) @system
     {
-        // Pointer shape (observes only — never consumes). Grabs outrank
-        // hover, so the shape holds through the whole drag no matter where
-        // the pointer strays; the scrollbars are vertical → ns-resize.
+        // Pointer shape (observes only — never consumes). The panes hover
+        // their own bars from pane-local positions; the container composes
+        // those with its dividers into the one wanted shape.
         e.match!((in PointerEvent p) {
-            const grabbed = split.dragging || viewer.sb.dragging
-                || tree.sb.dragging || viewer.vm.hsb.dragging
-                || tree.hsb.dragging;
-            // Hover lives on the machines; the ONE shared decision (IXB4)
-            // turns the grab/hover states into the wanted shape.
+            // The shape is written out of band, BEFORE the event routes, so
+            // the container's hover is refreshed here rather than waited on.
+            dock.hovered(p.pos);
             const vx = p.pos.x - viewer.originX;
             viewer.sb = viewer.sb.hoveredNow(
                 viewer.overScrollbar(vx, p.pos.y));
@@ -315,9 +381,9 @@ struct WorkspaceTui
                 treeVisible && tree.overScrollbar(p.pos.x, p.pos.y));
             tree.hsb = tree.hsb.hoveredNow(
                 treeVisible && tree.overHScrollbar(p.pos.x, p.pos.y));
-            const want = wantedPointerShape(split,
-                treeVisible && p.pos.x == tree.width,
-                viewer.vm.hsb, tree.hsb, viewer.sb, tree.sb);
+            const grabbed = dock.resizing
+                || paneGrabShape() != PointerShape.default_;
+            const want = dock.shape(paneGrabShape(), paneHoverShape());
             // Re-assert on every event while a grab is live: some terminals
             // and multiplexers reset the pointer themselves when a drag
             // starts, clobbering the OSC 22 shape — a repeated set is
@@ -328,51 +394,6 @@ struct WorkspaceTui
                 pendingCursor = "\x1b]22;" ~ cast(string) want ~ "\x1b\\";
             }
         }, (_) {});
-
-        // The wheel scrolls the pane under the CURSOR, not the focused one —
-        // both ways: over the tree it scrolls the tree, anywhere else it goes
-        // to the viewer (whose wheel arm is position-blind), so a focused
-        // tree never swallows a wheel spun over the document.
-        {
-            bool done;
-            e.match!((in WheelEvent wv) {
-                if (treeVisible && wv.pos.x < tree.width)
-                    tree.scrollBy(wv.dy);
-                else
-                    viewer.handle(e);
-                done = true;
-            }, (_) {});
-            if (done)
-                return true;
-        }
-
-        // The divider drag (STM8): a grab on the divider column resizes the
-        // tree pane live; the drag owns the pointer until release.
-        {
-            bool consumed;
-            e.match!((in PointerEvent p) {
-                if (!treeVisible)
-                    return;
-                if (split.dragging)
-                {
-                    split = p.action == PointerAction.release
-                        ? split.released()
-                        : split.draggedTo(p.pos.x, minTreeCols,
-                            width / 2 < minTreeCols ? minTreeCols : width / 2);
-                    arrange(width, height);
-                    consumed = true;
-                }
-                else if (p.action == PointerAction.press
-                    && p.button == PointerButton.left
-                    && p.pos.x == tree.width)
-                {
-                    split = split.started(p.pos.x);
-                    consumed = true;
-                }
-            }, (_) {});
-            if (consumed)
-                return true;
-        }
 
         // Global keys — only when no pane is consuming typed text.
         const typing = (treeFocused && tree.inputActive)
@@ -416,39 +437,22 @@ struct WorkspaceTui
                 return true;
         }
 
-        // Pointer events pick their pane by position on PRESS (click-to-
-        // focus) and arrive pane-local; the press captures the pointer, so
-        // drags stay with the owning pane across the divider until release.
-        // Everything else goes to the focused pane.
-        bool toTree = treeFocused;
-        Event ev = e;
-        e.match!((in PointerEvent p) {
-            // Re-aim on a press, or whenever nothing owns the pointer; while
-            // a drag is captured the target is frozen, which is the rule.
-            if (p.action == PointerAction.press || capture.isFree)
-            {
-                const onTree = treeVisible && p.pos.x < tree.width;
-                paneUnderPointer = onTree ? capTree : capViewer;
-                if (p.action == PointerAction.press)
-                {
-                    capture = capture.capturedBy(paneUnderPointer);
-                    treeFocused = onTree; // click-to-focus
-                }
-            }
-            // Route BEFORE releasing: the release is part of the gesture and
-            // belongs to whoever owned it, not to whatever sits under the
-            // pointer when the button comes up.
-            toTree = (capture.isFree ? paneUnderPointer : capture.owner)
-                == capTree;
-            if (p.action == PointerAction.release)
-                capture = capture.released();
-            if (!toTree && viewer.originX > 0)
-            {
-                PointerEvent q = p;
-                q.pos = Point(p.pos.x - viewer.originX, p.pos.y);
-                ev = Event(q);
-            }
-        }, (_) {});
+        // Everything positional — and the keys the panes own — is routed by
+        // the container (DCK13): capture first, then dividers, then the
+        // pane under the pointer, with coordinates already pane-local.
+        const r = dock.handle(e);
+        if (r.kind == RouteKind.container)
+        {
+            // A divider drag: the container resized the layout, the panes
+            // are told their new rects.
+            if (r.relayout)
+                arrange(width, height);
+            return true;
+        }
+        if (r.kind == RouteKind.none)
+            return true;
+        const toTree = r.pane == treePane;
+        const ev = r.event;
 
         if (toTree && treeVisible)
         {
@@ -491,7 +495,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     WorkspaceTui w;
     w.loadDoc = loadDoc;
     w.liveTypes = liveTypes;
-    w.split = SplitState(treeWidth < 12 ? 12 : treeWidth);
+    w.buildLayout(treeWidth);
     w.viewer.tabWidth = tabWidth < 1 ? 1 : tabWidth;
     w.viewer.listWhitespace = listWhitespace;
     w.tree.includeGlobs = includeGlobs;
@@ -742,14 +746,14 @@ unittest
     const div = w.tree.width;
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(div, 4)))));
-    assert(w.split.dragging);
+    assert(w.dock.resizing);
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(div + 6, 4)))));
     assert(w.tree.width == 38, "the pane followed the drag");
     assert(w.viewer.originX == 39, "the viewer moved with the divider");
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(div + 6, 4)))));
-    assert(!w.split.dragging && w.tree.width == 38);
+    assert(!w.dock.resizing && w.tree.width == 38);
 
     // The drag clamps: far left pins at the minimum, far right at half.
     w.handle(Event(PointerEvent(button: PointerButton.left,

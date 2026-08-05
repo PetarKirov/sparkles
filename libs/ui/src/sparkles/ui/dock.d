@@ -321,10 +321,24 @@ struct DockContainer
     private enum size_t paneCapBase = 1;
     private enum size_t divCapBase = size_t(1) << 32;
 
-    /// Recomputes the frames for `area` (`DCK1`).
+    /**
+    Recomputes the frames for `area` (`DCK1`), re-clamping fixed extents
+    against their constraints first — STM8's post-resize re-clamp,
+    generalized: a sidebar sized for a wide window must not keep that
+    width when the window shrinks under it.
+    */
     void arrange(in Rect newArea)
     {
         area = newArea;
+        foreach (ref n; layout.nodes)
+        {
+            if (n.extent <= 0)
+                continue;
+            if (n.minExtent > 0 && n.extent < n.minExtent)
+                n.extent = n.minExtent;
+            if (n.maxExtent > 0 && n.extent > n.maxExtent)
+                n.extent = n.maxExtent;
+        }
         dockFrames(layout, area, paneFrames, dividers);
     }
 
@@ -360,6 +374,19 @@ struct DockContainer
 
     /// `true` while a divider drag owns the pointer.
     bool resizing() const pure nothrow @nogc => dragDivider != uint.max;
+
+    /**
+    Updates the hover chrome from a pointer position — frozen while
+    something owns the pointer, so a drag never re-lights a divider it
+    merely crosses. $(LREF handle) does this itself; a host that needs
+    $(LREF shape) $(B before) routing — a terminal writing OSC 22 out of
+    band does — calls it first, and the repeat is idempotent.
+    */
+    void hovered(in Point p) pure nothrow @nogc
+    {
+        if (capture.isFree)
+            hoverDivider = dividerAt(p);
+    }
 
     /**
     The one wanted pointer shape (`DCK9`). The pane shapes are supplied by
@@ -415,13 +442,19 @@ struct DockContainer
         e.match!(
             (in PointerEvent p) { r = routePointer(p); },
             (in WheelEvent w) {
+                // Under the pointer, regardless of focus (DCK7). Over
+                // chrome (a divider) the position resolves to no pane, and
+                // the focused one takes it — a wheel is never dropped.
                 PaneId pane;
-                if (paneAt(w.pos, pane))
+                if (!paneAt(w.pos, pane))
                 {
-                    WheelEvent q = w;
-                    q.pos = toLocal(w.pos, pane);
-                    r = Route(RouteKind.pane, pane, Event(q));
+                    if (!paneFrames.length)
+                        return;
+                    pane = focused;
                 }
+                WheelEvent q = w;
+                q.pos = toLocal(w.pos, pane);
+                r = Route(RouteKind.pane, pane, Event(q));
             },
             (_) {
                 // Keys and everything else with no position of its own go
@@ -434,11 +467,7 @@ struct DockContainer
 
     private Route routePointer(in PointerEvent p)
     {
-        // Hover chrome is recomputed on every pointer event, but frozen
-        // while something owns the pointer: a drag must not re-light a
-        // divider it happens to cross.
-        if (capture.isFree)
-            hoverDivider = dividerAt(p.pos);
+        hovered(p.pos);
 
         // 1. A live divider drag owns everything until release (DCK3).
         if (resizing)
