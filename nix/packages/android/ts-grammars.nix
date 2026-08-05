@@ -49,6 +49,7 @@
         "python"
         "rust"
         "scala"
+        "sdl"
         "toml"
         "typescript"
         "tsx"
@@ -60,10 +61,17 @@
 
       soname = lang: "libtree_sitter_${builtins.replaceStrings [ "-" ] [ "_" ] lang}.so";
 
+      # Grammars that do not come from nixpkgs. `sdl` is maintained in-house
+      # (nix/packages/tree-sitter-sdl.nix); only its `src` is used here, since
+      # this builds `src/parser.c` per ABI rather than reusing the host build.
+      extraGrammars = {
+        sdl = config.packages.tree-sitter-sdl;
+      };
+
       grammarSo =
         lang:
         let
-          grammar = g."tree-sitter-${lang}";
+          grammar = extraGrammars.${lang} or g."tree-sitter-${lang}";
         in
         pkgs.stdenv.mkDerivation {
           pname = "ts-grammar-android-${lang}";
