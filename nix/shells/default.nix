@@ -189,6 +189,14 @@
           ++ lib.optional greeting pkgs.figlet
           ++ d-toolchain.packages;
           shellHook = ''
+            # Keep D's std.process child setup inside the signed-int range.
+            # Phobos casts RLIMIT_NOFILE from rlim_t to int before closing
+            # inherited descriptors; an unlimited soft limit overflows, and a
+            # low macOS default can also starve parallel dub/ldc builds. This
+            # was part of the original Darwin toolchain workaround but was
+            # lost when the dev shell moved behind the shared toolchain module.
+            ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true
+
             ${envExports}
             export GITHUB_TOKEN="$(gh auth token)"
 
