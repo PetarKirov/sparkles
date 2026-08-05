@@ -34,14 +34,8 @@ export default withMermaid(
     // evidence (claim-by-claim source verification), not published research —
     // keep them out of the site.
     srcExclude: [
-      '**/research/parsing/grounding/**',
-      '**/research/units-of-measure/grounding/**',
-      '**/research/cpu-pmu/grounding/**',
-      '**/research/sanitizers/grounding/**',
-      '**/research/manim/grounding/**',
+      '**/research/**/grounding/**',
       '**/research/application-packaging/PLAN.md',
-      '**/research/application-packaging/grounding/**',
-      '**/research/sql/grounding/**',
       '**/research/iroh/prompt.md',
     ],
 

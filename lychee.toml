@@ -56,12 +56,7 @@ fallback_extensions = ["md", "html"]
 # does not also exclude docs/guidelines/AGENTS.md.
 exclude_path = [
     '^AGENTS\.md$',
-    '^docs/research/parsing/grounding/',
-    '^docs/research/units-of-measure/grounding/',
-    '^docs/research/cpu-pmu/grounding/',
-    '^docs/research/sanitizers/grounding/',
-    '^docs/research/manim/grounding/',
-    '^docs/research/sql/grounding/',
+    '^docs/research/.*/grounding/',
 ]
 
 # Don't check URLs inside code blocks (they're often illustrative, not real)
@@ -187,3 +182,29 @@ request_interval = "1s"
 # entirely via lychee.ci.exclude, so this throttle benefits local pre-commit runs.)
 [hosts."web.archive.org"]
 request_interval = "1s"
+
+# SourceForge hosts block the synthetic Firefox User-Agent (returning HTTP 403
+# Cloudflare challenge) but respond with HTTP 200 OK to standard HTTP client
+# user agents like curl.
+[hosts."sourceforge.net"]
+headers = { "User-Agent" = "curl/8.7.1" }
+
+[hosts."sourceforge.io"]
+headers = { "User-Agent" = "curl/8.7.1" }
+
+[hosts."asymptote.sourceforge.io"]
+headers = { "User-Agent" = "curl/8.7.1" }
+
+[hosts."aegis.sourceforge.net"]
+headers = { "User-Agent" = "curl/8.7.1" }
+
+[hosts."docutils.sourceforge.io"]
+headers = { "User-Agent" = "curl/8.7.1" }
+
+[hosts."defoe.sourceforge.net"]
+headers = { "User-Agent" = "curl/8.7.1" }
+
+# code.haverbeke.berlin rejects the synthetic Firefox User-Agent with HTTP 403,
+# but responds with HTTP 200 to curl.
+[hosts."code.haverbeke.berlin"]
+headers = { "User-Agent" = "curl/8.7.1" }
