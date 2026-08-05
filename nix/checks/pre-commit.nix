@@ -195,6 +195,10 @@ in
             lychee = {
               enable = true;
               files = "\\.md$";
+              excludes = [
+                "^AGENTS\\.md$"
+                "^docs/research/.*/grounding/"
+              ];
               pass_filenames = true;
               # Run a single lychee process over all matched files. Without this,
               # prek splits `--all-files` into many parallel lychee invocations

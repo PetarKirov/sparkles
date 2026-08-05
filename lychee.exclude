@@ -116,3 +116,7 @@ apps/hue/twoslash
 # outage/chronic slowness, not checker flakiness. Same class as the x.org
 # entry above.
 ^https?://git\.launchpad\.net/
+
+# connectivity.fb.com (Facebook's ent ORM home, cited in research/sql/ent.md)
+# redirects to facebook.com/connectivity, which 400s automated checkers.
+^https?://([^/]+\.)?fb\.com
