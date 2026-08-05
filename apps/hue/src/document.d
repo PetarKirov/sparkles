@@ -52,6 +52,18 @@ struct Document
     /// `kind == diff`: the diff model; `source` holds the patch text (the
     /// raw / fallback view)
     DiffDoc diffDoc;
+    DiffSides diffSides;     /// `kind == diff`: per-side texts for `DVM5`
+}
+
+/// The per-side full texts of a diff document (`DVM5` syntax composition):
+/// the renderers re-highlight each side with `lang` and layer the diff tints
+/// on top. Empty when the sides are unavailable (a patch without readable
+/// sources — the `DVS2` worktree re-highlight is pending).
+struct DiffSides
+{
+    string lang;    /// canonical language of the diffed file pair
+    string oldText;
+    string newText;
 }
 
 /**
@@ -137,22 +149,21 @@ struct DocumentPipeline
     /// (which this `Document` keeps alive) rather than transient file reads.
     Document loadDiffPair(string oldPath, string newPath)
     {
-        const oldText = readText(oldPath);
-        const newText = readText(newPath);
-        auto computed = diffText(oldText, newText, oldPath, newPath);
-        SmallBuffer!char patchBuf;
-        emitPatch(computed, patchBuf);
-        string source = patchBuf[].idup;
-
-        auto res = parsePatch(source);
-        if (res.hasError) // emitter output always parses; stay total anyway
-            throw new Exception(text("internal: emitted patch failed to parse at byte ",
-                res.error.offset));
+        // The sides are Document-owned strings, so the @nogc model (`DVM8`)
+        // can borrow them directly — no emit-and-reparse detour.
+        DiffSides sides = {
+            lang: canonicalLanguage(newPath.extension.chompPrefix(".")),
+            oldText: readText(oldPath),
+            newText: readText(newPath),
+        };
         Document doc = {
             path: newPath, title: text(oldPath, " → ", newPath),
-            kind: ContentKind.diff, source: source, lang: "diff",
-            diffDoc: res.value,
+            kind: ContentKind.diff, lang: "diff", diffSides: sides,
+            diffDoc: diffText(sides.oldText, sides.newText, oldPath, newPath),
         };
+        SmallBuffer!char patchBuf;
+        emitPatch(doc.diffDoc, patchBuf);
+        doc.source = patchBuf[].idup;
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
     }

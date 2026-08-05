@@ -38,7 +38,7 @@ import sparkles.input.capability : InputCapabilities, mousePointer,
 import gui_text : Match;
 
 // Markdown-preview model (raylib-free) and the ANSI-fence decoder.
-import document : Document;
+import document : DiffSides, Document;
 import gui_preview : PreviewModel, stripSgr;
 import sparkles.diff.model : DiffDoc;
 import gui_ansi : decodeAnsi;
@@ -301,6 +301,7 @@ int runGui(
     string[] codepointMaps = null,       // --font-codepoint-map entries (Android defaults)
     bool liveTypes = true,               // live D types via the oracle (PRJ12)
     DiffDoc initialDiff = DiffDoc.init,  // diff document payload (ContentKind.diff)
+    DiffSides initialDiffSides = DiffSides.init, // per-side texts (DVM5)
 ) @system
 {
     import std.stdio : stderr;
@@ -535,7 +536,8 @@ int runGui(
         : (docPath.length ? dirName(docPath) : ".");
     applyTheme(vm.themeIdx); // resolves the theme before the first document
     vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
-        source, events, preview, twoslash, docLang, initialDiff);
+        source, events, preview, twoslash, docLang, initialDiff,
+        initialDiffSides);
     // A markdown file opens in preview by default; Tab toggles to the raw
     // highlighted-source view. `HUE_GUI_PREVIEW=0/1` pins the initial mode
     // for deterministic golden captures.
@@ -612,7 +614,7 @@ int runGui(
 
         vm.widthCols = widthCols();
         vm.setDocument(name, summary, doc.source, doc.events, doc.preview,
-            doc.twoslash, doc.lang, doc.diffDoc);
+            doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides);
         inp.query.clear();
         inp.mode = Mode.normal;
         window.title(("hue — " ~ name).toStringz);
