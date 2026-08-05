@@ -26,6 +26,7 @@ module sparkles.twoslash;
 public import sparkles.twoslash.protocol;
 public import sparkles.twoslash.ingest;
 public import sparkles.twoslash.overlay;
+public import sparkles.twoslash.below_layout;
 public import sparkles.twoslash.render_html;
 public import sparkles.twoslash.render_ansi;
 public import sparkles.twoslash.render_widgets;
