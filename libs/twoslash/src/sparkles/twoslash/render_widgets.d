@@ -34,7 +34,8 @@ import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
 import sparkles.ui.wrap : TextWrap;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
-import sparkles.ui.wrap : TextWrap;
+
+import std.algorithm.iteration : splitter;
 
 import sparkles.twoslash.below_layout : AnchorMarker, anchorCol, AnnotationRow,
     BelowLineLayout, ConnectorGlyphs, elbowCells, layoutBelowLine, payloadCells;
@@ -479,11 +480,10 @@ private uint[] buildPayloadRows(ref Builder b, const Node node, size_t nodeIndex
     {
         case NodeType.error:
             const slot = errIsWarning(node.level) ? Slot.warn : Slot.error;
-            const msg = b.add(Widget(kind: WidgetKind.text, text: node.text,
-                slot: slot, hitId: hit));
             return [b.add(Widget(kind: WidgetKind.panel, slot: slot,
                 paintBackground: true, decoration: accentDeco(slot),
-                padding: Insets.symmetric(0, 1), children: [msg], hitId: hit))];
+                padding: Insets.symmetric(0, 1), hitId: hit,
+                children: [messageBlock(b, node.text, slot, hit)]))];
 
         case NodeType.query:
             auto qWidth = SizeSpec.fit_;
@@ -527,13 +527,12 @@ private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex,
             const width = node.length ? node.length : 1;
             const caret = b.add(Widget(kind: WidgetKind.text,
                 text: repeatCaret(width), slot: slot, hitId: hit));
-            const msg = b.add(Widget(kind: WidgetKind.text, text: node.text,
-                slot: slot, hitId: hit));
             // The message sits in an accent block: a 3px left bar + a translucent
             // background tint (CSS `.twoslash-error-line` / `-warn-line`).
             const block = b.add(Widget(kind: WidgetKind.panel, slot: slot,
                 paintBackground: true, decoration: accentDeco(slot),
-                padding: Insets.symmetric(0, 1), children: [msg], hitId: hit));
+                padding: Insets.symmetric(0, 1), hitId: hit,
+                children: [messageBlock(b, node.text, slot, hit)]));
             return b.container(WidgetKind.column, [caret, block], padding: indent);
 
         case NodeType.query:
@@ -584,6 +583,21 @@ private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex,
             // indented column keeps the switch total.
             return b.container(WidgetKind.column, [], padding: indent);
     }
+}
+
+/// A diagnostic's message as one row per line. D reports a CTFE failure as the
+/// error plus a `called from here:` chain; a raw newline inside a text run has
+/// no meaning to the layout engine, so each line becomes its own row.
+// `text` is deliberately not `scope`: `-preview=dip1000` will not let a scope
+// slice drive a `splitter` range (the documented Phobos clash).
+private uint messageBlock(ref Builder b, const(char)[] text, Slot slot, size_t hit)
+{
+    uint[] rows;
+    foreach (line; text.splitter('\n'))
+        rows ~= b.add(Widget(kind: WidgetKind.text, text: line, slot: slot, hitId: hit));
+    // The overwhelmingly common one-line message stays exactly the widget it
+    // was — no wrapper, so the tree is unchanged for every single-line error.
+    return rows.length == 1 ? rows[0] : b.container(WidgetKind.column, rows);
 }
 
 /// A completion candidate row: a `-` marker then the name split into its matched
@@ -853,14 +867,45 @@ private uint[] signatureBlock(ref Builder b, const Node node, size_t hit,
 {
     if (node.signature != SignatureLayout.init)
         return signatureRows(b, node, hit, opts, sigStyle, sigWidth, sigWrap);
+
     // A TypeScript payload, a node predating the field, or a tip whose text is
-    // not a signature at all: one run, and the space-wrapping is all there is.
-    return [opts.sigSpans.length
-        ? b.add(Widget(kind: WidgetKind.rich, spans: opts.sigSpans, slot: Slot.code,
-            hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))
-        : b.add(Widget(kind: WidgetKind.text,
-            text: withoutQuickinfoPrefix(node.text), slot: Slot.code,
-            hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap))];
+    // not a signature at all: the space-wrapping is all there is. It still
+    // breaks at its own newlines — TypeScript prints an object type one member
+    // to a line, and a newline inside a text run means nothing to the layout
+    // engine.
+    uint[] rows;
+    if (opts.sigSpans.length)
+    {
+        // Spans index `node.text`, prefix included (`signatureSpans` is handed
+        // the whole thing), so the line breaks are found in that same string.
+        foreach (line; lineRanges(node.text))
+            rows ~= b.add(Widget(kind: WidgetKind.rich,
+                spans: sliceSpans(opts.sigSpans, line.start, line.end),
+                slot: Slot.code, hitId: hit, textStyle: sigStyle,
+                width: sigWidth, wrap: sigWrap));
+        return rows;
+    }
+    foreach (line; withoutQuickinfoPrefix(node.text).splitter('\n'))
+        rows ~= b.add(Widget(kind: WidgetKind.text, text: line, slot: Slot.code,
+            hitId: hit, textStyle: sigStyle, width: sigWidth, wrap: sigWrap));
+    return rows;
+}
+
+/// The `[start, end)` byte range of each line of `text`, newline excluded.
+private auto lineRanges(const(char)[] text) pure
+{
+    import std.algorithm.iteration : cumulativeFold, map, splitter;
+
+    static struct Range { uint start, end; }
+
+    uint at;
+    Range[] out_;
+    foreach (line; text.splitter('\n'))
+    {
+        out_ ~= Range(at, at + cast(uint) line.length);
+        at += cast(uint) line.length + 1;
+    }
+    return out_;
 }
 
 /**
