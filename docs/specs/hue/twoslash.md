@@ -138,6 +138,36 @@ render byte-identically to before.
 | SIG6 | Structure is **out-of-band offsets**, never in-band U+200B: a zero-width space would corrupt the tree-sitter re-highlight, inflate the width the layout engine measures, and ride into the clipboard. Any out-of-range or non-monotonic offset degrades to today's single flat row rather than asserting.                                                                                                                                                                                                                                                  | full        | `protocol.SignatureLayout`; `signature_layout.effectFreeRange`           |
 | SIG7 | The reader must be able to **toggle** a lambda between its source text and the compiler's internal name, per lambda, the way any other collapsed run expands (`SIG4`). The source is the default face because it is what the reader wrote; the internal name is what a diagnostic or a mangled symbol will say, so it has to stay reachable rather than be discarded. No new machinery: a lambda is an `Abbrev` region, so the existing key/`ExpandedRegions` path carries it, and selection still yields the internal name the signature really contains. | not started | `render_widgets.rowPieces`; producer half `TIP7`                         |
 
+## Crowded-line annotation layout (`CON`)
+
+A source line can carry more than one below-line block: two `^?` queries, a query
+and a completion list, a query and an error. Stacking them in node order — one
+caret row plus payload per block, each indented to its own column — loses the
+association the moment there are two: the second block's caret sits rows away
+from the code it points at, and the first block's payload runs underneath it.
+Fourteen lines in the D fixture corpus were already in that state.
+
+Rust, Elm, and modern GCC/Clang converged on the same answer, and it is the one
+these rows adopt: **one shared marker row** under the code, then the labels
+peeled off **right to left**, with vertical connectors carrying every anchor that
+has not been labelled yet.
+
+```
+auto width = spread(2.5, -1.0);
+     ┬────   ┬─────
+     │       ╰─ double sample.spread(double lo, double hi)
+     ╰─ (thread local global) double sample.width
+```
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                                    | Status | Traces to                                                     |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------- |
+| CON1 | Labels are placed **right to left**: the rightmost anchor's payload takes the first row and the leftmost takes the last. That ordering is what makes the connectors safe — a guide only ever runs down past anchors whose labels are still to come, so it can never cross text.                                                                                                                | full   | `below_layout.layoutBelowLine`                                |
+| CON2 | The line gets **one marker row**, one run per distinct anchor column, and each run is **clipped at the next anchor** so two adjacent spans stay distinguishable instead of merging. Each run is drawn in its own label's brand colour (error/warn vs. caret).                                                                                                                                  | full   | `below_layout.AnchorMarker`; `render_ansi`/`render_widgets`   |
+| CON3 | A connector runs beside **every** row of the payload it passes, so a multi-row label (a completion list, a broken signature) never detaches the anchors below it. In the widget view the guide is a column of glyphs sized from the payload's own row widgets — a left-only border has no cell analog in the TUI, and the GUI routes box drawing through `raylib-text`'s procedural `drawBox`. | full   | `render_widgets.buildGuide`; `render_ansi.writeAnnotationRow` |
+| CON4 | The layout engages only on **two or more distinct anchor columns**. One annotation — or several on the same token, where a connector would point every label at one cell — keeps the plain stacked shape byte for byte. A `// @tag` is a _line_ annotation with nothing to point at, so it is never an anchor and stays a plain row above the art.                                             | full   | `below_layout.isAnchored`                                     |
+| CON5 | Two labels **share a row** when the left one provably ends clear of the right one's anchor and neither wraps; otherwise each takes its own. Vertical space is the scarce resource on a crowded line, and a short label pair costs one row, not two.                                                                                                                                            | full   | `below_layout.layoutBelowLine` (`shareGutter`)                |
+| CON6 | One plan drives **both cell backends**: the planner decides _where_ and the glyphs are a parameter, so the ANSI meta-lines and the `sparkles:ui` widget view (GUI + TUI) cannot drift. Without box drawing the same shape degrades to GCC's `^~~~` art rather than to nothing. HTML is deliberately out of scope — its contract is Shiki fidelity, and it renders byte-identically to before.  | full   | `below_layout.ConnectorGlyphs`                                |
+
 ## Twoslash HTML overlay: chrome, docs, selection (`TWH`)
 
 `hue --twoslash --html` emits the Shiki `.twoslash-*` contract with pure-CSS
@@ -310,6 +340,7 @@ type oracle (`findTip`/`findDefinition`) · D3 completions + semantic tokens + r
 | `apps/hue/src/gui.d` (`runGuiTwoslash`)                                                                                         | `TWO1`–`TWO3`                                                                              |
 | `apps/hue/src/live_types.d` + the `startLive`/`pollLive` seams in `gui.d`, `workspace.d`, `tui.d`                               | `LIV1`–`LIV7` (producer half: `PRJ12`–`PRJ16`, `EXT7`)                                     |
 | `libs/twoslash/src/sparkles/twoslash/signature_layout.d`, `render_widgets.d`; `gui.drawPopup`, `tui.paintHoverPopup`            | `SIG1`–`SIG7` (producer half: `TIP5`, `TIP7`)                                              |
+| `libs/twoslash/src/sparkles/twoslash/below_layout.d`; `render_ansi.d`, `render_widgets.d` (below-line blocks)                   | `CON1`–`CON6`                                                                              |
 | `libs/twoslash/src/sparkles/twoslash/*.d` (`render_html.d`, `style.d`/`views/twoslash.css`, `icons.d`, `ingest.d`, `overlay.d`) | `TWH1`–`TWH8`; library summary (→ `docs/specs/twoslash/SPEC.md` on `feat/syntax-twoslash`) |
 | `libs/twoslash/examples/` (`compare-shiki.mjs`, `visual-check.mjs`)                                                             | verification tooling (the preview gallery moved to `apps/hue/src/gallery.d`, `TWD3`)       |
 | `sparkles:dmd-lsp` (proposed)                                                                                                   | `DMD1`–`DMD3`                                                                              |
