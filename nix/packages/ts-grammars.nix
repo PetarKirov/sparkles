@@ -11,9 +11,12 @@
 #    (base language first: the engine's same-node last-wins rule makes the
 #    specific file override).
 #  - ocaml's output ships no queries; they live at the src root.
+#
+# `sdl` is the one grammar not sourced from nixpkgs: it is maintained in-house
+# (nix/packages/tree-sitter-sdl.nix) because no SDLang grammar existed.
 {
   perSystem =
-    { pkgs, ... }:
+    { config, pkgs, ... }:
     let
       g = pkgs.tree-sitter-grammars;
 
@@ -118,6 +121,13 @@
           name = "ocaml";
           grammar = g.tree-sitter-ocaml;
           queriesFrom = g.tree-sitter-ocaml.src;
+        };
+        # Not in nixpkgs — ours. The directory name must stay `sdl`: that is
+        # what `canonicalLanguage` lowercases a `.sdl` extension to, and the
+        # loader derives the `tree_sitter_sdl` symbol from it.
+        sdl = entry {
+          name = "sdl";
+          grammar = config.packages.tree-sitter-sdl;
         };
       };
 
