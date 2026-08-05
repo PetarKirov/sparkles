@@ -22,18 +22,9 @@ import sparkles.ui.state : ScrollAxis, ScrollbarState;
 
 @safe:
 
-/// The hover-expand animation state (px): eased every frame toward the
-/// idle rail or the expanded gutter width. Regular; one per bar.
-struct ScrollbarAnim
-{
-    float width = 4.0f;
-
-    /// Eases `width` toward `target` at the shared 15/s rate.
-    void step(float target, float dt) pure nothrow @nogc
-    {
-        width += (target - width) * 15.0f * dt;
-    }
-}
+/// The hover-expand animation state now lives with the `ScrollView`
+/// container (`SCV1`) — re-exported here so px hosts keep one import.
+public import sparkles.ui.scroll_view : ScrollbarAnim;
 
 /// The bar's drawable geometry for one frame, in px: the track rectangle
 /// and the thumb rectangle inside it (both empty when the content fits).
