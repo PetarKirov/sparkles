@@ -27,7 +27,16 @@ sharing with an explicit lifetime. Close this issue when default or named copy
 operations cannot silently create mutable aliases and property tests demonstrate
 equality preservation plus independence for every type that claims Regular value
 semantics. The audit must cover all mutable slice-bearing UI structs, not only
-the examples named above.
+the examples named above — `DockContainer.paneFrames`/`.dividers` are in scope
+as derived per-frame caches (rebuilt by `arrange`, and so a candidate for the
+"borrowed/derived, not owned" policy rather than for copying).
+
+`DockLayout` ([`DCK1`](./containers.md)) is the first type to discharge this
+requirement and is the worked example: its arena is deep-copied by an explicit
+copy constructor, because a layout that aliases the arrangement it snapshotted
+cannot serve [`DCK2`](./containers.md) persistence. The test asserting
+copy-then-mutate independence is what exposed the aliasing — which is the
+property test this issue asks for, generalized to every claimant.
 
 ## UI-O2 — The widget payload is still a tagged record {#ui-o2}
 
