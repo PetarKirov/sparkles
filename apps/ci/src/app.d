@@ -142,6 +142,7 @@ import docs_sidebar :
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
+import fence_audit : AuditScope, FenceAuditOptions, runFenceAudit, wrapperFenceEnd;
 
 // === UI sizing ===
 
@@ -177,6 +178,18 @@ struct CliParams
 
     @(Option(`u|update`, description: "Rewrite the markdown file with actual example output."))
     bool update;
+
+    @(Option(`audit-fences`, description: "Classify every fenced code block in docs/ and README.md against the tree-sitter grammar bundle, and inventory the VitePress code-block features a highlighter swap must preserve."))
+    bool auditFences;
+
+    @(Option(`json`, description: "With --audit-fences: write the machine-readable report to this file."))
+    string json;
+
+    @(Option(`root`, description: "With --audit-fences: audit this worktree instead of the current one."))
+    string root;
+
+    @(Option(`audit-scope`, description: "With --audit-fences: which side of the config srcExclude split to census - site (default), all, or excluded."))
+    string auditScope = "site";
 
     @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/async-io/gcd/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, docs/research/manim/examples/*.d, docs/research/anchored-overlays/examples/*.d, docs/research/property-tree/examples/*.d, and the per-subject examples directories under docs/research/platform-ui-guidelines/."))
     bool exampleFiles;
@@ -320,6 +333,7 @@ enum ProgramMode
     checkDocsSidebar,
     checkBlobPaths,
     ciStats,
+    auditFences,
 }
 
 struct Example
@@ -425,6 +439,11 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.checkDocsSidebar)
         return runCheckDocsSidebar();
+
+    // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
+    // so it must not fall through to the shared "no input files" usage error.
+    if (mode == ProgramMode.auditFences)
+        return runAuditFencesMode(cli);
 
     if (mode == ProgramMode.runDubTests)
         return runDubTestsMode(cli.failFast, cli.coverage);
@@ -563,6 +582,9 @@ private string validateCliMode(
 
 private ProgramMode resolveProgramMode(in CliParams cli)
 {
+
+    if (cli.auditFences)
+        return ProgramMode.auditFences;
 
     if (cli.ciStats)
         return ProgramMode.ciStats;
@@ -934,6 +956,45 @@ private string[] trackedFilesMatching(string pattern)
         .array;
 }
 
+/// Runs the fence audit (`--audit-fences`). `--files` selectors override the
+/// default `docs/**/*.md` + `README.md` set; globs resolve through
+/// `git ls-files` in the current directory, so combine them with `--root` only
+/// when the two agree.
+private int runAuditFencesMode(in CliParams cli)
+{
+    string[] selected;
+    foreach (selector; cli.files)
+    {
+        if (selector.length == 0)
+            continue;
+
+        if (isGlobSelector(selector))
+            selected ~= trackedFilesMatching(selector);
+        else
+            selected ~= selector.idup;
+    }
+
+    // An unknown scope is a typo, not a reason to silently census the default
+    // set and report numbers the caller did not ask for.
+    AuditScope scope_;
+    switch (cli.auditScope)
+    {
+        case "site":     scope_ = AuditScope.site;     break;
+        case "all":      scope_ = AuditScope.all;      break;
+        case "excluded": scope_ = AuditScope.excluded; break;
+        default:
+            error(i"unknown --audit-scope `$(cli.auditScope)`; expected site, all or excluded");
+            return 1;
+    }
+
+    return runFenceAudit(FenceAuditOptions(
+        root: cli.root,
+        files: selected.filter!(path => path.endsWith(".md")).array,
+        jsonPath: cli.json,
+        auditScope: scope_,
+    ));
+}
+
 private string[] collectInputFiles(
     in CliParams cli,
     in ProgramMode mode,
@@ -1053,6 +1114,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 rc = 1;
                 break;
             case ProgramMode.ciStats:
+            case ProgramMode.auditFences:
                 rc = 1;   // handled earlier in main(); should never reach here
                 break;
         }
@@ -1751,21 +1813,16 @@ Example[] extractExamples(string content)
     {
         auto stripped = lines[idx].strip;
 
-        // Track outer fenced blocks (````markdown, etc.) to skip nested code blocks.
-        // An outer fence uses ≥4 backticks or is a non-D triple-backtick block.
-        if (idx >= outerFenceEnd && stripped.length >= 4
-            && stripped[0 .. 4] == "````")
+        // Skip wrapper blocks (````markdown, etc.) wholesale: the fences inside
+        // them are quoted content, not code blocks of this document. The
+        // scanning rule is shared with the fence audit — see
+        // `fence_audit.wrapperFenceEnd`.
+        if (idx >= outerFenceEnd)
         {
-            auto fenceLen = stripped.countUntil!(c => c != '`');
-            if (fenceLen < 0) fenceLen = stripped.length;
-            auto closeFence = stripped[0 .. fenceLen];
-            // Find matching closing fence
-            auto closeIdx = lines[idx + 1 .. $]
-                .countUntil!(l => l.strip.length >= fenceLen
-                    && l.strip[0 .. fenceLen] == closeFence);
-            if (closeIdx >= 0)
+            const wrapperEnd = wrapperFenceEnd(lines, idx);
+            if (wrapperEnd > 0)
             {
-                outerFenceEnd = idx + 1 + closeIdx + 1;
+                outerFenceEnd = wrapperEnd;
                 idx = outerFenceEnd - 1;
                 continue;
             }
