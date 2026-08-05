@@ -445,25 +445,27 @@ private uint buildAnnotationRow(ref Builder b, const TwoslashReturn tw,
 }
 
 /// A vertical connector `height` rows tall, in the color of the label its
-/// anchor is still owed.
+/// anchor is still owed. It carries that node's `hitId` too, so the whole
+/// chain — span, marker, connector, label — answers a pointer as one thing.
 private uint buildGuide(ref Builder b, const TwoslashReturn tw,
     in BelowLineLayout layout, int col, ConnectorGlyphs g, int height)
 {
+    const owner = anchorAt(layout, col);
     uint[] glyphs;
     foreach (_; 0 .. height)
         glyphs ~= b.add(Widget(kind: WidgetKind.text, text: g.guide,
-            slot: guideSlot(tw, layout, col)));
+            slot: connectorSlot(tw.nodes[owner]), hitId: hitOf(owner)));
     return b.container(WidgetKind.column, glyphs);
 }
 
-/// The slot coloring the guide at `col` — the block that anchor still owes a
-/// label to.
-private Slot guideSlot(const TwoslashReturn tw, in BelowLineLayout layout, int col)
+/// The node owning the anchor at `col`. Every guide column is an anchor by
+/// construction, so the fallback is unreachable.
+private size_t anchorAt(in BelowLineLayout layout, int col) pure nothrow @nogc
 {
     foreach (ref const m; layout.markers)
         if (m.col == col)
-            return connectorSlot(tw.nodes[m.node]);
-    return Slot.caret;
+            return m.node;
+    return 0;
 }
 
 /// `node`'s payload without its caret row: the error message block, the query
