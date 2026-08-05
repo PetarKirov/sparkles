@@ -16,6 +16,12 @@ dependency "sparkles:code-instrumentation" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "expected" version="~>0.4.1"
 dependency "sparkles:wired" path="../.."
+// The fence audit (`--audit-fences`) folds fence labels through
+// `sparkles.syntax.ts.registry.canonicalLanguage` / `isPlainTextLabel` and
+// enumerates the grammar bundle through `GrammarRegistry`, rather than
+// duplicating the alias table here.
+dependency "sparkles:syntax" path="../.."
+
 // Optimised, assertions live, `debug {}` blocks out — the build every nix
 // artifact uses. Neither `debug` (which compiles those blocks in) nor
 // `release` (which deletes assert *expressions*, side effects included).
@@ -43,5 +49,16 @@ configuration "unittest" {
     // overwrites the installed binary with a test runner, and a `ci` mode that
     // builds its own package races with the file it is running from.
     targetType "library"
+
+    // `dub test :ci` compiles its dependency sources with -unittest — and since
+    // `--audit-fences` pulls in sparkles:syntax / sparkles:tree-sitter, their
+    // env-gated tests call `skipTest` (in the impl package). Pulling the runner
+    // as a plain `dependency` links impl as a static archive positioned before
+    // those objects, so ld.bfd (single-pass) never pulls `skip.o` → undefined
+    // reference. Source-include the shim + impl instead (the cycle-safe recipe
+    // base/core-cli use) so `skipTest` compiles directly into this build.
+    sourcePaths "src" "../../libs/test-runner/src" "../../libs/test-runner-impl/src"
+    importPaths "src" "../../libs/test-runner/src" "../../libs/test-runner-impl/src"
+
     dflags "-checkaction=context" "-allinst"
 }
