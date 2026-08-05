@@ -5,7 +5,7 @@ ARM-Linux claims are checked against the **local** pinned kernel tree
 `linux@e43ffb69e043` (v7.1-rc6, read-only) and the vendor catalog
 `arm-data@0806afb1` (`ARM-software/data`, commit 2026-05-01); the Apple
 reverse-engineering repo is `applecpu@0e6bc3f6` (dougallj, 2023-07-13). Apple
-observations are read off `mac-bsn` = Apple **M4 Max** (`Mac16,5`, SoC `T6041`,
+observations are read off `Apple MacBook Pro M4 Max` = Apple **M4 Max** (`Mac16,5`, SoC `T6041`,
 `hw.cpufamily 0x17d5b93a`), macOS **26.3.1** (build 25D771280a), SIP enabled,
 non-root. `$REPOS = /home/petar/code/repos` (`linux` at `$REPOS/linux`).
 
@@ -21,7 +21,7 @@ non-root. `$REPOS = /home/petar/code/repos` (`linux` at `$REPOS/linux`).
 | `◯`  | Not locally groundable — synthesis/consequence, or source unobtainable (gated) |
 
 **Types:** `quote` (verbatim) · `src` (kernel/repo source-read, `[source-verified]`) ·
-`hw` (`mac-bsn`, `[hw-verified: aarch64-darwin]`) · `lit` (`[literature]`, gated) ·
+`hw` (`Apple MacBook Pro M4 Max`, `[hw-verified: aarch64-darwin]`) · `lit` (`[literature]`, gated) ·
 `synth` (derived consequence).
 
 ## Verification note
@@ -66,12 +66,12 @@ opening scope alert.
 | C23 | Apple IMPDEF register model: `PMCR0-4`/`PMESR0/1`/`PMSR`/`PMC0-9`, 10 ctrs (2 fixed), 8-bit field  | src    | `apple_m1_cpu_pmu.c:22-168,227-270,379-419,546-566`; `apple_m1_pmu.h:10-50`; `applecpu …/PMCKext2.c:5-32`                                                                                                                                                                               | ✓      |
 | Q1  | _"…a grand total of two known counters, and the rest is anybody's guess."_                         | quote  | `apple_m1_cpu_pmu.c:31-40`                                                                                                                                                                                                                                                              | ✓      |
 | C24 | Linux Apple driver = 4-event PMUv3 shim (`m1_pmu_pmceid_map`); rest raw via `config:0-7`           | src    | `apple_m1_cpu_pmu.c:170-187,215-220,568-586`                                                                                                                                                                                                                                            | ✓      |
-| C25 | **Apple changed event encoding at M4** (E2 table): `as1/a14/as3` Apple #s vs `as4/as5` PMUv3 #s    | hw+src | `mac-bsn:/usr/share/kpep/{as1,a14,as3,as4-1,as5}.plist` (E2); driver TODO `apple_m1_cpu_pmu.c:44-48`                                                                                                                                                                                    | ✓      |
+| C25 | **Apple changed event encoding at M4** (E2 table): `as1/a14/as3` Apple #s vs `as4/as5` PMUv3 #s    | hw+src | `/usr/share/kpep/{as1,a14,as3,as4-1,as5}.plist` on the Apple MacBook Pro M4 Max (E2); driver TODO `apple_m1_cpu_pmu.c:44-48`                                                                                                                                                            | ✓      |
 | Q2  | _"…we'll have to introduce per cpu-type tables."_ (predicts the M4 break)                          | quote  | `apple_m1_cpu_pmu.c:44-48`                                                                                                                                                                                                                                                              | ✓      |
 | C26 | Linux 8-bit Apple field (`GENMASK(7,0)`, `config:0-7`) under-exposes kpep's wider selectors        | src+hw | `apple_m1_cpu_pmu.c:24,215`; kpep `L1D_CACHE_MISS_LD=0x5a3`, `FETCH_RESTART=0x1de`, up to `0x4006` (M4)                                                                                                                                                                                 | ✓      |
 | C27 | Apple advanced filtering (`OPMAT/OPMSK`, `PMTRHLD`, `PMCR2-4`) Linux never programs                | src    | `applecpu@0e6bc3f6 timer-hacks/PMCKext2.c:13-32`                                                                                                                                                                                                                                        | ✓      |
-| E1  | This box's kpep = `as4-1.plist` via `cpu_100000c_2_17d5b93a.plist` symlink                         | hw     | `mac-bsn ls -la /usr/share/kpep \| grep 17d5b93a`                                                                                                                                                                                                                                       | ✓      |
-| E3  | Full M4-Max catalog = 103 events; SME block; `INST_ALL => {counters_mask:252, number:8}`           | hw     | `mac-bsn:/usr/share/kpep/as4-1.plist` (`python3`/`plutil`)                                                                                                                                                                                                                              | ✓      |
+| E1  | This box's kpep = `as4-1.plist` via `cpu_100000c_2_17d5b93a.plist` symlink                         | hw     | `ls -la /usr/share/kpep \| grep 17d5b93a` on the Apple MacBook Pro M4 Max                                                                                                                                                                                                               | ✓      |
+| E3  | Full M4-Max catalog = 103 events; SME block; `INST_ALL => {counters_mask:252, number:8}`           | hw     | `/usr/share/kpep/as4-1.plist` on the Apple MacBook Pro M4 Max (`python3`/`plutil`)                                                                                                                                                                                                      | ✓      |
 
 ## Discrepancies
 
@@ -122,7 +122,7 @@ opening scope alert.
 
 **Net:** 0 fabrications. Every ARM-Linux encoding/mechanism is source-verified against
 `linux@e43ffb69e043`; the Apple sidebar is `[hw-verified: aarch64-darwin]` off
-`mac-bsn` plus the Linux driver. **One open discrepancy** (D3, Apple fixed-counter
+`Apple MacBook Pro M4 Max` plus the Linux driver. **One open discrepancy** (D3, Apple fixed-counter
 count 3-vs-2, ⚠ flagged not resolved); **one gated source** (D5, DDI 0487 / SPE
 whitepaper, grounded via the in-kernel header instead). The self-monitoring
 cross-check resolved **affirmatively** — arm64 does have the `rdpmc` userpage analog.

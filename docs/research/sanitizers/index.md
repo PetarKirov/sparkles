@@ -132,7 +132,7 @@ Which tool catches what — and the D caveat on each.
 
 > [!IMPORTANT]
 > The honest boundary: the `x86_64-linux` box is the only full bed. **macOS is
-> mechanism-verified, not run-verified** — the `mac-bsn` transcripts were blocked
+> mechanism-verified, not run-verified** — the `Apple MacBook Pro M4 Max` transcripts were blocked
 > and one Apple-clang C datum stands in; **Windows has no hardware at all**; and
 > **no MTE silicon is in reach** (the project's only aarch64 box, an Apple M4, has
 > no MTE). Every such gap is tagged in place and carried into
@@ -217,7 +217,7 @@ Zig, googletest, CMake, and pytest-valgrind at their pinned SHAs. The sanitizer
 papers (ASan, TSan, MSan, the two Valgrind papers, GWP-ASan, and the MTE
 whitepaper) are archived locally under `papers/sanitizers/`. The survey's own
 experimental evidence is the eleven [runnable probes](#the-runnable-probes) plus
-the recon `mac-bsn` Apple-clang smoke test, with every experiment's environment
+the recon `Apple MacBook Pro M4 Max` Apple-clang smoke test, with every experiment's environment
 recorded alongside its output.
 
 <!-- References -->

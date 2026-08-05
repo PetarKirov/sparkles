@@ -25,7 +25,7 @@ PMUv3.
 > claim on this page is _source reading_ of the kernel driver at
 > [`linux@e43ffb69e043`][arm-pmuv3-c], tagged `[source-verified]` — never a
 > hardware observation. The only ARM silicon actually measured is Apple's, on
-> macOS (`mac-bsn`, M4 Max), and it is neither Linux nor PMUv3; it lives in the
+> an Apple MacBook Pro M4 Max, and it is neither Linux nor PMUv3; it lives in the
 > [Apple Silicon sidebar](#apple-silicon-microarchitecture-reference) tagged
 > `[hw-verified: aarch64-darwin]`. Where a spec figure comes from the Arm ARM
 > (DDI 0487) it is tagged `[literature]` and cited by chapter name, because the
@@ -408,7 +408,7 @@ DWARF-CFI copies. Detail is deferred to [linux-perf-events.md][linux] and
 > [!WARNING]
 > **This section is a macOS-observed microarchitecture reference, not
 > ARM-Linux.** Apple Silicon is an AArch64 core that is _not_ PMUv3; the numbers
-> below are `[hw-verified: aarch64-darwin]` off `mac-bsn` (Apple **M4 Max**,
+> below are `[hw-verified: aarch64-darwin]` off `Apple MacBook Pro M4 Max` (Apple **M4 Max**,
 > `Mac16,5`, SoC `T6041`, `hw.cpufamily 0x17d5b93a`, macOS **26.3.1** build
 > 25D771280a, SIP enabled, non-root) and `[source-verified]` against the Linux
 > `apple_m1_cpu_pmu.c` driver. It is placed here — a sidebar — precisely because
@@ -475,7 +475,8 @@ config_counters             1020    1020    1020    1020    1020
 catalog is 103 events with a large SME block (`SME_ENGINE_SM_ENABLE`,
 `INST_SME_ENGINE_ALU`, `LDST_SME_*`) reflecting M4's SME; a sample entry reads
 `INST_ALL => {'counters_mask': 252, 'number': 8, ...}` (mask 252 = counters 2–7).
-`[hw-verified: aarch64-darwin]` `mac-bsn:/usr/share/kpep/{as1,a14,as3,as4-1,as5}.plist`
+`[hw-verified: aarch64-darwin]` `/usr/share/kpep/{as1,a14,as3,as4-1,as5}.plist`
+on the Apple MacBook Pro M4 Max.
 
 - `[source-verified]` for the driver's TODO ([`apple_m1_cpu_pmu.c:44-48`][apple-m1-c]).
   The access _mechanism_ stays Apple-proprietary; only the low event _numbers_ now
@@ -586,7 +587,7 @@ answered above (and which page owns the shared machinery).
   `architectural` flag (`neoverse-n1.json`, `c1-ultra.json`).
 - [`dougallj/applecpu`][applecpu] `timer-hacks/PMCKext2.c` — reverse-engineered
   Apple PMU registers (opcode-match, thresholds).
-- `mac-bsn:/usr/share/kpep/*.plist` — macOS's Apple event catalog (`as1`/`a14`/
+- `/usr/share/kpep/*.plist` on the Apple MacBook Pro M4 Max — macOS's Apple event catalog (`as1`/`a14`/
   `as3`/`as4-1`/`as5`), the M4 encoding-change evidence. `[hw-verified: aarch64-darwin]`
 - Arm ARM **DDI 0487** issue **K.a** — _"The Performance Monitors Extension"_ and
   _"The Statistical Profiling Extension"_ chapters. **GATED**: the [developer.arm.com
@@ -599,7 +600,7 @@ answered above (and which page owns the shared machinery).
 > [!NOTE]
 > **No runnable CI example ships with this page.** The survey's convention is a
 > [CI-compiled probe][linux] per deep-dive, but there is no `aarch64-linux`
-> hardware in CI to run a PMUv3 probe against, and CI cannot reach `mac-bsn`. The
+> hardware in CI to run a PMUv3 probe against, and CI cannot reach `Apple MacBook Pro M4 Max`. The
 > in-page **E2 kpep transcript** is the primary evidence for the Apple claims; the
 > ARM-Linux claims are source-verified against `linux@e43ffb69e043`. A
 > host-agnostic PMUv3 raw-`config` encoder would compile everywhere but could only

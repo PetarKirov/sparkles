@@ -17,16 +17,16 @@ this box turns out _richer_ than Linux `/proc`.
 | Symbolization      | Mach-O + dSYM (DWARF) via `atos`/`symbols`, engine `CoreSymbolication.framework` (closed)                                        |
 | Event catalog      | on-disk **kpep** DB plists (`/usr/share/kpep/`, world-readable) + the kernel `RESTRICT_TO_KNOWN` allowlist (102 events on T6041) |
 | Open-source anchor | **xnu-12377.1.9** + **dtrace-413** (source drops); **dyld** open, not cloned                                                     |
-| Verification       | `[hw-verified: aarch64-darwin]` for `mac-bsn` transcripts; `[source-verified]` for xnu/dtrace reads                              |
+| Verification       | `[hw-verified: aarch64-darwin]` for `Apple MacBook Pro M4 Max` transcripts; `[source-verified]` for xnu/dtrace reads             |
 
 > [!IMPORTANT]
-> **This page is grounded in recorded `mac-bsn` transcripts, not a CI probe.**
-> There is no `aarch64-darwin` machine in CI and CI cannot reach `mac-bsn`, so —
+> **This page is grounded in recorded `Apple MacBook Pro M4 Max` transcripts, not a CI probe.**
+> There is no `aarch64-darwin` machine in CI and CI cannot reach `Apple MacBook Pro M4 Max`, so —
 > unlike the Linux deep-dives — no runnable example ships here; the five in-page
 > experiment transcripts (Exp. a–e) _are_ the hardware evidence, tagged
 > `[hw-verified: aarch64-darwin]`. Everything read from the kernel is tagged
 > `[source-verified]` against the open-source drop. **One version skew to keep in
-> mind:** `mac-bsn` _runs_ kernel **xnu-12377.91.3** (`RELEASE_ARM64_T6041`), but
+> mind:** `Apple MacBook Pro M4 Max` _runs_ kernel **xnu-12377.91.3** (`RELEASE_ARM64_T6041`), but
 > the public source drop is **xnu-12377.1.9** — same `12377` base for the same
 > die, so the code read is representative, but every line number below is from
 > `12377.1.9`. All experiments ran **unprivileged (uid 501)**; `sudo -n` needs a
@@ -193,7 +193,7 @@ an atomic `cmpxchg NULL→owner` in `cpc_hw_acquire` / `cpc_hw_in_use`
 
 > [!NOTE]
 > **Tier 2 (`xctrace`) is the third-party escape hatch.** `xctrace record
---template 'CPU Counters'` ran **unprivileged** on `mac-bsn` and produced a
+--template 'CPU Counters'` ran **unprivileged** on `Apple MacBook Pro M4 Max` and produced a
 > trace with real counter data (Exp. e, below): it brokers `kperf` through an
 > entitled helper rather than opening `kpc` directly. It is the sanctioned path
 > a non-root tool uses when it needs the configurable counters or sampling.
@@ -501,7 +501,7 @@ the on-disk kpep DBs are open and were read directly:
 internals are not open; their behavior here is observed from the outside
 (`dlopen` symbol resolution, `xctrace` transcripts, `atos` output), never read.
 
-- `mac-bsn:/usr/share/kpep/*.plist` — the world-readable kpep event catalog
+- `/usr/share/kpep/*.plist` on the Apple MacBook Pro M4 Max — the world-readable kpep event catalog
   (`cpu_100000c_2_17d5b93a.plist → as4-1.plist`). `[hw-verified: aarch64-darwin]`
 
 > [!NOTE]
@@ -513,7 +513,7 @@ internals are not open; their behavior here is observed from the outside
 > primary evidence, tagged `[hw-verified: aarch64-darwin]`; the kernel mechanics
 > are `[source-verified]` against `xnu-12377.1.9` / `dtrace-413`. Probe sources
 > (`kpc_probe.c`, `mt_probe.c`, `symtest.sh`, `tools.sh`) are kept in the job
-> scratchpad and on `mac-bsn:/tmp`.
+> scratchpad and in `/tmp` on the Apple MacBook Pro M4 Max.
 
 <!-- References -->
 

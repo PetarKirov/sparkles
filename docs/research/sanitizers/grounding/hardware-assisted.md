@@ -92,7 +92,7 @@ first attempt the same box/day, command reconstructed and/or re-run.
 | E6  | `clang -fsanitize=scudo -g uaf.c -o uaf-scudo-rerun`; `SCUDO_OPTIONS=GWP_ASAN_SampleRate=1 ./uaf-scudo-rerun`                  | `*** GWP-ASan detected a memory error *** / Use After Free at … 16-byte allocation …` + alloc/dealloc/access stacks, SIGSEGV exit **139**. Control (no env): `read after free: 42`, exit 0          | `scudo-rerun.out` (1st `scudo-gwp.out`)       | ✓ (hw) |
 | E7  | `ldc2 --output-ll tbaa-test.d` (LDC 1.41.0; two-field struct, int/double loads)                                                | `tbaa-test.ll` has **zero** `!tbaa` nodes (only typeinfo/ident metadata)                                                                                                                            | `tbaa-test.d`, `tbaa-test.ll`                 | ✓ (hw) |
 | E8  | `gcc -fsanitize=hwaddress uaf.c -o uaf-gcc-hwasan && ./uaf-gcc-hwasan` (gcc 15.2.0)                                            | compiles+links `libhwasan.so.0` on x86_64 **without** `-mlam`; runtime `FATAL … tagged address ABI.`, exit **99**                                                                                   | `gcc-hwasan-run.out`                          | ✓ (hw) |
-| E9  | `ssh mac-bsn 'sysctl hw.optional.arm'` (M4 MTE probe)                                                                          | **blocked**: `sign_and_send_pubkey: signing failed … agent refused operation; Permission denied` — M4-no-MTE stays `[literature]` (M6)                                                              | `mac-sysctl.out` (empty)                      | ◯      |
+| E9  | `sysctl hw.optional.arm` over SSH on the Apple MacBook Pro M4 Max (M4 MTE probe)                                               | **blocked**: `sign_and_send_pubkey: signing failed … agent refused operation; Permission denied` — M4-no-MTE stays `[literature]` (M6)                                                              | `mac-sysctl.out` (empty)                      | ◯      |
 
 ## Discrepancies
 
@@ -113,7 +113,7 @@ first attempt the same box/day, command reconstructed and/or re-run.
   behavior (gcc 15.2.0 accepts x86-64 without `-mlam`, E8) matches neither paragraph cleanly.
   Documented in the page's concern 7. `[source-verified]` + `[hw-verified: x86_64-linux]`
 - **⚠ D-M1 — the M4-no-MTE probe was blocked, finding stands on Apple's announcement.**
-  The direct `sysctl` on `mac-bsn` failed (SSH key refused non-interactive signing, E9), so
+  The direct `sysctl` on `Apple MacBook Pro M4 Max` failed (SSH key refused non-interactive signing, E9), so
   M4-no-MTE (M6) rests on the Apple MIE blog (names only A19 / iPhone 17), not a hardware
   probe. Trivially confirmable in an interactive macOS session later. Flagged, not resolved.
   `[literature]` ◯

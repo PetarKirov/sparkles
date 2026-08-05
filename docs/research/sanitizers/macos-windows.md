@@ -21,7 +21,7 @@ Valgrind role. This page walks each column through the survey's
 
 > [!IMPORTANT]
 > **Verification level, stated honestly.** The macOS column is **mechanism-verified,
-> not run-verified.** The planned `mac-bsn` (Apple **M4 Max**, macOS 26.3.1, SIP on)
+> not run-verified.** The planned `Apple MacBook Pro M4 Max` (Apple **M4 Max**, macOS 26.3.1, SIP on)
 > hardware experiments were **blocked** — the only usable ssh key sat locked in
 > `gpg-agent` with no pinentry surface for the tty-less session — so no D-on-darwin
 > sanitizer transcript, no TSan/UBSan/LSan run, and no darwin overhead number landed.
@@ -83,7 +83,7 @@ with allocation-site `file:line` symbolization and dies with `SIGABRT`** (shell 
 `abort_on_error=1` default. `[hw-verified: aarch64-darwin]`
 
 ```text
-$ clang -fsanitize=address -g uaf.c -o uaf-asan && ./uaf-asan   # mac-bsn, uid 501
+$ clang -fsanitize=address -g uaf.c -o uaf-asan && ./uaf-asan   # Apple MacBook Pro M4 Max, uid 501
 ==61730==ERROR: AddressSanitizer: heap-use-after-free on address 0x6020000000d0 …
     #0 0x000104ffc60c in main uaf.c:2
 exit: 134    (Abort trap: 6)
@@ -231,7 +231,7 @@ darwin runner leg:
 - **SIP + `DYLD_INSERT_LIBRARIES`.** System Integrity Protection strips
   `DYLD_INSERT_LIBRARIES` when spawning SIP-protected binaries (`/usr/bin/*` and
   friends), so runtime-injection tricks work only on the runner's _own_ built
-  binaries — record, don't fight. `csrutil status` reports SIP enabled on `mac-bsn`.
+  binaries — record, don't fight. `csrutil status` reports SIP enabled on `Apple MacBook Pro M4 Max`.
 - **The cc-fallback coupling** (above) means the darwin CI leg's sanitizer runtime is
   a moving dependency on the toolchain in the shell — the runner would pin it to the
   nixpkgs clang.
@@ -590,7 +590,7 @@ dylib set.
 
 **Other.** [ldc #3760][ldc-3760] (D exceptions under Windows ASan) ·
 [llvm PR #93770][llvm-pr-93770] (static ASan runtime elimination) ·
-[msys2 #3163][msys-3163] (MinGW libsanitizer) · recon `mac-bsn` smoke test
+[msys2 #3163][msys-3163] (MinGW libsanitizer) · recon `Apple MacBook Pro M4 Max` smoke test
 (`aarch64-darwin`, 2026-07-11).
 
 Shared vocabulary: [concepts.md][concepts] ([instrumentation locus][locus],

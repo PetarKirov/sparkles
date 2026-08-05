@@ -216,7 +216,7 @@ known hazards the harness must carry forward:
 Aggregated from the deep-dives; every cell's locator lives in its page's
 Sources section (repos pinned by SHA in the survey's internal QA ledger).
 Direct experiment evidence: the five [runnable probes][ex-counting] and the
-mac-bsn transcripts quoted in [macos.md][macos]/[arm.md][arm].
+Apple MacBook Pro M4 Max transcripts quoted in [macos.md][macos]/[arm.md][arm].
 
 <!-- References -->
 

@@ -126,7 +126,7 @@ prints one line per _absent-but-requested_ capability from
 `unavailableBecause`. Acceptance: on the survey's own hosts the report matches
 the survey's findings — the Zen 4 box shows `preciseMemory` present via
 `ibs_op` but `eventTracing` absent (root-only tracefs, as
-[today's `--syscalls` correctly detects][baseline]); mac-bsn shows `counting`
+[today's `--syscalls` correctly detects][baseline]); Apple MacBook Pro M4 Max shows `counting`
 present-unprivileged only as process-scope rusage.
 
 **Borrows:** the availability handshake and status-string discipline of
@@ -195,7 +195,7 @@ permits unprivileged, per [macos.md][macos] (`[hw-verified: aarch64-darwin]`).
 
 - **`counting` (process scope):** `proc_pid_rusage(RUSAGE_INFO_V4)` →
   `ri_instructions`/`ri_cycles` — true retired instructions and cycles with no
-  root and no entitlement (measured IPC 2.82 on mac-bsn). Delivered as a
+  root and no entitlement (measured IPC 2.82 on Apple MacBook Pro M4 Max). Delivered as a
   tier-0-style backend: snapshot pairs around the counting pass, per-iteration
   averages, `quantitative` class. Note the scope honestly: process-wide fixed
   counters, not per-bracket configurable events.

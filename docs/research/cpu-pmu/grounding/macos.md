@@ -4,7 +4,7 @@ Claim-by-claim source verification of [`docs/research/cpu-pmu/macos.md`](../maco
 Kernel claims are checked against the **local** pinned XNU / DTrace source drops
 `$REPOS/c/xnu` (`xnu-12377.1.9`, read-only) and `$REPOS/c/apple-dtrace`
 (`dtrace-413`); the Apple reverse-engineering repo is `applecpu@0e6bc3f`
-(dougallj, cross-reference only). Hardware observations are read off `mac-bsn` =
+(dougallj, cross-reference only). Hardware observations are read off `Apple MacBook Pro M4 Max` =
 Apple **M4 Max** (`Mac16,5`, SoC **T6041**, `hw.cpufamily 0x17d5b93a`), macOS
 **26.3.1** (build 25D771280a), **SIP enabled**, uid 501 (non-root), Apple clang
 21.0.0, `xctrace` 16.0. `$REPOS = /home/petar/code/repos`.
@@ -21,12 +21,12 @@ Apple **M4 Max** (`Mac16,5`, SoC **T6041**, `hw.cpufamily 0x17d5b93a`), macOS
 | `◯`  | Not locally groundable — synthesis/consequence, or surface closed (reverse-engineered) |
 
 **Types:** `quote` (verbatim) · `src` (xnu/dtrace source-read, `[source-verified]`) ·
-`hw` (`mac-bsn`, `[hw-verified: aarch64-darwin]`) · `synth` (derived consequence).
+`hw` (`Apple MacBook Pro M4 Max`, `[hw-verified: aarch64-darwin]`) · `synth` (derived consequence).
 
 ## Verification note
 
 **Every hardware row was run unprivileged (uid 501)** — `sudo -n` needs a password
-on `mac-bsn`, so nothing requiring root was attempted; the EPERM boundary is
+on `Apple MacBook Pro M4 Max`, so nothing requiring root was attempted; the EPERM boundary is
 observed from _outside_ the wall, and the privileged side (what `kpc` returns to
 root) is `src` only. There is **no `[hw-verified: aarch64-darwin]` observation of
 a privileged `kpc` read** anywhere in the page, by design. The closed userspace
@@ -75,7 +75,7 @@ read — those rows are `hw`/`◯`, not `src`.
   unavailable. Documented in the page as a `> [!WARNING]` in the
   [event-space section](../macos.md#event-space-and-tracing--kdebug-dtrace-no-cpc-provider).
   `src`.
-- **D2 (version skew, provenance note).** `mac-bsn` **runs** kernel
+- **D2 (version skew, provenance note).** `Apple MacBook Pro M4 Max` **runs** kernel
   **xnu-12377.91.3** (`RELEASE_ARM64_T6041`); the public open-source drop is
   **xnu-12377.1.9**. Same `12377` base for the same T6041 die, so the code read is
   representative, but every line number in the page is from `12377.1.9`. Flagged in
@@ -121,7 +121,7 @@ read — those rows are `hw`/`◯`, not `src`.
 
 **Net:** 0 fabrications. Every kernel mechanism is `[source-verified]` against
 `xnu-12377.1.9` / `dtrace-413`; every measurement is `[hw-verified: aarch64-darwin]`
-off `mac-bsn` (unprivileged). **One refuted prompt hypothesis** (D1, no DTrace
+off `Apple MacBook Pro M4 Max` (unprivileged). **One refuted prompt hypothesis** (D1, no DTrace
 `cpc` provider — recorded as a page WARNING), **one open discrepancy** (D3, kpep
 `fixed_counters` 3 vs `kpc` FIXED 2, ⚠ flagged not resolved, owned by `arm.md`),
 one source-version skew (D2, running `12377.91.3` vs drop `12377.1.9`, noted), and
