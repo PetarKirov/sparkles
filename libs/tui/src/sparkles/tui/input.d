@@ -3,7 +3,7 @@ Input: decode a terminal byte stream into the $(B shared)
 $(REF Event, sparkles,input,events) vocabulary of `sparkles:input` (spec
 I1/I2/I3 + `INP7`) — an expanded key vocabulary (arrows, Home/End, PageUp/Down,
 Insert/Delete, F1–F12, with Ctrl/Alt/Shift modifiers, plus printable Unicode),
-SGR-1006 mouse (press/release/drag + wheel), and terminal resize delivered as
+SGR-1006 mouse (press/release/drag/move + wheel), and terminal resize delivered as
 an event. The library keeps no private key/modifier/event types: what the
 toolkit's state machines consume is exactly what the decoder produces.
 
@@ -116,7 +116,8 @@ private Mods modsFromParam(uint m) @safe pure nothrow @nogc
 }
 
 /// Decode the tail of an SGR-1006 mouse report (the bytes after `ESC [ <`):
-/// `b ; x ; y (M|m)`. `b`'s low bits select the button, bit 5 is drag/motion,
+/// `b ; x ; y (M|m)`. `b`'s low bits select the button, bit 5 is drag/motion
+/// (motion + no button → `PointerAction.move`; motion + button → drag),
 /// bit 6 is the wheel; a trailing `m` is a release. Wire coordinates are
 /// 1-based; the returned position is the toolkit's 0-based cell.
 Event decodeMouse(scope const(char)[] s) @safe pure nothrow @nogc
@@ -436,8 +437,10 @@ unittest
         action: PointerAction.press, button: PointerButton.left, pos: Point(9, 4))));
     assert(decodeMouse("0;1;1m") == Event(PointerEvent(
         action: PointerAction.release, button: PointerButton.left, pos: Point(0, 0))));
-    assert(decodeMouse("32;3;4M") == Event(PointerEvent(  // motion bit
+    assert(decodeMouse("32;3;4M") == Event(PointerEvent(  // motion bit + left
         action: PointerAction.drag, button: PointerButton.left, pos: Point(2, 3))));
+    assert(decodeMouse("35;5;6M") == Event(PointerEvent(  // motion bit + none → free move
+        action: PointerAction.move, button: PointerButton.none, pos: Point(4, 5))));
     assert(decodeMouse("2;1;1M") == Event(PointerEvent(
         action: PointerAction.press, button: PointerButton.right, pos: Point(0, 0))));
     // Wheel signs follow the web's deltaY/deltaX: up/left negative.

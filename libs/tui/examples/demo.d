@@ -31,6 +31,8 @@ void main() @system
     const footer = CellStyle(fg: Color.fromRgb(150, 155, 170), attrs: TextAttr.italic);
     const marker = CellStyle(fg: Color.fromRgb(20, 22, 30), bg: Color.fromRgb(240, 200, 120));
 
+    // motion: true → DEC 1003 any-event tracking so the marker follows bare
+    // pointer moves (default is drag-only 1002).
     runApp(
         // present — immediate mode: paint the whole frame from current state.
         (ref Grid g, TermSize sz) {
@@ -49,7 +51,7 @@ void main() @system
             if (sz.height >= 1)
             {
                 g.fill(0, cast(ushort)(sz.height - 1), sz.width, footer);
-                g.putText(1, cast(ushort)(sz.height - 1), " q/Esc quit · arrows · click/drag/wheel", footer);
+                g.putText(1, cast(ushort)(sz.height - 1), " q/Esc quit · arrows · move/click/drag/wheel", footer);
             }
         },
         // handle — return false to quit (events are the shared sparkles:input
@@ -74,6 +76,7 @@ void main() @system
             },
             _ => true,
         ),
+        TerminalOptions(motion: true),
     );
 }
 
