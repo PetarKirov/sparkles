@@ -135,6 +135,11 @@ pure nothrow @nogc:
         hAnim.step(h.expanded(caps) ? expanded : idle, dt);
     }
 
+    /// `true` while either axis owns the pointer. Hosts composing shapes
+    /// need grab and hover apart, because a grab outranks every hover —
+    /// including one belonging to a different affordance (`DCK9`).
+    bool grabbing() const => v.dragging || h.dragging;
+
     /// The one pointer shape this viewport wants (`SCV6`): a live grab
     /// outranks hover, vertical outranks horizontal on ties.
     PointerShape shape() const
