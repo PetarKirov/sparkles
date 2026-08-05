@@ -83,6 +83,12 @@ struct CliParams
     @CliOption("raw", "Render highlighted source instead of the markdown preview, in every sink (the preview is the default for .md files).")
     bool raw;
 
+    @CliOption("diff", "Diff the two positional file arguments in-process and render the result in the active sink.")
+    bool diff;
+
+    @CliOption("patch", "Treat the input (a file target or piped stdin) as a unified diff; piped stdin is also sniffed without the flag.")
+    bool patch;
+
     @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
     string font = defaultGuiFont;
 
@@ -461,7 +467,8 @@ int main(string[] args)
 
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
-    auto pipeline = DocumentPipeline(&registry, &cache, cli.markdown, cli.raw);
+    auto pipeline = DocumentPipeline(&registry, &cache, cli.markdown, cli.raw,
+        cli.patch);
 
     const backend = pickBackend(cli);
 
@@ -515,16 +522,45 @@ int main(string[] args)
 
     // One loader for every sink. With no target, hue views its own source,
     // embedded at compile time via `import()` (a released binary has no
-    // build-tree `__FILE_FULL_PATH__` to read).
+    // build-tree `__FILE_FULL_PATH__` to read). A piped stdin that smells
+    // like a unified diff (or is forced by `--patch`) becomes a diff
+    // document (`DVS2` — the `git diff | hue` pager path).
     Document doc;
     try
-        doc = target.length
-            ? pipeline.load(target, forceTwoslash)
-            // The built-in self-view carries NO path — it is not a file. A
-            // synthetic "app.d" here made the explorer's reveal() re-root to
-            // dirname("app.d") == "." at startup (XPF3), clobbering the real
-            // tree root (on Android: the unreadable "/" → an empty tree).
-            : pipeline.fromSource("", "app.d", import("app.d"), "d");
+    {
+        if (cli.diff)
+        {
+            // `hue --diff <old> <new>`: two positional files, diffed
+            // in-process (`DVS1`).
+            if (args.length <= 2)
+            {
+                stderr.writeln("hue: --diff needs two file arguments");
+                return 1;
+            }
+            doc = pipeline.loadDiffPair(args[1], args[2]);
+        }
+        else if (target.length == 0 && !isTerminal(StdStream.stdin))
+        {
+            const stdinText = readStdinText();
+            import document : looksLikePatch;
+
+            if (stdinText.length && (cli.patch || looksLikePatch(stdinText)))
+                doc = pipeline.fromPatchSource("", "stdin", stdinText);
+            else if (stdinText.length)
+                doc = pipeline.fromSource("", "stdin", stdinText,
+                    cli.markdown ? "markdown" : "");
+            else
+                doc = pipeline.fromSource("", "app.d", import("app.d"), "d");
+        }
+        else
+            doc = target.length
+                ? pipeline.load(target, forceTwoslash)
+                // The built-in self-view carries NO path — it is not a file. A
+                // synthetic "app.d" here made the explorer's reveal() re-root to
+                // dirname("app.d") == "." at startup (XPF3), clobbering the real
+                // tree root (on Android: the unreadable "/" → an empty tree).
+                : pipeline.fromSource("", "app.d", import("app.d"), "d");
+    }
     catch (Exception e)
     {
         stderr.writeln("hue: ", e.msg);
@@ -605,6 +641,31 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
             renderAnsi(doc.source, doc.events, theme, output,
                 bgMode.backgroundOptions(depth, italics: true));
             break;
+        case diff:
+            // The diff view (ANS4): the same widget→cells→SGR pipeline as
+            // the markdown arm, over `viewDiffDoc` — the pager path
+            // (`git diff | hue`).
+            import diff_view : viewDiffDoc;
+            import sparkles.ui.display_list : buildDisplayList;
+            import sparkles.ui.geometry : Constraints;
+            import sparkles.ui.interp.cells : BgEmit, CellGrid;
+            import sparkles.ui.interp.immediate : paint;
+            import sparkles.ui.layout : layout;
+            import sparkles.ui.style : defaultTwoslashPalette;
+
+            const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
+            const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
+            auto tree = viewDiffDoc(doc.diffDoc);
+            auto frames = layout(tree, Constraints(maxW: previewWidth()));
+            const r = frames[tree.root].rect;
+            auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
+            paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
+                pageFg, pageBg));
+            grid.writeAnsi(output, depth,
+                bgMode == BackgroundMode.full ? BgEmit.full
+                : bgMode == BackgroundMode.spans ? BgEmit.spans : BgEmit.none);
+            output ~= '\n';
+            break;
     }
     write(output[]);
     return 0;
@@ -629,6 +690,20 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             import gallery : plainFragment;
 
             write(plainFragment(doc.source, doc.events, theme));
+            return 0;
+        case diff:
+            // The diff view as a self-contained widget-HTML page — the
+            // parity interpreter (`interp/html.d`), no bespoke emitter.
+            import diff_view : viewDiffDoc;
+            import sparkles.ui.interp.html : writeWidgetHtmlPage;
+            import sparkles.ui.style : defaultTwoslashPalette;
+
+            const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
+            const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
+            SmallBuffer!char htmlOut;
+            writeWidgetHtmlPage(htmlOut, viewDiffDoc(doc.diffDoc),
+                defaultTwoslashPalette(), pageFg, pageBg, doc.title);
+            write(htmlOut[]);
             return 0;
     }
 }
@@ -918,6 +993,18 @@ int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
 
 /// The column width the terminal markdown preview wraps to: the terminal width
 /// (capped for prose readability), or 80 when it can't be detected (piped).
+/// Slurps piped stdin to EOF (the `git diff | hue` pager path); empty when
+/// nothing was piped.
+private string readStdinText() @system
+{
+    import std.stdio : stdin;
+
+    ubyte[] raw;
+    foreach (chunk; stdin.byChunk(64 * 1024))
+        raw ~= chunk;
+    return cast(string) raw;
+}
+
 private int previewWidth() @system
 {
     import sparkles.base.term_caps : terminalSize, StdStream;
