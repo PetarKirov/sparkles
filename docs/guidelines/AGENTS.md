@@ -156,12 +156,17 @@ sparkles/
 │   ├── specs/                      # Design specs
 │   └── overview.md, index.md
 └── nix/
-    ├── dub-lock.json               # Nix-format lockfile shared by `ci` + examples (buildDubPackage)
+    ├── dub-lock.json               # Nix-format lockfile shared by `ci` + examples (one
+    │                               # registry-fetch derivation serves every consumer)
     ├── packages/
     │   ├── android/                # The Android cross build (x86_64-linux only): SDK/NDK
     │   │                           # tables, raylib/tree-sitter/libghostty-vt/grammar cross
     │   │                           # builds, libhue.so, and the nix-native APK assembler
     │   │                           # (aapt2 + zipalign + apksigner; no Gradle)
+    │   ├── dub-builder/            # Vendored `buildDubPackage` (crane-style): normalises the
+    │   │                           # build path and dub's mtimes so a `buildDubDeps` bundle of
+    │   │                           # compiled dependencies transfers between derivations —
+    │   │                           # the ~35 example builds share one closure per lib
     │   ├── fonts.nix               # `maple-mono` + the `sparkles-fonts` bundle (all platforms)
     │   └── maple-mono/             # Maple Mono with frozen OpenType features (vendored patcher)
     ├── shells/android.nix          # Android dev shell: adb/aapt2 + hue-emulator/-adb-install/-logcat
