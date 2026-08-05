@@ -57,8 +57,9 @@ Carried from the original roadmap, amended by the research:
   research probes' proven CI path); elfutils (tested 0.194) enters
   `buildInputs` likewise if B6 takes the link-time arm.
 - **Verification-bed honesty** (SPEC §9): the hardware beds are Zen 4 Linux
-  (Ryzen 9 7940HX, `perf_event_paranoid = −1`) and M4 Max macOS (mac-bsn,
-  unprivileged transcripts). ARM-Linux, RISC-V, Intel PEBS, multi-node NUMA,
+  (Ryzen 9 7940HX, `perf_event_paranoid = −1`) and an Apple MacBook Pro M4 Max
+  running macOS (unprivileged transcripts). ARM-Linux, RISC-V, Intel PEBS,
+  multi-node NUMA,
   and Windows have **no hardware bed** — those aspects ship
   source-verified/literature-gated, with `skipTest` degradation and no
   `[hw-verified]` claims. All paranoid > −1 behavior is literature-derived
@@ -72,22 +73,22 @@ Carried from the original roadmap, amended by the research:
 Interleaved by value; B-track numbers alias
 [backend-proposal.md](../../research/cpu-pmu/backend-proposal.md) §2–§7.
 
-| #   | ID  | Milestone                                                                | Gate / permissions                          |
-| --- | --- | ------------------------------------------------------------------------ | ------------------------------------------- |
-| 1   | B1  | Capability seam (`Capability`/`CapabilityReport`, backend trait)         | none                                        |
-| 2   | B2  | Linux counting depth (raw events, naming, labeled scaling, rdpmc)        | none (soft libpfm4)                         |
-| 3   | M4  | `@workload` window mode + wall decomposition                             | none                                        |
-| 4   | M5  | PSI stall integrals                                                      | `CONFIG_PSI`                                |
-| 5   | B3  | macOS floor (`proc_pid_rusage` counting tier)                            | none (mac-bsn verification)                 |
-| 6   | M6  | Page-cache regime control + residency verify                             | `drop_caches` = root                        |
-| 7   | M7  | Storage provenance fingerprint                                           | none                                        |
-| 8   | M8  | cgroup-v2 isolation + `memory.max` sweep                                 | root / systemd delegation                   |
-| 9   | B5  | Precise memory tier (IBS-first) + NUMA oracles + `LatencyHistogram`      | paranoid; IBS hardware                      |
-| 10  | B6  | Sampling & symbolization (`--bench-profile`)                             | paranoid; `perf_event_mlock_kb`; soft libdw |
-| 11  | M9  | Off-CPU profiler (rebuilt on B6) + biolatency floor                      | tracefs root (Tier B)                       |
-| 12  | M10 | CO-safe open-loop load generator                                         | none                                        |
-| —   | B4  | Windows floor (`CycleTime`; ETW elevated tier)                           | **blocked: no Windows hardware**            |
-| —   | M11 | Gated spikes (eBPF, block tracepoints, SCHED_FIFO, ARM SPE/BRBE, RISC-V) | caps / hardware                             |
+| #   | ID  | Milestone                                                                | Gate / permissions                           |
+| --- | --- | ------------------------------------------------------------------------ | -------------------------------------------- |
+| 1   | B1  | Capability seam (`Capability`/`CapabilityReport`, backend trait)         | none                                         |
+| 2   | B2  | Linux counting depth (raw events, naming, labeled scaling, rdpmc)        | none (soft libpfm4)                          |
+| 3   | M4  | `@workload` window mode + wall decomposition                             | none                                         |
+| 4   | M5  | PSI stall integrals                                                      | `CONFIG_PSI`                                 |
+| 5   | B3  | macOS floor (`proc_pid_rusage` counting tier)                            | none (Apple MacBook Pro M4 Max verification) |
+| 6   | M6  | Page-cache regime control + residency verify                             | `drop_caches` = root                         |
+| 7   | M7  | Storage provenance fingerprint                                           | none                                         |
+| 8   | M8  | cgroup-v2 isolation + `memory.max` sweep                                 | root / systemd delegation                    |
+| 9   | B5  | Precise memory tier (IBS-first) + NUMA oracles + `LatencyHistogram`      | paranoid; IBS hardware                       |
+| 10  | B6  | Sampling & symbolization (`--bench-profile`)                             | paranoid; `perf_event_mlock_kb`; soft libdw  |
+| 11  | M9  | Off-CPU profiler (rebuilt on B6) + biolatency floor                      | tracefs root (Tier B)                        |
+| 12  | M10 | CO-safe open-loop load generator                                         | none                                         |
+| —   | B4  | Windows floor (`CycleTime`; ETW elevated tier)                           | **blocked: no Windows hardware**             |
+| —   | M11 | Gated spikes (eBPF, block tracepoints, SCHED_FIFO, ARM SPE/BRBE, RISC-V) | caps / hardware                              |
 
 Sequencing rationale: B1 is pure reporting value and gives every later
 milestone one absence vocabulary; B2 deepens the mode the harness lives in
@@ -278,7 +279,7 @@ levels)…`; a `@workload` window reports 646M instructions at IPC 4.77
 > stay `diagnostic` class — per-OS class changes would break schema
 > stability, and process-wide counts are not gate-safe. Stale facts
 > corrected: darwin CI exists (`macos-latest` runs `dub test` — it
-> exercises the VM degrade path), and dub works on mac-bsn again (the
+> exercises the VM degrade path), and dub works on Apple MacBook Pro M4 Max again (the
 > fork-ENOMEM is gone; the store `ldc-1.41.0` + `dub-1.39.0` pair built
 > everything directly).
 
@@ -296,7 +297,7 @@ common events onto PMUv3 architected numbers while M1–M3 use Apple numbers,
 and the fixed-counter count is itself unresolved
 ([open-issues § O8](./open-issues.md)). Portability rider shared with M7: on
 P/E-core hosts (`hw.nperflevels`) record per-run core-type provenance.
-Verification: mac-bsn transcripts for the live path (see the shipped
+Verification: Apple MacBook Pro M4 Max transcripts for the live path (see the shipped
 note) plus the `macos-latest` CI leg for the VM degrade path.
 
 ## M6 — Page-cache regime control
@@ -499,7 +500,7 @@ Every milestone lands as independently green commits: full suites
   estimate marker; rdpmc bracket cost measured and recorded.
 - **M4/M5** — window rows render with decomposition; Σ(parts) ≤ wall with
   clamped residual; PSI-less kernel degrades with a reason.
-- **B3** — mac-bsn transcript shows instructions/cycles/IPC columns
+- **B3** — Apple MacBook Pro M4 Max transcript shows instructions/cycles/IPC columns
   unprivileged; Linux/stub builds unchanged.
 - **M6–M8** — regime stamps present on every row; tmpfs downgrade observed;
   unprivileged cgroup run reports absence and still passes.

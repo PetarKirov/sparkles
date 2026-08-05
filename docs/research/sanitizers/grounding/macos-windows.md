@@ -7,7 +7,7 @@ on the local `feat/wasm` checkout `f4d2f831`), compiler-rt
 and Dr. Memory [`drmemory@3d2b5f9`] (2025-12-12), plus MS Learn's MSVC sanitizer
 docs (`ms.date` 2026-05-28, retrieved 2026-07-11) and official LDC 1.41.0 release
 artifacts (downloaded, listed, deleted 2026-07-11). The **single** hardware datum is
-the recon Apple-clang ASan smoke test on `mac-bsn` (Apple **M4 Max**, macOS
+the recon Apple-clang ASan smoke test on `Apple MacBook Pro M4 Max` (Apple **M4 Max**, macOS
 **26.3.1**, SIP on, uid 501). `$REPOS = /home/petar/code/repos`.
 
 > Not published research. Do not link to it from the survey pages.
@@ -82,7 +82,7 @@ aarch64-darwin]` row is the recon smoke test.
 
 **The macOS column is mechanism-verified, not run-verified**, and the page says so in
 its opening `> [!IMPORTANT]` scope box and its closing `> [!NOTE]`. The planned
-`mac-bsn` hardware experiments (E-M1 Apple-clang C fixtures; E-M2 the exact
+`Apple MacBook Pro M4 Max` hardware experiments (E-M1 Apple-clang C fixtures; E-M2 the exact
 `MallocNanoZone` warning text; E-M3 nix-LDC link mechanism + D fixture catches, LSan
 `detect_leaks`, fiber UAR) were **BLOCKED** for the whole session: the only usable ssh
 key sat locked in `gpg-agent` and every signing attempt spawned a `pinentry` with no
@@ -97,7 +97,8 @@ surface to render on (`journalctl --user -u gpg-agent`: repeated
 - **The rerun kit is staged** (`scratchpad/w6/fixtures/`: `uaf.c`/`race.c`/`ub.c`/
   `leak.c` + `run-clang.sh`; `heap_uaf.d`/`stack_uar.d`/… + `run-ldc.sh`; one-shot
   `drive-mac.sh`). The open item is registered as a **Q-row** in the survey's
-  grounding register; a zero-thought re-run (once `ssh mac-bsn true` unlocks the key)
+  grounding register; a zero-thought re-run (once an SSH connection to the
+  Apple MacBook Pro M4 Max unlocks the key)
   splices the transcripts in.
 - **The Windows column has no hardware at all** — every Windows row is `[literature]`
   (MS Learn / issues / PRs, 🌐) or `[source-verified]` (LDC source, Dr. Memory clone,

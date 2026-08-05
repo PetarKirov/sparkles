@@ -389,7 +389,7 @@ _result_ cache would need the runtime options too.
 only ([macos-windows.md][macos-windows]). Darwin defaults `abort_on_error=1`
 (ASan → shell exit `134`) and needs `MallocNanoZone=0`; the sanitizer runtimes are
 dylib-only; Valgrind is effectively dead past macOS 10.13, so `--valgrind` is
-advertised absent on darwin. Splice the pending `mac-bsn` transcripts (blocked on
+advertised absent on darwin. Splice the pending `Apple MacBook Pro M4 Max` transcripts (blocked on
 a key unlock) into the capability report's darwin branch when available.
 
 ## 9. M7 (later tier): the hardware and realtime frontier

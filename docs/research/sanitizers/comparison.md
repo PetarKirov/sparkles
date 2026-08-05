@@ -171,7 +171,7 @@ runner must carry forward. Each is one honest line.
 3. **Windows has no hardware bed at all.** The whole Windows column is MS Learn
    docs plus LDC/Dr. Memory source — never `[hw-verified]`
    ([macos-windows § Windows][mw-windows]).
-4. **The darwin transcripts are blocked, not written.** The `mac-bsn` D-on-darwin
+4. **The darwin transcripts are blocked, not written.** The `Apple MacBook Pro M4 Max` D-on-darwin
    sanitizer runs (TSan, LSan `detect_leaks`, fiber UAR, the `MallocNanoZone`
    warning text) were blocked by an ssh-key/gpg-agent pinentry wall; only the
    Apple-clang C ASan smoke test landed. A zero-thought rerun kit is staged
@@ -216,7 +216,7 @@ LLVM `compiler-rt`/clang at [`73802c2e`][llvm-src], Valgrind at `218cee2f` (tag
 runner-integration columns add Go, Rust/cargo-nextest, SwiftPM, Zig, googletest,
 CMake, and pytest-valgrind at the SHAs [runner-integrations.md][ri] pins.
 Direct experiment evidence: the eleven runnable [example probes][examples] and
-the one `mac-bsn` Apple-clang smoke test quoted in [macos-windows.md][macos-windows].
+the one `Apple MacBook Pro M4 Max` Apple-clang smoke test quoted in [macos-windows.md][macos-windows].
 
 <!-- References -->
 

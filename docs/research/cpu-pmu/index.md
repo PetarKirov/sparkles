@@ -100,12 +100,12 @@ capability is itself a finding:
 
 ### By verification level
 
-| Level                           | What carries it                                                                                                         |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `[hw-verified: x86_64-linux]`   | Linux counting/sampling/unwinding, IBS, libpfm4 round trip, NUMA round trip — the five probes below                     |
-| `[hw-verified: aarch64-darwin]` | kpep catalogs, kpc EPERM matrix, rusage counting, xctrace, dyld/atos — mac-bsn transcripts in [macos][macos]/[arm][arm] |
-| `[source-verified]`             | ARM-Linux drivers, RISC-V kernel/SBI/firmware, PEBS, xnu/dtrace, krabsetw, all pinned repos                             |
-| `[literature]`                  | vendor docs (saved), gated specs cited by section                                                                       |
+| Level                           | What carries it                                                                                                                          |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `[hw-verified: x86_64-linux]`   | Linux counting/sampling/unwinding, IBS, libpfm4 round trip, NUMA round trip — the five probes below                                      |
+| `[hw-verified: aarch64-darwin]` | kpep catalogs, kpc EPERM matrix, rusage counting, xctrace, dyld/atos — Apple MacBook Pro M4 Max transcripts in [macos][macos]/[arm][arm] |
+| `[source-verified]`             | ARM-Linux drivers, RISC-V kernel/SBI/firmware, PEBS, xnu/dtrace, krabsetw, all pinned repos                                              |
+| `[literature]`                  | vendor docs (saved), gated specs cited by section                                                                                        |
 
 ## Milestones
 
@@ -154,7 +154,7 @@ Environment: Linux 6.18.26, AMD Ryzen 9 7940HX, LDC 1.41.
 
 Per-page Sources sections carry the primary references; repos are pinned by
 SHA and papers archived locally (see each deep-dive). The five probes and the
-mac-bsn transcripts are the survey's own experimental evidence; experiment
+Apple MacBook Pro M4 Max transcripts are the survey's own experimental evidence; experiment
 environments are recorded alongside every quoted output.
 
 <!-- References -->
