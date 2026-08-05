@@ -212,7 +212,8 @@ struct WorkspaceTui
             return; // the previous document stays on screen
         }
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
-            startPreview: true, doc.twoslash, doc.lang, doc.diffDoc);
+            startPreview: true, doc.twoslash, doc.lang, doc.diffDoc,
+            doc.diffSides);
         tree.reveal(path);
         treeFocused = false;
         startLive(path, doc.twoslash.code.length != 0);
@@ -522,7 +523,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         // (hidden) tree so `e` opens onto it highlighted.
         w.viewer.setDocument(initial.title, initial.source, initial.events,
             initial.preview, startPreview: true, initial.twoslash,
-            initial.lang, initial.diffDoc);
+            initial.lang, initial.diffDoc, initial.diffSides);
         if (target.length)
             w.tree.reveal(target);
         if (target.length)

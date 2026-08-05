@@ -8,7 +8,7 @@ module viewer_model;
 
 import ansi_model : AnsiLine, Attr;
 import diff_view : viewDiffDoc;
-import document : hueFenceRenderer;
+import document : DiffSides, hueFenceRenderer;
 import sparkles.diff.model : DiffDoc;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
 import gui_text : buildLineStarts, findMatches, lineCount, Match;
@@ -18,8 +18,8 @@ import sparkles.base.term_style : UnderlineStyle;
 import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
     RgbColor, Theme, toRgb;
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
-import sparkles.syntax.md.render_widgets : foldableSpans, MdViewOptions,
-    MdViewTheme, viewMarkdown;
+import sparkles.syntax.md.render_widgets : foldableSpans,
+    highlightedFenceRenderer, MdViewOptions, MdViewTheme, viewMarkdown;
 import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
@@ -118,6 +118,7 @@ struct ViewerModel
     PreviewModel preview;
     TwoslashReturn tw;              /// empty `code` ⇒ not a twoslash document
     DiffDoc diff;                   /// non-empty `files` ⇒ a diff document
+    DiffSides diffSides;            /// per-side texts for `DVM5` composition
     size_t srcTotal;                /// source (physical) line count
     size_t[] lineStarts;
     bool showPreview;               /// decorated view vs raw source (Tab)
@@ -180,7 +181,8 @@ struct ViewerModel
     /// reset, the pipeline rebuilds at the current width.
     void setDocument(string title_, string summary_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel preview_,
-        TwoslashReturn tw_, string lang_ = null, DiffDoc diff_ = DiffDoc.init)
+        TwoslashReturn tw_, string lang_ = null, DiffDoc diff_ = DiffDoc.init,
+        DiffSides diffSides_ = DiffSides.init)
     {
         title = title_;
         summary = summary_;
@@ -190,6 +192,7 @@ struct ViewerModel
         preview = preview_;
         tw = tw_;
         diff = diff_;
+        diffSides = diffSides_;
         srcTotal = lineCount(source);
         lineStarts = buildLineStarts(source);
         showPreview = preview.present || tw.code.length != 0
@@ -249,7 +252,19 @@ struct ViewerModel
             // A diff document (`DVL1`/`DVL4`): the unified diff widget view;
             // Tab (`showPreview = false`) falls through to the raw view of
             // the backing patch text.
-            tree = viewDiffDoc(diff);
+            import diff_view : DiffViewOptions;
+
+            DiffViewOptions dopt;
+            if (cache !is null
+                && (diffSides.oldText.length || diffSides.newText.length))
+            {
+                // DVM5: re-highlight each side with the file's language and
+                // let the view layer the diff tints over the syntax colors.
+                auto style = highlightedFenceRenderer(cache, &current, pageFg);
+                dopt.oldStyled = style(diffSides.lang, diffSides.oldText);
+                dopt.newStyled = style(diffSides.lang, diffSides.newText);
+            }
+            tree = viewDiffDoc(diff, dopt);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
             derive(withTargets: false);

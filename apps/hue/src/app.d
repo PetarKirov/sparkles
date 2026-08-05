@@ -650,9 +650,19 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
             import sparkles.ui.layout : layout;
             import sparkles.ui.style : defaultTwoslashPalette;
 
+            import diff_view : DiffViewOptions;
+            import sparkles.syntax.md.render_widgets : highlightedFenceRenderer;
+
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-            auto tree = viewDiffDoc(doc.diffDoc);
+            DiffViewOptions dopt;
+            if (doc.diffSides.oldText.length || doc.diffSides.newText.length)
+            {
+                auto style = highlightedFenceRenderer(&cache, &theme, pageFg);
+                dopt.oldStyled = style(doc.diffSides.lang, doc.diffSides.oldText);
+                dopt.newStyled = style(doc.diffSides.lang, doc.diffSides.newText);
+            }
+            auto tree = viewDiffDoc(doc.diffDoc, dopt);
             auto frames = layout(tree, Constraints(maxW: previewWidth()));
             const r = frames[tree.root].rect;
             auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
@@ -695,10 +705,20 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             import sparkles.ui.interp.html : writeWidgetHtmlPage;
             import sparkles.ui.style : defaultTwoslashPalette;
 
+            import diff_view : DiffViewOptions;
+            import sparkles.syntax.md.render_widgets : highlightedFenceRenderer;
+
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
+            DiffViewOptions dopt;
+            if (doc.diffSides.oldText.length || doc.diffSides.newText.length)
+            {
+                auto style = highlightedFenceRenderer(&cache, &theme, pageFg);
+                dopt.oldStyled = style(doc.diffSides.lang, doc.diffSides.oldText);
+                dopt.newStyled = style(doc.diffSides.lang, doc.diffSides.newText);
+            }
             SmallBuffer!char htmlOut;
-            writeWidgetHtmlPage(htmlOut, viewDiffDoc(doc.diffDoc),
+            writeWidgetHtmlPage(htmlOut, viewDiffDoc(doc.diffDoc, dopt),
                 defaultTwoslashPalette(), pageFg, pageBg, doc.title);
             write(htmlOut[]);
             return 0;
@@ -824,7 +844,8 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             faceOv, doc.lang,
             cli.include.dup, cli.exclude.dup, cli.treeWidth,
             cli.tabWidth, cli.listWhitespace, cpMaps,
-            liveTypes: !cli.noLiveTypes, initialDiff: doc.diffDoc);
+            liveTypes: !cli.noLiveTypes, initialDiff: doc.diffDoc,
+            initialDiffSides: doc.diffSides);
     }
     else
     {

@@ -29,6 +29,14 @@ struct DiffViewOptions
 {
     /// Render the dual old/new line-number gutter.
     bool lineNumbers = true;
+    /// Per-side syntax-styled lines (`DVM5` composition): index = 0-based
+    /// source line; each line's spans concatenate to exactly the line text
+    /// (the `highlightedFenceRenderer` contract). The view keeps the spans'
+    /// resolved syntax foregrounds and layers the diff row/emphasis tints
+    /// as slot backgrounds — the delta two-streams recipe. Null (or a line
+    /// whose spans don't cover its text) falls back to plain rows.
+    TextSpan[][] oldStyled;
+    TextSpan[][] newStyled;
 }
 
 /// A whole document (all its files), one column — the one-shot form every
@@ -65,7 +73,7 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
 
     const gutterWidth = opt.lineNumbers ? gutterDigits(doc, file) : 0;
     foreach (ref hunk; doc.fileHunks(file))
-        rows ~= viewHunk(b, doc, hunk, gutterWidth);
+        rows ~= viewHunk(b, doc, hunk, gutterWidth, opt);
 
     return b.container(WidgetKind.column, rows, gap: 1);
 }
@@ -84,7 +92,7 @@ private uint noticeRow(ref Builder b, string message) @safe
     => b.add(Widget(kind: WidgetKind.text, text: message, slot: Slot.muted));
 
 private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
-    int gutterWidth) @safe
+    int gutterWidth, DiffViewOptions opt) @safe
 {
     auto rows = new uint[](0);
     rows.reserve(hunk.rowsCount + 1);
@@ -97,13 +105,13 @@ private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
     ]));
 
     foreach (ref row; doc.hunkRows(hunk))
-        rows ~= viewRow(b, doc, row, gutterWidth);
+        rows ~= viewRow(b, doc, row, gutterWidth, opt);
 
     return b.container(WidgetKind.column, rows);
 }
 
 private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
-    int gutterWidth) @safe
+    int gutterWidth, DiffViewOptions opt) @safe
 {
     TextSpan[] spans;
 
@@ -112,24 +120,92 @@ private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
 
     const rowText = doc.rowText(row);
     const emph = doc.rowEmph(row);
+    // The side's syntax-styled line, when the host supplied one (`DVM5`).
+    const styled = row.kind == RowKind.added
+        ? styledLine(opt.newStyled, row.newLine)
+        : styledLine(opt.oldStyled, row.oldLine);
     final switch (row.kind)
     {
     case RowKind.context:
         spans ~= TextSpan("  ");
-        spans ~= contentSpans(rowText, emph, Slot.inherit, Slot.inherit, false);
+        spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
+            Slot.inherit, false);
         break;
     case RowKind.removed:
         spans ~= TextSpan("- ", slot: Slot.diffRemoved, paintBackground: true);
-        spans ~= contentSpans(rowText, emph, Slot.diffRemoved,
+        spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
             Slot.diffEmphRemoved, true);
         break;
     case RowKind.added:
         spans ~= TextSpan("+ ", slot: Slot.diffAdded, paintBackground: true);
-        spans ~= contentSpans(rowText, emph, Slot.diffAdded,
+        spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
             Slot.diffEmphAdded, true);
         break;
     }
     return b.add(Widget(kind: WidgetKind.rich, spans: spans));
+}
+
+/// The 1-based `line`'s styled spans, or null when unavailable.
+private const(TextSpan)[] styledLine(const(TextSpan[])[] styled, uint line) @safe
+    => line != 0 && line <= styled.length ? styled[line - 1] : null;
+
+/// Composition (`DVM5`): when a styled line covering the row text exists,
+/// split its spans at the emphasis boundaries — syntax foreground kept, the
+/// diff tint layered as the slot background; otherwise the plain path.
+private TextSpan[] composedSpans(const(TextSpan)[] styled, const(char)[] rowText,
+    const(Span)[] emph, Slot base, Slot emphSlot, bool tint) @safe
+{
+    if (styled is null || !covers(styled, rowText))
+        return contentSpans(rowText, emph, base, emphSlot, tint);
+
+    TextSpan[] spans;
+    size_t pos = 0; // row-relative offset of the current styled span
+    foreach (ref sp; styled)
+    {
+        size_t local = 0;
+        while (local < sp.text.length)
+        {
+            immutable at = pos + local;
+            // Longest run from `at` with a single emphasis verdict.
+            immutable inEmph = insideEmph(emph, at);
+            size_t end = sp.text.length;
+            foreach (e; emph)
+            {
+                if (e.start > at && e.start - pos < end)
+                    end = e.start - pos;
+                if (e.end > at && e.end - pos < end && at >= e.start)
+                    end = e.end - pos;
+            }
+            if (end <= local)
+                end = local + 1;
+            TextSpan piece = cast(TextSpan) sp;
+            piece.text = sp.text[local .. end];
+            piece.slot = inEmph ? emphSlot : base;
+            piece.paintBackground = tint && piece.slot != Slot.inherit;
+            spans ~= piece;
+            local = end;
+        }
+        pos += sp.text.length;
+    }
+    if (spans.length == 0)
+        spans ~= segment(rowText, base, tint);
+    return spans;
+}
+
+private bool insideEmph(const(Span)[] emph, size_t at) @safe pure nothrow @nogc
+{
+    foreach (e; emph)
+        if (at >= e.start && at < e.end)
+            return true;
+    return false;
+}
+
+private bool covers(const(TextSpan)[] styled, const(char)[] rowText) @safe pure nothrow @nogc
+{
+    size_t total = 0;
+    foreach (ref sp; styled)
+        total += sp.text.length;
+    return total == rowText.length;
 }
 
 /// The row's text split at its emphasis spans: base segments carry the row
@@ -205,6 +281,49 @@ private int gutterDigits(const ref DiffDoc doc, in FileEntry file) @safe pure no
 version (unittest)
 {
     import sparkles.diff : diffText;
+}
+
+
+@("diff_view.composedSpans.syntax-under-tints")
+@safe unittest
+{
+    import sparkles.base.term_color : RgbColor;
+
+    // DVM5: a styled line (two syntax spans) composed with one emphasis
+    // span — syntax foregrounds survive, the diff tint layers as slots,
+    // and the split happens exactly at the emphasis boundaries.
+    auto doc = diffText("int x = a;\n", "int x = b;\n", "t.d", "t.d");
+    DiffViewOptions opt;
+    // Hand-built styled lines: "int " keyword-colored, rest plain.
+    const kw = RgbColor(0xff, 0x00, 0x00);
+    opt.oldStyled = [[
+        TextSpan("int ", fg: kw, hasFg: true),
+        TextSpan("x = a;"),
+    ]];
+    opt.newStyled = [[
+        TextSpan("int ", fg: kw, hasFg: true),
+        TextSpan("x = b;"),
+    ]];
+    auto tree = viewDiffDoc(doc, opt);
+
+    bool sawStyledEmph = false, sawStyledBase = false;
+    foreach (ref node; tree.nodes)
+        if (node.kind == WidgetKind.rich)
+            foreach (sp; node.spans)
+            {
+                if (sp.slot == Slot.diffEmphRemoved)
+                {
+                    assert(sp.text == "a", "emphasis split at the changed token");
+                    sawStyledEmph = true;
+                }
+                if (sp.text == "int " && sp.hasFg && sp.fg == kw
+                    && (sp.slot == Slot.diffRemoved || sp.slot == Slot.diffAdded))
+                {
+                    assert(sp.paintBackground, "diff tint layered under syntax fg");
+                    sawStyledBase = true;
+                }
+            }
+    assert(sawStyledEmph && sawStyledBase);
 }
 
 @("diff_view.viewDiffDoc.structure")
