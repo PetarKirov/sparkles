@@ -7,7 +7,9 @@
 module viewer_model;
 
 import ansi_model : AnsiLine, Attr;
+import diff_view : viewDiffDoc;
 import document : hueFenceRenderer;
+import sparkles.diff.model : DiffDoc;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
 import gui_text : buildLineStarts, findMatches, lineCount, Match;
 
@@ -115,6 +117,7 @@ struct ViewerModel
     const(HighlightEvent)[] events;
     PreviewModel preview;
     TwoslashReturn tw;              /// empty `code` ⇒ not a twoslash document
+    DiffDoc diff;                   /// non-empty `files` ⇒ a diff document
     size_t srcTotal;                /// source (physical) line count
     size_t[] lineStarts;
     bool showPreview;               /// decorated view vs raw source (Tab)
@@ -177,7 +180,7 @@ struct ViewerModel
     /// reset, the pipeline rebuilds at the current width.
     void setDocument(string title_, string summary_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel preview_,
-        TwoslashReturn tw_, string lang_ = null)
+        TwoslashReturn tw_, string lang_ = null, DiffDoc diff_ = DiffDoc.init)
     {
         title = title_;
         summary = summary_;
@@ -186,9 +189,11 @@ struct ViewerModel
         events = events_;
         preview = preview_;
         tw = tw_;
+        diff = diff_;
         srcTotal = lineCount(source);
         lineStarts = buildLineStarts(source);
-        showPreview = preview.present || tw.code.length != 0;
+        showPreview = preview.present || tw.code.length != 0
+            || diff.files.length != 0;
         top = 0;
         matches = null;
         matchRects = null;
@@ -239,6 +244,21 @@ struct ViewerModel
     /// structure, and the search-match rects — all in lockstep.
     void rebuild()
     {
+        if (showPreview && diff.files.length)
+        {
+            // A diff document (`DVL1`/`DVL4`): the unified diff widget view;
+            // Tab (`showPreview = false`) falls through to the raw view of
+            // the backing patch text.
+            tree = viewDiffDoc(diff);
+            frames = layout(tree, Constraints(maxW: widthCols));
+            ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
+            derive(withTargets: false);
+            cells = null;
+            fences.length = 0;
+            cellList.length = 0;
+            foldable = null;
+            return;
+        }
         if (showPreview && tw.code.length)
         {
             // A twoslash document: the whole-document widget view (code lines
@@ -578,6 +598,57 @@ struct ViewerModel
         copiedFenceSrc = size_t.max;
         rebuild();
     }
+}
+
+
+@("viewer_model.diffDocumentRendersTheDiffPane")
+@system unittest
+{
+    import sparkles.diff : diffText;
+    import sparkles.syntax : builtinDark;
+    import sparkles.ui.style : Slot;
+    import sparkles.ui.widget : WidgetKind;
+
+    // A diff document renders the unified diff widget view in the
+    // interactive pipeline (DVL4: the TUI/GUI panes paint this model), and
+    // Tab (showPreview = false) falls back to the raw patch text.
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 60;
+    vm.applyTheme(0);
+
+    enum oldText = "alpha\nbeta\ngamma\n";
+    enum newText = "alpha\nBETA\ngamma\n";
+    auto dd = diffText(oldText, newText, "t.txt", "t.txt");
+    const patch = "diff --git a/t.txt b/t.txt\n"; // stand-in raw source
+
+    vm.setDocument("t.txt", "", patch,
+        [HighlightEvent.sourceSpan(0, patch.length)], PreviewModel.init,
+        TwoslashReturn.init, "diff", dd);
+
+    assert(vm.showPreview, "a diff document opens in the diff view");
+    bool sawHunkBand = false;
+    foreach (ref node; vm.tree.nodes)
+        if (node.kind == WidgetKind.rich)
+            foreach (sp; node.spans)
+                if (sp.slot == Slot.diffHunk)
+                    sawHunkBand = true;
+    assert(sawHunkBand, "the diff view painted its hunk header band");
+    assert(vm.rows.length, "the pane derived visual rows to scroll");
+
+    // Tab: the raw view of the backing patch text, same pipeline.
+    vm.showPreview = false;
+    vm.rebuild();
+    bool sawHunkBandRaw = false;
+    foreach (ref node; vm.tree.nodes)
+        if (node.kind == WidgetKind.rich)
+            foreach (sp; node.spans)
+                if (sp.slot == Slot.diffHunk)
+                    sawHunkBandRaw = true;
+    assert(!sawHunkBandRaw, "raw view shows the patch text, not the diff view");
+    assert(vm.rows.length);
 }
 
 @("viewer_model.rawAndPreviewShareOnePipeline")

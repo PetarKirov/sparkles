@@ -40,7 +40,9 @@ import sparkles.input.capability : InputCapabilities, mousePointer,
 import gui_text : Match;
 
 // Markdown-preview model (raylib-free) and the ANSI-fence decoder.
+import document : Document;
 import gui_preview : PreviewModel, stripSgr;
+import sparkles.diff.model : DiffDoc;
 import gui_ansi : decodeAnsi;
 import viewer_model : Dims, MdCell, MdFence, ViewerModel;
 
@@ -273,15 +275,11 @@ private enum Mode
     gotoLine,
 }
 
-/// A loaded document — the highlight inputs the viewer needs to show one file.
-struct LoadedDoc
-{
-    const(char)[] source;
-    const(HighlightEvent)[] events;
-    PreviewModel preview;
-    TwoslashReturn twoslash; /// empty `code` ⇒ not a twoslash document
-    string lang;             /// canonical language (CST fold provider)
-}
+/// A loaded document — the pipeline's `Document` Whole itself, so the
+/// navigation boundary loses nothing (content kind and diff payload ride
+/// along; this transport used to drop the kind, forcing payload-presence
+/// inference in the viewer).
+alias LoadedDoc = Document;
 
 /// Loads a document by path. Supplied by `app.d`, which owns the grammar registry
 /// and cache, so the GUI navigates a set (`GNV1`) without duplicating that
@@ -329,6 +327,7 @@ int runGui(
     bool listWhitespace = false,         // vim 'list' whitespace glyphs
     string[] codepointMaps = null,       // --font-codepoint-map entries (Android defaults)
     bool liveTypes = true,               // live D types via the oracle (PRJ12)
+    DiffDoc initialDiff = DiffDoc.init,  // diff document payload (ContentKind.diff)
 ) @system
 {
     import std.stdio : stderr;
@@ -588,7 +587,7 @@ int runGui(
     arrangePanes();
     applyTheme(vm.themeIdx); // resolves the theme before the first document
     vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
-        source, events, preview, twoslash, docLang);
+        source, events, preview, twoslash, docLang, initialDiff);
     // A markdown file opens in preview by default; Tab toggles to the raw
     // highlighted-source view. `HUE_GUI_PREVIEW=0/1` pins the initial mode
     // for deterministic golden captures.
@@ -665,7 +664,7 @@ int runGui(
 
         vm.widthCols = widthCols();
         vm.setDocument(name, summary, doc.source, doc.events, doc.preview,
-            doc.twoslash, doc.lang);
+            doc.twoslash, doc.lang, doc.diffDoc);
         inp.query.clear();
         inp.mode = Mode.normal;
         window.title(("hue — " ~ name).toStringz);

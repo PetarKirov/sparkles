@@ -30,24 +30,19 @@ import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.style : Slot;
 
 import ansi_model : BackgroundMode;
+import document : Document;
 import explorer : ExplorerTui;
 import gui_preview : PreviewModel;
 import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import tui : PreviewTui;
 
-/// One loaded document, as the viewer pane consumes it. Supplied by `app.d`'s
-/// pipeline through the loader delegate, so the workspace never duplicates
-/// the read → detect → highlight → parse pipeline.
-struct WorkspaceDoc
-{
-    string title;
-    string source;
-    HighlightEvent[] events;
-    PreviewModel preview;
-    TwoslashReturn twoslash; /// empty `code` ⇒ not a twoslash document
-    string lang;             /// canonical language (CST fold provider)
-}
+/// One loaded document, as the viewer pane consumes it — the pipeline's
+/// `Document` Whole itself, so the transport loses nothing at the pane
+/// boundary (the content kind and the diff payload ride along; the pane
+/// used to re-infer preview-vs-twoslash from payload presence because this
+/// boundary dropped the kind).
+alias WorkspaceDoc = Document;
 
 /// ditto
 alias WsLoader = WorkspaceDoc delegate(string path) @system;
@@ -217,7 +212,7 @@ struct WorkspaceTui
             return; // the previous document stays on screen
         }
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
-            startPreview: true, doc.twoslash, doc.lang);
+            startPreview: true, doc.twoslash, doc.lang, doc.diffDoc);
         tree.reveal(path);
         treeFocused = false;
         startLive(path, doc.twoslash.code.length != 0);
@@ -527,7 +522,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         // (hidden) tree so `e` opens onto it highlighted.
         w.viewer.setDocument(initial.title, initial.source, initial.events,
             initial.preview, startPreview: true, initial.twoslash,
-            initial.lang);
+            initial.lang, initial.diffDoc);
         if (target.length)
             w.tree.reveal(target);
         if (target.length)
@@ -649,8 +644,8 @@ unittest
         import std.path : baseName;
 
         const src = readText(path);
-        return WorkspaceDoc(baseName(path), src,
-            [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init);
+        return WorkspaceDoc(title: baseName(path), source: src,
+            events: [HighlightEvent.sourceSpan(0, src.length)]);
     };
     w.tree.root = root;
     w.tree.themeValue = &themes[0];
@@ -797,8 +792,8 @@ unittest
         import std.path : baseName;
 
         const s = readText(path);
-        return WorkspaceDoc(baseName(path), s,
-            [HighlightEvent.sourceSpan(0, s.length)], PreviewModel.init);
+        return WorkspaceDoc(title: baseName(path), source: s,
+            events: [HighlightEvent.sourceSpan(0, s.length)]);
     };
     w.tree.root = root;
     w.tree.themeValue = &themes[0];
@@ -865,8 +860,8 @@ unittest
         import std.path : baseName;
 
         const s = readText(path);
-        return WorkspaceDoc(baseName(path), s,
-            [HighlightEvent.sourceSpan(0, s.length)], PreviewModel.init);
+        return WorkspaceDoc(title: baseName(path), source: s,
+            events: [HighlightEvent.sourceSpan(0, s.length)]);
     };
     w.tree.root = root;
     w.tree.themeValue = &themes[0];
@@ -964,8 +959,8 @@ unittest
         import std.path : baseName;
 
         const s = readText(path);
-        return WorkspaceDoc(baseName(path), s,
-            [HighlightEvent.sourceSpan(0, s.length)], PreviewModel.init);
+        return WorkspaceDoc(title: baseName(path), source: s,
+            events: [HighlightEvent.sourceSpan(0, s.length)]);
     };
     w.tree.root = root;
     w.tree.themeValue = &themes[0];
@@ -1056,8 +1051,8 @@ unittest
         import std.path : baseName;
 
         const s = readText(p);
-        return WorkspaceDoc(baseName(p), s,
-            [HighlightEvent.sourceSpan(0, s.length)], PreviewModel.init);
+        return WorkspaceDoc(title: baseName(p), source: s,
+            events: [HighlightEvent.sourceSpan(0, s.length)]);
     };
     w.tree.root = root;
     w.tree.themeValue = &themes[0];

@@ -13,6 +13,7 @@ version (Posix):
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : mix;
+import sparkles.diff.model : DiffDoc;
 import sparkles.base.text.writers : writeInteger;
 
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
@@ -352,7 +353,7 @@ struct PreviewTui
     void setDocument(string title_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel model_,
         bool startPreview, TwoslashReturn tw_ = TwoslashReturn.init,
-        string lang_ = null) @system
+        string lang_ = null, DiffDoc diff_ = DiffDoc.init) @system
     {
         hoverSel = -1;
         sel = Selection!long.cleared;
@@ -362,7 +363,7 @@ struct PreviewTui
         vm.widthCols = width < 9 ? 8 : width - 1;
         if (vm.current.labels.length == 0 && themes.length)
             vm.applyTheme(themeIdx); // first document: resolve the theme once
-        vm.setDocument(title_, null, source_, events_, model_, tw_, lang_);
+        vm.setDocument(title_, null, source_, events_, model_, tw_, lang_, diff_);
         if (!startPreview && vm.showPreview)
         {
             vm.showPreview = false;

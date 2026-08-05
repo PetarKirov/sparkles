@@ -496,11 +496,8 @@ int main(string[] args)
                 auto themeSet = sortedThemes(cli.theme);
                 auto pl = &pipeline;
                 return runWorkspace(target, isDir: true, WorkspaceDoc.init,
-                    delegate WorkspaceDoc(string path) @system {
-                        auto d = pl.load(path);
-                        return WorkspaceDoc(d.title, d.source, d.events,
-                            d.preview, d.twoslash, d.lang);
-                    },
+                    delegate WorkspaceDoc(string path) @system
+                        => pl.load(path),
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
                     &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
                     cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes);
@@ -739,15 +736,10 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         if (pipeline !is null)
         {
             auto pl = pipeline; // capture the pointer, not the scope param
-            loader = delegate WorkspaceDoc(string path) @system {
-                auto d = pl.load(path);
-                return WorkspaceDoc(d.title, d.source, d.events, d.preview,
-                    d.twoslash, d.lang);
-            };
+            loader = delegate WorkspaceDoc(string path) @system
+                => pl.load(path);
         }
-        return runWorkspace(doc.path, isDir: false,
-            WorkspaceDoc(doc.title, doc.source, doc.events, doc.preview,
-                doc.twoslash, doc.lang),
+        return runWorkspace(doc.path, isDir: false, doc,
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
             cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes);
@@ -800,11 +792,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         // the one pipeline again — the GUI never duplicates it. A twoslash
         // payload rides along, so mixed sets navigate through one window.
         LoadedDoc loadDoc(string path) @system
-        {
-            auto d = pipeline.load(path);
-            return LoadedDoc(d.source, d.events, d.preview, d.twoslash,
-                d.lang);
-        }
+            => pipeline.load(path);
 
         auto themeSet = sortedThemes(cli.theme);
         // Font selection: Android has no CLI, so the bundled defaults stand
@@ -836,7 +824,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             faceOv, doc.lang,
             cli.include.dup, cli.exclude.dup, cli.treeWidth,
             cli.tabWidth, cli.listWhitespace, cpMaps,
-            liveTypes: !cli.noLiveTypes);
+            liveTypes: !cli.noLiveTypes, initialDiff: doc.diffDoc);
     }
     else
     {
