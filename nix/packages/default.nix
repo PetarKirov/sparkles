@@ -26,10 +26,14 @@
         pname = "ci";
         version = "0.1.0";
 
-        # ci references `ciCompiler` at runtime (see postFixup), so buildSparklesApp
-        # subtracts this buildInput from the disallowed-leak set rather than
-        # rejecting the reference.
-        buildInputs = [ ciCompiler ];
+        # Runtime deps subtracted from buildSparklesApp's default scrub set:
+        # - `ciCompiler` — shells out via PATH (see postFixup)
+        # - `pkgs.curl.out` — `--ci-stats` uses std.net.curl; Phobos bakes an
+        #   absolute libcurl path
+        buildInputs = [
+          ciCompiler
+          pkgs.curl.out
+        ];
 
         # ci shells out to `dub --single` at runtime to compile examples, so it
         # needs a D compiler + `dub` + git on PATH (via wrapProgram below).
