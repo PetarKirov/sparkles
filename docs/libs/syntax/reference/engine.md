@@ -8,7 +8,7 @@ semantics.
 ## Grammar supply
 
 Grammars are compiled shared objects plus query files, supplied by the Nix
-`ts-grammars` bundle (26 languages) and found through
+`ts-grammars` bundle (27 languages) and found through
 `$SPARKLES_TS_GRAMMAR_PATH` — a path-separator-separated list of directories,
 each holding `<lang>/parser` and `<lang>/queries/*.scm`. First hit wins, so
 a local directory can shadow one grammar ahead of the bundle.
