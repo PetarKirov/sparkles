@@ -173,10 +173,22 @@
             dontFixup = true;
           }
         );
+      # Is a bundle worth building on this platform? Sharing needs
+      # `$NIX_BUILD_TOP` to be the same string in every derivation, which only
+      # `sandbox-build-dir` guarantees — a Linux-only option. On Darwin (no
+      # such option, and the sandbox is off by default) each derivation would
+      # unpack to its own temporary directory, every cache lookup would miss,
+      # and the bundle would be a whole extra build for nothing. Callers gate
+      # on this rather than paying that cost twice.
+      #
+      # A Linux host that has *disabled* the sandbox lands in the same
+      # position and can't be detected at eval time; it is a slowdown, not a
+      # wrong result, and `sandbox-fallback = false` keeps CI out of it.
+      sharesArtifacts = stdenv.hostPlatform.isLinux;
     in
     {
       legacyPackages.dubBuilder = {
-        inherit mkDubDerivation buildDubDeps;
+        inherit mkDubDerivation buildDubDeps sharesArtifacts;
       };
     };
 }

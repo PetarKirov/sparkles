@@ -3,7 +3,11 @@
   perSystem =
     { config, pkgs, ... }:
     let
-      inherit (config.legacyPackages.dubBuilder) mkDubDerivation buildDubDeps;
+      inherit (config.legacyPackages.dubBuilder)
+        mkDubDerivation
+        buildDubDeps
+        sharesArtifacts
+        ;
 
       fs = lib.fileset;
       root = ../..;
@@ -195,6 +199,7 @@
         in
         mkDubDerivation (
           commonExampleArgs
+          // lib.optionalAttrs (artifacts != null) { dubArtifacts = artifacts; }
           // {
             pname = "${info.libName}-example-${info.fileBase}";
 
@@ -203,7 +208,6 @@
             # builder's replacement for `sourceRoot`, which cannot vary: the
             # tree root is pinned so artifacts hash identically).
             dubSubdir = info.examplesRel;
-            dubArtifacts = artifacts;
 
             # Phobos bakes store paths into every binary that must not leak into
             # the runtime closure: assert/`__FILE__` strings referencing ldc's
@@ -263,7 +267,9 @@
         (lib.mapAttrs (
           libName: paths:
           let
-            artifacts = depsForLib libName paths;
+            # Where the build path isn't pinned (Darwin), a bundle is an
+            # extra full build that nothing can hit — see `sharesArtifacts`.
+            artifacts = if sharesArtifacts then depsForLib libName paths else null;
           in
           lib.listToAttrs (
             map (path: {
