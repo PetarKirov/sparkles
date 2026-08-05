@@ -19,6 +19,7 @@ module diff_view;
 
 import std.conv : text;
 
+import document : DiffSides;
 import sparkles.diff.model : Degradation, DiffDoc, FileEntry, Hunk, Row,
     RowKind, Span;
 import sparkles.ui.style : Slot;
@@ -39,14 +40,30 @@ struct DiffViewOptions
     TextSpan[][] newStyled;
 }
 
+/// The `(lang, text) → styled lines` renderer a host supplies for `DVM5`
+/// composition (the `highlightedFenceRenderer` shape).
+alias SideRenderer = TextSpan[][] delegate(const(char)[] lang, const(char)[] body_) @safe;
+
 /// A whole document (all its files), one column — the one-shot form every
-/// sink calls.
-WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOptions.init) @safe
+/// sink calls. With `sides` + `render`, each file whose side texts are known
+/// is re-highlighted and composed (`DVM5`); files with empty sides render
+/// plain.
+WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOptions.init,
+    const(DiffSides)[] sides = null, SideRenderer render = null) @safe
 {
     auto b = Builder();
     auto files = new uint[](0);
     foreach (fi; 0 .. doc.files.length)
-        files ~= viewDiffInto(b, doc, doc.files[fi], opt);
+    {
+        auto fopt = opt;
+        if (render !is null && fi < sides.length
+            && (sides[fi].oldText.length || sides[fi].newText.length))
+        {
+            fopt.oldStyled = render(sides[fi].lang, sides[fi].oldText);
+            fopt.newStyled = render(sides[fi].lang, sides[fi].newText);
+        }
+        files ~= viewDiffInto(b, doc, doc.files[fi], fopt);
+    }
     if (files.length == 0)
         files ~= b.add(Widget(kind: WidgetKind.text, text: "(empty diff)",
             slot: Slot.muted));

@@ -118,7 +118,7 @@ struct ViewerModel
     PreviewModel preview;
     TwoslashReturn tw;              /// empty `code` ⇒ not a twoslash document
     DiffDoc diff;                   /// non-empty `files` ⇒ a diff document
-    DiffSides diffSides;            /// per-side texts for `DVM5` composition
+    const(DiffSides)[] diffSides;   /// per-file side texts (`DVM5`)
     size_t srcTotal;                /// source (physical) line count
     size_t[] lineStarts;
     bool showPreview;               /// decorated view vs raw source (Tab)
@@ -182,7 +182,7 @@ struct ViewerModel
     void setDocument(string title_, string summary_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel preview_,
         TwoslashReturn tw_, string lang_ = null, DiffDoc diff_ = DiffDoc.init,
-        DiffSides diffSides_ = DiffSides.init)
+        const(DiffSides)[] diffSides_ = null)
     {
         title = title_;
         summary = summary_;
@@ -254,17 +254,12 @@ struct ViewerModel
             // the backing patch text.
             import diff_view : DiffViewOptions;
 
-            DiffViewOptions dopt;
-            if (cache !is null
-                && (diffSides.oldText.length || diffSides.newText.length))
-            {
-                // DVM5: re-highlight each side with the file's language and
-                // let the view layer the diff tints over the syntax colors.
-                auto style = highlightedFenceRenderer(cache, &current, pageFg);
-                dopt.oldStyled = style(diffSides.lang, diffSides.oldText);
-                dopt.newStyled = style(diffSides.lang, diffSides.newText);
-            }
-            tree = viewDiffDoc(diff, dopt);
+            // DVM5: per-file re-highlight of the known sides; the view
+            // layers the diff tints over the syntax colors.
+            tree = cache !is null
+                ? viewDiffDoc(diff, DiffViewOptions.init, diffSides,
+                    highlightedFenceRenderer(cache, &current, pageFg))
+                : viewDiffDoc(diff);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
             derive(withTargets: false);

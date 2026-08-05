@@ -355,7 +355,7 @@ struct PreviewTui
         const(HighlightEvent)[] events_, PreviewModel model_,
         bool startPreview, TwoslashReturn tw_ = TwoslashReturn.init,
         string lang_ = null, DiffDoc diff_ = DiffDoc.init,
-        DiffSides diffSides_ = DiffSides.init) @system
+        const(DiffSides)[] diffSides_ = null) @system
     {
         hoverSel = -1;
         sel = Selection!long.cleared;
