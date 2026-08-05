@@ -265,6 +265,7 @@ string canonicalLanguage(scope const(char)[] label) @safe pure nothrow
         case "ml", "mli": return "ocaml";
         case "py", "python3": return "python";
         case "rs": return "rust";
+        case "sdlang": return "sdl";
         case "ts": return "typescript";
         case "yml": return "yaml";
         default: return lowered.idup;
@@ -285,6 +286,8 @@ unittest
     assert(canonicalLanguage("markdown_inline") == "markdown-inline"); // injection #set! value
     assert(canonicalLanguage("py") == "python");
     assert(canonicalLanguage("D") == "d");
+    assert(canonicalLanguage("sdlang") == "sdl");
+    assert(canonicalLanguage("sdl") == "sdl"); // the `.sdl` extension needs no alias
     assert(canonicalLanguage("json") == "json");
     assert(canonicalLanguage("SomethingNew") == "somethingnew");
 }
@@ -410,6 +413,7 @@ unittest
         ["python", "def f(x: int) -> int:\n    return x * 2\n"],
         ["rust", "fn main() { println!(\"hi\"); }\n"],
         ["scala", "object A { def main(a: Array[String]): Unit = () }\n"],
+        ["sdl", "name \"sparkles\" // sdl\ndeps {\n    lib version=\"1.0\"\n}\n"],
         ["toml", "[a]\nb = 1\n"],
         ["typescript", "const f = (x: number): number => x * 2;\n"],
         ["tsx", "const a = <div className=\"x\">hi</div>;\n"],
