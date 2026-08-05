@@ -22,6 +22,7 @@ nix run .#ci -- --test [--fail-fast]
 nix run .#ci -- --test-extracted [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
 nix run .#ci -- --check-vcs-urls [--files GLOB|FILE...]
+nix run .#ci -- --check-docs-sidebar
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
 
@@ -39,6 +40,7 @@ $(LIST
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
     $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
+    $(ITEM `--check-docs-sidebar` — verify every published `docs/**/*.md` page is linked from the VitePress sidebar in `docs/.vitepress/config.mts` (respects `srcExclude`; home page is implicit))
 )
 
 The script looks for D code blocks starting with:
@@ -114,6 +116,9 @@ import sparkles.ui.components.box : BoxProps, drawBox, TitleOverflow;
 import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 
 // in-app modules
+import docs_sidebar :
+    defaultVitePressConfig,
+    unlinkedDocsFromConfig;
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import example_manifest : exampleRunsOnHost;
 
@@ -182,6 +187,12 @@ struct CliParams
     @CliOption(`check-vcs-urls`, "Check tracked markdown files (or specified files) for github.com and raw.githubusercontent.com URLs, ensuring they reference a specific git commit.")
     bool checkVcsUrls;
 
+    @CliOption(`check-docs-sidebar`,
+        "Verify every published docs/**/*.md page is linked from the VitePress "
+        ~ "sidebar (docs/.vitepress/config.mts). Respects srcExclude; the home "
+        ~ "page (docs/index.md) is always considered linked.")
+    bool checkDocsSidebar;
+
     @CliOption(`C|ci-stats`,
         "Compute GitHub Actions CI job timing statistics and runner-type aggregates. "
         ~ "See docs/specs/ci/stats/ for the full specification.")
@@ -224,6 +235,7 @@ enum ProgramMode
     fixReferenceLinks,
     checkCommitScope,
     checkVcsUrls,
+    checkDocsSidebar,
     ciStats,
 }
 
@@ -327,6 +339,9 @@ int main(string[] args)
         return runCheckCommitScope(source);
     }
 
+    if (mode == ProgramMode.checkDocsSidebar)
+        return runCheckDocsSidebar();
+
     if (mode == ProgramMode.runDubTests)
         return runDubTestsMode(cli.failFast);
 
@@ -354,6 +369,8 @@ int main(string[] args)
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-commit-scope [<commit-msg-file> | -]");
         else if (mode == ProgramMode.checkVcsUrls)
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-vcs-urls [--files GLOB|FILE...]");
+        else if (mode == ProgramMode.checkDocsSidebar)
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-docs-sidebar");
         else
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--files GLOB|FILE...]");
         return 1;
@@ -408,14 +425,17 @@ private string validateCliMode(
             || cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test-extracted cannot be combined with other modes";
 
-    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.ciStats))
+    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.checkDocsSidebar || cli.ciStats))
         return "--check-commit-scope cannot be combined with other modes";
 
-    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.ciStats))
+    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkDocsSidebar || cli.ciStats))
         return "--check-vcs-urls cannot be combined with other modes";
 
+    if (cli.checkDocsSidebar && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.ciStats))
+        return "--check-docs-sidebar cannot be combined with other modes";
+
     if (cli.ciStats && (cli.verify || cli.update || cli.exampleFiles || cli.test
-            || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls))
+            || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar))
         return "--ci-stats cannot be combined with other modes";
 
     if (cli.ciStats && cli.limit <= 0)
@@ -464,6 +484,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
 
     if (cli.checkVcsUrls)
         return ProgramMode.checkVcsUrls;
+
+    if (cli.checkDocsSidebar)
+        return ProgramMode.checkDocsSidebar;
 
     return ProgramMode.runExamples;
 }
@@ -885,6 +908,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.fixReferenceLinks:
             case ProgramMode.checkCommitScope:
             case ProgramMode.checkVcsUrls:
+            case ProgramMode.checkDocsSidebar:
                 rc = 1;
                 break;
             case ProgramMode.ciStats:
@@ -1167,6 +1191,74 @@ private int runCheckVcsUrls(string[] files)
 
     info(i"{green ✓} All checked GitHub URLs refer to specific commit SHAs.");
     return 0;
+}
+
+/// Verify every published `docs/**/*.md` page appears in the VitePress
+/// sidebar. Invoked by the pre-commit `check-docs-sidebar` hook.
+/// Returns 0 when the sidebar is complete, 1 when pages are missing.
+private int runCheckDocsSidebar()
+{
+    import std.file : exists, readText;
+    import std.path : buildPath;
+    import std.stdio : stderr;
+
+    const repoRoot = detectRepoRoot();
+    const configPath = repoRoot.buildPath(defaultVitePressConfig);
+
+    if (!configPath.exists)
+    {
+        stderr.writefln("✗ VitePress config not found: %s", configPath);
+        return 1;
+    }
+
+    string configText;
+    try
+    {
+        configText = configPath.readText;
+    }
+    catch (Exception e)
+    {
+        stderr.writefln("✗ Could not read %s (%s)", configPath, e.msg);
+        return 1;
+    }
+
+    // Tracked docs markdown only (excludes untracked WIP and docs/public assets).
+    const result = execute(["git", "-C", repoRoot, "ls-files", "--", "docs"]);
+    if (result.status != 0)
+    {
+        error(i"Failed to enumerate docs files with git ls-files");
+        return 1;
+    }
+
+    auto mdFiles = result.output
+        .lineSplitter
+        .filter!(line => line.length != 0)
+        .filter!(line => line.endsWith(".md"))
+        .map!(line => line.idup)
+        .array;
+
+    const missing = unlinkedDocsFromConfig(configText, mdFiles);
+    if (missing.length == 0)
+    {
+        info(i"{green ✓} All $(mdFiles.length) docs markdown pages are linked from the VitePress sidebar.");
+        return 0;
+    }
+
+    stderr.writefln(
+        "✗ %d docs page(s) are not linked from the VitePress sidebar in %s:",
+        missing.length,
+        defaultVitePressConfig,
+    );
+    stderr.writeln;
+    foreach (path; missing)
+        stderr.writefln("  %s", path);
+    stderr.writeln;
+    stderr.writeln(
+        "Add each page under themeConfig.sidebar (or exclude it via srcExclude "
+        ~ "if it must not be published). The home page docs/index.md is always "
+        ~ "considered linked.",
+    );
+    return 1;
 }
 
 // === Core Functions ===

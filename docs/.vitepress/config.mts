@@ -193,6 +193,13 @@ export default withMermaid(
             {
               text: 'hue',
               link: '/apps/hue/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Open issues',
+                  link: '/apps/hue/open-issues',
+                },
+              ],
             },
           ],
         },
@@ -367,6 +374,10 @@ export default withMermaid(
                       link: '/libs/test-runner/how-to/benchmark',
                     },
                     {
+                      text: 'Measure workloads with @workload',
+                      link: '/libs/test-runner/how-to/measure-workloads',
+                    },
+                    {
                       text: 'Skip tests at runtime',
                       link: '/libs/test-runner/how-to/skip-tests',
                     },
@@ -395,6 +406,10 @@ export default withMermaid(
                       link: '/libs/test-runner/explanation/design',
                     },
                   ],
+                },
+                {
+                  text: 'Guide (single page)',
+                  link: '/libs/test-runner/guide',
                 },
               ],
             },
@@ -484,6 +499,17 @@ export default withMermaid(
             {
               text: 'twoslash',
               link: '/libs/twoslash/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'How to render a twoslash payload',
+                  link: '/libs/twoslash/how-to/render-twoslash',
+                },
+                {
+                  text: 'Reference: the overlay API',
+                  link: '/libs/twoslash/reference/overview',
+                },
+              ],
             },
             {
               text: 'ui',
@@ -541,7 +567,25 @@ export default withMermaid(
                       text: 'Enums spec',
                       link: '/specs/base/text/enums',
                     },
+                    {
+                      text: 'float_conv spec',
+                      link: '/specs/base/text/float-conv',
+                    },
                   ],
+                },
+              ],
+            },
+            {
+              text: 'CI',
+              collapsed: false,
+              items: [
+                {
+                  text: 'ci-stats specification',
+                  link: '/specs/ci/stats/SPEC',
+                },
+                {
+                  text: 'ci-stats delivery plan',
+                  link: '/specs/ci/stats/PLAN',
                 },
               ],
             },
@@ -550,6 +594,14 @@ export default withMermaid(
               collapsed: false,
               items: [
                 { text: 'drawTable spec', link: '/specs/core-cli/table' },
+                {
+                  text: 'TUI component suite',
+                  link: '/specs/core-cli/tui-components/',
+                },
+                {
+                  text: 'TUI components delivery plan',
+                  link: '/specs/core-cli/tui-components/PLAN',
+                },
               ],
             },
             {
@@ -596,6 +648,10 @@ export default withMermaid(
                 {
                   text: 'Gallery & multi-document nav',
                   link: '/specs/hue/gallery',
+                },
+                {
+                  text: 'Diff & PR view (planned)',
+                  link: '/specs/hue/diff-view',
                 },
                 { text: 'Navigation (planned)', link: '/specs/hue/navigation' },
                 {
@@ -645,6 +701,10 @@ export default withMermaid(
                   text: 'Label-Vocabulary Dialects',
                   link: '/specs/syntax/label-vocabulary-dialects',
                 },
+                {
+                  text: 'Next-milestones handoff',
+                  link: '/specs/syntax/next-milestones-handoff',
+                },
               ],
             },
             {
@@ -653,7 +713,28 @@ export default withMermaid(
               items: [
                 { text: 'Specification', link: '/specs/test-runner/SPEC' },
                 { text: 'Delivery Plan', link: '/specs/test-runner/PLAN' },
+                {
+                  text: 'Open specification issues',
+                  link: '/specs/test-runner/open-issues',
+                },
               ],
+            },
+            {
+              text: 'TUI',
+              collapsed: false,
+              items: [
+                { text: 'Overview', link: '/specs/tui/' },
+                { text: 'Delivery Plan', link: '/specs/tui/PLAN' },
+                {
+                  text: 'Render-core benchmark baseline',
+                  link: '/specs/tui/render-bench-baseline',
+                },
+              ],
+            },
+            {
+              text: 'Twoslash',
+              collapsed: false,
+              items: [{ text: 'Specification', link: '/specs/twoslash/SPEC' }],
             },
             {
               text: 'UI',
@@ -668,10 +749,18 @@ export default withMermaid(
                 { text: 'Layout (decision)', link: '/specs/ui/layout' },
                 { text: 'Theme (planned)', link: '/specs/ui/theme' },
                 { text: 'Widgets', link: '/specs/ui/widgets' },
+                {
+                  text: 'Containers (planned)',
+                  link: '/specs/ui/containers',
+                },
                 { text: 'Input (planned)', link: '/specs/ui/input' },
                 {
                   text: 'State machines',
                   link: '/specs/ui/state-machines',
+                },
+                {
+                  text: 'Interaction architecture review',
+                  link: '/specs/ui/interaction-review',
                 },
                 { text: 'Editor (planned)', link: '/specs/ui/editor' },
                 { text: 'Backends', link: '/specs/ui/backends' },
@@ -692,6 +781,14 @@ export default withMermaid(
               items: [
                 { text: 'Specification', link: '/specs/wired/SPEC' },
                 { text: 'Delivery Plan', link: '/specs/wired/PLAN' },
+                {
+                  text: 'Runtime JSON benchmark baseline',
+                  link: '/specs/wired/bench-baseline',
+                },
+                {
+                  text: 'Open specification issues',
+                  link: '/specs/wired/open-issues',
+                },
               ],
             },
             {
@@ -2800,6 +2897,10 @@ export default withMermaid(
                     {
                       text: 'Platform Gotchas',
                       link: '/research/window-system-integration/platform-gotchas',
+                    },
+                    {
+                      text: 'End-to-end testing',
+                      link: '/research/window-system-integration/e2e-testing',
                     },
                   ],
                 },

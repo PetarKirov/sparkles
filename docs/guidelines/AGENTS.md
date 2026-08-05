@@ -334,6 +334,7 @@ nix run .#ci -- --test --fail-fast       # dub test for every sub-package
 nix run .#ci -- --test-extracted         # --better-c/--wasm for every sub-package using them
 nix run .#ci -- --verify --files README.md   # verify markdown examples (see Examples below)
 nix run .#ci -- --check-vcs-urls         # audit all tracked markdown for unpinned GitHub URLs
+nix run .#ci -- --check-docs-sidebar     # every docs/**/*.md page is in the VitePress sidebar
 ```
 
 ### Debugging tips
@@ -844,6 +845,14 @@ Hooks run on commit and will modify or block your changes:
   runtime placeholder and skipped. Bypass with
   `SKIP=check-vcs-urls git commit …` or `git commit --no-verify`; run
   `nix run .#ci -- --check-vcs-urls` to audit all tracked markdown files.
+- **check-docs-sidebar** ensures every published `docs/**/*.md` page is linked
+  from the VitePress sidebar in `docs/.vitepress/config.mts`. It respects
+  `srcExclude` (internal grounding/QA pages stay out) and treats
+  `docs/index.md` as the implicit home page. The check is whole-tree (not
+  just staged files) and runs whenever anything under `docs/` is staged.
+  Bypass with `SKIP=check-docs-sidebar git commit …`; run
+  `nix run .#ci -- --check-docs-sidebar` (or `dub run :ci -- --check-docs-sidebar`)
+  to audit manually.
 
 ## Pitfalls Checklist
 
