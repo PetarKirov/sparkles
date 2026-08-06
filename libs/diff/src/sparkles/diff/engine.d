@@ -9,6 +9,7 @@ module sparkles.diff.engine;
 import sparkles.diff.model : Degradation, DiffDoc, DiffOptions, FileEntry, Row,
     RowKind, Span;
 import sparkles.diff.myers : buildHunks, buildRows, diffLines, splitDiffLines;
+import sparkles.diff.normalize : WhitespaceMode;
 import sparkles.diff.pairing : pairChangeBlocks;
 import sparkles.diff.refine : refineRows;
 
@@ -37,7 +38,8 @@ DiffDoc diffText(const(char)[] oldText, const(char)[] newText,
     auto oldLines = splitDiffLines(oldText, file.oldMissingNewline);
     auto newLines = splitDiffLines(newText, file.newMissingNewline);
 
-    auto d = diffLines(oldText, oldLines, newText, newLines, opt.maxEditDistance);
+    auto d = diffLines(oldText, oldLines, newText, newLines, opt.maxEditDistance,
+        opt.ignoreWhitespace);
     file.degraded = d.degraded;
 
     doc.rows = buildRows(oldLines, newLines, d);
@@ -104,6 +106,76 @@ unittest
     auto doc = diffText("a\nb", "a\nc\n");
     assert(doc.files[0].oldMissingNewline);
     assert(!doc.files[0].newMissingNewline);
+}
+
+@("engine.golden.markdown-table-repad-ignoring-whitespace")
+@safe pure nothrow @nogc
+unittest
+{
+    // `DVN1` over the motivating scenario. The same re-padded table as the
+    // golden below, but with the whitespace policy a reviewer would reach for:
+    // the realignment stops being a change AT THE MODEL LEVEL, so exactly one
+    // row is left — the one whose content actually changed.
+    //
+    // This is the claim the whole feature exists to make, so it is asserted as
+    // a count rather than a shape: five rows were re-padded, one was edited,
+    // and the reviewer should see one.
+    enum oldTable = "| Name | Role |\n"
+        ~ "| ---- | ---- |\n"
+        ~ "| ann | dev |\n"
+        ~ "| bob | ops |\n"
+        ~ "| cal | qa |\n";
+    enum newTable = "| Name    | Role |\n"
+        ~ "| ------- | ---- |\n"
+        ~ "| ann     | dev |\n"
+        ~ "| bob     | sre |\n"
+        ~ "| cal     | qa |\n";
+
+    DiffOptions opt;
+    opt.ignoreWhitespace = WhitespaceMode.change;
+    auto doc = diffText(oldTable, newTable, "a", "b", opt);
+    const f = doc.files[0];
+    const rows = doc.hunkRows(doc.fileHunks(f)[0]);
+
+    size_t removed, added;
+    const(char)[][8] removedCells;
+    foreach (ref row; rows)
+    {
+        if (row.kind == RowKind.removed)
+        {
+            if (removed < removedCells.length)
+                removedCells[removed] = firstCell(doc.rowText(row));
+            ++removed;
+        }
+        else if (row.kind == RowKind.added)
+            ++added;
+    }
+
+    // Five rows were re-padded and one was edited. Two survive, and WHICH two
+    // is the interesting part:
+    //
+    //   * `bob` — the real content edit (`ops` → `sre`).
+    //   * the separator — `| ---- | ---- |` became `| ------- | ---- |`, and
+    //     those dashes are not whitespace. To a markdown reader it is pure
+    //     column formatting; to a text differ it is a changed line, and no
+    //     whitespace policy can bridge that gap.
+    //
+    // That second row is exactly why the noise strategy has layers: `DVN1`
+    // removes what is literally whitespace, and only the table-aware pass
+    // (`DVN4`, which reads cell structure) can retire a widened separator.
+    // Asserting it here pins the boundary between the two layers, so a later
+    // change that quietly makes `DVN1` "smarter" about markdown shows up as a
+    // failure rather than as a silently different contract.
+    assert(removed == 2 && added == 2);
+    assert(removedCells[0][0] == '-', "the widened separator is still a change");
+    assert(removedCells[1] == "bob", "and so is the edited row");
+
+    // The three rows that differ ONLY in padding are gone from the model —
+    // not dimmed, not folded: never produced.
+    foreach (ref row; rows)
+        if (row.kind != RowKind.context)
+            assert(firstCell(doc.rowText(row)) != "ann"
+                && firstCell(doc.rowText(row)) != "cal");
 }
 
 @("engine.golden.markdown-table-repad")

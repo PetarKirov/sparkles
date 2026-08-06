@@ -13,6 +13,8 @@
 /// the document); path bytes are **owned** (copied into the `paths` arena).
 module sparkles.diff.model;
 
+import sparkles.diff.normalize : WhitespaceMode;
+
 import sparkles.base.smallbuffer : SmallBuffer;
 
 /// The kind of one display row.
@@ -180,6 +182,10 @@ struct DiffOptions
     /// which a pair renders as whole-row emphasis instead of confetti.
     size_t maxRefineTokens = 512;
     double maxRefineChangedRatio = 0.65;
+    /// `DVN1`: how much whitespace difference counts as "the same line".
+    /// Applied at the line-interning seam, so an ignored difference is never
+    /// a change in the model — not a change the renderer hides.
+    WhitespaceMode ignoreWhitespace = WhitespaceMode.exact;
     /// Pass toggles.
     bool pairRows = true;
     bool refineWords = true;
