@@ -241,6 +241,19 @@ becoming a full column is visible. Neither is obviously right, which is exactly
 why it is a decision rather than a refactor, and why the left-hand column should
 not wait on it.
 
+**Correction (2026-08-06): the left-hand column is smaller than it looks.**
+Read site by site, the surface-covering fills — the two pane backgrounds, the
+page fill, and the bottom-anchored bars — are **not** cell-aligned in general.
+They are anchored to the window's edges (`screenH - cellH`) or must cover it
+entirely, and a desktop window is resizable, so `screenH % cellH` is non-zero
+the moment a user drags it. Expressed as cell rects they would leave an
+unpainted sliver along the bottom and right, or move a bar off the edge. Those
+fills are legitimately pixel-space: a background covers the **surface**, which
+is not the same object as the grid. What did convert cleanly is the
+content-anchored pair — the selection tint and the search-match rects — whose
+origins are the gutter and the first document row, both whole-cell multiples by
+construction.
+
 **Decided (2026-08-06): the display list gains a sub-cell op.** `OpKind.rule`
 names an **edge** of a rect (`RuleEdge`) rather than a pixel count, so the
 toolkit keeps whole-cell geometry and no device units, while a pixel canvas
