@@ -4,6 +4,12 @@
     dependency "sparkles:event-horizon" path="../../.."
     platforms "linux"
     targetPath "build"
+    // Optimised, assertions live, `debug {}` blocks out — the build every nix
+    // artifact uses. Neither `debug` (which compiles those blocks in) nor
+    // `release` (which deletes assert *expressions*, side effects included).
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
 +/
 /**
  * The M7 gate: the IDE/agent-tooling primitives working together, direct

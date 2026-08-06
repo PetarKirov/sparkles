@@ -199,19 +199,56 @@ dub test :core-cli -- -t 1          # single-threaded
 # Test a sub-package in another worktree without cd:
 dub --root /path/to/worktree test :core-cli
 
-# Anything linking the DMD frontend (dmd-lsp, twoslash-d, twoslash-extract):
-# optimized *with* assertions — ~2x a debug build, ~3% off release.
+# Build any artifact the way the flake does: optimized, assertions live.
 dub build :twoslash-extract -b checked
 ```
 
-> [!IMPORTANT]
-> For `sparkles:dmd-lsp` and its dependents, prefer **`-b checked`** over both
-> the default `debug` and `release`. The DMD frontend is assert-heavy by
-> design: `release` compiles those checks out — which is how a fork bug that
-> crashed every `dub build` binary stayed invisible in the flake-built one for
-> a while — and plain `debug` costs about double the analysis time for no
-> extra checking. `checked` is `optimize` + `inline` + `debugInfo`, no
-> `releaseMode`.
+### Build types: `debug` to test, `checked` to ship, never `release`
+
+Every in-repo `dub.sdl` — and every single-file example's inline recipe —
+declares a `checked` build type:
+
+```sdl
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+```
+
+It is neither of dub's two obvious defaults, because each is wrong for a
+shipped artifact:
+
+| Build type | `assert` | `debug { }` | Use for                                        |
+| ---------- | -------- | ----------- | ---------------------------------------------- |
+| `debug`    | live     | **on**      | `dub test`, local iteration                    |
+| `release`  | **gone** | off         | nothing — see below                            |
+| `checked`  | live     | off         | every nix artifact: apps, examples, the `ci` helper |
+
+- **`release` implies `-release`, which deletes an assert's whole
+  _expression_** — so a call written inside one silently stops happening.
+  `assert(!client.connect(addr).hasError)` never connected, and the example
+  hung until CI's 20-minute cap instead of failing an assertion. An assertion
+  that does not run is not a cheap assertion; it is an absent one. Verify
+  what a mode actually does with `libs/base/examples/build-mode-probe.d`.
+- **`debug` implies `-debug`, which compiles `debug { }` blocks in.** Those
+  exist to hold checks too expensive to ship (an `isSorted` over the whole
+  input), so they do not belong in an artifact either — but they are exactly
+  what you want while testing.
+- **`checked` costs ~3% over `release`** where it was measured (`apps/twoslash-extract`,
+  on the assert-heavy DMD frontend) and about half the time of `debug`.
+
+Unit tests keep `debug`: `dub test` never passes `--build`, and the debug
+blocks are the point there.
+
+Where assertion cost genuinely matters in a hot path, the lever is
+**`-checkaction=halt`** on that code (a two-byte trap, no message, no
+`AssertError` machinery) — not deleting the check. Reach for it with a
+measurement in hand, per package, not repo-wide.
+
+A custom build type must be declared by the **root** package of a build:
+`dub.settings.json` has no equivalent, and dub resolves `--build=<name>`
+against the root recipe alone. That is why the declaration is repeated in
+each example's inline recipe rather than inherited. `apps/ci/tools/add-checked-buildtype.d`
+re-applies it idempotently when new packages or examples land.
 
 `nix develop -c <cmd>` also works but is slower and can trigger a rebuild of the
 `ci` package; reserve it for entering the shell or for reproducing CI exactly.
