@@ -159,3 +159,13 @@
 # times out / 500s under GitHub Actions' concurrency (live locally when the
 # host is healthy). Companion to the gnu.org bison/gpl-faq exclusions above.
 ^https?://([^/]+\.)?gcc\.gnu\.org/
+# docs.appimage.org is UNREACHABLE, not merely throttled — unlike every entry
+# above, it does not answer a single client either: a HEAD to the root hangs
+# past 20 s from a developer machine as well as from GitHub Actions (probed
+# 2026-08-06 from two independent networks). It is excluded so one dead upstream
+# host cannot block every PR, and it is called out here rather than filed with
+# the "live locally" entries because the honest fix differs: if the host stays
+# down, re-point the one citation
+# (docs/research/application-packaging/artifact-formats.md `[appimage-spec]`) at
+# a web.archive.org snapshot, the way the os-apis surveys pin bot-hostile hosts.
+^https?://docs\.appimage\.org/
