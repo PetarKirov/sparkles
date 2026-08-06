@@ -31,7 +31,7 @@ import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
     Mods, PointerAction, PointerButton, PointerEvent;
-import frame_input : FrameInput, foldFrame, pointerFor;
+import sparkles.input.frame : InputFrame, foldFrame, pointerFor;
 import keymap : Command, commandFor, InputMode, KeyContext;
 import sparkles.input.capability : InputCapabilities, mousePointer,
     touchPointer;
@@ -176,7 +176,7 @@ private struct InputState
     Mode mode = Mode.normal;
     SmallBuffer!(char, 256) query;
     CaptureState capture;
-    FrameInput fin;
+    InputFrame fin;
 }
 
 /// The copy modes (M15 GROUP-C of the GuiState hoist), toggleable at
