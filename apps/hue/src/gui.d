@@ -81,12 +81,12 @@ import sparkles.twoslash.signature_layout : ExpandedRegions;
 // The shared visual language: the twoslash palette is the single source for the
 // error/warn/tag/highlight colors this backend used to hand-copy as literals, and
 // the widget views drive the hover popup (so the GUI matches the TUI/HTML chrome).
-import sparkles.ui.style : defaultTwoslashPalette, Palette,
+import sparkles.ui.style : defaultTwoslashPalette, Palette, Visual,
     resolveSlot, schemeForBackground, Slot, UiTextStyle = TextStyle;
 import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.geometry : Constraints, Point, Rect;
-import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
+import sparkles.ui.canvas : DrawOp, LineStyle, OpKind, RuleEdge;
 import sparkles.ui.layout : layout;
 import sparkles.ui.scroll_view : ScrollExtents, ScrollPointer;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, keyAt,
@@ -1114,6 +1114,10 @@ int runGui(
         const cellH = fonts.cellH();
         const screenW = window.width;
         const screenH = window.height;
+        // The same surface in the toolkit's unit: chrome that names cells
+        // and edges (UIA2) rather than pixels reads these.
+        const screenCols = screenW / cellW;
+        const screenRows = screenH / cellH;
         const visibleRows = screenH / cellH;
         // With a set header bar, BOTH panes start under it (nothing hides
         // beneath the bar any more); the panes are docRows tall.
@@ -2377,7 +2381,11 @@ int runGui(
             pn.tree.width = treeCols; // the shared overflow check uses it
             pn.tree.scrollBy(0); // bounds only — never yank the view to the cursor
             chrome.fillPixels(0, 0, treeCols * cellW, screenH, mix(vm.pageBg, vm.pageFg, 0.03));
-            chrome.fillPixels(treeCols * cellW + cellW / 2, 0, 1, screenH, vm.gutterFg);
+            // The divider rule, in the toolkit's vocabulary (UIA2): hue
+            // names the column and the edge, the backend decides how thin a
+            // hairline is on this display.
+            chrome.rule(Rect(treeCols, 0, 1, screenRows),
+                RuleEdge.centerX, Visual(fg: vm.gutterFg));
 
             // The explorer pane's header — the shared chrome, focused when
             // the tree holds the input focus.
@@ -2482,7 +2490,8 @@ int runGui(
         if (set !is null && !set.empty && loadDoc !is null)
         {
             chrome.fillPixels(0, 0, screenW, cellH, mix(vm.pageBg, vm.pageFg, 0.12));
-            chrome.fillPixels(0, cellH - 1, screenW, 1, vm.gutterFg);
+            chrome.rule(Rect(0, 0, screenCols, 1), RuleEdge.bottom,
+                Visual(fg: vm.gutterFg));
             const left = vm.summary.length ? vm.title ~ "  " ~ vm.summary : vm.title;
             drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0, TextStyle(0), vm.pageFg);
             const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next   i index");
@@ -2497,7 +2506,8 @@ int runGui(
         // untappable.
         version (Android)
         {
-            chrome.fillPixels(0, toolbarY - 1, screenW, 1, vm.gutterFg);
+            chrome.rule(Rect(0, toolbarY / cellH - 1, screenCols, 1),
+                RuleEdge.bottom, Visual(fg: vm.gutterFg));
             auto barOps = buildDisplayList(barTree, barFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
             auto barCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
