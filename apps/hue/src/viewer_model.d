@@ -8,7 +8,7 @@ module viewer_model;
 
 import ansi_model : AnsiLine, Attr;
 import diff_session : DiffSession;
-import diff_view : diffFileKey, isDiffHunkKey, viewDiffDoc;
+import diff_view : diffFileKey, FileTypes, isDiffHunkKey, viewDiffDoc;
 import document : DiffSides, hueFenceRenderer;
 import sparkles.diff.model : DiffDoc;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
@@ -124,6 +124,10 @@ struct ViewerModel
     /// because they are view state — the `Document` supplies the initial value
     /// and this model is what `DVG1`/`DVG3` mutate.
     DiffSession diffSession;
+    /// `DVT1`: per-file type overlays, parallel to `diff.files`. The host
+    /// owns the analyzer sessions and attaches payloads here as they land;
+    /// an unattached (or refused) entry simply renders plain rows.
+    FileTypes[] diffTypes;
     size_t srcTotal;                /// source (physical) line count
     size_t[] lineStarts;
     bool showPreview;               /// decorated view vs raw source (Tab)
@@ -266,9 +270,9 @@ struct ViewerModel
             tree = cache !is null
                 ? viewDiffDoc(diff, DiffViewOptions.init, diffSides,
                     highlightedFenceRenderer(cache, &current, pageFg),
-                    diffSession)
+                    diffSession, diffTypes)
                 : viewDiffDoc(diff, DiffViewOptions.init, null, null,
-                    diffSession);
+                    diffSession, diffTypes);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
             derive(withTargets: false);

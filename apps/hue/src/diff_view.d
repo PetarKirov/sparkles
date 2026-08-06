@@ -23,6 +23,9 @@ import diff_session : DiffSession, FileChange, SessionEntry, statusGlyph;
 import document : DiffSides;
 import sparkles.diff.model : Degradation, DiffDoc, FileEntry, Hunk, Row,
     RowKind, Span;
+import sparkles.twoslash.overlay : planTwoslash, TwoslashPlan;
+import sparkles.twoslash.protocol : TwoslashReturn;
+import sparkles.twoslash.render_widgets : decorateCodeRow;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
@@ -43,6 +46,10 @@ struct DiffViewOptions
     /// resolves its laid-out row through `keyedRects` ($(LREF diffFileKey)).
     /// Zero leaves the container unkeyed.
     size_t fileKey;
+    /// `DVT1`: the per-side type payloads for this file. Each attaches only
+    /// when its `code` is byte-identical to that side's diff text — see
+    /// $(LREF anchors) — so a decoration can never land on the wrong token.
+    TypeOverlay oldTypes, newTypes;
     /// Per-side syntax-styled lines (`DVM5` composition): index = 0-based
     /// source line; each line's spans concatenate to exactly the line text
     /// (the `highlightedFenceRenderer` contract). The view keeps the spans'
@@ -51,6 +58,57 @@ struct DiffViewOptions
     /// whose spans don't cover its text) falls back to plain rows.
     TextSpan[][] oldStyled;
     TextSpan[][] newStyled;
+}
+
+/**
+`DVT1`: one side's resolved-type payload, ready to decorate diff rows.
+
+The **anchoring contract** lives here rather than at the call site, because it
+is the property that makes the whole feature safe: an overlay's offsets index
+the text the analyzer saw, so attaching it to a row of a *different* text
+would put underlines and popups on the wrong tokens. `attach` is the only way
+to build a live overlay, and it refuses unless the payload's `code` is
+byte-identical to the side text the rows come from. A refusal is not an error
+— that side simply renders without types, exactly as it does today.
+
+Byte-identity is the right test rather than, say, a line count: the extractor
+runs the notation parser, so a D file containing a literal `// ^?` or a
+`---cut---` comment yields a `code` that legitimately differs from its source.
+*/
+struct TypeOverlay
+{
+    private TwoslashReturn _tw;
+    private TwoslashPlan _plan;
+    private bool _live;
+
+    /// Builds an overlay for `sideText`, or an inert one when the payload
+    /// does not describe exactly that text.
+    static TypeOverlay attach(TwoslashReturn tw, scope const(char)[] sideText) @safe
+    {
+        TypeOverlay o;
+        if (tw.code.length == 0 || sideText.length == 0 || tw.code != sideText)
+            return o;
+        o._tw = tw;
+        o._plan = planTwoslash(tw);
+        o._live = true;
+        return o;
+    }
+
+    /// Whether this overlay decorates anything (`false` ⇒ plain rows).
+    bool live() const @safe pure nothrow @nogc => _live;
+
+    /// The payload, for a host resolving a hover to a node.
+    ref const(TwoslashReturn) payload() const return @safe pure nothrow @nogc
+        => _tw;
+}
+
+/// `DVT1`: one file's two overlays, parallel to `DiffDoc.files` — the same
+/// by-index pairing `DiffSides` and the session already use, so a host that
+/// resolves "file 3" once resolves it for every channel.
+struct FileTypes
+{
+    TypeOverlay old_;
+    TypeOverlay new_;
 }
 
 /// The `(lang, text) → styled lines` renderer a host supplies for `DVM5`
@@ -63,7 +121,8 @@ alias SideRenderer = TextSpan[][] delegate(const(char)[] lang, const(char)[] bod
 /// plain.
 WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOptions.init,
     const(DiffSides)[] sides = null, SideRenderer render = null,
-    const DiffSession session = DiffSession.init) @safe
+    const DiffSession session = DiffSession.init,
+    FileTypes[] types = null) @safe
 {
     auto b = Builder();
     auto files = new uint[](0);
@@ -85,6 +144,13 @@ WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOpti
         {
             fopt.oldStyled = render(sides[fi].lang, sides[fi].oldText);
             fopt.newStyled = render(sides[fi].lang, sides[fi].newText);
+        }
+        // `DVT1`: the file's per-side type overlays, already anchored (or
+        // refused) by whoever attached them.
+        if (!fopt.entry.collapsed && fi < types.length)
+        {
+            fopt.oldTypes = types[fi].old_;
+            fopt.newTypes = types[fi].new_;
         }
         files ~= viewDiffInto(b, doc, doc.files[fi], fopt);
     }
@@ -270,7 +336,21 @@ private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
             Slot.diffEmphAdded, true);
         break;
     }
-    return b.add(Widget(kind: WidgetKind.rich, spans: spans));
+    const code = b.add(Widget(kind: WidgetKind.rich, spans: spans));
+
+    // `DVT1`: the side's type overlay decorates this row. The row's own
+    // chrome — the gutter plus the two-cell marker — sits left of the code,
+    // so the decorations shift right by exactly that much; getting this
+    // wrong is the difference between an underline on a token and one two
+    // cells off it, which is why the offset is passed rather than assumed.
+    const side = row.kind == RowKind.added ? opt.newTypes : opt.oldTypes;
+    if (!side.live)
+        return code;
+    const line = row.kind == RowKind.added ? row.newLine : row.oldLine;
+    if (line == 0)
+        return code;
+    return decorateCodeRow(b, code, side.payload, side._plan, line - 1,
+        gutterWidth + 2);
 }
 
 /// The 1-based `line`'s styled spans, or null when unavailable.
@@ -598,4 +678,69 @@ version (unittest)
     // `DVG3`: the hunks are gone, replaced by a count of what is hidden.
     assert(tree.nodes[file.children[2]].text == "(1 hunk collapsed)");
     assert(file.children.length == 3, "no hunk rows survive a collapse");
+}
+
+@("diff_view.typeOverlay.anchorsOnlyOnIdenticalText")
+@safe unittest
+{
+    import sparkles.twoslash.protocol : Node, NodeType;
+
+    enum side = "int x;\nint y;\n";
+    TwoslashReturn tw = {
+        code: side,
+        nodes: [Node(type: NodeType.hover, start: 4, length: 1, line: 0,
+            character: 4)],
+    };
+
+    assert(TypeOverlay.attach(tw, side).live, "identical text anchors");
+
+    // The contract's whole point: anything else refuses rather than
+    // decorating the wrong tokens.
+    assert(!TypeOverlay.attach(tw, "int x;\nint z;\n").live,
+        "same shape, different content");
+    assert(!TypeOverlay.attach(tw, "int x;\n").live, "a prefix is not the text");
+    assert(!TypeOverlay.attach(tw, side ~ "\n").live, "nor is a superset");
+    assert(!TypeOverlay.attach(tw, null).live);
+    assert(!TypeOverlay.attach(TwoslashReturn.init, side).live,
+        "an empty payload has nothing to anchor");
+    // A payload whose `code` the notation parser rewrote (a `---cut---` in a
+    // real file) is exactly the case this refuses — the offsets are honest
+    // about the post-cut text, which is not what the diff rows show.
+    TwoslashReturn cut = { code: "int y;\n", nodes: tw.nodes };
+    assert(!TypeOverlay.attach(cut, side).live);
+}
+
+@("diff_view.typeOverlay.decoratesTheMatchingSideOnly")
+@safe unittest
+{
+    import sparkles.twoslash.protocol : Node, NodeType;
+    import sparkles.ui.style : Slot;
+
+    // One changed line: the old side gets a hover span, the new side none.
+    enum oldText = "int a;\nint b;\n";
+    enum newText = "int a;\nint c;\n";
+    auto doc = diffText(oldText, newText, "t.d", "t.d");
+
+    TwoslashReturn oldTw = {
+        code: oldText,
+        nodes: [Node(type: NodeType.hover, start: 4, length: 1, line: 0,
+            character: 4)],
+    };
+
+    DiffViewOptions opt;
+    opt.oldTypes = TypeOverlay.attach(oldTw, oldText);
+    opt.newTypes = TypeOverlay.attach(oldTw, newText); // refused: wrong text
+    assert(opt.oldTypes.live && !opt.newTypes.live);
+
+    auto b = Builder();
+    const fileNode = viewDiffInto(b, doc, doc.files[0], opt);
+    auto tree = b.finish(fileNode);
+
+    // The decorated row became a stack (underline beneath the code); count
+    // how many rows carry a hover underline.
+    size_t underlines;
+    foreach (ref n; tree.nodes)
+        if (n.slot == Slot.hoverUnderline)
+            ++underlines;
+    assert(underlines == 1, "exactly the one anchored span decorates");
 }
