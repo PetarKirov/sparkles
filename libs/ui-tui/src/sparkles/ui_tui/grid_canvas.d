@@ -92,6 +92,28 @@ struct GridCanvas
     /// into them, so a write must satisfy every entry.
     private Rect[] clips;
 
+    /**
+    `true` when row `y` is outside the grid or every pushed clip — so a caller
+    can reject a whole run before doing per-character work.
+
+    The row test alone, deliberately: it is the one that pays. A document
+    scrolled to its middle has thousands of rows above and below the viewport
+    and at most a screenful inside it, so rejecting by row turns "decode every
+    character of every line" into "compare two integers per line". The column
+    case stays with `inBounds`, where it costs one test on characters that are
+    being walked anyway.
+    */
+    private bool rowOutside(int y) const scope pure nothrow @nogc
+    {
+        const gy = originY + y;
+        if (grid is null || gy < 0 || gy >= grid.rows)
+            return true;
+        foreach (ref const c; clips)
+            if (y < c.y || y >= c.y + c.height)
+                return true;
+        return false;
+    }
+
     private bool inBounds(int x, int y) const scope pure nothrow @nogc
     {
         const gx = originX + x, gy = originY + y;
@@ -146,6 +168,9 @@ struct GridCanvas
             // the error line), so it keeps the glyph.
             const opaque = v.bgAlpha == 0xFF;
             foreach (y; r.y .. r.y + r.height)
+            {
+                if (rowOutside(y))
+                    continue; // `DVG5`: skip the row's cells wholesale
                 foreach (x; r.x .. r.x + r.width)
                     if (inBounds(x, y))
                     {
@@ -158,6 +183,7 @@ struct GridCanvas
                             c.width = 1;
                         }
                     }
+            }
         }
 
         if (v.border.any)
@@ -254,6 +280,11 @@ struct GridCanvas
     {
         import std.utf : byDchar;
 
+        // `DVG5`: an off-screen run costs one comparison, not a UTF-8 decode
+        // and a width lookup per character. Scroll cost then tracks what is
+        // VISIBLE rather than how long the document is.
+        if (rowOutside(at.y))
+            return;
         int x = at.x;
         foreach (dchar cp; text.byDchar)
         {
@@ -466,4 +497,52 @@ static assert(isCanvas!GridCanvas);
     // Blended toward the tint but still mostly the original dark grey.
     assert(bg != Color.fromRgb(0x30, 0x30, 0x30));
     assert(bg.rgb.r > 0x30 && bg.rgb.r < 0x50);
+}
+
+@("tui_canvas.offScreenRunsCostAlmostNothing")
+@safe unittest
+{
+    import std.datetime.stopwatch : StopWatch;
+
+    // `DVG5`: scroll cost must track what is VISIBLE, not how long the
+    // document is. The property is asserted as a ratio rather than a wall
+    // time, so it holds on any machine: painting a document ten times longer
+    // through the same small viewport must not cost ten times as much.
+    //
+    // Without the row rejection this fails outright — every off-screen run
+    // decoded its characters, so the two loops differed by exactly the
+    // document-length factor.
+    static DrawOp[] document(size_t lines)
+    {
+        DrawOp[] ops;
+        foreach (i; 0 .. lines)
+            ops ~= DrawOp(kind: OpKind.textRun,
+                rect: Rect(0, cast(int) i, 60, 1),
+                text: "const int some_reasonably_long_identifier = 12345;",
+                visual: Visual(fg: RgbColor(0xcc, 0xcc, 0xcc)));
+        return ops;
+    }
+
+    static long paintCost(in DrawOp[] ops, ushort rows)
+    {
+        Grid grid;
+        grid.resize(80, rows);
+        StopWatch sw;
+        sw.start();
+        foreach (_; 0 .. 20)
+            paintGrid(grid, RgbColor(0x1e, 0x1e, 0x1e), ops,
+                clip: Rect(0, 0, 80, rows));
+        sw.stop();
+        return sw.peek.total!"usecs";
+    }
+
+    enum ushort viewport = 40;
+    const small = paintCost(document(200), viewport);
+    const large = paintCost(document(4000), viewport);
+
+    // 20× the document through the same viewport. The remaining cost is the
+    // per-op walk and its row test, so allow generous headroom — the point is
+    // that the factor is nowhere near 20.
+    assert(large < small * 6,
+        "off-screen rows must not cost what visible ones do");
 }
