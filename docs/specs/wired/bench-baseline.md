@@ -766,6 +766,28 @@ all pretty arrays through the compact subtree loop (pretty mesh rose from
 loop (compact IPC collapsed and Twitter/citm regressed); and accelerating all
 deep pretty numeric arrays (reparsed short/mixed arrays erased the mesh win).
 
+**What round 6 costs the other four corpora.** The mesh snapshots contain
+mesh rows only, so no single snapshot shows the trade. Measured against the
+round-5 snapshot in a
+[same-host recheck](../../../libs/wired/bench/runtime/results/2026-08-05-ryzen9-7940hx-x86-64-v4-session-recheck.json)
+of the whole field, the accepted flat-array probe adds:
+
+| corpus              |  round 5 |      now |   delta |
+| ------------------- | -------: | -------: | ------: |
+| citm_catalog parse  |  9.424 M |  9.549 M | +1.33 % |
+| canada parse        | 25.844 M | 25.951 M | +0.41 % |
+| twitter parse       |  3.643 M |  3.656 M | +0.37 % |
+| github_events parse | 333.98 k |  335.0 k | +0.31 % |
+| twitter decode      |  3.974 M |  3.974 M |  0.00 % |
+
+That is `shouldScanNumericArray`'s nine-value prefix probe running on arrays
+that never reach the subtree loop; citm pays most because it is array-dense.
+The trade is worth taking — mesh −33.8 % instructions against citm +1.33 %,
+and citm still measures 1.102× — but it is a real cost and belongs in the
+ledger next to the win. Note the distinction from the rejected variant above:
+that one admitted flat arrays _before_ the integer kernel and cost citm 3.3 %;
+the shipped probe costs 1.33 %.
+
 ## Reproducing
 
 From the nix devshell (which exports `$WIRED_BENCH_DATA` and puts the ISA-preset
