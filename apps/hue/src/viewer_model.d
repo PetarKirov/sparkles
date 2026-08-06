@@ -8,8 +8,8 @@ module viewer_model;
 
 import ansi_model : AnsiLine, Attr;
 import diff_session : DiffSession;
-import diff_view : diffFileKey, DiffLayout, FileTypes, isDiffHunkKey,
-    viewDiffDoc;
+import diff_view : diffFileKey, diffGapKeyBase, DiffLayout, FileTypes,
+    isDiffGapKey, isDiffHunkKey, viewDiffDoc;
 import document : DiffSides, hueFenceRenderer;
 import sparkles.diff.model : DiffDoc;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
@@ -128,6 +128,11 @@ struct ViewerModel
     /// `DVG2`: show the unchanged regions the context window hid. Off by
     /// default — they render as a band saying how many lines they stand for.
     bool expandContext;
+    /// `DVG2`: the individual regions the reviewer expanded, indexed by the
+    /// document-global gap index. Independent of `expandContext`, so
+    /// "expand this one" survives an "expand everything / fold everything"
+    /// round trip.
+    bool[] expandedGaps;
     /// `DVL3`: the diff layout the reviewer asked for. The view degrades it
     /// to unified when the pane is too narrow to read two panes in.
     DiffLayout diffLayout;
@@ -282,12 +287,15 @@ struct ViewerModel
             dopt.foldFormattingOnly = !showFormattingHunks;
             dopt.layout = diffLayout;
             dopt.expandContext = expandContext;
-            tree = cache !is null
-                ? viewDiffDoc(diff, dopt, diffSides,
-                    highlightedFenceRenderer(cache, &current, pageFg),
-                    diffSession, diffTypes, widthCols)
-                : viewDiffDoc(diff, dopt, null, null,
-                    diffSession, diffTypes, widthCols);
+            dopt.expandedGaps = expandedGaps;
+            // The SIDES always go in; only the re-highlighting renderer is
+            // conditional. They carry the texts `DVG2` expands an unchanged
+            // region from, which needs no grammar — passing null here cost
+            // expansion its source whenever no cache was configured.
+            tree = viewDiffDoc(diff, dopt, diffSides,
+                cache !is null
+                    ? highlightedFenceRenderer(cache, &current, pageFg) : null,
+                diffSession, diffTypes, widthCols);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
             derive(withTargets: false);
@@ -738,6 +746,46 @@ struct ViewerModel
         return true;
     }
 
+    /**
+    `DVG2`: expands or re-folds the one unchanged region nearest the top of
+    the viewport, returning `false` when none is in view.
+
+    "Nearest the top" rather than a selection the reviewer has to move: a band
+    is a place in the document, and the place they are looking at is the one
+    they mean. It is the same derive-from-where-the-view-is rule the hunk
+    motion uses, for the same reason — no cursor to keep in sync with folding
+    and resizing.
+    */
+    bool diffToggleGapNearCursor()
+    {
+        if (diffSession.empty)
+            return false;
+        size_t best = size_t.max;
+        long bestRow = long.max;
+        foreach (ref kr; cells)
+        {
+            if (!isDiffGapKey(kr.key))
+                continue;
+            const y = cast(long) kr.rect.y;
+            // The first band at or below the viewport top; failing that, the
+            // last one above it, so a reviewer at the end of a file can still
+            // open the region they just scrolled past.
+            const delta = y >= top ? y - top : (top - y) + long.max / 2;
+            if (delta < bestRow)
+            {
+                bestRow = delta;
+                best = kr.key - diffGapKeyBase;
+            }
+        }
+        if (best == size_t.max)
+            return false;
+        if (expandedGaps.length <= best)
+            expandedGaps.length = best + 1;
+        expandedGaps[best] = !expandedGaps[best];
+        rebuild();
+        return true;
+    }
+
     /// `DVG2`: expands or re-folds the unchanged regions between hunks.
     bool diffToggleContext()
     {
@@ -799,6 +847,8 @@ struct ViewerModel
 @("viewer_model.diffDocumentRendersTheDiffPane")
 @system unittest
 {
+    import std.conv : text;
+
     import sparkles.diff : diffText;
     import sparkles.syntax : builtinDark;
     import sparkles.ui.style : Slot;
@@ -1071,4 +1121,67 @@ struct ViewerModel
         if (fm.row == 0 && !fm.open)
             topFolded = true;
     assert(topFolded, "level 0 folds the top-level region");
+}
+
+@("viewer_model.diffGap.expandsOnlyTheOneInView")
+@system unittest
+{
+    import std.conv : text;
+
+    import diff_session : buildDiffSession;
+    import sparkles.diff : diffText;
+    import sparkles.syntax : builtinDark;
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 60;
+    vm.applyTheme(0);
+
+    // A file with two far-apart changes, so there are two unchanged regions:
+    // one between the hunks and one after the last.
+    string oldText, newText;
+    foreach (i; 1 .. 61)
+    {
+        const line = text("line ", i, "\n");
+        oldText ~= line;
+        newText ~= (i == 2 || i == 30) ? text("CHANGED ", i, "\n") : line;
+    }
+    auto dd = diffText(oldText, newText, "f.txt", "f.txt");
+    auto session = buildDiffSession(dd);
+    vm.setDocument("f.txt", "", oldText,
+        [HighlightEvent.sourceSpan(0, oldText.length)], PreviewModel.init,
+        TwoslashReturn.init, "diff", dd, [DiffSides("txt", oldText, newText)],
+        session);
+
+    const folded = vm.rows.length;
+
+    // The band nearest the top opens; the other stays folded — that is the
+    // difference between this and the expand-everything toggle.
+    assert(vm.diffToggleGapNearCursor());
+    const oneOpen = vm.rows.length;
+    assert(oneOpen > folded, "the region in view opened");
+
+    size_t expandedCount;
+    foreach (e; vm.expandedGaps)
+        if (e)
+            ++expandedCount;
+    assert(expandedCount == 1, "exactly one region, not all of them");
+
+    // Toggling again re-folds it.
+    assert(vm.diffToggleGapNearCursor());
+    assert(vm.rows.length == folded);
+
+    // And the per-gap state is independent of the global toggle: expanding
+    // one, then expanding everything, then folding everything, leaves the one
+    // the reviewer opened still open.
+    assert(vm.diffToggleGapNearCursor());
+    vm.expandContext = true;
+    vm.rebuild();
+    const allOpen = vm.rows.length;
+    assert(allOpen > oneOpen, "everything is more than one");
+    vm.expandContext = false;
+    vm.rebuild();
+    assert(vm.rows.length == oneOpen, "the hand-opened region survived");
 }

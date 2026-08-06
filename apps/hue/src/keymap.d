@@ -126,7 +126,8 @@ enum Command : ubyte
     diffCollapseAll, diffExpandAll,
     diffToggleFormatting,              /// `zn` — the formatting-only hunks
     diffToggleLayout,                  /// `s` — unified ⇄ split
-    diffToggleContext,                 /// `zx` — the hidden unchanged regions
+    diffToggleContext,                 /// `zx` — every hidden unchanged region
+    diffToggleGap,                     /// `+` — just the one in view
 }
 
 /// A resolved command plus its argument (only `foldLevel` uses one: the
@@ -319,6 +320,9 @@ KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
                 // it stays available to whatever claims it later.
                 case 's': return ctx.hasDiffSession
                     ? KeyCommand(Command.diffToggleLayout) : KeyCommand(Command.none);
+                // `+` opens the one region in view; `zx` opens them all.
+                case '+': return ctx.hasDiffSession
+                    ? KeyCommand(Command.diffToggleGap) : KeyCommand(Command.none);
                 case '{': return ctx.hasDiffSession
                     ? KeyCommand(Command.diffPrevHunk) : KeyCommand(Command.none);
                 case '}': return ctx.hasDiffSession
@@ -564,6 +568,8 @@ unittest
     // Hunk motions exist only over a session — there is nothing to step
     // through otherwise, so the keys stay unbound rather than no-ops.
     assert(ch('s', diff).cmd == Command.diffToggleLayout);
+    assert(ch('+', diff).cmd == Command.diffToggleGap);
+    assert(ch('+').cmd == Command.none);
     assert(ch('s').cmd == Command.none, "no session, no layout to toggle");
     assert(ch('}', diff).cmd == Command.diffNextHunk);
     assert(ch('{', diff).cmd == Command.diffPrevHunk);

@@ -701,6 +701,15 @@ struct PreviewTui
     const(SessionEntry)[] diffEntries() const @safe pure nothrow @nogc
         => diffNav() ? vm.diffSession.entries : null;
 
+    /// `DVG2`: expand or re-fold the one unchanged region in view.
+    void toggleDiffGap() @system
+    {
+        if (!diffNav())
+            return;
+        vm.diffToggleGapNearCursor();
+        clampTop();
+    }
+
     /// `DVG2`: expand or re-fold the unchanged regions between hunks.
     void toggleDiffContext() @system
     {
@@ -837,6 +846,8 @@ struct PreviewTui
                     case 'y': copySelection(); break;
                     // `DVL3`: unified ⇄ split.
                     case 's': toggleDiffLayout(); break;
+                    // `DVG2`: open the unchanged region in view.
+                    case '+': toggleDiffGap(); break;
                     // `DVG1`: over a diff session the brackets walk files.
                     case '[': moveDiffFile(-1); break;
                     case ']': moveDiffFile(+1); break;

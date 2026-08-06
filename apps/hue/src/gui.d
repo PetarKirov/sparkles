@@ -1543,6 +1543,9 @@ int runGui(
                 case Command.diffToggleContext:
                     vm.diffToggleContext();
                     break;
+                case Command.diffToggleGap:
+                    vm.diffToggleGapNearCursor();
+                    break;
                 case Command.toggleView:
                     toggleView();
                     break;
