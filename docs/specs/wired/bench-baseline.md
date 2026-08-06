@@ -821,6 +821,74 @@ ledger next to the win. Note the distinction from the rejected variant above:
 that one admitted flat arrays _before_ the integer kernel and cost citm 3.3 %;
 the shipped probe costs 1.33 %.
 
+## Conformance of the field
+
+Throughput is only half a comparison. Every number above is measured on six
+well-formed corpora, and the fingerprint gate that guards them proves an engine
+agrees with `std.json` on _valid_ input — it cannot detect an engine that is
+fast partly because it never checks. The `conformance.field` test closes that
+gap by running the whole compiled field over the pinned robustness corpora
+(nst/JSONTestSuite `test_parsing/` + `test_transform/`, and
+nativejson-benchmark's JSON_checker and roundtrip files), scoring the verdicts
+the suites actually prescribe. Measured 2026-08-06, `x86-64-v4` preset:
+
+| engine              | correct | `y_` accept | `n_` reject | `i_` accept |
+| ------------------- | ------: | ----------: | ----------: | ----------: |
+| `wired-native`      | 100.00% |       98/98 |     217/217 |       11/35 |
+| `yyjson`            | 100.00% |       98/98 |     217/217 |        6/35 |
+| `simdjson-dom`      | 100.00% |       98/98 |     217/217 |        4/35 |
+| `serde_json`        | 100.00% |       98/98 |     217/217 |        5/35 |
+| `sonic-rs`          | 100.00% |       98/98 |     217/217 |        6/35 |
+| `simd-json`         |  99.68% |       98/98 |     216/217 |        7/35 |
+| `rapidjson`         |  99.37% |       98/98 |     215/217 |       17/35 |
+| `mir-ion`           |  96.83% |       98/98 |     207/217 |       18/35 |
+| `jsoniopipe`        |  91.43% |   **97**/98 |     191/217 |       12/35 |
+| `std.json`          |  88.89% |       98/98 |     182/217 |       14/35 |
+| `simdjson-ondemand` |  87.94% |   **90**/98 |     187/217 |        7/35 |
+| `asdf`              |  84.13% |       98/98 |     167/217 |       21/35 |
+
+**wired is in the strict group, and that is the result worth having.** The
+scoreboard above puts `wired-native` at 1.102× yyjson on citm and competitive
+across the field; this table says it gets there without buying speed with
+laxness — it is one of five engines that get every prescribed verdict right,
+and the only D engine that does.
+
+Reading the rest:
+
+- **Rejection is where engines differ.** Every engine but two accepts all 98
+  must-accept documents; the spread is entirely in the 217 must-reject ones.
+  `asdf` accepts 50 of them, `std.json` 35, `mir-ion` 10. Those are documents
+  RFC 8259 says are not JSON.
+- **`simdjson-ondemand` is the only engine that also rejects valid input**
+  (8 of 98), which is the lazy navigation model showing through rather than a
+  defect: On-Demand validates what it visits, so a document it never fully
+  walks is neither confirmed nor refuted. Its DOM sibling scores 100%. This is
+  the cost side of the fastest parse row in the matrix.
+- **`i_ accept` is policy, not score.** It counts the 35 files the suite leaves
+  open (lone surrogates, extreme numbers, non-UTF-8). Low means strict:
+  `simdjson-dom` accepts 4, `asdf` 21. wired's 11 is the strict reading — it
+  rejects unpaired surrogates and malformed UTF-8 outright, the same choice its
+  `test_transform` golden table pins.
+
+Two caveats the table cannot express:
+
+- **Depth limits are not measured.** `n_structure_100000_opening_arrays.json`
+  and `n_structure_open_array_object.json` exhaust the stack of a
+  recursive-descent parser, and a stack overflow is an uncatchable signal, so
+  an in-process matrix cannot survive one — `std.json` dies on them. Both files
+  are excluded for every engine to keep the scores comparable. Properly
+  measuring depth wants JSONTestSuite's own process-per-file model. Note
+  `sparkles:wired` survives both: its reader is iterative, and
+  `dub test :wired` runs the corpus undiluted.
+- **One crash found here was ours.** `sonic-rs` segfaulted on the 0-byte
+  `n_structure_no_data.json` until the Rust shim stopped calling
+  `slice::from_raw_parts` with the null pointer an empty D array carries —
+  UB that `serde_json` and `simd-json` happened to survive by testing
+  emptiness first. The engine is blameless; the binding was not.
+
+Scores are pinned per engine in `conformance.d`, so a dependency bump that
+moves one fails the test instead of drifting.
+
 ## Reproducing
 
 From the nix devshell (which exports `$WIRED_BENCH_DATA` and puts the ISA-preset

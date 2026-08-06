@@ -283,7 +283,55 @@ Speed inputs and rejection inputs stay separate. `dub test :wired -- -i
   forbids top-level scalars (valid since RFC 7159) and the other imposes an
   unspecified nesting limit.
 
+`test_transform/` is covered too, but not as pass/fail: those inputs are all
+well-formed and their _result_ is implementation-defined, so `:wired`'s test
+re-renders each parsed document and pins wired's own choices — number range and
+rounding, duplicate-key order, NFC/NFD keys, lone surrogates.
+
 Outside the devshell, point `$JSON_TEST_SUITE` and
 `$NATIVEJSON_TEST_SUITE` at checkouts of those repositories. Missing suite
 variables produce an explicit skip rather than making ordinary package tests
 depend on Nix.
+
+### The field's conformance (`conformance.field`)
+
+The same corpora also run against **every compiled engine**, as a plain
+unittest in this package:
+
+```sh
+dub test                       # the D field
+dub test -c unittest-foreign   # plus yyjson/simdjson/rapidjson/Rust
+```
+
+This is the question the timed matrix cannot ask. The six perf corpora are all
+well-formed, so their fingerprint gate proves agreement on _valid_ input only —
+it cannot tell you an engine is fast partly because it is lax. The conformance
+row can, and the spread is wide: see
+[bench-baseline.md](../../../../docs/specs/wired/bench-baseline.md#conformance-of-the-field)
+for the table and what it means.
+
+Scores are **pinned per engine** in `conformance.d`, so a dependency bump that
+changes an engine's behaviour fails the test with a paste-ready replacement
+line rather than drifting unnoticed. Two knobs help when a row misbehaves:
+
+| Variable                         | Effect                                             |
+| -------------------------------- | -------------------------------------------------- |
+| `$WIRED_BENCH_ENGINES`           | comma list; same filter the timed matrix honours   |
+| `$WIRED_BENCH_CONFORMANCE_TRACE` | name every file on stderr just before it is parsed |
+
+The trace exists because the failure mode here is a _signal_, not an exception:
+an engine that dies on hostile input takes the process with it, and the last
+traced line is the input that did it. That is how `sonic-rs` was found
+segfaulting on the 0-byte `n_structure_no_data.json` — which turned out to be a
+bug in this repository's Rust shim (`slice::from_raw_parts` needs a non-null
+pointer even for a zero length, and an empty D array has a null `.ptr`), not in
+sonic-rs.
+
+Two files are excluded for everyone:
+`n_structure_100000_opening_arrays.json` and
+`n_structure_open_array_object.json` exhaust the stack of any recursive-descent
+parser, and a stack overflow cannot be caught, so a single such engine would
+abort the matrix before any row printed — `std.json` does exactly that.
+JSONTestSuite's own runner avoids this by giving each file its own process;
+measuring depth limits properly wants that treatment. `sparkles:wired` itself
+survives both, and `dub test :wired` runs the corpus undiluted.

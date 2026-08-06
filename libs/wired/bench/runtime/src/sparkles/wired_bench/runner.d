@@ -537,3 +537,22 @@ private void delegate() engineTeardown(E)(E* e)
     else
         return null;
 }
+
+/// Robustness half of the matrix: every compiled engine over the pinned
+/// JSONTestSuite / nativejson-benchmark corpora. Unlike the timed rows this is
+/// a plain unittest — it answers "is this engine *correct* on hostile input",
+/// the question the six well-formed perf corpora cannot ask, so a fast-because-
+/// lax engine is visible next to its throughput.
+///
+/// The scoring lives in $(MREF sparkles,wired_bench,conformance); the engine
+/// list is supplied from here because this module already imports the registry,
+/// and a second import edge to mir-ion breaks the `library-inline` build (see
+/// that module's header).
+@("conformance.field")
+@system unittest
+{
+    import sparkles.wired_bench.conformance : reportFieldConformance;
+
+    assert(reportFieldConformance!AllEngines() == 0,
+        "field conformance moved from the pinned scores (see stderr)");
+}
