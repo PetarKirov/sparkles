@@ -797,7 +797,7 @@ not in `config.mts`:
 | `docs/.vitepress/sidebar.json`     | the sidebar tree (`themeConfig.sidebar` verbatim) |
 | `docs/.vitepress/docs-config.json` | `srcExclude` — the pages the site does not build  |
 
-These files are the **single source of truth**. Two consumers read them:
+These files are the **single source of truth**. Three consumers read them:
 
 - `docs/.vitepress/config.mts` imports them
   (`import sidebar from './sidebar.json' with { type: 'json' }`) and passes them
@@ -805,6 +805,8 @@ These files are the **single source of truth**. Two consumers read them:
 - `ci --check-docs-sidebar` (`apps/ci/src/docs_config.d` +
   `docs_sidebar.d`) decodes them with `sparkles:wired` and checks both
   directions: every published page is linked, and every link resolves to a page.
+- `ci --audit-fences` (`apps/ci/src/fence_audit.d`) uses the same `srcExclude`
+  to decide which files the site builds.
 
 **To add a page:** add `{ "text": "…", "link": "/route" }` to the right group in
 `sidebar.json` — a group is `{ "text": …, "collapsed": true, "items": [ … ] }`
