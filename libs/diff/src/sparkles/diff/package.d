@@ -12,7 +12,11 @@
 /// `package.d` unittests); this module only re-exports the public surface.
 module sparkles.diff;
 
+public import sparkles.diff.classify : classifyHunks, formattingOnlyCount,
+    isFormattingOnly;
 public import sparkles.diff.engine : diffText;
 public import sparkles.diff.model : Degradation, DiffDoc, DiffOptions, FileEntry,
     Hunk, Row, RowKind, Span;
+public import sparkles.diff.normalize : compareLines, isBlank, linesEqual,
+    WhitespaceMode;
 public import sparkles.diff.patch : emitPatch, parsePatch;

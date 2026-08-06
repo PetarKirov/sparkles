@@ -10,6 +10,7 @@ import sparkles.diff.model : Degradation, DiffDoc, DiffOptions, FileEntry, Row,
     RowKind, Span;
 import sparkles.diff.myers : buildHunks, buildRows, diffLines, splitDiffLines;
 import sparkles.diff.normalize : WhitespaceMode;
+static import classify = sparkles.diff.classify;
 import sparkles.diff.pairing : pairChangeBlocks;
 import sparkles.diff.refine : refineRows;
 
@@ -56,6 +57,12 @@ DiffDoc diffText(const(char)[] oldText, const(char)[] newText,
         if (opt.refineWords)
             refineRows(rows, oldText, newText, doc.emph, opt);
     }
+
+    // `DVN2`: after pairing, since the verdict for a changed line is "does its
+    // counterpart say the same thing" — and pairing is what decides which line
+    // the counterpart is.
+    if (opt.classifyHunks)
+        classify.classifyHunks(doc);
 
     doc.files ~= file;
     return doc;
