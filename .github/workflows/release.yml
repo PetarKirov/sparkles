@@ -31,16 +31,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
       - name: Trigger code.dlang.org update
         env:
           # Optional. Set this repo secret only if the package was registered
           # with an update secret; otherwise the empty default is accepted.
-          SECRET: ${{ secrets.DUB_REGISTRY_SECRET }}
-        run: |
-          curl --fail-with-body --silent --show-error \
-            --retry 3 --retry-delay 5 \
-            -X POST 'https://code.dlang.org/api/packages/sparkles/update' \
-            --data-urlencode "secret=${SECRET}"
+          DUB_REGISTRY_SECRET: ${{ secrets.DUB_REGISTRY_SECRET }}
+        run: ci/notify-dub-registry.sh
 
   # Build `.#all-desktop` (the aggregate from nix/packages/all.nix: the full dev
   # shell, every package, and every standalone example), push it to the binary
@@ -86,23 +85,14 @@ jobs:
       # Usually all cache hits: CI's nix-build job already built and pushed
       # this commit's outputs before it reached main.
       - name: Build devShells.full, all packages, and all examples
-        run: nix build --print-build-logs .#all-desktop
+        env:
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
 
       - name: Push & pin the release closure
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          CACHE: ${{ vars.CACHIX_CACHE }}
-        run: |
-          # `release --split` publishes a chain of releases whose runs race,
-          # and an old release can be re-published; only the highest tag may
-          # move the `latest-*` pin. (Plain `vX.Y.Z` tags version-sort fine.)
-          latest=$(git tag --list 'v*' --sort=-v:refname | head -n1)
-          if [ "$GITHUB_REF_NAME" != "$latest" ]; then
-            echo "::notice::$GITHUB_REF_NAME is not the highest tag ($latest); not moving the pin"
-            exit 0
-          fi
-          # The pin needs the path in the cache *now*; the cachix-action
-          # post-job hook only pushes after all steps have run.
-          out=$(readlink -f ./result)
-          cachix push "$CACHE" "$out"
-          cachix pin "$CACHE" "latest-${{ matrix.system }}" "$out" --keep-revisions 3
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CI_SYSTEM: ${{ matrix.system }}
+        run: ci/release-pin.sh
