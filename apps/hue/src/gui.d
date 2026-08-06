@@ -41,6 +41,7 @@ import gui_text : Match;
 
 // Markdown-preview model (raylib-free) and the ANSI-fence decoder.
 import diff_session : DiffSession;
+import diff_view : TypeOverlay;
 import document : DiffSides, Document;
 import gui_preview : PreviewModel, stripSgr;
 import sparkles.diff.model : DiffDoc;
@@ -611,6 +612,10 @@ int runGui(
     // open document — opening another file ends the previous one — and the
     // notice (no binary, or a child that died) is printed once per window.
     LiveTypesSession* liveSession;
+    /// `DVT1`: the two oracles a diff needs — one per side of the focused
+    /// file. A diff's sides are two different texts, so one session cannot
+    /// answer for both.
+    LiveTypesSession*[2] diffLive;
     bool liveNoticeShown;
 
     void noteLive(string why)
@@ -621,12 +626,61 @@ int runGui(
         stderr.writeln("hue: live D types unavailable: ", why);
     }
 
+    void stopDiffTypes()
+    {
+        foreach (ref s; diffLive)
+        {
+            if (s is null)
+                continue;
+            s.shutdown();
+            s = null;
+        }
+    }
+
     void stopLive()
     {
+        stopDiffTypes();
         if (liveSession is null)
             return;
         liveSession.shutdown();
         liveSession = null;
+    }
+
+    /// `DVT1`/`T0`: one analyzer per side of a two-file `.d` diff — the same
+    /// scope the terminal workspace uses, against the same shared model, so
+    /// the two backends cannot drift on when types appear.
+    void startDiffTypes()
+    {
+        import std.algorithm.searching : endsWith;
+        import std.file : exists, isFile;
+
+        stopDiffTypes();
+        if (!liveTypes || !vm.showPreview || vm.diffSession.empty
+            || vm.diffSession.entries.length != 1)
+            return;
+        const paths = [vm.diffSession.entries[0].oldPath,
+            vm.diffSession.entries[0].newPath];
+        foreach (p; paths)
+        {
+            if (!p.endsWith(".d"))
+                return;
+            bool ok;
+            try
+                ok = p.exists && p.isFile;
+            catch (Exception)
+                ok = false;
+            if (!ok)
+                return;
+        }
+        if (vm.diffTypes.length < 1)
+            vm.diffTypes.length = 1;
+        foreach (i, p; paths)
+        {
+            string reason;
+            diffLive[i] = LiveTypesSession.start(p, reason);
+            if (diffLive[i] is null)
+                noteLive(reason);
+        }
     }
 
     // `PRJ12`: triggered by the document open, never from the render path.
@@ -648,6 +702,7 @@ int runGui(
     // The document hue opened with (a payload target needs no oracle).
     if (docPath.length)
         startLive(docPath, vm.tw.code.length != 0);
+    startDiffTypes();
 
     /// Loads the set's currently-selected document in place (`GNV1`): re-read,
     /// re-highlight, rebuild the preview model, relayout. Scroll and search reset;
@@ -993,6 +1048,35 @@ int runGui(
             {
                 noteLive(liveSession.reason);
                 stopLive();
+            }
+        }
+
+        // `DVT1`: the diff's two side oracles. A payload that does not
+        // describe its side is refused by `TypeOverlay.attach`, so a stale
+        // one leaves that side plain rather than mis-anchored.
+        foreach (i, sess; diffLive)
+        {
+            if (sess is null)
+                continue;
+            sess.poll();
+            if (sess.payloadReady && i < vm.diffSides.length + 1
+                && vm.diffTypes.length >= 1 && vm.diffSides.length >= 1)
+            {
+                const sideText = i == 0
+                    ? vm.diffSides[0].oldText : vm.diffSides[0].newText;
+                auto overlay = TypeOverlay.attach(sess.takePayload(), sideText);
+                if (i == 0)
+                    vm.diffTypes[0].old_ = overlay;
+                else
+                    vm.diffTypes[0].new_ = overlay;
+                vm.widthCols = -1; // force the relayout at an unchanged width
+                relayout();
+            }
+            if (sess.failed)
+            {
+                noteLive(sess.reason);
+                sess.shutdown();
+                diffLive[i] = null;
             }
         }
 
