@@ -55,6 +55,7 @@ enum MdBlockKind
     tableRow,      /// `children` are `tableCell`s
     tableCell,     /// `inlines` are the cell text
     htmlBlock,     /// raw HTML; `span` covers the verbatim bytes
+    codeGroup,     /// `::: code-group` — `children` are `codeFence`s, one shown
 }
 
 /// A table column's text alignment, from the delimiter row (`:---`/`:--:`/`---:`).
@@ -156,8 +157,79 @@ MdDoc extractMarkdown(ref GrammarRegistry registry, scope const(char)[] source) 
     doc.source = cleaned;
 
     auto ex = Extractor(cleaned, &inlineParser);
-    doc.root.children = ex.walkBlocks(tree.rootNode);
+    doc.root.children = foldCodeGroups(ex.walkBlocks(tree.rootNode), cleaned);
     return doc;
+}
+
+/**
+Folds VitePress `::: code-group` fences into $(LREF MdBlockKind.codeGroup)
+blocks.
+
+The block grammar has no notion of the `:::` container, so it yields the
+opener and closer as ordinary paragraphs with the fences loose between
+them. Recognising that shape afterwards — rather than teaching the
+grammar — keeps this a property of the DOCUMENT MODEL, where the byte
+spans are already resolved and every renderer sees the same structure.
+
+Only fences are taken into a group: prose accidentally caught inside one
+stays a sibling, so a malformed container degrades to the blocks it was
+made of rather than swallowing them. An unclosed opener does the same.
+*/
+private MdBlock[] foldCodeGroups(MdBlock[] blocks, scope const(char)[] src)
+    @safe nothrow
+{
+    static bool isMarker(in MdBlock b, scope const(char)[] src,
+        scope const(char)[] want) @trusted nothrow
+    {
+        if (b.kind != MdBlockKind.paragraph
+            || b.span.end > src.length || b.span.start >= b.span.end)
+            return false;
+        return strip(src[b.span.start .. b.span.end]) == want;
+    }
+
+    MdBlock[] outv;
+    for (size_t i = 0; i < blocks.length; ++i)
+    {
+        if (!isMarker(blocks[i], src, ":::code-group")
+            && !isMarker(blocks[i], src, "::: code-group"))
+        {
+            // Containers may nest inside quotes and list items.
+            if (blocks[i].children.length)
+                blocks[i].children = foldCodeGroups(blocks[i].children, src);
+            outv ~= blocks[i];
+            continue;
+        }
+
+        // Scan to the closer, collecting fences.
+        MdBlock grp = {kind: MdBlockKind.codeGroup, span: blocks[i].span};
+        size_t j = i + 1;
+        bool closed;
+        MdBlock[] strays;
+        for (; j < blocks.length; ++j)
+        {
+            if (isMarker(blocks[j], src, ":::"))
+            {
+                closed = true;
+                break;
+            }
+            if (blocks[j].kind == MdBlockKind.codeFence)
+                grp.children ~= blocks[j];
+            else
+                strays ~= blocks[j];
+        }
+        if (!closed || !grp.children.length)
+        {
+            // Not a container after all: emit what was scanned, unchanged.
+            outv ~= blocks[i .. j < blocks.length ? j : blocks.length];
+            i = j < blocks.length ? j - 1 : blocks.length;
+            continue;
+        }
+        grp.span = Span(blocks[i].span.start, blocks[j].span.end);
+        outv ~= grp;
+        outv ~= strays;
+        i = j;
+    }
+    return outv;
 }
 
 private void blankContinuations(TSNode n, char[] buf) @trusted nothrow
@@ -674,6 +746,55 @@ unittest
     assert(blocks[0].label == "[file.d]");
     assert(d.source[blocks[0].codeBody.start .. blocks[0].codeBody.end] == "void main() {}\n");
     assert(blocks[1].infoLang == "ansi");
+}
+
+@("md.model.codeGroup.foldsFencesAndKeepsLabels")
+@system
+unittest
+{
+    // VitePress's code group: an opener, labelled fences, a closer. The
+    // grammar sees three paragraphs and two fences; the model sees one
+    // group whose children are the fences, labels intact for the tabs.
+    auto d = extractForTest(
+        "::: code-group\n\n```js [config.js]\nexport default {}\n```\n\n"
+        ~ "```ts [config.ts]\nexport default {}\n```\n\n:::\n\nafter\n");
+    auto blocks = d.root.children;
+    assert(blocks[0].kind == MdBlockKind.codeGroup);
+    assert(blocks[0].children.length == 2);
+    assert(blocks[0].children[0].infoLang == "js");
+    assert(blocks[0].children[0].label == "[config.js]");
+    assert(blocks[0].children[1].label == "[config.ts]");
+    // The group's span covers opener through closer, so a fold or a hit id
+    // can address the whole container.
+    assert(d.source[blocks[0].span.start .. blocks[0].span.start + 3] == ":::");
+    // What follows the container is untouched.
+    assert(blocks[1].kind == MdBlockKind.paragraph);
+    assert(blocks.length == 2, "the markers are consumed, not emitted");
+}
+
+@("md.model.codeGroup.degradesRatherThanSwallows")
+@system
+unittest
+{
+    import std.algorithm.searching : any;
+
+    // An unclosed opener is not a container: every block stays where it
+    // was, so a typo cannot make the rest of the document disappear.
+    auto open = extractForTest("::: code-group\n\n```d\nx\n```\n\ntail\n");
+    assert(open.root.children.length == 3);
+    assert(!open.root.children.any!(b => b.kind == MdBlockKind.codeGroup));
+
+    // A closed container with no fences is likewise left alone.
+    auto empty = extractForTest("::: code-group\n\njust prose\n\n:::\n");
+    assert(!empty.root.children.any!(b => b.kind == MdBlockKind.codeGroup));
+
+    // Prose caught between fences stays a sibling rather than being
+    // swallowed into the group.
+    auto mixed = extractForTest(
+        "::: code-group\n\n```d\nx\n```\n\nstray\n\n```c\ny\n```\n\n:::\n");
+    auto grp = mixed.root.children[0];
+    assert(grp.kind == MdBlockKind.codeGroup && grp.children.length == 2);
+    assert(mixed.root.children[1].kind == MdBlockKind.paragraph);
 }
 
 @("md.model.lists.nestedAndTasks")
