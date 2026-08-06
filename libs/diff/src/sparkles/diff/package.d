@@ -20,3 +20,5 @@ public import sparkles.diff.model : Degradation, DiffDoc, DiffOptions, FileEntry
 public import sparkles.diff.normalize : compareLines, isBlank, linesEqual,
     WhitespaceMode;
 public import sparkles.diff.patch : emitPatch, parsePatch;
+public import sparkles.diff.table : cellsEqual, cellSpans, isSeparatorRow,
+    isTableRow, rowsEquivalent;

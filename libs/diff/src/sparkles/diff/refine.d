@@ -10,6 +10,7 @@ module sparkles.diff.refine;
 import sparkles.base.smallbuffer : SmallBuffer;
 
 import sparkles.diff.model : DiffOptions, Row, RowKind, Span;
+import sparkles.diff.table : cellsEqual, cellSpans, isSeparatorRow;
 
 /// One token: a byte span of the row classified for diffing.
 struct Token
@@ -66,6 +67,15 @@ void refinePair(ref Row oldRow, scope const(char)[] aText,
     ref Row newRow, scope const(char)[] bText,
     ref SmallBuffer!Span emphArena, in DiffOptions opt) @safe pure nothrow @nogc
 {
+    // `DVN4`: when both sides are pipe-table rows with the same shape, the
+    // meaningful unit is the CELL, not the word. Word refinement would light
+    // up every re-padded cell's whitespace tokens; cell refinement lights up
+    // exactly the cells whose content differs, which is the motivating
+    // scenario's whole point.
+    if (opt.refineTableCells
+        && refineTableRow(oldRow, aText, newRow, bText, emphArena))
+        return;
+
     auto ta = tokenize(aText);
     auto tb = tokenize(bText);
     if (ta.length > opt.maxRefineTokens || tb.length > opt.maxRefineTokens)
@@ -101,6 +111,67 @@ void refinePair(ref Row oldRow, scope const(char)[] aText,
 
     appendChangedSpans(oldRow, ta, inLcsA, emphArena);
     appendChangedSpans(newRow, tb, inLcsB, emphArena);
+}
+
+/**
+`DVN4`: emphasize the changed CELLS of a paired table row.
+
+Returns `false` — leaving the caller to fall back on word refinement — unless
+both sides are pipe-table rows with the same cell count. A row that gained or
+lost a column is a structural change that cell-wise emphasis would misrepresent.
+
+Cells that differ get their whole span emphasized, padding included: the cell
+is the unit the reviewer is being pointed at, and highlighting a fragment of it
+would beg the question of which fragment.
+*/
+private bool refineTableRow(ref Row oldRow, scope const(char)[] aText,
+    ref Row newRow, scope const(char)[] bText,
+    ref SmallBuffer!Span emphArena) @safe pure nothrow @nogc
+{
+    SmallBuffer!Span ca, cb;
+    const na = cellSpans(aText, ca);
+    const nb = cellSpans(bText, cb);
+    if (na == 0 || na != nb)
+        return false;
+
+    // A separator pair carries no content to point at: its cells are dashes.
+    // Claiming "this cell changed" about a column-width redraw would be
+    // exactly the noise this layer exists to remove.
+    if (isSeparatorRow(aText) && isSeparatorRow(bText))
+    {
+        oldRow.emphCount = 0;
+        newRow.emphCount = 0;
+        return true;
+    }
+
+    const startA = emphArena.length;
+    uint countA;
+    foreach (i; 0 .. na)
+    {
+        const x = aText[ca[i].start .. ca[i].end];
+        const y = bText[cb[i].start .. cb[i].end];
+        if (cellsEqual(x, y))
+            continue;
+        emphArena ~= ca[i];
+        ++countA;
+    }
+    oldRow.emphStart = cast(uint) startA;
+    oldRow.emphCount = countA;
+
+    const startB = emphArena.length;
+    uint countB;
+    foreach (i; 0 .. nb)
+    {
+        const x = aText[ca[i].start .. ca[i].end];
+        const y = bText[cb[i].start .. cb[i].end];
+        if (cellsEqual(x, y))
+            continue;
+        emphArena ~= cb[i];
+        ++countB;
+    }
+    newRow.emphStart = cast(uint) startB;
+    newRow.emphCount = countB;
+    return true;
 }
 
 /// Refine every paired pair in `rows` (`Row.pair` indices are relative to
@@ -258,24 +329,50 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    // A re-padded row: only the widened space run and the changed word
-    // should light up, not the whole row.
+    // A re-padded row: only the changed part should light up, not the whole
+    // row. These are table rows, so `DVN4` refines them CELL-wise — the
+    // emphasis covers the changed cell including its padding, because the
+    // cell is the unit the reviewer is being pointed at. The property this
+    // test has always asserted is unchanged: the unchanged column stays dark.
     enum aText = "| foo | bar |";
     enum bText = "| foo    | baz |";
     auto o = Row(RowKind.removed, 1, 0, Span(0, aText.length), 1);
     auto n = Row(RowKind.added, 0, 1, Span(0, bText.length), 0);
     SmallBuffer!Span arena;
     refinePair(o, aText, n, bText, arena, DiffOptions());
-    // Old side: only "bar" changed (space run is part of the widened side).
-    assert(o.emphCount >= 1);
-    bool oldMarksBar = false;
+
+    assert(o.emphCount == 1, "one cell differs, so one span");
+    const s = arena[o.emphStart];
+    assert(stripped(aText[s.start .. s.end]) == "bar");
+    // The `foo` column is untouched and must stay so — the padding it gained
+    // on the other side is not a change to it.
     foreach (i; 0 .. o.emphCount)
     {
-        const s = arena[o.emphStart + i];
-        if (aText[s.start .. s.end] == "bar")
-            oldMarksBar = true;
-        // Old side must NOT mark "foo".
-        assert(aText[s.start .. s.end] != "foo");
+        const sp = arena[o.emphStart + i];
+        assert(stripped(aText[sp.start .. sp.end]) != "foo");
     }
-    assert(oldMarksBar);
+
+    // Word refinement is still what a non-table row gets.
+    enum wa = "int a = compute(x, y);";
+    enum wb = "int a = compute(x, z);";
+    auto wo = Row(RowKind.removed, 1, 0, Span(0, wa.length), 1);
+    auto wn = Row(RowKind.added, 0, 1, Span(0, wb.length), 0);
+    SmallBuffer!Span warena;
+    refinePair(wo, wa, wn, wb, warena, DiffOptions());
+    bool marksY;
+    foreach (i; 0 .. wo.emphCount)
+        if (wa[warena[wo.emphStart + i].start .. warena[wo.emphStart + i].end] == "y")
+            marksY = true;
+    assert(marksY, "a token, not a cell, when the row is not a table row");
+}
+
+private const(char)[] stripped(return scope const(char)[] s) @safe pure nothrow @nogc
+{
+    size_t a;
+    while (a < s.length && (s[a] == ' ' || s[a] == '\t'))
+        ++a;
+    size_t b = s.length;
+    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t'))
+        --b;
+    return s[a .. b];
 }

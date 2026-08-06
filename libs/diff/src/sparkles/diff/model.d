@@ -199,6 +199,9 @@ struct DiffOptions
     /// already in cache) and the renderers ignore the flag unless asked, so
     /// it is on by default.
     bool classifyHunks = true;
+    /// `DVN4`: refine paired pipe-table rows cell-wise instead of word-wise,
+    /// so a re-aligned table lights up only the cells whose content changed.
+    bool refineTableCells = true;
 }
 
 @("model.Span.end")
