@@ -127,6 +127,12 @@ whose `_d_assert_fail!(T)` instances go unemitted;
 bench defaults to `library-inline`; `--override-config sparkles:wired/library`
 and `.../library-singleobj` reproduce the matrix above.
 
+Independently of the codegen matrix, the runtime benchmark configs no longer
+force shared Phobos, Gold, or `--export-dynamic`; default libraries are static
+unless a foreign shim brings a shared runtime dependency. That change is
+instruction-neutral: the mesh snapshots recorded before it reproduce to within
+0.01 % after it.
+
 ## The headline: typed decode (twitter.json)
 
 The op closest to wired's real workload — raw text → a partial Twitter

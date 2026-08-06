@@ -140,6 +140,35 @@ numbers only against baselines regenerated under this build type. The
 devshell still exports `$WIRED_BENCH_ISA` (the foreign-engine preset name)
 for results-file naming.
 
+Both configurations use context-checking assertions and the toolchain's static
+default libraries; foreign shims may still introduce their own shared runtime
+dependencies.
+
+## Manifest notes
+
+`dub.sdl` is deliberately terse; these four properties are not obvious from
+reading it, and each has bitten before:
+
+- **`configuration "unittest"` is empty but load-bearing.** `dub test` builds
+  the _first_ configuration, not one matched by name, so the empty block is
+  what keeps the default off-nix (D-engine) field. Delete it and plain
+  `dub test` silently starts building `unittest-foreign`, which needs the nix
+  shims.
+- **`buildOptions "unittests"` in the `bench` build type is what registers
+  tests.** Without it `dub test -b bench` builds and runs successfully having
+  discovered _zero_ tests — it does not fail, it just measures nothing.
+- **Cross-module inlining rides on `subConfiguration "sparkles:wired"
+"library-inline"`, not on the build type.** That scoping is the point:
+  build-type flags propagate to every dependency, and mir-ion's
+  `-unittest` + release build culls a template-nested symbol its own inlined
+  code references. For codegen A/B runs override the sub-configuration
+  instead — `--override-config sparkles:wired/library` for stock, or
+  `.../library-singleobj`; the parity matrix lives in `libs/wired/dub.sdl`.
+- **An engine's `versions` gate also controls its UDA.** `twitter.d` gates
+  each engine's "ignore unknown keys" attribute on the same version
+  identifier, so clearing one `versions` line disables that engine without
+  leaving a dangling import; its `dependency` line can then go too.
+
 ## Recorded results
 
 Baseline snapshots live under `results/`, named `<date>-<host>-<isa>.json`.
