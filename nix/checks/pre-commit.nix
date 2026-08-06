@@ -238,10 +238,15 @@ in
               };
 
               # Regenerate the cell-grid SVG for docs/specs/base/text/ whenever the
-              # text algorithm or its generator changes. The generator is the
-              # prebuilt standalone example (rebuilt by Nix when the sources change),
-              # so the committed SVG can never drift from `byGraphemeCluster`; prek
-              # reports a failure if the file was rewritten, mirroring prettier.
+              # text algorithm or its generator changes, so the committed SVG can
+              # never drift from `byGraphemeCluster`; prek reports a failure if the
+              # file was rewritten, mirroring prettier.
+              #
+              # Built on demand with `dub --single`, the way `ci --verify` builds
+              # every markdown example: pointing at the prebuilt example
+              # derivation would put it — and its deps bundle — in the dev shell,
+              # since `installationScript` carries every hook entry there.
+              # `--temp-build` keeps it clear of the concurrent example builds.
               gen-text-svg = {
                 enable = true;
                 files = "(^libs/base/src/sparkles/base/text/.*\\.d$)|(^libs/base/examples/text-cell-svg\\.d$)";
@@ -251,9 +256,22 @@ in
                 entry = toString (
                   pkgs.writeShellScript "gen-text-svg" ''
                     set -euo pipefail
+                    export PATH=${
+                      lib.makeBinPath [
+                        pkgs.dub
+                        pkgs.ldc
+                        pkgs.gitMinimal
+                      ]
+                    }:$PATH
+                    ${lib.concatStringsSep "\n" (
+                      lib.mapAttrsToList (
+                        name: value: "export ${name}=${lib.escapeShellArg value}"
+                      ) config.legacyPackages.d-toolchain.env
+                    )}
                     repo_root=$(git rev-parse --show-toplevel)
-                    ${lib.getExe config.legacyPackages.examples.base."text-cell-svg"} \
-                      --out "$repo_root/docs/public/text-cells.svg"
+                    exec dub run --single --temp-build --build=checked --compiler=ldc2 \
+                      "$repo_root/libs/base/examples/text-cell-svg.d" \
+                      -- --out "$repo_root/docs/public/text-cells.svg"
                   ''
                 );
               };
