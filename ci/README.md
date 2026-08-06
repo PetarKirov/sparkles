@@ -37,6 +37,7 @@ supplies them from the `sparkles-ci` context.
 | `NIX_TRUSTED_PUBLIC_KEYS` | `nix-configure`                               | Extra trusted public keys, space-separated         |
 | `NIX_GITHUB_TOKEN`        | `nix-configure`                               | `access-tokens` entry for github.com               |
 | `NIX_GITLAB_TOKEN`        | `nix-configure`                               | `access-tokens` entry for `NIX_GITLAB_DOMAIN`      |
+| `NIX_ACCEPT_FLAKE_CONFIG` | `nix-configure`                               | Trust flake.nix's `nixConfig` caches (see below)   |
 | `CI_DEVSHELL`             | `nix-devshell`                                | devShell to activate (`default`, `pre-commit`)     |
 | `CI_NIX_SINGLE_USER`      | `nix-install`                                 | Single-user store, required to cache `/nix`        |
 | `GITHUB_TOKEN`            | `lint`, `pr-comment`                          | lychee's GitHub API budget; PR preview comment     |
@@ -100,6 +101,46 @@ Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
    at all, and a concurrency limit of 1.
 4. Nothing needs "dynamic config" / setup workflows. The docs path filter is
    handled inside the job.
+
+## Substituters: two ways to configure them
+
+`flake.nix` declares this project's caches in its `nixConfig` block, but Nix
+ignores a flake's own config by default — it warns
+`ignoring untrusted flake configuration setting 'extra-substituters'` and then
+builds from source, which for this repo means the whole D toolchain.
+
+There are two ways to avoid that, and the two providers use different ones:
+
+- **CircleCI** sets `NIX_ACCEPT_FLAKE_CONFIG: true`, so `flake.nix` is the
+  single source of truth. This is only safe because CircleCI does not build
+  forked PRs unless the project opts in; a branch that can set
+  `extra-trusted-public-keys` can make Nix accept paths from a cache it chose.
+  **Do not enable "Build forked pull requests" while this is on.**
+- **GitHub Actions** leaves it off and passes the caches explicitly through
+  `NIX_SUBSTITUTERS` / `NIX_TRUSTED_PUBLIC_KEYS`, because it _does_ build fork
+  PRs. The cost is that those repo variables must list every cache
+  `flake.nix` names, and drift between the two is silent.
+
+## Cold start
+
+The first pipeline on a new project has an empty `/nix` cache and pays for the
+whole closure. That is much worse on Linux than on macOS, because
+`devShells.default` adds Linux-only tools that dominate the download:
+
+| Linux-only devShell entry | Closure   |
+| ------------------------- | --------- |
+| `chromium`                | 1.7 GiB   |
+| `perf`                    | 288.1 MiB |
+| `valgrind`                | 148.9 MiB |
+
+macOS gets none of these, which is why a cold `test-macos` finishes in ~5.5 min
+while a cold Linux leg is still fetching well past 15. Let the first run finish
+— it is what populates both the CircleCI `/nix` cache and Cachix. Subsequent
+runs restore instead of fetching.
+
+The `nix-build-*` jobs additionally pay ~380 MiB for the `cachix` binary's own
+closure (it pulls `aws-sdk-cpp` and `boost`), since they run without a devShell
+and `with-cachix.sh` has to fetch it via `nix run`.
 
 ## Behaviour that could not be ported
 

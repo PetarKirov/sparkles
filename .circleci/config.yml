@@ -96,6 +96,12 @@ commands:
           command: ci/nix-install.sh
       - run:
           name: Configure Nix
+          environment:
+            # Make flake.nix's `nixConfig` authoritative for which Cachix
+            # caches this project uses, instead of duplicating that list into
+            # the context. Safe here because CircleCI does not build forked
+            # PRs unless the project opts in — do not turn this on if it does.
+            NIX_ACCEPT_FLAKE_CONFIG: true
           command: ci/nix-configure.sh
       - when:
           condition: << parameters.devshell >>
