@@ -88,6 +88,20 @@ struct MdViewOptions
     /// and the placeholder shows unobstructed content.
     bool inlineFoldMarker = true;
 
+    /// `codeBody.start` of the fence showing in each code group (`MDP22`).
+    /// Source-anchored like `foldedSpans`, so a selection survives a
+    /// rebuild and no per-group counter exists to drift; a group whose
+    /// fences are all absent from this set shows its first.
+    size_t[] activeCodeTabs;
+    /// Whether a fence's header repeats its `[label]`. A code group's tab
+    /// carries it instead, so the group's active fence clears this.
+    bool fenceLabelInHeader = true;
+    /// Non-zero makes a group's tabs click targets:
+    /// `hitId = codeTabHitBase + fence.codeBody.start`, so an activation
+    /// names the fence itself rather than an index into a list that a
+    /// re-parse may have renumbered.
+    size_t codeTabHitBase = 0;
+
     /// In-panel fence line numbers (`COD`): each code-fence body line gets
     /// a muted 1-based number gutter inside the panel.
     bool codeLineNumbers;
@@ -186,6 +200,58 @@ uint viewMarkdownInto(ref Builder b, const MdDoc doc,
 // One column of blocks with a blank line's worth of gap between them. A
 // folded block collapses to its placeholder; a folded HEADING folds its whole
 // section (the sibling run up to the next heading of the same or higher level).
+
+/**
+Views a `::: code-group` (`MDP22`): a tab strip over exactly one fence.
+
+The showing fence is named by its own `codeBody.start` in
+`MdViewOptions.activeCodeTabs`, so the selection is source-anchored like a
+fold and survives a rebuild; a group with no selection shows its first
+fence. A tab's title is the fence's `[label]` with the brackets peeled,
+falling back to its language — which is what an unlabelled ` ```ansi `
+output fence inside a group needs, and what VitePress does.
+*/
+private uint viewCodeGroup(ref Builder b, ref const MdBlock blk,
+    const(char)[] src, MdViewOptions opt)
+{
+    import sparkles.ui.components.chrome : tabStrip;
+    import sparkles.ui.state : PressState;
+
+    if (!blk.children.length)
+        return blocksColumn(b, blk.children, src, opt);
+
+    size_t active;
+    string[] titles;
+    size_t[] ids;
+    foreach (i, ref const f; blk.children)
+    {
+        foreach (a; opt.activeCodeTabs)
+            if (a == f.codeBody.start)
+                active = i;
+        titles ~= tabTitle(f);
+        ids ~= opt.codeTabHitBase != 0
+            ? opt.codeTabHitBase + f.codeBody.start : 0;
+    }
+
+    const strip = tabStrip(b, titles, active, 0, PressState.init,
+        fitLabels: true, ids: ids);
+    MdViewOptions inner = opt;
+    inner.fenceLabelInHeader = false;
+    const body = viewBlock(b, blk.children[active], src, inner);
+    return b.add(Widget(kind: WidgetKind.column, children: [strip, body]));
+}
+
+/// A fence's tab title: its `[label]` unbracketed, else its language.
+private string tabTitle(ref const MdBlock fence) @safe pure nothrow
+{
+    const(char)[] l = fence.label;
+    if (l.length >= 2 && l[0] == '[' && l[$ - 1] == ']')
+        l = l[1 .. $ - 1];
+    if (!l.length)
+        l = fence.infoLang;
+    return l.idup;
+}
+
 private uint blocksColumn(ref Builder b, in MdBlock[] blocks,
     const(char)[] src, MdViewOptions opt, int listDepth = 0,
     int quoteDepth = 0)
@@ -279,9 +345,6 @@ Span[] foldableSpans(const MdDoc doc) @safe
             final switch (blocks[i].kind) with (MdBlockKind)
             {
                 case codeGroup:
-                    // The tab strip lands with the view state that selects a
-                    // tab; the fences render as siblings until then, so the
-                    // parse never hides content it merely grouped.
                     walk(blocks[i].children);
                     break;
 
@@ -382,7 +445,9 @@ private Widget themedFenceHeader(ref const MdBlock blk, MdViewOptions opt)
     const icon = langIcon(blk.infoLang);
     const(char)[] lbl = (icon.length ? icon ~ " " : "")
         ~ (blk.infoLang.length ? blk.infoLang : "code");
-    if (blk.label.length)
+    // Inside a code group the tab already says the label, so repeating it
+    // in the header is noise; the language and copy affordance stay.
+    if (blk.label.length && opt.fenceLabelInHeader)
         lbl = lbl ~ " " ~ blk.label;
     // With a fence hit base the whole band is a copy target, its identity
     // anchored at the body's source position; the glyph is the affordance,
@@ -418,9 +483,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             return blocksColumn(b, blk.children, src, opt);
 
         case codeGroup:
-            // As in `walk`: the group's fences render as a column until the
-            // tab strip and its selection state arrive.
-            return blocksColumn(b, blk.children, src, opt);
+            return viewCodeGroup(b, blk, src, opt);
 
         case heading:
         {
@@ -1607,4 +1670,64 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
         if (t.hitId == hitBase + 0)
             sawKey = true;
     assert(sawKey, "the placeholder unfolds the folded section");
+}
+
+@("md.render_widgets.codeGroup.oneFenceBehindTabs")
+@safe unittest
+{
+    import sparkles.ui.widget : WidgetKind;
+
+    // Two fences in a group: a labelled one and an unlabelled `ansi`
+    // output block — the shape the repo's own docs use.
+    const src = "::: code-group\n\n```js [config.js]\nA\n```\n\n```ansi\nB\n```\n\n:::";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.codeGroup, span: Span(0, src.length),
+            children: [
+                MdBlock(kind: MdBlockKind.codeFence, infoLang: "js",
+                    label: "[config.js]", span: Span(16, 39),
+                    codeBody: Span(34, 36)),
+                MdBlock(kind: MdBlockKind.codeFence, infoLang: "ansi",
+                    span: Span(41, 54), codeBody: Span(49, 51)),
+            ]),
+    ]), src);
+
+    // No selection: the first fence shows. Titles are the label with its
+    // brackets peeled, falling back to the language for the unlabelled one.
+    MdViewOptions opt = {codeTabHitBase: 1 << 21};
+    auto tree = viewMarkdown(doc, opt);
+    const(char)[][] titles;
+    size_t[] ids;
+    bool sawA, sawB;
+    foreach (ref const n; tree.nodes)
+    {
+        if (n.kind == WidgetKind.text && n.hitId == 0 && n.text.length)
+            titles ~= n.text;
+        if (n.hitId >= (1 << 21))
+            ids ~= n.hitId;
+        foreach (ref const s; n.spans)
+        {
+            if (s.text == "A") sawA = true;
+            if (s.text == "B") sawB = true;
+        }
+    }
+    import std.algorithm.searching : canFind;
+    assert(titles.canFind("config.js") && titles.canFind("ansi"));
+    assert(sawA && !sawB, "only the active fence's body renders");
+
+    // Tab ids are source-anchored to each fence's body, so two groups on a
+    // page cannot mint the same id.
+    assert(ids.canFind((1 << 21) + 34) && ids.canFind((1 << 21) + 49));
+
+    // Selecting the second fence by ITS source offset swaps the body and
+    // nothing else — the selection is not an index a re-parse can shift.
+    MdViewOptions sel = {codeTabHitBase: 1 << 21, activeCodeTabs: [49UL]};
+    auto t2 = viewMarkdown(doc, sel);
+    bool sawA2, sawB2;
+    foreach (ref const n; t2.nodes)
+        foreach (ref const s; n.spans)
+        {
+            if (s.text == "A") sawA2 = true;
+            if (s.text == "B") sawB2 = true;
+        }
+    assert(sawB2 && !sawA2);
 }
