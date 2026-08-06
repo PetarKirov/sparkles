@@ -15,6 +15,7 @@ import std.algorithm.sorting : sort;
 import sparkles.base.smallbuffer : SmallBuffer;
 
 import sparkles.diff.model : Degradation, DiffOptions, Hunk, Row, RowKind, Span;
+import sparkles.diff.normalize : compareLines, linesEqual, WhitespaceMode;
 
 /// The line list of one side — spans into that side's text.
 alias LineSpans = SmallBuffer!Span;
@@ -70,7 +71,8 @@ unittest
 private void internLinePair(
     scope const(char)[] oldText, in LineSpans oldLines,
     scope const(char)[] newText, in LineSpans newLines,
-    ref SmallBuffer!uint oldIds, ref SmallBuffer!uint newIds) @safe pure nothrow @nogc
+    ref SmallBuffer!uint oldIds, ref SmallBuffer!uint newIds,
+    WhitespaceMode ws = WhitespaceMode.exact) @safe pure nothrow @nogc
 {
     static struct Key
     {
@@ -91,7 +93,9 @@ private void internLinePair(
             ? oldText[k.span.start .. k.span.end]
             : newText[k.span.start .. k.span.end];
 
-    sort!((in a, in b) => lineOf(a) < lineOf(b))(keys[]);
+    // `DVN1`: one comparison decides both the sort order and the grouping
+    // below, so a whitespace policy cannot make the two disagree.
+    sort!((in a, in b) => compareLines(lineOf(a), lineOf(b), ws) < 0)(keys[]);
 
     oldIds.clear();
     oldIds.reserve(oldLines.length);
@@ -108,7 +112,7 @@ private void internLinePair(
     uint id = 0;
     foreach (i; 0 .. sorted.length)
     {
-        if (i != 0 && lineOf(sorted[i - 1]) != lineOf(sorted[i]))
+        if (i != 0 && !linesEqual(lineOf(sorted[i - 1]), lineOf(sorted[i]), ws))
             id++;
         if (sorted[i].idx < oldLines.length)
             oldSlice[sorted[i].idx] = id;
@@ -367,10 +371,11 @@ private uint firstNeighborLine(in SmallBuffer!Row rows, size_t firstIdx, bool ol
 LineDiff diffLines(
     scope const(char)[] oldText, in LineSpans oldLines,
     scope const(char)[] newText, in LineSpans newLines,
-    uint maxEditDistance) @safe pure nothrow @nogc
+    uint maxEditDistance, WhitespaceMode ws = WhitespaceMode.exact)
+    @safe pure nothrow @nogc
 {
     SmallBuffer!uint oldIds, newIds;
-    internLinePair(oldText, oldLines, newText, newLines, oldIds, newIds);
+    internLinePair(oldText, oldLines, newText, newLines, oldIds, newIds, ws);
     return diffLineIds(oldIds[], newIds[], maxEditDistance);
 }
 
