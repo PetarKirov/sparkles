@@ -1875,6 +1875,17 @@ int runGui(
                         copyClicked = true; // not a selection either
                         break;
                     }
+                    // Ordered by range, highest base first: a code-group
+                    // tab's ids sit BELOW the fence ids, so this test must
+                    // follow them or it would swallow every fence hit.
+                    if (tgt.hitId >= vm.codeTabHitBase
+                        && tgt.hitId < vm.fenceHitBase
+                        && tgt.rect.contains(dp))
+                    {
+                        vm.activateCodeTab(tgt.hitId - vm.codeTabHitBase);
+                        copyClicked = true; // not a selection either
+                        break;
+                    }
                     if (tgt.hitId >= vm.fenceHitBase && tgt.rect.contains(dp))
                     {
                         const bodyStart = tgt.hitId - vm.fenceHitBase;

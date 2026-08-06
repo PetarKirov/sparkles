@@ -183,6 +183,10 @@ struct ViewerModel
     size_t copiedFenceSrc = size_t.max; /// body start of the just-copied fence
     DisclosureState!size_t folds = DisclosureState!size_t(true);
     Span[] foldable;
+    /// The showing fence of each code group, by `codeBody.start` (`MDP22`)
+    /// — source-anchored like the fold set, so a rebuild keeps the
+    /// reader's tab.
+    size_t[] activeCodeTabs;
     /// Horizontal overflow (IXB2): the widest laid-out right edge in doc
     /// cells, and the document's ScrollView (SCV1) — BOTH backends step
     /// the same machines; `hsb` remains the horizontal bar's short name.
@@ -194,6 +198,7 @@ struct ViewerModel
     int widthCols = -1;             /// the width the pipeline is laid out for
 
     // Source-anchored identity bases (disjoint id spaces — see the md view).
+    enum size_t codeTabHitBase = size_t.max / 4 + 1;
     enum size_t fenceHitBase = size_t.max / 2 + 1;
     enum size_t foldHitBase = size_t.max / 4 * 3 + 1;
     enum size_t tableKeyBase = 1;
@@ -362,6 +367,8 @@ struct ViewerModel
         MdViewOptions opt = {
             theme: MdViewTheme.derive(current, pageFg, pageBg),
             fenceHitBase: fenceHitBase,
+            codeTabHitBase: codeTabHitBase,
+            activeCodeTabs: activeCodeTabs,
             tableKeyBase: tableKeyBase,
             copiedFence: copiedFenceSrc,
             fenceRenderer: fenceRenderer(),
@@ -640,6 +647,56 @@ struct ViewerModel
 
     /// Marks fence `bodyStart` as just-copied (its header shows the ✔) and
     /// rebuilds; `clearCopied` reverts when the host's flash ends.
+    /**
+    Shows the fence whose body starts at `bodyStart` in its code group
+    (`MDP22`), and rebuilds.
+
+    The set holds at most one entry per group, so activating a tab drops
+    its siblings' selections rather than accumulating them — which is why
+    this takes the group from the document rather than trusting the
+    caller to have cleared anything.
+    */
+    void activateCodeTab(size_t bodyStart)
+    {
+        import sparkles.syntax.md.model : MdBlockKind;
+
+        bool inGroup(in MdBlock[] blocks)
+        {
+            foreach (ref const g; blocks)
+            {
+                if (g.kind == MdBlockKind.codeGroup)
+                {
+                    bool mine;
+                    foreach (ref const f; g.children)
+                        if (f.codeBody.start == bodyStart)
+                            mine = true;
+                    if (mine)
+                    {
+                        // Drop every selection belonging to THIS group.
+                        size_t[] kept;
+                        foreach (a; activeCodeTabs)
+                        {
+                            bool sibling;
+                            foreach (ref const f; g.children)
+                                if (f.codeBody.start == a)
+                                    sibling = true;
+                            if (!sibling)
+                                kept ~= a;
+                        }
+                        activeCodeTabs = kept ~ bodyStart;
+                        return true;
+                    }
+                }
+                if (g.children.length && inGroup(g.children))
+                    return true;
+            }
+            return false;
+        }
+
+        if (inGroup(preview.doc.root.children))
+            rebuild();
+    }
+
     void markCopied(size_t bodyStart)
     {
         copiedFenceSrc = bodyStart;
@@ -1206,4 +1263,61 @@ struct ViewerModel
     vm.expandContext = false;
     vm.rebuild();
     assert(vm.rows.length == oneOpen, "the hand-opened region survived");
+}
+
+@("viewer_model.codeGroupTabActivation")
+@system unittest
+{
+    import std.process : environment;
+    import sparkles.syntax : builtinDark, extractMarkdown, GrammarRegistry;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 40;
+    vm.applyTheme(0);
+
+    const src = "::: code-group\n\n```d [a.d]\nAAA\n```\n\n```c [b.c]\nBBB\n```\n\n:::\n";
+    PreviewModel pm;
+    auto reg = GrammarRegistry.fromEnvironment();
+    pm.doc = extractMarkdown(reg, src);
+    pm.present = true;
+    vm.setDocument("t.md", "", src,
+        [HighlightEvent.sourceSpan(0, src.length)], pm, TwoslashReturn.init);
+
+    // The group's fences, in document order.
+    const grp = pm.doc.root.children[0];
+    assert(grp.kind == MdBlockKind.codeGroup && grp.children.length == 2);
+    const firstBody = grp.children[0].codeBody.start;
+    const secondBody = grp.children[1].codeBody.start;
+
+    static bool shows(in ViewerModel m, string text)
+    {
+        foreach (ref const op; m.ops)
+            if (op.text.length && op.text == text)
+                return true;
+        return false;
+    }
+
+    // No selection: the first fence shows.
+    assert(shows(vm, "AAA") && !shows(vm, "BBB"));
+
+    // Activating the second tab swaps the body…
+    vm.activateCodeTab(secondBody);
+    assert(shows(vm, "BBB") && !shows(vm, "AAA"));
+
+    // …and activating back does not accumulate: one selection per group,
+    // so the set never grows into a contradiction.
+    vm.activateCodeTab(firstBody);
+    assert(shows(vm, "AAA") && !shows(vm, "BBB"));
+    assert(vm.activeCodeTabs.length == 1);
+
+    // An offset belonging to no group is ignored rather than rebuilding.
+    vm.activateCodeTab(size_t.max - 1);
+    assert(vm.activeCodeTabs.length == 1 && shows(vm, "AAA"));
 }
