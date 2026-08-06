@@ -701,6 +701,15 @@ struct PreviewTui
     const(SessionEntry)[] diffEntries() const @safe pure nothrow @nogc
         => diffNav() ? vm.diffSession.entries : null;
 
+    /// `DVG2`: expand or re-fold the unchanged regions between hunks.
+    void toggleDiffContext() @system
+    {
+        if (!diffNav())
+            return;
+        vm.diffToggleContext();
+        clampTop();
+    }
+
     /// `DVL3`: switch between the unified and split layouts.
     void toggleDiffLayout() @system
     {
@@ -860,6 +869,11 @@ struct PreviewTui
                     case 'M':
                         if (pk == 'z')
                             setAllFolds(true);
+                        break;
+                    // `zx`: the unchanged regions between hunks (`DVG2`).
+                    case 'x':
+                        if (pk == 'z')
+                            toggleDiffContext();
                         break;
                     case '1': .. case '9':
                         if (pk == 'z')

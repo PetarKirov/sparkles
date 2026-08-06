@@ -125,6 +125,9 @@ struct ViewerModel
     /// because they are view state — the `Document` supplies the initial value
     /// and this model is what `DVG1`/`DVG3` mutate.
     DiffSession diffSession;
+    /// `DVG2`: show the unchanged regions the context window hid. Off by
+    /// default — they render as a band saying how many lines they stand for.
+    bool expandContext;
     /// `DVL3`: the diff layout the reviewer asked for. The view degrades it
     /// to unified when the pane is too narrow to read two panes in.
     DiffLayout diffLayout;
@@ -278,6 +281,7 @@ struct ViewerModel
             DiffViewOptions dopt;
             dopt.foldFormattingOnly = !showFormattingHunks;
             dopt.layout = diffLayout;
+            dopt.expandContext = expandContext;
             tree = cache !is null
                 ? viewDiffDoc(diff, dopt, diffSides,
                     highlightedFenceRenderer(cache, &current, pageFg),
@@ -731,6 +735,19 @@ struct ViewerModel
                 break;
             }
         }
+        return true;
+    }
+
+    /// `DVG2`: expands or re-folds the unchanged regions between hunks.
+    bool diffToggleContext()
+    {
+        if (diffSession.empty)
+            return false;
+        expandContext = !expandContext;
+        rebuild();
+        const row = diffFileRow(diffSession.index);
+        if (row >= 0)
+            top = row;
         return true;
     }
 

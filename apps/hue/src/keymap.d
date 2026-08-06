@@ -126,6 +126,7 @@ enum Command : ubyte
     diffCollapseAll, diffExpandAll,
     diffToggleFormatting,              /// `zn` — the formatting-only hunks
     diffToggleLayout,                  /// `s` — unified ⇄ split
+    diffToggleContext,                 /// `zx` — the hidden unchanged regions
 }
 
 /// A resolved command plus its argument (only `foldLevel` uses one: the
@@ -211,6 +212,9 @@ KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
                 // `n` for noise: the formatting-only hunks (`DVN2`) are a
                 // fold like any other, so they live in the same family.
                 case 'n': return KeyCommand(Command.diffToggleFormatting);
+                // `x` for expand: the unchanged regions between hunks
+                // (`DVG2`) are the other thing a diff hides.
+                case 'x': return KeyCommand(Command.diffToggleContext);
                 default: return KeyCommand(Command.none);
             }
         if (k.key == Key.char_)
@@ -546,8 +550,10 @@ unittest
     assert(ch('c', armed).cmd == Command.diffToggleFile);
     assert(ch('m', armed).cmd == Command.diffCollapseAll);
     assert(ch('r', armed).cmd == Command.diffExpandAll);
-    // `DVN2`'s noise fold joins the same family.
+    // `DVN2`'s noise fold and `DVG2`'s context join the same family.
     assert(ch('n', armed).cmd == Command.diffToggleFormatting);
+    assert(ch('x', armed).cmd == Command.diffToggleContext);
+    assert(ch('x', KeyContext(foldArmed: true)).cmd == Command.none);
     assert(ch('n', KeyContext(foldArmed: true)).cmd == Command.none,
         "no session, no noise to fold");
     // Levels are meaningless over a flat file list, so they stay unbound.
