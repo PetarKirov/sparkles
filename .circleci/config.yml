@@ -71,9 +71,9 @@ commands:
         default: true
       cache_suffix:
         description: >
-          Namespaces the /nix cache. Jobs with different closures (the
-          `default` devShell vs `pre-commit` vs a full `nix build`) should not
-          share one, or whichever job saves first decides what the others get.
+          Namespaces the /nix cache. Jobs with different closures (the `ci`
+          devShell vs `pre-commit` vs a full `nix build`) should not share
+          one, or whichever job saves first decides what the others get.
         type: string
         default: shared
     steps:
@@ -200,8 +200,8 @@ jobs:
     steps:
       - checkout
       - setup_nix:
-          devshell: default
-          cache_suffix: devshell-default
+          devshell: ci
+          cache_suffix: devshell-ci
       - restore_dub_cache
       - run:
           name: Run flake checks
@@ -236,7 +236,7 @@ jobs:
                     --root=docs/research/window-system-integration/os-apis/wayland/example
       - save_dub_cache
       - save_nix_cache:
-          cache_suffix: devshell-default
+          cache_suffix: devshell-ci
 
   test-macos:
     executor: macos
@@ -248,7 +248,7 @@ jobs:
       # own APFS volume created by the daemon installer, so there is no
       # user-owned /nix to tar. Cachix is the only cache here.
       - setup_nix:
-          devshell: default
+          devshell: ci
           cache_nix: false
       - restore_dub_cache
       - run:
@@ -280,8 +280,8 @@ jobs:
     steps:
       - checkout
       - setup_nix:
-          devshell: default
-          cache_suffix: devshell-default
+          devshell: ci
+          cache_suffix: devshell-ci
       - restore_dub_cache
       - run:
           # Both modes normally *skip* when their toolchain is missing, which

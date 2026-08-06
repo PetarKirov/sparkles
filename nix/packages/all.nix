@@ -31,6 +31,10 @@
       packages.all-desktop = pkgs.linkFarm "sparkles-all-desktop" (
         {
           devshell-full = config.devShells.full;
+          # The lean shell the CI jobs actually activate. It must be in the
+          # aggregate or it never reaches the binary cache, and every runner
+          # rebuilds it from source.
+          devshell-ci = config.devShells.ci;
         }
         // builtins.removeAttrs config.packages ([ "all-desktop" ] ++ androidNames)
         // lib.concatMapAttrs (
