@@ -68,9 +68,14 @@ int main()
     }();
 
     Watcher watcher;
-    assert(!Watcher.create(watcher).hasError);
+    // Every call here is bound to a local before the assert sees it: `-release`
+    // strips an assert's expression wholesale, so a call written *inside* one
+    // simply never happens in the release build the CI example set uses.
+    const watcherCreated = Watcher.create(watcher);
+    assert(!watcherCreated.hasError);
     scope (exit) watcher.close();
-    assert(watcher.addWatch(dir, IN_CLOSE_WRITE).hasValue);
+    const watchAdded = watcher.addWatch(dir, IN_CLOSE_WRITE);
+    assert(watchAdded.hasValue);
 
     SmallBuffer!(char, 256) streamed;
     bool sawEvent;
@@ -117,13 +122,15 @@ int main()
         assert(f.hasValue);
         auto handle = f.value;
         Statx st;
-        assert(!statxPath(sched, dir ~ "/result.txt", st).hasError);
+        const statted = statxPath(sched, dir ~ "/result.txt", st);
+        assert(!statted.hasError);
         SmallBuffer!(ubyte, 64) content;
         content.length = 64;
         auto got = read(handle, move(content), 0);
         assert(!got.res.hasError && got.res.value == st.stx_size);
         assert(got.buf[][0 .. got.res.value] == cast(const(ubyte)[]) "41+1\n");
-        assert(!closeFile(sched, handle).hasError);
+        const closed = closeFile(sched, handle);
+        assert(!closed.hasError);
     });
     assert(!r.hasError);
 
