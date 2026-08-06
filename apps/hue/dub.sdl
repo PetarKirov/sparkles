@@ -26,6 +26,10 @@ dependency "sparkles:tui" path="../.."
 // The sparkles:ui → sparkles:tui bridge (GridCanvas), extracted from the old
 // in-app src/tui_canvas.d.
 dependency "sparkles:ui-tui" path="../.."
+// The shared event vocabulary and its per-frame fold (`sparkles.input.frame`,
+// which `gui.d` drives). Declared rather than inherited through `sparkles:ui`
+// (`PKG2`).
+dependency "sparkles:input" path="../.."
 
 // Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
 // the preview support modules (gui_text.d layout, gui_ansi.d libghostty bridge,
