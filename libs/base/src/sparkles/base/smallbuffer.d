@@ -14,6 +14,7 @@ import std.algorithm.comparison : max;
 import std.array : overlap;
 import std.range.primitives : ElementType, hasLength, hasSlicing, isInputRange;
 import std.experimental.allocator : makeArray, expandArray, dispose;
+import std.traits : hasIndirections;
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
 import std.experimental.allocator.mallocator : Mallocator;
 
@@ -50,6 +51,32 @@ private bool aliasesRegion(T)(in T[] elements, in T[] region)
 // copy-on-write and `unique` instantiations of `SmallBuffer` share one
 // allocator type — that is what lets `toShared` transfer a heap block from a
 // `unique` buffer to a copy-on-write one without reallocating.
+/*
+druntime's collector-root entry points, redeclared `pure`.
+
+`core.memory.GC.addRange`/`removeRange` are `nothrow @nogc` but not `pure`, and
+`SmallBuffer`'s methods are — a display list built in `pure` code still has to
+root its block. This is druntime's own `pureMalloc` device: declare the C symbol
+with the attributes the caller needs, because registering a root changes only
+whether the collector may reclaim memory, which no pure computation observes.
+
+$(B Declared, not cast.) Casting a function pointer to `pure` and calling it for
+its side effect alone is not equivalent: a strongly-pure call returning `void`
+has, by definition, no observable effect, and the compiler is free to delete it.
+dmd does exactly that — with the cast in place, the roots were never registered
+and the tests below collected their payloads out from under the buffer, while
+ldc kept the calls and passed. An `extern (C)` declaration is emitted as a call.
+
+`ti` is passed as `null`: the range holds `b.length` elements and a single
+element's `TypeInfo` would describe only the first, so conservative scanning of
+the whole block is the honest request.
+*/
+extern (C) private pure nothrow @nogc @system
+{
+    pragma(mangle, "gc_addRange") void pureGcAddRange(const void* p, size_t sz, const TypeInfo ti);
+    pragma(mangle, "gc_removeRange") void pureGcRemoveRange(const void* p);
+}
+
 private struct ControlBlock { size_t refCount; }
 private alias BlockAllocator = AffixAllocator!(Mallocator, ControlBlock);
 
@@ -132,7 +159,14 @@ pure nothrow @nogc:
         size_t _length = 0;
         union
         {
-            T[N] _inline = void;   // live iff !onHeap
+            // `= void` only where it is free of consequence. For a `T` holding
+            // references the untouched slots would be garbage pointers, which
+            // the conservative scan of a stack- or GC-resident buffer would
+            // follow — so those instantiations pay for default initialization.
+            static if (hasIndirections!T)
+                T[N] _inline;
+            else
+                T[N] _inline = void;   // live iff !onHeap
             T[] _block;                           // capacity slots (ControlBlock prefix precedes them)
         }
 
@@ -330,7 +364,28 @@ pure nothrow @nogc:
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Output range interface: appends a single element.
-    void put(in T element) @safe
+    static if (hasIndirections!T)
+    {
+        /// ditto
+        void put(T element) @safe => putOne(element);
+    }
+    else
+    {
+        /// ditto
+        void put(in T element) @safe => putOne(element);
+    }
+
+    /*
+    The append proper.
+
+    The parameter above is `in` — and so `scope` under `-preview=in` — only for
+    an element type that carries no references. Where `T` does carry them,
+    `scope` would be a promise the buffer cannot keep: it stores the element,
+    which outlives the call, so a scope reference handed in would be escaping.
+    Such a caller must own what it hands over, which is what taking `T` by value
+    says.
+    */
+    private void putOne(T element) @safe
     {
         // Fast path: while the buffer is inline (`length <= N`) it is always
         // uniquely owned — copy-on-write applies only to shared heap blocks — so
@@ -408,7 +463,10 @@ pure nothrow @nogc:
 
             if (newLen > N && overlapsInline)
             {
-                T[N] tmp = void;
+                static if (hasIndirections!T)
+                    T[N] tmp;
+                else
+                    T[N] tmp = void;
                 tmp[0 .. elements.length] = elements[];
                 T[] tail = ensureUniqueStorage(extraLen: elements.length);
                 tail[] = tmp[0 .. elements.length];
@@ -435,15 +493,30 @@ pure nothrow @nogc:
             if (retainedBlock !is null)
             {
                 if (--Allocator.instance.prefix(retainedBlock).refCount == 0)
+                {
+                    removeBlockRange(retainedBlock.ptr);
                     dispose(Allocator.instance, retainedBlock);
+                }
             }
         }
     }
 
-    /// Appends a single element using `~=` operator.
-    void opOpAssign(string op : "~")(in T element) @safe
+    /// Appends a single element using `~=` operator. The parameter mirrors
+    /// $(LREF SmallBuffer.put)'s: `in` (and so `scope`) only where `T` carries
+    /// no references, because the element is stored and outlives the call.
+    static if (hasIndirections!T)
     {
-        put(element);
+        void opOpAssign(string op : "~")(T element) @safe
+        {
+            put(element);
+        }
+    }
+    else
+    {
+        void opOpAssign(string op : "~")(in T element) @safe
+        {
+            put(element);
+        }
     }
 
     /// Appends elements from a slice using `~=` operator.
@@ -661,7 +734,63 @@ pure nothrow @nogc:
         T[] b = makeArray!T(Allocator.instance, blockCapacity);
         assert(b !is null, "SmallBuffer: allocation failed");
         Allocator.instance.prefix(b).refCount = 1;
+        addBlockRange(b);
         return b;
+    }
+
+    // Grow the heap block to `capacity` slots, keeping the GC root in step.
+    //
+    // `expandArray` falls through to `reallocate` here (the affix allocator over
+    // `Mallocator` has no `expand`), so the block may MOVE — and its length
+    // changes even when it does not. A root registered against the old address
+    // and size would therefore be stale in both directions, so it is dropped and
+    // re-established rather than left alone.
+    private void reallocateBlock(size_t capacity) scope @safe
+    {
+        const oldPtr = (() @trusted => cast(const(void)*) _block.ptr)();
+        const ok = (() @trusted =>
+            Allocator.instance.expandArray(
+                _block, capacity - _block.length
+            )
+        )();
+        if (!ok)
+            assert(false, "SmallBuffer: reallocation failed");
+        removeBlockRange(oldPtr);
+        (() @trusted => addBlockRange(_block))();
+    }
+
+    /*
+    Register a heap block as a GC root, for a `T` that carries references.
+
+    The block comes from `Mallocator`, which the collector does not scan. An
+    element holding the $(I only) reference to GC memory would therefore let
+    that memory be collected while the buffer still points at it — so without
+    this, `SmallBuffer!(T, N)` is simply unsafe for any `T` with indirections,
+    which is why `DrawOp` streams have had to use a GC array.
+
+    `GC.addRange`/`removeRange` are `nothrow @nogc` but not `pure`, and this
+    struct's methods are. Casting the purity in is sound for the same reason
+    druntime does it for `pureMalloc`: registering a root changes only whether
+    the collector may reclaim memory, which no pure computation can observe.
+
+    Registration is per $(I block), not per owner: a shared block is registered
+    once by whoever allocated it and unregistered once by whoever disposes it,
+    so reference counting needs no help here. A block moved between owners
+    (`toShared`) keeps its registration, since the address does not change.
+    */
+    private static void addBlockRange(scope T[] b) @trusted
+    {
+        static if (hasIndirections!T)
+            if (b.length)
+                pureGcAddRange(b.ptr, b.length * T.sizeof, null);
+    }
+
+    /// ditto
+    private static void removeBlockRange(const(void)* p) @trusted
+    {
+        static if (hasIndirections!T)
+            if (p !is null)
+                pureGcRemoveRange(p);
     }
 
     // Ensure this buffer has unique mutable storage with room for `extraLen`
@@ -699,13 +828,7 @@ pure nothrow @nogc:
             // Already on the heap: grow in place when too small.
             if (needed > this.capacity)
             {
-                const ok = (() @trusted =>
-                    Allocator.instance.expandArray(
-                        _block, capacity - _block.length
-                    )
-                )();
-                if (!ok)
-                    assert(false, "SmallBuffer: reallocation failed");
+                reallocateBlock(capacity);
             }
             return (() @trusted => _block[oldLen .. newLen])();
         }
@@ -716,13 +839,7 @@ pure nothrow @nogc:
             {
                 if (needed > this.capacity)
                 {
-                    const ok = (() @trusted =>
-                        Allocator.instance.expandArray(
-                            _block, capacity - _block.length
-                        )
-                    )();
-                    if (!ok)
-                        assert(false, "SmallBuffer: reallocation failed");
+                    reallocateBlock(capacity);
                 }
                 return (() @trusted => _block[oldLen .. newLen])();
             }
@@ -746,14 +863,155 @@ pure nothrow @nogc:
         if (!onHeap)
             return;
         static if (unique)
+        {
+            removeBlockRange(_block.ptr); // before the memory goes back
             dispose(Allocator.instance, _block); // sole owner: free outright
+        }
         else if (--ctrl().refCount == 0)
+        {
+            removeBlockRange(_block.ptr);
             dispose(Allocator.instance, _block);
+        }
         _block = null;
     }
 }
 
 ///
+// ─────────────────────────────────────────────────────────────────────────────
+// Reference-bearing elements
+// ─────────────────────────────────────────────────────────────────────────────
+
+version (unittest)
+{
+    // An element type with an indirection — the case the buffer could not hold
+    // safely before: the heap block is not GC-scanned, and the inline slots were
+    // `void`-initialized.
+    private struct Payload
+    {
+        string text;
+        int tag;
+    }
+}
+
+@("SmallBuffer.indirections.inlineSlotsAreInitialized")
+@safe pure nothrow @nogc
+unittest
+{
+    // Untouched inline slots must read as `T.init`, not as whatever the stack
+    // held. A garbage `string` here is a pointer the conservative collector
+    // would follow.
+    SmallBuffer!(Payload, 4) buf;
+    buf ~= Payload("one", 1);
+    assert(buf.length == 1);
+    assert(buf[0] == Payload("one", 1));
+
+    // Growing into a slot that was never written yields an initialized element.
+    buf.length = 3;
+    assert(buf[1] == Payload.init && buf[2] == Payload.init);
+}
+
+@("SmallBuffer.indirections.stillNogc")
+@safe pure nothrow @nogc
+unittest
+{
+    // Rooting the block must not cost the buffer its attributes: `GC.addRange`
+    // is `nothrow @nogc`, and the purity cast is what keeps this instantiation
+    // usable from `pure` code at all.
+    SmallBuffer!(Payload, 2) buf;
+    foreach (i; 0 .. 16)
+        buf ~= Payload("x", i);
+    assert(buf.onHeap && buf.length == 16);
+    assert(buf[15].tag == 15);
+}
+
+@("SmallBuffer.indirections.heapElementsSurviveCollection")
+@system
+unittest
+{
+    import core.memory : GC;
+    import std.conv : text;
+
+    enum count = 64;
+
+    SmallBuffer!(Payload, 2) buf;
+    foreach (i; 0 .. count)
+        buf ~= Payload(text("payload-", i), i); // freshly GC-allocated each time
+    assert(buf.onHeap, "the test is about the heap block, not the inline slots");
+
+    // The buffer now holds the only references to those strings. Without the
+    // block registered as a root the collector cannot see them, and the memory
+    // is free to be handed out again.
+    GC.collect();
+
+    // Churn the heap so anything actually reclaimed is overwritten rather than
+    // merely dangling — a dangling pointer to intact memory would still compare
+    // equal and let the bug pass unnoticed.
+    string[] churn;
+    foreach (i; 0 .. 4096)
+        churn ~= text("churn-", i);
+    assert(churn.length == 4096);
+
+    foreach (i; 0 .. count)
+    {
+        assert(buf[i].tag == i);
+        assert(buf[i].text == text("payload-", i),
+            "element text was collected or overwritten");
+    }
+}
+
+@("SmallBuffer.indirections.survivesCopyOnWriteAndTransfer")
+@system
+unittest
+{
+    import core.memory : GC;
+    import std.conv : text;
+
+    SmallBuffer!(Payload, 2) a;
+    foreach (i; 0 .. 32)
+        a ~= Payload(text("a-", i), i);
+
+    // A copy shares the block; writing through it clones, and the clone is a
+    // separate allocation that needs its own root.
+    auto b = a;
+    b ~= Payload(text("b-", 0), 99);
+    assert(a.length == 32 && b.length == 33);
+
+    // A `unique` buffer's block transfers to the shared world without
+    // reallocating, so its registration must travel with it — registered once
+    // by the allocation, dropped once by whoever disposes it.
+    SmallBuffer!(Payload, 2, true) u;
+    foreach (i; 0 .. 32)
+        u ~= Payload(text("u-", i), i);
+    auto shared_ = u.toShared();
+
+    GC.collect();
+
+    foreach (i; 0 .. 32)
+    {
+        assert(a[i].text == text("a-", i));
+        assert(b[i].text == text("a-", i));
+        assert(shared_[i].text == text("u-", i));
+    }
+    assert(b[32].text == "b-0");
+}
+
+@("SmallBuffer.indirections.pointerFreeLayoutUnchanged")
+@safe pure nothrow @nogc
+unittest
+{
+    // The cost is paid only where it buys something: an element type without
+    // indirections keeps the `void`-initialized inline storage and the
+    // three-word layout the default `N` is chosen for.
+    static assert(!hasIndirections!char && !hasIndirections!int);
+    static assert(SmallBuffer!char.sizeof == 3 * size_t.sizeof);
+    static assert(SmallBuffer!int.sizeof == 3 * size_t.sizeof);
+    static assert(SmallBuffer!long.sizeof == 3 * size_t.sizeof);
+
+    SmallBuffer!(char, 16) buf;
+    buf ~= "unchanged";
+    assert(buf[] == "unchanged");
+}
+
 @("SmallBuffer.tour")
 @safe pure nothrow @nogc
 unittest
