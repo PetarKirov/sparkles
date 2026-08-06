@@ -188,9 +188,8 @@
         # Python + wcwidth for the PyD-embedded Layer 10.
         pythonEnv
 
-        # terminal benchmarking: the harness plus the third-party tools it
-        # pairs with (see apps/terminal-benchmark/README.md)
-        config.packages.terminal-benchmark
+        # terminal benchmarking: the third-party tools the harness pairs
+        # with (see apps/terminal-benchmark/README.md)
         config.packages.vtebench
         config.packages.termbench
         pkgs.cmatrix

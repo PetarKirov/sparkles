@@ -29,17 +29,21 @@ of being skipped (a continuous stream would be parse-bound, not render-bound).
 
 ## Usage
 
-In the dev shell (`nix develop`) the harness and tools are on `PATH`:
+The third-party tools it pairs with (`vtebench`, `termbench`, `cmatrix`) are on
+`PATH` in the dev shell. The harness itself is not — putting an in-tree D app
+there makes every `nix develop` rebuild it whenever `core-cli`'s lib closure
+changes — so run it through dub:
 
 ```bash
 # Compare two binaries (e.g. before/after a change)
-terminal-benchmark /path/to/terminal_before /path/to/terminal_after
+dub run :terminal-benchmark -b checked -- /path/to/terminal_before /path/to/terminal_after
 
 # A single binary, all scenarios
-terminal-benchmark ./apps/terminal/build/sparkles_terminal
+dub run :terminal-benchmark -b checked -- ./apps/terminal/build/sparkles_terminal
 
 # Tune the run
-terminal-benchmark --scenario churn --reps 5 --window 10 --warmup 3 BIN_A BIN_B
+dub run :terminal-benchmark -b checked -- \
+    --scenario churn --reps 5 --window 10 --warmup 3 BIN_A BIN_B
 ```
 
 Or without entering the shell:
