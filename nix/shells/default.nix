@@ -77,175 +77,231 @@
             export WIRED_BENCH_ISA=${only.isa}
             export PKG_CONFIG_PATH=${benchPcPath only}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
           '';
+      # ── Package tiers ──────────────────────────────────────────────────
+      #
+      # `ciPackages` is the floor: exactly what `ci --test`,
+      # `ci --example-files` and `ci --test-extracted` need in order to *run*
+      # rather than skip. Everything else is interactive-only and lives in
+      # `devPackages`, because CI pays for it in download time on every cold
+      # runner — chromium alone is a 1.7 GiB closure, and nothing in CI opens
+      # a browser.
+      #
+      # The rule for moving something up: it belongs in `ciPackages` if a CI
+      # job links it, execs it, or degrades to a skip without it.
+
+      ciPackages = [
+        # Used by :test-utils for diff output on a failing assertion.
+        pkgs.delta
+
+        # wasm-ld, for the test runner's `--wasm` mode: nixpkgs' LDC is
+        # built without -link-internally, so the wasm32 link needs an
+        # external linker. Without it the mode skips rather than runs
+        # (and `--require-toolchain` turns that skip into a failure).
+        # The wasm runtime it hands off to is `pkgs.nodejs` below.
+        pkgs.lld
+        pkgs.nodejs
+
+        # CI helper — the `ci --test` / `ci --example-files` the jobs invoke.
+        pkgs.curl # libcurl, linked by its --ci-stats subcommand
+        config.packages.ci
+
+        # ghostty — the slim repack (shared lib + headers + .pc), NOT the
+        # upstream `.dev` output: its static archive embeds zig store
+        # paths in debug info, dragging a 1.5 GiB toolchain closure into
+        # the shell. See nix/packages/libghostty-vt.nix.
+        # `libs "ghostty-vt"` in libs/ghostty/dub.sdl.
+        pkgs.pkg-config
+        config.packages.libghostty-vt
+
+        # tree-sitter runtime for sparkles:tree-sitter / sparkles:syntax
+        # (single-output: headers + .so + .pc all in `out`). Grammars come
+        # from the ts-grammars bundle via $SPARKLES_TS_GRAMMAR_PATH below.
+        # `libs "tree-sitter"` in libs/tree-sitter/dub.sdl.
+        pkgs.tree-sitter
+
+        # `libs "raylib"` in libs/raylib-text and apps/terminal.
+        pkgs.raylib
+      ]
+      # OS-API research examples (docs/research/.../os-apis): the X11 and Wayland
+      # ImportC examples are **Linux-only**, so gate these on Linux — `wayland`,
+      # `libx11`, etc. refuse to evaluate on darwin. pkg-config (above) resolves
+      # the headers via the `.dev` outputs (dub#3085 feeds `--cflags` to ImportC);
+      # `xvfb-run` lets the X11 example open a real window on a headless runner.
+      ++ lib.optionals pkgs.stdenv.isLinux [
+        pkgs.libx11
+        pkgs.libx11.dev
+        pkgs.xorgproto
+        pkgs.wayland
+        pkgs.wayland.dev
+        pkgs.xvfb-run
+
+        # CPU-PMU research probes (docs/research/cpu-pmu/examples): the
+        # symbolization/unwind probes link `libs "dw" "elf"` and the
+        # event-naming probe links `libs "pfm"`. Neither library is found
+        # by `nix shell` alone (no setup hooks run), so they're shell
+        # packages here with LIBRARY_PATH/LD_LIBRARY_PATH exports below.
+        # `ci --example-files` builds these, so a missing library is a
+        # link error, not a skip.
+        pkgs.elfutils
+        pkgs.libpfm
+
+        # Sanitizers research probes (docs/research/sanitizers/examples):
+        # the valgrind-*.d probes exec `valgrind` from PATH (never link it)
+        # and print a SKIP line when it is absent. `ci --example-files`
+        # runs them, so this is here to keep three examples from silently
+        # degrading to SKIP in CI — the `nix run .#ci` wrapper deliberately
+        # omits it to keep the .#ci closure small.
+        pkgs.valgrind
+      ];
+
+      devPackages = [
+        # Pre-commit hooks
+        pkgs.prek
+        pkgs.lychee
+        # Profiling
+        pkgs.tracy
+        pkgs.capstone
+        pkgs.mold
+
+        # Independent oracle libraries for the text-conformance harness
+        # (bindings under libs/base/tools/text-conformance/bindings). utf8proc
+        # is single-output (headers + .pc in `out`); icu/notcurses carry their
+        # pkg-config in the `.dev` output. Not a root sub-package, so no CI
+        # job builds it.
+        pkgs.utf8proc
+        pkgs.icu
+        pkgs.icu.dev
+        notcursesCore
+        notcursesCore.dev
+
+        # Rust unicode-width oracle helper (Layer 9), built from the in-tree
+        # crate under the harness's oracles/ dir.
+        config.packages.uwidth-rs
+
+        # wired runtime JSON bench: the cpp shim's `Requires: simdjson`
+        # resolves against this simdjson.pc (generic build — simdjson
+        # dispatches SIMD kernels at runtime, unlike the preset-built
+        # engines wired up via the benchIsaHook below). The bench is not a
+        # root sub-package either.
+        pkgs.simdjson
+
+        # Python + wcwidth for the PyD-embedded Layer 10.
+        pythonEnv
+
+        # terminal benchmarking: the harness plus the third-party tools it
+        # pairs with (see apps/terminal-benchmark/README.md)
+        config.packages.terminal-benchmark
+        config.packages.vtebench
+        config.packages.termbench
+        pkgs.cmatrix
+      ]
+      ++ lib.optionals pkgs.stdenv.isLinux [
+        # Headless Chromium for the sparkles:twoslash visual-regression check
+        # (libs/twoslash/examples/visual-check.mjs): it lays out the rendered
+        # HTML overlay and asserts popup geometry. Dev-only ($CHROME_BIN
+        # exported below) — it is a .mjs, so neither `ci --example-files`
+        # (which globs .d) nor any other job runs it.
+        pkgs.chromium
+
+        # perf is Linux-only; the harness/profiling flow is too (reads
+        # /proc). Nothing execs the CLI — the probes call perf_event_open
+        # directly and link libpfm — so this is for interactive profiling.
+        pkgs.perf
+      ];
+
+      # ── Shell hooks, split on the same seam ────────────────────────────
+
+      ciShellHook = ''
+        # Keep D's std.process child setup inside the signed-int range.
+        # Phobos casts RLIMIT_NOFILE from rlim_t to int before closing
+        # inherited descriptors; an unlimited soft limit overflows, and a
+        # low macOS default can also starve parallel dub/ldc builds. This
+        # was part of the original Darwin toolchain workaround but was
+        # lost when the dev shell moved behind the shared toolchain module.
+        ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true
+
+        ${envExports}
+
+        # tree-sitter grammar bundle for sparkles:syntax (one dir per
+        # language: parser + queries/). Tests skip when unset.
+        export SPARKLES_TS_GRAMMAR_PATH=${config.packages.ts-grammars}
+
+        # JSONTestSuite conformance corpus for the wired native JSON
+        # reader (dub test :wired skips those tests when unset).
+        export JSON_TEST_SUITE=${config.packages.json-test-suite}
+        export NATIVEJSON_TEST_SUITE=${config.packages.nativejson-test-suite}
+
+        # druntime/phobos sources matching the pinned dmd:frontend, for
+        # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
+        export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
+
+        ${lib.optionalString pkgs.stdenv.isLinux ''
+          # CPU-PMU research probes: libdw/libelf (elfutils) and libpfm for
+          # `dub run --single` linking (`libs "dw" "elf"` / `libs "pfm"`).
+          export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        ''}
+      '';
+
+      # Deliberately NOT in ciShellHook:
+      #
+      #   * `GITHUB_TOKEN` — `gh auth token` has no logged-in gh on a runner,
+      #     so this resolves to the empty string and *overwrites* the token the
+      #     job was given, quietly de-authenticating lychee's GitHub requests.
+      #   * the bench/oracle corpora and PyD paths, whose packages are not in
+      #     the ci tier at all.
+      devShellHook = ''
+        export GITHUB_TOKEN="$(gh auth token)"
+
+        # Pinned corpora for the wired runtime JSON bench
+        # (libs/wired/bench/runtime; its --data-dir flag overrides this).
+        export WIRED_BENCH_DATA=${config.packages.wired-bench-data}
+
+        ${benchIsaHook}
+
+        # PyD-embedded Python (text-conformance Layer 10): make libpython
+        # linkable and let the embedded interpreter find wcwidth + the stdlib.
+        export LIBRARY_PATH="${pythonEnv}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
+        export LD_LIBRARY_PATH="${pythonEnv}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export PYTHONPATH="${pythonEnv}/${pythonEnv.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
+
+        ${lib.optionalString pkgs.stdenv.isLinux ''
+          # Browser for the sparkles:twoslash visual-regression check.
+          export CHROME_BIN=${pkgs.chromium}/bin/chromium
+        ''}
+      '';
+
       mkSparklesShell =
-        greeting:
+        {
+          greeting ? false,
+          tier ? "dev",
+        }:
         pkgs.mkShell {
-          packages = [
-            # Pre-commit hooks
-            pkgs.prek
-            pkgs.lychee
-            # Used by :test-utils package
-            pkgs.delta
-            # Profiling
-            pkgs.tracy
-            pkgs.capstone
-            pkgs.mold
-            # Documentation site
-            pkgs.nodejs
-            # wasm-ld, for the test runner's `--wasm` mode: nixpkgs' LDC is
-            # built without -link-internally, so the wasm32 link needs an
-            # external linker. Without it the mode skips rather than runs
-            # (and `--require-toolchain` turns that skip into a failure).
-            # The wasm runtime it hands off to is `pkgs.nodejs` above.
-            pkgs.lld
-            # CI helper (markdown examples, standalone examples, link maintenance)
-            config.packages.ci
+          packages =
+            ciPackages
+            ++ lib.optionals (tier == "dev") devPackages
+            ++ lib.optional greeting pkgs.figlet
+            ++ d-toolchain.packages;
 
-            # libcurl — linked by the gen_unicode_tables generator tool
-            # (libs/base/tools), which fetches UCD files via std.net.curl.
-            pkgs.curl
-
-            # ghostty — the slim repack (shared lib + headers + .pc), NOT the
-            # upstream `.dev` output: its static archive embeds zig store
-            # paths in debug info, dragging a 1.5 GiB toolchain closure into
-            # the shell. See nix/packages/libghostty-vt.nix.
-            pkgs.pkg-config
-            config.packages.libghostty-vt
-
-            # tree-sitter runtime for sparkles:tree-sitter / sparkles:syntax
-            # (single-output: headers + .so + .pc all in `out`). Grammars come
-            # from the ts-grammars bundle via $SPARKLES_TS_GRAMMAR_PATH below.
-            pkgs.tree-sitter
-
-            # Independent oracle libraries for the text-conformance harness
-            # (bindings under libs/base/tools/text-conformance/bindings). utf8proc
-            # is single-output (headers + .pc in `out`); icu/notcurses carry their
-            # pkg-config in the `.dev` output.
-            pkgs.utf8proc
-            pkgs.icu
-            pkgs.icu.dev
-            notcursesCore
-            notcursesCore.dev
-
-            # Rust unicode-width oracle helper (Layer 9), built from the in-tree
-            # crate under the harness's oracles/ dir.
-            config.packages.uwidth-rs
-
-            # wired runtime JSON bench: the cpp shim's `Requires: simdjson`
-            # resolves against this simdjson.pc (generic build — simdjson
-            # dispatches SIMD kernels at runtime, unlike the preset-built
-            # engines wired up via the benchIsaHook below).
-            pkgs.simdjson
-
-            # Python + wcwidth for the PyD-embedded Layer 10.
-            pythonEnv
-
-            # rendering
-            pkgs.raylib
-
-            # terminal benchmarking: the harness plus the third-party tools it
-            # pairs with (see apps/terminal-benchmark/README.md)
-            config.packages.terminal-benchmark
-            config.packages.vtebench
-            config.packages.termbench
-            pkgs.cmatrix
-          ]
-          # OS-API research examples (docs/research/.../os-apis): the X11 and Wayland
-          # ImportC examples are **Linux-only**, so gate these on Linux — `wayland`,
-          # `libx11`, etc. refuse to evaluate on darwin. pkg-config (above) resolves
-          # the headers via the `.dev` outputs (dub#3085 feeds `--cflags` to ImportC);
-          # `xvfb-run` lets the X11 example open a real window on a headless runner.
-          ++ lib.optionals pkgs.stdenv.isLinux [
-            pkgs.libx11
-            pkgs.libx11.dev
-            pkgs.xorgproto
-            pkgs.wayland
-            pkgs.wayland.dev
-            pkgs.xvfb-run
-
-            # CPU-PMU research probes (docs/research/cpu-pmu/examples): the
-            # symbolization/unwind probes link `libs "dw" "elf"` and the
-            # event-naming probe links `libs "pfm"`. Neither library is found
-            # by `nix shell` alone (no setup hooks run), so they're shell
-            # packages here with LIBRARY_PATH/LD_LIBRARY_PATH exports below.
-            pkgs.elfutils
-            pkgs.libpfm
-
-            # Sanitizers research probes (docs/research/sanitizers/examples):
-            # the valgrind-*.d probes exec `valgrind` from PATH (never link it)
-            # and print a SKIP line when it is absent, so the tool is a
-            # devshell-only package — the `nix run .#ci` wrapper deliberately
-            # omits it to keep the .#ci closure small.
-            pkgs.valgrind
-
-            # Headless Chromium for the sparkles:twoslash visual-regression check
-            # (libs/twoslash/examples/visual-check.mjs): it lays out the rendered
-            # HTML overlay and asserts popup geometry. Dev/CI-only ($CHROME_BIN
-            # exported below); never part of the hermetic build.
-            pkgs.chromium
-          ]
-          # perf is Linux-only; the harness/profiling flow is too (reads /proc).
-          ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.perf ]
-          ++ lib.optional greeting pkgs.figlet
-          ++ d-toolchain.packages;
-          shellHook = ''
-            # Keep D's std.process child setup inside the signed-int range.
-            # Phobos casts RLIMIT_NOFILE from rlim_t to int before closing
-            # inherited descriptors; an unlimited soft limit overflows, and a
-            # low macOS default can also starve parallel dub/ldc builds. This
-            # was part of the original Darwin toolchain workaround but was
-            # lost when the dev shell moved behind the shared toolchain module.
-            ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true
-
-            ${envExports}
-            export GITHUB_TOKEN="$(gh auth token)"
-
-            # Pinned corpora for the wired runtime JSON bench
-            # (libs/wired/bench/runtime; its --data-dir flag overrides this).
-            export WIRED_BENCH_DATA=${config.packages.wired-bench-data}
-
-            # tree-sitter grammar bundle for sparkles:syntax (one dir per
-            # language: parser + queries/). Tests skip when unset.
-            export SPARKLES_TS_GRAMMAR_PATH=${config.packages.ts-grammars}
-
-            # JSONTestSuite conformance corpus for the wired native JSON
-            # reader (dub test :wired skips those tests when unset).
-            export JSON_TEST_SUITE=${config.packages.json-test-suite}
-            export NATIVEJSON_TEST_SUITE=${config.packages.nativejson-test-suite}
-
-            # druntime/phobos sources matching the pinned dmd:frontend, for
-            # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
-            export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
-
-            ${benchIsaHook}
-
-            # PyD-embedded Python (text-conformance Layer 10): make libpython
-            # linkable and let the embedded interpreter find wcwidth + the stdlib.
-            export LIBRARY_PATH="${pythonEnv}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
-            export LD_LIBRARY_PATH="${pythonEnv}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-            export PYTHONPATH="${pythonEnv}/${pythonEnv.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
-
-            ${lib.optionalString pkgs.stdenv.isLinux ''
-              # CPU-PMU research probes: libdw/libelf (elfutils) and libpfm for
-              # `dub run --single` linking (`libs "dw" "elf"` / `libs "pfm"`).
-              export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
-              export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-              # Browser for the sparkles:twoslash visual-regression check.
-              export CHROME_BIN=${pkgs.chromium}/bin/chromium
-            ''}
-
-            ${lib.optionalString greeting "figlet 'sparkles : *'"}
-          ''
-          + config.pre-commit.installationScript;
+          shellHook =
+            ciShellHook
+            + lib.optionalString (tier == "dev") devShellHook
+            + lib.optionalString greeting "figlet 'sparkles : *'\n"
+            # Installs the git hooks into .git/. Wanted on a developer's
+            # checkout, pointless on a runner that clones once and throws the
+            # tree away — and it is what drags prek into the closure.
+            + lib.optionalString (tier == "dev") config.pre-commit.installationScript;
         };
     in
     {
       devShells = {
-        # Quiet shell for non-interactive use (LLM agents, scripts, CI).
-        default = mkSparklesShell false;
+        # Quiet shell for non-interactive use (LLM agents, scripts).
+        default = mkSparklesShell { };
         # Full shell for interactive use — adds the figlet greeting on entry.
-        full = mkSparklesShell true;
+        full = mkSparklesShell { greeting = true; };
+        # The CI floor: no browser, no profilers, no benchmark corpora, no
+        # oracle libraries, no pre-commit tooling. See `ciPackages` above.
+        ci = mkSparklesShell { tier = "ci"; };
       };
     };
 }

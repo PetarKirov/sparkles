@@ -38,7 +38,7 @@ supplies them from the `sparkles-ci` context.
 | `NIX_GITHUB_TOKEN`        | `nix-configure`                               | `access-tokens` entry for github.com               |
 | `NIX_GITLAB_TOKEN`        | `nix-configure`                               | `access-tokens` entry for `NIX_GITLAB_DOMAIN`      |
 | `NIX_ACCEPT_FLAKE_CONFIG` | `nix-configure`                               | Trust flake.nix's `nixConfig` caches (see below)   |
-| `CI_DEVSHELL`             | `nix-devshell`                                | devShell to activate (`default`, `pre-commit`)     |
+| `CI_DEVSHELL`             | `nix-devshell`                                | devShell to activate (`ci`, `pre-commit`)          |
 | `CI_NIX_SINGLE_USER`      | `nix-install`                                 | Single-user store, required to cache `/nix`        |
 | `GITHUB_TOKEN`            | `lint`, `pr-comment`                          | lychee's GitHub API budget; PR preview comment     |
 | `CLOUDFLARE_API_TOKEN`    | `deploy-cloudflare-pages`                     | Pages deploy                                       |
@@ -121,22 +121,40 @@ There are two ways to avoid that, and the two providers use different ones:
   PRs. The cost is that those repo variables must list every cache
   `flake.nix` names, and drift between the two is silent.
 
-## Cold start
+## Cold start and `devShells.ci`
 
 The first pipeline on a new project has an empty `/nix` cache and pays for the
-whole closure. That is much worse on Linux than on macOS, because
-`devShells.default` adds Linux-only tools that dominate the download:
+whole closure, and that is much worse on Linux than on macOS: `devShells.full`
+carries Linux-only tools no CI job touches.
 
-| Linux-only devShell entry | Closure   |
-| ------------------------- | --------- |
-| `chromium`                | 1.7 GiB   |
-| `perf`                    | 288.1 MiB |
-| `valgrind`                | 148.9 MiB |
+So the jobs activate **`devShells.ci`** (`nix/shells/default.nix`), not
+`default`. It is the same shell minus everything interactive:
 
-macOS gets none of these, which is why a cold `test-macos` finishes in ~5.5 min
-while a cold Linux leg is still fetching well past 15. Let the first run finish
-— it is what populates both the CircleCI `/nix` cache and Cachix. Subsequent
-runs restore instead of fetching.
+|                     | Closure (x86_64-linux) |
+| ------------------- | ---------------------- |
+| `devShells.default` | 4.8 GiB                |
+| `devShells.ci`      | **3.2 GiB**            |
+
+The biggest single cut is `chromium` (1.7 GiB), which exists only for
+`libs/twoslash/examples/visual-check.mjs` — a `.mjs`, so neither
+`ci --example-files` (which globs `.d`) nor any other job runs it. Also gone:
+`perf` (nothing execs the CLI; the probes call `perf_event_open` and link
+libpfm), the profilers, the benchmark harnesses and corpora, the
+text-conformance oracle libraries and PyD Python (not a root sub-package), and
+the pre-commit tooling.
+
+What deliberately **stays**, because dropping it would turn a test into a
+silent skip rather than a saving: the tree-sitter grammar bundle, the JSON
+conformance corpora, the DMD import paths, `valgrind` (three
+`docs/research/sanitizers/examples` probes exec it and print SKIP without it),
+and `elfutils`/`libpfm` (the cpu-pmu examples link `dw`/`elf`/`pfm`, so a
+missing one is a link error).
+
+`devShells.ci` is in the `all-desktop` aggregate, so `nix-build-*` pushes it to
+Cachix and the other jobs restore rather than build it.
+
+Even so, let the first pipeline finish — it is what populates both the
+CircleCI `/nix` cache and Cachix. Subsequent runs restore instead of fetching.
 
 The `nix-build-*` jobs additionally pay ~380 MiB for the `cachix` binary's own
 closure (it pulls `aws-sdk-cpp` and `boost`), since they run without a devShell
