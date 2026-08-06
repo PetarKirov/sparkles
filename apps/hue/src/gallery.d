@@ -361,17 +361,40 @@ struct GalleryOptions
     /// the switch is flipped
     string darkBackground;
 
-    /// linked from `<head>` when set — the shared stylesheet the fragments
-    /// leave their rules to
+    /**
+    Linked from `<head>` when set — the shared stylesheet the fragments leave
+    their rules to.
+
+    In a mirrored gallery (`GAL12`) pages sit at varying depths, so this is the
+    href $(B as seen from the gallery root); $(LREF writeGallery) rewrites it per
+    page with $(LREF depthAdjustedHref) rather than making every caller compute
+    one href per depth.
+    */
     string stylesheetHref;
 }
+
+/**
+The name [`H4`](../../../docs/specs/hue/web-integration.md) reserves for the
+successor of $(LREF GalleryOptions) once a whole $(I site) — not just one gallery
+— has its own knobs.
+
+An alias, not a second struct: H4 has not settled its field set, and two structs
+today would only buy a conversion function. When H4 lands it renames this and
+`GalleryOptions` becomes the alias (or goes away).
+*/
+alias SiteOptions = GalleryOptions;
 
 /**
 Wraps a content `fragment` in the full preview shell (`GAL3`/`GAL6`): a header
 (prev · name · summary · index · next), a full-height single scroll container, a
 theme-matched background, the physical-line gutter (`GAL4`), and the selection
-domains (`GAL7`). `prev`/`next` are page stems; an empty one renders its link
-disabled (rather than omitted) so the header does not reflow between pages.
+domains (`GAL7`).
+
+`prev`/`next` are hrefs $(B relative to this page) — `next.html`, or
+`../other/app.d.html` in a mirrored gallery ($(LREF pageHref) computes them). An
+empty one renders its link disabled (rather than omitted) so the header does not
+reflow between pages. The index link is the literal `index.html`, which resolves
+to whichever directory index sits beside the page, at any depth.
 */
 string pageShell(scope const(char)[] name, scope const(char)[] summary, string fragment,
     scope const(char)[] prev, scope const(char)[] next,
@@ -472,66 +495,114 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
 }
 
 /// A header nav link, or a disabled span when there is no such neighbour.
-private void navLink(ref Appender!string w, scope const(char)[] target,
+private void navLink(ref Appender!string w, scope const(char)[] href,
     string label, string cls) @safe pure
 {
-    if (target.length)
+    if (href.length)
     {
         w ~= text("<a class=\"", cls, "\" href=\"");
-        escapeInto(w, target);
-        w ~= text(".html\">", label, "</a>");
+        escapeInto(w, href);
+        w ~= text("\">", label, "</a>");
     }
     else
         w ~= text("<span class=\"", cls, " disabled\">", label, "</span>");
 }
 
 /**
-Builds the gallery `index.html` (`GAL2`): every entry as a link plus its summary.
-An empty set renders an explicit "no documents" note rather than an empty list
-(`GAL9`).
+The gallery's root `index.html` (`GAL2`) for a $(B flat) set: every entry as a
+link plus its summary. An empty set renders an explicit "no documents" note
+rather than an empty list (`GAL9`).
+
+A convenience over [`site_tree`](./site_tree.d)'s
+`directoryIndex(buildSiteTree(entries).nodes[0])` — the flat layout is the
+depth-0 case of the mirrored one (`GAL12`), not a second renderer — so a flat
+gallery's index is byte-for-byte the one it always was.
 */
 string galleryIndex(scope const SourceEntry[] entries,
     in GalleryOptions opt = GalleryOptions.init) @safe pure
 {
+    import site_tree : buildSiteTree, directoryIndex, DirNode;
+
+    auto tree = buildSiteTree(entries);
+    return directoryIndex(tree.nodes.length ? tree.nodes[0] : DirNode.init, opt);
+}
+
+// ── mirrored-layout hrefs (GAL12) ──────────────────────────────────────────
+
+/**
+The href from the page at root-relative `from` to the page at root-relative `to`
+(both `/`-separated output paths): the file name for a sibling, `../`-prefixed
+across directories — `relativePath` over URL paths, so a page works wherever the
+gallery is mounted.
+*/
+string pageHref(const(char)[] from, const(char)[] to) @safe pure
+{
+    auto fromDir = segments(from);
+    if (fromDir.length)
+        fromDir = fromDir[0 .. $ - 1]; // the page's directory, not the page
+    auto toSegs = segments(to);
+
+    size_t common;
+    while (common < fromDir.length && common + 1 < toSegs.length
+        && fromDir[common] == toSegs[common])
+        ++common;
+
     auto w = appender!string;
-    w ~= "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n";
-    w ~= "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n";
-    w ~= "<title>";
-    escapeInto(w, opt.indexTitle.length ? opt.indexTitle : opt.heading);
-    w ~= "</title>\n<style>\n";
-    w ~= "  body { margin: 0 auto; max-width: 48em; padding: 2em 1.5em;\n";
-    w ~= "         background: #11111b; color: #cdd6f4; font: 15px/1.6 system-ui, sans-serif; }\n";
-    w ~= "  h1 { font-size: 1.4em; } p { color: #a6adc8; }\n";
-    w ~= "  ul { list-style: none; padding: 0; }\n";
-    w ~= "  li { padding: 0.5em 0; border-bottom: 1px solid #1e1e2e; }\n";
-    w ~= "  a { color: #89b4fa; text-decoration: none; font-weight: 600; }\n";
-    w ~= "  a:hover { text-decoration: underline; }\n";
-    w ~= "  code { color: #a6adc8; font-size: 0.9em; margin-left: 0.6em; }\n";
-    w ~= "</style></head><body>\n<h1>";
-    escapeInto(w, opt.heading);
-    w ~= "</h1>\n<p>";
-    w ~= opt.blurb; // trusted, caller-supplied markup
-    w ~= "</p>\n";
-
-    if (entries.length == 0)
+    foreach (_; common .. fromDir.length)
+        w ~= "../";
+    foreach (i, seg; toSegs[common .. $])
     {
-        w ~= "<p><em>No documents to show.</em></p>\n</body></html>\n";
-        return w[];
+        if (i)
+            w ~= "/";
+        w ~= seg;
     }
-
-    w ~= "<ul>\n";
-    foreach (e; entries)
-    {
-        w ~= "  <li><a href=\"";
-        escapeInto(w, e.name);
-        w ~= ".html\">";
-        escapeInto(w, e.name);
-        w ~= "</a><code>";
-        escapeInto(w, e.summary);
-        w ~= "</code></li>\n";
-    }
-    w ~= "</ul>\n</body></html>\n";
     return w[];
+}
+
+/// `href`, as seen from a page `depth` directories below the gallery root: a
+/// relative one gains a `../` per level, while an absolute path, a URL, or a
+/// fragment is left alone (it does not depend on where the page sits).
+string depthAdjustedHref(string href, size_t depth) @safe pure
+{
+    import std.algorithm.searching : canFind;
+
+    if (href.length == 0 || depth == 0)
+        return href;
+    if (href[0] == '/' || href[0] == '#' || href.canFind("://"))
+        return href;
+
+    auto w = appender!string;
+    foreach (_; 0 .. depth)
+        w ~= "../";
+    w ~= href;
+    return w[];
+}
+
+/// How many directories below the gallery root a page at `outPath` sits.
+private size_t pageDepth(scope const(char)[] outPath) @safe pure nothrow @nogc
+{
+    size_t n;
+    foreach (char c; outPath)
+        if (c == '/')
+            ++n;
+    return n;
+}
+
+/// `path` split on `/`, dropping empty segments (`a//b`, a trailing `/`).
+private const(char)[][] segments(const(char)[] path) @safe pure nothrow
+{
+    const(char)[][] outp;
+    size_t start;
+    foreach (i, char c; path)
+        if (c == '/')
+        {
+            if (i > start)
+                outp ~= path[start .. i];
+            start = i + 1;
+        }
+    if (start < path.length)
+        outp ~= path[start .. $];
+    return outp;
 }
 
 /// The backdrop for a theme that declares no background of its own.
@@ -561,8 +632,11 @@ string themeBackground(in ResolvedTheme theme) @safe pure
     return w[];
 }
 
-/// Escapes `&`, `<`, `>`, `"` into `w`.
-private void escapeInto(ref Appender!string w, scope const(char)[] s) @safe pure
+/// Escapes `&`, `<`, `>`, `"` into `w`. Public (not `private`) because
+/// [`site_tree`](./site_tree.d) renders directory indices with the same escaping —
+/// one implementation, or the two would drift. (These are root-level modules with
+/// no enclosing package, so `package` would not reach it.)
+void escapeInto(ref Appender!string w, scope const(char)[] s) @safe pure
 {
     foreach (char c; s)
         switch (c)
@@ -578,17 +652,25 @@ private void escapeInto(ref Appender!string w, scope const(char)[] s) @safe pure
 // ── the I/O seam ───────────────────────────────────────────────────────────
 
 /**
-Writes the gallery for `set` into `outDir` (`GAL2`): `<name>.html` per entry plus
-`index.html`. `renderOne` produces one entry's content fragment; an entry it fails
-on is reported and $(B skipped), leaving the rest of the gallery intact (`GAL9`).
+Writes the gallery for `set` into `outDir` (`GAL2`/`GAL12`): one page per entry at
+`<outDir>/<entry.outPath>`, plus an `index.html` in every directory the pages
+occupy. A flat set puts every page at the top level and writes exactly one index —
+the layout, and the bytes, it always had.
+
+`renderOne` produces one entry's content fragment; an entry it fails on is
+reported and $(B skipped), leaving the rest of the gallery intact (`GAL9`) — and
+out of the indices, so no index ever links a page that was not written.
+
 Returns the number of pages written.
 */
 size_t writeGallery(in SourceSet set, string outDir, in GalleryOptions opt,
     scope string delegate(in SourceEntry) renderOne) @system
 {
     import std.file : mkdirRecurse, write;
-    import std.path : buildPath;
+    import std.path : buildPath, dirName;
     import std.stdio : stderr;
+
+    import site_tree : buildSiteTree, directoryIndex;
 
     mkdirRecurse(outDir);
 
@@ -608,14 +690,38 @@ size_t writeGallery(in SourceSet set, string outDir, in GalleryOptions opt,
             stderr.writeln("hue: skipping '", e.path, "': nothing rendered");
             continue;
         }
-        const prev = i > 0 ? set.entries[i - 1].name : "";
-        const next = i + 1 < set.entries.length ? set.entries[i + 1].name : "";
-        write(buildPath(outDir, e.name ~ ".html"),
-            pageShell(e.name, e.summary, fragment, prev, next, opt));
+        // Neighbours stay the flat-sorted ones (`GAL3`/`GNV1`) — prev/next walk
+        // the whole set in one order, not each directory in turn — so across a
+        // directory boundary the link simply climbs out and back down.
+        const prev = i > 0 ? pageHref(e.outPath, set.entries[i - 1].outPath) : "";
+        const next = i + 1 < set.entries.length
+            ? pageHref(e.outPath, set.entries[i + 1].outPath) : "";
+
+        // The one thing a page's depth must change: a root-relative asset href.
+        GalleryOptions pageOpt = opt;
+        pageOpt.stylesheetHref = depthAdjustedHref(opt.stylesheetHref, pageDepth(e.outPath));
+
+        const dest = buildPath(outDir, e.outPath);
+        const destDir = dest.dirName;
+        if (destDir != outDir)
+            mkdirRecurse(destDir);
+        write(dest, pageShell(e.name, e.summary, fragment, prev, next, pageOpt));
         written ~= e;
     }
 
-    write(buildPath(outDir, "index.html"), galleryIndex(written, opt));
+    // One index per directory. An empty set still has a root node, so the
+    // "no documents" index is written either way (`GAL9`).
+    auto tree = buildSiteTree(written);
+    if (tree.nodes.length == 0)
+        write(buildPath(outDir, "index.html"), galleryIndex(null, opt));
+    foreach (ref const node; tree.nodes)
+    {
+        const dest = node.relPath.length
+            ? buildPath(outDir, node.relPath, "index.html")
+            : buildPath(outDir, "index.html");
+        mkdirRecurse(dest.dirName);
+        write(dest, directoryIndex(node, opt));
+    }
     return written.length;
 }
 
@@ -808,7 +914,8 @@ unittest
 
     const frag = "<style>\n.syn-root { background-color: #123456; }\n</style>\n"
         ~ "<pre class=\"syn-root\"><code>x\n</code></pre>\n";
-    const page = pageShell("02-query", "hover×2 query", frag, "01-hover", "03-completions",
+    const page = pageShell("02-query", "hover×2 query", frag,
+        "01-hover.html", "03-completions.html",
         GalleryOptions(titlePrefix: "twoslash", background: "#123456"));
 
     assert(page.canFind("<title>twoslash · 02-query</title>"), page);
@@ -832,14 +939,143 @@ unittest
     import std.algorithm.searching : canFind;
 
     const frag = "<pre class=\"syn-root\"><code>x\n</code></pre>\n";
-    const first = pageShell("a", "", frag, "", "b");
+    const first = pageShell("a", "", frag, "", "b.html");
     // No previous document ⇒ the link is disabled, not dropped (so the header
     // keeps its shape between pages).
     assert(first.canFind("<span class=\"prev disabled\">← prev</span>"), first);
     assert(first.canFind("href=\"b.html\""), first);
 
-    const last = pageShell("b", "", frag, "a", "");
+    const last = pageShell("b", "", frag, "a.html", "");
     assert(last.canFind("<span class=\"next disabled\">next →</span>"), last);
+
+    // A neighbour in another directory is reached by a relative href, verbatim —
+    // the shell appends nothing to it (`GAL12`).
+    const nested = pageShell("app.d", "", frag, "../a/app.d.html", "../c/app.d.html");
+    assert(nested.canFind("href=\"../a/app.d.html\""), nested);
+    assert(nested.canFind("href=\"../c/app.d.html\""), nested);
+    // The index link stays the sibling one, so it resolves at any depth.
+    assert(nested.canFind("<a href=\"index.html\">all</a>"), nested);
+}
+
+@("gallery.pageHref.relativeAcrossDirectories")
+@safe pure
+unittest
+{
+    // Siblings at the root: the file name, exactly what the flat gallery emitted.
+    assert(pageHref("a.html", "b.html") == "b.html");
+    // Siblings in a subdirectory: still just the file name.
+    assert(pageHref("src/a.html", "src/b.html") == "b.html");
+    // Out of one directory and into another, and back up to the root.
+    assert(pageHref("a/x.d.html", "b/y.d.html") == "../b/y.d.html");
+    assert(pageHref("a/b/x.d.html", "top.d.html") == "../../top.d.html");
+    assert(pageHref("top.d.html", "a/b/x.d.html") == "a/b/x.d.html");
+    // A shared prefix is not re-descended.
+    assert(pageHref("a/b/x.html", "a/c/y.html") == "../c/y.html");
+    // A same-named page in a sibling directory is a different href — the
+    // collision the flat layout could not express.
+    assert(pageHref("a/app.d.html", "b/app.d.html") == "../b/app.d.html");
+}
+
+@("gallery.depthAdjustedHref.onlyRelativeHrefsMove")
+@safe pure
+unittest
+{
+    assert(depthAdjustedHref("assets/hue.css", 0) == "assets/hue.css");
+    assert(depthAdjustedHref("assets/hue.css", 2) == "../../assets/hue.css");
+    // An absolute path, a URL and a fragment do not depend on the page's depth.
+    assert(depthAdjustedHref("/assets/hue.css", 3) == "/assets/hue.css");
+    assert(depthAdjustedHref("https://x.example/a.css", 3) == "https://x.example/a.css");
+    assert(depthAdjustedHref("#inline", 3) == "#inline");
+    assert(depthAdjustedHref("", 3) == "");
+}
+
+/// The mirrored output tree (`GAL12`): a page per source path, an index per
+/// directory, and two same-named files that no longer overwrite each other.
+@("gallery.writeGallery.mirrorsTheSourceTree")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : exists, readText, rmdirRecurse, tempDir;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    import source_set : SourceEntry, SourceSet;
+
+    const outDir = buildPath(tempDir(), "hue-gallery-mirror-" ~ randomUUID.toString);
+    scope (exit)
+        rmdirRecurse(outDir);
+
+    static SourceEntry entry(string rel, string name)
+        => SourceEntry(path: "src/" ~ rel, name: name, summary: "d · 1 line",
+            relPath: rel, outPath: rel ~ ".html");
+
+    const set = SourceSet(entries: [
+        entry("a/app.d", "app.d"),
+        entry("b/deep/app.d", "app.d"),
+        entry("top.d", "top.d"),
+    ]);
+    const n = writeGallery(set, outDir,
+        GalleryOptions(stylesheetHref: "assets/hue.css"),
+        (in SourceEntry e) => "<pre class=\"syn-root\"><code>x\n</code></pre>\n");
+    assert(n == 3);
+
+    // Two same-named files, two pages.
+    assert(buildPath(outDir, "a", "app.d.html").exists);
+    assert(buildPath(outDir, "b", "deep", "app.d.html").exists);
+    assert(buildPath(outDir, "top.d.html").exists);
+
+    // An index in every directory — including `b`, which holds no page itself.
+    foreach (dir; ["", "a", "b", buildPath("b", "deep")])
+        assert(buildPath(outDir, dir, "index.html").exists, dir);
+
+    // The shared stylesheet resolves from every depth.
+    assert(readText(buildPath(outDir, "top.d.html")).canFind("href=\"assets/hue.css\""));
+    assert(readText(buildPath(outDir, "a", "app.d.html"))
+        .canFind("href=\"../assets/hue.css\""));
+    assert(readText(buildPath(outDir, "b", "deep", "app.d.html"))
+        .canFind("href=\"../../assets/hue.css\""));
+
+    // prev/next stay the flat-sorted neighbours, reached relatively.
+    const first = readText(buildPath(outDir, "a", "app.d.html"));
+    assert(first.canFind("<span class=\"prev disabled\">"), first);
+    assert(first.canFind("href=\"../b/deep/app.d.html\""), first);
+}
+
+/// A page `renderOne` fails on is skipped — and stays out of the indices, so a
+/// directory index never links a page that was not written (`GAL9`).
+@("gallery.writeGallery.skippedPagesLeaveNoDeadLinks")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : exists, readText, rmdirRecurse, tempDir;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    import source_set : SourceEntry, SourceSet;
+
+    const outDir = buildPath(tempDir(), "hue-gallery-skip-" ~ randomUUID.toString);
+    scope (exit)
+        rmdirRecurse(outDir);
+
+    const set = SourceSet(entries: [
+        SourceEntry(path: "a/bad.d", name: "bad.d", relPath: "a/bad.d",
+            outPath: "a/bad.d.html"),
+        SourceEntry(path: "ok.d", name: "ok.d", relPath: "ok.d", outPath: "ok.d.html"),
+    ]);
+    const n = writeGallery(set, outDir, GalleryOptions.init, (in SourceEntry e) {
+        if (e.name == "bad.d")
+            throw new Exception("boom");
+        return "<pre class=\"syn-root\"><code>x\n</code></pre>\n";
+    });
+
+    assert(n == 1);
+    assert(!buildPath(outDir, "a", "bad.d.html").exists);
+    // The whole `a/` node is gone with its only page — nothing links into it.
+    const root = readText(buildPath(outDir, "index.html"));
+    assert(!root.canFind("a/index.html"), root);
+    assert(root.canFind("href=\"ok.d.html\""), root);
 }
 
 @("gallery.galleryIndex.linksEntriesAndHandlesEmpty")
