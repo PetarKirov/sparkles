@@ -43,6 +43,7 @@ import sparkles.base.smallbuffer : SmallBuffer;
 
 import sparkles.twoslash.icons : completionIconGlyph, completionIconSvg,
     tagIconGlyph, tagIconSvg;
+import sparkles.twoslash.below_layout : anchorCol, ConnectorGlyphs, layoutBelowLine;
 import sparkles.twoslash.overlay : BelowBlock, InlineDecoration, highlightSignature,
     planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
@@ -162,11 +163,11 @@ ref Writer renderTwoslashHtml(Writer)(
     // (all spans closed → the block <div>s are valid top-level markup).
     void flushBelow(size_t flushedLine)
     {
+        const first = bi;
         while (bi < below.length && below[bi].line == flushedLine)
-        {
-            writeBelowBlock(w, theme, cache, tw.effectiveLanguage, tw.nodes[below[bi].node], options);
             ++bi;
-        }
+        if (first < bi)
+            writeBelowLine(w, theme, cache, tw, below[first .. bi], options);
     }
 
     while (pos < code.length)
@@ -356,17 +357,96 @@ private void writePopupTags(Writer)(ref Writer w, ref TsConfigCache cache,
     put(w, `</div>`);
 }
 
-/// A below-line block for a query / completion / error / tag node.
+/**
+The below-line blocks anchored to one source line.
+
+Two or more $(B distinct) anchor columns get the connected diagnostic layout of
+$(MREF sparkles,twoslash,below_layout): a shared marker row, then the labels
+peeled off right to left, each connected back to its anchor by a vertical guide.
+
+Where the cell backends repeat a glyph per row, HTML has real layout: a guide is
+an absolutely-positioned rule at `left: <column>ch` spanning its row, so it lands
+on the exact column and stretches to whatever height the card beside it turns out
+to be. Every payload keeps the markup it always had — the `.twoslash-*` contract
+is unchanged, the art is chrome around it.
+*/
+private void writeBelowLine(Writer)(ref Writer w, in ResolvedTheme theme,
+    ref TsConfigCache cache, in TwoslashReturn tw, scope const(BelowBlock)[] blocks,
+    in TwoslashHtmlOptions options) @system
+{
+    // `allowSharing: false`: a payload here is a bordered, padded card, wider
+    // than the label the planner measured, so two never share a row.
+    const layout = layoutBelowLine(tw, blocks, 0, allowSharing: false);
+    if (!layout.connected)
+    {
+        foreach (ref const b; blocks)
+            writeBelowBlock(w, theme, cache, tw.effectiveLanguage, tw.nodes[b.node], options);
+        return;
+    }
+
+    // A `// @tag` points at nothing, so it sits above the art, not inside it.
+    foreach (n; layout.unanchored)
+        writeBelowBlock(w, theme, cache, tw.effectiveLanguage, tw.nodes[n], options);
+
+    put(w, `<div class="twoslash-crowded">`);
+
+    // The marker row is preformatted text: inside `white-space: pre` the
+    // columns are exact with no arithmetic, and `user-select: none` on the
+    // wrapper keeps its padding out of a copied code selection.
+    put(w, `<div class="twoslash-crowded-markers">`);
+    int cur;
+    foreach (ref const m; layout.markers)
+    {
+        foreach (_; cur .. m.col)
+            put(w, ' ');
+        put(w, connectorGlyphs.anchor);
+        foreach (_; 1 .. m.width)
+            put(w, connectorGlyphs.fill);
+        cur = m.col + m.width;
+    }
+    put(w, `</div>`);
+
+    foreach (ref const row; layout.rows)
+    {
+        put(w, `<div class="twoslash-crowded-row">`);
+        foreach (col; row.guides)
+        {
+            put(w, `<span class="twoslash-crowded-guide"`);
+            writeLeftOffset(w, col);
+            put(w, `></span>`);
+        }
+        foreach (n; row.blocks)
+        {
+            put(w, `<span class="twoslash-crowded-elbow"`);
+            writeLeftOffset(w, anchorCol(tw.nodes[n]));
+            put(w, `></span>`);
+            writeBelowBlock(w, theme, cache, tw.effectiveLanguage, tw.nodes[n],
+                options, crowded: true);
+        }
+        put(w, `</div>`);
+    }
+    put(w, `</div>`);
+}
+
+/// HTML always has box drawing available, so the glyph set is the Unicode one.
+private enum connectorGlyphs = ConnectorGlyphs.init;
+
+/// A below-line block for a query / completion / error / tag node. `crowded`
+/// says the block sits inside a connected row, where an error message takes its
+/// own column offset instead of spanning the full line.
 private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
     ref TsConfigCache cache, scope const(char)[] language, in Node node,
-    in TwoslashHtmlOptions options) @system
+    in TwoslashHtmlOptions options, bool crowded = false) @system
 {
     final switch (node.type)
     {
         case NodeType.error:
             put(w, `<div class="twoslash-meta-line twoslash-error-line `);
             put(w, errorLevelClass(node.level));
-            put(w, `">`);
+            put(w, `"`);
+            if (crowded)
+                writeColumnOffset(w, node.character);
+            put(w, `>`);
             writeHtmlEscaped(w, node.text);
             put(w, `</div>`);
             break;
@@ -387,7 +467,7 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
             break;
 
         case NodeType.completion:
-            writeCompletion(w, node, options);
+            writeCompletion(w, node, options, crowded);
             break;
 
         case NodeType.tag:
@@ -411,21 +491,27 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
 /// unmatched remainder (the wrapper keeps the list's flex `gap` off the word, so
 /// the candidate reads `parseFloat`, not `p arseFloat`) — matching the
 /// `@shikijs/twoslash` structure.
-private void writeCompletion(Writer)(ref Writer w, in Node node, in TwoslashHtmlOptions options)
+private void writeCompletion(Writer)(ref Writer w, in Node node,
+    in TwoslashHtmlOptions options, bool crowded = false)
 {
     put(w, `<ul class="twoslash-completion-list"`);
     // Anchor under the START of the typed prefix (the caret column minus the
     // prefix already typed), i.e. where the completed identifier begins — e.g.
     // `Number.p|` anchors at column 7 (`Number.`), not the caret at 8.
-    const col = node.character >= node.completionsPrefix.length
-        ? node.character - node.completionsPrefix.length : 0;
-    writeColumnOffset(w, col);
+    //
+    // Inside a connected row the caret wins instead: the marker, the guide and
+    // the elbow all sit on it, and a list a column or two left of its own
+    // connector reads as a mistake. The IDE-like alignment is worth less than
+    // the chain being unbroken.
+    const shift = crowded || node.character < node.completionsPrefix.length
+        ? 0 : node.completionsPrefix.length;
+    writeColumnOffset(w, node.character - shift);
     put(w, `>`);
     // The connector arrow points at the completion CARET — `prefix.length`
     // columns right of the list's anchor (unlike the fixed-position arrow on
     // hover/query popups, which points near the token start).
     put(w, `<div class="twoslash-popup-arrow" style="left:`);
-    writeUint(w, node.completionsPrefix.length);
+    writeUint(w, shift);
     put(w, `ch"></div>`);
     foreach (ref const Completion c; node.completions)
     {
@@ -509,6 +595,16 @@ private void writeUint(Writer)(ref Writer w, size_t n)
 /// Emits ` style="margin-left:{character}ch"` (omitted at column 0) to shift a
 /// below-line query/completion popup under its caret column. `ch` tracks the
 /// monospace code grid so the popup and its arrow line up with the token above.
+/// An absolute column as `style="left:<n>ch"` — what an absolutely-positioned
+/// connector needs, where $(LREF writeColumnOffset)'s `margin-left` would
+/// measure from the previous sibling instead.
+private void writeLeftOffset(Writer)(ref Writer w, int column)
+{
+    put(w, ` style="left:`);
+    writeUint(w, column > 0 ? column : 0);
+    put(w, `ch"`);
+}
+
 private void writeColumnOffset(Writer)(ref Writer w, size_t character)
 {
     if (!character)
@@ -882,4 +978,81 @@ version (unittest)
             (html[i + 1] == '/') ? ++close : ++open;
     }
     assert(open == close, "unbalanced tags on the last line");
+}
+
+@("render_html.crowdedLineConnectsEachLabelToItsColumn")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // Two `^?` on one line: a shared marker row, then the labels peeled off
+    // right to left. Every payload keeps the markup it always had — the art is
+    // chrome around the `.twoslash-*` contract.
+    const tw = TwoslashReturn(code: "auto width = spread(lo, hi);\n", nodes: [
+        Node(type: NodeType.query, start: 5, length: 5, line: 0, character: 5,
+            text: "double width"),
+        Node(type: NodeType.query, start: 13, length: 6, line: 0, character: 13,
+            text: "double spread(double, double)"),
+    ]);
+    const html = renderTw(tw, null);
+
+    // The marker row is preformatted, so its columns are exact.
+    assert(html.canFind(
+        `<div class="twoslash-crowded-markers">     ┬────   ┬─────</div>`), html);
+
+    // The rightmost label first, with a connector down the left anchor's column;
+    // the leftmost last, with nothing left to carry.
+    assert(html.canFind(
+        `<div class="twoslash-crowded-row">` ~
+        `<span class="twoslash-crowded-guide" style="left:5ch"></span>` ~
+        `<span class="twoslash-crowded-elbow" style="left:13ch"></span>` ~
+        `<div class="twoslash-meta-line twoslash-query-line" style="margin-left:13ch"`), html);
+    assert(html.canFind(
+        `<div class="twoslash-crowded-row">` ~
+        `<span class="twoslash-crowded-elbow" style="left:5ch"></span>` ~
+        `<div class="twoslash-meta-line twoslash-query-line" style="margin-left:5ch"`), html);
+}
+
+@("render_html.crowdedCompletionAnchorsOnItsCaret")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // On a line of its own a completion list anchors under the start of the
+    // typed identifier, with its arrow offset to the caret. Inside a connected
+    // row the caret wins: the marker, the guide and the elbow all sit on it, so
+    // a list two columns left of its own connector would read as a mistake.
+    const solo = TwoslashReturn(code: "Number.pa\n", nodes: [
+        Node(type: NodeType.completion, start: 9, length: 0, line: 0, character: 9,
+            completionsPrefix: "pa", completions: [Completion(name: "parseFloat")]),
+    ]);
+    assert(renderTw(solo, null).canFind(
+        `<ul class="twoslash-completion-list" style="margin-left:7ch">` ~
+        `<div class="twoslash-popup-arrow" style="left:2ch">`));
+
+    const crowded = TwoslashReturn(code: "auto o = Number.pa\n", nodes: [
+        Node(type: NodeType.query, start: 5, length: 1, line: 0, character: 5, text: "T"),
+        Node(type: NodeType.completion, start: 18, length: 0, line: 0, character: 18,
+            completionsPrefix: "pa", completions: [Completion(name: "parseFloat")]),
+    ]);
+    const html = renderTw(crowded, null);
+    assert(html.canFind(`<span class="twoslash-crowded-elbow" style="left:18ch"></span>` ~
+        `<ul class="twoslash-completion-list" style="margin-left:18ch">` ~
+        `<div class="twoslash-popup-arrow" style="left:0ch">`), html);
+}
+
+@("render_html.singleAnchorKeepsTheStackedMarkup")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // One anchor: no marker row, no connectors — the markup is byte for byte
+    // what it always was.
+    const tw = TwoslashReturn(code: "let b = 1\n", nodes: [
+        Node(type: NodeType.query, start: 4, length: 1, line: 0, character: 4,
+            text: "let b: number"),
+    ]);
+    const html = renderTw(tw, null);
+    assert(!html.canFind("twoslash-crowded"));
+    assert(html.canFind(`<div class="twoslash-meta-line twoslash-query-line" style="margin-left:4ch">`));
 }
