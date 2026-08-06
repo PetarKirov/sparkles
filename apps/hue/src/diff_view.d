@@ -128,8 +128,12 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
     }
 
     const gutterWidth = opt.lineNumbers ? gutterDigits(doc, file) : 0;
+    // Hunk keys are the document-global hunk index, so "next hunk" is one
+    // ordering over the whole session rather than per file (`DVG1`).
+    uint hi = file.hunksStart;
     foreach (ref hunk; doc.fileHunks(file))
-        rows ~= viewHunk(b, doc, hunk, gutterWidth, opt);
+        rows ~= keyed(b, viewHunk(b, doc, hunk, gutterWidth, opt),
+            opt.fileKey ? diffHunkKey(hi++) : 0);
 
     return keyed(b, b.container(WidgetKind.column, rows, gap: 1), opt.fileKey);
 }
@@ -139,6 +143,18 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
 /// shape. Zero (the `keyedRects` "unkeyed" value) means the caller supplied no
 /// session, so nothing is stamped.
 size_t diffFileKey(size_t fileIndex) @safe pure nothrow @nogc => fileIndex + 1;
+
+/// `DVG1`: the key a hunk's container carries. A disjoint id space above the
+/// file keys (the `fenceHitBase`/`foldHitBase` precedent), so one `keyedRects`
+/// sweep answers both "where is file 3" and "where is the next hunk".
+enum size_t diffHunkKeyBase = size_t.max / 2 + 1;
+
+/// ditto
+size_t diffHunkKey(size_t hunkIndex) @safe pure nothrow @nogc
+    => diffHunkKeyBase + hunkIndex;
+
+/// `true` for a key produced by $(LREF diffHunkKey).
+bool isDiffHunkKey(size_t key) @safe pure nothrow @nogc => key >= diffHunkKeyBase;
 
 private uint keyed(ref Builder b, uint node, size_t key) @safe
 {
