@@ -1057,7 +1057,9 @@ Hooks run on commit and will modify or block your changes:
   `SKIP=check-vcs-urls git commit …` or `git commit --no-verify`; run
   `nix run .#ci -- --check-vcs-urls` to audit all tracked markdown files.
 - **check-docs-sidebar** ensures the VitePress sidebar in
-  `docs/.vitepress/config.mts` is consistent with published pages in both
+  `docs/.vitepress/sidebar.json` (see
+  [The docs sidebar is data](#the-docs-sidebar-is-data)) is consistent with
+  published pages in both
   directions: every published `docs/**/*.md` page is linked from the sidebar
   (pages → sidebar), and every sidebar `link` resolves to an existing published
   page (sidebar → pages). It respects `srcExclude` (internal grounding/QA pages

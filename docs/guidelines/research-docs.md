@@ -196,8 +196,10 @@ The site build is the gate for link and markup correctness — **`npm run docs:b
 must be green** before you commit a tree, and it is the fastest way to catch the
 gotchas below.
 
-1. **Register the tree** in `docs/.vitepress/config.mts`
-   under the `Research` sidebar section: a top-level entry linking the umbrella, with
+1. **Register the tree** in `docs/.vitepress/sidebar.json` — the sidebar data file
+   `config.mts` imports (see
+   [Agent Guidelines § The docs sidebar is data](./AGENTS.md#the-docs-sidebar-is-data))
+   — under the `Research` group: a top-level entry linking the umbrella, with
    subjects **grouped by category** into nested collapsed `items` (see how `ui-layout`
    and `monorepo-tooling` are grouped). A `<slug>/` link resolves to its `index.md`.
 2. **Markdown is compiled as a Vue template**, so a few constructs bite:
@@ -271,7 +273,7 @@ illustrative. Rules:
   (`node_modules/`, `target/`, `dist/`, `.dub/`, …); add them to `.gitignore`.
 - **No `.md` under `sample/`** — keep all prose in the deep-dive, so the link checker
   and VitePress don't try to build fixture files. (If a sample must contain `.md`, add
-  a `srcExclude` glob in `config.mts`.)
+  a `srcExclude` glob to `docs/.vitepress/docs-config.json`.)
 - **Match each ecosystem's native formatting** so the hooks pass: per-file
   `.editorconfig` indent (4-space Rust/D, tabs for Go/Makefile, 2-space JSON/YAML/JS),
   a final newline, no trailing whitespace.
