@@ -95,45 +95,21 @@ runs:
         extra_nix_config: |
           auto-optimise-store = false
 
+    # Shared with CircleCI — see ci/README.md. The inputs are mapped onto the
+    # provider-neutral environment contract here rather than being read from
+    # `inputs.*` inside the script, which is the whole reason one script can
+    # serve both providers.
     - name: Configure Nix
       shell: bash
-      run: |
-        mkdir -p $HOME/.config/nix
-
-        cat << EOF > "$HOME/.config/nix/nix.conf"
-          ${{
-            (inputs.nix-github-token != '' && inputs.nix-gitlab-token != '' && inputs.nix-gitlab-domain != '' &&
-              format('access-tokens = github.com={0} {1}=PAT:{2}', inputs.nix-github-token, inputs.nix-gitlab-domain, inputs.nix-gitlab-token)) ||
-            (inputs.nix-github-token != '' &&
-              format('access-tokens = github.com={0}', inputs.nix-github-token)) ||
-            (inputs.nix-gitlab-token != '' && inputs.nix-gitlab-domain != '' &&
-              format('access-tokens = {0}=PAT:{1}', inputs.nix-gitlab-domain, inputs.nix-gitlab-token)) ||
-            ''
-          }}
-
-          auto-optimise-store = false
-          fallback = true
-          download-attempts = 2
-          connect-timeout = 5
-          narinfo-cache-negative-ttl = 120
-          allow-import-from-derivation = true
-
-          substituters = https://cache.nixos.org ${{inputs.substituters}}
-          trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
-          netrc-file = $HOME/.config/nix/netrc
-        EOF
-
-        if [ -f /etc/nix/nix.conf ]; then
-          echo "auto-optimise-store = false" | sudo tee -a /etc/nix/nix.conf
-        fi
-
-        touch "$HOME/.config/nix/netrc"
-        chmod 0600 "$HOME/.config/nix/netrc"
-        if [[ -n "${{ inputs.cachix-cache }}" && -n "${{ inputs.cachix-auth-token }}" ]]; then
-          cat << EOF >> "$HOME/.config/nix/netrc"
-          machine ${{ inputs.cachix-cache }}.cachix.org password ${{ inputs.cachix-auth-token }}
-        EOF
-        fi
+      env:
+        NIX_SUBSTITUTERS: ${{ inputs.substituters }}
+        NIX_TRUSTED_PUBLIC_KEYS: ${{ inputs.trusted-public-keys }}
+        NIX_GITHUB_TOKEN: ${{ inputs.nix-github-token }}
+        NIX_GITLAB_TOKEN: ${{ inputs.nix-gitlab-token }}
+        NIX_GITLAB_DOMAIN: ${{ inputs.nix-gitlab-domain }}
+        CACHIX_CACHE: ${{ inputs.cachix-cache }}
+        CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
+      run: ci/nix-configure.sh
 
     - uses: cachix/cachix-action@v15
       if: ${{ fromJSON(inputs.push-to-cache || 'false') && inputs.cachix-cache != '' && inputs.cachix-auth-token != '' }}
@@ -148,81 +124,19 @@ runs:
         primary-key: ${{ inputs.nix-cache-key }}
         restore-prefixes-first-match: ${{ inputs.nix-cache-restore-prefixes }}
 
-    # Resolve which flake devShell to build/activate, validating the inputs.
-    # In `devshell` mode the ref is given directly; in `use-direnv` mode we read
-    # it from the repo's .envrc when it loads a flake (`use flake [ref]`,
-    # defaulting to the '.' default devShell). The output `flake-ref` stays
-    # empty for non-flake .envrc files, which we cannot pre-build generically.
-    - name: Determine the devShell to build
-      id: determine-devshell
+    # Resolve, build and activate the devShell. Shared with CircleCI — see
+    # ci/README.md.
+    #
+    # The script builds the devShell explicitly before handing over to direnv,
+    # because direnv's `use flake` swallows build failures: it runs
+    # `eval "$(nix print-dev-env ...)"`, so a devShell that fails to build
+    # substitutes to the empty string, `eval ""` succeeds, and the export still
+    # exits 0 — leaving $GITHUB_ENV without the devShell's PATH and the real
+    # failure surfacing several steps later as `<tool>: command not found`.
+    - name: Build & activate the Nix DevShell
       if: ${{ fromJSON(inputs.use-direnv || 'false') || inputs.devshell != '' }}
       shell: bash
-      run: |
-        if [ "${{ inputs.devshell }}" != "" ] && [ "${{ inputs.use-direnv }}" == "true" ]; then
-          echo "Error: 'devshell' and 'use-direnv' are mutually exclusive."
-          exit 1
-        fi
-
-        flake_ref=""
-        if [ "${{ inputs.devshell }}" != "" ]; then
-          flake_ref=".#${{ inputs.devshell }}"
-        elif [ "${{ inputs.use-direnv }}" == "true" ]; then
-          if [ ! -f .envrc ]; then
-            echo "Error: 'use-direnv' is enabled but .envrc does not exist."
-            exit 1
-          fi
-          if grep -qE '^[[:space:]]*use[[:space:]]+flake' .envrc; then
-            flake_ref="$(sed -n 's/^[[:space:]]*use[[:space:]][[:space:]]*flake[[:space:]]*//p' .envrc | head -n1)"
-            flake_ref="${flake_ref:-.}"
-          fi
-        fi
-
-        echo "flake-ref=$flake_ref" >> "$GITHUB_OUTPUT"
-        echo "Resolved devShell flake ref: '${flake_ref:-<none>}'"
-
-    # Build the devShell explicitly so a build/eval failure aborts the job here
-    # with a clear error. This is necessary because direnv's `use flake`
-    # swallows such failures: it runs `eval "$(nix print-dev-env ...)"`, so when
-    # the devShell fails to build the substitution is empty, `eval ""` succeeds,
-    # and the later `direnv export` still exits 0 while leaving $GITHUB_ENV
-    # without the devShell's PATH. The action would then report success and the
-    # real failure would only surface in a later step as an obscure
-    # "<tool>: command not found" (exit 127). `nix print-dev-env` propagates the
-    # build/eval exit code, so we use it to fail fast.
-    - name: Build the Nix DevShell
-      if: ${{ steps.determine-devshell.outputs.flake-ref != '' }}
-      shell: bash
-      run: |
-        echo "::group::Building Nix DevShell"
-        nix --extra-experimental-features "nix-command flakes" \
-          print-dev-env "${{ steps.determine-devshell.outputs.flake-ref }}" >/dev/null
-        echo "::endgroup::"
-
-    # Generate the .envrc (in `devshell` mode) or use the repo's existing one
-    # (in `use-direnv` mode), then export the devShell environment to
-    # $GITHUB_ENV via direnv so subsequent steps run inside it.
-    - name: Activate the Nix DevShell
-      if: ${{ fromJSON(inputs.use-direnv || 'false') || inputs.devshell != '' }}
-      shell: bash
-      run: |
-        direnv() { nix run --inputs-from . nixpkgs#direnv -- "$@"; }
-
-        if [ "${{ inputs.devshell }}" != "" ]; then
-          # Function to restore .envrc
-          restore_envrc() {
-            if git ls-files --error-unmatch .envrc > /dev/null 2>&1; then
-              git restore .envrc
-            else
-              rm -f .envrc
-            fi
-          }
-          # Set trap to restore .envrc on exit (success or failure)
-          trap restore_envrc EXIT
-
-          echo "use flake .#${{ inputs.devshell }}" > .envrc
-        fi
-
-        direnv allow .
-        echo "::group::Exporting Nix DevShell to GITHUB_ENV"
-        direnv export gha >> "$GITHUB_ENV"
-        echo "::endgroup::"
+      env:
+        CI_DEVSHELL: ${{ inputs.devshell }}
+        CI_USE_DIRENV: ${{ inputs.use-direnv }}
+      run: ci/nix-devshell.sh

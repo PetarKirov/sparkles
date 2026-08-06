@@ -214,10 +214,15 @@ jobs:
             nix-${{ runner.os }}-nixbuild-
             nix-${{ runner.os }}-
 
-      # Built paths are pushed to the cache by the setup-nix action
-      # (push-to-cache: true).
+      # `with-cachix.sh` pushes each path as it is built, so a failure in the
+      # step below still leaves this build's outputs in the cache. The
+      # setup-nix action's post-job hook (push-to-cache: true) then pushes
+      # anything else the job produced.
       - name: Build & push devShells.full, all packages, and all examples
-        run: nix build --print-build-logs .#all-desktop
+        env:
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
 
       - name: Run all runnable examples
         run: nix run .#run-all-examples
@@ -255,7 +260,10 @@ jobs:
             nix-${{ runner.os }}-
 
       - name: Build & push the Android APK closure
-        run: nix build --print-build-logs .#all-android
+        env:
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: ci/with-cachix.sh nix build --print-build-logs .#all-android
 
   lint:
     name: Lint & markdown link check
