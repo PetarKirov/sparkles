@@ -462,7 +462,7 @@ The observed gaps, which feed [comparison.md][comparison]'s delta table:
 [src-extract]: ../../../libs/test-runner-impl/src/sparkles/test_runner/extract.d
 [src-driver]: ../../../libs/test-runner-impl/src/sparkles/test_runner/driver.d
 [src-model]: ../../../libs/test-runner-impl/src/sparkles/test_runner/model.d
-[src-attributes]: ../../../libs/test-runner-impl/src/sparkles/test_runner/attributes.d
+[src-attributes]: ../../../libs/test-runner/src/sparkles/test_runner/attributes.d
 [src-skip]: ../../../libs/test-runner-impl/src/sparkles/test_runner/skip.d
 [src-reporting]: ../../../libs/test-runner-impl/src/sparkles/test_runner/reporting.d
 [versions-dub]: ../../../libs/versions/dub.sdl
