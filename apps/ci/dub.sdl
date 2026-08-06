@@ -21,3 +21,13 @@ dependency "sparkles:wired" path="../.."
 buildType "checked" {
     buildOptions "optimize" "inline" "debugInfo"
 }
+
+// `app.d` is an ordinary module here (`main` lives in `ci_main.d`), so the test
+// build compiles the whole tool — including `ci_stats`' `fromJSON` template
+// instantiations. `-allinst` is what makes dmd emit the `JsonDocument`
+// instantiations those reference; without it the test binary fails to link
+// against `sparkles:wired` on dmd (ldc emits them either way). Same recipe as
+// every library package's unittest configuration.
+configuration "unittest" {
+    dflags "-checkaction=context" "-allinst"
+}
