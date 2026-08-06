@@ -138,6 +138,77 @@ source-anchored (`Node.start`/`length`), so a backend maps a pointer to a node
 through $(REF sourceOffsetAt, sparkles,ui,state) and gets the token's on-screen
 geometry from $(REF selectionRects, sparkles,ui,state).
 */
+/**
+Layers one source line's inline decorations onto an already-built code row,
+returning the row to place in the document (the row itself when the line has
+no decorations, else a `stack` with tints and hover underlines beneath it and
+error squiggles above).
+
+This is the **line-source-agnostic seam** (`OVL8`): the caller supplies a row
+widget and says which line of `tw.code` it shows, so an overlay is no longer
+tied to "the twoslash document is the whole document". `viewTwoslashDocument`
+is one caller; hue's diff view is the other, where a row shows one side of one
+file and sits behind a gutter — hence `columnOffset`, the cells the row's own
+chrome occupies before the code starts.
+
+Params:
+    b = the builder the row was added to
+    code = the row widget the decorations layer onto
+    tw = the payload the plan came from (error levels are read from its nodes)
+    plan = `planTwoslash(tw)`, hoisted by the caller so a multi-row render
+        plans once
+    line = the 0-based line of `tw.code` this row shows
+    columnOffset = cells of leading chrome on the row (gutter, markers)
+*/
+uint decorateCodeRow(ref Builder b, uint code, const TwoslashReturn tw,
+    const ref TwoslashPlan plan, size_t line, int columnOffset = 0)
+{
+    import sparkles.ui.canvas : LineStyle;
+    import sparkles.ui.geometry : Point, SizeSpec;
+
+    uint[] under, over;
+    foreach (ref const d; plan.inlineDecorations)
+    {
+        if (d.line != line)
+            continue;
+        const cols = cast(int) cellsOf(tw.code[d.start .. d.end]);
+        const at = Insets(0, 0, 0, columnOffset + cast(int) d.character);
+        if (d.kind == NodeType.highlight)
+        {
+            const tint = b.add(Widget(kind: WidgetKind.box,
+                slot: Slot.highlight, paintBackground: true,
+                width: SizeSpec.fixed(cols), height: SizeSpec.fixed(1)));
+            under ~= b.container(WidgetKind.column, [tint], padding: at);
+        }
+        else if (d.kind == NodeType.hover)
+        {
+            // Discoverability: a hoverable token is marked by a permanent
+            // dotted underline (the CSS `.twoslash-hover` bottom border),
+            // baked into the prebuilt display list rather than drawn on
+            // pointer motion. A border-only box paints no fill, so the code
+            // text above it is untouched; the TUI degrades the bottom-only
+            // dotted border to a dotted cell underline.
+            const rule = b.add(Widget(kind: WidgetKind.box,
+                slot: Slot.hoverUnderline, paintBackground: false,
+                decoration: hoverUnderlineDeco(),
+                width: SizeSpec.fixed(cols), height: SizeSpec.fixed(1)));
+            under ~= b.container(WidgetKind.column, [rule], padding: at);
+        }
+        else if (d.kind == NodeType.error)
+        {
+            const n = tw.nodes[d.node];
+            const slot = errIsWarning(n.level) ? Slot.warn : Slot.error;
+            const wavy = b.add(Widget(kind: WidgetKind.line, slot: slot,
+                lineStyle: LineStyle.wavy, lineTo: Point(cols, 0)));
+            over ~= b.container(WidgetKind.column, [wavy], padding: at);
+        }
+    }
+
+    return under.length || over.length
+        ? b.container(WidgetKind.stack, under ~ code ~ over)
+        : code;
+}
+
 WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
     const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
     RgbColor pageFg, TsConfigCache* cache = null, int maxWidth = 0)
@@ -180,49 +251,7 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
         const code = b.add(Widget(kind: WidgetKind.rich, spans: spans,
             slot: Slot.code));
 
-        // Overlay decorations for this line: tints under the text (added
-        // first ⇒ painted first), squiggles over it.
-        uint[] under, over;
-        foreach (ref const d; plan.inlineDecorations)
-        {
-            if (d.line != line)
-                continue;
-            const cols = cast(int) cellsOf(tw.code[d.start .. d.end]);
-            const at = Insets(0, 0, 0, cast(int) d.character);
-            if (d.kind == NodeType.highlight)
-            {
-                const tint = b.add(Widget(kind: WidgetKind.box,
-                    slot: Slot.highlight, paintBackground: true,
-                    width: SizeSpec.fixed(cols), height: SizeSpec.fixed(1)));
-                under ~= b.container(WidgetKind.column, [tint], padding: at);
-            }
-            else if (d.kind == NodeType.hover)
-            {
-                // Discoverability: a hoverable token is marked by a permanent
-                // dotted underline (the CSS `.twoslash-hover` bottom border),
-                // baked into the prebuilt display list rather than drawn on
-                // pointer motion. A border-only box paints no fill, so the
-                // code text above it is untouched; the TUI degrades the
-                // bottom-only dotted border to a dotted cell underline.
-                const rule = b.add(Widget(kind: WidgetKind.box,
-                    slot: Slot.hoverUnderline, paintBackground: false,
-                    decoration: hoverUnderlineDeco(),
-                    width: SizeSpec.fixed(cols), height: SizeSpec.fixed(1)));
-                under ~= b.container(WidgetKind.column, [rule], padding: at);
-            }
-            else if (d.kind == NodeType.error)
-            {
-                const n = tw.nodes[d.node];
-                const slot = errIsWarning(n.level) ? Slot.warn : Slot.error;
-                const wavy = b.add(Widget(kind: WidgetKind.line, slot: slot,
-                    lineStyle: LineStyle.wavy, lineTo: Point(cols, 0)));
-                over ~= b.container(WidgetKind.column, [wavy], padding: at);
-            }
-        }
-
-        rows ~= under.length || over.length
-            ? b.container(WidgetKind.stack, under ~ code ~ over)
-            : code;
+        rows ~= decorateCodeRow(b, code, tw, plan, line);
 
         foreach (ref const blk; plan.belowBlocks)
             if (blk.line == line)
