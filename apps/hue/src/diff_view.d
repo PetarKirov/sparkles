@@ -59,6 +59,13 @@ struct DiffViewOptions
     /// resolves its laid-out row through `keyedRects` ($(LREF diffFileKey)).
     /// Zero leaves the container unkeyed.
     size_t fileKey;
+    /// `DVG2`: expand the unchanged regions between hunks, showing the lines
+    /// the context window hid. Needs `sideText` — a patch does not carry the
+    /// lines it elided, so there is nothing to expand it with.
+    bool expandContext;
+    /// `DVG2`: the file's new-side text, when the host has it — the source the
+    /// expanded lines are read from.
+    const(char)[] sideText;
     /// `DVN2`: fold hunks classified formatting-only into a one-line dimmed
     /// badge. Demote, never hide — the badge says how many rows it stands for
     /// and the reviewer can always expand.
@@ -231,6 +238,10 @@ WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOpti
             fopt.oldStyled = render(sides[fi].lang, sides[fi].oldText);
             fopt.newStyled = render(sides[fi].lang, sides[fi].newText);
         }
+        // `DVG2`: the new side's full text, when the host has it — what an
+        // expanded unchanged region is read from.
+        if (fi < sides.length)
+            fopt.sideText = sides[fi].newText;
         // `DVT1`: the file's per-side type overlays, already anchored (or
         // refused) by whoever attached them.
         if (!fopt.entry.collapsed && fi < types.length)
@@ -286,8 +297,17 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
     // Hunk keys are the document-global hunk index, so "next hunk" is one
     // ordering over the whole session rather than per file (`DVG1`).
     uint hi = file.hunksStart;
-    foreach (ref hunk; doc.fileHunks(file))
+    const hunks = doc.fileHunks(file);
+    foreach (gi, ref hunk; hunks)
     {
+        // `DVG2`: the unchanged region between this hunk and the previous one
+        // (or the start of the file). The context window hid it; say how much
+        // it hid, and show it when asked.
+        const prevEnd = gi == 0 ? 1u : hunks[gi - 1].newStart + hunks[gi - 1].newCount;
+        if (hunk.newStart > prevEnd)
+            rows ~= contextGap(b, prevEnd, hunk.newStart - prevEnd,
+                gutterWidth, opt);
+
         const key = opt.fileKey ? diffHunkKey(hi) : 0;
         ++hi;
         uint node;
@@ -298,6 +318,17 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         else
             node = viewHunk(b, doc, hunk, gutterWidth, opt);
         rows ~= keyed(b, node, key);
+    }
+
+    // And the region after the last hunk, when the side text says there is
+    // one — the model itself has no idea how long the file is.
+    if (hunks.length != 0 && opt.sideText.length != 0)
+    {
+        const last = hunks[$ - 1];
+        const after = last.newStart + last.newCount;
+        const total = cast(uint) countLines(opt.sideText);
+        if (total >= after)
+            rows ~= contextGap(b, after, total - after + 1, gutterWidth, opt);
     }
 
     auto fileCol = b.container(WidgetKind.column, rows, gap: 1);
@@ -420,6 +451,101 @@ private uint foldedHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk) @saf
         TextSpan(text("formatting only — ", changed,
             changed == 1 ? " row hidden" : " rows hidden"), slot: Slot.muted),
     ]));
+}
+
+/**
+`DVG2`: an unchanged region — folded to a band that says how many lines it
+stands for, or expanded into those lines.
+
+The band is the honest form of a context window: the reviewer can see that
+something was elided and how much, which a silent jump in line numbers does
+not convey. Expansion reads from the side text rather than re-running the
+diff, because these lines are unchanged by definition — the same on both
+sides — so there is nothing to recompute.
+
+Without a side text the band still renders but cannot expand: a patch does not
+carry the lines it elided, and pretending otherwise would mean inventing them.
+*/
+private uint contextGap(ref Builder b, uint firstLine, uint count,
+    int gutterWidth, DiffViewOptions opt) @safe
+{
+    if (count == 0)
+        return b.add(Widget(kind: WidgetKind.text, text: ""));
+
+    if (!opt.expandContext || opt.sideText.length == 0)
+        return b.add(Widget(kind: WidgetKind.rich, spans: [
+            TextSpan(text("⋯ ", count,
+                count == 1 ? " unchanged line" : " unchanged lines"),
+                slot: Slot.muted),
+        ]));
+
+    auto rows = new uint[](0);
+    foreach (n; firstLine .. firstLine + count)
+    {
+        const line = lineOf(opt.sideText, n);
+        if (line is null)
+            break;
+        TextSpan[] spans;
+        if (gutterWidth > 0)
+            spans ~= TextSpan(bothGutterText(n, gutterWidth), slot: Slot.gutter);
+        spans ~= TextSpan("  ");
+        spans ~= TextSpan(line);
+        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans));
+    }
+    if (rows.length == 0)
+        return b.add(Widget(kind: WidgetKind.text, text: ""));
+    return b.container(WidgetKind.column, rows);
+}
+
+/// The 1-based `n`th line of `text` without its newline, or `null` past the
+/// end. Scans; the gaps a reviewer expands are few and short-lived.
+private const(char)[] lineOf(const(char)[] text, uint n) @safe pure nothrow @nogc
+{
+    if (n == 0)
+        return null;
+    size_t start;
+    uint line = 1;
+    foreach (i, c; text)
+    {
+        if (c != '\n')
+            continue;
+        if (line == n)
+            return text[start .. i];
+        ++line;
+        start = i + 1;
+    }
+    return line == n && start < text.length ? text[start .. $] : null;
+}
+
+/// Physical lines in `text` (an unterminated last line counts).
+private size_t countLines(const(char)[] text) @safe pure nothrow @nogc
+{
+    if (text.length == 0)
+        return 0;
+    size_t n;
+    foreach (c; text)
+        if (c == '\n')
+            ++n;
+    return text[$ - 1] == '\n' ? n : n + 1;
+}
+
+/// An expanded context line's gutter: the same number on both sides, since an
+/// unchanged line has the same position in each.
+private const(char)[] bothGutterText(uint n, int width) @safe
+{
+    auto digits = text(n);
+    auto s = new char[](width + 1);
+    s[] = ' ';
+    const half = width / 2;
+    const start = digits.length >= cast(size_t) half
+        ? 0 : cast(size_t) half - digits.length;
+    foreach (i, c; digits)
+        if (start + i < cast(size_t) half)
+            s[start + i] = c;
+    foreach (i, c; digits)
+        if (half + 1 + i < cast(size_t) width)
+            s[half + 1 + i] = c;
+    return s;
 }
 
 /// The hunk header, rendered as its own tinted band — shared by both layouts.
@@ -1114,4 +1240,61 @@ import sparkles.ui.style : Slot;
             && isHalf(unsized, n.children[0]))
             ++unsizedSplitRows;
     assert(unsizedSplitRows >= 2, "no width given, no degradation");
+}
+
+@("diff_view.contextGap.bandCountsAndExpandsFromTheSideText")
+@safe unittest
+{
+    // Two changes far apart, so the context window leaves a real gap between
+    // the hunks — the region a reviewer cannot see and is not told about
+    // unless the view says so.
+    string oldText, newText;
+    foreach (i; 1 .. 31)
+    {
+        const line = text("line ", i, "\n");
+        oldText ~= line;
+        newText ~= (i == 2 || i == 28) ? text("CHANGED ", i, "\n") : line;
+    }
+    auto doc = diffText(oldText, newText, "f.txt", "f.txt");
+    assert(doc.files[0].hunksCount == 2, "precondition: two separate hunks");
+
+    // Folded: a band saying how many lines it stands for.
+    DiffViewOptions opt;
+    auto b = Builder();
+    auto folded = b.finish(viewDiffInto(b, doc, doc.files[0], opt));
+    const(char)[] band;
+    foreach (ref n; folded.nodes)
+        foreach (sp; n.spans)
+            if (sp.text.length >= 4 && sp.text[0 .. 4] == "⋯ ")
+                band = sp.text;
+    assert(band.length, "the hidden region announces itself");
+    // Hunks cover lines 1-5 and 25-30 at three lines of context, so the gap
+    // is 6..24 — nineteen lines, and the band must say exactly that.
+    assert(band == "⋯ 19 unchanged lines", band);
+
+    // Expanded: the lines themselves, read from the side text.
+    DiffViewOptions ex;
+    ex.expandContext = true;
+    ex.sideText = newText;
+    auto b2 = Builder();
+    auto shown = b2.finish(viewDiffInto(b2, doc, doc.files[0], ex));
+    bool sawHidden;
+    foreach (ref n; shown.nodes)
+        foreach (sp; n.spans)
+            if (sp.text == "line 15")
+                sawHidden = true;
+    assert(sawHidden, "a line only the gap could supply is now on screen");
+
+    // Without a side text there is nothing to expand WITH — a patch does not
+    // carry the lines it elided, and the band must not pretend otherwise.
+    DiffViewOptions noText;
+    noText.expandContext = true;
+    auto b3 = Builder();
+    auto stillFolded = b3.finish(viewDiffInto(b3, doc, doc.files[0], noText));
+    bool leaked;
+    foreach (ref n; stillFolded.nodes)
+        foreach (sp; n.spans)
+            if (sp.text == "line 15")
+                leaked = true;
+    assert(!leaked, "no side text, no expansion");
 }
