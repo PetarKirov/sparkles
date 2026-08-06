@@ -8,7 +8,8 @@ module viewer_model;
 
 import ansi_model : AnsiLine, Attr;
 import diff_session : DiffSession;
-import diff_view : diffFileKey, FileTypes, isDiffHunkKey, viewDiffDoc;
+import diff_view : diffFileKey, DiffLayout, FileTypes, isDiffHunkKey,
+    viewDiffDoc;
 import document : DiffSides, hueFenceRenderer;
 import sparkles.diff.model : DiffDoc;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
@@ -124,6 +125,9 @@ struct ViewerModel
     /// because they are view state — the `Document` supplies the initial value
     /// and this model is what `DVG1`/`DVG3` mutate.
     DiffSession diffSession;
+    /// `DVL3`: the diff layout the reviewer asked for. The view degrades it
+    /// to unified when the pane is too narrow to read two panes in.
+    DiffLayout diffLayout;
     /// `DVN2`: show the hunks classified formatting-only. Off by default —
     /// they fold to a dimmed badge — and a keystroke away, which is the
     /// demote-never-hide contract.
@@ -273,12 +277,13 @@ struct ViewerModel
             // layers the diff tints over the syntax colors.
             DiffViewOptions dopt;
             dopt.foldFormattingOnly = !showFormattingHunks;
+            dopt.layout = diffLayout;
             tree = cache !is null
                 ? viewDiffDoc(diff, dopt, diffSides,
                     highlightedFenceRenderer(cache, &current, pageFg),
-                    diffSession, diffTypes)
+                    diffSession, diffTypes, widthCols)
                 : viewDiffDoc(diff, dopt, null, null,
-                    diffSession, diffTypes);
+                    diffSession, diffTypes, widthCols);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
             derive(withTargets: false);
@@ -726,6 +731,21 @@ struct ViewerModel
                 break;
             }
         }
+        return true;
+    }
+
+    /// `DVL3`: switches between the unified and split layouts, keeping the
+    /// current file under the cursor.
+    bool diffToggleLayout()
+    {
+        if (diffSession.empty)
+            return false;
+        diffLayout = diffLayout == DiffLayout.unified
+            ? DiffLayout.split : DiffLayout.unified;
+        rebuild();
+        const row = diffFileRow(diffSession.index);
+        if (row >= 0)
+            top = row;
         return true;
     }
 

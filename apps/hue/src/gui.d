@@ -1537,6 +1537,9 @@ int runGui(
                 case Command.diffToggleFormatting:
                     vm.diffToggleFormatting();
                     break;
+                case Command.diffToggleLayout:
+                    vm.diffToggleLayout();
+                    break;
                 case Command.toggleView:
                     toggleView();
                     break;
