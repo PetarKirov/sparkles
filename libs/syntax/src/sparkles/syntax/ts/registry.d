@@ -330,7 +330,9 @@ string canonicalLanguageOfPath(scope const(char)[] path) @safe pure nothrow
 unittest
 {
     assert(canonicalLanguageOfPath("src/app.d") == "d");
-    assert(canonicalLanguageOfPath("libs/base/dub.sdl") == "d");
+    // `.sdl` keeps its own grammar (nix/packages/tree-sitter-sdl.nix) — it is
+    // deliberately NOT folded onto `d`, which would shadow the better parser.
+    assert(canonicalLanguageOfPath("libs/base/dub.sdl") == "sdl");
     assert(canonicalLanguageOfPath("/tmp/vec.h") == "c");
 
     // Extensionless files resolve through their base name.
@@ -418,8 +420,12 @@ unittest
     assert(canonicalLanguage("objc") == "objc");
     assert(canonicalLanguage("rkt") == "racket");
 
+    // SDLang has a real in-house grammar, so the label reaches it unchanged;
+    // `sdlang` is the spelled-out alias for the same one.
+    assert(canonicalLanguage("sdl") == "sdl");
+    assert(canonicalLanguage("sdlang") == "sdl");
+
     // The only approximations left: no grammar for these exists anywhere.
-    assert(canonicalLanguage("sdl") == "d");
     assert(canonicalLanguage("eff") == "ocaml");
 
     // Labels with no grammar stay themselves; the registry reports the miss
