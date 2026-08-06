@@ -3,6 +3,12 @@
     name "text-fields"
     dependency "sparkles:base" path="../../.."
     targetPath "build"
+    // Optimised, assertions live, `debug {}` blocks out — the build every nix
+    // artifact uses. Neither `debug` (which compiles those blocks in) nor
+    // `release` (which deletes assert *expressions*, side effects included).
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
 +/
 
 // The fixed-width field primitives from `sparkles.base.text.width`:

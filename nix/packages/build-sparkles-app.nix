@@ -158,11 +158,26 @@
 
             # Which dub build type the app is compiled with (the build hook's
             # own knob, surfaced here so callers set it as an argument and get
-            # a default they can read). `release` suits an ordinary CLI; an
-            # app whose dependencies rely on their own assertions wants a type
-            # that keeps them — `sparkles:dmd-lsp`'s `checked` (`BLD6`), which
-            # the twoslash-extract package selects.
-            dubBuildType = args.dubBuildType or "release";
+            # a default they can read).
+            #
+            # `checked` — `optimize` + `inline` + `debugInfo`, and neither
+            # `releaseMode` nor `debugMode` — is the repo's build for every
+            # shipped artifact. The two dub defaults are each wrong for one:
+            #
+            #   * `release` implies `-release`, which deletes assert
+            #     *expressions* outright. An assertion that never runs is not
+            #     a cheap assertion, it is an absent one — and a call written
+            #     inside an assert silently stops happening.
+            #   * `debug` implies `-debug`, which compiles `debug { }` blocks
+            #     in. Those exist to hold checks too expensive to ship (an
+            #     `isSorted` over the whole input), so they do not belong in
+            #     an artifact either.
+            #
+            # `checked` keeps assertions and drops the debug blocks, at ~3%
+            # over `release` where it was measured (`apps/twoslash-extract`).
+            # Where even that is too much for a hot path, the lever is
+            # `-checkaction=halt` on that code — not deleting the check.
+            dubBuildType = args.dubBuildType or "checked";
 
             src = args.src or (sourceFor srcDirs);
             sourceRoot = args.sourceRoot or "${finalAttrs.src.name}/apps/${finalAttrs.pname}";

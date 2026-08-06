@@ -26,6 +26,12 @@
         buildOptions "unittests" "releaseMode" "optimize" "inline"
         dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
     }
+    // Optimised, assertions live, `debug {}` blocks out — the build every nix
+    // artifact uses. Neither `debug` (which compiles those blocks in) nor
+    // `release` (which deletes assert *expressions*, side effects included).
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
 +/
 // ci: build-only
 
