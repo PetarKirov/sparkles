@@ -14,7 +14,7 @@ version (Posix):
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : mix;
 import sparkles.diff.model : DiffDoc;
-import diff_session : DiffSession;
+import diff_session : DiffSession, SessionEntry;
 import document : DiffSides;
 import sparkles.base.text.writers : writeInteger;
 
@@ -661,6 +661,20 @@ struct PreviewTui
         vm.diffMoveFile(delta);
         clampTop();
     }
+
+    /// `TVU6`: jump to a session file the explorer picked.
+    void selectDiffFile(size_t i) @system
+    {
+        if (!diffNav())
+            return;
+        vm.diffSelectFile(i);
+        clampTop();
+    }
+
+    /// The session the explorer's changed-files tree lists (`TVU6`); empty
+    /// when the open document is not a diff.
+    const(SessionEntry)[] diffEntries() const @safe pure nothrow @nogc
+        => diffNav() ? vm.diffSession.entries : null;
 
     /// `DVG1`: `{`/`}` step hunk to hunk across the whole session.
     void moveDiffHunk(int delta) @system

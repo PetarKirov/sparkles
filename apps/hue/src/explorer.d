@@ -12,9 +12,11 @@
 module explorer;
 
 import std.algorithm.sorting : sort;
+import std.conv : text;
 import std.file : dirEntries, SpanMode;
 import std.path : baseName, buildPath, dirName;
 
+import diff_session : FileChange, SessionEntry;
 import git_status : GitBadge, gitBadge, GitStatus, GitStatusCache;
 
 import sparkles.base.term_color : mix;
@@ -59,11 +61,39 @@ struct FsEntry
     RgbColor badgeFg;
     bool hasBadgeFg;
     GitStatus gitSt;    // the raw status (]g/[g navigation; ignored dimming)
+    /// `TVU6`: index into the diff session this row came from, or `-1` for a
+    /// filesystem row (and for the directories a session tree synthesizes).
+    /// Activating a row with an index jumps the diff pane instead of loading
+    /// a document.
+    int sessionIndex = -1;
 
     const(char)[] label() const @safe pure nothrow @nogc => name;
     const(char)[] icon() const @safe pure nothrow @nogc
         => isDir ? (openDir ? "\U0000F115 " : "\U0000F114 ") //  open /  closed
             : fsIcon(name).glyph;
+}
+
+/// The last `/` in `p`, or `size_t.max` when it has none — the one path split
+/// a session tree needs, without dragging `std.path` into a `@nogc` context.
+private size_t lastSlash(scope const(char)[] p) @safe pure nothrow @nogc
+{
+    foreach_reverse (i, c; p)
+        if (c == '/')
+            return i;
+    return size_t.max;
+}
+
+/// `TVU6`: a session file's change kind as the explorer's git-status
+/// vocabulary, so one badge language covers the tree and the diff headers.
+private GitStatus sessionGitStatus(FileChange c) @safe pure nothrow @nogc
+{
+    final switch (c) with (FileChange)
+    {
+        case modified: return GitStatus.modified;
+        case added:    return GitStatus.added;
+        case removed:  return GitStatus.deleted;
+        case renamed:  return GitStatus.renamed;
+    }
 }
 
 /// The explorer's tree charset: no separate disclosure marker — the folder
@@ -131,6 +161,11 @@ struct ExplorerTui
     RgbColor pageFg, pageBg;
     immutable(Theme)* themeValue; // for the palette the chrome resolves against
 
+    /// `TVU6`: when non-empty, the pane lists this changed-file session
+    /// instead of walking the filesystem — the diff's shape is what a
+    /// reviewer needs from a tree, and the working tree is not it.
+    const(SessionEntry)[] session;
+
     TreeData!FsEntry data;
     FlatTreeRow[] rows;
     DisclosureState!string open;  // user intent, keyed by path (survives rebuilds)
@@ -170,6 +205,9 @@ struct ExplorerTui
     string[] excludeGlobs;
 
     string picked;  // the chosen file (empty = none yet)
+    /// `TVU6`: the session index of the chosen row, or `-1` when the pick was
+    /// an ordinary filesystem row (so the host loads it as a document).
+    int pickedSession = -1;
     string current; // the open document's path — highlighted in the tree (XPL3)
     GitStatusCache git;   // async per-root status snapshot (XPF1)
 
@@ -311,6 +349,58 @@ struct ExplorerTui
     /// children of open dirs recurse; closed dirs load one level (so their
     /// disclosure marker is honest); a filter keeps matches and the dirs on
     /// the way to them.
+    /**
+    `TVU6`: builds the tree from the diff session rather than the filesystem —
+    the changed files as a path-prefix tree, each leaf badged with its status
+    and labelled with its `+N −M` counts.
+
+    Directories are **synthesized from the paths**, not listed: a changed-file
+    tree must show exactly the files that changed, and a directory listing
+    would drag in their unchanged siblings. Everything starts expanded, since
+    the whole point is seeing the shape of the change at a glance, and a
+    session is small by construction.
+    */
+    private void addSession() @safe
+    {
+        uint[string] dirs; // directory path → node index
+
+        uint parentFor(string dir) @safe
+        {
+            if (dir.length == 0)
+                return uint.max;
+            if (auto p = dir in dirs)
+                return *p;
+            const cut = lastSlash(dir);
+            FsEntry d = {
+                name: cut == size_t.max ? dir : dir[cut + 1 .. $],
+                path: dir, isDir: true, openDir: true,
+            };
+            const idx = data.add(d, parentFor(cut == size_t.max ? "" : dir[0 .. cut]));
+            dirs[dir] = idx;
+            return idx;
+        }
+
+        foreach (i, ref e; session)
+        {
+            // A removed file lives where it was; everything else where it is.
+            const path = e.newPath.length && e.newPath != "/dev/null"
+                ? e.newPath : e.oldPath;
+            if (path.length == 0 || path == "/dev/null")
+                continue;
+            const cut = lastSlash(path);
+            const st = sessionGitStatus(e.change);
+            const b = gitBadge(st);
+            FsEntry f = {
+                name: text(cut == size_t.max ? path : path[cut + 1 .. $],
+                    "  +", e.added, " −", e.removed),
+                path: path, gitSt: st, badge: b.letter,
+                badgeFg: b.fg, hasBadgeFg: b.letter.length != 0,
+                sessionIndex: cast(int) i,
+            };
+            data.add(f, parentFor(cut == size_t.max ? "" : path[0 .. cut]));
+        }
+    }
+
     void rebuild() @system
     {
         data = TreeData!FsEntry.init;
@@ -335,7 +425,9 @@ struct ExplorerTui
             }
         }
 
-        if (filter.text.length == 0)
+        if (session.length)
+            addSession();
+        else if (filter.text.length == 0)
             addChildren(root, uint.max, true);
         else
             addFiltered(root, uint.max);
@@ -394,8 +486,11 @@ struct ExplorerTui
                 }
             }
 
+        // A session tree is always fully expanded (`TVU6`): its whole purpose
+        // is showing the shape of the change, and it is small by construction.
         rows = flatten(data, (uint i) @safe
-            => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path));
+            => session.length != 0 || filter.text.length != 0
+                || open.isOpen(data.nodes[i].value.path));
         measureContent();
         clamp();
     }
@@ -827,6 +922,9 @@ struct ExplorerTui
             return true;
         }
         picked = v.path;
+        // `TVU6`: a session row names a file in the diff, not a document to
+        // load — the workspace jumps the diff pane to it instead of reading it.
+        pickedSession = v.sessionIndex;
         return false;
     }
 
@@ -1407,4 +1505,53 @@ unittest
     x.includeGlobs = null;
     x.rebuild();
     assert(!listed("build"), "the ignored dir hides without the include");
+}
+
+@("explorer.sessionTree.pathsBecomeATreeWithBadgesAndCounts")
+@system unittest
+{
+    import diff_session : FileChange, SessionEntry;
+
+    // `TVU6`: the tree is built from the session's paths alone — no
+    // filesystem is touched, which is the property that lets a diff of files
+    // that no longer exist (or never did, on a removed side) still list.
+    ExplorerTui x;
+    x.root = "/nonexistent-on-purpose";
+    x.session = [
+        SessionEntry(oldPath: "src/a.d", newPath: "src/a.d", display: "src/a.d",
+            change: FileChange.modified, added: 3, removed: 1),
+        SessionEntry(oldPath: "/dev/null", newPath: "src/deep/b.d",
+            display: "src/deep/b.d", change: FileChange.added, added: 7),
+        SessionEntry(oldPath: "gone.d", newPath: "/dev/null",
+            display: "gone.d", change: FileChange.removed, removed: 4),
+    ];
+    x.rebuild();
+
+    string[] labels;
+    foreach (ref n; x.data.nodes)
+        labels ~= n.value.name.idup;
+    // Directories are synthesized from the paths, shared between the files
+    // under them — `src` appears once, with `deep` nested inside it.
+    assert(labels.length == 5, text(labels)); // 2 synthesized dirs + 3 files
+    assert(labels[0] == "src");
+    assert(labels[1] == "a.d  +3 −1");
+    assert(labels[2] == "deep" && labels[3] == "b.d  +7 −0");
+    // A removed file lives at the path it had, at the root here.
+    assert(labels[4] == "gone.d  +0 −4");
+
+    // Badges use the explorer's own git-status vocabulary, so the tree and
+    // the diff headers read the same.
+    string[] badges;
+    foreach (ref n; x.data.nodes)
+        if (!n.value.isDir)
+            badges ~= n.value.badge;
+    assert(badges == ["M", "A", "D"], text(badges));
+
+    // Every leaf carries the index that jumps the diff pane; the synthesized
+    // directories carry none.
+    foreach (ref n; x.data.nodes)
+        assert((n.value.sessionIndex >= 0) == !n.value.isDir);
+
+    // Everything starts expanded: the shape of the change is the point.
+    assert(x.rows.length == x.data.nodes.length, "no row is hidden");
 }
