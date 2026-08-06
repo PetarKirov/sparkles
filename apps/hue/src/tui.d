@@ -701,6 +701,15 @@ struct PreviewTui
     const(SessionEntry)[] diffEntries() const @safe pure nothrow @nogc
         => diffNav() ? vm.diffSession.entries : null;
 
+    /// `DVN2`: show or fold the formatting-only hunks.
+    void toggleFormattingHunks() @system
+    {
+        if (!diffNav())
+            return;
+        vm.diffToggleFormatting();
+        clampTop();
+    }
+
     /// `DVG1`: `{`/`}` step hunk to hunk across the whole session.
     void moveDiffHunk(int delta) @system
     {
@@ -798,7 +807,14 @@ struct PreviewTui
                     case 'g': top = 0; break;
                     case 'G': top = maxTop; break;
                     case '/': searching = true; qlen = 0; break;
-                    case 'n': jumpMatch(top + 1, true); break;
+                    // `n` is search-next, but `zn` folds the formatting-only
+                    // hunks (`DVN2`) — the armed `z` decides which.
+                    case 'n':
+                        if (pk == 'z')
+                            toggleFormattingHunks();
+                        else
+                            jumpMatch(top + 1, true);
+                        break;
                     case 'N': jumpMatch(top - 1, false); break;
                     case 'y': copySelection(); break;
                     // `DVG1`: over a diff session the brackets walk files.

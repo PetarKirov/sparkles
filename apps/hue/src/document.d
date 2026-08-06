@@ -20,8 +20,8 @@ import std.string : chompPrefix;
 import sparkles.base.logger : warning;
 import sparkles.base.smallbuffer : SmallBuffer;
 import diff_session : buildDiffSession, DiffSession;
-import sparkles.diff : DiffDoc, diffText, emitPatch, FileEntry, parsePatch,
-    RowKind;
+import sparkles.diff : DiffDoc, DiffOptions, diffText, emitPatch, FileEntry,
+    parsePatch, RowKind, WhitespaceMode;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
     highlightInjected, MdBlock, ResolvedTheme, RgbColor, TsConfigCache;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
@@ -86,6 +86,8 @@ struct DocumentPipeline
     bool forceMarkdown; /// `--markdown`
     bool raw;           /// `--raw` (wins over `forceMarkdown`/`forcePatch`)
     bool forcePatch;    /// `--patch`: the input is a unified diff
+    /// `DVN1`: the whitespace policy computed diffs run under.
+    WhitespaceMode ignoreWhitespace = WhitespaceMode.exact;
 
 @system:
 
@@ -148,6 +150,14 @@ struct DocumentPipeline
         attachSession(doc);
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
+    }
+
+    /// The engine options this pipeline's policy implies (`DVN1`).
+    private DiffOptions diffOptions() const @safe pure nothrow @nogc
+    {
+        DiffOptions opt;
+        opt.ignoreWhitespace = ignoreWhitespace;
+        return opt;
     }
 
     /// `DVS3`: a git-revision diff — `hue --diff [<rev>[..<rev>]]`, plus
@@ -473,7 +483,8 @@ struct DocumentPipeline
         Document doc = {
             path: newPath, title: text(oldPath, " → ", newPath),
             kind: ContentKind.diff, lang: "diff", diffSides: [sides],
-            diffDoc: diffText(sides.oldText, sides.newText, oldPath, newPath),
+            diffDoc: diffText(sides.oldText, sides.newText, oldPath, newPath,
+                diffOptions()),
         };
         attachSession(doc);
         SmallBuffer!char patchBuf;

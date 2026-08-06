@@ -1534,6 +1534,9 @@ int runGui(
                 case Command.diffToggleFile:  vm.diffToggleFile(); break;
                 case Command.diffCollapseAll: vm.diffSetAllFiles(true); break;
                 case Command.diffExpandAll:   vm.diffSetAllFiles(false); break;
+                case Command.diffToggleFormatting:
+                    vm.diffToggleFormatting();
+                    break;
                 case Command.toggleView:
                     toggleView();
                     break;
