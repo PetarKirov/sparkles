@@ -7,7 +7,8 @@
 module viewer_model;
 
 import ansi_model : AnsiLine, Attr;
-import diff_view : viewDiffDoc;
+import diff_session : DiffSession;
+import diff_view : diffFileKey, viewDiffDoc;
 import document : DiffSides, hueFenceRenderer;
 import sparkles.diff.model : DiffDoc;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
@@ -119,6 +120,10 @@ struct ViewerModel
     TwoslashReturn tw;              /// empty `code` ⇒ not a twoslash document
     DiffDoc diff;                   /// non-empty `files` ⇒ a diff document
     const(DiffSides)[] diffSides;   /// per-file side texts (`DVM5`)
+    /// The changed-file session (`DVS4`): selection and fold state live here
+    /// because they are view state — the `Document` supplies the initial value
+    /// and this model is what `DVG1`/`DVG3` mutate.
+    DiffSession diffSession;
     size_t srcTotal;                /// source (physical) line count
     size_t[] lineStarts;
     bool showPreview;               /// decorated view vs raw source (Tab)
@@ -182,7 +187,8 @@ struct ViewerModel
     void setDocument(string title_, string summary_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel preview_,
         TwoslashReturn tw_, string lang_ = null, DiffDoc diff_ = DiffDoc.init,
-        const(DiffSides)[] diffSides_ = null)
+        const(DiffSides)[] diffSides_ = null,
+        DiffSession diffSession_ = DiffSession.init)
     {
         title = title_;
         summary = summary_;
@@ -193,6 +199,7 @@ struct ViewerModel
         tw = tw_;
         diff = diff_;
         diffSides = diffSides_;
+        diffSession = diffSession_;
         srcTotal = lineCount(source);
         lineStarts = buildLineStarts(source);
         showPreview = preview.present || tw.code.length != 0
@@ -258,12 +265,16 @@ struct ViewerModel
             // layers the diff tints over the syntax colors.
             tree = cache !is null
                 ? viewDiffDoc(diff, DiffViewOptions.init, diffSides,
-                    highlightedFenceRenderer(cache, &current, pageFg))
-                : viewDiffDoc(diff);
+                    highlightedFenceRenderer(cache, &current, pageFg),
+                    diffSession)
+                : viewDiffDoc(diff, DiffViewOptions.init, null, null,
+                    diffSession);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
             derive(withTargets: false);
-            cells = null;
+            // `DVG1`: the file containers are keyed, so their laid-out rows
+            // are a lookup rather than a re-walk of the tree.
+            cells = keyedRects(tree, frames);
             fences.length = 0;
             cellList.length = 0;
             foldable = null;
@@ -608,6 +619,68 @@ struct ViewerModel
         copiedFenceSrc = size_t.max;
         rebuild();
     }
+
+    // ── diff session navigation (`DVG1`/`DVG3`) ─────────────────────────────
+
+    /// The laid-out top row of session file `i`, or `-1` when it has none
+    /// (not a diff view, or the file is not laid out). Resolved through the
+    /// keyed rects, so it survives any change to the view's tree shape.
+    long diffFileRow(size_t i) const @safe pure nothrow @nogc
+    {
+        const want = diffFileKey(i);
+        foreach (ref kr; cells)
+            if (kr.key == want)
+                return kr.rect.y;
+        return -1;
+    }
+
+    /**
+    `DVG1`: moves the selection by `delta` files and scrolls that file's
+    header to the top. Returns `true` iff the selection moved.
+
+    Scrolling to the top rather than centring is deliberate: a reviewer
+    arriving at a file wants its header and first hunk, and every file then
+    lands in the same place on screen.
+    */
+    bool diffMoveFile(int delta)
+    {
+        if (!diffSession.move(delta))
+            return false;
+        rebuild(); // the selection marker moved, so the headers changed
+        const row = diffFileRow(diffSession.index);
+        if (row >= 0)
+            top = row;
+        return true;
+    }
+
+    /// `DVG3`: folds or unfolds the selected file, keeping it under the
+    /// cursor — a fold that scrolled the file out of view would be a strange
+    /// way to hide it.
+    bool diffToggleFile()
+    {
+        if (diffSession.empty)
+            return false;
+        diffSession.currentMut.collapsed = !diffSession.current.collapsed;
+        rebuild();
+        const row = diffFileRow(diffSession.index);
+        if (row >= 0)
+            top = row;
+        return true;
+    }
+
+    /// `DVG3`: folds or unfolds every file at once.
+    bool diffSetAllFiles(bool collapsed)
+    {
+        if (diffSession.empty)
+            return false;
+        foreach (ref e; diffSession.entries)
+            e.collapsed = collapsed;
+        rebuild();
+        const row = diffFileRow(diffSession.index);
+        if (row >= 0)
+            top = row;
+        return true;
+    }
 }
 
 
@@ -659,6 +732,58 @@ struct ViewerModel
                     sawHunkBandRaw = true;
     assert(!sawHunkBandRaw, "raw view shows the patch text, not the diff view");
     assert(vm.rows.length);
+}
+
+@("viewer_model.diffSessionNavigatesAndFolds")
+@system unittest
+{
+    import diff_session : buildDiffSession;
+    import sparkles.diff : parsePatch;
+    import sparkles.syntax : builtinDark;
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 60;
+    vm.applyTheme(0);
+
+    // Two files, so "next file" has somewhere to go.
+    enum patch =
+        "--- a/one.d\n+++ b/one.d\n@@ -1,2 +1,2 @@\n a\n-b\n+B\n" ~
+        "--- a/two.d\n+++ b/two.d\n@@ -1,2 +1,2 @@\n c\n-d\n+D\n";
+    const dd = parsePatch(patch).value;
+    auto session = buildDiffSession(dd);
+    assert(session.length == 2);
+
+    vm.setDocument("patch", "", patch,
+        [HighlightEvent.sourceSpan(0, patch.length)], PreviewModel.init,
+        TwoslashReturn.init, "diff", dd, null, session);
+
+    // `DVG1`: the second file's header is below the first, and moving to it
+    // scrolls there — the row comes from the keyed rect, not a guess.
+    const firstRow = vm.diffFileRow(0);
+    const secondRow = vm.diffFileRow(1);
+    assert(firstRow >= 0 && secondRow > firstRow, "files lay out in order");
+
+    assert(vm.diffMoveFile(1));
+    assert(vm.diffSession.index == 1);
+    assert(vm.top == vm.diffFileRow(1), "the selected file scrolled to the top");
+    assert(!vm.diffMoveFile(1), "no wraparound past the last file");
+
+    // `DVG3`: folding the selected file removes its rows; the file above it
+    // is untouched, so the fold is per file and not a global mode.
+    const rowsExpanded = vm.rows.length;
+    assert(vm.diffToggleFile());
+    assert(vm.diffSession.entries[1].collapsed);
+    assert(vm.rows.length < rowsExpanded, "a folded file drops its hunk rows");
+    assert(vm.diffFileRow(0) == firstRow, "the file above did not move");
+
+    // Fold-all then expand-all returns to the original height.
+    assert(vm.diffSetAllFiles(true));
+    const rowsAllFolded = vm.rows.length;
+    assert(vm.diffSetAllFiles(false));
+    assert(vm.rows.length == rowsExpanded && rowsAllFolded < rowsExpanded);
 }
 
 @("viewer_model.rawAndPreviewShareOnePipeline")

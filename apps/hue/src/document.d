@@ -19,6 +19,7 @@ import std.string : chompPrefix;
 
 import sparkles.base.logger : warning;
 import sparkles.base.smallbuffer : SmallBuffer;
+import diff_session : buildDiffSession, DiffSession;
 import sparkles.diff : DiffDoc, diffText, emitPatch, FileEntry, parsePatch,
     RowKind;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
@@ -56,6 +57,9 @@ struct Document
     /// `kind == diff`: per-file side texts for `DVM5` composition,
     /// parallel to `diffDoc.files` (an empty entry renders plain rows).
     DiffSides[] diffSides;
+    /// `kind == diff`: the changed-file session (`DVS4`) — status, counts,
+    /// fold state and per-file errors, parallel to `diffDoc.files`.
+    DiffSession diffSession;
 }
 
 /// The per-side full texts of a diff document (`DVM5` syntax composition):
@@ -141,6 +145,7 @@ struct DocumentPipeline
             source: patchText, lang: "diff", diffDoc: res.value,
         };
         doc.diffSides = sidesFromWorktree(doc.diffDoc);
+        attachSession(doc);
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
     }
@@ -178,6 +183,7 @@ struct DocumentPipeline
             source: res.output, lang: "diff", diffDoc: parsed.value,
         };
         doc.diffSides = sidesFromGit(doc.diffDoc, revspec, staged);
+        attachSession(doc);
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
     }
@@ -297,6 +303,26 @@ struct DocumentPipeline
                 oldText, newText);
         }
         return sides;
+    }
+
+    /**
+    Builds the document's changed-file session (`DVS4`) and annotates the
+    entries whose sources could not be fetched (`DVS5`).
+
+    "Could not be fetched" is *both* sides empty on a file that has hunks: an
+    added file legitimately has no old side, so testing one side alone would
+    label every new file an error. Such a file still renders — from the patch
+    text, without syntax composition — which is why the notice says so rather
+    than claiming a failure.
+    */
+    package static void attachSession(ref Document doc) @safe
+    {
+        doc.diffSession = buildDiffSession(doc.diffDoc);
+        foreach (i, ref e; doc.diffSession.entries)
+            if (i < doc.diffSides.length && !e.binary && e.hunks != 0
+                && doc.diffSides[i].oldText.length == 0
+                && doc.diffSides[i].newText.length == 0)
+                e.error = "(sources unavailable — showing the patch text)";
     }
 
     /// `DVS2`'s re-highlight half: for each file of a parsed patch whose
@@ -449,6 +475,7 @@ struct DocumentPipeline
             kind: ContentKind.diff, lang: "diff", diffSides: [sides],
             diffDoc: diffText(sides.oldText, sides.newText, oldPath, newPath),
         };
+        attachSession(doc);
         SmallBuffer!char patchBuf;
         emitPatch(doc.diffDoc, patchBuf);
         doc.source = patchBuf[].idup;
