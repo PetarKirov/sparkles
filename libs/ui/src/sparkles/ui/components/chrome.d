@@ -13,10 +13,10 @@ module sparkles.ui.components.chrome;
 
 import std.conv : text;
 
-import sparkles.ui.geometry : Insets, Point, SizeSpec;
+import sparkles.ui.geometry : cellsOf, Insets, Point, SizeSpec;
 import sparkles.ui.state : PressState, ScrollAxis, ScrollbarState, ScrollState,
     scrollbarThumb;
-import sparkles.ui.style : Slot;
+import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Visibility, Widget, WidgetKind;
 
 @safe:
@@ -196,6 +196,84 @@ uint actionBar(ref Builder b, scope const(string)[] labels, size_t hitBase,
             paintBackground: true,
         ));
     }
+    return b.add(Widget(
+        kind: WidgetKind.row,
+        children: segs,
+        slot: Slot.chrome,
+        paintBackground: true,
+        stretch: true,
+        height: SizeSpec.fixed(1),
+    ));
+}
+
+/**
+A tab strip (`WGT23`): a row of labelled tabs, one $(B active), over shared
+content that only the active tab supplies.
+
+The same discipline as $(LREF actionBar) — segments laid out once, hit rects
+from $(REF hoverTargets, sparkles,ui,state) over those very frames, so painted
+and tappable cannot drift — plus the one thing a bar does not have: a
+$(I selected) segment, which is a different state from an $(I armed) one. A
+press arms, a release over the same tab activates (`STM10`), and the active
+tab stays lit after the pointer leaves; conflating the two is why hand-rolled
+strips flicker the wrong tab during a drag.
+
+Tabs are as wide as what they say (`fitLabels`, the usual look — a file name
+should not be padded to a fifth of the window); with `fitLabels: false` each
+tab instead takes its label plus an equal share of the leftover width, the
+$(LREF actionBar) behaviour, for callers that want a segmented control.
+Either way the widths come from `cellsOf`, so a UTF-8 label is measured in
+cells and never by `.length`.
+
+Consumers are deliberately unrelated: an application selecting one of several
+documents, and a markdown renderer showing one of a code group's fences. That
+is the test of whether this belongs in the toolkit at all.
+
+`hitBase` is the first id; tab `i` gets `hitBase + i`, so an activation maps
+back with `id - hitBase`.
+*/
+uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
+    size_t hitBase, in PressState press = PressState.init,
+    bool fitLabels = true)
+{
+    auto segs = new uint[](labels.length + 1);
+    foreach (i, label; labels)
+    {
+        const id = hitBase + i;
+        const isActive = i == active;
+        const armed = press.isArmed(id);
+        const caption = b.add(Widget(
+            kind: WidgetKind.text,
+            text: label,
+            // Three distinct states, because they mean three things: this
+            // one is showing, this one is being pressed, this one is idle.
+            slot: isActive ? Slot.chromeAccent
+                : armed ? Slot.chromeFocused : Slot.gutter,
+            textStyle: TextStyle(bold: isActive),
+        ));
+        segs[i] = b.add(Widget(
+            kind: WidgetKind.column,
+            children: [caption],
+            // A tab is its label plus one cell of breathing room either
+            // side; growing shares the leftover instead.
+            width: fitLabels
+                ? SizeSpec.fixed(cast(int) cellsOf(label) + 2)
+                : SizeSpec.grow(),
+            alignX: Alignment.center,
+            // The whole tab is the target, not just the glyphs.
+            hitId: id,
+            slot: isActive ? Slot.chromeFocused : Slot.chrome,
+            paintBackground: true,
+        ));
+    }
+    // A filler tail so the strip's background spans the full width even when
+    // the tabs do not — and so nothing beyond the last tab is hit-testable.
+    segs[$ - 1] = b.add(Widget(
+        kind: WidgetKind.column,
+        width: SizeSpec.grow(),
+        slot: Slot.chrome,
+        paintBackground: true,
+    ));
     return b.add(Widget(
         kind: WidgetKind.row,
         children: segs,
@@ -412,4 +490,83 @@ version (unittest)
 
     // The view's element identity is in the tree for the state store.
     assert(elementKeys(tree) == [42]);
+}
+
+@("ui.components.chrome.tabStripFitsLabelsAndHitsMatchPaint")
+@safe unittest
+{
+    import sparkles.ui.state : hoverTargets, HoverState;
+    import sparkles.input : PointerAction, PointerEvent;
+
+    // Three tabs sized to their labels, the second one showing.
+    enum base = 200;
+    auto b = Builder();
+    const strip = tabStrip(b, ["config.js", "config.ts", "π.md"], 1, base);
+    const col = b.add(Widget(kind: WidgetKind.column, children: [strip],
+        width: SizeSpec.fixed(40)));
+    auto tree = b.finish(col);
+    auto frames = layout(tree);
+
+    // Widths are label CELLS plus one either side — "π.md" is 4 cells, not
+    // the 5 bytes a `.length` measurement would have produced.
+    const tabs = tree.nodes[strip].children;
+    assert(frames[tabs[0]].rect.width == 11);
+    assert(frames[tabs[1]].rect.width == 11);
+    assert(frames[tabs[2]].rect.width == 6);
+    // The filler tail takes the remainder, so the strip spans the full width.
+    assert(frames[tabs[3]].rect.width == 12);
+
+    // Hits come from those same frames (the IXR27 invariant).
+    const targets = hoverTargets(tree, frames);
+    HoverState h;
+    h.update(PointerEvent(action: PointerAction.move, pos: Point(5, 0)),
+        targets);
+    assert(h.hot == base + 0);
+    h.update(PointerEvent(action: PointerAction.move, pos: Point(15, 0)),
+        targets);
+    assert(h.hot == base + 1);
+    h.update(PointerEvent(action: PointerAction.move, pos: Point(24, 0)),
+        targets);
+    assert(h.hot == base + 2);
+    // Past the last tab is filler: hit-testable by nothing.
+    h.update(PointerEvent(action: PointerAction.move, pos: Point(35, 0)),
+        targets);
+    assert(h.hot == 0, "the tail is not a tab");
+}
+
+@("ui.components.chrome.tabStripDistinguishesActiveFromArmed")
+@safe unittest
+{
+    // Active and armed are different states: the showing tab stays lit while
+    // a DIFFERENT one is held down, which is what a strip that conflates
+    // them gets wrong mid-press.
+    auto b = Builder();
+    const strip = tabStrip(b, ["one", "two"], 0, 10,
+        PressState.init.pressed(11));
+    auto tree = b.finish(strip);
+    const tabs = tree.nodes[strip].children;
+    assert(tree.nodes[tabs[0]].slot == Slot.chromeFocused, "active tab");
+    assert(tree.nodes[tree.nodes[tabs[0]].children[0]].textStyle.bold);
+    assert(tree.nodes[tabs[1]].slot == Slot.chrome, "armed is not active");
+    assert(tree.nodes[tree.nodes[tabs[1]].children[0]].slot
+        == Slot.chromeFocused, "…but the armed label is lit");
+
+    // `fitLabels: false` grows instead: every segment takes its label plus
+    // the SAME share of the leftover, so the strip tiles exactly (the
+    // actionBar behaviour — not equal widths, which unequal labels forbid).
+    auto e = Builder();
+    const seg = tabStrip(e, ["a", "bbbbb"], 0, 10, PressState.init,
+        fitLabels: false);
+    const col = e.add(Widget(kind: WidgetKind.column, children: [seg],
+        width: SizeSpec.fixed(30)));
+    auto etree = e.finish(col);
+    auto eframes = layout(etree);
+    const segs = etree.nodes[seg].children;
+    const share0 = eframes[segs[0]].rect.width - 1; // minus "a"
+    const share1 = eframes[segs[1]].rect.width - 5; // minus "bbbbb"
+    assert(share0 == share1, "the leftover is shared equally");
+    int total;
+    foreach (sgi; segs)
+        total += eframes[sgi].rect.width;
+    assert(total == 30, "the segments tile the strip");
 }
