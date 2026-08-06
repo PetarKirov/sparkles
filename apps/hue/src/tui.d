@@ -662,6 +662,15 @@ struct PreviewTui
         clampTop();
     }
 
+    /// `DVG1`: `{`/`}` step hunk to hunk across the whole session.
+    void moveDiffHunk(int delta) @system
+    {
+        if (!diffNav())
+            return;
+        vm.diffMoveHunk(delta);
+        clampTop();
+    }
+
     // `z1`-`z9`: fold to nesting level (vim's foldlevel).
     private void foldToLevel(int level) @system
     {
@@ -756,6 +765,8 @@ struct PreviewTui
                     // `DVG1`: over a diff session the brackets walk files.
                     case '[': moveDiffFile(-1); break;
                     case ']': moveDiffFile(+1); break;
+                    case '{': moveDiffHunk(-1); break;
+                    case '}': moveDiffHunk(+1); break;
                     // The vim fold family (FLD5): z arms; then a/z toggle,
                     // c close, o open, R open-all, M fold-all.
                     case 'z':

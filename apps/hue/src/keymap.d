@@ -121,6 +121,7 @@ enum Command : ubyte
     // own: to a reviewer the changed-file list IS the set being walked, and a
     // file IS the thing that folds.
     diffNextFile, diffPrevFile,
+    diffNextHunk, diffPrevHunk,        /// `}` / `{`
     diffToggleFile,
     diffCollapseAll, diffExpandAll,
 }
@@ -303,6 +304,12 @@ KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
                     ? KeyCommand(Command.diffNextFile)
                     : (ctx.hasDocSet
                         ? KeyCommand(Command.setNext) : KeyCommand(Command.none));
+                // `{`/`}` step hunk to hunk — vim's paragraph motion, which is
+                // what a hunk is to a reviewer moving through a file.
+                case '{': return ctx.hasDiffSession
+                    ? KeyCommand(Command.diffPrevHunk) : KeyCommand(Command.none);
+                case '}': return ctx.hasDiffSession
+                    ? KeyCommand(Command.diffNextHunk) : KeyCommand(Command.none);
                 default: break;
             }
     }
@@ -534,6 +541,12 @@ unittest
     assert(ch('3', armed).cmd == Command.none);
     // Without a session the same keys keep their syntax-fold meanings.
     assert(ch('m', KeyContext(foldArmed: true)).cmd == Command.foldCloseAll);
+
+    // Hunk motions exist only over a session — there is nothing to step
+    // through otherwise, so the keys stay unbound rather than no-ops.
+    assert(ch('}', diff).cmd == Command.diffNextHunk);
+    assert(ch('{', diff).cmd == Command.diffPrevHunk);
+    assert(ch('}').cmd == Command.none && ch('{').cmd == Command.none);
 }
 
 @("keymap.sharedBindingsWorkFromEitherPane")

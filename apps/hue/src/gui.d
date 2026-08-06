@@ -1445,6 +1445,8 @@ int runGui(
                 // selection, the fold state and the scroll that follows them.
                 case Command.diffNextFile:    vm.diffMoveFile(1);  break;
                 case Command.diffPrevFile:    vm.diffMoveFile(-1); break;
+                case Command.diffNextHunk:    vm.diffMoveHunk(1);  break;
+                case Command.diffPrevHunk:    vm.diffMoveHunk(-1); break;
                 case Command.diffToggleFile:  vm.diffToggleFile(); break;
                 case Command.diffCollapseAll: vm.diffSetAllFiles(true); break;
                 case Command.diffExpandAll:   vm.diffSetAllFiles(false); break;

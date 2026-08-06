@@ -8,7 +8,7 @@ module viewer_model;
 
 import ansi_model : AnsiLine, Attr;
 import diff_session : DiffSession;
-import diff_view : diffFileKey, viewDiffDoc;
+import diff_view : diffFileKey, isDiffHunkKey, viewDiffDoc;
 import document : DiffSides, hueFenceRenderer;
 import sparkles.diff.model : DiffDoc;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
@@ -668,6 +668,48 @@ struct ViewerModel
         return true;
     }
 
+    /**
+    `DVG1`: scrolls to the next (`delta > 0`) or previous hunk relative to the
+    current scroll position, returning `true` iff it moved.
+
+    Deliberately stateless: the target is derived from where the view actually
+    is, not from a cursor this model would have to keep in sync with folding,
+    resizing and rebuilds. A collapsed file contributes no hunk rows, so its
+    hunks are skipped for free — a fold really hides them.
+    */
+    bool diffMoveHunk(int delta)
+    {
+        if (diffSession.empty || delta == 0)
+            return false;
+        long best = -1;
+        foreach (ref kr; cells)
+        {
+            if (!isDiffHunkKey(kr.key))
+                continue;
+            const y = cast(long) kr.rect.y;
+            if (delta > 0 ? y <= top : y >= top)
+                continue;
+            // The nearest one in the direction of travel.
+            if (best < 0 || (delta > 0 ? y < best : y > best))
+                best = y;
+        }
+        if (best < 0)
+            return false;
+        top = best;
+        // Keep the session selection honest: the file the new position is in
+        // is the file the reviewer is now on, so `[`/`]` continue from here.
+        foreach_reverse (i; 0 .. diffSession.entries.length)
+        {
+            const row = diffFileRow(i);
+            if (row >= 0 && row <= best)
+            {
+                diffSession.index = i;
+                break;
+            }
+        }
+        return true;
+    }
+
     /// `DVG3`: folds or unfolds every file at once.
     bool diffSetAllFiles(bool collapsed)
     {
@@ -784,6 +826,63 @@ struct ViewerModel
     const rowsAllFolded = vm.rows.length;
     assert(vm.diffSetAllFiles(false));
     assert(vm.rows.length == rowsExpanded && rowsAllFolded < rowsExpanded);
+}
+
+@("viewer_model.diffHunkMotionCrossesFilesAndSkipsFolds")
+@system unittest
+{
+    import diff_session : buildDiffSession;
+    import sparkles.diff : parsePatch;
+    import sparkles.syntax : builtinDark;
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 60;
+    vm.applyTheme(0);
+
+    // Two files, two hunks in the first — so hunk motion has to step within a
+    // file and then across the file boundary.
+    enum patch =
+        "--- a/one.d\n+++ b/one.d\n" ~
+        "@@ -1,2 +1,2 @@\n a\n-b\n+B\n" ~
+        "@@ -10,2 +10,2 @@\n c\n-d\n+D\n" ~
+        "--- a/two.d\n+++ b/two.d\n@@ -1,2 +1,2 @@\n e\n-f\n+F\n";
+    const dd = parsePatch(patch).value;
+    auto session = buildDiffSession(dd);
+    assert(session.length == 2 && session.entries[0].hunks == 2);
+
+    vm.setDocument("patch", "", patch,
+        [HighlightEvent.sourceSpan(0, patch.length)], PreviewModel.init,
+        TwoslashReturn.init, "diff", dd, null, session);
+
+    // Three forward steps reach all three hunks, then stop at the last.
+    long[] visited;
+    while (vm.diffMoveHunk(1))
+        visited ~= vm.top;
+    assert(visited.length == 3, "one stop per hunk in the session");
+    assert(visited[0] < visited[1] && visited[1] < visited[2]);
+
+    // Crossing into the second file's hunk moved the file selection with it,
+    // so `[`/`]` continue from where the reader actually is.
+    assert(vm.diffSession.index == 1);
+
+    // Backwards retraces the same stops and stops at the first.
+    assert(vm.diffMoveHunk(-1) && vm.top == visited[1]);
+    assert(vm.diffMoveHunk(-1) && vm.top == visited[0]);
+    assert(!vm.diffMoveHunk(-1), "nothing above the first hunk");
+    assert(vm.diffSession.index == 0, "the selection followed back");
+
+    // A folded file contributes no hunk rows, so its hunks are skipped: with
+    // the first file folded, only the second file's hunk remains.
+    vm.top = 0;
+    vm.diffSession.entries[0].collapsed = true;
+    vm.rebuild();
+    long[] afterFold;
+    while (vm.diffMoveHunk(1))
+        afterFold ~= vm.top;
+    assert(afterFold.length == 1, "a folded file really hides its hunks");
 }
 
 @("viewer_model.rawAndPreviewShareOnePipeline")
