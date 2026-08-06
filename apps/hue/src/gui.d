@@ -40,6 +40,7 @@ import sparkles.input.capability : InputCapabilities, mousePointer,
 import gui_text : Match;
 
 // Markdown-preview model (raylib-free) and the ANSI-fence decoder.
+import diff_session : DiffSession;
 import document : DiffSides, Document;
 import gui_preview : PreviewModel, stripSgr;
 import sparkles.diff.model : DiffDoc;
@@ -329,6 +330,7 @@ int runGui(
     bool liveTypes = true,               // live D types via the oracle (PRJ12)
     DiffDoc initialDiff = DiffDoc.init,  // diff document payload (ContentKind.diff)
     DiffSides[] initialDiffSides = null, // per-file side texts (DVM5)
+    DiffSession initialDiffSession = DiffSession.init, // changed-file session (DVS4)
 ) @system
 {
     import std.stdio : stderr;
@@ -589,7 +591,7 @@ int runGui(
     applyTheme(vm.themeIdx); // resolves the theme before the first document
     vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
         source, events, preview, twoslash, docLang, initialDiff,
-        initialDiffSides);
+        initialDiffSides, initialDiffSession);
     // A markdown file opens in preview by default; Tab toggles to the raw
     // highlighted-source view. `HUE_GUI_PREVIEW=0/1` pins the initial mode
     // for deterministic golden captures.
@@ -666,7 +668,7 @@ int runGui(
 
         vm.widthCols = widthCols();
         vm.setDocument(name, summary, doc.source, doc.events, doc.preview,
-            doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides);
+            doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides, doc.diffSession);
         inp.query.clear();
         inp.mode = Mode.normal;
         window.title(("hue — " ~ name).toStringz);
@@ -1276,6 +1278,9 @@ int runGui(
                 foldArmed: foldSeq,
                 hasMatches: vm.matches.length > 0,
                 hasDocSet: set !is null && !set.empty && loadDoc !is null,
+                // Only while the diff view is actually showing: Tab drops to
+                // the raw patch text, where files are not a navigable unit.
+                hasDiffSession: vm.showPreview && !vm.diffSession.empty,
                 showPreview: vm.showPreview,
             );
 
@@ -1436,6 +1441,13 @@ int runGui(
                     vm.widthCols = -1;
                     relayout();
                     break;
+                // The diff session (`DVG1`/`DVG3`): the model owns the
+                // selection, the fold state and the scroll that follows them.
+                case Command.diffNextFile:    vm.diffMoveFile(1);  break;
+                case Command.diffPrevFile:    vm.diffMoveFile(-1); break;
+                case Command.diffToggleFile:  vm.diffToggleFile(); break;
+                case Command.diffCollapseAll: vm.diffSetAllFiles(true); break;
+                case Command.diffExpandAll:   vm.diffSetAllFiles(false); break;
                 case Command.toggleView:
                     toggleView();
                     break;

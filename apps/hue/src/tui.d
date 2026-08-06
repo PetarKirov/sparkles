@@ -14,6 +14,7 @@ version (Posix):
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : mix;
 import sparkles.diff.model : DiffDoc;
+import diff_session : DiffSession;
 import document : DiffSides;
 import sparkles.base.text.writers : writeInteger;
 
@@ -355,7 +356,8 @@ struct PreviewTui
         const(HighlightEvent)[] events_, PreviewModel model_,
         bool startPreview, TwoslashReturn tw_ = TwoslashReturn.init,
         string lang_ = null, DiffDoc diff_ = DiffDoc.init,
-        const(DiffSides)[] diffSides_ = null) @system
+        const(DiffSides)[] diffSides_ = null,
+        DiffSession diffSession_ = DiffSession.init) @system
     {
         hoverSel = -1;
         sel = Selection!long.cleared;
@@ -366,7 +368,7 @@ struct PreviewTui
         if (vm.current.labels.length == 0 && themes.length)
             vm.applyTheme(themeIdx); // first document: resolve the theme once
         vm.setDocument(title_, null, source_, events_, model_, tw_, lang_,
-            diff_, diffSides_);
+            diff_, diffSides_, diffSession_);
         if (!startPreview && vm.showPreview)
         {
             vm.showPreview = false;
@@ -618,8 +620,21 @@ struct PreviewTui
 
     // Applies `op` at the selection (else the top row), over the row's
     // source identity — the model owns the innermost-region policy (FLD5).
+    /// `DVG1`/`DVG3`: whether the diff session is the thing the fold and
+    /// bracket keys should act on — only while the diff view is showing, since
+    /// Tab drops to the raw patch text where a file is not a navigable unit.
+    bool diffNav() const @safe pure nothrow @nogc
+        => vm.showPreview && !vm.diffSession.empty;
+
     private void foldAt(FoldOp op) @system
     {
+        if (diffNav())
+        {
+            // A diff has no CST fold ranges; its fold unit is the file.
+            vm.diffToggleFile();
+            clampTop();
+            return;
+        }
         const rowIdx = sel.active ? sel.lo : top;
         if (rowIdx < 0 || rowIdx >= cast(long) mdRows.length
             || mdRows[cast(size_t) rowIdx].srcStart == size_t.max)
@@ -631,7 +646,19 @@ struct PreviewTui
     // `zR` / `zM`: open every fold, or fold every foldable region.
     private void setAllFolds(bool folded) @system
     {
-        vm.setAllFolds(folded);
+        if (diffNav())
+            vm.diffSetAllFiles(folded);
+        else
+            vm.setAllFolds(folded);
+        clampTop();
+    }
+
+    /// `DVG1`: `[`/`]` walk the session's changed files.
+    void moveDiffFile(int delta) @system
+    {
+        if (!diffNav())
+            return;
+        vm.diffMoveFile(delta);
         clampTop();
     }
 
@@ -726,6 +753,9 @@ struct PreviewTui
                     case 'n': jumpMatch(top + 1, true); break;
                     case 'N': jumpMatch(top - 1, false); break;
                     case 'y': copySelection(); break;
+                    // `DVG1`: over a diff session the brackets walk files.
+                    case '[': moveDiffFile(-1); break;
+                    case ']': moveDiffFile(+1); break;
                     // The vim fold family (FLD5): z arms; then a/z toggle,
                     // c close, o open, R open-all, M fold-all.
                     case 'z':

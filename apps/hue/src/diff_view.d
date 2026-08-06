@@ -19,6 +19,7 @@ module diff_view;
 
 import std.conv : text;
 
+import diff_session : DiffSession, FileChange, SessionEntry, statusGlyph;
 import document : DiffSides;
 import sparkles.diff.model : Degradation, DiffDoc, FileEntry, Hunk, Row,
     RowKind, Span;
@@ -30,6 +31,18 @@ struct DiffViewOptions
 {
     /// Render the dual old/new line-number gutter.
     bool lineNumbers = true;
+    /// `DVS4`/`DVG3`: the session entry for the file being rendered. Supplies
+    /// the header's status marker and add/remove counts, whether the file is
+    /// collapsed, and any per-file error (`DVS5`). Left at `init` by callers
+    /// that have no session, which renders the plain path-only header.
+    SessionEntry entry;
+    /// `DVG1`: this file is the session's selected one — the header marks it,
+    /// so a reviewer can see where the cursor is without a separate pane.
+    bool selected;
+    /// `DVG1`: the `Widget.key` stamped on this file's container, so a host
+    /// resolves its laid-out row through `keyedRects` ($(LREF diffFileKey)).
+    /// Zero leaves the container unkeyed.
+    size_t fileKey;
     /// Per-side syntax-styled lines (`DVM5` composition): index = 0-based
     /// source line; each line's spans concatenate to exactly the line text
     /// (the `highlightedFenceRenderer` contract). The view keeps the spans'
@@ -49,14 +62,25 @@ alias SideRenderer = TextSpan[][] delegate(const(char)[] lang, const(char)[] bod
 /// is re-highlighted and composed (`DVM5`); files with empty sides render
 /// plain.
 WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOptions.init,
-    const(DiffSides)[] sides = null, SideRenderer render = null) @safe
+    const(DiffSides)[] sides = null, SideRenderer render = null,
+    const DiffSession session = DiffSession.init) @safe
 {
     auto b = Builder();
     auto files = new uint[](0);
     foreach (fi; 0 .. doc.files.length)
     {
         auto fopt = opt;
-        if (render !is null && fi < sides.length
+        // Entries are parallel to `doc.files`, as are the side texts — one
+        // index names the model, the session and the sources alike.
+        if (fi < session.entries.length)
+        {
+            fopt.entry = session.entries[fi];
+            fopt.selected = !session.empty && fi == session.index;
+            fopt.fileKey = diffFileKey(fi);
+        }
+        // A collapsed file renders its header only, so re-highlighting its
+        // sides would be work nobody sees.
+        if (render !is null && !fopt.entry.collapsed && fi < sides.length
             && (sides[fi].oldText.length || sides[fi].newText.length))
         {
             fopt.oldStyled = render(sides[fi].lang, sides[fi].oldText);
@@ -76,7 +100,12 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
 {
     auto rows = new uint[](0);
 
-    rows ~= fileHeader(b, doc, file);
+    rows ~= fileHeader(b, doc, file, opt);
+
+    // `DVS5`: a file whose sources could not be read reports why, in band,
+    // and the rest of the session renders regardless.
+    if (opt.entry.error.length)
+        rows ~= noticeRow(b, opt.entry.error);
 
     if (file.degraded == Degradation.fileTooLarge)
         rows ~= noticeRow(b, "(file too large — diff not computed)");
@@ -88,21 +117,87 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
     else if (file.hunksCount == 0 && file.degraded == Degradation.none)
         rows ~= noticeRow(b, "(no changes)");
 
+    if (opt.entry.collapsed)
+    {
+        // `DVG3`: the header stays, the hunks go — with a count, so a folded
+        // file still says how much it is hiding.
+        if (file.hunksCount != 0)
+            rows ~= noticeRow(b, text("(", file.hunksCount,
+                file.hunksCount == 1 ? " hunk collapsed)" : " hunks collapsed)"));
+        return b.container(WidgetKind.column, rows, gap: 1);
+    }
+
     const gutterWidth = opt.lineNumbers ? gutterDigits(doc, file) : 0;
     foreach (ref hunk; doc.fileHunks(file))
         rows ~= viewHunk(b, doc, hunk, gutterWidth, opt);
 
-    return b.container(WidgetKind.column, rows, gap: 1);
+    return keyed(b, b.container(WidgetKind.column, rows, gap: 1), opt.fileKey);
 }
 
-private uint fileHeader(ref Builder b, const ref DiffDoc doc, in FileEntry file) @safe
+/// `DVG1`: the widget key a file's container carries, so a host can find the
+/// file's laid-out row through `keyedRects` instead of re-deriving the tree's
+/// shape. Zero (the `keyedRects` "unkeyed" value) means the caller supplied no
+/// session, so nothing is stamped.
+size_t diffFileKey(size_t fileIndex) @safe pure nothrow @nogc => fileIndex + 1;
+
+private uint keyed(ref Builder b, uint node, size_t key) @safe
+{
+    if (key != 0)
+        b.nodes[node].key = key;
+    return node;
+}
+
+/// The per-file header: a fold marker, the status letter, the display path,
+/// and the add/remove counts — everything a reviewer scanning a multi-file
+/// diff reads before deciding to look (`DVS4`).
+private uint fileHeader(ref Builder b, const ref DiffDoc doc, in FileEntry file,
+    DiffViewOptions opt) @safe
+{
+    const(char)[] title = opt.entry.display.length
+        ? opt.entry.display
+        : pathTitle(doc, file);
+
+    TextSpan[] spans;
+    if (opt.selected)
+        spans ~= TextSpan("▸ ", slot: Slot.chromeFocused);
+    if (opt.entry.display.length)
+    {
+        spans ~= TextSpan(opt.entry.collapsed ? "▸ " : "▾ ", slot: Slot.muted);
+        spans ~= TextSpan(text(statusGlyph(opt.entry.change), " "),
+            slot: statusSlot(opt.entry.change));
+    }
+    spans ~= TextSpan(title, slot: Slot.chromeAccent);
+    if (opt.entry.added || opt.entry.removed)
+    {
+        spans ~= TextSpan("  ");
+        spans ~= TextSpan(text("+", opt.entry.added), slot: Slot.diffAdded);
+        spans ~= TextSpan(" ");
+        spans ~= TextSpan(text("−", opt.entry.removed), slot: Slot.diffRemoved);
+    }
+    return b.add(Widget(kind: WidgetKind.rich, spans: spans));
+}
+
+/// The path-only title used when no session entry is available.
+private const(char)[] pathTitle(const ref DiffDoc doc, in FileEntry file) @safe
 {
     const oldPath = doc.pathText(file.oldPath);
     const newPath = doc.pathText(file.newPath);
-    const(char)[] title = oldPath == newPath || newPath.length == 0
+    return oldPath == newPath || newPath.length == 0
         ? oldPath
         : text(oldPath, " → ", newPath);
-    return b.add(Widget(kind: WidgetKind.text, text: title, slot: Slot.chromeAccent));
+}
+
+/// The status letter's color: added/removed reuse the row tints (as
+/// foregrounds), so one vocabulary covers the header and the rows.
+private Slot statusSlot(FileChange c) @safe pure nothrow @nogc
+{
+    final switch (c) with (FileChange)
+    {
+        case added:    return Slot.diffAdded;
+        case removed:  return Slot.diffRemoved;
+        case modified:
+        case renamed:  return Slot.chromeAccent;
+    }
 }
 
 private uint noticeRow(ref Builder b, string message) @safe
@@ -354,7 +449,10 @@ version (unittest)
     assert(tree.rootNode.children.length == 1);
     const fileCol = tree.nodes[tree.rootNode.children[0]];
     assert(fileCol.children.length == 2);
-    assert(tree.nodes[fileCol.children[0]].text == "x.txt");
+    // Without a session the header is the path alone (one span, no status
+    // marker and no counts) — the shape every static caller still gets.
+    const fileHead = tree.nodes[fileCol.children[0]];
+    assert(fileHead.spans.length == 1 && fileHead.spans[0].text == "x.txt");
 
     const hunkCol = tree.nodes[fileCol.children[1]];
     assert(hunkCol.kind == WidgetKind.column);
@@ -424,4 +522,64 @@ version (unittest)
     auto btree = viewDiffDoc(bin);
     const binCol = btree.nodes[btree.rootNode.children[0]];
     assert(btree.nodes[binCol.children[1]].text == "(binary files differ)");
+}
+
+@("diff_view.viewDiffDoc.sessionHeaderStatusAndCounts")
+@safe unittest
+{
+    import diff_session : buildDiffSession;
+    import sparkles.diff : parsePatch;
+
+    enum patch =
+        "--- a/keep.d\n+++ b/keep.d\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three\n" ~
+        "--- /dev/null\n+++ b/new.d\n@@ -0,0 +1 @@\n+alpha\n";
+    const doc = parsePatch(patch).value;
+    auto session = buildDiffSession(doc);
+
+    auto tree = viewDiffDoc(doc, DiffViewOptions.init, null, null, session);
+    const first = tree.nodes[tree.rootNode.children[0]];
+    const header = tree.nodes[first.children[0]];
+
+    // Selected file, expanded, modified, with its counts — the whole header
+    // vocabulary in one row.
+    assert(header.spans[0].text == "▸ ", "the selected file is marked");
+    assert(header.spans[1].text == "▾ ", "an expanded file points down");
+    assert(header.spans[2].text == "M ");
+    assert(header.spans[3].text == "keep.d");
+    assert(header.spans[5].text == "+1" && header.spans[7].text == "−1");
+
+    // The added file is neither selected nor 'M'.
+    const second = tree.nodes[tree.rootNode.children[1]];
+    const addedHeader = tree.nodes[second.children[0]];
+    assert(addedHeader.spans[0].text == "▾ ", "not selected: no cursor mark");
+    assert(addedHeader.spans[1].text == "A ");
+    assert(addedHeader.spans[2].text == "new.d");
+
+    // Each file container carries its key, so a host finds its row without
+    // knowing the tree's shape.
+    assert(first.key == diffFileKey(0) && second.key == diffFileKey(1));
+}
+
+@("diff_view.viewDiffDoc.collapsedFileAndPerFileError")
+@safe unittest
+{
+    import diff_session : buildDiffSession;
+    import sparkles.diff : parsePatch;
+
+    enum patch = "--- a/x.d\n+++ b/x.d\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n";
+    const doc = parsePatch(patch).value;
+    auto session = buildDiffSession(doc);
+    session.entries[0].collapsed = true;
+    session.entries[0].error = "(old side unavailable)";
+
+    auto tree = viewDiffDoc(doc, DiffViewOptions.init, null, null, session);
+    const file = tree.nodes[tree.rootNode.children[0]];
+    const header = tree.nodes[file.children[0]];
+    assert(header.spans[1].text == "▸ ", "a collapsed file points right");
+
+    // `DVS5`: the error is in band, under the header, and the rest renders.
+    assert(tree.nodes[file.children[1]].text == "(old side unavailable)");
+    // `DVG3`: the hunks are gone, replaced by a count of what is hidden.
+    assert(tree.nodes[file.children[2]].text == "(1 hunk collapsed)");
+    assert(file.children.length == 3, "no hunk rows survive a collapse");
 }
