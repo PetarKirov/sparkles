@@ -230,16 +230,22 @@ documents, and a markdown renderer showing one of a code group's fences. That
 is the test of whether this belongs in the toolkit at all.
 
 `hitBase` is the first id; tab `i` gets `hitBase + i`, so an activation maps
-back with `id - hitBase`.
+back with `id - hitBase`. Pass `ids` instead when the caller has its own
+identity scheme — a source-anchored one, say — and the strip uses those
+verbatim.
 */
 uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
     size_t hitBase, in PressState press = PressState.init,
-    bool fitLabels = true)
+    bool fitLabels = true, scope const(size_t)[] ids = null)
 {
     auto segs = new uint[](labels.length + 1);
     foreach (i, label; labels)
     {
-        const id = hitBase + i;
+        // Ids default to `hitBase + i`, but a caller with its own identity
+        // scheme supplies them: a markdown code group anchors each tab to
+        // its fence's source offset, so two groups on one page cannot mint
+        // the same id and a re-parse cannot renumber them.
+        const id = i < ids.length ? ids[i] : hitBase + i;
         const isActive = i == active;
         const armed = press.isArmed(id);
         const caption = b.add(Widget(
