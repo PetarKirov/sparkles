@@ -60,6 +60,23 @@ struct InputCapabilities
     /// The highest $(LREF InteractionTier) this target serves.
     InteractionTier tier = InteractionTier.interactive;
 
+    /**
+    The target reports key $(B releases), not only presses (`INP16`).
+
+    A terminal cannot: its input is a byte stream of what was typed, with no
+    key-up to decode. So a held-key interaction — "pan while space is down" —
+    works on a window and silently does nothing in a terminal unless the
+    consumer asks this first and offers another route.
+
+    $(B Defaults to `false`), unlike the other axes, which default to a mouse.
+    A release is not a refinement of a press but an $(I extra) event, and a
+    consumer that switches on the key alone would read one as a second press.
+    Undeclared therefore means "presses only", which is what every producer
+    reported before this existed; a producer opts in by declaring it and
+    synthesizing them.
+    */
+    bool keyRelease = false;
+
     // The module-level block above does not reach inside an aggregate.
 @safe pure nothrow @nogc:
 
@@ -126,4 +143,15 @@ unittest
     // behaves as it did rather than claiming less than it offers.
     assert(mousePointer == InputCapabilities.init);
     assert(mousePointer.hover && mousePointer.precisePointer);
+
+    // Key releases are the one axis that defaults to absent: they are an extra
+    // event, not a refinement of an existing one, so claiming them by default
+    // would change what every existing consumer sees.
+    assert(!mousePointer.keyRelease);
+    assert(!cellPointer.keyRelease, "a terminal has no key-up to decode");
+    assert(!touchPointer.keyRelease && !staticPointer.keyRelease);
+
+    // A window target opts in by declaring it.
+    enum windowWithReleases = InputCapabilities(keyRelease: true);
+    assert(windowWithReleases.keyRelease);
 }

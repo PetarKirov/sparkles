@@ -199,7 +199,7 @@ struct RaylibEvents
         ];
         foreach (rk; repeatable)
             if (IsKeyPressedRepeat(rk))
-                sink(keyEvent(namedKey(rk), mods));
+                sink(keyEvent(namedKey(rk), mods, KeyAction.repeat));
     }
 
     /**
@@ -219,7 +219,12 @@ struct RaylibEvents
             alt: IsKeyDown(KeyboardKey.KEY_LEFT_ALT)
                 || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT),
             shift: IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
-                || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT));
+                || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT),
+            // Command on macOS, Windows/Super elsewhere. A terminal emulator's
+            // key encoder reports it, and it was simply missing from the
+            // vocabulary until `INP15`.
+            super_: IsKeyDown(KeyboardKey.KEY_LEFT_SUPER)
+                || IsKeyDown(KeyboardKey.KEY_RIGHT_SUPER));
 
     // The recogniser emits positions as a placeholder; the adapter stamps the
     // cell-space anchor and the live modifier state on the way out.

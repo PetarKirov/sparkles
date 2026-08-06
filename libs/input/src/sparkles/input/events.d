@@ -48,21 +48,92 @@ enum Key : ubyte
 }
 
 /// Keyboard modifiers carried on a key or pointer event.
+///
+/// `super_` is the platform's Command / Windows / Super key. It is last so that
+/// every existing positional construction keeps its meaning.
 struct Mods
 {
     bool ctrl;
     bool alt;
     bool shift;
+    bool super_;
 }
 
-/// A key press: a named key, or a printable code point (`key == Key.char_`,
-/// code point in `ch`) — which is also how text input arrives.
+/**
+What a key did (`INP15`).
+
+A terminal cannot report `release` at all, so a consumer that needs the level of
+a held key must ask `InputCapabilities.keyRelease` and offer another route where
+it is absent — the `TGT5` rule, applied to keys. `press` is the default, so a
+producer that has not thought about this reports what it always did.
+*/
+enum KeyAction : ubyte
+{
+    press,   /// the key went down
+    repeat,  /// the platform's auto-repeat fired while it is held
+    release, /// the key came up
+}
+
+/**
+A key event: a named key, or a printable code point (`key == Key.char_`, code
+point in `ch`) — which is also how text input arrives.
+
+`unshifted` and `text` exist for the one consumer that cannot work without
+them: a terminal emulator's key encoder, which reports the layout-independent
+key that was struck $(I and) the characters it produced, together. Delivering
+the text as a separate event cannot express that pairing — which keystroke
+produced which text — so it rides here.
+
+The three fields are appended, so every existing construction and helper keeps
+its meaning; `KeyAction.press` and a zero `unshifted` describe what producers
+reported before.
+*/
 struct KeyEvent
 {
     Key key;
     dchar ch;
     Mods mods;
+    KeyAction action;   /// press (the default), auto-repeat, or release
+    /**
+    The code point this key produces with no modifiers applied — `'a'` for the
+    `A` key whatever the shift state, `0` where the key has no such spelling
+    (arrows, function keys). Layout-independent identity, for a consumer that
+    must name the physical key rather than the character.
+    */
+    /// `0` when the key has no such spelling. Explicit, because `dchar.init` is
+    /// `0xFFFF` — which is why the constructors above pass `ch` as `0` by hand.
+    dchar unshifted = 0;
+    /**
+    The UTF-8 this keystroke produced, or empty.
+
+    $(B Stored inline,) not borrowed. A slice would cost the whole vocabulary
+    its `INP4` guarantee — an event you can record now and assert on later
+    cannot hold a pointer into a producer's per-frame buffer — and it makes the
+    sum type's assignment `@system` under `dip1000`. One keystroke yields one
+    code point (four bytes at most); the extra room covers a dead-key or IME
+    composition that resolves to a couple. Text beyond that is not a keystroke's
+    output and belongs in a composition event of its own.
+    */
+    private char[maxKeyText] _text = 0;
+    private ubyte _textLength;
+
+    /// The produced text, as a slice of this event's own storage.
+    const(char)[] text() const return @safe pure nothrow @nogc
+        => _text[0 .. _textLength];
+
+    /// Sets the produced text, truncating beyond `maxKeyText`. Unused bytes are
+    /// zeroed, so two events carrying the same text compare equal.
+    void text(scope const(char)[] t) @safe pure nothrow @nogc
+    {
+        _text[] = 0;
+        const n = t.length > maxKeyText ? maxKeyText : t.length;
+        _text[0 .. n] = t[0 .. n];
+        _textLength = cast(ubyte) n;
+    }
 }
+
+/// The most UTF-8 a single `KeyEvent` carries — see `KeyEvent.text`.
+enum size_t maxKeyText = 8;
 
 /// The button of a $(LREF PointerEvent) (`none` for pure motion).
 enum PointerButton : ubyte
@@ -201,12 +272,12 @@ alias Event = SumType!(
     GestureEvent, EndOfInput);
 
 /// A named-key event.
-Event keyEvent(Key k, Mods m = Mods()) pure nothrow @nogc
-    => Event(KeyEvent(k, 0, m));
+Event keyEvent(Key k, Mods m = Mods(), KeyAction a = KeyAction.press) pure nothrow @nogc
+    => Event(KeyEvent(k, 0, m, a));
 
 /// A printable code-point event (also text input).
-Event charEvent(dchar c, Mods m = Mods()) pure nothrow @nogc
-    => Event(KeyEvent(Key.char_, c, m));
+Event charEvent(dchar c, Mods m = Mods(), KeyAction a = KeyAction.press) pure nothrow @nogc
+    => Event(KeyEvent(Key.char_, c, m, a));
 
 /// `true` iff the stream ended — the one test every event-loop shell makes.
 bool isEndOfInput(in Event e) pure nothrow @nogc
@@ -227,7 +298,7 @@ hue's, and a different app would nest differently. `q` is deliberately not
 here: "q quits" is a keybinding, not a platform spelling of dismiss.
 */
 bool isDismiss(in KeyEvent k) pure nothrow @nogc
-    => k.key == Key.escape || k.key == Key.back;
+    => k.action != KeyAction.release && (k.key == Key.escape || k.key == Key.back);
 
 @("input.events.isDismiss")
 @safe pure nothrow @nogc unittest
@@ -236,11 +307,82 @@ bool isDismiss(in KeyEvent k) pure nothrow @nogc
     assert(isDismiss(KeyEvent(Key.back)));
     assert(!isDismiss(KeyEvent(Key.menu)));
     assert(!isDismiss(KeyEvent(Key.char_, 'q')));
+
+    // A release is not a second dismissal. Once a target reports releases, an
+    // app that dismissed on the press would otherwise dismiss twice per stroke
+    // — closing a popup and then quitting.
+    auto up = KeyEvent(Key.escape);
+    up.action = KeyAction.release;
+    assert(!isDismiss(up));
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+@("input.events.keyLevels")
+@safe pure nothrow @nogc
+unittest
+{
+    // Appended fields, so every existing construction still means what it did:
+    // a bare key event is a press that produced no text.
+    const plain = KeyEvent(Key.enter);
+    assert(plain.action == KeyAction.press);
+    assert(plain.unshifted == 0 && plain.text.length == 0);
+    assert(!plain.mods.super_);
+
+    // The three actions are distinct values on the same key.
+    auto down = KeyEvent(Key.char_, 'a');
+    auto rep = down;
+    rep.action = KeyAction.repeat;
+    auto up = down;
+    up.action = KeyAction.release;
+    assert(down != rep && rep != up && down != up);
+}
+
+@("input.events.keyTextIsInlineAndRegular")
+@safe pure nothrow @nogc
+unittest
+{
+    // The text is stored, not borrowed: an event recorded now can be asserted
+    // on later, which a slice into a producer's frame buffer could not promise.
+    KeyEvent a;
+    a.text = "é"; // two UTF-8 bytes
+    assert(a.text == "é" && a.text.length == 2);
+
+    // Equality sees the text, and unused bytes are zeroed so two events built
+    // from the same string compare equal whatever they held before.
+    KeyEvent b;
+    b.text = "longer";
+    b.text = "é";
+    assert(a == b);
+
+    b.text = "e";
+    assert(a != b);
+
+    // Beyond the cap the text is truncated rather than overrunning: one
+    // keystroke does not produce a paragraph.
+    KeyEvent c;
+    c.text = "0123456789";
+    assert(c.text.length == maxKeyText);
+    assert(c.text == "01234567");
+}
+
+@("input.events.superModifier")
+@safe pure nothrow @nogc
+unittest
+{
+    // `super_` is last, so positional construction of the older three is
+    // unchanged — and a modifier set without it still compares equal to one
+    // built the old way.
+    assert(Mods(true, false, true) == Mods(ctrl: true, shift: true));
+    assert(Mods(ctrl: true) != Mods(ctrl: true, super_: true));
+
+    // It rides on pointer events too, which is where a modifier-drag reads it.
+    const e = PointerEvent(action: PointerAction.drag, button: PointerButton.left,
+        pos: Point(2, 3), mods: Mods(super_: true));
+    assert(e.mods.super_ && !e.mods.ctrl);
+}
 
 @("input.events.regularValues")
 @safe pure nothrow unittest
