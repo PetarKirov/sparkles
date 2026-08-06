@@ -142,7 +142,9 @@ for results-file naming.
 
 Both configurations use context-checking assertions and the toolchain's static
 default libraries; foreign shims may still introduce their own shared runtime
-dependencies.
+dependencies. The halt-mode cross-module-inlining experiment is
+[concluded and recorded](../../../../docs/specs/wired/bench-baseline.md) — it
+produced identical instruction counts, so there is nothing to re-run.
 
 ## Manifest notes
 

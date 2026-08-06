@@ -127,6 +127,33 @@ whose `_d_assert_fail!(T)` instances go unemitted;
 bench defaults to `library-inline`; `--override-config sparkles:wired/library`
 and `.../library-singleobj` reproduce the matrix above.
 
+### Halt-mode CMI probe (2026-08-05) — concluded, no effect
+
+The runner's context-checking build fails when bare CMI propagates into mir-ion,
+because context-assert template instances are not emitted. Switching the whole
+field to `-checkaction=halt` does make it link: with halt-mode assertions,
+stock `sparkles:wired/library` plus bare `-enable-cross-module-inlining`
+builds and runs the complete field, mir-ion included. (`-link-internally` is
+not accepted by LDC 1.41.)
+
+**It buys nothing.** Re-measured against the canonical build, the halt+CMI
+binary retires the same instruction counts on every corpus — canada 25.95 M,
+citm 9.55 M, mesh 10.01 M — because wired's hot path is templates, and a
+template is code-generated in whichever translation unit instantiates it,
+CMI or not. That is the same property the
+[inlining ceiling](#the-inlining-ceiling-wired-inline) section relies on when
+it collects its −5.2 % by giving the float kernels empty template parameter
+lists. The remaining wall-clock difference was the larger engine-field cache
+regime, not codegen.
+
+The probe is recorded here rather than carried as a configuration of its own:
+it would duplicate the foreign-engine dependency block, and the `--linker=lld`
+it needs bypasses the nixpkgs cc-wrapper's rpath injection, leaving the binary
+unable to resolve `libstdc++.so.6` at load time. The canonical benchmark mode
+is the context-checking `library-inline` recipe. To reconstruct the probe, add
+`-checkaction=halt` and `-enable-cross-module-inlining` to a copy of
+`unittest-foreign` and leave the linker alone.
+
 Independently of the codegen matrix, the runtime benchmark configs no longer
 force shared Phobos, Gold, or `--export-dynamic`; default libraries are static
 unless a foreign shim brings a shared runtime dependency. That change is
