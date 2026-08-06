@@ -776,6 +776,19 @@ export default withMermaid(
               ],
             },
             {
+              text: 'UI App',
+              collapsed: false,
+              items: [
+                { text: 'Overview', link: '/specs/ui-app/' },
+                {
+                  text: 'Feature Requirements',
+                  link: '/specs/ui-app/feature-requirements',
+                },
+                { text: 'Delivery Plan', link: '/specs/ui-app/PLAN' },
+                { text: 'Open issues', link: '/specs/ui-app/open-issues' },
+              ],
+            },
+            {
               text: 'Versions',
               collapsed: false,
               items: [
