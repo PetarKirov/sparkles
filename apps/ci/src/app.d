@@ -121,6 +121,7 @@ import docs_sidebar :
     defaultVitePressConfig;
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import example_manifest : exampleRunsOnHost;
+import output_lines : fitOutputLines;
 
 // === UI sizing ===
 
@@ -2853,17 +2854,17 @@ private string formatExampleFileHeader(string exampleFile, string progress, stri
     return styledText(i"{dim $(progress)} {cyan $(exampleFile.baseName)} {dim › dub $(action) --single $(exampleFile)}");
 }
 
-/// Formats output lines for display, truncating if necessary.
+/// Formats output lines for display, truncating if necessary. The truncation
+/// policy — and the reason it keeps the tail — is `output_lines.fitOutputLines`;
+/// this adds only the styling, which that module deliberately does not know about.
 private string[] formatOutputLines(string[] lines, size_t maxLines = 8)
 in (maxLines > 1, "maxLines must be at least 2 for truncation indicator")
 {
     if (lines.length == 0)
         return [styledText(i"{dim (no output)}")];
 
-    if (lines.length > maxLines)
-        return lines[0 .. maxLines - 1] ~ [styledText(i"{dim ...}")];
-
-    return lines;
+    return fitOutputLines(lines, maxLines,
+        (size_t omitted) => styledText(i"{dim … $(omitted) more lines …}"));
 }
 
 /// Displays the result box for an example run.
