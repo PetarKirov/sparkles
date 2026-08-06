@@ -22,17 +22,44 @@ import sparkles.base.term_color : RgbColor;
 Builds the display list for `tree` (already positioned into `frames`), resolving
 every slot against `pal` and the page `pageFg`/`pageBg`. Containers paint their
 background (when `paintBackground`) before recursing, so children draw on top.
+
+Allocates the returned array. For a per-frame rebuild that must not, see
+$(LREF buildDisplayListInto).
 */
 DrawOp[] buildDisplayList(in WidgetTree tree, in Frame[] frames, in Palette pal,
     in RgbColor pageFg, in RgbColor pageBg)
 {
     DrawOp[] ops;
-    emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), ops);
+    buildDisplayListInto(tree, frames, pal, pageFg, pageBg, ops);
     return ops;
 }
 
-private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pal,
-    in RgbColor pageFg, in RgbColor pageBg, in Rect clip, ref DrawOp[] ops)
+/**
+Builds the display list into a caller-supplied sink — the `@nogc` path
+([`NFR2`](../../../../docs/specs/ui/feature-requirements.md)).
+
+`Sink` is anything that accepts `~= DrawOp`, so a
+$(REF SmallBuffer, sparkles,base,smallbuffer) the caller reuses across frames
+works, and a plain `DrawOp[]` still works. Attributes are $(B inferred) from the
+sink: with a `SmallBuffer` this whole path is `@nogc`, which a function
+returning an array can never be.
+
+$(B The operations are borrowed from `ops`.) The sink owns them, and a `DrawOp`
+additionally borrows its `text` from the widget tree — so both the sink and the
+tree must outlive every painter that walks the result. A caller that stores a
+display list past the scope that built it therefore stores the $(I sink), not a
+slice of it. This is the ownership question
+[`UI-O4`](../../../../docs/specs/ui/open-issues.md#ui-o4) records.
+*/
+void buildDisplayListInto(Sink)(in WidgetTree tree, in Frame[] frames,
+    in Palette pal, in RgbColor pageFg, in RgbColor pageBg, ref Sink ops)
+if (__traits(compiles, (ref Sink s) { DrawOp op; s ~= op; }))
+{
+    emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), ops);
+}
+
+private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pal,
+    in RgbColor pageFg, in RgbColor pageBg, in Rect clip, ref Sink ops)
 {
     const node = tree.nodes[idx];
     const rect = frames[idx].rect;
@@ -395,4 +422,76 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
     assert(!ops[0].visual.hasBg); // border-only, no fill
     assert(ops[0].visual.border.any && ops[0].visual.border.style == BorderStyle.dotted);
     assert(ops[0].visual.border.width == Insets(0, 0, 1, 0));
+}
+
+@("ui.display_list.buildIntoASinkMatchesTheArray")
+@safe
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.ui.geometry : Insets;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette, Slot;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    const t = b.add(Widget(kind: WidgetKind.text, text: "hi", slot: Slot.code));
+    const box = b.container(WidgetKind.popup, [t], slot: Slot.surface,
+        padding: Insets.all(1), paintBackground: true);
+    auto tree = b.finish(box);
+
+    const pal = defaultTwoslashPalette();
+    const fg = RgbColor(255, 255, 255), bg = RgbColor(0, 0, 0);
+    auto frames = layout(tree);
+
+    // The sink path is the same walk: op for op, the two agree.
+    auto viaArray = buildDisplayList(tree, frames, pal, fg, bg);
+
+    SmallBuffer!(DrawOp, 64) viaSink;
+    buildDisplayListInto(tree, frames, pal, fg, bg, viaSink);
+
+    assert(viaSink.length == viaArray.length);
+    foreach (i; 0 .. viaArray.length)
+    {
+        assert(viaSink[i].kind == viaArray[i].kind);
+        assert(viaSink[i].rect == viaArray[i].rect);
+        assert(viaSink[i].visual == viaArray[i].visual);
+        assert(viaSink[i].text == viaArray[i].text);
+    }
+
+    // A reused sink is the point: cleared and refilled, it yields the same
+    // frame again without allocating a second array.
+    viaSink.length = 0;
+    buildDisplayListInto(tree, frames, pal, fg, bg, viaSink);
+    assert(viaSink.length == viaArray.length);
+}
+
+@("ui.display_list.sinkPathIsNogc")
+@safe
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    // The requirement `NFR2` actually states, proved at compile time: with a
+    // `SmallBuffer` sink the whole walk allocates nothing. A function that
+    // returns an array can never satisfy this, which is why the sink form
+    // exists rather than a flag on the old one.
+    static assert(__traits(compiles, () @nogc {
+        WidgetTree tree;
+        Frame[] frames;
+        Palette pal;
+        SmallBuffer!(DrawOp, 32) ops;
+        buildDisplayListInto(tree, frames, pal,
+            RgbColor(0, 0, 0), RgbColor(0, 0, 0), ops);
+    }), "the SmallBuffer sink path must be @nogc");
+
+    // And it stays `@safe` — the seam is a sink, not a pointer.
+    static assert(__traits(compiles, () @safe {
+        WidgetTree tree;
+        Frame[] frames;
+        Palette pal;
+        SmallBuffer!(DrawOp, 32) ops;
+        buildDisplayListInto(tree, frames, pal,
+            RgbColor(0, 0, 0), RgbColor(0, 0, 0), ops);
+    }));
 }
