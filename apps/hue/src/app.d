@@ -33,6 +33,7 @@ import sparkles.base.term_caps : isTerminal, StdStream;
 
 import ansi_model : BackgroundMode, backgroundOptions;
 import document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
+import sparkles.diff : WhitespaceMode;
 import source_set : SourceSet;
 import table_select : TableCopyFormat;
 
@@ -91,6 +92,9 @@ struct CliParams
 
     @CliOption("staged", "Diff the index (staged changes) against HEAD or the given revision; implies --diff.")
     bool staged;
+
+    @CliOption("diff-ignore-whitespace", "How much whitespace difference counts as the same line: exact (default), trailing (git --ignore-space-at-eol), change (git -b), all (git -w). An ignored difference is never a change, not a change that is hidden.")
+    string diffIgnoreWhitespace = "exact";
 
     @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
     string font = defaultGuiFont;
@@ -306,6 +310,23 @@ version (Android)
 /// bundle via `$SPARKLES_TS_GRAMMAR_PATH`. Android: the soname layout —
 /// parsers are APK native libraries the dynamic linker resolves, queries come
 /// from the extracted assets.
+/// `DVN1`: the `--diff-ignore-whitespace` spelling as a mode. An unknown
+/// spelling warns and falls back to `exact` rather than failing the run — the
+/// totality law: a bad flag must not cost the reviewer their diff.
+private WhitespaceMode parseWhitespaceMode(string spelling) @safe
+{
+    switch (spelling)
+    {
+        case "exact":    return WhitespaceMode.exact;
+        case "trailing": return WhitespaceMode.trailing;
+        case "change":   return WhitespaceMode.change;
+        case "all":      return WhitespaceMode.all;
+        default:
+            warning(i"unknown --diff-ignore-whitespace '$(spelling)'; using exact");
+            return WhitespaceMode.exact;
+    }
+}
+
 private GrammarRegistry defaultRegistry() @safe
 {
     version (Android)
@@ -471,7 +492,7 @@ int main(string[] args)
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
     auto pipeline = DocumentPipeline(&registry, &cache, cli.markdown, cli.raw,
-        cli.patch);
+        cli.patch, parseWhitespaceMode(cli.diffIgnoreWhitespace));
 
     const backend = pickBackend(cli);
 

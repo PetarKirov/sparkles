@@ -124,6 +124,10 @@ struct ViewerModel
     /// because they are view state — the `Document` supplies the initial value
     /// and this model is what `DVG1`/`DVG3` mutate.
     DiffSession diffSession;
+    /// `DVN2`: show the hunks classified formatting-only. Off by default —
+    /// they fold to a dimmed badge — and a keystroke away, which is the
+    /// demote-never-hide contract.
+    bool showFormattingHunks;
     /// `DVT1`: per-file type overlays, parallel to `diff.files`. The host
     /// owns the analyzer sessions and attaches payloads here as they land;
     /// an unattached (or refused) entry simply renders plain rows.
@@ -267,11 +271,13 @@ struct ViewerModel
 
             // DVM5: per-file re-highlight of the known sides; the view
             // layers the diff tints over the syntax colors.
+            DiffViewOptions dopt;
+            dopt.foldFormattingOnly = !showFormattingHunks;
             tree = cache !is null
-                ? viewDiffDoc(diff, DiffViewOptions.init, diffSides,
+                ? viewDiffDoc(diff, dopt, diffSides,
                     highlightedFenceRenderer(cache, &current, pageFg),
                     diffSession, diffTypes)
-                : viewDiffDoc(diff, DiffViewOptions.init, null, null,
+                : viewDiffDoc(diff, dopt, null, null,
                     diffSession, diffTypes);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
@@ -720,6 +726,20 @@ struct ViewerModel
                 break;
             }
         }
+        return true;
+    }
+
+    /// `DVN2`: shows or hides the formatting-only hunks, keeping the current
+    /// file under the cursor so the view does not jump when rows appear.
+    bool diffToggleFormatting()
+    {
+        if (diffSession.empty)
+            return false;
+        showFormattingHunks = !showFormattingHunks;
+        rebuild();
+        const row = diffFileRow(diffSession.index);
+        if (row >= 0)
+            top = row;
         return true;
     }
 

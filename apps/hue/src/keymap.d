@@ -124,6 +124,7 @@ enum Command : ubyte
     diffNextHunk, diffPrevHunk,        /// `}` / `{`
     diffToggleFile,
     diffCollapseAll, diffExpandAll,
+    diffToggleFormatting,              /// `zn` — the formatting-only hunks
 }
 
 /// A resolved command plus its argument (only `foldLevel` uses one: the
@@ -206,6 +207,9 @@ KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
                     return KeyCommand(Command.diffToggleFile);
                 case 'r': return KeyCommand(Command.diffExpandAll);
                 case 'm': return KeyCommand(Command.diffCollapseAll);
+                // `n` for noise: the formatting-only hunks (`DVN2`) are a
+                // fold like any other, so they live in the same family.
+                case 'n': return KeyCommand(Command.diffToggleFormatting);
                 default: return KeyCommand(Command.none);
             }
         if (k.key == Key.char_)
@@ -537,6 +541,10 @@ unittest
     assert(ch('c', armed).cmd == Command.diffToggleFile);
     assert(ch('m', armed).cmd == Command.diffCollapseAll);
     assert(ch('r', armed).cmd == Command.diffExpandAll);
+    // `DVN2`'s noise fold joins the same family.
+    assert(ch('n', armed).cmd == Command.diffToggleFormatting);
+    assert(ch('n', KeyContext(foldArmed: true)).cmd == Command.none,
+        "no session, no noise to fold");
     // Levels are meaningless over a flat file list, so they stay unbound.
     assert(ch('3', armed).cmd == Command.none);
     // Without a session the same keys keep their syntax-fold meanings.

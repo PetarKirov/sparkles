@@ -46,6 +46,10 @@ struct DiffViewOptions
     /// resolves its laid-out row through `keyedRects` ($(LREF diffFileKey)).
     /// Zero leaves the container unkeyed.
     size_t fileKey;
+    /// `DVN2`: fold hunks classified formatting-only into a one-line dimmed
+    /// badge. Demote, never hide — the badge says how many rows it stands for
+    /// and the reviewer can always expand.
+    bool foldFormattingOnly = true;
     /// `DVT1`: the per-side type payloads for this file. Each attaches only
     /// when its `code` is byte-identical to that side's diff text — see
     /// $(LREF anchors) — so a decoration can never land on the wrong token.
@@ -198,8 +202,13 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
     // ordering over the whole session rather than per file (`DVG1`).
     uint hi = file.hunksStart;
     foreach (ref hunk; doc.fileHunks(file))
-        rows ~= keyed(b, viewHunk(b, doc, hunk, gutterWidth, opt),
-            opt.fileKey ? diffHunkKey(hi++) : 0);
+    {
+        const key = opt.fileKey ? diffHunkKey(hi) : 0;
+        ++hi;
+        rows ~= keyed(b, hunk.formattingOnly && opt.foldFormattingOnly
+            ? foldedHunk(b, doc, hunk)
+            : viewHunk(b, doc, hunk, gutterWidth, opt), key);
+    }
 
     return keyed(b, b.container(WidgetKind.column, rows, gap: 1), opt.fileKey);
 }
@@ -280,6 +289,23 @@ private Slot statusSlot(FileChange c) @safe pure nothrow @nogc
         case modified:
         case renamed:  return Slot.chromeAccent;
     }
+}
+
+/// `DVN2`: a formatting-only hunk, folded to one dimmed line that says what
+/// it is standing in for. The count is rows, not hunks, because that is what
+/// the reviewer is deciding whether to read.
+private uint foldedHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk) @safe
+{
+    uint changed;
+    foreach (ref row; doc.hunkRows(hunk))
+        if (row.kind != RowKind.context)
+            ++changed;
+    return b.add(Widget(kind: WidgetKind.rich, spans: [
+        TextSpan(text("@@ -", hunk.oldStart, " +", hunk.newStart, " @@  "),
+            slot: Slot.muted),
+        TextSpan(text("formatting only — ", changed,
+            changed == 1 ? " row hidden" : " rows hidden"), slot: Slot.muted),
+    ]));
 }
 
 private uint noticeRow(ref Builder b, string message) @safe
@@ -743,4 +769,49 @@ version (unittest)
         if (n.slot == Slot.hoverUnderline)
             ++underlines;
     assert(underlines == 1, "exactly the one anchored span decorates");
+}
+
+@("diff_view.formattingOnly.foldsToABadgeAndExpandsBack")
+@safe unittest
+{
+    import sparkles.diff : classifyHunks, DiffOptions;
+
+    // A hunk whose every changed row is re-padding: the reviewer should get
+    // one dimmed line, not eight rows of noise.
+    enum before = "| a | b |\n| c | d |\n";
+    enum after = "| a   | b |\n| c   | d |\n";
+    auto doc = diffText(before, after, "t.md", "t.md");
+    classifyHunks(doc);
+    assert(doc.hunks[0].formattingOnly, "precondition: the engine classified it");
+
+    DiffViewOptions opt; // foldFormattingOnly defaults on
+    auto b = Builder();
+    auto tree = b.finish(viewDiffInto(b, doc, doc.files[0], opt));
+
+    // The folded hunk is one rich row saying what it stands for — and the
+    // count is rows, because that is what the reviewer is deciding to read.
+    bool sawBadge;
+    foreach (ref n; tree.nodes)
+        foreach (sp; n.spans)
+            if (sp.text.length >= 16 && sp.text[0 .. 16] == "formatting only ")
+            {
+                sawBadge = true;
+                assert(sp.slot == Slot.muted, "demoted, not shouted");
+            }
+    assert(sawBadge, "a formatting-only hunk folds to its badge");
+
+    // Demote, never hide: expanding shows every row again.
+    DiffViewOptions shown;
+    shown.foldFormattingOnly = false;
+    auto b2 = Builder();
+    auto full = b2.finish(viewDiffInto(b2, doc, doc.files[0], shown));
+    assert(full.nodes.length > tree.nodes.length,
+        "the rows come back when asked for");
+
+    size_t tinted;
+    foreach (ref n; full.nodes)
+        foreach (sp; n.spans)
+            if (sp.slot == Slot.diffAdded || sp.slot == Slot.diffRemoved)
+                ++tinted;
+    assert(tinted > 0, "and they render as ordinary diff rows");
 }
