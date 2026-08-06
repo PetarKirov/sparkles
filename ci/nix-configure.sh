@@ -15,6 +15,8 @@
 #   NIX_GITHUB_TOKEN          access-token for github.com.
 #   NIX_GITLAB_TOKEN          access-token for NIX_GITLAB_DOMAIN.
 #   NIX_GITLAB_DOMAIN         Defaults to gitlab.com.
+#   NIX_ACCEPT_FLAKE_CONFIG   Trust the flake's own `nixConfig` block. See the
+#                             note next to the setting below before enabling.
 set -euo pipefail
 
 # shellcheck source=ci/lib/common.sh
@@ -69,6 +71,21 @@ fi
 
   # nix/packages/ reads build outputs during evaluation (dub-lock.json).
   printf 'allow-import-from-derivation = true\n'
+
+  # flake.nix's own `nixConfig` names this project's two Cachix caches. Nix
+  # ignores it unless told otherwise, warning "ignoring untrusted flake
+  # configuration setting 'extra-substituters'" and then building from source
+  # — so with this off, the substituters below are the *only* ones in effect
+  # and they must list every cache the project needs.
+  #
+  # Enabling it makes flake.nix the single source of truth for that list, at
+  # the cost of letting a branch add a substituter and a trusted public key.
+  # That is only safe where untrusted forks are not built: CircleCI does not
+  # build forked PRs unless the project opts in, whereas GitHub Actions does —
+  # which is why the GitHub side leaves this off and passes the caches
+  # explicitly instead.
+  printf 'accept-flake-config = %s\n' \
+    "$(ci_is_true "${NIX_ACCEPT_FLAKE_CONFIG:-}" && echo true || echo false)"
 
   printf 'substituters = https://cache.nixos.org%s\n' "${substituters:+ $substituters}"
   printf 'trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=%s\n' \
