@@ -109,6 +109,18 @@ private void writeBlock(Writer, Fence)(ref Writer w, scope const(char)[] src,
                 writeBlock(w, src, c, options, fence);
             break;
 
+        case MdBlockKind.codeGroup:
+            // The group is a container, and its fences already carry their
+            // own labels; a tabbed rendering here wants the checked-radio
+            // idiom ([`WGT23`](../../specs/ui/widgets.md)) and lands with
+            // it. Until then the class is the hook and every fence shows,
+            // which is the honest degradation — nothing is hidden.
+            w.put("<div class=\"code-group\">\n");
+            foreach (ref const c; b.children)
+                writeBlock(w, src, c, options, fence);
+            w.put("</div>\n");
+            break;
+
         case MdBlockKind.heading:
             const tag = headingTag(b.level);
             put(w, "<"); put(w, tag); put(w, ">");

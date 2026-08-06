@@ -278,6 +278,13 @@ Span[] foldableSpans(const MdDoc doc) @safe
         {
             final switch (blocks[i].kind) with (MdBlockKind)
             {
+                case codeGroup:
+                    // The tab strip lands with the view state that selects a
+                    // tab; the fences render as siblings until then, so the
+                    // parse never hides content it merely grouped.
+                    walk(blocks[i].children);
+                    break;
+
                 case heading:
                 {
                     size_t end = blocks[i].span.end;
@@ -408,6 +415,11 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
     final switch (blk.kind) with (MdBlockKind)
     {
         case document:
+            return blocksColumn(b, blk.children, src, opt);
+
+        case codeGroup:
+            // As in `walk`: the group's fences render as a column until the
+            // tab strip and its selection state arrive.
             return blocksColumn(b, blk.children, src, opt);
 
         case heading:
