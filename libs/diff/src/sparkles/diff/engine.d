@@ -115,6 +115,70 @@ unittest
     assert(!doc.files[0].newMissingNewline);
 }
 
+@("engine.golden.dvn4-one-cell-lights-up")
+@safe pure nothrow @nogc
+unittest
+{
+    // `DVN4`'s acceptance test, named in the spec as the feature's reason for
+    // existing: reformat a large table, edit one cell, and exactly one cell
+    // lights up.
+    //
+    // At the DEFAULT policy — no whitespace flag, nothing opted into. That
+    // matters: the reviewer who hits this problem is not the one who already
+    // knows which flag to reach for.
+    enum before =
+        "| Name | Role | Team |\n"
+        ~ "| ---- | ---- | ---- |\n"
+        ~ "| ann | dev | core |\n"
+        ~ "| bob | ops | infra |\n"
+        ~ "| cal | qa | core |\n"
+        ~ "| dee | dev | infra |\n"
+        ~ "| eve | sre | core |\n";
+    enum after =
+        "| Name      | Role | Team  |\n"
+        ~ "| --------- | ---- | ----- |\n"
+        ~ "| ann       | dev  | core  |\n"
+        ~ "| bob       | ops  | infra |\n"
+        ~ "| cal       | qa   | core  |\n"
+        ~ "| dee       | dev  | infra |\n"
+        ~ "| eve       | sre  | PLATFORM |\n";
+
+    auto doc = diffText(before, after);
+    const f = doc.files[0];
+    const rows = doc.hunkRows(doc.fileHunks(f)[0]);
+
+    // Every row was re-drawn, so every row is a changed row — the model tells
+    // the truth about the bytes. What must be true is that only ONE of them
+    // carries emphasis, and that it is the right cell.
+    size_t emphasizedRows;
+    size_t emphasizedCells;
+    const(char)[] litOld, litNew;
+    foreach (ref row; rows)
+    {
+        if (row.kind == RowKind.context || row.emphCount == 0)
+            continue;
+        ++emphasizedRows;
+        emphasizedCells += row.emphCount;
+        const text = doc.rowText(row);
+        foreach (sp; doc.rowEmph(row))
+        {
+            if (row.kind == RowKind.removed)
+                litOld = text[sp.start .. sp.end];
+            else
+                litNew = text[sp.start .. sp.end];
+        }
+    }
+
+    // One cell on each side of the one changed pair.
+    assert(emphasizedRows == 2, "one pair, not seven");
+    assert(emphasizedCells == 2, "one cell per side");
+    assert(litOld == " core ");
+    assert(litNew == " PLATFORM ");
+
+    // And the hunk is NOT dismissed as formatting: a real edit lives in it.
+    assert(!doc.hunks[0].formattingOnly);
+}
+
 @("engine.golden.markdown-table-repad-ignoring-whitespace")
 @safe pure nothrow @nogc
 unittest

@@ -25,6 +25,7 @@ module sparkles.diff.classify;
 
 import sparkles.diff.model : DiffDoc, Hunk, Row, RowKind;
 import sparkles.diff.normalize : isBlank, linesEqual, WhitespaceMode;
+import sparkles.diff.table : rowsEquivalent;
 
 /**
 Classifies every hunk of `doc`, stamping `Hunk.formattingOnly`.
@@ -74,11 +75,18 @@ bool isFormattingOnly(const ref DiffDoc doc, in Hunk hunk) @safe pure nothrow @n
         if (row.pair < 0 || cast(size_t) row.pair >= rows.length)
             return false;
         const other = rows[cast(size_t) row.pair];
+        const otherText = doc.rowText(other);
         // `all` rather than `change` here: the question is whether the two
         // lines carry the same content, and this pass is the one place where
         // "same content, different spacing" is precisely what we are looking
         // for — including spacing added where there was none.
-        if (!linesEqual(text, doc.rowText(other), WhitespaceMode.all))
+        if (linesEqual(text, otherText, WhitespaceMode.all))
+            continue;
+        // `DVN4`: a re-drawn table row is formatting even when its bytes
+        // differ beyond whitespace — a widened separator (`----` → `-------`)
+        // is a column-width redraw, which no whitespace policy can forgive
+        // because dashes are content.
+        if (!rowsEquivalent(text, otherText))
             return false;
     }
     return sawChange;
@@ -165,6 +173,31 @@ unittest
     assert(formattingOnlyCount(doc) == 0);
     foreach (i; 0 .. doc.hunks.length)
         assert(!doc.hunks[i].formattingOnly);
+}
+
+@("classify.isFormattingOnly.reAlignedTableIncludingItsSeparator")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.diff.engine : diffText;
+
+    // `DVN4`'s contribution to the verdict, and the gap `DVN1` provably
+    // cannot close: the separator's `----` became `-------`. Those dashes are
+    // not whitespace, so whitespace normalization calls the row changed —
+    // only cell structure can say "same separator, wider column".
+    enum before = "| Name | Role |\n| ---- | ---- |\n| ann | dev |\n";
+    enum after = "| Name    | Role |\n| ------- | ---- |\n| ann     | dev |\n";
+
+    auto doc = diffText(before, after);
+    classifyHunks(doc);
+    assert(doc.hunks[0].formattingOnly,
+        "a purely re-aligned table is noise, separator included");
+
+    // Alignment is meaning, though: adding `:` changes how the table renders.
+    enum aligned = "| Name    | Role |\n| :------ | ---- |\n| ann     | dev |\n";
+    auto doc2 = diffText(before, aligned);
+    classifyHunks(doc2);
+    assert(!doc2.hunks[0].formattingOnly, "an alignment change is real");
 }
 
 @("classify.isFormattingOnly.indentationOnly")
