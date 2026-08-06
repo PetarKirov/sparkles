@@ -88,3 +88,33 @@ This remains unverified on the target compositor. Close the issue only after the
 reproduces and then passes drag-over-decoration, outside-window motion and
 outside-window release under a real headless window manager. In-process unit
 tests are insufficient.
+
+## UI-O4 — An allocation-free display list is borrowed, not owned {#ui-o4}
+
+**Status:** open. **Requirements:** `NFR2`, `PRN1`, `UI-O1`.
+
+`buildDisplayList` returns a GC array today, so every consumer's slice stays alive
+for as long as it is referenced and no lifetime question arises. `NFR2` replaces
+that with a `SmallBuffer` the caller supplies — which turns the returned operations
+into a **borrow**: the buffer must outlive every painter that walks it, and a slice
+that currently outlives its producer does so only because the collector kept it
+alive.
+
+Two things must be settled before the swap, not after:
+
+1. **A per-consumer audit.** Each existing `buildDisplayList` call site — the two
+   hue hosts, the twoslash renderer, the component tests — needs checking for a
+   display list that escapes the scope that built it.
+2. **A stated policy**, in the same terms [`UI-O1`](#ui-o1) demands of the other
+   slice-bearing types: the operations are derived, borrowed per-frame data, not an
+   owned value, and the type should make that explicit rather than leave it to a
+   comment.
+
+There is also a prerequisite in `sparkles:base`: `SmallBuffer`'s inline slots are
+`void`-initialized and its heap block is not scanned by the collector, so it cannot
+safely hold reference-bearing elements at all until that is fixed
+([P0.2](../ui-app/PLAN.md#phase-0)).
+
+Close this issue when the display list and the widget arena are allocation-free in
+steady state, the ownership policy is written on the types, and no consumer holds
+operations past their buffer.

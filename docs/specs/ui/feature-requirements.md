@@ -61,13 +61,26 @@ core-cli      → base, ui, expected
 
 ## Non-functional (`NFR`)
 
-| ID   | Requirement                                                                                                                                                                                                                                                     | Status      | Traces to                                    |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------- |
-| NFR1 | Layout and display-list construction must be `@safe pure nothrow` and run in `O(n)` over the node count.                                                                                                                                                        | partial     | `layout.d`; `display_list.d`                 |
-| NFR2 | The widget arena, display list and per-frame scratch buffers must have a **`@nogc` path** via `SmallBuffer`, so a per-frame rebuild allocates nothing steady-state. The node and operation types are chosen so this swap is non-breaking.                       | not started | `widget.d`; `display_list.d`                 |
-| NFR3 | Every stage before `paint` must be exercisable with **no GPU context and no terminal**, through the recording canvas.                                                                                                                                           | full        | `canvas.d` `RecordingCanvas`                 |
-| NFR4 | A full-screen relayout plus display-list construction must complete in **under 1 ms** for a tree of 2 000 nodes (a full terminal of decorated content), measured by a `@benchmark` test. Incremental relayout is deferred until that budget is actually missed. | researched  | [layout.md](./layout.md) `LAY13`             |
-| NFR5 | The toolkit must carry a **parity harness**: the same widget tree rendered through every backend, with the HTML target usable as a browser ground-truth oracle, and theme values asserted in lockstep against the stylesheet they mirror.                       | partial     | `interp/html.d`; twoslash CSS lockstep tests |
+| ID   | Requirement                                                                                                                                                                                                                                                     | Status      | Traces to                                                       |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------- |
+| NFR1 | Layout and display-list construction must be `@safe pure nothrow` and run in `O(n)` over the node count.                                                                                                                                                        | partial     | `layout.d`; `display_list.d`                                    |
+| NFR2 | The widget arena, display list and per-frame scratch buffers must have a **`@nogc` path** via `SmallBuffer`, so a per-frame rebuild allocates nothing steady-state. The node and operation types are chosen so this swap is non-breaking.                       | not started | `widget.d`; `display_list.d`; [`UI-O4`](./open-issues.md#ui-o4) |
+| NFR3 | Every stage before `paint` must be exercisable with **no GPU context and no terminal**, through the recording canvas.                                                                                                                                           | full        | `canvas.d` `RecordingCanvas`                                    |
+| NFR4 | A full-screen relayout plus display-list construction must complete in **under 1 ms** for a tree of 2 000 nodes (a full terminal of decorated content), measured by a `@benchmark` test. Incremental relayout is deferred until that budget is actually missed. | researched  | [layout.md](./layout.md) `LAY13`                                |
+| NFR5 | The toolkit must carry a **parity harness**: the same widget tree rendered through every backend, with the HTML target usable as a browser ground-truth oracle, and theme values asserted in lockstep against the stylesheet they mirror.                       | partial     | `interp/html.d`; twoslash CSS lockstep tests                    |
+
+> [!IMPORTANT]
+> `NFR2` has a **prerequisite outside this package**, and it is the reason the row
+> has stayed "not started" rather than being a small mechanical swap. A `DrawOp`
+> contains a borrowed text slice, and `SmallBuffer` cannot safely hold an element
+> type with references today: its inline slots are `void`-initialized, and its heap
+> block is allocated outside the GC's scanned memory, so a buffer that outgrows its
+> inline storage can have the text its operations point at collected. This is why
+> `RecordingCanvas` uses a GC array and says so in its documentation.
+>
+> The fix belongs to `sparkles:base` and is specified as
+> [P0.2](../ui-app/PLAN.md#phase-0); the ownership question it raises for this
+> package is [`UI-O4`](./open-issues.md#ui-o4).
 
 ## Module coverage
 
