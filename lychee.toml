@@ -208,3 +208,51 @@ headers = { "User-Agent" = "curl/8.7.1" }
 # but responds with HTTP 200 to curl.
 [hosts."code.haverbeke.berlin"]
 headers = { "User-Agent" = "curl/8.7.1" }
+
+# ── Read-the-Docs-fronted documentation hosts ───────────────────────────────
+#
+# The same `max_concurrency = 16` burst problem as the block above, but spread
+# across a PLATFORM rather than one site: Read the Docs serves each project on
+# its own hostname (and fronts custom domains for others), so a single runner
+# opening 16 connections lands several of them on RTD at once and earns HTTP
+# 429s. The tell is that a DIFFERENT subset fails every run — 49 errors across
+# ~10 of these hosts in one run, 5 across 3 in the next, 0 in a third — which is
+# sampling noise, not rot. Every one of them answers a single client with 200.
+#
+# One block per hostname because lychee keys `[hosts."…"]` on the exact host;
+# 500 ms rather than 1 s because we link each of these only a handful of times,
+# so the whole set costs seconds against an ~18 min run. Lowering the global
+# `max_concurrency` was the alternative and is worse: it would slow all 8.7k
+# links to pace a dozen hosts, and the run already sits inside a 35 min cap.
+[hosts."ox.softwaremill.com"]
+request_interval = "500ms"
+
+[hosts."redo.readthedocs.io"]
+request_interval = "500ms"
+
+[hosts."kiwisolver.readthedocs.io"]
+request_interval = "500ms"
+
+[hosts."trio.readthedocs.io"]
+request_interval = "500ms"
+
+[hosts."cx-freeze.readthedocs.io"]
+request_interval = "500ms"
+
+[hosts."briefcase.beeware.org"]
+request_interval = "500ms"
+
+[hosts."docs.libuv.org"]
+request_interval = "500ms"
+
+[hosts."docs.manim.community"]
+request_interval = "500ms"
+
+[hosts."packaging.python.org"]
+request_interval = "500ms"
+
+[hosts."www.pypa.io"]
+request_interval = "500ms"
+
+[hosts."docs.flatpak.org"]
+request_interval = "500ms"
