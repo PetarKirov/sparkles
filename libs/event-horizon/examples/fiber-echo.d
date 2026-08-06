@@ -103,7 +103,14 @@ int main()
         client.fd = socket(AF_INET, SOCK_STREAM, 0);
         assert(client.fd >= 0);
         scope (exit) client.close();
-        assert(!client.connect(addr).hasError);
+        // The connect must happen *outside* the assert: `-release` (which
+        // `dub --build=release` passes, and which the nix example builds use)
+        // strips the whole assert expression, side effects and all. With the
+        // connect elided the client never reaches the listener, so the server
+        // fiber's `accept` waits forever and `sched.run` never returns — a
+        // deterministic hang rather than a failed assertion.
+        const connected = client.connect(addr);
+        assert(!connected.hasError);
 
         SmallBuffer!(ubyte, 4096) msg;
         msg ~= payload[];
