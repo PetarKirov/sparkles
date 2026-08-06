@@ -89,6 +89,9 @@ struct CliParams
     @CliOption("patch", "Treat the input (a file target or piped stdin) as a unified diff; piped stdin is also sniffed without the flag.")
     bool patch;
 
+    @CliOption("staged", "Diff the index (staged changes) against HEAD or the given revision; implies --diff.")
+    bool staged;
+
     @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
     string font = defaultGuiFont;
 
@@ -525,16 +528,37 @@ int main(string[] args)
     Document doc;
     try
     {
-        if (cli.diff)
+        if (cli.diff || cli.staged)
         {
-            // `hue --diff <old> <new>`: two positional files, diffed
-            // in-process (`DVS1`).
-            if (args.length <= 2)
+            import std.file : exists, isFile;
+
+            static bool isFilePath(string p) @system
             {
-                stderr.writeln("hue: --diff needs two file arguments");
-                return 1;
+                try
+                    return p.exists && p.isFile;
+                catch (Exception)
+                    return false;
             }
-            doc = pipeline.loadDiffPair(args[1], args[2]);
+
+            if (!cli.staged && args.length > 2 && isFilePath(args[1])
+                && isFilePath(args[2]))
+                // `hue --diff <old> <new>`: two positional files, diffed
+                // in-process (`DVS1`).
+                doc = pipeline.loadDiffPair(args[1], args[2]);
+            else
+            {
+                // Git revisions (`DVS3`): `hue --diff [<rev>[..<rev>]]
+                // [paths…]` — a positional naming an existing file is a
+                // path filter, the first non-file is the revspec.
+                string revspec;
+                string[] filters;
+                foreach (a; args[1 .. $])
+                    if (revspec.length == 0 && !isFilePath(a))
+                        revspec = a;
+                    else
+                        filters ~= a;
+                doc = pipeline.loadGitDiff(revspec, cli.staged, filters);
+            }
         }
         else if (target.length == 0 && !isTerminal(StdStream.stdin))
         {
