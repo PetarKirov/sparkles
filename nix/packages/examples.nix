@@ -13,11 +13,17 @@
       root = ../..;
       fromRoot = lib.path.append root;
 
-      # The root recipe plus the manifests of the sub-packages it declares —
-      # shared with `buildSparklesApp` so both builders agree on what dub needs
-      # on disk, and so neither is invalidated by a `dub.sdl` under
-      # `docs/research/**` or `libs/*/bench/**`.
-      inherit (config.legacyPackages.sparklesSources) manifestFileset;
+      # `manifestFileset` — the root recipe plus the manifests of the
+      # sub-packages it declares — is shared with `buildSparklesApp` so both
+      # builders agree on what dub needs on disk, and so neither is invalidated
+      # by a `dub.sdl` under `docs/research/**` or `libs/*/bench/**`.
+      # `libsClosure`/`refsIn` are the same manifest-walking fixpoint the app
+      # builder uses, reused here to size each lib's example source tree.
+      inherit (config.legacyPackages.sparklesSources)
+        manifestFileset
+        libsClosure
+        refsIn
+        ;
 
       # Enumerate every standalone `.d` example across all libs as a flat list
       # of absolute paths — `libs/*/examples/*.d`, the $(I direct) children
@@ -45,19 +51,37 @@
         lib.concatLists
       ];
 
-      # Every lib's `src/` tree, as one fileset. An example may `dependency` on
-      # any sibling sub-package (e.g. `tree.d` pulls in `build-primitives`), and
-      # `core-cli` additionally imports `math` (ScreenSize) via importPaths — so
-      # rather than guess the transitive set per example, include them all (a
-      # `dub build --single` only compiles what the example actually reaches).
-      allLibSources = lib.pipe (builtins.readDir (fromRoot "libs")) [
-        (lib.filterAttrs (_: type: type == "directory"))
-        (lib.mapAttrsToList (name: _: fs.maybeMissing (fromRoot "libs/${name}/src")))
-        fs.unions
-        (fs.intersection (
-          fs.fileFilter (file: file.hasExt "d" || file.hasExt "c" || file.hasExt "i") (fromRoot "libs")
-        ))
-      ];
+      # The `src/` trees a lib's examples compile against, as one fileset.
+      #
+      # An example may `dependency` on any sibling sub-package (e.g. `tree.d`
+      # pulls in `build-primitives`), and those packages in turn reach further
+      # ones — `core-cli` imports `math` (ScreenSize) via importPaths. Rather
+      # than guess, seed the app builder's manifest-walking fixpoint from what
+      # each example's inline recipe actually declares.
+      #
+      # This is deliberately computed per *lib*, not per example: a lib's
+      # examples share one `buildDubDeps` bundle, and `nix/packages/dub-builder`
+      # requires a bundle and its consumers to be built from the same `src`
+      # (normalising dub's mtimes disables its own staleness check). Seeding
+      # from `exampleFilesIn` — the unfiltered list — also keeps the tree
+      # identical across platforms, where `platforms`-restricted examples drop
+      # out of the derivation set.
+      #
+      # The previous rule unioned *every* lib's sources into every example, so a
+      # `libs/twoslash-d` edit rebuilt all ~35 example derivations and their
+      # bundles — and, through the `gen-text-svg` hook's use of
+      # `examples.base."text-cell-svg"`, the dev shell.
+      libSourcesFor =
+        libName:
+        fs.unions (
+          map
+            (dir: fs.fileFilter (file: file.hasExt "d" || file.hasExt "c" || file.hasExt "i") (fromRoot dir))
+            (
+              libsClosure (
+                [ libName ] ++ lib.concatMap (p: refsIn (builtins.readFile p)) (exampleFilesIn libName)
+              )
+            )
+        );
 
       # Decompose an absolute example path into the metadata needed for the
       # derivation (lib name, file basename, attribute name, sub-paths).
@@ -138,11 +162,10 @@
             # so all sibling manifests must be present even when only one
             # example is being built.
             manifestFileset
-            # Library sources the example links against via
-            # `dependency "sparkles:<lib>" path="../../.."` — plus the impl
-            # runner sources `base`/`core-cli` import unconditionally, and
-            # `math` which `core-cli` reaches via importPaths. See allLibSources.
-            allLibSources
+            # Library sources the examples link against via
+            # `dependency "sparkles:<lib>" path="../../.."`, transitively — see
+            # `libSourcesFor`.
+            (libSourcesFor libName)
             # The full `examples/` subtree — this brings in the shared
             # `views/` string-import assets alongside the script itself.
             (fromRoot "libs/${libName}/examples")

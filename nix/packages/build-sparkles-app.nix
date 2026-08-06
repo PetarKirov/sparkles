@@ -119,11 +119,20 @@
     in
     {
       # The source-closure machinery, exported for builders that bypass dub
-      # (the Android cross build): `srcClosure "apps/hue"` → repo-relative
-      # source dirs of the app's transitive sparkles closure; `sourceFor dirs`
-      # → the filtered fileset source tree.
+      # (the Android cross build) or that start from something other than an
+      # app manifest (`examples.nix`, which seeds from each example's inline
+      # recipe):
+      #   * `srcClosure "apps/hue"` → repo-relative source dirs of the app's
+      #     transitive sparkles closure;
+      #   * `libsClosure [ "base" ]` → the same, seeded from lib names;
+      #   * `refsIn text` → the `sparkles:*` names a recipe body references,
+      #     both as `dependency` and as a sibling `../<name>/src` import path;
+      #   * `sourceFor dirs` → the filtered fileset source tree;
+      #   * `manifestFileset` → the dub manifests every build needs present.
       legacyPackages.sparklesSources = {
         srcClosure = sparklesSrcClosure;
+        libsClosure = names: map (n: "libs/${n}/src") (grow [ ] names);
+        refsIn = refsOf;
         inherit sourceFor manifestFileset;
       };
 
