@@ -69,6 +69,41 @@ interaction — instead of aspirational.
 > in-process tests entirely, its fix must be validated against the end-to-end
 > windowing harness, not unit tests.
 
+## Event detail (`INP11`–`INP14`)
+
+These four shipped with the vocabulary but were never recorded here; the rows are
+written from the implementations and their commits, not proposed.
+
+| ID    | Requirement                                                                                                                                                                                                                                                         | Status            | Traces to                                                                    |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------- |
+| INP11 | A pointer event must carry a **pointer identity**, so multi-touch is expressible in the shared vocabulary at all. Everything above the gesture layer stays single-pointer by construction: a recognizer owns the ids and hands onward only the primary contact.     | full (`401cfba4`) | `sparkles.input.events` `PointerEvent.pointerId`                             |
+| INP12 | Wheel deltas must be **cells to scroll, applied by the producer** — never a raw notch count a consumer multiplies again. This is what lets a notchless producer (a touch drag, a pixel-precise trackpad) participate in the same event.                             | full (`d4f531bb`) | `sparkles.input.events` `WheelEvent`, `linesPerNotch`, `precise`             |
+| INP13 | The platform spellings of **"go back / dismiss"** must be one equivalence in the vocabulary. The framework owns the equivalence; the application owns the chain it triggers.                                                                                        | full (`401cfba4`) | `sparkles.input.events` `isDismiss` (escape ≡ the Android system back key)   |
+| INP14 | A target must declare its **pointer affordances as independent axes** — hover, sub-cell precision, simultaneous contacts — separately from the tier ladder, because touch serves a higher tier than a terminal while lacking hover, which no `<=` test can express. | full (`ed198ddf`) | `sparkles.input.capability` `InputCapabilities` and its four target profiles |
+
+> [!NOTE]
+> The touch recognizer (`sparkles.input.gesture`, `2ea120fe`) cites requirement
+> IDs `GST1`–`GST5` that exist in no specification page. Recording them is a
+> separate reconciliation, not part of this tree.
+
+## Key levels and the per-frame fold (`INP15`–`INP17`)
+
+Proposed. Required by the [application host](../ui-app/index.md) and by migrating
+`apps/terminal` onto it — see [P0.3](../ui-app/PLAN.md#phase-0).
+
+| ID    | Requirement                                                                                                                                                                                                                                                                                                     | Status      | Traces to                                                          |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------ |
+| INP15 | A key event must carry its **action** (press, repeat, release), the **layout-independent unshifted code point**, and the **text that keystroke produced**; modifiers must include the platform "super". A terminal emulator's encoder pairs a key with its text, and a detached text event cannot express that. | not started | `sparkles.input.events` `KeyEvent`, `Mods`                         |
+| INP16 | A target must **declare whether it can report a key release** at all — a terminal cannot. A held-key interaction must consult that declaration and offer another route, rather than working on one target and silently failing on another ([`TGT5`](./backends.md)).                                            | not started | `sparkles.input.capability` `InputCapabilities`                    |
+| INP17 | The **per-frame fold** — edges versus levels, wheel accumulation, gesture anchors — belongs to this package, not to an application. It must cover every pointer button, modifier level and (where `INP16` allows) held keys, and stay **unit-agnostic**: positions pass through in the producer's own unit.     | not started | planned `sparkles.input.frame`; today `apps/hue/src/frame_input.d` |
+
+> [!IMPORTANT]
+> `INP15`–`INP17` are additive: the new key fields are **appended**, so every
+> existing construction and helper keeps compiling, and `INP16` defaults to the
+> desktop answer so a producer that has not declared anything keeps today's
+> behavior. The fold already exists as a pure, tested function inside `apps/hue`;
+> `INP17` is a move plus a generalization, not a new design.
+
 ## Hit testing (`INP10`)
 
 | ID    | Requirement                                                                                                                                                                                                                                       | Status  | Traces to                                                                                                                                                                                                     |
@@ -106,22 +141,24 @@ order, or equivalently a culled top-down frame-tree descent. The rules:
 
 ## Milestones
 
-| Milestone | Scope                                                    | Status                                                                        | Requirements   |
-| --------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- | -------------- |
-| N0        | Package + event vocabulary + tier classification         | full (`97f931e5`; widget declaration in M6)                                   | `INP1`–`INP5`  |
-| N1        | Terminal decoding retargeted to the shared vocabulary    | full (`b9aeb102`)                                                             | `INP7`         |
-| N2        | Hit identity plumbed through layout and the display list | partial (`f166e099`; shared document consumes it, container routing remains)  | `INP10`        |
-| N3        | GPU adapter: event synthesis + pointer grab              | partial (`INP8` full; pointer grab remains [`UI-O3`](./open-issues.md#ui-o3)) | `INP8`, `INP9` |
-| N4        | Declared target tiers, with reported degradation         | partial (`IXB10`; widget declaration/reporting remains)                       | `INP6`         |
+| Milestone | Scope                                                    | Status                                                                        | Requirements    |
+| --------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------- |
+| N0        | Package + event vocabulary + tier classification         | full (`97f931e5`; widget declaration in M6)                                   | `INP1`–`INP5`   |
+| N1        | Terminal decoding retargeted to the shared vocabulary    | full (`b9aeb102`)                                                             | `INP7`          |
+| N2        | Hit identity plumbed through layout and the display list | partial (`f166e099`; shared document consumes it, container routing remains)  | `INP10`         |
+| N3        | GPU adapter: event synthesis + pointer grab              | partial (`INP8` full; pointer grab remains [`UI-O3`](./open-issues.md#ui-o3)) | `INP8`, `INP9`  |
+| N4        | Declared target tiers, with reported degradation         | partial (`IXB10`; widget declaration/reporting remains)                       | `INP6`          |
+| N5        | Key levels, richer key identity, and the per-frame fold  | not started ([P0.3](../ui-app/PLAN.md#phase-0))                               | `INP15`–`INP17` |
 
 ## Module coverage
 
-| Source file                         | Requirements           |
-| ----------------------------------- | ---------------------- |
-| `libs/input/src/sparkles/input/`    | `INP1`–`INP6`          |
-| `libs/tui/src/sparkles/tui/input.d` | `INP7`                 |
-| `libs/ui-raylib/src/`               | `INP8`, `INP9`         |
-| `libs/ui/src/sparkles/ui/state.d`   | `INP10` (the consumer) |
+| Source file                                         | Requirements                   |
+| --------------------------------------------------- | ------------------------------ |
+| `libs/input/src/sparkles/input/`                    | `INP1`–`INP6`, `INP11`–`INP16` |
+| `libs/tui/src/sparkles/tui/input.d`                 | `INP7`                         |
+| `libs/ui-raylib/src/`                               | `INP8`, `INP9`                 |
+| `libs/ui/src/sparkles/ui/state.d`                   | `INP10` (the consumer)         |
+| `libs/input/src/sparkles/input/frame.d` _(planned)_ | `INP17`                        |
 
 ## Relationship to existing specs
 
@@ -130,6 +167,7 @@ order, or equivalently a culled top-down frame-tree descent. The rules:
 | [state-machines.md](./state-machines.md) `STM`                                                        | the consumers of events — hover, selection, scroll, focus, disclosure |
 | [backends.md](./backends.md) `TGT5`                                                                   | declared per-target capabilities, of which input tiers are half       |
 | [widgets.md](./widgets.md) `WGT`                                                                      | where a widget declares its required tier                             |
+| [ui-app](../ui-app/index.md) `HST`                                                                    | the host that drains these events and folds them per frame (`INP17`)  |
 | [End-to-end windowing test harness research](../../research/window-system-integration/e2e-testing.md) | the validation route for `INP9` / [`UI-O3`](./open-issues.md#ui-o3)   |
 
 → [Overview](./index.md) · [State machines](./state-machines.md) · [Backends](./backends.md)
