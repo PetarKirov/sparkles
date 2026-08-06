@@ -7,7 +7,7 @@ license "BSL-1.0"
 targetType "executable"
 targetName "ci"
 targetPath "build"
-mainSourceFile "src/app.d"
+mainSourceFile "src/ci_main.d"
 
 dflags "-preview=in" "-preview=dip1000"
 
