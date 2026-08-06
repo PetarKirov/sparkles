@@ -213,7 +213,7 @@ struct WorkspaceTui
         }
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
             startPreview: true, doc.twoslash, doc.lang, doc.diffDoc,
-            doc.diffSides);
+            doc.diffSides, doc.diffSession);
         tree.reveal(path);
         treeFocused = false;
         startLive(path, doc.twoslash.code.length != 0);
@@ -308,6 +308,11 @@ struct WorkspaceTui
     }
 
     // `[`/`]`: open the previous/next file of the tree, wrapping (XPL4).
+    /// `DVG1`: the viewer is showing a multi-file diff, so the bracket keys
+    /// belong to its changed-file list rather than to the tree's neighbours.
+    private bool viewerHasDiffSession() const @safe pure nothrow @nogc
+        => viewer.diffNav();
+
     private void openAdjacent(int step) @system
     {
         auto files = visibleFiles();
@@ -412,17 +417,26 @@ struct WorkspaceTui
                     // With the tree focused the brackets belong to the pane
                     // (next/prev git change); the viewer keeps them for
                     // document navigation (XPL4).
+                    // …and a diff session claims them ahead of the document
+                    // set: the changed-file list is what is being walked
+                    // (`DVG1`).
                     case '[':
                         if (!treeFocused)
                         {
-                            openAdjacent(-1);
+                            if (viewerHasDiffSession)
+                                viewer.moveDiffFile(-1);
+                            else
+                                openAdjacent(-1);
                             handled = true;
                         }
                         break;
                     case ']':
                         if (!treeFocused)
                         {
-                            openAdjacent(+1);
+                            if (viewerHasDiffSession)
+                                viewer.moveDiffFile(+1);
+                            else
+                                openAdjacent(+1);
                             handled = true;
                         }
                         break;
@@ -523,7 +537,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         // (hidden) tree so `e` opens onto it highlighted.
         w.viewer.setDocument(initial.title, initial.source, initial.events,
             initial.preview, startPreview: true, initial.twoslash,
-            initial.lang, initial.diffDoc, initial.diffSides);
+            initial.lang, initial.diffDoc, initial.diffSides,
+            initial.diffSession);
         if (target.length)
             w.tree.reveal(target);
         if (target.length)
