@@ -24,7 +24,8 @@ dependency "sparkles:twoslash" path="../.."
 // backend (`FPR10`), used from the `HueDmdFmt` configurations.
 dependency "sparkles:fuzzy" path="../.."
 dependency "sparkles:event-horizon" path="../.."
-// The files finder reuses the repository's nested-.gitignore walker (`PKS1`).
+// The files finder reuses the repository's nested-.gitignore walker (`PKS1`);
+// the recursive document set (`SRC9`, src/source_set.d) descends with it too.
 dependency "sparkles:build-primitives" path="../.."
 // Coverage ingestion for the `--overlay coverage` gutter (`COV1`).
 dependency "sparkles:code-instrumentation" path="../.."
