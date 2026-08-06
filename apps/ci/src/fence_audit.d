@@ -35,6 +35,8 @@ import std.array : appender, array, join;
 import std.conv : to;
 import std.string : lineSplitter, strip, stripRight;
 
+import docs_config : docsConfigPath, loadDocsConfig;
+
 import sparkles.syntax.ts.registry : canonicalLanguage, GrammarRegistry, isPlainTextLabel;
 
 // === Fence scanning ===
@@ -732,31 +734,8 @@ unittest
     assert(!hits.canFind!(h => h.kind == FeatureKind.blockTitle));
 }
 
-// === srcExclude mirror ===
+// === srcExclude ===
 
-/**
-A verbatim copy of the `srcExclude` list in `docs/.vitepress/config.mts` — the
-files the docs site does not build into pages.
-
-> [!IMPORTANT]
-> This is a $(B mirror), and mirrors drift. The site's list is JavaScript this
-> tool cannot evaluate, and parsing `config.mts` from D would be worse than
-> duplicating nine globs. The audit therefore never hides the difference: it
-> reports the excluded set as its own census alongside the site-visible one,
-> and prints the patterns it used, so a mismatch shows up as a file count that
-> disagrees with the site rather than as a silently wrong percentage.
-*/
-immutable string[] srcExcludeMirror = [
-    "**/research/parsing/grounding/**",
-    "**/research/units-of-measure/grounding/**",
-    "**/research/cpu-pmu/grounding/**",
-    "**/research/sanitizers/grounding/**",
-    "**/research/manim/grounding/**",
-    "**/research/application-packaging/PLAN.md",
-    "**/research/application-packaging/grounding/**",
-    "**/research/sql/grounding/**",
-    "**/research/iroh/prompt.md",
-];
 
 /**
 Glob match with the semantics VitePress's `srcExclude` uses: `**` spans any
@@ -815,19 +794,36 @@ unittest
     assert(!matchesGlob("docs/sub/a.md", "docs/*.md"));
 }
 
-/// `true` when the docs site excludes `path` from the built site.
-bool isSrcExcluded(scope const(char)[] path) @safe pure nothrow
-    => srcExcludeMirror.canFind!(p => matchesGlob(path, p));
+/++
+`true` when the docs site excludes `path` from the built site.
+
+`patterns` comes from `docs/.vitepress/docs-config.json` — the same list
+`config.mts` passes to VitePress as `srcExclude` (see `docs_config`). It used to
+be a hand-maintained mirror of nine expanded globs in this file, which could
+drift from the site silently.
++/
+bool isSrcExcluded(scope const(char)[] path, in string[] patterns) @safe pure nothrow
+    => patterns.canFind!(p => matchesGlob(path, p));
 
 ///
-@("fence_audit.isSrcExcluded.mirror")
+@("fence_audit.isSrcExcluded.sitePatterns")
 @safe pure nothrow
 unittest
 {
-    assert(isSrcExcluded("docs/research/parsing/grounding/claims.md"));
-    assert(isSrcExcluded("docs/research/application-packaging/PLAN.md"));
-    assert(!isSrcExcluded("docs/research/parsing/index.md"));
-    assert(!isSrcExcluded("README.md"));
+    // The real list, as committed in docs-config.json.
+    static immutable site = [
+        "**/research/**/grounding/**",
+        "**/research/application-packaging/PLAN.md",
+        "**/research/iroh/prompt.md",
+    ];
+
+    assert(isSrcExcluded("docs/research/parsing/grounding/claims.md", site));
+    assert(isSrcExcluded("docs/research/units-of-measure/grounding/a/b.md", site));
+    assert(isSrcExcluded("docs/research/application-packaging/PLAN.md", site));
+    assert(isSrcExcluded("docs/research/iroh/prompt.md", site));
+    assert(!isSrcExcluded("docs/research/parsing/index.md", site));
+    assert(!isSrcExcluded("docs/research/iroh/prompts.md", site));
+    assert(!isSrcExcluded("README.md", site));
 }
 
 // === Aggregation ===
@@ -905,8 +901,12 @@ Runs the census over already-read files.
 Kept separate from I/O so the aggregation is unit-testable: `runFenceAudit`
 reads the files, this decides what the numbers are.
 */
-AuditResult auditFiles(in MarkdownFile[] files, in bool[string] bundled, AuditScope scope_)
-    @safe pure
+AuditResult auditFiles(
+    in MarkdownFile[] files,
+    in bool[string] bundled,
+    AuditScope scope_,
+    in string[] srcExclude,
+) @safe pure
 {
     AuditResult result;
     result.bundledGrammars = bundled.length;
@@ -916,7 +916,7 @@ AuditResult auditFiles(in MarkdownFile[] files, in bool[string] bundled, AuditSc
 
     foreach (const ref file; files)
     {
-        const excluded = isSrcExcluded(file.path);
+        const excluded = isSrcExcluded(file.path, srcExclude);
         final switch (scope_)
         {
             case AuditScope.site:
@@ -984,6 +984,8 @@ AuditResult auditFiles(in MarkdownFile[] files, in bool[string] bundled, AuditSc
 unittest
 {
     bool[string] bundled = ["d": true, "rust": true];
+    // The site's own pattern (docs-config.json), not an expanded per-topic copy.
+    const srcExclude = ["**/research/**/grounding/**"];
 
     const files = [
         MarkdownFile("docs/a.md", "```d\nx\n```\n```text\ny\n```\n```wat\nz\n```\n"),
@@ -991,7 +993,7 @@ unittest
         MarkdownFile("docs/b.md", "````markdown\n```rust\nq\n```\n````\n"),
     ];
 
-    auto site = auditFiles(files, bundled, AuditScope.site);
+    auto site = auditFiles(files, bundled, AuditScope.site, srcExclude);
     assert(site.filesScanned == 2 && site.filesExcluded == 1);
     // 3 in a.md + the wrapper in b.md; the nested `rust` block is not one.
     assert(site.fences == 4, site.fences.to!string);
@@ -1000,10 +1002,10 @@ unittest
     assert(site.fenceCount(FenceClass.plainText) == 1);     // `text`
     assert(site.fenceCount(FenceClass.uncovered) == 2);     // `wat`, `markdown`
 
-    auto all = auditFiles(files, bundled, AuditScope.all);
+    auto all = auditFiles(files, bundled, AuditScope.all, srcExclude);
     assert(all.filesScanned == 3 && all.fences == 5);
 
-    auto excluded = auditFiles(files, bundled, AuditScope.excluded);
+    auto excluded = auditFiles(files, bundled, AuditScope.excluded, srcExclude);
     assert(excluded.filesScanned == 1 && excluded.fences == 1);
 
     // Per-label rows are ordered by frequency, then alphabetically.
@@ -1189,12 +1191,17 @@ bool isDiagramLanguage(scope const(char)[] canonical) @safe pure nothrow @nogc
     => canonical == "mermaid";
 
 /// Builds the JSON report from an audit result.
-JsonReport toJsonReport(in AuditResult r, AuditScope scope_, in string[] grammarPath) @safe
+JsonReport toJsonReport(
+    in AuditResult r,
+    AuditScope scope_,
+    in string[] grammarPath,
+    in string[] srcExclude,
+) @safe
 {
     JsonReport j;
     j.auditScope = scope_.to!string;
     j.grammarPath = grammarPath.dup;
-    j.srcExclude = srcExcludeMirror.dup;
+    j.srcExclude = srcExclude.dup;
 
     bool[string] hue;
     bool[string] diagrams;
@@ -1257,7 +1264,9 @@ unittest
     bool[string] bundled = ["d": true, "typescript": true];
     const files = [MarkdownFile("docs/a.md", "```ts\nx\n```\n```text\ny\n```\n```wat\nz\n```\n")];
 
-    auto j = auditFiles(files, bundled, AuditScope.all).toJsonReport(AuditScope.all, ["/grammars"]);
+    const srcExclude = ["**/research/**/grounding/**"];
+    auto j = auditFiles(files, bundled, AuditScope.all, srcExclude)
+        .toJsonReport(AuditScope.all, ["/grammars"], srcExclude);
 
     // The allow-list is canonical names, not the labels as written.
     assert(j.hueLanguages == ["typescript"]);
@@ -1265,7 +1274,8 @@ unittest
     assert(j.uncoveredLabels == ["wat"]);
     assert(j.totals.fences == 3 && j.totals.distinctLabels == 3);
     assert(j.auditScope == "all");
-    assert(j.srcExclude == srcExcludeMirror);
+    // The report records the patterns it was handed, for provenance.
+    assert(j.srcExclude == srcExclude);
 }
 
 @("fence_audit.toJsonReport.mermaidHeldOutOfAllowList")
@@ -1275,7 +1285,8 @@ unittest
     bool[string] bundled = ["mermaid": true, "d": true];
     const files = [MarkdownFile("docs/a.md", "```mermaid\ngraph TD;\n```\n```d\nx\n```\n")];
 
-    auto j = auditFiles(files, bundled, AuditScope.all).toJsonReport(AuditScope.all, null);
+    auto j = auditFiles(files, bundled, AuditScope.all, null)
+        .toJsonReport(AuditScope.all, null, null);
 
     // A plugin renders mermaid; handing it to the highlighter would replace a
     // diagram with colored text.
@@ -1346,6 +1357,17 @@ int runFenceAudit(in FenceAuditOptions opts)
         return 1;
     }
 
+    // The site-visibility split reads the same `srcExclude` VitePress does, so
+    // the two can no longer disagree. A missing or malformed file is an error:
+    // an empty pattern list would silently census excluded files as published.
+    auto docsConfig = loadDocsConfig(opts.root.length ? opts.root : ".");
+    if (docsConfig.hasError)
+    {
+        error(i"Could not read $(docsConfigPath): $(docsConfig.error)");
+        return 1;
+    }
+    const srcExclude = docsConfig.value.srcExclude;
+
     auto paths = opts.files.length ? opts.files.dup : trackedDocMarkdown(opts.root);
     if (paths.length == 0)
     {
@@ -1365,7 +1387,7 @@ int runFenceAudit(in FenceAuditOptions opts)
             warning(i"Skipping $(path): $(e.msg)");
     }
 
-    auto result = auditFiles(files, bundled, opts.auditScope);
+    auto result = auditFiles(files, bundled, opts.auditScope, srcExclude);
 
     const distinct = result.labels.length;
     const scopeName = opts.auditScope.to!string;
@@ -1413,13 +1435,13 @@ int runFenceAudit(in FenceAuditOptions opts)
     writeln();
     const searchPath = registry.dirs.join(":");
     info(i"Grammar search path: $(searchPath)");
-    info(i"srcExclude is mirrored from docs/.vitepress/config.mts ($(srcExcludeMirror.length) patterns) — see fence_audit.srcExcludeMirror.");
+    info(i"srcExclude read from $(docsConfigPath) ($(srcExclude.length) patterns) — the same list the site uses.");
 
     if (opts.jsonPath.length)
     {
         import sparkles.wired.json : writeJSONFile;
 
-        auto report = toJsonReport(result, opts.auditScope, registry.dirs.dup);
+        auto report = toJsonReport(result, opts.auditScope, registry.dirs.dup, srcExclude);
         auto written = writeJSONFile(report, opts.jsonPath);
         if (written.hasError)
         {
