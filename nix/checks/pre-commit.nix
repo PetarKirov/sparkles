@@ -19,6 +19,17 @@ let
     ".pnp.data.json"
   ];
 
+  # JSON whose *key order* carries meaning for the reader and must survive a
+  # commit. `pretty-format-json` sorts keys alphabetically, which would push
+  # every sidebar group's `"text"` label below its (often hundreds of lines
+  # long) `"items"` array — you could no longer tell which group you were
+  # editing. Prettier still normalizes indentation and whitespace for these;
+  # only the key sorter is excluded.
+  keyOrderedJsonFiles = [
+    "docs/.vitepress/sidebar.json"
+    "docs/.vitepress/docs-config.json"
+  ];
+
   filesToExcludeRegex =
     files: lib.concatMapStringsSep "|" (entry: "(${lib.escapeRegex entry})") files;
 in
@@ -403,7 +414,7 @@ in
                 { id = "check-json5"; }
                 {
                   id = "pretty-format-json";
-                  exclude = filesToExcludeRegex ([ "package.json" ] ++ generatedJsonFiles);
+                  exclude = filesToExcludeRegex ([ "package.json" ] ++ generatedJsonFiles ++ keyOrderedJsonFiles);
                 }
                 { id = "check-toml"; }
                 { id = "check-vcs-permalinks"; }

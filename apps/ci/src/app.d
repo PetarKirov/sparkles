@@ -42,7 +42,7 @@ $(LIST
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
     $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
-    $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/config.mts` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
+    $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/sidebar.json` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
     $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
 )
 
@@ -136,9 +136,8 @@ import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 import blob_paths :
     BlobPathReport, BlobRef, BlobResult, BlobStatus,
     parseBlobRefs, resolveClone;
-import docs_sidebar :
-    checkDocsSidebarFromConfig,
-    defaultVitePressConfig;
+import docs_config : loadDocsConfig, loadSidebar, sidebarDataPath;
+import docs_sidebar : checkDocsSidebar;
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
@@ -1690,27 +1689,24 @@ private int runCheckBlobPaths(string[] files, string cloneRoot)
 /// when pages are missing from the sidebar or sidebar links are dangling.
 private int runCheckDocsSidebar()
 {
-    import std.file : exists, readText;
-    import std.path : buildPath;
     import std.stdio : stderr;
 
     const repoRoot = detectRepoRoot();
-    const configPath = repoRoot.buildPath(defaultVitePressConfig);
 
-    if (!configPath.exists)
+    // The sidebar tree and srcExclude list are data files `config.mts` imports;
+    // see docs_config. A malformed or missing file is a hard error — never an
+    // empty link set that would flag every page as unlinked.
+    auto sidebar = loadSidebar(repoRoot);
+    if (sidebar.hasError)
     {
-        stderr.writefln("✗ VitePress config not found: %s", configPath);
+        error(i"Could not read the docs sidebar: $(sidebar.error)");
         return 1;
     }
 
-    string configText;
-    try
+    auto docsConfig = loadDocsConfig(repoRoot);
+    if (docsConfig.hasError)
     {
-        configText = configPath.readText;
-    }
-    catch (Exception e)
-    {
-        stderr.writefln("✗ Could not read %s (%s)", configPath, e.msg);
+        error(i"Could not read the docs config: $(docsConfig.error)");
         return 1;
     }
 
@@ -1729,7 +1725,7 @@ private int runCheckDocsSidebar()
         .map!(line => line.idup)
         .array;
 
-    const report = checkDocsSidebarFromConfig(configText, mdFiles);
+    const report = checkDocsSidebar(sidebar.value, docsConfig.value.srcExclude, mdFiles);
     if (report.ok)
     {
         info(i"{green ✓} Docs sidebar is consistent: every published page is linked, and every sidebar link resolves ($(mdFiles.length) markdown files checked).");
@@ -1741,16 +1737,16 @@ private int runCheckDocsSidebar()
         stderr.writefln(
             "✗ %d docs page(s) are not linked from the VitePress sidebar in %s:",
             report.unlinkedPages.length,
-            defaultVitePressConfig,
+            sidebarDataPath,
         );
         stderr.writeln;
         foreach (path; report.unlinkedPages)
             stderr.writefln("  %s", path);
         stderr.writeln;
         stderr.writeln(
-            "Add each page under themeConfig.sidebar (or exclude it via srcExclude "
-            ~ "if it must not be published). The home page docs/index.md is always "
-            ~ "considered linked.",
+            "Add each page to the sidebar tree (or exclude it via srcExclude in "
+            ~ "docs/.vitepress/docs-config.json if it must not be published). The "
+            ~ "home page docs/index.md is always considered linked.",
         );
         if (report.danglingLinks.length != 0)
             stderr.writeln;
@@ -1761,7 +1757,7 @@ private int runCheckDocsSidebar()
         stderr.writefln(
             "✗ %d sidebar link(s) in %s do not resolve to a published docs page:",
             report.danglingLinks.length,
-            defaultVitePressConfig,
+            sidebarDataPath,
         );
         stderr.writeln;
         foreach (link; report.danglingLinks)
