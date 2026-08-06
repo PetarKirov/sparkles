@@ -680,7 +680,8 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
             auto tree = viewDiffDoc(doc.diffDoc, DiffViewOptions.init,
-                doc.diffSides, highlightedFenceRenderer(&cache, &theme, pageFg));
+                doc.diffSides, highlightedFenceRenderer(&cache, &theme, pageFg),
+                doc.diffSession);
             auto frames = layout(tree, Constraints(maxW: previewWidth()));
             const r = frames[tree.root].rect;
             auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
@@ -731,7 +732,8 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             SmallBuffer!char htmlOut;
             writeWidgetHtmlPage(htmlOut,
                 viewDiffDoc(doc.diffDoc, DiffViewOptions.init, doc.diffSides,
-                    highlightedFenceRenderer(&cache, &theme, pageFg)),
+                    highlightedFenceRenderer(&cache, &theme, pageFg),
+                    doc.diffSession),
                 defaultTwoslashPalette(), pageFg, pageBg, doc.title);
             write(htmlOut[]);
             return 0;
@@ -858,7 +860,8 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             cli.include.dup, cli.exclude.dup, cli.treeWidth,
             cli.tabWidth, cli.listWhitespace, cpMaps,
             liveTypes: !cli.noLiveTypes, initialDiff: doc.diffDoc,
-            initialDiffSides: doc.diffSides);
+            initialDiffSides: doc.diffSides,
+            initialDiffSession: doc.diffSession);
     }
     else
     {

@@ -49,6 +49,9 @@ struct KeyContext
     bool foldArmed;      /// a `z` fold sequence is waiting for its next key
     bool hasMatches;     /// a search produced matches (enables n / N)
     bool hasDocSet;      /// a multi-document set is loaded (enables [ / ] / i)
+    /// a multi-file diff session is showing (`DVG1`: `[`/`]` walk its files,
+    /// and the `z` family folds files rather than syntax ranges)
+    bool hasDiffSession;
     bool showPreview;    /// the decorated preview is showing (search is raw-only)
 }
 
@@ -112,6 +115,14 @@ enum Command : ubyte
     // $(LREF KeyCommand.arg).
     foldToggle, foldClose, foldOpen, foldOpenAll, foldCloseAll,
     foldLevel,
+
+    // The diff session (`DVG1`/`DVG3`), when one is showing. `[`/`]` and the
+    // `z` family are re-pointed at files rather than getting keys of their
+    // own: to a reviewer the changed-file list IS the set being walked, and a
+    // file IS the thing that folds.
+    diffNextFile, diffPrevFile,
+    diffToggleFile,
+    diffCollapseAll, diffExpandAll,
 }
 
 /// A resolved command plus its argument (only `foldLevel` uses one: the
@@ -184,6 +195,18 @@ KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
     // normal-mode meanings.
     if (ctx.foldArmed)
     {
+        // Over a diff session the `z` family folds FILES (`DVG3`) — same
+        // vocabulary, the unit the view actually has. The CST fold ranges a
+        // source view exposes do not exist here.
+        if (ctx.hasDiffSession && k.key == Key.char_)
+            switch (k.ch)
+            {
+                case 'a', 'z', 'c', 'o':
+                    return KeyCommand(Command.diffToggleFile);
+                case 'r': return KeyCommand(Command.diffExpandAll);
+                case 'm': return KeyCommand(Command.diffCollapseAll);
+                default: return KeyCommand(Command.none);
+            }
         if (k.key == Key.char_)
             switch (k.ch)
             {
@@ -270,10 +293,16 @@ KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
                 case '/': return ctx.showPreview
                     ? KeyCommand(Command.none)  // search is raw-view only
                     : KeyCommand(Command.startSearch);
-                case '[': return ctx.hasDocSet
-                    ? KeyCommand(Command.setPrev) : KeyCommand(Command.none);
-                case ']': return ctx.hasDocSet
-                    ? KeyCommand(Command.setNext) : KeyCommand(Command.none);
+                // A diff session claims the bracket pair: its changed-file
+                // list is the set a reviewer is walking.
+                case '[': return ctx.hasDiffSession
+                    ? KeyCommand(Command.diffPrevFile)
+                    : (ctx.hasDocSet
+                        ? KeyCommand(Command.setPrev) : KeyCommand(Command.none));
+                case ']': return ctx.hasDiffSession
+                    ? KeyCommand(Command.diffNextFile)
+                    : (ctx.hasDocSet
+                        ? KeyCommand(Command.setNext) : KeyCommand(Command.none));
                 default: break;
             }
     }
@@ -477,6 +506,34 @@ unittest
     // …but the tree's filter is not affected by the preview.
     assert(ch('/', KeyContext(treeFocused: true, treeVisible: true,
         showPreview: true)).cmd == Command.treeFilter);
+}
+
+@("keymap.diffSessionClaimsBracketsAndTheFoldFamily")
+@safe pure nothrow @nogc
+unittest
+{
+    // `DVG1`: over a diff session the brackets walk changed FILES.
+    auto diff = KeyContext(hasDiffSession: true);
+    assert(ch(']', diff).cmd == Command.diffNextFile);
+    assert(ch('[', diff).cmd == Command.diffPrevFile);
+
+    // A diff session outranks a document set on the same keys: the file list
+    // is what the reviewer is walking.
+    auto both = KeyContext(hasDocSet: true, hasDiffSession: true);
+    assert(ch(']', both).cmd == Command.diffNextFile);
+    assert(ch(']', KeyContext(hasDocSet: true)).cmd == Command.setNext);
+
+    // `DVG3`: the `z` family folds files, not syntax ranges — the diff view
+    // has no CST fold ranges for the other meaning to act on.
+    auto armed = KeyContext(foldArmed: true, hasDiffSession: true);
+    assert(ch('a', armed).cmd == Command.diffToggleFile);
+    assert(ch('c', armed).cmd == Command.diffToggleFile);
+    assert(ch('m', armed).cmd == Command.diffCollapseAll);
+    assert(ch('r', armed).cmd == Command.diffExpandAll);
+    // Levels are meaningless over a flat file list, so they stay unbound.
+    assert(ch('3', armed).cmd == Command.none);
+    // Without a session the same keys keep their syntax-fold meanings.
+    assert(ch('m', KeyContext(foldArmed: true)).cmd == Command.foldCloseAll);
 }
 
 @("keymap.sharedBindingsWorkFromEitherPane")
