@@ -26,12 +26,25 @@ import sparkles.diff.model : Degradation, DiffDoc, FileEntry, Hunk, Row,
 import sparkles.twoslash.overlay : planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : decorateCodeRow;
+import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
+
+/// `DVL3`: which layout a file renders in.
+enum DiffLayout : ubyte
+{
+    /// One column, old and new interleaved (`DVL1`).
+    unified,
+    /// Two panes, rows aligned by the pairing pass (`DVL2`).
+    split,
+}
 
 /// View options — deliberately small in V1.
 struct DiffViewOptions
 {
+    /// `DVL3`: the layout to render. `split` degrades to `unified` below
+    /// $(LREF minSplitWidth) — see `viewDiffDoc`.
+    DiffLayout layout;
     /// Render the dual old/new line-number gutter.
     bool lineNumbers = true;
     /// `DVS4`/`DVG3`: the session entry for the file being rendered. Supplies
@@ -106,6 +119,65 @@ struct TypeOverlay
         => _tw;
 }
 
+/**
+`DVL3`: the narrowest pane a split layout is worth showing in.
+
+Below this, two panes of ~30 columns each wrap every line into an unreadable
+ribbon, and a unified view of the same diff is strictly better — so the split
+request degrades rather than being honored into uselessness (the
+`git-split-diffs` behaviour). Stated as a constant rather than hidden in a
+comparison so the threshold is one named thing a reader can find.
+*/
+enum int minSplitWidth = 80;
+
+/// One aligned display row of a split layout: indices into the hunk's rows,
+/// or `-1` for a filler cell opposite an unmatched line.
+struct SplitRow
+{
+    int old_ = -1;
+    int new_ = -1;
+}
+
+/**
+`DVL2`: aligns a hunk's rows into side-by-side pairs.
+
+The pairing pass (`DVM2`) already decided which removed line corresponds to
+which added line; this walks the rows in emission order and turns those
+decisions into display rows. A removed line with a pair sits opposite it; one
+without gets a filler, and so does an added line nobody claimed.
+
+Pure and index-only — no widgets, no text — so the alignment can be tested for
+what it is: a correspondence between rows.
+*/
+SplitRow[] alignSplitRows(const(Row)[] rows) @safe
+{
+    auto consumed = new bool[](rows.length);
+    SplitRow[] out_;
+    foreach (i, ref row; rows)
+    {
+        final switch (row.kind) with (RowKind)
+        {
+            case context:
+                out_ ~= SplitRow(cast(int) i, cast(int) i);
+                break;
+            case removed:
+                if (row.pair >= 0 && cast(size_t) row.pair < rows.length)
+                {
+                    consumed[cast(size_t) row.pair] = true;
+                    out_ ~= SplitRow(cast(int) i, row.pair);
+                }
+                else
+                    out_ ~= SplitRow(cast(int) i, -1);
+                break;
+            case added:
+                if (!consumed[i])
+                    out_ ~= SplitRow(-1, cast(int) i);
+                break;
+        }
+    }
+    return out_;
+}
+
 /// `DVT1`: one file's two overlays, parallel to `DiffDoc.files` — the same
 /// by-index pairing `DiffSides` and the session already use, so a host that
 /// resolves "file 3" once resolves it for every channel.
@@ -126,8 +198,18 @@ alias SideRenderer = TextSpan[][] delegate(const(char)[] lang, const(char)[] bod
 WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOptions.init,
     const(DiffSides)[] sides = null, SideRenderer render = null,
     const DiffSession session = DiffSession.init,
-    FileTypes[] types = null) @safe
+    FileTypes[] types = null, int widthCols = 0) @safe
 {
+    // `DVL3`: honor the split request only where it is readable. Two panes of
+    // thirty columns wrap every line into a ribbon, and a unified view of the
+    // same diff is strictly better — so a narrow pane degrades rather than
+    // obeying into uselessness. `widthCols == 0` means "the caller did not
+    // say", which is the static sinks: they lay out at their own width and
+    // are not being asked to second-guess it.
+    if (opt.layout == DiffLayout.split && widthCols != 0
+        && widthCols < minSplitWidth)
+        opt.layout = DiffLayout.unified;
+
     auto b = Builder();
     auto files = new uint[](0);
     foreach (fi; 0 .. doc.files.length)
@@ -161,7 +243,10 @@ WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOpti
     if (files.length == 0)
         files ~= b.add(Widget(kind: WidgetKind.text, text: "(empty diff)",
             slot: Slot.muted));
-    return b.finish(b.container(WidgetKind.column, files, gap: 1));
+    auto root = b.container(WidgetKind.column, files, gap: 1);
+    if (opt.layout == DiffLayout.split)
+        root = grown(b, root);
+    return b.finish(root);
 }
 
 /// One file's view appended to `b` (the `viewMarkdownInto` shape).
@@ -205,12 +290,20 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
     {
         const key = opt.fileKey ? diffHunkKey(hi) : 0;
         ++hi;
-        rows ~= keyed(b, hunk.formattingOnly && opt.foldFormattingOnly
-            ? foldedHunk(b, doc, hunk)
-            : viewHunk(b, doc, hunk, gutterWidth, opt), key);
+        uint node;
+        if (hunk.formattingOnly && opt.foldFormattingOnly)
+            node = foldedHunk(b, doc, hunk);
+        else if (opt.layout == DiffLayout.split)
+            node = viewHunkSplit(b, doc, hunk, gutterWidth, opt);
+        else
+            node = viewHunk(b, doc, hunk, gutterWidth, opt);
+        rows ~= keyed(b, node, key);
     }
 
-    return keyed(b, b.container(WidgetKind.column, rows, gap: 1), opt.fileKey);
+    auto fileCol = b.container(WidgetKind.column, rows, gap: 1);
+    if (opt.layout == DiffLayout.split)
+        fileCol = grown(b, fileCol);
+    return keyed(b, fileCol, opt.fileKey);
 }
 
 /// `DVG1`: the widget key a file's container carries, so a host can find the
@@ -230,6 +323,27 @@ size_t diffHunkKey(size_t hunkIndex) @safe pure nothrow @nogc
 
 /// `true` for a key produced by $(LREF diffHunkKey).
 bool isDiffHunkKey(size_t key) @safe pure nothrow @nogc => key >= diffHunkKeyBase;
+
+/// Marks a node as filling its parent's remaining width.
+private uint grown(ref Builder b, uint node) @safe
+{
+    b.nodes[node].width = SizeSpec.grow();
+    return node;
+}
+
+/**
+Marks a node as exactly half its parent's width — one pane of a split layout.
+
+`percent(50)` rather than `grow`: the layout hands a grower its natural width
+PLUS a share of the leftover, so two `grow` halves whose contents differ in
+length end up different widths and the panes stop lining up. A split view whose
+divider wanders with the text is worse than no split view.
+*/
+private uint halfWidth(ref Builder b, uint node) @safe
+{
+    b.nodes[node].width = SizeSpec(SizeSpec.Kind.percent, 50);
+    return node;
+}
 
 private uint keyed(ref Builder b, uint node, size_t key) @safe
 {
@@ -308,8 +422,112 @@ private uint foldedHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk) @saf
     ]));
 }
 
+/// The hunk header, rendered as its own tinted band — shared by both layouts.
+private uint hunkHeader(ref Builder b, in Hunk hunk) @safe
+    => b.add(Widget(kind: WidgetKind.rich, spans: [
+        TextSpan(text("@@ -", hunk.oldStart, ",", hunk.oldCount,
+            " +", hunk.newStart, ",", hunk.newCount, " @@"),
+            slot: Slot.diffHunk, paintBackground: true),
+    ]));
+
 private uint noticeRow(ref Builder b, string message) @safe
     => b.add(Widget(kind: WidgetKind.text, text: message, slot: Slot.muted));
+
+/// `DVL2`: one hunk as two aligned panes.
+private uint viewHunkSplit(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
+    int gutterWidth, DiffViewOptions opt) @safe
+{
+    auto rows = new uint[](0);
+    rows ~= hunkHeader(b, hunk);
+
+    const hunkRows = doc.hunkRows(hunk);
+    foreach (pair; alignSplitRows(hunkRows))
+    {
+        const left = splitHalf(b, doc, hunkRows, pair.old_, true,
+            gutterWidth, opt);
+        const right = splitHalf(b, doc, hunkRows, pair.new_, false,
+            gutterWidth, opt);
+        // The row itself must fill the pane, or its two `grow` halves have no
+        // remaining space to divide and both shrink-wrap their text.
+        // The row fills the pane; its two halves each take exactly 50% of it.
+        rows ~= grown(b, b.container(WidgetKind.row, [left, right]));
+    }
+    // Every container between the panes and the viewport must fill the width,
+    // or `percent(50)` resolves against a shrink-wrapped ancestor and the
+    // halves collapse back onto their text.
+    return grown(b, b.container(WidgetKind.column, rows));
+}
+
+/**
+One side of one aligned row: the line-number gutter, the marker, and the text
+with its tint — or a filler when this side has no line.
+
+The filler is a tinted empty box rather than blank space, because the reader
+needs to see that the OTHER side gained or lost a line; blank space would read
+as "unchanged and short".
+*/
+private uint splitHalf(ref Builder b, const ref DiffDoc doc,
+    const(Row)[] hunkRows, int idx, bool oldSide, int gutterWidth,
+    DiffViewOptions opt) @safe
+{
+    if (idx < 0)
+    {
+        const filler = b.add(Widget(kind: WidgetKind.box, slot: Slot.diffFill,
+            paintBackground: true, width: SizeSpec.grow(), height: SizeSpec.fixed(1)));
+        return halfWidth(b, b.container(WidgetKind.column, [filler]));
+    }
+
+    const row = hunkRows[cast(size_t) idx];
+    TextSpan[] spans;
+    if (gutterWidth > 0)
+        spans ~= TextSpan(halfGutterText(row, oldSide, gutterWidth),
+            slot: Slot.gutter);
+
+    const rowText = doc.rowText(row);
+    const emph = doc.rowEmph(row);
+    const styled = row.kind == RowKind.added
+        ? styledLine(opt.newStyled, row.newLine)
+        : styledLine(opt.oldStyled, row.oldLine);
+
+    final switch (row.kind) with (RowKind)
+    {
+        case context:
+            spans ~= TextSpan("  ");
+            spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
+                Slot.inherit, false);
+            break;
+        case removed:
+            spans ~= TextSpan("- ", slot: Slot.diffRemoved, paintBackground: true);
+            spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
+                Slot.diffEmphRemoved, true);
+            break;
+        case added:
+            spans ~= TextSpan("+ ", slot: Slot.diffAdded, paintBackground: true);
+            spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
+                Slot.diffEmphAdded, true);
+            break;
+    }
+    const text = b.add(Widget(kind: WidgetKind.rich, spans: spans));
+    return halfWidth(b, b.container(WidgetKind.column, [text]));
+}
+
+/// The one side's line number, right-aligned in `width` cells.
+private const(char)[] halfGutterText(in Row row, bool oldSide, int width) @safe
+{
+    const n = oldSide ? row.oldLine : row.newLine;
+    auto s = new char[](width + 1);
+    s[] = ' ';
+    if (n != 0)
+    {
+        auto digits = text(n);
+        const start = digits.length >= cast(size_t) width
+            ? 0 : cast(size_t) width - digits.length;
+        foreach (i, c; digits)
+            if (start + i < cast(size_t) width)
+                s[start + i] = c;
+    }
+    return s;
+}
 
 private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
     int gutterWidth, DiffViewOptions opt) @safe
@@ -317,12 +535,7 @@ private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
     auto rows = new uint[](0);
     rows.reserve(hunk.rowsCount + 1);
 
-    // The hunk header, rendered as its own tinted band.
-    rows ~= b.add(Widget(kind: WidgetKind.rich, spans: [
-        TextSpan(text("@@ -", hunk.oldStart, ",", hunk.oldCount,
-            " +", hunk.newStart, ",", hunk.newCount, " @@"),
-            slot: Slot.diffHunk, paintBackground: true),
-    ]));
+    rows ~= hunkHeader(b, hunk);
 
     foreach (ref row; doc.hunkRows(hunk))
         rows ~= viewRow(b, doc, row, gutterWidth, opt);
@@ -740,7 +953,8 @@ version (unittest)
 @safe unittest
 {
     import sparkles.twoslash.protocol : Node, NodeType;
-    import sparkles.ui.style : Slot;
+    import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.style : Slot;
 
     // One changed line: the old side gets a hover span, the new side none.
     enum oldText = "int a;\nint b;\n";
@@ -814,4 +1028,90 @@ version (unittest)
             if (sp.slot == Slot.diffAdded || sp.slot == Slot.diffRemoved)
                 ++tinted;
     assert(tinted > 0, "and they render as ordinary diff rows");
+}
+
+@("diff_view.alignSplitRows.pairsFillersAndOrder")
+@safe unittest
+{
+    // Alignment is a correspondence between rows, so it is tested as one —
+    // indices only, no widgets, no text.
+    // A block of `-a -b +A +B` where a↔A and b↔B: two aligned rows.
+    Row[] rows = [
+        Row(RowKind.removed, 1, 0, Span(0, 1), 2),
+        Row(RowKind.removed, 2, 0, Span(0, 1), 3),
+        Row(RowKind.added, 0, 1, Span(0, 1), 0),
+        Row(RowKind.added, 0, 2, Span(0, 1), 1),
+    ];
+    auto aligned = alignSplitRows(rows);
+    assert(aligned.length == 2);
+    assert(aligned[0] == SplitRow(0, 2));
+    assert(aligned[1] == SplitRow(1, 3));
+
+    // An unpaired removal gets a filler opposite it, and an unpaired addition
+    // gets one on the other side — the reader must see that a line was gained
+    // or lost, which blank space would not convey.
+    Row[] uneven = [
+        Row(RowKind.context, 1, 1, Span(0, 1), -1),
+        Row(RowKind.removed, 2, 0, Span(0, 1), -1),
+        Row(RowKind.added, 0, 2, Span(0, 1), -1),
+    ];
+    auto a2 = alignSplitRows(uneven);
+    assert(a2.length == 3);
+    assert(a2[0] == SplitRow(0, 0), "context occupies both sides");
+    assert(a2[1] == SplitRow(1, -1), "removal opposite a filler");
+    assert(a2[2] == SplitRow(-1, 2), "addition opposite a filler");
+
+    // A paired addition is never emitted twice — once as its partner's right
+    // half, and again on its own.
+    Row[] paired = [
+        Row(RowKind.removed, 1, 0, Span(0, 1), 1),
+        Row(RowKind.added, 0, 1, Span(0, 1), 0),
+    ];
+    assert(alignSplitRows(paired).length == 1);
+}
+
+@("diff_view.splitLayout.rendersTwoPanesAndDegradesWhenNarrow")
+@safe unittest
+{
+    auto doc = diffText("alpha\nbeta\n", "alpha\nBETA\n", "t.txt", "t.txt");
+
+    DiffViewOptions opt;
+    opt.layout = DiffLayout.split;
+    auto wide = viewDiffDoc(doc, opt, null, null, DiffSession.init, null, 120);
+
+    // The split layout puts each aligned row in a `row` container of two
+    // halves that are each exactly 50% wide. `percent`, not `grow`: a grower
+    // gets its natural width PLUS a share of the leftover, so two `grow`
+    // halves with different content end up different widths and the divider
+    // wanders down the page.
+    static bool isHalf(in WidgetTree t, uint idx)
+        => t.nodes[idx].width.kind == SizeSpec.Kind.percent
+            && t.nodes[idx].width.value == 50;
+
+    size_t splitRows;
+    foreach (ref n; wide.nodes)
+        if (n.kind == WidgetKind.row && n.children.length == 2
+            && isHalf(wide, n.children[0]) && isHalf(wide, n.children[1]))
+            ++splitRows;
+    assert(splitRows >= 2, "aligned rows render as two equal panes");
+
+    // `DVL3`: below the threshold the same request renders unified instead —
+    // two 30-column panes would wrap every line into a ribbon.
+    auto narrow = viewDiffDoc(doc, opt, null, null, DiffSession.init, null, 40);
+    size_t narrowSplitRows;
+    foreach (ref n; narrow.nodes)
+        if (n.kind == WidgetKind.row && n.children.length == 2
+            && isHalf(narrow, n.children[0]))
+            ++narrowSplitRows;
+    assert(narrowSplitRows == 0, "a narrow pane degrades to unified");
+
+    // Width 0 means "the caller did not say" — the static sinks, which lay
+    // out at their own width and are not asking to be second-guessed.
+    auto unsized = viewDiffDoc(doc, opt, null, null, DiffSession.init, null, 0);
+    size_t unsizedSplitRows;
+    foreach (ref n; unsized.nodes)
+        if (n.kind == WidgetKind.row && n.children.length == 2
+            && isHalf(unsized, n.children[0]))
+            ++unsizedSplitRows;
+    assert(unsizedSplitRows >= 2, "no width given, no degradation");
 }

@@ -30,6 +30,7 @@ import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.style : Slot;
 
 import ansi_model : BackgroundMode;
+import diff_view : DiffLayout;
 import document : Document;
 import explorer : ExplorerTui;
 import gui_preview : PreviewModel;
@@ -610,11 +611,15 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     LabelSet labels, TsConfigCache* cache,
     string[] includeGlobs = null, string[] excludeGlobs = null,
     int treeWidth = 32, int tabWidth = 4, bool listWhitespace = false,
-    bool liveTypes = true) @system
+    bool liveTypes = true,
+    DiffLayout diffLayout = DiffLayout.unified) @system
 {
     WorkspaceTui w;
     w.loadDoc = loadDoc;
     w.liveTypes = liveTypes;
+    // `DVL3`: the layout the reviewer asked for on the command line; `s`
+    // toggles it, and a narrow pane degrades it at render time.
+    w.viewer.vm.diffLayout = diffLayout;
     w.buildLayout(treeWidth);
     w.viewer.tabWidth = tabWidth < 1 ? 1 : tabWidth;
     w.viewer.listWhitespace = listWhitespace;

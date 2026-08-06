@@ -33,6 +33,7 @@ import sparkles.base.term_caps : isTerminal, StdStream;
 
 import ansi_model : BackgroundMode, backgroundOptions;
 import document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
+import diff_view : DiffLayout, DiffViewOptions;
 import sparkles.diff : WhitespaceMode;
 import source_set : SourceSet;
 import table_select : TableCopyFormat;
@@ -95,6 +96,9 @@ struct CliParams
 
     @CliOption("diff-ignore-whitespace", "How much whitespace difference counts as the same line: exact (default), trailing (git --ignore-space-at-eol), change (git -b), all (git -w). An ignored difference is never a change, not a change that is hidden.")
     string diffIgnoreWhitespace = "exact";
+
+    @CliOption("diff-layout", "Diff layout: unified (default, one column) or split (two aligned panes). A split narrower than 80 columns degrades to unified, where the same diff reads better.")
+    string diffLayout = "unified";
 
     @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
     string font = defaultGuiFont;
@@ -310,6 +314,30 @@ version (Android)
 /// bundle via `$SPARKLES_TS_GRAMMAR_PATH`. Android: the soname layout —
 /// parsers are APK native libraries the dynamic linker resolves, queries come
 /// from the extracted assets.
+/// The HTML sink's diff options: the layout the reviewer asked for, at
+/// whatever width the page ends up — a browser is not a fixed-width pane, so
+/// the narrow-pane degradation (`DVL3`) does not apply there.
+private DiffViewOptions htmlDiffOptions(DiffLayout layout) @safe pure nothrow @nogc
+{
+    DiffViewOptions opt;
+    opt.layout = layout;
+    return opt;
+}
+
+/// `DVL3`: the `--diff-layout` spelling. Unknown spellings warn and fall back
+/// to `unified` rather than failing the run.
+private DiffLayout parseDiffLayout(string spelling) @safe
+{
+    switch (spelling)
+    {
+        case "unified": return DiffLayout.unified;
+        case "split":   return DiffLayout.split;
+        default:
+            warning(i"unknown --diff-layout '$(spelling)'; using unified");
+            return DiffLayout.unified;
+    }
+}
+
 /// `DVN1`: the `--diff-ignore-whitespace` spelling as a mode. An unknown
 /// spelling warns and falls back to `exact` rather than failing the run — the
 /// totality law: a bad flag must not cost the reviewer their diff.
@@ -616,7 +644,8 @@ int main(string[] args)
                 haveSet ? &docSet : null, &pipeline, dirTarget);
             break;
         case Backend.html:
-            rc = runHtmlSink(doc, theme, registry, cache);
+            rc = runHtmlSink(doc, theme, registry, cache,
+                parseDiffLayout(cli.diffLayout));
             break;
         case Backend.tui:
             rc = runTuiSink(cli, doc, labels, theme, cache,
@@ -700,9 +729,11 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
 
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-            auto tree = viewDiffDoc(doc.diffDoc, DiffViewOptions.init,
+            DiffViewOptions dopt;
+            dopt.layout = parseDiffLayout(cli.diffLayout);
+            auto tree = viewDiffDoc(doc.diffDoc, dopt,
                 doc.diffSides, highlightedFenceRenderer(&cache, &theme, pageFg),
-                doc.diffSession);
+                doc.diffSession, null, previewWidth());
             auto frames = layout(tree, Constraints(maxW: previewWidth()));
             const r = frames[tree.root].rect;
             auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
@@ -720,7 +751,8 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
 
 /// Static HTML to stdout.
 private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
-    ref GrammarRegistry registry, ref TsConfigCache cache) @system
+    ref GrammarRegistry registry, ref TsConfigCache cache,
+    DiffLayout diffLayout = DiffLayout.unified) @system
 {
     final switch (doc.kind) with (ContentKind)
     {
@@ -752,7 +784,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
             SmallBuffer!char htmlOut;
             writeWidgetHtmlPage(htmlOut,
-                viewDiffDoc(doc.diffDoc, DiffViewOptions.init, doc.diffSides,
+                viewDiffDoc(doc.diffDoc, htmlDiffOptions(diffLayout), doc.diffSides,
                     highlightedFenceRenderer(&cache, &theme, pageFg),
                     doc.diffSession),
                 defaultTwoslashPalette(), pageFg, pageBg, doc.title);
@@ -798,7 +830,8 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         return runWorkspace(doc.path, isDir: false, doc,
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
-            cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes);
+            cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes,
+            diffLayout: parseDiffLayout(cli.diffLayout));
     }
     else
     {

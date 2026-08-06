@@ -125,6 +125,7 @@ enum Command : ubyte
     diffToggleFile,
     diffCollapseAll, diffExpandAll,
     diffToggleFormatting,              /// `zn` — the formatting-only hunks
+    diffToggleLayout,                  /// `s` — unified ⇄ split
 }
 
 /// A resolved command plus its argument (only `foldLevel` uses one: the
@@ -310,6 +311,10 @@ KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
                         ? KeyCommand(Command.setNext) : KeyCommand(Command.none));
                 // `{`/`}` step hunk to hunk — vim's paragraph motion, which is
                 // what a hunk is to a reviewer moving through a file.
+                // `s` for split — free over a diff, and unbound elsewhere so
+                // it stays available to whatever claims it later.
+                case 's': return ctx.hasDiffSession
+                    ? KeyCommand(Command.diffToggleLayout) : KeyCommand(Command.none);
                 case '{': return ctx.hasDiffSession
                     ? KeyCommand(Command.diffPrevHunk) : KeyCommand(Command.none);
                 case '}': return ctx.hasDiffSession
@@ -552,6 +557,8 @@ unittest
 
     // Hunk motions exist only over a session — there is nothing to step
     // through otherwise, so the keys stay unbound rather than no-ops.
+    assert(ch('s', diff).cmd == Command.diffToggleLayout);
+    assert(ch('s').cmd == Command.none, "no session, no layout to toggle");
     assert(ch('}', diff).cmd == Command.diffNextHunk);
     assert(ch('{', diff).cmd == Command.diffPrevHunk);
     assert(ch('}').cmd == Command.none && ch('{').cmd == Command.none);

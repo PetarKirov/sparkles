@@ -701,6 +701,15 @@ struct PreviewTui
     const(SessionEntry)[] diffEntries() const @safe pure nothrow @nogc
         => diffNav() ? vm.diffSession.entries : null;
 
+    /// `DVL3`: switch between the unified and split layouts.
+    void toggleDiffLayout() @system
+    {
+        if (!diffNav())
+            return;
+        vm.diffToggleLayout();
+        clampTop();
+    }
+
     /// `DVN2`: show or fold the formatting-only hunks.
     void toggleFormattingHunks() @system
     {
@@ -817,6 +826,8 @@ struct PreviewTui
                         break;
                     case 'N': jumpMatch(top - 1, false); break;
                     case 'y': copySelection(); break;
+                    // `DVL3`: unified ⇄ split.
+                    case 's': toggleDiffLayout(); break;
                     // `DVG1`: over a diff session the brackets walk files.
                     case '[': moveDiffFile(-1); break;
                     case ']': moveDiffFile(+1); break;
