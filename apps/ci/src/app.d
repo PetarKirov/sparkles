@@ -122,6 +122,7 @@ import docs_sidebar :
     checkDocsSidebarFromConfig,
     defaultVitePressConfig;
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
+import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
 
 // === UI sizing ===
@@ -196,6 +197,12 @@ struct CliParams
         ~ "(docs/index.md) is always considered linked.")
     bool checkDocsSidebar;
 
+    @CliOption(`coverage`,
+        "Measure line coverage: run each sub-package's tests under -cov and "
+        ~ "report covered/coverable lines per package, worst first. Reports "
+        ~ "only; nothing fails on a low number.")
+    bool coverage;
+
     @CliOption(`C|ci-stats`,
         "Compute GitHub Actions CI job timing statistics and runner-type aggregates. "
         ~ "See docs/specs/ci/stats/ for the full specification.")
@@ -264,6 +271,7 @@ enum ProgramMode
     checkVcsUrls,
     checkDocsSidebar,
     ciStats,
+    coverage,
 }
 
 struct Example
@@ -377,6 +385,9 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.ciStats)
         return runCiStatsMode(cli);
+
+    if (mode == ProgramMode.coverage)
+        return runCoverageMode();
 
     auto inputFiles = collectInputFiles(cli, mode);
 
@@ -501,6 +512,9 @@ private string validateCliMode(
 
 private ProgramMode resolveProgramMode(in CliParams cli)
 {
+    if (cli.coverage)
+        return ProgramMode.coverage;
+
     if (cli.ciStats)
         return ProgramMode.ciStats;
 
@@ -957,6 +971,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkCommitScope:
             case ProgramMode.checkVcsUrls:
             case ProgramMode.checkDocsSidebar:
+            case ProgramMode.coverage:
                 rc = 1;
                 break;
             case ProgramMode.ciStats:
@@ -1786,6 +1801,147 @@ private int runDubTestsMode(bool failFast)
     if (stoppedEarly)
         displayFailureReplay(failureReplay);
     return failures > 0 ? 1 : 0;
+}
+
+/**
+Runs every sub-package's tests under `-cov` and reports line coverage.
+
+Reports only. There is no threshold and nothing fails on a low number: D's
+`-cov` counts template instantiations per instantiation and emits listings for
+imported modules too, so the figure is a trend indicator rather than a contract.
+Gating on it would buy noise.
+
+Two mechanics the listings force (see $(MREF coverage)): the destination is
+redirected with druntime's own `--DRT-covopt`, because otherwise every run
+scatters its `.lst` files across the repository root; and a package's number
+counts only files beneath its own directory, because a run also writes listings
+for every dependency it compiled.
+*/
+private int runCoverageMode()
+{
+    import std.algorithm : sort;
+    import std.file : mkdirRecurse, rmdirRecurse;
+    import std.format : format;
+    import sparkles.ui.components.table : drawTable, TableProps;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    {
+        error(i"Could not detect repository root");
+        return 1;
+    }
+
+    auto subPackages = parseSubPackages(repoRoot);
+    if (subPackages.length == 0)
+    {
+        error(i"No sub-packages found in dub.sdl");
+        return 1;
+    }
+
+    const covRoot = buildPath(repoRoot, "build", "coverage");
+    if (covRoot.exists)
+        covRoot.rmdirRecurse;
+    covRoot.mkdirRecurse;
+
+    i"Measuring coverage for $(subPackages.length) sub-package(s)".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
+        .writeln("\n");
+
+    PackageCoverage[] results;
+    string[] failed;
+    foreach (i, pkg; subPackages)
+    {
+        const pkgName = pkg.baseName;
+        const dest = buildPath(covRoot, pkgName);
+        dest.mkdirRecurse;
+        mkdirRecurse(buildPath(repoRoot, pkg, "build"));
+
+        auto cmd = ["dub", "--root", repoRoot, "test", ":" ~ pkgName, "-b", "unittest-cov"];
+        const dc = environment.get("DC", "");
+        if (dc.length)
+            cmd ~= "--compiler=" ~ dc;
+        cmd ~= ["--", "--DRT-covopt=dstpath:" ~ dest];
+
+        styledText(i"{dim [$(i + 1)/$(subPackages.length)]} $(pkgName)").writeln;
+        auto result = executeLogged(cmd, "coverage " ~ pkgName);
+        if (result.status != 0)
+        {
+            // Not every package runs `sparkles:test-runner`: `event-horizon`,
+            // `http` and `terminal-benchmark` still use silly, which parses
+            // argv with `std.getopt` and rejects druntime's own `--DRT-*`
+            // options — exactly as our runner did before `a5c5d040`. Retry
+            // without the redirect and collect the listings from where they
+            // land instead, so which runner a package uses does not decide
+            // whether it can be measured.
+            result = executeLogged(cmd[0 .. $ - 2], "coverage " ~ pkgName ~ " (retry)");
+            sweepListings(repoRoot, dest);
+        }
+        if (result.status != 0)
+        {
+            failed ~= pkgName;
+            // Show WHY, next to the package that failed. Naming it and stopping
+            // leaves the reader to reproduce the run by hand for information
+            // this one already had — the defect `02b254dc` fixed for the result
+            // boxes, which a new mode is just as able to reintroduce.
+            result.output.lineSplitter
+                .map!(l => l.to!string)
+                .array
+                .formatOutputLines(14, keepTail: true)
+                .drawBox(styledText(i"{red ✗ $(pkgName)} {dim › coverage run failed}"))
+                .writeln;
+        }
+
+        results ~= collectCoverage(dest, pkgName, pkg);
+    }
+
+    results.sort!((a, b) => a.percent < b.percent);
+
+    string[][] rows = [["package", "files", "covered", "coverable", "%"]];
+    size_t totalCovered, totalCoverable;
+    foreach (r; results)
+    {
+        totalCovered += r.covered;
+        totalCoverable += r.coverable;
+        rows ~= [
+            r.name,
+            r.files.length.to!string,
+            r.covered.to!string,
+            r.coverable.to!string,
+            r.coverable == 0 ? "—" : format("%.1f", r.percent),
+        ];
+    }
+    const total = totalCoverable == 0 ? 100.0 : (100.0 * totalCovered) / totalCoverable;
+    rows ~= [
+        "TOTAL", "", totalCovered.to!string, totalCoverable.to!string, format("%.1f", total),
+    ];
+
+    writeln();
+    drawTable(rows, TableProps(headerRows: 1)).writeln;
+    styledText(i"{dim listings kept in} $(covRoot)").writeln;
+
+    // A package whose tests did not run has no coverage to report, and a zero
+    // that means "did not build" must not read as a zero that means "untested".
+    if (failed.length)
+        warning(i"{yellow tests failed} for $(failed.length) package(s): $(failed.join(", ")) — their rows are not meaningful");
+
+    return 0;
+}
+
+/**
+Moves any `-cov` listings left in `from` into `into`.
+
+Without `--DRT-covopt=dstpath:` the runtime writes them to the process's working
+directory, which for `dub test` is the repository root — so a package whose
+runner rejects that option scatters its listings across the tree. Sweeping them
+is what keeps the retry above from leaving litter behind.
+*/
+private void sweepListings(string from, string into)
+{
+    import std.file : dirEntries, rename, SpanMode;
+    import std.path : baseName, buildPath;
+
+    foreach (entry; from.dirEntries("*.lst", SpanMode.shallow))
+        rename(entry.name, buildPath(into, entry.name.baseName));
 }
 
 /// Which of the test runner's extracted-test modes a sub-package opts into.
