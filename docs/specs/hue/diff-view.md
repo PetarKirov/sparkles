@@ -1,15 +1,16 @@
 # `hue` diff & PR view — Feature Requirements
 
-_**Status:** planned · **Date:** 2026-08-04 (waves 2–3 scoped 2026-08-05) ·
-**Scope:** viewing **diffs** (two files, a piped unified patch, git revisions),
-then **pull requests** (second wave), then a **write surface** (third wave):
-hunk/line **staging**, **inline editing**, content-anchored **comments with
-proposed suggestions**, and **3-way conflict** viewing/resolution — across all
-four sinks (GUI / TUI / ANSI / HTML), over a new `sparkles:diff` engine
-library. The motivating pain: editing a large markdown table and having the
-formatter re-align **unrelated rows**, drowning the real change in alignment
-noise — so noise classification is a first-class concern, not an
-afterthought._
+_**Status:** planned · **Date:** 2026-08-04 (waves 2–3 scoped 2026-08-05, the
+type overlay 2026-08-06) · **Scope:** viewing **diffs** (two files, a piped
+unified patch, git revisions), then **pull requests** (second wave), then a
+**write surface** (third wave): hunk/line **staging**, **inline editing**,
+content-anchored **comments with proposed suggestions**, and **3-way conflict**
+viewing/resolution — across all four sinks (GUI / TUI / ANSI / HTML), over a new
+`sparkles:diff` engine library; plus **resolved D types on both sides** of the
+diff (`DVT`) over `sparkles:twoslash-d`. The motivating pain: editing a large
+markdown table and having the formatter re-align **unrelated rows**, drowning
+the real change in alignment noise — so noise classification is a first-class
+concern, not an afterthought._
 
 > [!NOTE]
 > Forward-looking — every row is `not started`. Status legend and IDs: see the
@@ -18,7 +19,8 @@ afterthought._
 
 ## Design & rationale
 
-Twelve decisions shape the spec (1–7 settled 2026-08-04, 8–12 on 2026-08-05):
+Fifteen decisions shape the spec (1–7 settled 2026-08-04, 8–12 on 2026-08-05,
+13–15 on 2026-08-06):
 
 1. **Diffs first, PRs next.** The first wave renders local diffs; PR viewing
    (`DPR`) is specced now but built as a second wave **on the same diff
@@ -77,6 +79,37 @@ Twelve decisions shape the spec (1–7 settled 2026-08-04, 8–12 on 2026-08-05)
     so GitHub is merely the first adapter and GitLab / Gitea / Forgejo /
     Codeberg follow without touching the session or UI layers; a missing
     capability degrades that one feature, not the forge.
+13. **The old side is analyzed in a real worktree, not approximated.** Types on
+    both sides (`DVT`) are only worth having if they are _right_: a confidently
+    wrong type in a review tool is worse than no type. DMD-as-a-library resolves
+    imports by reading other modules **from disk**, so the old side is analyzed
+    inside a **materialized git worktree of that revision** (detached, machine-
+    managed, under hue's cache root) — siblings, `dub.sdl` and selections all at
+    the revision under review. The worktree slice this needs
+    (`add --detach` / `remove` / `prune` / `list --porcelain`) goes into the
+    shared **`sparkles:git`** library rather than being hand-rolled in
+    `apps/hue`: that extraction is already decided (dman `D16` — the
+    `release/git.d` argv funnel promoted to `libs/git` with the spawner injected
+    as a capability, worktree verbs explicitly listed as net-new there), and
+    hue's type overlay is simply its **first consumer**, with dman's `VcsRepo`
+    the second. Layout follows dman's convention ([`D9`](../dman/DECISIONS.md)),
+    with hue using its own cache root — these are machine-managed caches, not a
+    user's branch worktrees.
+14. **One analysis serves its whole import closure.** Analyzing `a.d` already
+    made DMD analyze everything `a` imports, so opening `b.d` next must _not_
+    start a second process. The oracle therefore enumerates the set of modules
+    its one analysis covers and answers payload/tip requests for **any file in
+    that set** (`EXT8`), and hue caches payloads per `(revision, path)`.
+    Navigation inside a closure is instant; a new process is spawned only for a
+    file the current analyses do not cover. This is what makes the per-side
+    process budget bearable at PR scale.
+15. **The semantic differential is staged, coarse before precise.** Session-wide
+    the analyzer yields a cheap per-file **verdict badge** (public signatures
+    changed / implementation only / doc only / type-preserving, `DVT4`) from an
+    API-surface digest of each side; the **precise** per-identifier comparison —
+    which inferred type changed, which call now resolves to a different overload
+    (`DVT5`) — is computed only when the file is actually opened. The reviewer
+    gets the map immediately and the detail where they look.
 
 ## Diff engine & document model (`DVM`)
 
@@ -124,6 +157,7 @@ interactive backend, and Android phases in behind the editor component:
 | Capability                                        | TUI | GUI desktop | GUI Android                          | HTML               |
 | ------------------------------------------------- | --- | ----------- | ------------------------------------ | ------------------ |
 | Diff viewing (layouts, noise, preview-diff)       | yes | yes         | yes                                  | yes (static)       |
+| Type overlay + verdict badges (`DVT`)             | yes | yes         | **no — no analyzer on device**       | yes (CSS popups)   |
 | Staging / discard (`DST2`–`DST4`)                 | yes | yes         | yes (touch, [`AND12`](./android.md)) | **no — read-only** |
 | Inline editing (`DST5`)                           | yes | yes         | later (soft-keyboard editor, `UIA9`) | no                 |
 | Comments: reading (`DPR3`/`DCM2`)                 | yes | yes         | yes                                  | yes (static)       |
@@ -143,6 +177,36 @@ The four-layer strategy; each layer independent and degradable.
 | DVN5 | **Moved-code detection** is explicitly **out of scope** for both waves (researched: VS Code / WinMerge prior art); the model must not preclude it (rows carry stable ids).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | not started | deferred                                                                                                                           |
 | DVN6 | **Rendered-preview diff** for markdown: diff the two `MdDoc` models (block-level alignment + inline text diff within blocks) and render change decorations **in the decorated preview**, with **full block coverage from the first cut**: tables cell-wise (changed cells tinted in the box-drawn table), paragraphs/headings/list items with inline word-diff tinting, code fences line-diffed inside the preview, callouts and nested lists; deleted blocks render collapsed/struck. The novel mode: `--diff-preview`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | not started | `MdDoc`; `viewMarkdown`; proposed model diff                                                                                       |
 | DVN7 | **Order-independent construct equivalence** (tree-sitter-based): where the grammar has containers whose child order can be semantically irrelevant (class/struct members, overload sets, imports, attributes, markdown reference-link definitions), the structural pass (`DVN3`) must detect that a container's children were only **permuted** — every member matched 1:1 (by structural identity / a signature key) with no content change — and classify the reorder like `DVN2` noise: demoted rendering with matched-pair move indicators, never a wall of remove+add. Whether an order is irrelevant is **context-dependent** — reordering D/C struct fields is an ABI/layout break, reordering imports or overloads is a trivial refactor — so commutativity must be a **declarative per-language profile** (Mergiraf `LangProfile`-style: which node kinds are commutative containers, matched by which signature key), shipped with conservative defaults and overridable per container kind via config/CLI. Distinct from `DVN5`: container-scoped permutation via structural matching, not general cross-file moved-code detection. | not started | proposed commutativity profiles over the `sparkles:syntax` ts engine; [research: Mergiraf](../../research/diff-review/mergiraf.md) |
+
+## Type overlay & semantic diff (`DVT`)
+
+Resolved **D types on both sides** of the diff, over the analyzer hue already
+spawns for a single open file ([`LIV*`](./twoslash.md#live-d-types-in-the-viewer-liv)).
+The reviewer's questions this answers are the ones a text diff cannot: _what is
+this expression's type after the change_, _did this signature change or only its
+body_, _does the new side still compile_. Where `DVN3`/`DVN7` are **syntactic**
+(tree-sitter), this layer is **semantic** (the type oracle) — no surveyed tool in
+[the catalog](../../research/diff-review/index.md) resolves types on the
+_removed_ side at all.
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Status      | Traces to                                                            |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------- |
+| DVT1 | **Both sides answer hovers.** A `.d` file in a diff session attaches a lazy twoslash payload **per side**; pointing at an identifier on a removed row resolves it against the _old_ revision and on an added row against the _new_ one, through the existing `LiveTypesSession` protocol unchanged. **Anchoring contract**: the overlay attaches to a side only when the analyzed `code` is **byte-identical** to that side's text (the extractor runs the notation parser, and a `DVS2` reconstructed old side may be `null`) — otherwise that side simply has no overlay. A mis-anchored popup is never acceptable.             | not started | proposed per-side overlay; `LiveTypesSession`; `diff_view.DiffSides` |
+| DVT2 | **Revision provisioning by worktree** (decision 13): each revision the session needs is materialized **once** as a detached `git worktree` under hue's cache root via `sparkles:git`'s worktree verbs, shared by every file and side that references it, removed at session end and stale ones pruned at start. Hue's worktrees are named so `git worktree list` shows their provenance and are never confused with a user's branch worktrees ([dman `D9`](../dman/DECISIONS.md)). The **worktree side needs no provisioning** (it is the repo); the **index side** (`--staged`) materializes with `git checkout-index --prefix`. | not started | `sparkles:vcs` worktree slice; `DVS3`                                |
+| DVT3 | **Closure reuse** (decision 14): one oracle per **side-revision**, not per file — it enumerates the modules its single analysis covers and serves lazy payloads and tips for **any** of them (`EXT8`), and hue caches payloads per `(revision, path)`. Opening a file already covered by a live analysis must render its types **without spawning anything**; only an uncovered file starts a new process. Live oracles are bounded and the oldest is retired first.                                                                                                                                                              | not started | `EXT8`; `PRJ16` cache; proposed session-level oracle pool            |
+| DVT4 | **Coarse verdict badges, session-wide** (decision 15): every changed `.d` file carries a semantic verdict — _public signatures changed_ / _implementation only_ / _doc only_ / _type-preserving_ — derived by comparing an **API-surface digest** of each side (declared symbols with resolved signatures, attributes and effects, `EXT9`), not by per-identifier work. Badges render in the changed-file list (`DVS4`, [`TVU6`](./tree-view.md)) and in each file's header, and feed `DVN2`-style demotion: a file whose digest is unchanged is noise by the strongest available evidence.                                       | not started | `EXT9` digest; `DVS4`; `DVN2`                                        |
+| DVT5 | **Precise differential, on open** (decision 15): for the opened file, identifiers paired across a changed row (`DVM2`/`DVM4`) whose **resolved type or resolved symbol differs** are marked with their own emphasis tier and their popup shows _was_ → _now_; identifiers that survive unchanged are explicitly quiet. This is the reviewer-facing payoff of `DVT1` and it must never be computed for a file that is not open.                                                                                                                                                                                                    | not started | proposed type-pair comparison over `DVM2` pairs                      |
+| DVT6 | **New-side diagnostics inline**: the analyzer's error nodes for the new side render as below-line blocks in the diff (the twoslash error channel) — review-time typechecking, "this change does not compile", with the old side's diagnostics available for contrast so a **pre-existing** error is not mistaken for a regression.                                                                                                                                                                                                                                                                                                | not started | analyzer error nodes; `OVL1` below-line channel                      |
+| DVT7 | **Provenance and degradation**: every resolved tip states what it was resolved against (`resolved at <rev>`), so a type is never anonymous evidence. Non-D files, no `twoslash-extract`, no dub project, an unresolvable revision, a shallow clone missing the old commit, or a materialization failure leave the diff exactly as it renders today plus **one** notice — never a blank pane, never a modal, and never an "approximate" type silently substituted for a faithful one.                                                                                                                                              | not started | `LIV4`/`PRJ15` degradation shape; totality                           |
+| DVT8 | **Sinks**: hover popups in the **TUI and GUI** (one shared widget view, the `SIG*` layout); the **HTML** sink emits the same types as a static review page through the existing `.twoslash-*` pure-CSS `:hover` contract — both sides, no JavaScript ([`HTM9`](./feature-requirements.md)). ANSI (eager meta-lines) and Android (no analyzer on device) are explicitly **out** of the first cut.                                                                                                                                                                                                                                  | not started | `render_widgets.d`; `libs/twoslash` `render_html.d`; `HTM9`          |
+
+> [!IMPORTANT]
+> `DVT` requires **`render_widgets.d`'s per-line decoration application to be
+> extracted from its payload-shaped entry point** into a line-source-agnostic
+> seam, so the diff's row builder can paint hover spans without duplicating the
+> overlay's popup/underline logic. That refactor is the real structural cost of
+> this area — and it is the same seam [`overlays.md`](./overlays.md) needs for
+> "twoslash stops being a mode", extended with **per-side attachment** (`OVL8`).
 
 ## Navigation & scale (`DVG`)
 
@@ -218,28 +282,39 @@ submitted to forges.
 ## Milestones
 
 Waves: **V** (viewing) → **P** (PR/forge reading) → **W** (write surface:
-staging, editing, comments, conflicts). Within V, noise precedes the split
-layout — the noise layers are layout-independent post-diff passes and they are
-the motivating pain.
+staging, editing, comments, conflicts), with **T** (types) interleaved. Within
+V, noise precedes the split layout — the noise layers are layout-independent
+post-diff passes and they are the motivating pain.
 
-| Milestone | Scope                                                                                             | Status               | Requirements                                  |
-| --------- | ------------------------------------------------------------------------------------------------- | -------------------- | --------------------------------------------- |
-| V0        | `sparkles:diff` engine: line diff + alignment + patch parser + word refinement + guards + goldens | partial (`440ab1f7`) | `DVM1`–`DVM8`                                 |
-| V1        | Diff content kind in hue: two-file + piped-patch sources, **unified** layout, all four sinks      | partial (`31fdab59`) | `DVS1`, `DVS2`, `DVS5`, `DVL1`, `DVL4`–`DVL7` |
-| V2        | Git revisions + multi-file session + explorer integration + hunk/file navigation                  | not started          | `DVS3`, `DVS4`, `DVG1`, `DVG3`                |
-| V3        | Noise layers 1–2: whitespace toggles + formatting-only classification + **table-cell golden**     | not started          | `DVN1`, `DVN2`, `DVN4`                        |
-| V4        | **Split** layout + runtime toggle + width degradation + unchanged-region collapsing               | not started          | `DVL2`, `DVL3`, `DVG2`, `DVG5`                |
-| V5        | Structural pass: classification oracle + opt-in structural view + commutativity profiles          | not started          | `DVN3`, `DVN7`                                |
-| V6        | Rendered-preview diff for markdown (full block coverage)                                          | not started          | `DVN6`                                        |
-| P0        | Forge seam + GitHub adapter; PR session: description, metadata, file-list diff                    | not started          | `DPR1`, `DPR2`, `DPR6`, `DPR7`                |
-| P1        | Inline review-comment threads                                                                     | not started          | `DPR3`                                        |
-| W0        | Staging: stable ids, hunk/line stage/unstage, selection modes, discard, display/apply invariant   | not started          | `DST1`–`DST4`, `DST6`                         |
-| W1        | Inline editing of the worktree side (**requires the `UIA9` editor component first**)              | not started          | `DST5`; [`UIA9`](./ui-architecture.md)        |
-| W2        | Local comments: content anchors, thread blocks, `refs/hue/data` store + viewed marks              | not started          | `DCM1`, `DCM2`, `DCM5`                        |
-| W3        | Suggestions: authoring + both emitters                                                            | not started          | `DCM3`, `DCM4`                                |
-| W4        | Review submission (draft batch → forge)                                                           | not started          | `DCM6`                                        |
-| W5        | Conflict view: ingestion, 3-way layout, navigation                                                | not started          | `CFV1`–`CFV3`                                 |
-| W6        | Conflict resolution                                                                               | not started          | `CFV4`                                        |
+The **T** wave is sequenced around one observation: `T0` needs no git at all
+(two `.d` files on disk are both analyzable exactly as `LIV1` analyzes one), so
+it can prove the anchoring contract, the dual-session shape and the
+`render_widgets` seam **immediately**, while everything expensive — worktree
+provisioning, closure serving, digests — waits for `V2` to supply a real
+multi-file git session to hang it on.
+
+| Milestone | Scope                                                                                                                        | Status               | Requirements                                  |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------- | --------------------------------------------- |
+| V0        | `sparkles:diff` engine: line diff + alignment + patch parser + word refinement + guards + goldens                            | partial (`440ab1f7`) | `DVM1`–`DVM8`                                 |
+| V1        | Diff content kind in hue: two-file + piped-patch sources, **unified** layout, all four sinks                                 | partial (`31fdab59`) | `DVS1`, `DVS2`, `DVS5`, `DVL1`, `DVL4`–`DVL7` |
+| V2        | Git revisions + multi-file session + explorer integration + hunk/file navigation                                             | not started          | `DVS3`, `DVS4`, `DVG1`, `DVG3`                |
+| T0        | Type spike: `--diff a.d b.d`, both sides on disk — dual sessions, anchoring, TUI/GUI popups (**no git; runnable before V2**) | not started          | `DVT1`, `DVT7`; the `render_widgets` seam     |
+| T1        | `sparkles:git` worktree verbs + revision provisioning + closure-serving oracle → types on git-sourced diffs (**after V2**)   | not started          | `DVT2`, `DVT3`; `EXT8`; dman `D16`            |
+| T2        | API-surface digests → session-wide verdict badges in the explorer + inline new-side diagnostics                              | not started          | `DVT4`, `DVT6`; `EXT9`                        |
+| T3        | Precise per-identifier differential (was → now) + the static HTML type-review page                                           | not started          | `DVT5`, `DVT8`                                |
+| V3        | Noise layers 1–2: whitespace toggles + formatting-only classification + **table-cell golden**                                | not started          | `DVN1`, `DVN2`, `DVN4`                        |
+| V4        | **Split** layout + runtime toggle + width degradation + unchanged-region collapsing                                          | not started          | `DVL2`, `DVL3`, `DVG2`, `DVG5`                |
+| V5        | Structural pass: classification oracle + opt-in structural view + commutativity profiles                                     | not started          | `DVN3`, `DVN7`                                |
+| V6        | Rendered-preview diff for markdown (full block coverage)                                                                     | not started          | `DVN6`                                        |
+| P0        | Forge seam + GitHub adapter; PR session: description, metadata, file-list diff                                               | not started          | `DPR1`, `DPR2`, `DPR6`, `DPR7`                |
+| P1        | Inline review-comment threads                                                                                                | not started          | `DPR3`                                        |
+| W0        | Staging: stable ids, hunk/line stage/unstage, selection modes, discard, display/apply invariant                              | not started          | `DST1`–`DST4`, `DST6`                         |
+| W1        | Inline editing of the worktree side (**requires the `UIA9` editor component first**)                                         | not started          | `DST5`; [`UIA9`](./ui-architecture.md)        |
+| W2        | Local comments: content anchors, thread blocks, `refs/hue/data` store + viewed marks                                         | not started          | `DCM1`, `DCM2`, `DCM5`                        |
+| W3        | Suggestions: authoring + both emitters                                                                                       | not started          | `DCM3`, `DCM4`                                |
+| W4        | Review submission (draft batch → forge)                                                                                      | not started          | `DCM6`                                        |
+| W5        | Conflict view: ingestion, 3-way layout, navigation                                                                           | not started          | `CFV1`–`CFV3`                                 |
+| W6        | Conflict resolution                                                                                                          | not started          | `CFV4`                                        |
 
 ## Relationship to existing specs
 
@@ -251,6 +326,9 @@ the motivating pain.
 | [folding.md](./folding.md)                                          | the fold mechanics `DVG2`/`DVN2` reuse                        |
 | [gallery.md](./gallery.md) `GAL7` / `HTM8`                          | HTML selection domains for split panes                        |
 | [`sparkles:syntax`](../syntax/index.md)                             | highlighting both sides (`DVM5`); the ts engine behind `DVN3` |
+| [twoslash.md](./twoslash.md) `LIV*`                                 | the live-types oracle the `DVT` overlay attaches per side     |
+| [`sparkles:dmd-lsp`](../dmd-lsp/index.md) `EXT8`/`EXT9`             | closure-serving oracle + the API digest behind the badges     |
+| `sparkles:git` (dman `D16`) / [dman `D9`](../dman/DECISIONS.md)     | the worktree verbs that provision the old revision (`DVT2`)   |
 | [`docs/research/diff-review/`](../../research/diff-review/index.md) | the prior-art survey grounding every "prior art" claim above  |
 
 → [Overview](./index.md) · [Feature requirements](./feature-requirements.md) · [Tree / DAG view](./tree-view.md)
