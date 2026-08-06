@@ -12,9 +12,9 @@ targetPath "build"
 // help output — `core-cli -> ui -> math -> (math's unittest) -> test-runner ->
 // test-runner-impl -> core-cli`. Dub's cycle detection unions across configs, so
 // the edge counts even though only math's *test* build needs the runner.
-// `../test-runner{,-impl}/src` are here for the same reason: see the unittest
+// `../test-runner/src` is here for the same reason: see the unittest
 // configuration below. This is the recipe `sparkles:core-cli` documents.
-importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
+importPaths "src" "../test-runner/src" "../math/src"
 
 // sparkles:base supplies the color/style vocabulary (RgbColor/Color/toRgb — the
 // toolkit adds no color type of its own). Concrete canvas backends adapt to
@@ -45,6 +45,7 @@ configuration "unittest" {
     // include the shim and the impl instead, as `base`/`core-cli`/`test-utils`
     // do for the same reason.
     sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
 
     // The component tests use the diff/outdent helpers. `test-utils` depends on
     // `base` alone, so this edge closes no cycle.

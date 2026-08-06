@@ -7,7 +7,7 @@ targetPath "build"
 // test-utils is in the impl library's dependency closure (core-cli's unittest
 // build depends on it), so it cannot depend on the impl — it source-includes
 // the shim and the impl like base/core-cli.
-importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+importPaths "src" "../test-runner/src"
 
 dflags "-preview=in" "-preview=dip1000"
 
@@ -20,6 +20,7 @@ configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
     sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
 
     dependency "sparkles:base" path="../.."
 

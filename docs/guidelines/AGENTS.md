@@ -133,11 +133,11 @@ sparkles/
 │   │   ├── purl.d, vers.d          # pURL / VERS interop
 │   │   └── testing.d               # checkRoundTrip / checkRejects / checkAscending
 │   ├── test-runner/src/sparkles/test_runner/   # the shim (sourceLibrary, compiled into consumers)
+│   │   ├── attributes.d            # @betterC / @ctfe / @wasm / @benchmark marker UDAs
 │   │   ├── discovery.d             # compile-time unittest discovery → Test[]
 │   │   └── register.d              # extendedModuleUnitTester hook + extern(C) seam
 │   ├── test-runner-impl/src/sparkles/test_runner/  # prebuilt impl library (internal)
 │   │   ├── runner_impl.d           # extern(C) entry, CLI, mode dispatch
-│   │   ├── attributes.d            # @betterC / @ctfe / @wasm / @benchmark marker UDAs
 │   │   ├── model.d, filter.d       # Test/TestResult data model; regex include/exclude
 │   │   ├── execution.d, reporting.d # parallel execution; styled result rendering
 │   │   ├── bench.d                 # benchIter/blackBox, auto-scaling measurement
@@ -357,15 +357,25 @@ A new sub-package integrates the runner one of two ways:
   source-include both packages instead:
 
   ```sdl
-  importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+  importPaths "src" "../test-runner/src"
   configuration "unittest" {
       sourcePaths "../test-runner/src" "../test-runner-impl/src"
+      importPaths "src" "../test-runner/src" "../test-runner-impl/src"
   }
   ```
 
-The `@ctfe`/`@betterC`/`@wasm`/`@benchmark` attributes live in the impl
-package. A module that imports them in a non-`unittest` build (e.g. `base`'s
-`readers.d`) must put `../test-runner-impl/src` on its top-level `importPaths`.
+  Note the split: only the **shim** is on the top-level `importPaths`; the impl's
+  tree is unittest-only. A `sourcePaths` entry does not imply an import path, so
+  the `unittest` block repeats both.
+
+The `@ctfe`/`@betterC`/`@wasm`/`@benchmark`/`@workload` attributes live in the
+**shim** (`libs/test-runner/src/sparkles/test_runner/attributes.d`), not the
+impl. That placement is load-bearing: a module carrying them imports
+`attributes` in _every_ build (e.g. `base`'s `readers.d`), so hosting them in
+the impl would force its whole source tree — and, through the impl's
+`sparkles:ui` dependency, that toolkit too — onto the top-level `importPaths` of
+`base`/`core-cli`/`ui`/`input` and thus into the Nix source closure of every app
+that depends on them.
 
 > [!WARNING]
 > **The runner does not discover unittests that live only in `package.d`**

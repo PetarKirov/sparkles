@@ -6,11 +6,6 @@ license "BSL-1.0"
 
 targetPath "build"
 
-// vector.d imports `@ctfe`/`@betterC`/`@wasm` (attributes) unconditionally, so
-// the attributes module (in the impl package) must be on importPaths in all
-// configs.
-importPaths "src" "../test-runner-impl/src"
-
 dflags "-preview=in" "-preview=dip1000"
 
 configuration "library" {

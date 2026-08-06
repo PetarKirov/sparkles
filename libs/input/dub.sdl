@@ -10,7 +10,7 @@ targetPath "../../build"
 // cycle detection unions dependencies across configurations — a real math
 // dependency would close input → math → (math unittest) → test-runner → impl.
 // Same recipe as libs/tui and libs/core-cli document.
-importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
+importPaths "src" "../test-runner/src" "../math/src"
 sourcePaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
@@ -25,6 +25,7 @@ configuration "library" {
 // rather than `dependency "sparkles:test-runner"` (see the note above).
 configuration "unittest" {
     sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
     dflags "-checkaction=context" "-allinst"
 }
 // Optimised, assertions live, `debug {}` blocks out — the build every nix

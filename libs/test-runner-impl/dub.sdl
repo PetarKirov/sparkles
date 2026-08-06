@@ -12,6 +12,10 @@ targetPath "build"
 // them — resolves cleanly.
 dflags "-preview=in" "-preview=dip1000" "-allinst"
 
+// The marker UDAs live in the shim. Import-only (not `sourcePaths`): the shim's
+// registration modules are not compiled into this library.
+importPaths "src" "../test-runner/src"
+
 // The heavy runner machinery: CLI dispatch, execution, reporting, drivers,
 // benchmarking. Built once as a prebuilt library and reached across a thin
 // `extern(C)` seam by the `sparkles:test-runner` shim, so consumers never

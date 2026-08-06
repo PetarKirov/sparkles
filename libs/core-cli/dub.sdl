@@ -21,8 +21,8 @@ targetPath "build"
 // `../math/src` is import-only (all-template `Vector`/`ScreenSize`): a real
 // `dependency "sparkles:math"` would close a dub dependency cycle through
 // math's unittest config (math -> test-runner -> test-runner-impl -> core-cli),
-// the same reason the test-runner shim/impl are on importPaths here.
-importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
+// the same reason the test-runner shim is on importPaths here.
+importPaths "src" "../test-runner/src" "../math/src"
 
 configuration "library" {
     targetType "library"
@@ -35,6 +35,7 @@ configuration "unittest" {
     // `core-cli` is imported by the impl (UI niceties), so it cannot depend on
     // the impl library — it source-includes the shim and the impl instead.
     sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
     dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
