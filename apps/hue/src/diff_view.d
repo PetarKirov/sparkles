@@ -59,10 +59,14 @@ struct DiffViewOptions
     /// resolves its laid-out row through `keyedRects` ($(LREF diffFileKey)).
     /// Zero leaves the container unkeyed.
     size_t fileKey;
-    /// `DVG2`: expand the unchanged regions between hunks, showing the lines
-    /// the context window hid. Needs `sideText` — a patch does not carry the
-    /// lines it elided, so there is nothing to expand it with.
+    /// `DVG2`: expand every unchanged region. Needs `sideText` — a patch does
+    /// not carry the lines it elided, so there is nothing to expand it with.
     bool expandContext;
+    /// `DVG2`: the document-global gap indices the reviewer expanded one at a
+    /// time. Consulted when `expandContext` is off, so "expand this one" and
+    /// "expand everything" are independent rather than one overriding the
+    /// other.
+    const(bool)[] expandedGaps;
     /// `DVG2`: the file's new-side text, when the host has it — the source the
     /// expanded lines are read from.
     const(char)[] sideText;
@@ -298,6 +302,9 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
     // ordering over the whole session rather than per file (`DVG1`).
     uint hi = file.hunksStart;
     const hunks = doc.fileHunks(file);
+    // Gap indices are document-global, like hunk keys, so a host resolves
+    // "the gap the cursor is in" without knowing which file it belongs to.
+    size_t gapIndex = file.hunksStart;
     foreach (gi, ref hunk; hunks)
     {
         // `DVG2`: the unchanged region between this hunk and the previous one
@@ -305,8 +312,9 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         // it hid, and show it when asked.
         const prevEnd = gi == 0 ? 1u : hunks[gi - 1].newStart + hunks[gi - 1].newCount;
         if (hunk.newStart > prevEnd)
-            rows ~= contextGap(b, prevEnd, hunk.newStart - prevEnd,
-                gutterWidth, opt);
+            rows ~= keyed(b, contextGap(b, prevEnd, hunk.newStart - prevEnd,
+                gutterWidth, opt, gapIndex), opt.fileKey ? diffGapKey(gapIndex) : 0);
+        ++gapIndex;
 
         const key = opt.fileKey ? diffHunkKey(hi) : 0;
         ++hi;
@@ -328,7 +336,9 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         const after = last.newStart + last.newCount;
         const total = cast(uint) countLines(opt.sideText);
         if (total >= after)
-            rows ~= contextGap(b, after, total - after + 1, gutterWidth, opt);
+            rows ~= keyed(b, contextGap(b, after, total - after + 1,
+                gutterWidth, opt, gapIndex),
+                opt.fileKey ? diffGapKey(gapIndex) : 0);
     }
 
     auto fileCol = b.container(WidgetKind.column, rows, gap: 1);
@@ -352,8 +362,21 @@ enum size_t diffHunkKeyBase = size_t.max / 2 + 1;
 size_t diffHunkKey(size_t hunkIndex) @safe pure nothrow @nogc
     => diffHunkKeyBase + hunkIndex;
 
-/// `true` for a key produced by $(LREF diffHunkKey).
-bool isDiffHunkKey(size_t key) @safe pure nothrow @nogc => key >= diffHunkKeyBase;
+/// `true` for a key produced by $(LREF diffHunkKey) — and not a gap key.
+bool isDiffHunkKey(size_t key) @safe pure nothrow @nogc
+    => key >= diffHunkKeyBase && key < diffGapKeyBase;
+
+/// `DVG2`: the key an unchanged-region band carries, in a third id space above
+/// the hunk keys — so one `keyedRects` sweep locates files, hunks and gaps
+/// without any of them having to know about the others.
+enum size_t diffGapKeyBase = size_t.max / 4 * 3 + 1;
+
+/// ditto
+size_t diffGapKey(size_t gapIndex) @safe pure nothrow @nogc
+    => diffGapKeyBase + gapIndex;
+
+/// `true` for a key produced by $(LREF diffGapKey).
+bool isDiffGapKey(size_t key) @safe pure nothrow @nogc => key >= diffGapKeyBase;
 
 /// Marks a node as filling its parent's remaining width.
 private uint grown(ref Builder b, uint node) @safe
@@ -467,12 +490,14 @@ Without a side text the band still renders but cannot expand: a patch does not
 carry the lines it elided, and pretending otherwise would mean inventing them.
 */
 private uint contextGap(ref Builder b, uint firstLine, uint count,
-    int gutterWidth, DiffViewOptions opt) @safe
+    int gutterWidth, DiffViewOptions opt, size_t gapIndex) @safe
 {
     if (count == 0)
         return b.add(Widget(kind: WidgetKind.text, text: ""));
 
-    if (!opt.expandContext || opt.sideText.length == 0)
+    const expandedHere = gapIndex < opt.expandedGaps.length
+        && opt.expandedGaps[gapIndex];
+    if ((!opt.expandContext && !expandedHere) || opt.sideText.length == 0)
         return b.add(Widget(kind: WidgetKind.rich, spans: [
             TextSpan(text("⋯ ", count,
                 count == 1 ? " unchanged line" : " unchanged lines"),
