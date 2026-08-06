@@ -130,13 +130,27 @@ private struct ParsedArgs
     Option[] helpOptions; /// populated when `helpWanted`
 }
 
-/// Parses the runner's CLI. A malformed value (`-t abc`), an unknown option,
-/// and stray positional arguments (`--syscalls futex` — values attach with
-/// `=`) all yield a readable `error` instead of an uncaught exception.
+/**
+Parses the runner's CLI. A malformed value (`-t abc`), an unknown option,
+and stray positional arguments (`--syscalls futex` — values attach with
+`=`) all yield a readable `error` instead of an uncaught exception.
+
+$(B `--DRT-*` options are dropped, not rejected.) They belong to druntime —
+`--DRT-covopt=dstpath:…` redirects `-cov` listings, `--DRT-gcopt=…` configures
+the collector — and the runtime acts on them before `main` runs, but leaves
+them in the argv this hook is handed. Treating them as unknown made a
+`-cov` build unusable: coverage listings were written correctly and the run
+then failed on the very option that produced them.
+*/
 package ParsedArgs parseRunnerOptions(string[] args)
 {
+    import std.algorithm.iteration : filter;
+    import std.algorithm.searching : startsWith;
+    import std.array : array;
     import std.conv : ConvException, text;
     import std.getopt : arraySep, config, getopt, GetOptException;
+
+    args = args.filter!(a => !a.startsWith("--DRT-")).array;
 
     ParsedArgs r;
     // Comma-separated array options (`--group-by=dataset,operation`, repeatable
@@ -290,6 +304,26 @@ unittest
 
     auto help = parseRunnerOptions(["prog", "--help"]);
     assert(!help.error.length && help.helpWanted && help.helpOptions.length);
+}
+
+@("runner.parseRunnerOptions.ignoresDruntimeOptions")
+@system
+unittest
+{
+    // druntime's own options reach this argv but are not the application's to
+    // reject: the runtime has already acted on them. Rejecting them made
+    // `dub test -b unittest-cov -- --DRT-covopt=dstpath:DIR` fail *after*
+    // writing the coverage listings it was asked for.
+    auto cov = parseRunnerOptions(["prog", "--DRT-covopt=dstpath:/tmp/cov", "-t", "2"]);
+    assert(!cov.error.length, cov.error);
+    assert(cov.options.threads == 2);
+
+    // They are dropped, not treated as positionals — the stray-argument check
+    // must not fire on them either.
+    assert(!parseRunnerOptions(["prog", "--DRT-gcopt=profile:1"]).error.length);
+
+    // An option that merely looks similar is still unknown.
+    assert(parseRunnerOptions(["prog", "--DRT"]).error.length);
 }
 
 private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
