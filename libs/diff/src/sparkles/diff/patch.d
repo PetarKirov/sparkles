@@ -164,6 +164,16 @@ ParseExpected!DiffDoc parsePatch(const(char)[] patch,
         }
         if (startsWith(line, "--- "))
         {
+            // A `---` arriving while the open file already carries content
+            // starts the NEXT file. Plain `diff -u`/`diff -ru` output has no
+            // `diff --git` separator (`DVM3` covers it), so without this the
+            // second file's header only overwrites the first's paths and every
+            // hunk piles onto one entry. After a `diff --git` line the file is
+            // open but empty, which is exactly the case that must not split.
+            // `inHunk` counts as content too: the hunk in progress has not
+            // been folded into `hunksCount` yet when this line arrives.
+            if (haveFile && (inHunk || current.hunksCount != 0 || current.binary))
+                finishFile();
             finishHunk();
             openFile();
             current.oldPath = doc.internPath(stripPathPrefix(line[4 .. $]));
@@ -498,6 +508,34 @@ unittest
     auto bad = parsePatch("--- a/x\n+++ b/x\n@@ -1,2 +1 @@\n-a\n?bogus\n");
     assert(bad.hasError);
     assert(bad.error.code == ParseErrorCode.unexpectedCharacter);
+}
+
+@("patch.parsePatch.plain-diff-u-splits-files")
+@safe pure nothrow @nogc
+unittest
+{
+    // `diff -ru` output has no `diff --git` separator: the only boundary
+    // between two files is the second `---` line (`DVM3`). Each file must land
+    // as its own entry with its own hunks — this used to collapse into one
+    // entry whose paths were the last file's.
+    enum plain =
+        "--- a/one.txt\n+++ b/one.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+2\n" ~
+        "--- a/two.txt\n+++ b/two.txt\n@@ -1 +1 @@\n-x\n+y\n";
+
+    auto res = parsePatch(plain);
+    assert(res.hasValue);
+    const doc = res.value;
+    assert(doc.files.length == 2);
+    assert(doc.pathText(doc.files[0].oldPath) == "one.txt");
+    assert(doc.pathText(doc.files[1].oldPath) == "two.txt");
+    assert(doc.files[0].hunksCount == 1 && doc.files[1].hunksCount == 1);
+    assert(doc.hunkRows(doc.fileHunks(doc.files[1])[0]).length == 2);
+
+    // The `diff --git` form still opens exactly one file per header: there the
+    // `---` follows an open-but-empty entry and must not split it.
+    auto git = parsePatch(
+        "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n");
+    assert(git.hasValue && git.value.files.length == 1);
 }
 
 @("patch.emitPatch.round-trip-model")
