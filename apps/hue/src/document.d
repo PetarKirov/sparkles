@@ -145,6 +145,160 @@ struct DocumentPipeline
         return doc;
     }
 
+    /// `DVS3`: a git-revision diff — `hue --diff [<rev>[..<rev>]]`, plus
+    /// `--staged` and trailing path filters — via `git diff` porcelain with
+    /// pinned flags (no libgit2). The patch flows through the same model as
+    /// every other diff; the sides come from `git show <rev>:<path>` (index
+    /// spellings included) or the worktree, so revision diffs compose syntax
+    /// exactly (`DVM5`) instead of reverse-applying.
+    Document loadGitDiff(string revspec, bool staged, string[] paths)
+    {
+        import std.process : execute;
+        import std.string : strip;
+
+        auto argv = ["git", "diff", "--no-color", "--no-ext-diff"];
+        if (staged)
+            argv ~= "--cached";
+        if (revspec.length)
+            argv ~= revspec;
+        if (paths.length)
+            argv ~= "--" ~ paths;
+        const res = execute(argv);
+        if (res.status != 0)
+            throw new Exception(text("git diff failed: ", res.output.strip));
+
+        auto parsed = parsePatch(res.output);
+        if (parsed.hasError)
+            throw new Exception(text("git produced an unparseable patch at byte ",
+                parsed.error.offset));
+
+        const label = revspec.length ? revspec : (staged ? "--staged" : "worktree");
+        Document doc = {
+            title: text("diff ", label), kind: ContentKind.diff,
+            source: res.output, lang: "diff", diffDoc: parsed.value,
+        };
+        doc.diffSides = sidesFromGit(doc.diffDoc, revspec, staged);
+        doc.events = highlight(doc.lang, doc.source, quietFallback: true);
+        return doc;
+    }
+
+    /// The `(old, new)` `git show` specs for a `git diff` invocation's two
+    /// sides. `null` means "read the worktree file"; `":"` is the index.
+    package static void gitDiffSideSpecs(string revspec, bool staged,
+        out string oldSpec, out string newSpec) @safe pure nothrow
+    {
+        import std.string : indexOf;
+
+        if (staged)
+        {
+            // Index vs a base: `git diff --staged [rev]`.
+            oldSpec = revspec.length ? revspec : "HEAD";
+            newSpec = ":";
+            return;
+        }
+        auto i = revspec.indexOf("...");
+        if (i >= 0)
+        {
+            // Symmetric range: old = merge-base(a, b) — resolved by the
+            // caller (needs a git call); mark with the raw spelling.
+            oldSpec = revspec; // resolved in sidesFromGit
+            newSpec = revspec[i + 3 .. $].length ? revspec[i + 3 .. $] : "HEAD";
+            return;
+        }
+        i = revspec.indexOf("..");
+        if (i >= 0)
+        {
+            oldSpec = revspec[0 .. i].length ? revspec[0 .. i] : "HEAD";
+            newSpec = revspec[i + 2 .. $].length ? revspec[i + 2 .. $] : "HEAD";
+            return;
+        }
+        // `git diff` (worktree vs index) or `git diff <rev>` (worktree vs rev).
+        oldSpec = revspec.length ? revspec : ":";
+        newSpec = null;
+    }
+
+    /// Per-file sides for a git-sourced diff: exact contents from
+    /// `git show <spec>:<path>` (or the worktree for the unnamed new side).
+    /// Any lookup failure leaves that file's entry empty (plain rows).
+    private static DiffSides[] sidesFromGit(in DiffDoc dd, string revspec,
+        bool staged)
+    {
+        import std.file : exists, isFile;
+        import std.process : execute;
+        import std.string : indexOf, strip;
+
+        string oldSpec, newSpec;
+        gitDiffSideSpecs(revspec, staged, oldSpec, newSpec);
+        if (oldSpec.indexOf("...") >= 0)
+        {
+            // Symmetric range: the old side is the merge base.
+            const i = oldSpec.indexOf("...");
+            const a = oldSpec[0 .. i].length ? oldSpec[0 .. i] : "HEAD";
+            const b = oldSpec[i + 3 .. $].length ? oldSpec[i + 3 .. $] : "HEAD";
+            const mb = execute(["git", "merge-base", a, b]);
+            if (mb.status != 0)
+                return new DiffSides[](dd.files.length);
+            oldSpec = mb.output.strip;
+        }
+
+        // Paths in a git patch are repo-root-relative; worktree reads must
+        // resolve against the root, not the invocation directory.
+        string root;
+        if (newSpec is null)
+        {
+            const top = execute(["git", "rev-parse", "--show-toplevel"]);
+            if (top.status != 0)
+                return new DiffSides[](dd.files.length);
+            root = top.output.strip;
+        }
+
+        static string show(string spec, string path)
+        {
+            const r = execute(["git", "show",
+                spec == ":" ? ":" ~ path : spec ~ ":" ~ path]);
+            return r.status == 0 ? r.output : null;
+        }
+
+        auto sides = new DiffSides[](dd.files.length);
+        foreach (fi; 0 .. dd.files.length)
+        {
+            const file = dd.files[fi];
+            if (file.binary || file.hunksCount == 0)
+                continue;
+            const oldPath = dd.pathText(file.oldPath).idup;
+            const newPath = dd.pathText(file.newPath).idup;
+
+            string oldText = oldPath == "/dev/null" ? "" : show(oldSpec, oldPath);
+            if (oldText is null)
+                continue;
+            string newText;
+            if (newPath == "/dev/null")
+                newText = "";
+            else if (newSpec is null)
+            {
+                import std.path : buildPath;
+
+                const full = buildPath(root, newPath);
+                if (!full.exists || !full.isFile)
+                    continue;
+                try
+                    newText = readText(full);
+                catch (Exception)
+                    continue;
+            }
+            else
+            {
+                newText = show(newSpec, newPath);
+                if (newText is null)
+                    continue;
+            }
+            sides[fi] = DiffSides(
+                canonicalLanguage(newPath.extension.chompPrefix(".")),
+                oldText, newText);
+        }
+        return sides;
+    }
+
     /// `DVS2`'s re-highlight half: for each file of a parsed patch whose
     /// new side is readable from the worktree, read it and reconstruct the
     /// old side by reverse-applying the hunks — validated against the
@@ -421,6 +575,38 @@ bool looksLikePatch(scope const(char)[] content) @safe pure nothrow @nogc
     // A stale worktree (context mismatch) yields null, never wrong colors.
     assert(DocumentPipeline.reconstructOldText(dd, dd.files[0],
         "one\nDIFFERENT\nthree\n4\n") is null);
+}
+
+@("document.gitDiffSideSpecs.revspecMapping")
+@safe pure nothrow
+unittest
+{
+    // The pure half of `DVS3`: which `git show` spelling names each side.
+    // `null` = read the worktree file; `":"` = the index. Testable without a
+    // repository, which is the point of splitting it out.
+    static void check(string revspec, bool staged, string wantOld, string wantNew)
+    {
+        string oldSpec, newSpec;
+        DocumentPipeline.gitDiffSideSpecs(revspec, staged, oldSpec, newSpec);
+        assert(oldSpec == wantOld, oldSpec);
+        assert(newSpec == wantNew, newSpec is null ? "<worktree>" : newSpec);
+    }
+
+    // Bare `hue --diff`: the worktree against the index, like `git diff`.
+    check("", false, ":", null);
+    // `hue --diff <rev>`: the worktree against that revision.
+    check("HEAD~2", false, "HEAD~2", null);
+    // Ranges name both sides — an omitted end means `HEAD`, as git spells it.
+    check("a..b", false, "a", "b");
+    check("..b", false, "HEAD", "b");
+    check("a..", false, "a", "HEAD");
+    // A symmetric range keeps its raw spelling on the old side: resolving it
+    // is a `git merge-base` call, which this pure mapping cannot make.
+    check("a...b", false, "a...b", "b");
+    check("a...", false, "a...", "HEAD");
+    // `--staged` diffs the index, defaulting its base to `HEAD`.
+    check("", true, "HEAD", ":");
+    check("v1.2.3", true, "v1.2.3", ":");
 }
 
 @("document.looksLikePatch.sniff")
