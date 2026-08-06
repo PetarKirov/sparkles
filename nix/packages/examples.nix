@@ -13,12 +13,11 @@
       root = ../..;
       fromRoot = lib.path.append root;
 
-      isDubManifest =
-        file:
-        builtins.elem file.name [
-          "dub.sdl"
-          "dub.selections.json"
-        ];
+      # The root recipe plus the manifests of the sub-packages it declares —
+      # shared with `buildSparklesApp` so both builders agree on what dub needs
+      # on disk, and so neither is invalidated by a `dub.sdl` under
+      # `docs/research/**` or `libs/*/bench/**`.
+      inherit (config.legacyPackages.sparklesSources) manifestFileset;
 
       # Enumerate every standalone `.d` example across all libs as a flat list
       # of absolute paths — `libs/*/examples/*.d`, the $(I direct) children
@@ -138,7 +137,7 @@
             # Dub validates every sub-package declared in the root `dub.sdl`,
             # so all sibling manifests must be present even when only one
             # example is being built.
-            (fs.fileFilter isDubManifest root)
+            manifestFileset
             # Library sources the example links against via
             # `dependency "sparkles:<lib>" path="../../.."` — plus the impl
             # runner sources `base`/`core-cli` import unconditionally, and
