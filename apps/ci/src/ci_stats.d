@@ -65,6 +65,58 @@ struct Job
     string[] labels;
     string runnerName;
     string conclusion;
+    /// The run's `head_branch` — the dimension a regression hunt splits on
+    /// ("is this branch slower than `main`, or is the whole repo slower?").
+    string branch;
+    /// When the job started. The dimension a "slower than before" hunt
+    /// actually splits on: a workflow that only triggers on `pull_request`
+    /// never produces runs on `main`, so a branch comparison has no baseline
+    /// and time is the only axis both populations share.
+    SysTime startedAt;
+    /// Per-step timings, in the order GitHub reports them. Populated only
+    /// under `--steps`: it is the breakdown that says *where* inside a job
+    /// the time went, which the job total alone cannot.
+    Step[] steps;
+}
+
+/// One step of a job, with the wall-clock it occupied.
+struct Step
+{
+    string name;
+    Duration duration;
+    string conclusion;
+}
+
+/// Per-name aggregate — of jobs (`--by-job`) or of steps (`--steps`).
+/// The label is whatever was grouped on; `branch` is empty for an
+/// undifferentiated group and set when the group is one side of a comparison.
+struct NamedAggregate
+{
+    string label;
+    string branch;
+    JobStats stats;
+}
+
+/// One row of a two-window comparison: the same label measured on a baseline
+/// and on a candidate, with the median shift between them.
+struct Comparison
+{
+    string label;
+    JobStats baseline;
+    JobStats candidate;
+
+    /// Signed median difference, candidate − baseline. Duration is signed, so
+    /// a speed-up is simply negative.
+    Duration delta() const @safe pure nothrow @nogc
+        => candidate.median - baseline.median;
+
+    /// `delta` as a percentage of the baseline median, or `double.nan` when
+    /// there is no baseline to be a percentage of.
+    double deltaPercent() const @safe pure nothrow @nogc
+    {
+        const base = baseline.median.total!"msecs";
+        return base == 0 ? double.nan : 100.0 * delta.total!"msecs" / base;
+    }
 }
 
 struct JobStats
@@ -99,12 +151,23 @@ struct GhWorkflowRun
     Nullable!string name;
     string path;
     @WireName("workflow_name") Nullable!string workflowName;
+    // Nullable for the same reason: a run triggered outside a branch context
+    // (a tag push, a scheduled run on a deleted ref) reports null.
+    @WireName("head_branch") Nullable!string headBranch;
 }
 
 struct GhRunsResponse
 {
     long total_count;
     @WireName("workflow_runs") GhWorkflowRun[] workflowRuns;
+}
+
+struct GhStep
+{
+    string name;
+    Nullable!string conclusion;
+    @WireName("started_at") Nullable!string startedAt;
+    @WireName("completed_at") Nullable!string completedAt;
 }
 
 struct GhJob
@@ -116,6 +179,9 @@ struct GhJob
     @WireName("completed_at") Nullable!string completedAt;
     string[] labels;
     @WireName("runner_name") Nullable!string runnerName;
+    // Absent on a job that never started; the jobs endpoint returns it inline,
+    // so a step breakdown costs no extra request.
+    GhStep[] steps;
 }
 
 struct GhJobsResponse
@@ -282,6 +348,82 @@ if (isInputRange!R)
     return s;
 }
 
+/// Group a range by a caller-supplied key and compute `JobStats` per group,
+/// heaviest group first. The one grouping primitive behind `--by-job`,
+/// `--steps`, and the two sides of `--baseline`; `aggregateByRunner` predates
+/// it and keeps its own shape.
+NamedAggregate[] aggregateBy(alias keyOf, R)(R items)
+{
+    import std.algorithm.sorting : sort;
+
+    auto keyed = items
+        .map!(x => tuple(keyOf(x), x))
+        .array
+        .sort!((a, b) => a[0] < b[0])
+        .release;
+
+    NamedAggregate[] result;
+    if (keyed.empty)
+        return result;
+
+    string currentKey = keyed.front[0];
+    auto group = [keyed.front[1]];
+    foreach (t; keyed.drop(1))
+    {
+        if (t[0] != currentKey)
+        {
+            result ~= NamedAggregate(currentKey, "", computeStats(group));
+            currentKey = t[0];
+            group = [t[1]];
+        }
+        else
+            group ~= t[1];
+    }
+    result ~= NamedAggregate(currentKey, "", computeStats(group));
+
+    result.sort!((a, b) => a.stats.total > b.stats.total);
+    return result;
+}
+
+/// Per-job-name aggregate: which named job owns the wall-clock.
+NamedAggregate[] aggregateByJobName(R)(R jobs)
+if (isInputRange!R && is(ElementType!R == Job))
+    => aggregateBy!(j => j.name)(jobs);
+
+/// Per-step aggregate within one job name. Steps are keyed by name alone:
+/// a matrix runs the same step list on every leg, and the interesting figure
+/// is the step's typical cost across them.
+NamedAggregate[] aggregateByStep(R)(R jobs)
+if (isInputRange!R && is(ElementType!R == Job))
+    => aggregateBy!(s => s.name)(jobs.map!(j => j.steps).join);
+
+/// Match per-label aggregates from two populations into comparison rows,
+/// heaviest candidate first. A label present on only one side still yields a
+/// row — with `JobStats.init` for the missing side — because "this job only
+/// exists on the new branch" is itself an answer to where the time went.
+Comparison[] compareByLabel(NamedAggregate[] baseline, NamedAggregate[] candidate) @safe pure
+{
+    import std.algorithm.sorting : sort;
+
+    JobStats[string] base;
+    foreach (b; baseline)
+        base[b.label] = b.stats;
+
+    Comparison[] rows;
+    bool[string] seen;
+    foreach (c; candidate)
+    {
+        seen[c.label] = true;
+        rows ~= Comparison(c.label, base.get(c.label, JobStats.init), c.stats);
+    }
+    foreach (b; baseline)
+        if (b.label !in seen)
+            rows ~= Comparison(b.label, b.stats, JobStats.init);
+
+    rows.sort!((a, b) => a.candidate.total > b.candidate.total);
+    return rows;
+}
+
 RunnerAggregate[] aggregateByRunner(R)(R jobs) @safe pure
 if (isInputRange!R && is(ElementType!R == Job))
 {
@@ -388,6 +530,81 @@ if (isInputRange!R && is(ElementType!R == Job))
     return arr.take(n).array;
 }
 
+/// A signed percentage with an explicit sign and one decimal (`+34.2%`), or
+/// `n/a` when there is no baseline to compare against.
+string fmtDeltaPercent(double pct)
+{
+    import std.math : isNaN, abs;
+
+    if (pct.isNaN)
+        return "n/a";
+    ulong scaled = cast(ulong)(pct.abs * 10.0 + 0.5);
+    SmallBuffer!(char, 24) buf;
+    buf ~= pct < 0 ? '-' : '+';
+    writeFixedPoint(buf, scaled, 1);
+    buf ~= '%';
+    return buf[].idup;
+}
+
+/// A signed duration (`+2.4m`). `writeDuration` renders magnitudes, so the
+/// sign is carried explicitly and the value passed as its absolute.
+string fmtDeltaDuration(Duration d)
+{
+    SmallBuffer!(char, 32) buf;
+    buf ~= d < Duration.zero ? '-' : '+';
+    writeDuration(buf, d < Duration.zero ? -d : d);
+    return buf[].idup;
+}
+
+void renderByLabel(in NamedAggregate[] rows, string title)
+{
+    import sparkles.ui.components.table : drawTable, TableProps;
+
+    if (rows.empty)
+        return;
+
+    string[][] table = [["Name", "Runs", "Total", "Median", "Min", "Max"]];
+    foreach (r; rows)
+        table ~= [
+            r.label,
+            fmtCount(r.stats.count),
+            fmtDur(r.stats.total),
+            fmtDur(r.stats.median),
+            fmtDur(r.stats.min),
+            fmtDur(r.stats.max),
+        ];
+
+    writeln();
+    writeln(drawTable(table, TableProps(headerRows: 1, title: title)));
+}
+
+void renderComparison(in Comparison[] rows, string baselineLabel, string candidateLabel)
+{
+    import sparkles.ui.components.table : drawTable, TableProps;
+
+    if (rows.empty)
+        return;
+
+    // Medians, not totals: the two sides almost never have the same run count,
+    // so a total comparison would mostly measure how often each ref was pushed.
+    string[][] table = [
+        ["Name", baselineLabel ~ " (n)", "median", candidateLabel ~ " (n)", "median", "Δ", "Δ%"]
+    ];
+    foreach (r; rows)
+        table ~= [
+            r.label,
+            fmtCount(r.baseline.count),
+            r.baseline.count ? fmtDur(r.baseline.median) : "-",
+            fmtCount(r.candidate.count),
+            r.candidate.count ? fmtDur(r.candidate.median) : "-",
+            (r.baseline.count && r.candidate.count) ? fmtDeltaDuration(r.delta) : "-",
+            (r.baseline.count && r.candidate.count) ? fmtDeltaPercent(r.deltaPercent) : "-",
+        ];
+
+    writeln();
+    writeln(drawTable(table, TableProps(headerRows: 1, title: "Per-job median: " ~ candidateLabel ~ " vs " ~ baselineLabel)));
+}
+
 void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slowJobs, in Theme theme)
 {
     import std.stdio : writeln;
@@ -479,6 +696,81 @@ struct CiStatsOptions
     string since;
     string workflowFilter;
     string conclusionFilter;
+    /// Restrict to runs whose `head_branch` matches exactly.
+    string branchFilter;
+    /// Branch to compare `branchFilter` against, per job name. Each ref is
+    /// fetched with its own `--limit`, since one recency window is dominated
+    /// by whichever ref was pushed last.
+    ///
+    /// Only meaningful when both refs actually run the workflow. A
+    /// `pull_request`-triggered workflow never runs on `main`, so comparing
+    /// against `main` yields an empty baseline — use `splitAt` there.
+    string baselineBranch;
+    /// Split the fetched jobs at this instant and compare the two halves per
+    /// job name: before is the baseline, at-or-after the candidate. The axis
+    /// that answers "slower than before" without needing two refs.
+    string splitAt;
+    /// Break the slowest job names down by step.
+    bool showSteps;
+    /// How many job names to expand under `--steps`.
+    int stepJobs = 3;
+}
+
+/// The wall-clock between two ISO-8601 instants, or `Duration.zero` when
+/// either is absent or unparseable (a step that never ran, a malformed stamp).
+Duration spanOf(in Nullable!string from, in Nullable!string to) @safe nothrow
+{
+    if (from.isNull || to.isNull)
+        return Duration.zero;
+    try
+        return SysTime.fromISOExtString(to.get) - SysTime.fromISOExtString(from.get);
+    catch (Exception)
+        return Duration.zero;
+}
+
+/// Parse a split pivot: a bare `YYYY-MM-DD` (midnight UTC) or a full ISO-8601
+/// instant. The bare-date form is what a person types, and matching `--since`'s
+/// accepted shape keeps the two flags interchangeable in a command line.
+SysTime parseSplitInstant(string s) @safe
+{
+    import std.exception : enforce;
+
+    enforce(s.length >= 10, "expected YYYY-MM-DD or an ISO-8601 instant, got '" ~ s ~ "'");
+    return SysTime.fromISOExtString(s.length == 10 ? s ~ "T00:00:00Z" : s);
+}
+
+@("ci_stats.parseSplitInstant.bareDateIsMidnightUtc")
+@safe unittest
+{
+    assert(parseSplitInstant("2026-08-05") == SysTime.fromISOExtString("2026-08-05T00:00:00Z"));
+    assert(parseSplitInstant("2026-08-05T12:30:00Z")
+        == SysTime.fromISOExtString("2026-08-05T12:30:00Z"));
+}
+
+@("ci_stats.compareByLabel.oneSidedLabelsSurvive")
+@safe unittest
+{
+    // A job that exists on only one side is itself a finding, so it must not
+    // be dropped — it renders with an empty count on the missing side.
+    auto rows = compareByLabel(
+        [NamedAggregate("gone", "", JobStats(count: 2))],
+        [NamedAggregate("new", "", JobStats(count: 3))],
+    );
+    assert(rows.length == 2);
+    assert(rows[0].label == "new" && rows[0].baseline.count == 0);
+    assert(rows[1].label == "gone" && rows[1].candidate.count == 0);
+}
+
+Step[] toSteps(in GhStep[] steps) @safe nothrow
+{
+    Step[] result;
+    foreach (s; steps)
+        result ~= Step(
+            name: s.name,
+            duration: spanOf(s.startedAt, s.completedAt),
+            conclusion: s.conclusion.isNull ? "" : s.conclusion.get,
+        );
+    return result;
 }
 
 /// High-level entry: templated so callers (or tests) can inject a fetcher
@@ -511,15 +803,30 @@ Result!Report runCiStats(alias fetchJson)(in CiStatsOptions opts)
 
     GhWorkflowRun[] runs;
     bool[long] seenRuns;  // dedup by run.id: created-desc pages shift when runs start mid-fetch
-    int page = 1;
     const perPage = 100;
     string baseUrl = "https://api.github.com/repos/" ~ opts.repo ~ "/actions/runs";
 
-    while (runs.length < opts.limit)
+    // A comparison needs a *balanced* window. Runs come back created-desc, so
+    // one shared window is dominated by whichever ref was pushed most recently
+    // — asking for 120 runs while iterating on a branch returned 24 runs for
+    // the branch and zero for `main`, making every delta unmeasurable. Fetch
+    // each ref separately (the API filters server-side on `branch=`) so both
+    // sides get `--limit` runs of their own.
+    string[] refsToFetch = opts.baselineBranch.length
+        ? [opts.branchFilter, opts.baselineBranch]
+        : [opts.branchFilter];  // a single "" element means unfiltered
+
+    foreach (wantRef; refsToFetch)
+    {
+    const target = runs.length + opts.limit;
+    int page = 1;
+    while (runs.length < target)
     {
         string url = baseUrl ~ "?per_page=" ~ perPage.to!string ~ "&page=" ~ page.to!string;
         if (opts.since.length)
             url ~= "&created=" ~ encodeComponent(">=" ~ opts.since);
+        if (wantRef.length)
+            url ~= "&branch=" ~ encodeComponent(wantRef);
 
         auto r = fetchJson!GhRunsResponse(url, "GET", null, makeAuthHeaders(authHeader));
         if (r.hasError)
@@ -546,7 +853,7 @@ Result!Report runCiStats(alias fetchJson)(in CiStatsOptions opts)
             }
 
             runs ~= run;
-            if (runs.length >= opts.limit)
+            if (runs.length >= target)
                 break;
         }
 
@@ -557,8 +864,8 @@ Result!Report runCiStats(alias fetchJson)(in CiStatsOptions opts)
             break;
         ++page;
     }
+    }
 
-    runs = runs[0 .. min($, opts.limit)];
     tasks.succeed(runsId, text(runs.length, " runs"));
 
     if (runs.length == 0)
@@ -609,17 +916,12 @@ Result!Report runCiStats(alias fetchJson)(in CiStatsOptions opts)
 
         foreach (ghJob; runJobs)
         {
-            Duration dur;
-            if (!ghJob.startedAt.isNull && !ghJob.completedAt.isNull)
-            {
+            const dur = spanOf(ghJob.startedAt, ghJob.completedAt);
+            SysTime started;
+            if (!ghJob.startedAt.isNull)
                 try
-                {
-                    auto start = SysTime.fromISOExtString(ghJob.startedAt.get);
-                    auto end = SysTime.fromISOExtString(ghJob.completedAt.get);
-                    dur = end - start;
-                }
-                catch (Exception) { /* ignore bad timestamp */ }
-            }
+                    started = SysTime.fromISOExtString(ghJob.startedAt.get);
+                catch (Exception) { /* leave unset; the split treats it as oldest */ }
 
             string rname = ghJob.runnerName.isNull ? "" : ghJob.runnerName.get;
             string concl = ghJob.conclusion.isNull ? "" : ghJob.conclusion.get;
@@ -631,6 +933,9 @@ Result!Report runCiStats(alias fetchJson)(in CiStatsOptions opts)
                 labels: ghJob.labels,
                 runnerName: rname,
                 conclusion: concl,
+                branch: run.headBranch.isNull ? "" : run.headBranch.get,
+                startedAt: started,
+                steps: opts.showSteps ? toSteps(ghJob.steps) : null,
             );
         }
 
@@ -677,7 +982,64 @@ Result!Report runCiStats(alias fetchJson)(in CiStatsOptions opts)
     // 4. Render with live-style final output (for now static tables; live during fetch above)
     renderReport(overall, byRunner, slowJobs, theme);
 
-    return success(Report(overall, byRunner, slowJobs));
+    // 5. Regression views. `--baseline` splits the same window into two
+    // populations and compares them per job name; without it, the per-job
+    // table is still the first thing to look at, since the overall total
+    // hides which named job moved.
+    auto byJob = aggregateByJobName(filtered);
+    Comparison[] comparison;
+
+    // Which axis splits the population in two — time, branch, or neither.
+    bool delegate(in Job) @safe isCandidate;
+    string baseLabel, candLabel;
+
+    if (opts.splitAt.length)
+    {
+        SysTime pivot;
+        try
+            pivot = parseSplitInstant(opts.splitAt);
+        catch (Exception e)
+            return failure!Report("--split: " ~ e.msg);
+
+        isCandidate = (in Job j) => j.startedAt >= pivot;
+        baseLabel = "before " ~ opts.splitAt;
+        candLabel = "since " ~ opts.splitAt;
+    }
+    else if (opts.baselineBranch.length)
+    {
+        isCandidate = (in Job j) => j.branch == opts.branchFilter;
+        baseLabel = opts.baselineBranch;
+        candLabel = opts.branchFilter;
+    }
+
+    if (isCandidate is null)
+        renderByLabel(byJob, "By Job Name");
+    else
+    {
+        auto baseJobs = filtered.filter!(j => !isCandidate(j)).array;
+        auto candJobs = filtered.filter!(j => isCandidate(j)).array;
+        comparison = compareByLabel(aggregateByJobName(baseJobs), aggregateByJobName(candJobs));
+        renderComparison(comparison, baseLabel, candLabel);
+    }
+
+    if (opts.showSteps)
+        foreach (agg; byJob.take(opts.stepJobs))
+        {
+            auto jobsOfName = filtered.filter!(j => j.name == agg.label).array;
+            if (isCandidate is null)
+                renderByLabel(aggregateByStep(jobsOfName), "Steps of " ~ agg.label);
+            else
+                renderComparison(
+                    compareByLabel(
+                        aggregateByStep(jobsOfName.filter!(j => !isCandidate(j))),
+                        aggregateByStep(jobsOfName.filter!(j => isCandidate(j))),
+                    ),
+                    baseLabel,
+                    candLabel ~ " — " ~ agg.label,
+                );
+        }
+
+    return success(Report(overall, byRunner, slowJobs, byJob, comparison));
 }
 
 struct Report
@@ -685,4 +1047,6 @@ struct Report
     JobStats overall;
     RunnerAggregate[] byRunner;
     Job[] slowJobs;
+    NamedAggregate[] byJob;
+    Comparison[] comparison;
 }

@@ -222,6 +222,30 @@ struct CliParams
     @CliOption(`c|conclusion`,
         "Only jobs with this conclusion (e.g. success, failure).")
     string conclusion;
+
+    @CliOption(`b|branch`,
+        "Only runs on this branch (head_branch, exact match).")
+    string branch;
+
+    @CliOption(`B|baseline`,
+        "Compare --branch against this branch per job name, showing the median delta. "
+        ~ "Both refs are taken from the same run window.")
+    string baseline;
+
+    @CliOption(`s|split`,
+        "Split the fetched jobs at this instant (YYYY-MM-DD or ISO-8601) and compare "
+        ~ "the halves per job name. The axis to use when a workflow only triggers on "
+        ~ "pull_request and so never runs on the default branch.")
+    string split;
+
+    @CliOption(`steps`,
+        "Break the slowest job names down by step, so a regression is attributed "
+        ~ "to the step that owns it rather than to the job total.")
+    bool steps;
+
+    @CliOption(`step-jobs`,
+        "How many job names --steps expands (default 3).")
+    int stepJobs = 3;
 }
 
 enum ProgramMode
@@ -441,6 +465,25 @@ private string validateCliMode(
 
     if (cli.ciStats && cli.limit <= 0)
         return "--limit must be a positive integer";
+
+    // A baseline is one side of a two-population comparison; without
+    // `--branch` there is nothing to compare it against.
+    if (cli.ciStats && cli.baseline.length && cli.branch.length == 0)
+        return "--baseline requires --branch (the candidate side of the comparison)";
+
+    if (cli.ciStats && cli.stepJobs <= 0)
+        return "--step-jobs must be a positive integer";
+
+    // Reject a malformed pivot here rather than after a few hundred API calls.
+    if (cli.ciStats && cli.split.length)
+    {
+        import ci_stats : parseSplitInstant;
+
+        try
+            cast(void) parseSplitInstant(cli.split);
+        catch (Exception e)
+            return "--split: " ~ e.msg;
+    }
 
     if (cli.checkCommitScope && positionalArgs.length > 1)
         return "--check-commit-scope accepts at most one argument (a path or '-' for stdin)";
@@ -2967,6 +3010,11 @@ private int runCiStatsMode(in CliParams cli)
         since: cli.since,
         workflowFilter: cli.workflow,
         conclusionFilter: cli.conclusion,
+        branchFilter: cli.branch,
+        baselineBranch: cli.baseline,
+        splitAt: cli.split,
+        showSteps: cli.steps,
+        stepJobs: cli.stepJobs,
     );
 
     auto res = runCiStats!fetchAndDeserializeJson(opts);

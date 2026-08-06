@@ -56,6 +56,11 @@ ci --ci-stats
 | `--since`                         | (none)                          | Only runs created on or after this date (`created>=...` query param).                         |
 | `--workflow`                      | (all)                           | Substring filter on `name` or workflow filename.                                              |
 | `--conclusion`                    | (all completed)                 | Filter jobs by conclusion (`success`, `failure`, `cancelled`, ...).                           |
+| `--branch`                        | (all)                           | Only runs whose `head_branch` matches exactly.                                                |
+| `--baseline`                      | (none)                          | Branch to compare `--branch` against, per job name. Requires `--branch`.                      |
+| `--split`                         | (none)                          | Split the jobs at an instant (`YYYY-MM-DD` or ISO-8601) and compare the halves per job name.  |
+| `--steps`                         | off                             | Break the slowest job names down by step.                                                     |
+| `--step-jobs`                     | 3                               | How many job names `--steps` expands.                                                         |
 | `--json`                          | off                             | Emit machine-readable JSON (structure defined in §6.3) instead of (or in addition to) tables. |
 | `--no-live`                       | off                             | Disable in-place live updates (force plain progressive output).                               |
 | `--log-level`                     | `info`                          | Standard sparkles logger levels.                                                              |
@@ -128,7 +133,22 @@ Pagination for `/actions/runs` and `/actions/runs/{id}/jobs` respects `per_page=
 - Otherwise the first label is used (typical values: `ubuntu-latest`, `ubuntu-22.04`, `macos-14`, `windows-latest`).
 - The resulting key is used for `groupBy` / associative aggregation.
 
-### 6.3 Output
+### 6.3 Regression views
+
+The runner-type aggregate answers "what does CI cost"; it does not answer "why is CI slower than it was". Three views do:
+
+**Per job name** (default when no comparison axis is given). Groups jobs by `name`, heaviest total first. This is the first cut: an overall median hides which named job moved.
+
+**Per-step** (`--steps`). The `/actions/runs/{id}/jobs` response carries a `steps[]` array with per-step timestamps, so a breakdown costs no extra request. Steps are keyed by name across matrix legs. This is what attributes a regression: a job total says a job got slower, a step total says which part of it did.
+
+**Two-population comparison** (`--baseline` or `--split`). Both render as one row per label with each side's run count, each side's median, and the signed delta. Medians rather than totals: the two sides rarely have equal run counts, so a total comparison would mostly measure push frequency. A label present on one side only still yields a row — "this job only exists on the new side" is itself an answer.
+
+The two axes are not interchangeable:
+
+- `--branch X --baseline Y` compares two refs. Each ref is fetched with its own `--limit` (the API filters server-side on `branch=`), because runs come back created-desc and a single window is dominated by whichever ref was pushed last.
+- `--split T` compares time windows within one population. **This is the axis to use when the workflow only triggers on `pull_request`**: such a workflow never produces runs on the default branch, so `--baseline main` finds an empty baseline and every delta renders as `-`. `head_branch` on a PR run is the _source_ branch, never the target.
+
+### 6.4 Output
 
 **Human (default):**
 
@@ -144,7 +164,7 @@ A single JSON object containing the report (exact shape defined in the implement
 
 Non-tty output never emits terminal control sequences.
 
-### 6.4 Error model
+### 6.5 Error model
 
 All fallible operations return a `Result!T` (alias to `Expected!(T, string)`) following the pattern in `apps/release/src/sparkles/release/result.d`.
 
