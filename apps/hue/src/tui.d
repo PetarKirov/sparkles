@@ -197,6 +197,7 @@ struct PreviewTui
     private const(HoverTarget)[] mdTargets() const @safe pure nothrow @nogc => vm.targets;
     private alias FoldOp = ViewerModel.FoldOp;
     private enum size_t fenceHitBase = ViewerModel.fenceHitBase;
+    private enum size_t codeTabHitBase = ViewerModel.codeTabHitBase;
     private enum size_t foldHitBase = ViewerModel.foldHitBase;
 
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
@@ -1074,6 +1075,13 @@ struct PreviewTui
                     if (t.hitId >= fenceHitBase && t.rect.contains(p))
                     {
                         copyFenceAt(t.hitId - fenceHitBase);
+                        return true;
+                    }
+                    // Below the fence range — see the GUI's note on order.
+                    if (t.hitId >= codeTabHitBase && t.hitId < fenceHitBase
+                        && t.rect.contains(p))
+                    {
+                        vm.activateCodeTab(t.hitId - codeTabHitBase);
                         return true;
                     }
                 }
