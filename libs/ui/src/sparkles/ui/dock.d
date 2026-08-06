@@ -35,7 +35,7 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.input.events : Event, match, PointerAction, PointerButton,
     PointerEvent, WheelEvent;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.state : CaptureState, SplitState;
+import sparkles.ui.state : CaptureState, PressState, SplitState;
 
 @safe:
 
@@ -56,6 +56,7 @@ enum DockKind : ubyte
 {
     leaf,  /// one pane
     split, /// an ordered row/column of children
+    tabs,  /// a stack of panes, one shown, selected by a tab strip
 }
 
 /// One node of the layout arena.
@@ -63,8 +64,13 @@ struct DockNode
 {
     DockKind kind;
     DockAxis axis;      /// `split` only
-    uint[] children;    /// `split` only — indices into `DockLayout.nodes`
+    uint[] children;    /// `split`/`tabs` — indices into `DockLayout.nodes`
+    uint active;        /// `tabs` only — which child is shown
     PaneId pane;        /// `leaf` only
+    /// `tabs` children only: the tab's width in the strip. `0` shares the
+    /// strip equally — an application that measures its labels sets this
+    /// so tabs are as wide as what they say.
+    int tabExtent;
     /// Extent along the PARENT's axis. `0` flexes (shares the remainder
     /// with the other flexing siblings); non-zero is a fixed extent, the
     /// sidebar model every dock framework offers.
@@ -82,6 +88,8 @@ struct DockLayout
     /// Divider thickness in the container's units — 1 cell in a terminal,
     /// 1 cell-width in hue's GPU host.
     int dividerExtent = 1;
+    /// The height of a tabbed group's strip, in the same units.
+    int tabStripExtent = 1;
 
     /**
     Deep-copies (`DCK1`). A flat arena is only a $(B value) if copying it
@@ -95,7 +103,8 @@ struct DockLayout
         nodes.length = other.nodes.length;
         foreach (i, ref n; other.nodes)
             nodes[i] = DockNode(kind: n.kind, axis: n.axis,
-                children: n.children.dup, pane: n.pane, extent: n.extent,
+                children: n.children.dup, active: n.active, pane: n.pane,
+                tabExtent: n.tabExtent, extent: n.extent,
                 minExtent: n.minExtent, maxExtent: n.maxExtent,
                 visible: n.visible);
         root = other.root;
@@ -117,6 +126,31 @@ struct DockLayout
         nodes ~= DockNode(kind: DockKind.split, axis: axis,
             children: children, extent: extent);
         return cast(uint)(nodes.length - 1);
+    }
+
+    /// Appends a tabbed group over already-added children (`DCK4`) and
+    /// returns its index. The first child is shown until a tab is picked.
+    uint addTabs(uint[] children, int extent = 0)
+    {
+        nodes ~= DockNode(kind: DockKind.tabs, children: children,
+            extent: extent);
+        return cast(uint)(nodes.length - 1);
+    }
+
+    /// Shows `pane`'s tab within its group, if it is in one.
+    void activate(PaneId pane) pure nothrow @nogc
+    {
+        const leaf = nodeOf(pane);
+        if (leaf == uint.max)
+            return;
+        foreach (ref n; nodes)
+            if (n.kind == DockKind.tabs)
+                foreach (i, c; n.children)
+                    if (c == leaf)
+                    {
+                        n.active = cast(uint) i;
+                        return;
+                    }
     }
 
     /// The node holding `pane`, or `uint.max`.
@@ -170,21 +204,38 @@ struct DividerFrame
 }
 
 /**
+One tab in a group's strip (`DCK4`). The strip is laid out once, by the
+same walk that places the pane below it, and BOTH the paint and the hit
+test read these frames — which is what makes the `IXR27` defect (a band
+hit-tested by one geometry and painted by another) unrepresentable here.
+The application paints the label; the container never learns it.
+*/
+struct TabFrame
+{
+    uint node;    /// the tabs node
+    uint child;   /// index into that node's `children`
+    PaneId pane;
+    Rect rect;
+    bool active;  /// this tab's pane is the one showing
+}
+
+/**
 Computes the frames (`DCK1` geometry): pure, so a layout's arrangement is
 checkable without a canvas. Buffers are reused — the caller keeps them
 across frames and pays no per-frame allocation after warm-up.
 */
 void dockFrames(in DockLayout l, in Rect area, ref PaneFrame[] panes,
-    ref DividerFrame[] dividers)
+    ref DividerFrame[] dividers, ref TabFrame[] tabs)
 {
     panes.length = 0;
     dividers.length = 0;
+    tabs.length = 0;
     if (l.nodes.length && l.root < l.nodes.length)
-        walk(l, l.root, area, panes, dividers);
+        walk(l, l.root, area, panes, dividers, tabs);
 }
 
 private void walk(in DockLayout l, uint idx, in Rect area,
-    ref PaneFrame[] panes, ref DividerFrame[] dividers)
+    ref PaneFrame[] panes, ref DividerFrame[] dividers, ref TabFrame[] tabs)
 {
     const n = l.nodes[idx];
     if (!n.visible)
@@ -192,6 +243,11 @@ private void walk(in DockLayout l, uint idx, in Rect area,
     if (n.kind == DockKind.leaf)
     {
         panes ~= PaneFrame(n.pane, area);
+        return;
+    }
+    if (n.kind == DockKind.tabs)
+    {
+        walkTabs(l, idx, area, panes, dividers, tabs);
         return;
     }
 
@@ -266,7 +322,7 @@ private void walk(in DockLayout l, uint idx, in Rect area,
         const childArea = horiz
             ? Rect(pos, area.y, ext[i], area.height)
             : Rect(area.x, pos, area.width, ext[i]);
-        walk(l, c, childArea, panes, dividers);
+        walk(l, c, childArea, panes, dividers, tabs);
         const start = pos;
         pos += ext[i];
         if (i + 1 < vis.length)
@@ -290,6 +346,71 @@ private void walk(in DockLayout l, uint idx, in Rect area,
             pos += l.dividerExtent;
         }
     }
+}
+
+// A tabbed group: a strip of tabs across the top, the active child below.
+// Only the active child is walked, so an inactive pane has no frame at all
+// — it cannot be hit, scrolled or painted by accident.
+private void walkTabs(in DockLayout l, uint idx, in Rect area,
+    ref PaneFrame[] panes, ref DividerFrame[] dividers, ref TabFrame[] tabs)
+{
+    const n = l.nodes[idx];
+    const strip = l.tabStripExtent;
+
+    int fixed;
+    int flexCount;
+    size_t nvis;
+    foreach (c; n.children)
+    {
+        if (!l.nodes[c].visible)
+            continue;
+        ++nvis;
+        if (l.nodes[c].tabExtent > 0)
+            fixed += l.nodes[c].tabExtent;
+        else
+            ++flexCount;
+    }
+    if (!nvis)
+        return;
+
+    int remaining = area.width - fixed;
+    if (remaining < 0)
+        remaining = 0;
+    int x = area.x;
+    uint activeChild = uint.max;
+    foreach (i, c; n.children)
+    {
+        if (!l.nodes[c].visible)
+            continue;
+        int w = l.nodes[c].tabExtent;
+        if (w <= 0)
+        {
+            w = flexCount > 1 ? remaining / flexCount : remaining;
+            remaining -= w;
+            --flexCount;
+        }
+        const isActive = i == n.active;
+        if (isActive)
+            activeChild = c;
+        tabs ~= TabFrame(idx, cast(uint) i, l.nodes[c].pane,
+            Rect(x, area.y, w, strip), isActive);
+        x += w;
+    }
+
+    // An `active` index pointing at a hidden or absent child would leave
+    // the group blank; fall back to the first visible tab instead.
+    if (activeChild == uint.max)
+        foreach (c; n.children)
+            if (l.nodes[c].visible)
+            {
+                activeChild = c;
+                break;
+            }
+    if (activeChild == uint.max)
+        return;
+    walk(l, activeChild, Rect(area.x, area.y + strip, area.width,
+        area.height - strip > 0 ? area.height - strip : 0),
+        panes, dividers, tabs);
 }
 
 /// What the container decided an event means (`DCK13`).
@@ -323,6 +444,9 @@ struct DockContainer
     PaneFrame[] paneFrames;
     /// ditto
     DividerFrame[] dividers;
+    /// ditto — the tab strips (`DCK4`); the host paints labels into these
+    /// and the container hit-tests the same rects.
+    TabFrame[] tabs;
     /// The focused pane (`DCK6`); click-to-focus and $(LREF focusNext)
     /// maintain it.
     PaneId focused;
@@ -333,6 +457,7 @@ struct DockContainer
 
     private Rect area;
     private CaptureState capture;
+    private PressState tabPress;
     private SplitState drag;
     private uint dragDivider = uint.max;
     private uint hoverDivider = uint.max;
@@ -343,6 +468,7 @@ struct DockContainer
     // means "free" to the machine, so both spaces start above it.
     private enum size_t paneCapBase = 1;
     private enum size_t divCapBase = size_t(1) << 32;
+    private enum size_t tabCapBase = size_t(1) << 48;
 
     /**
     Recomputes the frames for `area` (`DCK1`), re-clamping fixed extents
@@ -362,7 +488,7 @@ struct DockContainer
             if (n.maxExtent > 0 && n.extent > n.maxExtent)
                 n.extent = n.maxExtent;
         }
-        dockFrames(layout, area, paneFrames, dividers);
+        dockFrames(layout, area, paneFrames, dividers, tabs);
     }
 
     /// A pane's laid-out extent along its split's axis, or `0` when it is
@@ -424,6 +550,16 @@ struct DockContainer
             if (hit)
                 return cast(uint) i;
         }
+        return uint.max;
+    }
+
+    /// The tab under `p`, or `uint.max` — the same frames the host paints.
+    uint tabAt(in Point p) const pure nothrow @nogc
+    {
+        foreach (i, ref t; tabs)
+            if (p.x >= t.rect.x && p.x < t.rect.x + t.rect.width
+                && p.y >= t.rect.y && p.y < t.rect.y + t.rect.height)
+                return cast(uint) i;
         return uint.max;
     }
 
@@ -566,7 +702,41 @@ struct DockContainer
             }
         }
 
-        // 3. The positional query — re-aimed on a press, or whenever
+        // 3. A tab strip is chrome over the pane below it, so it is tested
+        //    before the positional query. Press ARMS the tab, a release
+        //    over the SAME tab activates it (STM10) — a press that slides
+        //    off cancels, which an `if (clicked && inRect)` never does.
+        {
+            const idx = tabAt(p.pos);
+            const id = idx == uint.max ? 0 : tabCapBase + idx;
+            if (p.action == PointerAction.press
+                && p.button == PointerButton.left && idx != uint.max)
+            {
+                tabPress = tabPress.pressed(id);
+                capture = capture.capturedBy(id);
+                return Route(RouteKind.container, tabs[idx].pane, Event(p));
+            }
+            if (p.action == PointerAction.release && tabPress.armed != 0)
+            {
+                tabPress = tabPress.released(id);
+                capture = capture.released();
+                if (tabPress.activated != 0)
+                {
+                    const t = tabs[cast(size_t)(tabPress.activated - tabCapBase)];
+                    layout.nodes[t.node].active = t.child;
+                    focused = t.pane; // showing a pane gives it the keyboard
+                    arrange(area);
+                    tabPress = tabPress.cancelled();
+                    return Route(RouteKind.container, t.pane, Event(p),
+                        relayout: true);
+                }
+                return Route(RouteKind.container, 0, Event(p));
+            }
+            if (!capture.isFree && capture.owner >= tabCapBase)
+                return Route(RouteKind.container, 0, Event(p));
+        }
+
+        // 4. The positional query — re-aimed on a press, or whenever
         //    nothing owns the pointer; frozen mid-drag, which is the rule.
         if (p.action == PointerAction.press || capture.isFree)
         {
@@ -825,4 +995,102 @@ version (unittest)
     b.nodes[0].extent = 20;
     assert(b != a.layout);
     assert(a.layout.nodeOf(tree) == 0 && a.layout.nodeOf(99) == uint.max);
+}
+
+@("ui.dock.tabbedGroupShowsOneAndActivatesOnRelease")
+@safe unittest
+{
+    // A sidebar beside a tabbed group of two documents — hue's set, in
+    // the shape C-2b gives it.
+    enum PaneId side = 1, docA = 2, docB = 3;
+    DockContainer c;
+    const s = c.layout.addLeaf(side, extent: 20, minExtent: 10);
+    const a = c.layout.addLeaf(docA);
+    const b = c.layout.addLeaf(docB);
+    const g = c.layout.addTabs([a, b]);
+    c.layout.root = c.layout.addSplit(DockAxis.horizontal, [s, g]);
+    c.arrange(Rect(0, 0, 100, 40));
+
+    // Only the active pane has a frame: an inactive tab's pane cannot be
+    // hit, scrolled or painted, because it does not exist this frame.
+    assert(c.paneFrames.length == 2);
+    assert(c.paneFrames[1] == PaneFrame(docA, Rect(21, 1, 79, 39)));
+    assert(c.tabs.length == 2);
+    assert(c.tabs[0] == TabFrame(g, 0, docA, Rect(21, 0, 39, 1), true));
+    assert(c.tabs[1] == TabFrame(g, 1, docB, Rect(60, 0, 40, 1), false));
+
+    // Press arms the second tab; the pane below has NOT changed yet.
+    auto r = c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(70, 0))));
+    assert(r.kind == RouteKind.container && r.pane == docB);
+    assert(c.paneFrames[1].pane == docA, "arming is not activating");
+
+    // Release over the SAME tab activates it, and showing a pane focuses it.
+    r = c.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(70, 0))));
+    assert(r.kind == RouteKind.container && r.relayout);
+    assert(c.paneFrames[1].pane == docB);
+    assert(c.focused == docB);
+    assert(c.tabs[1].active && !c.tabs[0].active);
+}
+
+@("ui.dock.tabPressSlidingOffCancels")
+@safe unittest
+{
+    enum PaneId docA = 1, docB = 2;
+    DockContainer c;
+    const a = c.layout.addLeaf(docA);
+    const b = c.layout.addLeaf(docB);
+    c.layout.root = c.layout.addTabs([a, b]);
+    c.arrange(Rect(0, 0, 100, 40));
+
+    // Press the second tab, release over the FIRST: nothing activates —
+    // the defect `if (clicked && inRect)` always has.
+    c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(70, 0))));
+    const r = c.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(10, 0))));
+    assert(r.kind == RouteKind.container);
+    assert(c.paneFrames[0].pane == docA, "a slid-off press activates nothing");
+
+    // And the pointer is free again afterwards, so the panes still work.
+    const p = c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(50, 20))));
+    assert(p.kind == RouteKind.pane && p.pane == docA);
+}
+
+@("ui.dock.tabsSizeByLabelOrShareEqually")
+@safe unittest
+{
+    // A group whose tabs are as wide as their labels, with the last one
+    // flexing — the mix an application measuring its own text produces.
+    enum PaneId one = 1, two = 2, three = 3;
+    DockContainer c;
+    const a = c.layout.addLeaf(one);
+    const b = c.layout.addLeaf(two);
+    const d = c.layout.addLeaf(three);
+    c.layout.nodes[a].tabExtent = 12;
+    c.layout.nodes[b].tabExtent = 8;
+    c.layout.root = c.layout.addTabs([a, b, d]);
+    c.arrange(Rect(0, 0, 60, 10));
+    assert(c.tabs[0].rect.width == 12 && c.tabs[1].rect.width == 8);
+    assert(c.tabs[2].rect.width == 40, "the flexing tab takes the rest");
+
+    // A hidden pane leaves the strip entirely, and the survivors re-share.
+    c.layout.setVisible(two, false);
+    c.arrange(Rect(0, 0, 60, 10));
+    assert(c.tabs.length == 2 && c.tabs[1].pane == three);
+    assert(c.tabs[1].rect.width == 48);
+
+    // Hiding the ACTIVE pane must not blank the group: the first visible
+    // tab takes over rather than leaving an index pointing at nothing.
+    c.layout.setVisible(one, false);
+    c.arrange(Rect(0, 0, 60, 10));
+    assert(c.paneFrames.length == 1 && c.paneFrames[0].pane == three);
+
+    // `activate` is the programmatic route (a key binding, a set jump).
+    c.layout.setVisible(one, true);
+    c.layout.activate(one);
+    c.arrange(Rect(0, 0, 60, 10));
+    assert(c.paneFrames[0].pane == one);
 }
