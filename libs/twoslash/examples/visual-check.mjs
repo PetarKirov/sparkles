@@ -83,12 +83,37 @@ addEventListener('load', () => setTimeout(() => {
     return +(el.getBoundingClientRect().top - rects[rects.length - 1].bottom).toFixed(2);
   };
   const leftCol = (el) => +((el.getBoundingClientRect().left - col0) / charW).toFixed(2);
-  const one = (sel) => { const el = document.querySelector(sel); return el && {
+  // A block inside a connected row is a different layout — its previous sibling
+  // is a connector, not the code line — so the stacked-layout gap/column
+  // invariants below measure the first block that is NOT in one. The connected
+  // rows have their own invariants, measured separately below.
+  const one = (sel) => { const el = [...document.querySelectorAll(sel)]
+    .find(e => !e.closest('.twoslash-crowded-row')); return el && {
     gap: gapAbove(el), col: leftCol(el), arrow: !!el.querySelector(':scope > .twoslash-popup-arrow') }; };
+  // A crowded line: the connected layout's rows, in document (top-to-bottom)
+  // order, each with its label's column, its elbow's column, and the columns
+  // and heights of the guides still running through it.
+  const crowded = [...document.querySelectorAll('.twoslash-crowded')].map(box => ({
+    markers: box.querySelector('.twoslash-crowded-markers').textContent,
+    rows: [...box.querySelectorAll('.twoslash-crowded-row')].map(row => {
+      const rh = row.getBoundingClientRect().height;
+      const label = row.querySelector('.twoslash-query-line, .twoslash-completion-list, .twoslash-error-line');
+      const elbow = row.querySelector('.twoslash-crowded-elbow');
+      return {
+        label: label ? leftCol(label) : null,
+        elbow: elbow ? leftCol(elbow) : null,
+        guides: [...row.querySelectorAll('.twoslash-crowded-guide')].map(g => ({
+          col: leftCol(g),
+          fill: +(g.getBoundingClientRect().height / rh).toFixed(3),
+        })),
+      };
+    }),
+  }));
   document.getElementById('__vc__').textContent = JSON.stringify({
     charW: +charW.toFixed(2),
     query: one('.twoslash-query-line'),
     completion: one('.twoslash-completion-list'),
+    crowded,
   });
 }, 60));
 </script>`;
@@ -130,6 +155,7 @@ const COL_TOL = 0.6; // completion column tolerance (fraction of a column)
 
 const fixturesDir = join(here, 'fixtures');
 const names = [
+  '16-crowded',
   '02-query',
   '07-generics',
   '08-jsdoc',
@@ -150,6 +176,7 @@ for (const name of names) {
   });
   const m = measure(html);
   const problems = [];
+  const crowdedRows = (m.crowded ?? []).reduce((n, b) => n + b.rows.length, 0);
 
   for (const kind of ['query', 'completion']) {
     const p = m[kind];
@@ -169,6 +196,39 @@ for (const name of names) {
       `query/completion gap skew ${Math.abs(m.query.gap - m.completion.gap).toFixed(1)}px > ${GAP_SKEW}`,
     );
 
+  // Connected layout (CON1-CON3): the labels peel off right to left, each
+  // elbow sits on its label's column, every guide is left of the label it is
+  // passing, and a guide spans its whole row so a multi-row card never
+  // detaches the anchors below it.
+  for (const box of m.crowded ?? []) {
+    let previous = Infinity;
+    for (const [i, row] of box.rows.entries()) {
+      if (row.label === null) {
+        problems.push(`crowded row ${i} has no label`);
+        continue;
+      }
+      if (row.elbow === null || Math.abs(row.elbow - row.label) > COL_TOL)
+        problems.push(
+          `crowded row ${i} elbow ${row.elbow} off label ${row.label}`,
+        );
+      if (row.label >= previous)
+        problems.push(
+          `crowded row ${i} label at ${row.label} is not left of the row above (${previous})`,
+        );
+      previous = row.label;
+      for (const g of row.guides) {
+        if (g.col >= row.label)
+          problems.push(
+            `crowded row ${i} guide at ${g.col} is not left of its label`,
+          );
+        if (g.fill < 0.99)
+          problems.push(
+            `crowded row ${i} guide fills only ${g.fill} of the row`,
+          );
+      }
+    }
+  }
+
   const expectCol = completionExpectation(fixture);
   if (
     m.completion &&
@@ -180,6 +240,8 @@ for (const name of names) {
     );
 
   const parts = [];
+  if (crowdedRows)
+    parts.push(`crowded{lines:${m.crowded.length} rows:${crowdedRows}}`);
   if (m.query) parts.push(`query{gap:${m.query.gap} arrow:${m.query.arrow}}`);
   if (m.completion)
     parts.push(
