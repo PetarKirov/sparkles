@@ -132,16 +132,22 @@ commands:
 
   restore_dub_cache:
     steps:
+      # `checksum` takes one literal path and does not glob, and there is no
+      # root dub.selections.json — every manifest lives in a sub-package. So
+      # the digest of all 85 of them is materialised into a file first.
+      - run:
+          name: Compute the dub cache key
+          command: ci/dub-cache-key.sh
       - restore_cache:
           keys:
-            - dub-v1-{{ arch }}-{{ checksum "dub.selections.json" }}
+            - dub-v1-{{ arch }}-{{ checksum ".dub-cache-key" }}
             - dub-v1-{{ arch }}-
 
   save_dub_cache:
     steps:
       - save_cache:
           when: always
-          key: dub-v1-{{ arch }}-{{ checksum "dub.selections.json" }}
+          key: dub-v1-{{ arch }}-{{ checksum ".dub-cache-key" }}
           paths:
             - ~/.dub
             - ~/.local/share/dub
