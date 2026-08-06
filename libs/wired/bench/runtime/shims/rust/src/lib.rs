@@ -62,5 +62,14 @@ impl ErrorSlot {
 /// initialized buffer for the duration of the call (the D harness passes a
 /// slice of a GC-held string).
 pub(crate) unsafe fn input_slice<'a>(data: *const std::ffi::c_char, len: usize) -> &'a [u8] {
+    // `from_raw_parts` requires a non-null, aligned pointer *even when `len`
+    // is 0*, and an empty D array has a null `.ptr` — so an empty document
+    // (JSONTestSuite's 0-byte `n_structure_no_data.json`) built a slice that
+    // was instant UB. serde_json and simd-json happened to survive it by
+    // testing emptiness first; sonic-rs read through the null and took the
+    // whole process down with SIGSEGV.
+    if len == 0 {
+        return &[];
+    }
     std::slice::from_raw_parts(data as *const u8, len)
 }
