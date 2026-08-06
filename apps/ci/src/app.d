@@ -91,6 +91,8 @@ nor verified; removing the directive makes the example required again:
 ---
 +/
 
+module app;
+
 // std.* modules
 import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
 import std.array : array, join;
@@ -333,7 +335,7 @@ private __gshared immutable refDefRegex = ctRegex!(r"^\[([^\]]+)\]:\s+(https?://
 /// noise filter: on success, only the program's stdout appears in the combined
 /// output; on failure, compiler errors are still reported.
 
-int main(string[] args)
+int ciMain(string[] args)
 {
     auto parseArgs = args.dup;
     const fileSelection = extractFilesOption(parseArgs);
@@ -2909,7 +2911,7 @@ therefore keep the tail; passing ones keep the head, where a build's summary
 lives.
 */
 private string[] formatOutputLines(string[] lines, size_t maxLines = 8,
-    bool keepTail = false)
+    bool keepTail = false) @safe
 in (maxLines > 1, "maxLines must be at least 2 for truncation indicator")
 {
     if (lines.length == 0)
