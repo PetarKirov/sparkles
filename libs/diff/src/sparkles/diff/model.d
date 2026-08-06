@@ -77,6 +77,12 @@ struct Hunk
     /// The hunk's rows: `DiffDoc.rows[rowsStart .. rowsStart + rowsCount]`.
     uint rowsStart;
     uint rowsCount;
+    /// `DVN2`: every changed row in this hunk is formatting (re-padding,
+    /// re-indentation, blank-line churn). A verdict, not a policy — the rows
+    /// are still here, and renderers dim and fold them rather than dropping
+    /// them, so a reviewer can always look. Stamped by
+    /// `sparkles.diff.classify.classifyHunks`.
+    bool formattingOnly;
 }
 
 /// Why an expensive pass was skipped (`DVM6` scale guards). Disclosed
@@ -189,6 +195,10 @@ struct DiffOptions
     /// Pass toggles.
     bool pairRows = true;
     bool refineWords = true;
+    /// `DVN2`: stamp `Hunk.formattingOnly`. Cheap (one pass over the rows
+    /// already in cache) and the renderers ignore the flag unless asked, so
+    /// it is on by default.
+    bool classifyHunks = true;
 }
 
 @("model.Span.end")
