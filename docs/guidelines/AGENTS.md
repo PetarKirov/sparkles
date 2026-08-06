@@ -217,10 +217,10 @@ buildType "checked" {
 It is neither of dub's two obvious defaults, because each is wrong for a
 shipped artifact:
 
-| Build type | `assert` | `debug { }` | Use for                                        |
-| ---------- | -------- | ----------- | ---------------------------------------------- |
-| `debug`    | live     | **on**      | `dub test`, local iteration                    |
-| `release`  | **gone** | off         | nothing — see below                            |
+| Build type | `assert` | `debug { }` | Use for                                             |
+| ---------- | -------- | ----------- | --------------------------------------------------- |
+| `debug`    | live     | **on**      | `dub test`, local iteration                         |
+| `release`  | **gone** | off         | nothing — see below                                 |
 | `checked`  | live     | off         | every nix artifact: apps, examples, the `ci` helper |
 
 - **`release` implies `-release`, which deletes an assert's whole
