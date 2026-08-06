@@ -382,6 +382,12 @@ struct Gallery
     @(Option("emit-stylesheet", description: "Also write the stylesheet the pages need (both themes when --dark-theme is set) to this file."))
     string emitStylesheet;
 
+    @(Option("recursive|r", description: "Render the whole subtree, mirroring its directory structure in the output, with an index per directory. Git-ignored files are skipped."))
+    bool recursive;
+
+    @(Option("root", description: "Directory the mirrored output paths are relative to (default: the gallery target). Also the base for view-on-GitHub links."))
+    string root;
+
     int run(Program)(in Program program)
     {
         return executeGallery(program.value, this);
@@ -858,7 +864,7 @@ private int executeGallery(in HueCli root, in Gallery gallery)
 
     string dir = gallery.dir.length ? gallery.dir : ".";
     bool twoslash = gallery.twoslash || root.overlay.twoslash.length != 0;
-    auto set = collectSources(dir, twoslash);
+    auto set = collectSources(dir, twoslash, gallery.recursive, gallery.root);
     if (set.empty)
         warning(i"no renderable files in '$(dir)' — writing an empty gallery index");
 
