@@ -164,7 +164,19 @@
         # shared lockfile or split out into its own.
         dubLock = fromRoot "nix/dub-lock.json";
         compiler = pkgs.ldc;
-        dubBuildType = "release";
+
+        # `debug`, deliberately — an example set is a smoke test, and `-release`
+        # strips every assert *expression*, side effects included. An example
+        # that asserts its own result then exits 0 under `-release` has verified
+        # nothing; one that performs I/O inside an assert doesn't even do the
+        # I/O (which is how `fiber-echo` came to hang for 13 minutes on a
+        # 20-minute-capped job).
+        #
+        # It also removes a divergence rather than adding one: `ci
+        # --example-files` and the documented `dub run --single foo.d` both use
+        # dub's default `debug`, so `release` here was the odd build out —
+        # the one configuration no reader of these examples ever runs.
+        dubBuildType = "debug";
 
         # Examples that depend on sparkles:syntax (or other ImportC bindings)
         # need pkg-config + the C library so dub#3085 can feed -P-I...
