@@ -214,6 +214,7 @@ struct WorkspaceTui
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
             startPreview: true, doc.twoslash, doc.lang, doc.diffDoc,
             doc.diffSides, doc.diffSession);
+        syncTreeSession();
         tree.reveal(path);
         treeFocused = false;
         startLive(path, doc.twoslash.code.length != 0);
@@ -312,6 +313,16 @@ struct WorkspaceTui
     /// belong to its changed-file list rather than to the tree's neighbours.
     private bool viewerHasDiffSession() const @safe pure nothrow @nogc
         => viewer.diffNav();
+
+    /// `TVU6`: point the explorer at the open document's changed-file session
+    /// (or back at the filesystem when it is not a diff). Called wherever the
+    /// viewer's document changes, so the two panes never disagree about what
+    /// is being shown.
+    package void syncTreeSession() @system
+    {
+        tree.session = viewer.diffEntries();
+        tree.rebuild();
+    }
 
     private void openAdjacent(int step) @system
     {
@@ -467,6 +478,16 @@ struct WorkspaceTui
         if (toTree && treeVisible)
         {
             const alive = tree.handle(ev);
+            if (tree.pickedSession >= 0) // `TVU6`: a changed-file row
+            {
+                const idx = cast(size_t) tree.pickedSession;
+                tree.picked = null;
+                tree.pickedSession = -1;
+                // The file is already in the open diff — jump, do not reload.
+                viewer.selectDiffFile(idx);
+                treeFocused = false;
+                return true;
+            }
             if (tree.picked.length) // Enter on a file → the viewer pane
             {
                 const path = tree.picked;
@@ -539,6 +560,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             initial.preview, startPreview: true, initial.twoslash,
             initial.lang, initial.diffDoc, initial.diffSides,
             initial.diffSession);
+        w.syncTreeSession();
         if (target.length)
             w.tree.reveal(target);
         if (target.length)

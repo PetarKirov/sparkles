@@ -668,6 +668,15 @@ struct ViewerModel
         return true;
     }
 
+    /// `DVG1`/`TVU6`: selects session file `i` and scrolls to it — what the
+    /// explorer's changed-files tree calls when a row is activated.
+    bool diffSelectFile(size_t i)
+    {
+        if (i >= diffSession.entries.length || i == diffSession.index)
+            return false;
+        return diffMoveFile(cast(int)(cast(long) i - cast(long) diffSession.index));
+    }
+
     /**
     `DVG1`: scrolls to the next (`delta > 0`) or previous hunk relative to the
     current scroll position, returning `true` iff it moved.
