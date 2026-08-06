@@ -91,18 +91,37 @@ written from the implementations and their commits, not proposed.
 Proposed. Required by the [application host](../ui-app/index.md) and by migrating
 `apps/terminal` onto it — see [P0.3](../ui-app/PLAN.md#phase-0).
 
-| ID    | Requirement                                                                                                                                                                                                                                                                                                     | Status      | Traces to                                                          |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------ |
-| INP15 | A key event must carry its **action** (press, repeat, release), the **layout-independent unshifted code point**, and the **text that keystroke produced**; modifiers must include the platform "super". A terminal emulator's encoder pairs a key with its text, and a detached text event cannot express that. | not started | `sparkles.input.events` `KeyEvent`, `Mods`                         |
-| INP16 | A target must **declare whether it can report a key release** at all — a terminal cannot. A held-key interaction must consult that declaration and offer another route, rather than working on one target and silently failing on another ([`TGT5`](./backends.md)).                                            | not started | `sparkles.input.capability` `InputCapabilities`                    |
-| INP17 | The **per-frame fold** — edges versus levels, wheel accumulation, gesture anchors — belongs to this package, not to an application. It must cover every pointer button, modifier level and (where `INP16` allows) held keys, and stay **unit-agnostic**: positions pass through in the producer's own unit.     | not started | planned `sparkles.input.frame`; today `apps/hue/src/frame_input.d` |
+| ID    | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Status            | Traces to                                                     |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------- |
+| INP15 | A key event must carry its **action** (press, repeat, release), the **layout-independent unshifted code point**, and the **text that keystroke produced** — the last **stored inline, not borrowed**, so an event stays a value that can be recorded now and asserted on later ([`INP4`](#event-model-inp1inp4)); modifiers must include the platform "super". A terminal emulator's encoder pairs a key with its text, and a detached text event cannot express that. | full (`9f0ca9ad`) | `sparkles.input.events` `KeyEvent`, `Mods`, `maxKeyText`      |
+| INP16 | A target must **declare whether it can report a key release** at all — a terminal cannot. A held-key interaction must consult that declaration and offer another route, rather than working on one target and silently failing on another ([`TGT5`](./backends.md)). The declaration defaults to **absent**, unlike the other capability axes.                                                                                                                         | full (`9f0ca9ad`) | `sparkles.input.capability` `InputCapabilities.keyRelease`    |
+| INP17 | The **per-frame fold** — edges versus levels, wheel accumulation, gesture anchors — belongs to this package, not to an application. It must cover every pointer button, modifier level and (where `INP16` allows) held keys, and stay **unit-agnostic**: positions pass through in the producer's own unit.                                                                                                                                                            | full (`12d17717`) | `sparkles.input.frame` (`apps/hue/src/frame_input.d` deleted) |
 
 > [!IMPORTANT]
 > `INP15`–`INP17` are additive: the new key fields are **appended**, so every
-> existing construction and helper keeps compiling, and `INP16` defaults to the
-> desktop answer so a producer that has not declared anything keeps today's
-> behavior. The fold already exists as a pure, tested function inside `apps/hue`;
-> `INP17` is a move plus a generalization, not a new design.
+> existing construction and helper keeps compiling. The fold already existed as a
+> pure, tested function inside `apps/hue`, so `INP17` was a move plus a
+> generalization, not a new design.
+>
+> **`INP16` defaults to _absent_, not to the desktop answer**, which is the one
+> place these rows say something different from the other capability axes. A key
+> release is an **extra event**, not a refinement of a press: a consumer that
+> switches on the key alone reads a release as a second press. Defaulting the
+> declaration to `true` would therefore have changed what every existing consumer
+> sees the moment a producer started synthesizing releases. Undeclared means
+> "presses only" — what every producer reported before this existed — and a target
+> opts in by declaring it _and_ emitting them.
+>
+> The same hazard is why `isDismiss` ignores releases: an application that
+> dismisses on Escape would otherwise dismiss twice per keystroke, closing a popup
+> and then quitting.
+>
+> **`INP15`'s text is stored inline, not borrowed.** A slice into the producer's
+> per-frame buffer would cost the vocabulary [`INP4`](#event-model-inp1inp4) — an
+> event you can record and replay cannot hold a pointer with a shorter life than
+> itself — and it makes the sum type's assignment `@system` under `dip1000`, which
+> would strand every `@safe` consumer. One keystroke is one code point; the cap
+> (`maxKeyText`) covers a dead-key or IME composition and truncates beyond.
 
 ## Hit testing (`INP10`)
 
