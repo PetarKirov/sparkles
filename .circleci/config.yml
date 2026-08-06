@@ -1,0 +1,542 @@
+# CircleCI pipeline for sparkles.
+#
+# A port of .github/workflows/{ci,docs,release}.yml. The two providers share
+# every non-trivial step through the scripts in ci/ — this file and the GitHub
+# workflows are meant to stay thin enough that a behaviour change happens in
+# one place. See ci/README.md for the environment contract.
+#
+# Differences from GitHub Actions that are inherent to CircleCI, not choices:
+#
+#   * No `merge_group` trigger, and no `paths:` filter. The docs deploy gates
+#     itself with `ci/paths-changed.sh` + `circleci-agent step halt` instead.
+#   * No "release published" event. The release workflow fires on the `v*` tag
+#     push, so the grace window between tagging and publishing is gone.
+#   * No per-job wall-clock timeout. `no_output_timeout` bounds a *silent* step
+#     instead; the project's "Auto-cancel redundant workflows" setting is what
+#     replaces `concurrency.cancel-in-progress`.
+
+version: 2.1
+
+orbs:
+  win: circleci/windows@5.0
+
+# ---------------------------------------------------------------------------
+# Executors
+# ---------------------------------------------------------------------------
+
+executors:
+  # 4 vCPU / 15 GB — the closest match to the GitHub-hosted `ubuntu-latest`
+  # runner the workflows were tuned against. A machine executor rather than
+  # Docker because these jobs install Nix, and a single-user store under a
+  # cacheable /nix wants a real VM.
+  linux:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+
+  # macOS is Performance-plan-only and by far the most expensive resource
+  # class here (see ci/README.md § Cost).
+  macos:
+    macos:
+      xcode: '26.6'
+    resource_class: m4pro.medium
+
+  # The fan-in gate does no work; keep it on the cheapest thing that runs.
+  tiny:
+    docker:
+      - image: cimg/base:current
+    resource_class: small
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+commands:
+  setup_nix:
+    description: >
+      Install Nix, write nix.conf, and optionally build and activate a flake
+      devShell for the rest of the job.
+    parameters:
+      devshell:
+        description: devShell to activate, or empty for none.
+        type: string
+        default: ''
+      cache_nix:
+        description: >
+          Cache /nix between builds. Implies a single-user store, since the
+          cache is restored unprivileged and cannot write a root-owned /nix.
+          Must be false on macOS, where the store needs its own APFS volume
+          and only a daemon install can create it.
+        type: boolean
+        default: true
+      cache_suffix:
+        description: >
+          Namespaces the /nix cache. Jobs with different closures (the
+          `default` devShell vs `pre-commit` vs a full `nix build`) should not
+          share one, or whichever job saves first decides what the others get.
+        type: string
+        default: shared
+    steps:
+      - when:
+          condition: << parameters.cache_nix >>
+          steps:
+            # Must happen *before* restore_cache: the restore runs as the job
+            # user and cannot create a directory at the filesystem root.
+            - run:
+                name: Create a user-owned /nix
+                command: sudo install -d -m 0755 -o "$(id -un)" -g "$(id -gn)" /nix
+            - restore_cache:
+                keys:
+                  - nix-v1-<< parameters.cache_suffix >>-{{ arch }}-{{ checksum "flake.lock" }}
+                  - nix-v1-<< parameters.cache_suffix >>-{{ arch }}-
+      - run:
+          name: Install Nix
+          environment:
+            CI_NIX_SINGLE_USER: << parameters.cache_nix >>
+          command: ci/nix-install.sh
+      - run:
+          name: Configure Nix
+          command: ci/nix-configure.sh
+      - when:
+          condition: << parameters.devshell >>
+          steps:
+            - run:
+                name: Build & activate the << parameters.devshell >> devShell
+                command: ci/nix-devshell.sh << parameters.devshell >>
+                no_output_timeout: 30m
+
+  save_nix_cache:
+    description: >
+      Save /nix. Separate from setup_nix so it runs at the end of the job, with
+      the store populated; `when: always` so a failing job still leaves a warm
+      cache for the retry.
+    parameters:
+      cache_suffix:
+        type: string
+        default: shared
+    steps:
+      - save_cache:
+          when: always
+          key: nix-v1-<< parameters.cache_suffix >>-{{ arch }}-{{ checksum "flake.lock" }}
+          paths:
+            - /nix
+            - ~/.nix-profile
+            - ~/.nix-defexpr
+            - ~/.cache/nix
+
+  restore_dub_cache:
+    steps:
+      - restore_cache:
+          keys:
+            - dub-v1-{{ arch }}-{{ checksum "dub.selections.json" }}
+            - dub-v1-{{ arch }}-
+
+  save_dub_cache:
+    steps:
+      - save_cache:
+          when: always
+          key: dub-v1-{{ arch }}-{{ checksum "dub.selections.json" }}
+          paths:
+            - ~/.dub
+            - ~/.local/share/dub
+
+  install_node:
+    description: Node from this flake's pinned nixpkgs, plus the npm cache.
+    steps:
+      - run:
+          name: Put Node on PATH
+          command: ci/nix-tool-path.sh nodejs_24
+      - restore_cache:
+          keys:
+            - npm-v1-{{ arch }}-{{ checksum "package-lock.json" }}
+            - npm-v1-{{ arch }}-
+      - run:
+          name: npm ci
+          command: npm ci
+      - save_cache:
+          key: npm-v1-{{ arch }}-{{ checksum "package-lock.json" }}
+          paths:
+            - ~/.npm
+
+  build_docs:
+    description: >
+      `docs:build` first runs `build:wasm`, which shells out to
+      `nix build .#table-wasm` for the drawTable playground module — hence Nix
+      in a job that otherwise only needs Node.
+    steps:
+      - install_node
+      - run:
+          name: Build the VitePress site
+          command: npm run docs:build
+          no_output_timeout: 20m
+
+# ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+
+jobs:
+  # `ci` here is the repo's own D helper (apps/ci), on PATH from the devShell.
+  test-linux:
+    parameters:
+      dc:
+        description: D compiler to run the test suite under.
+        type: enum
+        enum: [ldc2, dmd]
+    executor: linux
+    environment:
+      DC: << parameters.dc >>
+    steps:
+      - checkout
+      - setup_nix:
+          devshell: default
+          cache_suffix: devshell-default
+      - restore_dub_cache
+      - run:
+          name: Run flake checks
+          command: nix flake check
+          no_output_timeout: 20m
+      - run:
+          # `ci` embeds dmd (small closure); honour the matrix compiler for the
+          # test suite so the ldc2/dmd dimensions are actually exercised. Both
+          # are on PATH via the `default` devShell.
+          name: Build and test with dub
+          command: ci --test --fail-fast
+          no_output_timeout: 20m
+      - run:
+          name: Build and run examples
+          command: ci --example-files --fail-fast
+          no_output_timeout: 20m
+      - when:
+          # OS-API research examples (docs/research/.../os-apis). These are
+          # multi-file dub packages (ImportC), not single-file, so they fall
+          # outside `ci --example-files`. X11 opens a real window under xvfb;
+          # Wayland has no compositor here, so it prints SKIP and exits 0.
+          # (macOS/iOS/Android are verified out of band — see the surveys.)
+          condition:
+            equal: [ldc2, << parameters.dc >>]
+          steps:
+            - run:
+                name: Build & run OS-API windowing examples (X11 + Wayland)
+                command: |
+                  xvfb-run -a dub run --compiler=ldc2 \
+                    --root=docs/research/window-system-integration/os-apis/x11/example
+                  dub run --compiler=ldc2 \
+                    --root=docs/research/window-system-integration/os-apis/wayland/example
+      - save_dub_cache
+      - save_nix_cache:
+          cache_suffix: devshell-default
+
+  test-macos:
+    executor: macos
+    environment:
+      DC: ldc2
+    steps:
+      - checkout
+      # cache_nix is false throughout the macOS legs: the store lives on its
+      # own APFS volume created by the daemon installer, so there is no
+      # user-owned /nix to tar. Cachix is the only cache here.
+      - setup_nix:
+          devshell: default
+          cache_nix: false
+      - restore_dub_cache
+      - run:
+          name: Run flake checks
+          command: nix flake check
+          no_output_timeout: 20m
+      - run:
+          name: Build and test with dub
+          command: ci --test --fail-fast
+          no_output_timeout: 20m
+      - run:
+          name: Build and run examples
+          command: ci --example-files --fail-fast
+          no_output_timeout: 20m
+      - save_dub_cache
+
+  # The test runner's extracted-test modes. `--test` does not cover these: a
+  # @betterC test runs as an ordinary unittest there, and only `--better-c`
+  # additionally extracts it, compiles it without druntime, and runs the
+  # result — so a break in the extraction, the -betterC codegen, or the wasm32
+  # cross-compile is invisible to `dub test`.
+  #
+  # Linux-only and LDC-only: `--wasm` is -mtriple/llvm_trap based, so a dmd leg
+  # could only skip.
+  extracted-tests:
+    executor: linux
+    environment:
+      DC: ldc2
+    steps:
+      - checkout
+      - setup_nix:
+          devshell: default
+          cache_suffix: devshell-default
+      - restore_dub_cache
+      - run:
+          # Both modes normally *skip* when their toolchain is missing, which
+          # is right on a contributor's machine and exactly wrong here.
+          # `--test-extracted` passes the runner's `--require-toolchain`,
+          # turning any such skip into a failure — without it a missing wasm-ld
+          # would leave this job green having run nothing.
+          name: Run --better-c and --wasm for every sub-package that uses them
+          command: ci --test-extracted --fail-fast
+          no_output_timeout: 20m
+      - save_dub_cache
+
+  # The Win32 OS-API example builds against druntime's core.sys.windows — no
+  # Nix, no third-party deps — so it runs on a plain Windows runner with LDC.
+  win32-example:
+    executor:
+      name: win/default
+      size: medium
+    steps:
+      - checkout
+      - run:
+          name: Install LDC
+          shell: bash.exe
+          command: bash ci/install-ldc-windows.sh
+      - restore_cache:
+          keys:
+            - dub-win-v1-osapi
+      - run:
+          name: Build & run the Win32 example
+          shell: bash.exe
+          command: |
+            dub run --compiler=ldc2 \
+              --root=docs/research/window-system-integration/os-apis/win32/example
+      - save_cache:
+          key: dub-win-v1-osapi
+          paths:
+            - C:\Users\circleci\AppData\Local\dub
+
+  # Build the Nix outputs and push them to the binary cache. The derivations
+  # are compiler-agnostic (always ldc), so this is independent of the test
+  # matrix's DC dimension. `.#all-desktop` is the aggregate from
+  # nix/packages/all.nix: the full dev shell, every desktop package, and every
+  # standalone example. The Android closure has its own job below.
+  #
+  # No /nix cache: this job's store *is* the whole closure, and tarring it into
+  # the CircleCI cache costs more than fetching it from Cachix.
+  nix-build-linux:
+    executor: linux
+    steps:
+      - checkout
+      - setup_nix:
+          cache_nix: false
+      - run:
+          name: Build & push devShells.full, all packages, and all examples
+          command: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
+          no_output_timeout: 30m
+      - run:
+          name: Run all runnable examples
+          command: nix run .#run-all-examples
+          no_output_timeout: 20m
+
+  nix-build-macos:
+    executor: macos
+    steps:
+      - checkout
+      - setup_nix:
+          cache_nix: false
+      - run:
+          name: Build & push devShells.full, all packages, and all examples
+          command: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
+          no_output_timeout: 30m
+      - run:
+          name: Run all runnable examples
+          command: nix run .#run-all-examples
+          no_output_timeout: 20m
+
+  # The Android APK pipeline (nix/packages/android/): builds `.#all-android` —
+  # the repo-embedded hue APK, whose dependency chain covers the entire cross
+  # closure (dual-ABI druntimes via dlang.nix's ldc-android, the
+  # raylib/tree-sitter/libghostty-vt cross builds, every grammar parser, the
+  # Maple font build, and the aapt2/zipalign/apksigner assembly). Linux-only:
+  # the NDK/SDK ship prebuilt for x86_64-linux alone. The unfree Android SDK
+  # licence is accepted inside the scoped nixpkgs import
+  # (nix/packages/android/sdk.nix) — no env flags needed here.
+  #
+  # `large` rather than `xlarge` deliberately: the Linux VM rate jumps 20 →
+  # 100 credits/min at xlarge, and the GitHub job this replaces already fits a
+  # 4-vCPU runner in a 4m median.
+  nix-build-android:
+    executor: linux
+    steps:
+      - checkout
+      - setup_nix:
+          cache_nix: false
+      - run:
+          name: Build & push the Android APK closure
+          command: ci/with-cachix.sh nix build --print-build-logs .#all-android
+          no_output_timeout: 90m
+
+  lint:
+    executor: linux
+    environment:
+      SKIP: verify-md-examples
+    steps:
+      - checkout
+      - setup_nix:
+          devshell: pre-commit
+          cache_suffix: devshell-pre-commit
+      - restore_cache:
+          keys:
+            - lychee-v3-
+      - run:
+          name: Lint and check links
+          command: prek run --all-files --show-diff-on-failure --color always
+          no_output_timeout: 35m
+      - run:
+          name: Verify markdown runnable examples
+          command: nix run .#ci -- --verify --fail-fast --files '**.md'
+          no_output_timeout: 35m
+      - save_cache:
+          # lychee's cache must keep growing, and CircleCI never overwrites an
+          # existing key — so the key has to change every run while the restore
+          # prefix stays stable.
+          when: always
+          key: lychee-v3-{{ .Branch }}-{{ .BuildNum }}
+          paths:
+            - .lycheecache
+      - save_nix_cache:
+          cache_suffix: devshell-pre-commit
+
+  docs:
+    executor: linux
+    steps:
+      - checkout
+      - setup_nix:
+          cache_suffix: docs
+      - build_docs
+      - save_nix_cache:
+          cache_suffix: docs
+
+  docs-deploy:
+    executor: linux
+    steps:
+      - checkout
+      - run:
+          name: Skip unless the docs sources changed
+          # The twoslash showcase gallery is rendered from libs/twoslash at
+          # docs-build time (docs/scripts/build-twoslash-showcase.sh), so a
+          # fixture/renderer change must redeploy the docs too.
+          command: |
+            ci/paths-changed.sh docs/ libs/twoslash/ package.json package-lock.json \
+              || circleci-agent step halt
+      - setup_nix:
+          cache_suffix: docs
+      - build_docs
+      - run:
+          name: Deploy to Cloudflare Pages
+          command: ci/deploy-cloudflare-pages.sh
+      - save_nix_cache:
+          cache_suffix: docs
+
+  # Pokes code.dlang.org to ingest the new release immediately. The registry
+  # also background-scans registered repos on its own schedule, so this only
+  # *speeds up* ingestion — it is not what makes a tag public.
+  notify-dub-registry:
+    executor: tiny
+    steps:
+      - checkout
+      - run:
+          name: Trigger a code.dlang.org update
+          command: ci/notify-dub-registry.sh
+
+  # Build `.#all-desktop`, push it to the binary cache, and pin the closure
+  # under a stable per-system name so it survives cache garbage collection.
+  nix-build-pin:
+    parameters:
+      platform:
+        type: executor
+    executor: << parameters.platform >>
+    steps:
+      - checkout
+      - run:
+          name: Fetch tags
+          # release-pin.sh compares this tag against every other `v*` tag, and
+          # CircleCI's checkout does not bring them along.
+          command: git fetch --force --tags origin
+      - setup_nix:
+          cache_nix: false
+      - run:
+          # Usually all cache hits: the CI pipeline already built and pushed
+          # this commit's outputs before it reached main.
+          name: Build devShells.full, all packages, and all examples
+          command: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
+          no_output_timeout: 30m
+      - run:
+          name: Push & pin the release closure
+          command: ci/release-pin.sh
+
+  # The single fan-in gate, so branch protection has one stable check to
+  # require as jobs come and go. CircleCI will not start this job unless every
+  # `requires:` dependency succeeded, so reaching it *is* the assertion.
+  ci:
+    executor: tiny
+    steps:
+      - run:
+          name: All required jobs succeeded
+          command: echo 'CI green.'
+
+# ---------------------------------------------------------------------------
+# Workflows
+# ---------------------------------------------------------------------------
+
+workflows:
+  ci:
+    jobs:
+      - test-linux:
+          name: test-linux-<< matrix.dc >>
+          context: sparkles-ci
+          matrix:
+            parameters:
+              dc: [ldc2, dmd]
+      - test-macos:
+          context: sparkles-ci
+      - extracted-tests:
+          context: sparkles-ci
+      - win32-example
+      - nix-build-linux:
+          context: sparkles-ci
+      - nix-build-macos:
+          context: sparkles-ci
+      - nix-build-android:
+          context: sparkles-ci
+      - lint:
+          context: sparkles-ci
+      - docs:
+          context: sparkles-ci
+      - ci:
+          requires:
+            - test-linux-ldc2
+            - test-linux-dmd
+            - test-macos
+            - extracted-tests
+            - win32-example
+            - nix-build-linux
+            - nix-build-macos
+            - nix-build-android
+            - lint
+            - docs
+
+  docs:
+    jobs:
+      - docs-deploy:
+          context: sparkles-ci
+
+  release:
+    jobs:
+      - notify-dub-registry:
+          context: sparkles-ci
+          filters: &release-tags
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
+      - nix-build-pin:
+          name: nix-build-pin-<< matrix.platform >>
+          context: sparkles-ci
+          filters: *release-tags
+          matrix:
+            parameters:
+              platform: [linux, macos]
