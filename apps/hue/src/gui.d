@@ -2215,9 +2215,12 @@ int runGui(
         {
             if (screenRow < 0 || screenRow >= docRows || xEndCol <= xStartCol)
                 return;
-            chrome.fillPixels(gutterPx + xStartCol * cellW,
-                cast(int)(docY0 + screenRow * cellH),
-                (xEndCol - xStartCol) * cellW, cellH, vm.quoteBars[1], 80);
+            // Content-anchored and whole-cell, so it says so: the gutter
+            // and the first document row are both cell multiples (UIA2).
+            chrome.fillRect(Rect(gutterPx / cellW + xStartCol,
+                cast(int)(docY0 / cellH + screenRow),
+                xEndCol - xStartCol, 1),
+                Visual(bg: vm.quoteBars[1], bgAlpha: 80, hasBg: true));
         }
         // Tint a source byte range on the widget path: the toolkit derives the
         // char-precise rects (document cell coordinates) once for any backend.
@@ -2265,9 +2268,9 @@ int runGui(
                     if (row < 0 || row >= docRows)
                         continue;
                     const t = i == vm.curMatch ? currentMatchTint : matchTint;
-                    chrome.fillPixels(gutterPx + r.x * cellW,
-                        cast(int)(docY0 + row * cellH), r.width * cellW, cellH,
-                        t.rgb, t.alpha);
+                    chrome.fillRect(Rect(gutterPx / cellW + r.x,
+                        cast(int)(docY0 / cellH + row), r.width, 1),
+                        Visual(bg: t.rgb, bgAlpha: t.alpha, hasBg: true));
                 }
 
         // Twoslash hover: pointer → byte (the identity channel) → hover node;
