@@ -132,9 +132,14 @@ anchor and neither wraps; otherwise each takes its own row.
 Returns a layout with `connected == false` when the line has fewer than two
 distinct anchor columns — there is nothing to disambiguate, and the caller
 should keep its existing stacked rendering.
+
+`allowSharing: false` gives every block its own row. A backend whose payloads
+are boxes rather than text — the HTML overlay's bordered, padded popup cards —
+cannot honour a share: the planner measures the label, and the box around it is
+wider by an amount only that backend knows.
 */
 BelowLineLayout layoutBelowLine(in TwoslashReturn tw,
-    scope const(BelowBlock)[] blocks, int availWidth) @safe
+    scope const(BelowBlock)[] blocks, int availWidth, bool allowSharing = true) @safe
 {
     import std.algorithm.iteration : filter, map, uniq;
     import std.algorithm.searching : canFind;
@@ -180,7 +185,7 @@ BelowLineLayout layoutBelowLine(in TwoslashReturn tw,
     {
         const col = anchorCol(tw.nodes[n]);
         const cells = elbowCells + payloadCells(tw.nodes[n]);
-        const flat = fitsFlat(tw.nodes[n], col, cells, availWidth);
+        const flat = allowSharing && fitsFlat(tw.nodes[n], col, cells, availWidth);
         if (i && (rowWraps || !flat || col + cells + shareGutter > leftmost))
         {
             ++row;
@@ -507,4 +512,21 @@ unittest
     assert(layout.rows[0].guides == [5]);
     assert(layout.rows[1].guides == [5]);
     assert(layout.rows[2].guides.length == 0);
+}
+
+@("below_layout.sharingIsOptional")
+@safe unittest
+{
+    // Two short labels that would share a row give every block its own row when
+    // the backend cannot honour a share.
+    const tw = TwoslashReturn(code: "auto p = q + r;\n", nodes: [
+        Node(type: NodeType.query, start: 5, length: 1, line: 0, character: 5, text: "int"),
+        Node(type: NodeType.query, start: 30, length: 1, line: 0, character: 30, text: "int"),
+    ]);
+    assert(layoutBelowLine(tw, blocksOn(tw, 0), 100).rows.length == 1);
+
+    const split = layoutBelowLine(tw, blocksOn(tw, 0), 100, allowSharing: false);
+    assert(split.rows.length == 2);
+    assert(split.rows[0].blocks == [1UL] && split.rows[1].blocks == [0UL]);
+    assert(split.rows[0].guides == [5]);
 }

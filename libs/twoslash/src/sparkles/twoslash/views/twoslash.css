@@ -230,6 +230,65 @@
   color: var(--twoslash-warn-color);
 }
 
+/* ── Crowded lines ───────────────────────────────────────────────────────────
+  Several annotations anchored to one source line. A shared marker row under the
+  code, then the labels peeled off right to left, each connected back to its own
+  column by a vertical guide — the compiler-diagnostic shape (Rust, Elm, modern
+  GCC/Clang), which is the only thing that says which label belongs to which
+  token once there is more than one.
+
+  The cell backends repeat a glyph per row because a terminal has no other way
+  to draw a line. Here the guides are absolutely positioned at their exact
+  column and stretch to whatever height the card beside them turns out to be,
+  which is what lets a card keep the markup it always had — the art is chrome
+  around the `.twoslash-*` contract, not a replacement for it. */
+.twoslash .twoslash-crowded {
+  /* Decoration, not code: stays out of a selection of the code, like every
+    other annotation surface (the marker row's padding spaces especially). */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.twoslash .twoslash-crowded-markers {
+  /* Preformatted, so the marker columns are exact with no arithmetic. */
+  white-space: pre;
+  color: var(--twoslash-underline-color);
+}
+
+.twoslash .twoslash-crowded-row {
+  position: relative;
+}
+
+/* A pending anchor's connector: a rule down the row at its own column, for
+  every anchor whose label has not been drawn yet. */
+.twoslash .twoslash-crowded-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--twoslash-underline-color);
+}
+
+/* The turn into a label. `1ch` is the gap the popup cards leave above
+  themselves (`margin-top: 1ch`), so the hook lands exactly on the card's top
+  edge rather than at a hand-tuned offset. */
+.twoslash .twoslash-crowded-elbow {
+  position: absolute;
+  top: 0;
+  height: 1ch;
+  width: 0.7ch;
+  border-left: 1px solid var(--twoslash-underline-color);
+  border-bottom: 1px solid var(--twoslash-underline-color);
+  border-bottom-left-radius: 4px;
+}
+
+/* Inside a connected row an error message sits under its own anchor, so it is
+  no longer the full-width accent band it is on a line of its own. */
+.twoslash .twoslash-crowded-row .twoslash-error-line {
+  min-width: 0;
+  width: max-content;
+  margin-top: 1ch;
+}
+
 /* Inline error span: wavy underline (SVG data-URI, bottom-repeat). */
 .twoslash .twoslash-error {
   padding-bottom: 2px;
