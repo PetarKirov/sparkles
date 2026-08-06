@@ -9,7 +9,9 @@ interpreters are later siblings under `interp/`.
 */
 module sparkles.ui.interp.immediate;
 
-import sparkles.ui.canvas : DrawOp, isCanvas, OpKind;
+import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind, RuleEdge,
+    ruleEndpoints;
+import sparkles.ui.geometry : Point;
 
 /// Replays `ops` onto `canvas`, dispatching each $(REF DrawOp, sparkles,ui,canvas)
 /// to the matching primitive. Backend-neutral: the display list carries resolved
@@ -32,6 +34,21 @@ if (isCanvas!Canvas)
                 break;
             case line:
                 canvas.line(op.rect.origin, op.to, op.visual, op.lineStyle);
+                break;
+            case rule:
+                // Sub-cell chrome is an OPTIONAL primitive (UIA2): a pixel
+                // canvas draws the hairline where it belongs, and a canvas
+                // without one gets the cell-aligned line along the same
+                // edge rather than nothing.
+                static if (__traits(compiles,
+                    canvas.rule(op.rect, op.ruleEdge, op.visual)))
+                    canvas.rule(op.rect, op.ruleEdge, op.visual);
+                else
+                {
+                    Point rf, rt;
+                    ruleEndpoints(op.rect, op.ruleEdge, rf, rt);
+                    canvas.line(rf, rt, op.visual, LineStyle.solid);
+                }
                 break;
             case pushClip:
                 // The clipping pair is an optional canvas capability: forward
@@ -79,4 +96,45 @@ if (isCanvas!Canvas)
         assert(c.ops[i].rect == ops[i].rect);
         assert(c.ops[i].visual == ops[i].visual);
     }
+}
+
+@("ui.interp.immediate.ruleFallsBackToTheCellAlignedLine")
+@safe unittest
+{
+    import sparkles.ui.canvas : DrawOp, OpKind, RecordingCanvas, RuleEdge;
+    import sparkles.ui.geometry : Rect;
+
+    // A canvas with no sub-cell primitive still shows the hairline, at the
+    // coarsest honest resolution: the line along the very same edge (UIA2).
+    // Silence would be the wrong degradation — the chrome would vanish.
+    auto rec = RecordingCanvas();
+    DrawOp op = {kind: OpKind.rule, rect: Rect(2, 3, 10, 4),
+        ruleEdge: RuleEdge.bottom};
+    paint(rec, [op]);
+    assert(rec.ops.length == 1);
+    assert(rec.ops[0].kind == OpKind.line);
+    assert(rec.ops[0].rect.origin == Point(2, 6));
+    assert(rec.ops[0].to == Point(11, 6));
+}
+
+@("ui.canvas.ruleEndpointsByEdge")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.ui.canvas : RuleEdge, ruleEndpoints;
+    import sparkles.ui.geometry : Rect;
+
+    const r = Rect(10, 20, 4, 6); // x 10..13, y 20..25
+    Point f, t;
+    ruleEndpoints(r, RuleEdge.top, f, t);
+    assert(f == Point(10, 20) && t == Point(13, 20));
+    ruleEndpoints(r, RuleEdge.right, f, t);
+    assert(f == Point(13, 20) && t == Point(13, 25));
+    ruleEndpoints(r, RuleEdge.centerX, f, t);
+    assert(f == Point(12, 20) && t == Point(12, 25));
+    ruleEndpoints(r, RuleEdge.centerY, f, t);
+    assert(f == Point(10, 23) && t == Point(13, 23));
+
+    // A degenerate rect must not index outside itself.
+    ruleEndpoints(Rect(5, 5, 0, 0), RuleEdge.bottom, f, t);
+    assert(f == Point(5, 5) && t == Point(5, 5));
 }
