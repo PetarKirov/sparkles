@@ -62,6 +62,10 @@ struct WorkspaceTui
     /// this pane is an alt screen a stray `dub describe` line would corrupt.
     bool liveTypes = true;
     private LiveTypesSession* live;
+    /// `DVT1`: the two oracles a diff needs — one per side of the focused
+    /// file. A diff's sides are two different texts, so one session cannot
+    /// answer for both; everything else about them is the `live` machinery.
+    private LiveTypesSession*[2] diffLive;
     private string liveNotice; // shown once, after the terminal is restored
     private int width, height;
     private RgbColor pageFg, pageBg;
@@ -215,6 +219,7 @@ struct WorkspaceTui
             startPreview: true, doc.twoslash, doc.lang, doc.diffDoc,
             doc.diffSides, doc.diffSession);
         syncTreeSession();
+        startDiffTypes();
         tree.reveal(path);
         treeFocused = false;
         startLive(path, doc.twoslash.code.length != 0);
@@ -243,10 +248,94 @@ struct WorkspaceTui
     /// ditto
     package void stopLive() @system
     {
+        stopDiffTypes();
         if (live is null)
             return;
         live.shutdown();
         live = null;
+    }
+
+    /**
+    `DVT1`/`T0`: starts one analyzer per side of a two-file `.d` diff.
+
+    Scoped to the case where both sides are files on disk (`hue --diff a.d
+    b.d`), because that is the one the analyzer can answer without a
+    materialized revision (`DVT2`). Anything else — a git-sourced side, a
+    non-`.d` file, more than one changed file — leaves the diff exactly as it
+    renders without types.
+    */
+    package void startDiffTypes() @system
+    {
+        import std.algorithm.searching : endsWith;
+        import std.file : exists, isFile;
+
+        stopDiffTypes();
+        if (!liveTypes || !viewer.diffNav())
+            return;
+        const entries = viewer.diffEntries();
+        if (entries.length != 1)
+            return;
+        const paths = [entries[0].oldPath, entries[0].newPath];
+        foreach (i, p; paths)
+        {
+            if (!p.endsWith(".d"))
+                return;
+            bool ok;
+            try
+                ok = p.exists && p.isFile;
+            catch (Exception)
+                ok = false;
+            if (!ok)
+                return;
+        }
+        viewer.ensureDiffTypes(1);
+        foreach (i, p; paths)
+        {
+            string reason;
+            diffLive[i] = LiveTypesSession.start(p, reason,
+                silenceChildStderr: true);
+            if (diffLive[i] is null && !liveNotice.length)
+                liveNotice = reason;
+        }
+    }
+
+    /// ditto
+    package void stopDiffTypes() @system
+    {
+        foreach (ref s; diffLive)
+        {
+            if (s is null)
+                continue;
+            s.shutdown();
+            s = null;
+        }
+    }
+
+    /// Drains both diff oracles; returns `true` when something changed and
+    /// the frame needs a repaint. A side whose payload does not describe that
+    /// side's text is refused by `TypeOverlay.attach` and simply stays plain.
+    package bool pollDiffTypes() @system
+    {
+        bool changed;
+        foreach (i, s; diffLive)
+        {
+            if (s is null)
+                continue;
+            s.poll();
+            if (s.payloadReady)
+            {
+                viewer.attachDiffTypes(0, i == 0, s.takePayload());
+                changed = true;
+            }
+            if (s.failed)
+            {
+                if (!liveNotice.length)
+                    liveNotice = s.reason;
+                s.shutdown();
+                diffLive[i] = null;
+            }
+        }
+        return changed;
     }
 
     /// The loop ticks on a deadline (rather than blocking on input) exactly
@@ -561,6 +650,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             initial.lang, initial.diffDoc, initial.diffSides,
             initial.diffSession);
         w.syncTreeSession();
+        w.startDiffTypes();
         if (target.length)
             w.tree.reveal(target);
         if (target.length)
@@ -590,6 +680,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             // Live types tick before the frame, so an arriving payload or tip
             // paints in the same pass.
             dirty |= w.pollLive();
+            dirty |= w.pollDiffTypes();
 
             if (dirty)
             {
@@ -1170,4 +1261,89 @@ unittest
     w.paint(g);
     assert(rowsWith("int alpha") == 2,
         "the resolved type composites over the pane");
+}
+
+@("workspace.diffTypes.bothSidesAnchorThroughTheRealOracle")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+
+    import document : DocumentPipeline;
+    import live_types : liveTypesBinary;
+    import sparkles.syntax : builtinDark, GrammarRegistry, LabelSet,
+        resolveTheme;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.ui.style : Slot;
+
+    // `T0`'s acceptance: two `.d` files on disk, one analyzer per side, both
+    // payloads anchoring onto their own side's rows. Env-gated exactly like
+    // the live-types oracle test — a machine without the extractor skips.
+    if (!liveTypesBinary().length)
+        skipTest("no twoslash-extract (set $SPARKLES_TWOSLASH_EXTRACT)");
+    import std.process : environment;
+    if (!environment.get("SPARKLES_DMD_IMPORT_PATH", "").length)
+        skipTest("SPARKLES_DMD_IMPORT_PATH not set (enter `nix develop`)");
+
+    const dir = buildPath(tempDir(), "hue-diff-types-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+    const oldPath = buildPath(dir, "old.d");
+    const newPath = buildPath(dir, "new.d");
+    write(oldPath, "module s;\n\nint compute(int a)\n{\n    return a;\n}\n");
+    write(newPath, "module s;\n\nlong compute(int a)\n{\n    return a;\n}\n");
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    const labels = LabelSet.standard();
+
+    // A real registry + cache: `loadDiffPair` highlights, and a
+    // default-constructed registry has no grammar table to consult.
+    auto registry = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&registry, labels);
+    auto pipeline = DocumentPipeline(registry: &registry, cache: &cache);
+    auto doc = pipeline.loadDiffPair(oldPath, newPath);
+    assert(doc.diffDoc.files.length == 1);
+
+    WorkspaceTui w;
+    w.tree.root = dir;
+    w.tree.themeValue = &themes[0];
+    w.tree.theme = resolveTheme(themes[0], labels);
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = labels;
+    w.arrange(80, 24);
+    w.viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
+        startPreview: true, doc.twoslash, doc.lang, doc.diffDoc,
+        doc.diffSides, doc.diffSession);
+    w.startDiffTypes();
+    scope (exit) w.stopDiffTypes();
+
+    // A real analysis is seconds, not milliseconds: poll the way the loop
+    // does, and skip rather than fail on a slow machine.
+    bool bothLive()
+        => w.viewer.vm.diffTypes.length == 1
+            && w.viewer.vm.diffTypes[0].old_.live
+            && w.viewer.vm.diffTypes[0].new_.live;
+
+    foreach (_; 0 .. 120 * 100)
+    {
+        w.pollDiffTypes();
+        if (bothLive())
+            break;
+        Thread.sleep(10.msecs);
+    }
+    if (!bothLive())
+        skipTest("the oracles did not both answer within 120 s");
+
+    // Both payloads anchored, so both sides' rows carry hover underlines —
+    // the property `T0` exists to prove.
+    size_t underlines;
+    foreach (ref n; w.viewer.vm.tree.nodes)
+        if (n.slot == Slot.hoverUnderline)
+            ++underlines;
+    assert(underlines > 0, "an anchored overlay decorates the diff rows");
 }

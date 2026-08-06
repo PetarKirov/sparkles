@@ -15,6 +15,7 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : mix;
 import sparkles.diff.model : DiffDoc;
 import diff_session : DiffSession, SessionEntry;
+import diff_view : TypeOverlay;
 import document : DiffSides;
 import sparkles.base.text.writers : writeInteger;
 
@@ -660,6 +661,30 @@ struct PreviewTui
             return;
         vm.diffMoveFile(delta);
         clampTop();
+    }
+
+    /// `DVT1`: makes room for `n` files' type overlays (idempotent).
+    void ensureDiffTypes(size_t n) @safe
+    {
+        if (vm.diffTypes.length < n)
+            vm.diffTypes.length = n;
+    }
+
+    /// `DVT1`: attaches one side's payload to file `fileIndex`, then rebuilds
+    /// so the decorations appear. The attach itself enforces the anchoring
+    /// contract, so a payload that does not describe that side is a no-op.
+    void attachDiffTypes(size_t fileIndex, bool oldSide, TwoslashReturn tw) @system
+    {
+        if (fileIndex >= vm.diffTypes.length || fileIndex >= vm.diffSides.length)
+            return;
+        const sideText = oldSide
+            ? vm.diffSides[fileIndex].oldText : vm.diffSides[fileIndex].newText;
+        auto overlay = TypeOverlay.attach(tw, sideText);
+        if (oldSide)
+            vm.diffTypes[fileIndex].old_ = overlay;
+        else
+            vm.diffTypes[fileIndex].new_ = overlay;
+        vm.rebuild();
     }
 
     /// `TVU6`: jump to a session file the explorer picked.
