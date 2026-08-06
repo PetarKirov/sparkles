@@ -1,8 +1,9 @@
 # Shared builder for the executable sub-packages under `apps/`. Wraps nixpkgs'
 # `buildDubPackage` with the sparkles-specific plumbing every app needs: the
-# shared `nix/dub-lock.json`, an in-tree source fileset (all sibling dub
-# manifests plus the `.d`/`.c`/`.i` sources of the app's transitive `sparkles:*`
-# closure), the writable-build-tree fixup dub needs, a `build/<pname>` install,
+# shared `nix/dub-lock.json`, an in-tree source fileset (the manifests of the
+# root package's declared sub-packages plus the `.d`/`.c`/`.i` sources of the
+# app's transitive `sparkles:*` closure), the writable-build-tree fixup dub
+# needs, a `build/<pname>` install,
 # `makeWrapper` on the build inputs, and a `remove-references-to` scrub *derived*
 # from a default Phobos-leak set (minus anything in `buildInputs`) so callers
 # configure the leak list in one place.
@@ -71,23 +72,38 @@
       sparklesSrcClosure =
         appDir: [ "${appDir}/src" ] ++ map (n: "libs/${n}/src") (grow [ ] (refsOf (readManifest appDir)));
 
-      isDubManifest =
-        file:
-        builtins.elem file.name [
-          "dub.sdl"
-          "dub.selections.json"
-        ];
+      # The manifests dub needs on disk: the root recipe plus one pair per
+      # sub-package it declares. Dub validates every `subPackage` of the root
+      # package, so they must all be present even when building one app — but
+      # *only* those. Filtering `dub.sdl`/`dub.selections.json` over the whole
+      # tree (the previous rule) also swept in manifests dub never looks at —
+      # `docs/research/**`, `libs/*/bench/**`, `libs/base/tools/**` — so editing
+      # a research sample's recipe changed the source hash of every app, and
+      # through `ci`, of the dev shell.
+      manifestsFor = dir: [
+        (fromRoot "${dir}/dub.sdl")
+        (fs.maybeMissing (fromRoot "${dir}/dub.selections.json"))
+      ];
 
-      # A source tree containing every sibling dub manifest (dub validates all
-      # sub-packages declared in the root `dub.sdl`, so they must all be
-      # present even when building one app) plus the `.d`/`.c`/`.i` sources of
-      # the given repo-relative dirs (`.c`/`.i` for ImportC shims).
+      subPackageDirs = matchAll ''subPackage "([^"]+)"'' (builtins.readFile (root + "/dub.sdl"));
+
+      manifestFileset = fs.unions (
+        [
+          (fromRoot "dub.sdl")
+          (fs.maybeMissing (fromRoot "dub.selections.json"))
+        ]
+        ++ lib.concatMap manifestsFor subPackageDirs
+      );
+
+      # A source tree containing the dub manifests above plus the
+      # `.d`/`.c`/`.i` sources of the given repo-relative dirs (`.c`/`.i` for
+      # ImportC shims).
       sourceFor =
         sourceDirs:
         fs.toSource {
           inherit root;
           fileset = fs.unions (
-            [ (fs.fileFilter isDubManifest root) ]
+            [ manifestFileset ]
             ++ map (
               path:
               fs.fileFilter (
@@ -108,7 +124,7 @@
       # → the filtered fileset source tree.
       legacyPackages.sparklesSources = {
         srcClosure = sparklesSrcClosure;
-        inherit sourceFor;
+        inherit sourceFor manifestFileset;
       };
 
       legacyPackages.buildSparklesApp = lib.extendMkDerivation {
