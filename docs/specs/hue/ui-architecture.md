@@ -241,6 +241,16 @@ becoming a full column is visible. Neither is obviously right, which is exactly
 why it is a decision rather than a refactor, and why the left-hand column should
 not wait on it.
 
+**Decided (2026-08-06): the display list gains a sub-cell op.** `OpKind.rule`
+names an **edge** of a rect (`RuleEdge`) rather than a pixel count, so the
+toolkit keeps whole-cell geometry and no device units, while a pixel canvas
+draws the thinnest rule its display has there. It is an _optional_ canvas
+primitive: `RaylibCanvas.rule` honours it exactly, and a canvas without one
+falls back to the cell-aligned line along the same edge — visible in the same
+place at the coarsest honest resolution, never silence. That makes the
+right-hand column expressible without changing how the GUI looks, and it is
+the case where the cell backend **gains** the element rather than losing it.
+
 #### What each side costs
 
 Not symmetric, and worth knowing before starting:

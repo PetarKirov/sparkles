@@ -24,7 +24,8 @@ import sparkles.tui.cell : CellStyle, Grid;
 
 import sparkles.base.text.width : codepointWidth;
 
-import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind;
+import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind,
+    ruleEndpoints;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.interp.cells : blend;
 import sparkles.ui.style : BorderStyle, Visual;
@@ -62,6 +63,13 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 break;
             case line:
                 canvas.line(op.rect.origin, op.to, op.visual, op.lineStyle);
+                break;
+            case rule:
+                // The cell backend has no sub-cell resolution: a hairline
+                // becomes the box-drawing line along the same edge (UIA2).
+                Point rf, rt;
+                ruleEndpoints(op.rect, op.ruleEdge, rf, rt);
+                canvas.line(rf, rt, op.visual, LineStyle.solid);
                 break;
             case pushClip:
                 canvas.pushClip(op.rect);

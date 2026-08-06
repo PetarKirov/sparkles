@@ -20,7 +20,7 @@ import sparkles.raylib_text : TextStyle, FontSet, drawText;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
-import sparkles.ui.canvas : isCanvas, LineStyle;
+import sparkles.ui.canvas : isCanvas, LineStyle, RuleEdge;
 import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.style : BorderStyle, Visual;
@@ -205,6 +205,35 @@ struct RaylibCanvas
 
     /// Strokes `from` -> `to` in `v.fg`. A `wavy` line is the twoslash error
     /// squiggle along the cell's baseline; a `solid` line is a 1px rule.
+    /**
+    A sub-cell hairline along an edge of `rect` (`UIA2`).
+
+    The optional canvas primitive a pixel target can honour exactly: the
+    toolkit names an edge, and this draws the thinnest rule the display
+    has there — one device pixel — instead of quantising to a whole cell,
+    which for a pane divider or a header underline is the difference
+    between chrome and a stripe. Canvases without this get the cell-aligned
+    line along the same edge.
+    */
+    void rule(in Rect rect, RuleEdge edge, in Visual v) @system
+    {
+        const x0 = cast(int) px(rect.x);
+        const y0 = cast(int) py(rect.y);
+        const w = cast(int)(rect.width * cellW);
+        const h = cast(int)(rect.height * cellH);
+        const c = v.fg;
+        const a = v.fgAlpha;
+        final switch (edge) with (RuleEdge)
+        {
+            case top:     fillPixels(x0, y0, w, 1, c, a); break;
+            case bottom:  fillPixels(x0, y0 + h - 1, w, 1, c, a); break;
+            case left:    fillPixels(x0, y0, 1, h, c, a); break;
+            case right:   fillPixels(x0 + w - 1, y0, 1, h, c, a); break;
+            case centerX: fillPixels(x0 + w / 2, y0, 1, h, c, a); break;
+            case centerY: fillPixels(x0, y0 + h / 2, w, 1, c, a); break;
+        }
+    }
+
     void line(in Point from, in Point to, in Visual v, LineStyle style) @system
     {
         const y0 = cast(int) py(from.y);

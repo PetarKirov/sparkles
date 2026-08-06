@@ -26,12 +26,33 @@ enum LineStyle : ubyte
 
 /// The drawing primitives, reified so the pure model can hand a painter a
 /// flat `DrawOp[]` with no backend in sight.
+/**
+Where a hairline sits within a cell band (`UIA2`).
+
+The toolkit's geometry is whole cells, but real chrome is thinner than a
+cell: a 1 px pane divider, the hairline under a header, a separator above
+a toolbar. Naming the $(B edge) instead of a pixel count keeps that
+expressible without giving the toolkit device units — the backend decides
+what "a hairline along this edge" is in its own terms, which is the same
+bargain `LineStyle` already makes.
+*/
+enum RuleEdge : ubyte
+{
+    top,      /// along the rect's top edge
+    bottom,   /// along its bottom edge
+    left,     /// along its left edge
+    right,    /// along its right edge
+    centerX,  /// vertically, down the rect's horizontal middle
+    centerY,  /// horizontally, across its vertical middle
+}
+
 enum OpKind : ubyte
 {
     fillRect, /// fill `rect` with `visual.bg`
     textRun,  /// draw `text` at `rect.origin` (`rect.width` = advance in cells)
     glyph,    /// draw a single `glyph` at `rect.origin`
     line,     /// stroke `rect.origin` → `to` in `lineStyle`
+    rule,     /// a hairline along `ruleEdge` of `rect`, in `visual.fg`
     pushClip, /// clip subsequent ops to `rect` (nested clips intersect)
     popClip,  /// undo the matching `pushClip`
 }
@@ -50,8 +71,38 @@ struct DrawOp
     const(char)[] text; /// `textRun` payload (borrowed; must outlive the op)
     dchar glyph;        /// `glyph` payload
     LineStyle lineStyle;
+    RuleEdge ruleEdge;  /// `rule` placement
     Slot slot;          /// the semantic role this op was resolved from
     Visual visual;      /// resolved appearance
+}
+
+/**
+The endpoints of a $(LREF RuleEdge) within `rect`, in whole cells — the
+fallback every canvas without a sub-cell `rule` primitive paints instead.
+A hairline it cannot draw thinner becomes the cell-aligned line along the
+same edge: visible in the same place, at the coarsest honest resolution.
+*/
+void ruleEndpoints(in Rect rect, RuleEdge edge, out Point from, out Point to)
+    @safe pure nothrow @nogc
+{
+    const x1 = rect.x, y1 = rect.y;
+    const x2 = rect.x + (rect.width > 0 ? rect.width - 1 : 0);
+    const y2 = rect.y + (rect.height > 0 ? rect.height - 1 : 0);
+    final switch (edge) with (RuleEdge)
+    {
+        case top:     from = Point(x1, y1); to = Point(x2, y1); break;
+        case bottom:  from = Point(x1, y2); to = Point(x2, y2); break;
+        case left:    from = Point(x1, y1); to = Point(x1, y2); break;
+        case right:   from = Point(x2, y1); to = Point(x2, y2); break;
+        case centerX:
+            const cx = rect.x + rect.width / 2;
+            from = Point(cx, y1); to = Point(cx, y2);
+            break;
+        case centerY:
+            const cy = rect.y + rect.height / 2;
+            from = Point(x1, cy); to = Point(x2, cy);
+            break;
+    }
 }
 
 /**
