@@ -100,21 +100,34 @@ into a **borrow**: the buffer must outlive every painter that walks it, and a sl
 that currently outlives its producer does so only because the collector kept it
 alive.
 
-Two things must be settled before the swap, not after:
+**The `sparkles:base` prerequisite is met** (`350ba75d`): `SmallBuffer` registers
+its heap block as a GC root and initializes its inline slots for an element type
+carrying references, so a `DrawOp` buffer is safe to hold.
 
-1. **A per-consumer audit.** Each existing `buildDisplayList` call site — the two
-   hue hosts, the twoslash renderer, the component tests — needs checking for a
-   display list that escapes the scope that built it.
-2. **A stated policy**, in the same terms [`UI-O1`](#ui-o1) demands of the other
-   slice-bearing types: the operations are derived, borrowed per-frame data, not an
-   owned value, and the type should make that explicit rather than leave it to a
-   comment.
+**The path exists** (`eea336c3`): `buildDisplayListInto` walks into any sink taking
+`~= DrawOp`, and with a `SmallBuffer` the walk is `@nogc` — asserted at compile
+time. `buildDisplayList` is unchanged and now wraps it.
 
-There is also a prerequisite in `sparkles:base`: `SmallBuffer`'s inline slots are
-`void`-initialized and its heap block is not scanned by the collector, so it cannot
-safely hold reference-bearing elements at all until that is fixed
-([P0.2](../ui-app/PLAN.md#phase-0)).
+What is left is the ownership, and the audit is what showed it is not mechanical:
 
-Close this issue when the display list and the widget arena are allocation-free in
-steady state, the ownership policy is written on the types, and no consumer holds
-operations past their buffer.
+1. **Retained consumers store the list, not a scope-local copy.** `ViewerModel`
+   holds `DrawOp[] ops` as a member and rebuilds it on demand; `explorer.d`,
+   `tui.d`, `twoslash_tui.d` and `gui.d` do likewise. Each must own the _sink_
+   rather than a slice of one — a change to what the type owns, not to a call.
+2. **The widget arena is the same change, wider.** `WidgetTree.nodes` is a slice
+   consumers hold, so moving the `Builder` arena onto a buffer makes every holder
+   of a tree a holder of its storage. That is [`UI-O1`](#ui-o1)'s question, not a
+   separate one, and it should be answered there first.
+3. **A stated policy**, in the same terms [`UI-O1`](#ui-o1) demands: the operations
+   are derived, borrowed per-frame data, and the type should say so rather than
+   leaving it to a comment.
+
+Most of this converges on `gui.d`, which is excluded from hue's test build — so
+the conversion wants doing one consumer at a time against a green build, not as a
+sweep. The `@nogc` path being additive is what makes that possible: a new consumer
+(the application host, the diagram app) takes it immediately, while a retained one
+moves when its ownership is settled.
+
+Close this issue when the widget arena and every retained display list are
+allocation-free in steady state, the ownership policy is written on the types, and
+no consumer holds operations past their buffer.
