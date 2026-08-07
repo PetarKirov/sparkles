@@ -36,6 +36,7 @@ public import sparkles.ui_app.gui_options;
 public import sparkles.ui_app.host;
 public import sparkles.ui_app.record;
 public import sparkles.ui_app.run;
+public import sparkles.ui_app.run_app;
 
 version (UiAppTui)
 {
