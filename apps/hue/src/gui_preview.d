@@ -7,7 +7,7 @@ module gui_preview;
 
 import ansi_model : AnsiLine;
 
-import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, HighlightEvent,
+import sparkles.syntax : MdDecoration, MdDoc, MdBlock, MdBlockKind, HighlightEvent,
     ResolvedTheme, toRgb, RgbColor, GrammarRegistry, TsConfigCache,
     canonicalLanguage, extractMarkdown, highlightInjected;
 import sparkles.base.smallbuffer : SmallBuffer;
@@ -35,6 +35,11 @@ struct PreviewModel
     bool present;
     MdDoc doc;
     CodeFence[] fences; /// in document order, parallel to the codeFence blocks
+    /// `DVN6`: per-block diff verdicts for a rendered-preview diff, sorted by
+    /// span start (empty for an ordinary preview). Every sink hands these to
+    /// `MdViewOptions.diffBlocks`, so the decorated document renders the same
+    /// way in all four.
+    MdDecoration[] decorations;
 }
 
 // ── Stage 1: build (@system, once) ───────────────────────────────────────────
@@ -56,10 +61,18 @@ without any reference to a decoder.
 PreviewModel buildPreviewModel(Decode = typeof(null))(ref GrammarRegistry registry,
     ref TsConfigCache cache, scope const(char)[] source, Decode decodeAnsiFn = null) @system
 {
+    return previewOf(cache, extractMarkdown(registry, source), decodeAnsiFn);
+}
+
+/// ditto, for a document that is already parsed — `DVN6`'s merged tree, whose
+/// blocks come from two sources and so cannot be re-extracted from one.
+PreviewModel previewOf(Decode = typeof(null))(ref TsConfigCache cache,
+    MdDoc doc, Decode decodeAnsiFn = null) @system
+{
     PreviewModel m;
-    m.doc = extractMarkdown(registry, source);
+    m.doc = doc;
     m.present = true;
-    collectFences(m.doc.root, source, cache, m.fences, decodeAnsiFn);
+    collectFences(m.doc.root, doc.source, cache, m.fences, decodeAnsiFn);
     return m;
 }
 

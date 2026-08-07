@@ -99,6 +99,9 @@ struct CliParams
     @CliOption("diff-ignore-whitespace", "How much whitespace difference counts as the same line: exact (default), trailing (git --ignore-space-at-eol), change (git -b), all (git -w). An ignored difference is never a change, not a change that is hidden.")
     string diffIgnoreWhitespace = "exact";
 
+    @CliOption("diff-preview", "With --diff over two markdown files: diff the rendered DOCUMENTS instead of their source — the new document as it now stands, with removed blocks struck through in place and changed words marked. Rewrapping and table re-alignment become invisible, because neither changes a block's content.")
+    bool diffPreview;
+
     @CliOption("diff-structural", "Whether the grammar gets asked if a change is real: auto (default, when a grammar exists and the file is under the size ceiling), on (ignore the ceiling), off. Token-stream-identical hunks fold as formatting-only; the parser can only demote a change, never hide one.")
     string diffStructural = "auto";
 
@@ -385,6 +388,11 @@ private CommutativeKind[] parseCommutative(string spelling) @safe
     return kinds;
 }
 
+/// `--diff-preview` needs two markdown files: the rendered-preview diff has
+/// no meaning for a document the markdown renderer cannot draw.
+private bool isMarkdownPath(string path) @safe
+    => canonicalLanguage(path.extension.chompPrefix(".")) == "markdown";
+
 private GrammarRegistry defaultRegistry() @safe
 {
     version (Android)
@@ -624,8 +632,12 @@ int main(string[] args)
             if (!cli.staged && args.length > 2 && isFilePath(args[1])
                 && isFilePath(args[2]))
                 // `hue --diff <old> <new>`: two positional files, diffed
-                // in-process (`DVS1`).
-                doc = pipeline.loadDiffPair(args[1], args[2]);
+                // in-process (`DVS1`) — or, for markdown under
+                // `--diff-preview`, diffed as documents (`DVN6`).
+                doc = cli.diffPreview && isMarkdownPath(args[1])
+                    && isMarkdownPath(args[2])
+                    ? pipeline.loadDiffPreview(args[1], args[2])
+                    : pipeline.loadDiffPair(args[1], args[2]);
             else
             {
                 // Git revisions (`DVS3`): `hue --diff [<rev>[..<rev>]]
@@ -728,6 +740,7 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
             MdViewOptions opt = {
                 theme: MdViewTheme.derive(theme, pageFg, pageBg),
                 fenceRenderer: hueFenceRenderer(&cache, &theme, pageFg),
+                diffBlocks: doc.preview.decorations, // `DVN6`
             };
             auto tree = viewMarkdown(doc.preview.doc, opt);
             auto frames = layout(tree, Constraints(maxW: previewWidth()));

@@ -658,6 +658,34 @@ struct DocumentPipeline
         return doc;
     }
 
+    /**
+    `DVN6`: two markdown files diffed as DOCUMENTS and rendered as one
+    decorated preview — `hue --diff --diff-preview old.md new.md`.
+
+    The reviewer reads the document as it now stands, with the removed blocks
+    back in place struck through and the changed words marked, instead of
+    reading a diff of its source. The merged tree spans both sides' text
+    (`new ~ old`), which is also what the raw view (`Tab`) shows here.
+    */
+    Document loadDiffPreview(string oldPath, string newPath)
+    {
+        import gui_preview : previewOf;
+        import md_diff : diffMarkdown;
+        import sparkles.syntax.md.model : extractMarkdown;
+
+        auto merged = diffMarkdown(extractMarkdown(*registry, readText(oldPath)),
+            extractMarkdown(*registry, readText(newPath)));
+        Document doc = {
+            path: newPath, title: text(baseName(oldPath), " → ", baseName(newPath)),
+            kind: ContentKind.markdown, lang: "markdown",
+            source: merged.doc.source.idup,
+        };
+        doc.preview = previewOf(*cache, merged.doc);
+        doc.preview.decorations = merged.decorations;
+        doc.events = highlight(doc.lang, doc.source, quietFallback: true);
+        return doc;
+    }
+
     /// A document from in-memory source (the embedded self-view). Detection
     /// runs on the language, not a path.
     Document fromSource(string path, string title, string source, string lang)
@@ -1126,4 +1154,49 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
     foreach (i; 0 .. plain.diffDoc.hunks.length)
         assert(!plain.diffDoc.hunks[i].formattingOnly,
             "without the grammar there is no evidence to demote either hunk");
+}
+
+@("document.loadDiffPreview.rendersOneDecoratedDocument")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    import sparkles.syntax : GrammarRegistry, LabelSet;
+    import sparkles.syntax.md.model : MdDiffStatus;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    const dir = buildPath(tempDir(), "hue-preview-diff-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+
+    const oldPath = buildPath(dir, "a.md");
+    const newPath = buildPath(dir, "b.md");
+    write(oldPath, "# Title\n\nkept\n\ndoomed\n");
+    write(newPath, "# Title\n\nkept\n\nfresh text\n");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    auto doc = DocumentPipeline(registry: &reg, cache: &cache)
+        .loadDiffPreview(oldPath, newPath);
+
+    // A markdown document, not a diff document: the reviewer reads the
+    // rendered page, and every sink's preview path draws it.
+    assert(doc.kind == ContentKind.markdown);
+    assert(doc.preview.present);
+    assert(doc.preview.decorations.length != 0,
+        "the verdicts must reach the sinks through the preview model");
+
+    size_t removed, added;
+    foreach (d; doc.preview.decorations)
+        if (d.status == MdDiffStatus.removed)
+            ++removed;
+        else if (d.status == MdDiffStatus.added)
+            ++added;
+    assert(removed == 1 && added == 1);
 }
