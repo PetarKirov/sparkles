@@ -35,3 +35,16 @@ public import sparkles.ui_app.display;
 public import sparkles.ui_app.gui_options;
 public import sparkles.ui_app.host;
 public import sparkles.ui_app.record;
+public import sparkles.ui_app.run;
+
+version (UiAppTui)
+{
+    version (Posix)
+        public import sparkles.ui_app.tui_loop;
+}
+
+version (UiAppGui)
+{
+    public import sparkles.ui_app.gui_setup;
+    public import sparkles.ui_app.gui_loop;
+}
