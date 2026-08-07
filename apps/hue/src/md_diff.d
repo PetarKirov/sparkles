@@ -184,6 +184,12 @@ private Span[] wordEmphasis(in MdBlock before, scope const(char)[] oldSrc,
     // extent as well would double-mark everything inside it.
     if (after.children.length != 0)
         return null;
+    // A code fence is diffed by LINE. Its body is code, where a line is the
+    // unit a reader compares, and it is rendered row-by-row rather than as
+    // wrapped prose — so word ranges inside it would have nothing to mark.
+    if (after.kind == MdBlockKind.codeFence
+        && before.kind == MdBlockKind.codeFence)
+        return fenceLineEmphasis(before, oldSrc, after, newSrc);
     if (before.span.end > oldSrc.length || after.span.end > newSrc.length)
         return null;
     const a = oldSrc[before.span.start .. before.span.end];
@@ -202,6 +208,60 @@ private Span[] wordEmphasis(in MdBlock before, scope const(char)[] oldSrc,
     {
         const s = arena[i];
         spans ~= Span(after.span.start + s.start, after.span.start + s.end);
+    }
+    return spans;
+}
+
+/// The changed lines of a code fence's body, as ranges into the new side.
+///
+/// An LCS over the two bodies' lines: whatever is not in the common
+/// subsequence is a line the reader has to look at. Line granularity because
+/// the preview renders a fence one row per line, and because within code a
+/// line is the unit a reader compares anyway.
+private Span[] fenceLineEmphasis(in MdBlock before, scope const(char)[] oldSrc,
+    in MdBlock after, scope const(char)[] newSrc) @safe
+{
+    if (before.codeBody.end > oldSrc.length || after.codeBody.end > newSrc.length)
+        return null;
+    const a = oldSrc[before.codeBody.start .. before.codeBody.end];
+    const b = newSrc[after.codeBody.start .. after.codeBody.end];
+
+    static string[] lines(scope const(char)[] text, out size_t[] starts)
+    {
+        string[] out_;
+        size_t at;
+        foreach (i, c; text)
+            if (c == '\n')
+            {
+                starts ~= at;
+                out_ ~= text[at .. i].idup;
+                at = i + 1;
+            }
+        if (at < text.length)
+        {
+            starts ~= at;
+            out_ ~= text[at .. $].idup;
+        }
+        return out_;
+    }
+
+    size_t[] aStarts, bStarts;
+    const aLines = lines(a, aStarts);
+    const bLines = lines(b, bStarts);
+    if (bLines.length == 0)
+        return null;
+
+    auto kept = new bool[](bLines.length);
+    foreach (pair; lcsPairs(aLines, bLines))
+        kept[pair.newIndex] = true;
+
+    Span[] spans;
+    foreach (i, keep; kept)
+    {
+        if (keep)
+            continue;
+        const start = after.codeBody.start + bStarts[i];
+        spans ~= Span(start, start + bLines[i].length);
     }
     return spans;
 }
@@ -616,4 +676,30 @@ private bool haveGrammars() @safe
     const d = res.decorations[0];
     assert(res.doc.source[d.spanStart .. d.spanStart + 4] == "FOUR",
         "the decoration names the cell that changed");
+}
+
+@("md_diff.diffMarkdown.fenceIsDiffedByLine")
+@system unittest
+{
+    import sparkles.syntax.md.model : extractMarkdown;
+    import sparkles.syntax.ts.registry : GrammarRegistry;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!haveGrammars())
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    enum before = "# Guide\n\n```d\nvoid main()\n{\n    one();\n    two();\n}\n```\n";
+    enum after = "# Guide\n\n```d\nvoid main()\n{\n    ONE();\n    two();\n}\n```\n";
+    auto res = diffMarkdown(extractMarkdown(reg, before),
+        extractMarkdown(reg, after));
+
+    assert(res.decorations.length == 1);
+    const d = res.decorations[0];
+    assert(d.status == MdDiffStatus.changed);
+    // Line granularity inside a fence: the preview renders one row per line,
+    // and within code a line is the unit a reader compares.
+    assert(d.emphasis.length == 1, "one line changed");
+    assert(res.doc.source[d.emphasis[0].start .. d.emphasis[0].end]
+        == "    ONE();");
 }
