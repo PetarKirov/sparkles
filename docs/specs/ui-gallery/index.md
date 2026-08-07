@@ -72,6 +72,29 @@ completeness against the enum it catalogs — so a widget kind or a slot added t
 the toolkit and not to the gallery **fails a test** rather than quietly going
 undisplayed.
 
+## What the catalog has already caught
+
+The strongest argument for the app is the list of defects that existed before it
+and were invisible without it.
+
+- **`ui-raylib` drew every square-cornered border wrong.** The two vertical
+  edges were computed with the horizontal axis' argument order, so a box's left
+  border drew as a bar _across_ the box and its right border as a bar poking out
+  beside it. Every backend-neutral test passed — the display list was right and
+  the cell grid drew the box correctly — because the defect lived inside a
+  `@system` function that needs a window to run. The Decoration page shows eight
+  bordered boxes side by side, which is a picture nobody can misread. Fixed by
+  extracting `borderEdges` as pure arithmetic with tests.
+- **The shell's header was drawn under the page** on a surface shorter than the
+  sidebar's natural height, because the root column reclaimed the header's row.
+- **Three header segments overprinted** on a narrow surface, because overflow
+  reclamation shrinks a text run's allocation without clipping what it paints.
+- **The gallery's own `section` helper drew its caption on top of its body**,
+  because `panel` is not a flow.
+
+Each of the last three is now an assertion; the first is a unit test in the
+backend that owns the arithmetic.
+
 ## Verification
 
 ```bash

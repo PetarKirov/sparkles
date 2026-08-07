@@ -282,52 +282,48 @@ struct RaylibCanvas
         // Border widths are CELL-space weights; stroke thickness scales by
         // the same unit the procedural box glyphs use for their arms
         // (`drawBox`'s light stroke), so "1 wide" here matches a `│` and
-        // "2 wide" a `┃` at any cell size.
+        // "2 wide" a `┃` at any cell size. A solid vertical side centers in
+        // its border COLUMN, where the cell backends put their `│` — and
+        // where a glyph-composed corner row's `╭`/`╰` stems are, so the
+        // fence chrome's edges meet (the quote bar gains the same parity).
+        // Dotted/dashed accents straddle the rect edge instead.
         const md = cellW < cellH ? cellW : cellH;
         const unit = md / 14 < 1 ? 1.0f : cast(float)(md / 14);
-        strokeEdge(x, y, w, b.width.top * unit, true, b.style, c);             // top
-        strokeEdge(x, y + h - b.width.bottom * unit, w, b.width.bottom * unit,
-            true, b.style, c);                                                 // bottom
-        // A solid vertical side centers in its border COLUMN, where the cell
-        // backends put their `│` — and where a glyph-composed corner row's
-        // `╭`/`╰` stems are, so the fence chrome's edges meet (the quote bar
-        // gains the same parity). Dotted/dashed accents keep the rect edge.
         const inset = b.style == BorderStyle.solid ? cellW / 2.0f : 0;
-        // (len, thick) order: the height is the LENGTH of a vertical edge.
-        // Swapped, each side rendered as a one-pixel-tall sliver hanging off
-        // the top corner — the box read as floating horizontal lines.
-        strokeEdge(x + (b.width.left
-                ? inset - b.width.left * unit / 2 : 0), y,
-            h, b.width.left * unit, false, b.style, c);                        // left
-        strokeEdge(x + w - (b.width.right
-                ? inset + b.width.right * unit / 2 : b.width.right), y,
-            h, b.width.right * unit, false, b.style, c);                       // right
+        // The four rectangles come from `borderEdges`, which is pure and
+        // tested. Computing them here is how the vertical pair ended up
+        // passing the horizontal argument order — `len` and `thick` swap
+        // meaning between the two axes, and a box whose left border drew as
+        // a stripe across the box was invisible to every test in the
+        // repository.
+        foreach (e; borderEdges(x, y, w, h, b.width, unit, inset))
+            strokeEdge(e, b.style, c);
     }
 
-    /// Strokes one horizontal/vertical edge of thickness `thick`, dashed for a
-    /// dotted/dashed style, solid otherwise.
-    private void strokeEdge(float x, float y, float len, float thick, bool horizontal,
-        BorderStyle style, Color c) @system
+    /// Strokes one edge, dashed for a dotted/dashed style, solid otherwise.
+    /// Dashes run along the edge's own long axis, whichever that is.
+    private void strokeEdge(in BorderEdge e, BorderStyle style, Color c) @system
     {
-        if (thick <= 0 || len <= 0)
+        if (e.empty)
             return;
-        if (style == BorderStyle.dotted || style == BorderStyle.dashed)
+        if (style != BorderStyle.dotted && style != BorderStyle.dashed)
+            return DrawRectangle(cast(int) e.x, cast(int) e.y,
+                cast(int) e.w, cast(int) e.h, c);
+
+        const thick = e.horizontal ? e.h : e.w;
+        const len = e.horizontal ? e.w : e.h;
+        const dash = style == BorderStyle.dotted ? thick : thick * 3;
+        const gap = style == BorderStyle.dotted ? thick : thick * 2;
+        for (float p = 0; p < len; p += dash + gap)
         {
-            const dash = style == BorderStyle.dotted ? thick : thick * 3;
-            const gap = style == BorderStyle.dotted ? thick : thick * 2;
-            for (float p = 0; p < len; p += dash + gap)
-            {
-                const seg = (p + dash <= len) ? dash : (len - p);
-                if (horizontal)
-                    DrawRectangle(cast(int)(x + p), cast(int) y, cast(int) seg, cast(int) thick, c);
-                else
-                    DrawRectangle(cast(int) x, cast(int)(y + p), cast(int) thick, cast(int) seg, c);
-            }
+            const seg = (p + dash <= len) ? dash : (len - p);
+            if (e.horizontal)
+                DrawRectangle(cast(int)(e.x + p), cast(int) e.y,
+                    cast(int) seg, cast(int) thick, c);
+            else
+                DrawRectangle(cast(int) e.x, cast(int)(e.y + p),
+                    cast(int) thick, cast(int) seg, c);
         }
-        else if (horizontal)
-            DrawRectangle(cast(int) x, cast(int) y, cast(int) len, cast(int) thick, c);
-        else
-            DrawRectangle(cast(int) x, cast(int) y, cast(int) thick, cast(int) len, c);
     }
 
     /// Draws the popup arrow/tail: a small upward triangle off the box's top edge
@@ -384,3 +380,155 @@ struct RaylibCanvas
 // The raylib canvas must satisfy the ui capability concept, or the shared
 // `paint` interpreter won't accept it.
 static assert(isCanvas!RaylibCanvas);
+
+// ---------------------------------------------------------------------------
+// Border geometry — pure, so it is testable without a GL context.
+// ---------------------------------------------------------------------------
+
+/// One stroked edge of a box border, as a device-pixel rectangle.
+struct BorderEdge
+{
+    float x; ///
+    float y; ///
+    float w; ///
+    float h; ///
+
+@safe pure nothrow @nogc:
+
+    /// `true` iff the edge covers no pixels — a side of zero width.
+    bool empty() const => w <= 0 || h <= 0;
+
+    /// `true` for the top and bottom edges: the ones whose long axis is x.
+    /// Dashes run along the long axis, so this is what tells them which way.
+    bool horizontal() const => w >= h;
+}
+
+/**
+The four edges of a square border, in device pixels.
+
+$(B Extracted because it was wrong.) Inline, the two axes' rectangles were
+written by hand from a `(length, thickness)` pair whose meaning swaps between
+them — and the vertical pair was written in the horizontal order, so a box's
+left border drew as a bar $(I across) the box and its right border as a bar
+poking out to the right of it. Every backend-neutral test passed: the display
+list was correct, the cell grid drew the box correctly, and the defect existed
+only inside a `@system` function that needs a window to run.
+
+Pure arithmetic in, four rectangles out, and the arithmetic has tests.
+
+`unit` scales a side's cell-space weight into pixels of stroke thickness.
+`inset` centres a vertical stroke that many pixels into its border column —
+half a cell for a solid border, so the stroke lands where the cell backends
+put their `│` and a glyph-composed corner's stem meets it; zero makes a
+vertical stroke straddle the rect edge (the dotted/dashed accents).
+*/
+BorderEdge[4] borderEdges(float x, float y, float w, float h, in Insets width,
+    float unit = 1, float inset = 0) @safe pure nothrow @nogc
+{
+    const l = width.left * unit;
+    const r = width.right * unit;
+    return [
+        BorderEdge(x, y, w, width.top * unit),                            // top
+        BorderEdge(x, y + h - width.bottom * unit, w,
+            width.bottom * unit),                                         // bottom
+        BorderEdge(width.left ? x + inset - l / 2 : x, y, l, h),          // left
+        BorderEdge(width.right ? x + w - inset - r / 2 : x + w - r, y,
+            r, h),                                                        // right
+    ];
+}
+
+@("ui_raylib.raylib_canvas.borderEdgesStayNearTheBoxTheyBorder")
+@safe pure nothrow @nogc
+unittest
+{
+    // The bug, stated as a property: an edge never extends a box-length past
+    // the box. The old vertical pair drew `h` pixels WIDE, so the right edge
+    // started at the box's right and ran another box-height past it — which is
+    // what a reader saw as stray horizontal lines beside every square-cornered
+    // panel. (A vertical stroke MAY straddle the rect edge by half its own
+    // thickness — that is the inset-0 accent geometry — so the bound is the
+    // thickness, not zero.)
+    enum x = 100.0f, y = 40.0f, w = 130.0f, h = 78.0f;
+    foreach (e; borderEdges(x, y, w, h, Insets.all(1)))
+    {
+        assert(e.x >= x - e.w && e.x + e.w <= x + w + e.w,
+            "an edge escaped sideways");
+        assert(e.y >= y && e.y + e.h <= y + h, "an edge escaped vertically");
+    }
+}
+
+@("ui_raylib.raylib_canvas.borderEdgesScaleAndCentreInTheirColumn")
+@safe pure nothrow @nogc
+unittest
+{
+    // The GPU border's two cell-parity rules, as arithmetic: `unit` scales a
+    // side's cell weight into stroke pixels, and a solid vertical stroke
+    // centres `inset` pixels into its border column — where the cell
+    // backends put their `│` and where a glyph-composed corner's stem is.
+    enum x = 0.0f, y = 0.0f, w = 40.0f, h = 20.0f;
+    const e = borderEdges(x, y, w, h, Insets.all(1), unit: 2, inset: 5);
+
+    assert(e[0].h == 2 && e[1].h == 2, "horizontal thickness scales by unit");
+    assert(e[2].w == 2 && e[3].w == 2, "vertical thickness scales by unit");
+    assert(e[2].x + e[2].w / 2 == x + 5, "left centres in its column");
+    assert(e[3].x + e[3].w / 2 == x + w - 5, "right centres in its column");
+
+    // Inset 0 — the dotted/dashed accents — straddles the rect edge instead.
+    const a = borderEdges(x, y, w, h, Insets.all(1), unit: 2);
+    assert(a[2].x + a[2].w / 2 == x && a[3].x + a[3].w / 2 == x + w);
+}
+
+@("ui_raylib.raylib_canvas.borderEdgesRunAlongTheirOwnAxis")
+@safe pure nothrow @nogc
+unittest
+{
+    enum x = 0.0f, y = 0.0f, w = 40.0f, h = 20.0f;
+    const e = borderEdges(x, y, w, h, Insets(1, 2, 3, 4)); // top right bottom left
+
+    // Horizontal edges span the width and are as thick as their own side.
+    assert(e[0] == BorderEdge(0, 0, 40, 1), "top");
+    assert(e[1] == BorderEdge(0, 17, 40, 3), "bottom");
+    // Vertical edges span the HEIGHT and are as thick as their own side. This
+    // is the assertion the swap failed: it produced (0, 0, 20, 4) — a bar four
+    // pixels tall lying across the top of the box. (At inset 0 a vertical
+    // stroke centres ON the rect edge, hence the half-thickness x shift.)
+    assert(e[2] == BorderEdge(-2, 0, 4, 20), "left");
+    assert(e[3] == BorderEdge(39, 0, 2, 20), "right");
+
+    assert(e[0].horizontal && e[1].horizontal);
+    assert(!e[2].horizontal && !e[3].horizontal);
+}
+
+@("ui_raylib.raylib_canvas.borderEdgesDropAbsentSides")
+@safe pure nothrow @nogc
+unittest
+{
+    // A bottom-only rule and a left accent bar are both real decorations
+    // (`hoverUnderline`, the error accent). The sides they do not ask for must
+    // draw nothing rather than a zero-thickness smear.
+    const bottom = borderEdges(0, 0, 40, 20, Insets(0, 0, 1, 0));
+    assert(bottom[0].empty && bottom[2].empty && bottom[3].empty);
+    assert(!bottom[1].empty && bottom[1].horizontal);
+
+    const accent = borderEdges(0, 0, 40, 20, Insets(0, 0, 0, 3));
+    assert(accent[0].empty && accent[1].empty && accent[3].empty);
+    assert(!accent[2].empty && !accent[2].horizontal,
+        "a left accent is a vertical bar, not a horizontal one");
+}
+
+@("ui_raylib.raylib_canvas.borderEdgesOfADegenerateBox")
+@safe pure nothrow @nogc
+unittest
+{
+    // A one-pixel-tall box: no edge strays past its own thickness, and the
+    // verticals are not mistaken for horizontals just because they are short.
+    foreach (e; borderEdges(0, 0, 10, 1, Insets.all(1)))
+    {
+        assert(e.x >= -e.w && e.x + e.w <= 10 + e.w);
+        assert(e.y >= 0 && e.y + e.h <= 1);
+    }
+
+    // Borders wider than the box do not invert it into negative geometry.
+    foreach (e; borderEdges(0, 0, 2, 2, Insets.all(5)))
+        assert(!e.empty || e.w <= 0 || e.h <= 0);
+}
