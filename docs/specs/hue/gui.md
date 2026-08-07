@@ -235,10 +235,10 @@ regime distinct from `SEL`.
 
 Environment-variable hooks that make the GUI deterministically capturable headless.
 
-| ID   | Requirement                                                                                                                                                             | Status            | Traces to                    |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ---------------------------- |
-| DBG1 | `HUE_GUI_SCREENSHOT=<path>` must render a few warm-up frames then write a PNG and exit (headless golden capture).                                                       | full (`a0b0f93a`) | `shotPath`; `TakeScreenshot` |
-| DBG2 | `HUE_GUI_TOP`, `HUE_GUI_FONTSIZE`, `HUE_GUI_PREVIEW`, `HUE_GUI_SEARCH` must pin initial scroll / font px / view mode / a preselected search for deterministic captures. | full (`1e218180`) | env reads in `runGui`        |
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                     | Status            | Traces to                                                    |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------ |
+| DBG1 | `HUE_GUI_SCREENSHOT=<path>` must render a few warm-up frames then write a PNG and exit (headless golden capture). The capture must also be **reproducible**: it waits out the async git-status worker, whose landing rebuilds the tree, so two runs of one binary cannot differ. A worker that never settles is capped rather than allowed to hang the capture. | full (`a0b0f93a`) | `shotPath`; `window.screenshot`; `settledAt`/`shotSettleCap` |
+| DBG2 | `HUE_GUI_TOP`, `HUE_GUI_FONTSIZE`, `HUE_GUI_PREVIEW`, `HUE_GUI_SEARCH` must pin initial scroll / font px / view mode / a preselected search for deterministic captures.                                                                                                                                                                                         | full (`1e218180`) | env reads in `runGui`                                        |
 
 ## Box-drawing (`BOX`, shared library)
 
