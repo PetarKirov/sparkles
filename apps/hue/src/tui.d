@@ -16,6 +16,8 @@ import sparkles.base.term_color : mix;
 import sparkles.diff.model : DiffDoc;
 import diff_session : DiffSession, SessionEntry;
 import diff_view : TypeOverlay;
+import keymap : Command, InputMode, KeyContext;
+import lantern : LanternState, ltnStep = step, LtnStepKind = StepKind;
 import document : DiffSides;
 import sparkles.base.text.writers : writeInteger;
 
@@ -131,8 +133,10 @@ struct PreviewTui
     private SmallBuffer!char clip;
     private bool clipReady;
 
-    // The pending 'z' of the vim fold sequences (za/zz, zc, zo, zR, zM).
-    private char zPending;
+    /// The key guide's pending path (`LTN2`) — what `zPending` used to be,
+    /// except it handles every prefix, three levels deep, and can say what
+    /// follows.
+    private LanternState lantern;
 
     // Twoslash hover popups in the pane: the hover-typed node indices (for
     // `p` cycling) and the selected one (-1 = none; click toggles).
@@ -769,135 +773,157 @@ struct PreviewTui
         );
     }
 
+    /**
+    The viewer's keys — resolved by the ONE table (`KEY1`), not a switch.
+
+    What was here before was hue's third copy of the keyboard policy, and it
+    had drifted from the other two: `g`/`G` meant top/bottom while the GUI's
+    `g` started go-to-line, `y` copied where the GUI toggled a mode, and `q`
+    quit only here. Those are resolved in the table now (vim-correct: `gg`,
+    `Shift-G`, `gl`, `y` copies, `q` quits everywhere), so this is a dispatch
+    and nothing else.
+
+    Keys arrive through `lantern.step`, so the terminal gets the prefix
+    machine and the guide for free — `z`, `g` and `<leader>` behave here
+    exactly as they do in the window, because they are the same table walked
+    by the same code.
+    */
     private bool handleKey(in KeyEvent e) @system
     {
         const rows = bodyRows();
-        switch (e.key)
+
+        // Escape closes an open popup before it means anything else; the
+        // guide only sees it when there is nothing to close.
+        if (e.key == Key.escape && hoverSel >= 0 && !lantern.active)
         {
-            case Key.enter:
-                // Open (or re-close) the signature's collapsed runs. The TUI
-                // has no pointer to name one, so the popup opens as a whole;
-                // a per-region cursor is the extension point.
-                if (toggleHoverRegions())
-                    break;
-                goto default;
-            case Key.up:       top -= 1; clampTop(); break;
-            case Key.down:     top += 1; clampTop(); break;
-            case Key.pageUp:   top -= rows; clampTop(); break;
-            case Key.pageDown: top += rows; clampTop(); break;
-            case Key.home:     top = 0; break;
-            case Key.end:      top = maxTop; break;
-            case Key.left:
+            hoverSel = -1;
+            return true;
+        }
+
+        const st = ltnStep(lantern, e, keyContext());
+        if (st.kind != LtnStepKind.execute)
+            return true;
+
+        final switch (st.cmd.cmd)
+        {
+            case Command.none:
+            case Command.dismiss:
+            case Command.inputBackspace:
+            case Command.inputAccept:
+            case Command.inputCancel:
+            case Command.toggleFullscreen:
+            case Command.lanternAll:
+                break;
+
+            // The explorer pane owns these; a focused tree never routes here.
+            case Command.treeDown:  case Command.treeUp:
+            case Command.treeHome:  case Command.treeEnd:
+            case Command.treeActivate: case Command.treeRefresh:
+            case Command.treeReroot: case Command.treeToggleIgnored:
+            case Command.treeParent: case Command.treeNextChange:
+            case Command.treePrevChange: case Command.treeCloseAll:
+            case Command.treeToggleHidden: case Command.treeCollapseOrUp:
+            case Command.treeFilter: case Command.toggleExplorer:
+                break;
+
+            case Command.quit: return false;
+
+            case Command.viewDown:     top += 1; clampTop(); break;
+            case Command.viewUp:       top -= 1; clampTop(); break;
+            case Command.viewPageDown: top += rows; clampTop(); break;
+            case Command.viewPageUp:   top -= rows; clampTop(); break;
+            case Command.viewHome:
+            case Command.viewTop:      top = 0; break;
+            case Command.viewEnd:
+            case Command.viewBottom:   top = maxTop; break;
+
+            case Command.themePrev:
                 themeIdx = themeIdx == 0 ? names.length - 1 : themeIdx - 1;
                 relayout();
                 break;
-            case Key.right:
+            case Command.themeNext:
                 themeIdx = themeIdx + 1 == names.length ? 0 : themeIdx + 1;
                 relayout();
                 break;
-            case Key.tab:
+
+            case Command.toggleView:
                 if (model.present)
                 {
                     showPreview = !showPreview;
                     relayout();
                 }
                 break;
-            case Key.escape:
-                if (hoverSel >= 0)
+
+            case Command.toggleHoverRegions:
+                if (!toggleHoverRegions())
                 {
-                    hoverSel = -1;
-                    break;
-                }
-                return false;
-            case Key.char_:
-            {
-                const pk = zPending;
-                zPending = 0;
-                switch (e.ch)
-                {
-                    case 'q': return false;
-                    case ' ':
-                        if (toggleHoverRegions())
-                            break;
-                        top += rows; // otherwise the usual page-down
-                        clampTop();
-                        break;
-                    case 'p': // cycle the twoslash hover popups
-                        if (hoverNodes.length)
-                        {
-                            hoverSel = (hoverSel + 1) % cast(int) hoverNodes.length;
-                            hoverExpanded = null;
-                        }
-                        break;
-                    case 'j': top += 1; clampTop(); break;
-                    case 'k': top -= 1; clampTop(); break;
-                    case 'g': top = 0; break;
-                    case 'G': top = maxTop; break;
-                    case '/': searching = true; qlen = 0; break;
-                    // `n` is search-next, but `zn` folds the formatting-only
-                    // hunks (`DVN2`) — the armed `z` decides which.
-                    case 'n':
-                        if (pk == 'z')
-                            toggleFormattingHunks();
-                        else
-                            jumpMatch(top + 1, true);
-                        break;
-                    case 'N': jumpMatch(top - 1, false); break;
-                    case 'y': copySelection(); break;
-                    // `DVL3`: unified ⇄ split.
-                    case 's': toggleDiffLayout(); break;
-                    // `DVG2`: open the unchanged region in view.
-                    case '+': toggleDiffGap(); break;
-                    // `DVG1`: over a diff session the brackets walk files.
-                    case '[': moveDiffFile(-1); break;
-                    case ']': moveDiffFile(+1); break;
-                    case '{': moveDiffHunk(-1); break;
-                    case '}': moveDiffHunk(+1); break;
-                    // The vim fold family (FLD5): z arms; then a/z toggle,
-                    // c close, o open, R open-all, M fold-all.
-                    case 'z':
-                        if (pk == 'z')
-                            foldAt(FoldOp.toggle);
-                        else
-                            zPending = 'z';
-                        break;
-                    case 'a':
-                        if (pk == 'z')
-                            foldAt(FoldOp.toggle);
-                        break;
-                    case 'c':
-                        if (pk == 'z')
-                            foldAt(FoldOp.close);
-                        break;
-                    case 'o':
-                        if (pk == 'z')
-                            foldAt(FoldOp.open);
-                        break;
-                    case 'R':
-                        if (pk == 'z')
-                            setAllFolds(false);
-                        break;
-                    case 'M':
-                        if (pk == 'z')
-                            setAllFolds(true);
-                        break;
-                    // `zx`: the unchanged regions between hunks (`DVG2`).
-                    case 'x':
-                        if (pk == 'z')
-                            toggleDiffContext();
-                        break;
-                    case '1': .. case '9':
-                        if (pk == 'z')
-                            foldToLevel(cast(int)(e.ch - '0'));
-                        break;
-                    default: break;
+                    // Nothing to expand: Enter/Space fall back to page-down,
+                    // which is what a reader pressing Space actually wants.
+                    top += rows;
+                    clampTop();
                 }
                 break;
-            }
-            default: break;
+            case Command.cycleHoverPopup:
+                if (hoverNodes.length)
+                {
+                    hoverSel = (hoverSel + 1) % cast(int) hoverNodes.length;
+                    hoverExpanded = null;
+                }
+                break;
+
+            case Command.startSearch: searching = true; qlen = 0; break;
+            case Command.startGoto:   break; // the TUI has no go-to bar yet
+            case Command.matchNext:   jumpMatch(top + 1, true); break;
+            case Command.matchPrev:   jumpMatch(top - 1, false); break;
+
+            case Command.copySelection: copySelection(); break;
+
+            // Settings the terminal viewer does not own (the workspace and
+            // the GUI do), reachable from the guide but inert here.
+            case Command.toggleLineNumbers:
+            case Command.toggleCodeLineNumbers:
+            case Command.toggleAnsiCopy:
+            case Command.toggleTableCopy:
+            case Command.fontBigger: case Command.fontSmaller:
+            case Command.setNext: case Command.setPrev: case Command.setIndex:
+                break;
+
+            case Command.foldToggle:   foldAt(FoldOp.toggle); break;
+            case Command.foldClose:    foldAt(FoldOp.close); break;
+            case Command.foldOpen:     foldAt(FoldOp.open); break;
+            case Command.foldOpenAll:  setAllFolds(false); break;
+            case Command.foldCloseAll: setAllFolds(true); break;
+            case Command.foldLevel:    foldToLevel(st.cmd.arg); break;
+
+            case Command.diffToggleLayout:     toggleDiffLayout(); break;
+            case Command.diffToggleGap:        toggleDiffGap(); break;
+            case Command.diffToggleContext:    toggleDiffContext(); break;
+            case Command.diffToggleFormatting: toggleFormattingHunks(); break;
+            case Command.diffPrevFile: moveDiffFile(-1); break;
+            case Command.diffNextFile: moveDiffFile(+1); break;
+            case Command.diffPrevHunk: moveDiffHunk(-1); break;
+            case Command.diffNextHunk: moveDiffHunk(+1); break;
+            case Command.diffToggleFile:
+            case Command.diffCollapseAll:
+            case Command.diffExpandAll:
+                break; // the file list lives in the workspace, not here
         }
         return true;
     }
+
+    /// The facts the table may consult, assembled from this viewer's state.
+    /// One place, so a binding's gate cannot mean something different here
+    /// than it does in the window.
+    private KeyContext keyContext() const @safe pure nothrow @nogc
+        => KeyContext(
+            mode: searching ? InputMode.search : InputMode.normal,
+            // The terminal viewer searches line-by-line rather than
+            // materialising a match list, so a live query IS the
+            // condition `n`/`N` are gated on.
+            hasMatches: qlen > 0,
+            hasDiffSession: vm.showPreview && !vm.diffSession.empty,
+            showPreview: vm.showPreview,
+        );
 
     private bool handlePointer(in PointerEvent e) @system
     {
@@ -1339,6 +1365,55 @@ unittest
     t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
     t.handle(Event(KeyEvent(key: Key.char_, ch: 'R')));
     assert(t.mdRows.length == openRows, "zR reopened everything");
+}
+
+@("tui.keys.resolvedDivergencesFromTheGuiTable")
+@system
+unittest
+{
+    import sparkles.input : Mods;
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+
+    // Before this, the terminal viewer had its own copy of the keyboard
+    // policy and had drifted: `g`/`G` were top/bottom while the window's `g`
+    // started go-to-line, and `q` quit only here. Both now come from the one
+    // table, and this pins the resolution so it cannot drift back.
+    static immutable src = "l0\nl1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\n";
+    static HighlightEvent[1] ev = [HighlightEvent.sourceSpan(0, src.length)];
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+
+    PreviewTui t;
+    t.title = "d.txt";
+    t.source = src;
+    t.events = ev[];
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 6;
+    t.relayout();
+
+    KeyEvent k(dchar c, bool shift = false)
+        => KeyEvent(key: Key.char_, ch: c, mods: Mods(shift: shift));
+
+    // `gg` goes to the top, `Shift-G` to the bottom — vim's motions, and the
+    // first key of `gg` must do nothing on its own.
+    t.handle(Event(k('j')));
+    t.handle(Event(k('j')));
+    assert(t.top == 2);
+    t.handle(Event(k('g')));
+    assert(t.top == 2, "a lone `g` is a prefix, not a motion");
+    t.handle(Event(k('g')));
+    assert(t.top == 0, "gg jumps to the top");
+    t.handle(Event(k('g', true)));
+    assert(t.top == t.maxTop, "Shift-G jumps to the bottom");
+
+    // `q` quits — `handle` returning false is how this viewer says so.
+    assert(!t.handle(Event(k('q'))), "q quits");
+
+    // …and an unbound key is still unbound rather than swallowed.
+    assert(t.handle(Event(k('w'))));
 }
 
 @("tui.twoslash.paneRendersAndPopups")
