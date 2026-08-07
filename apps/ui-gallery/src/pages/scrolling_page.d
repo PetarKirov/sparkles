@@ -7,38 +7,49 @@ and paints the handle another. The page puts the formula's output next to the
 handle it produced, at three offsets, so the two are checkable by eye.
 
 The viewport below is independent of the shell's own scroll: the page you are
-reading scrolls with `PgDn`, and this one with `n`/`p`. Two scroll states over
-two documents, from the same machine.
+reading scrolls with `PgDn`, and this one with `n`/`p` or by grabbing its bar.
+Two `ScrollView`s over two documents, from the same machine — and grabbing
+either leaves the other where it was, which is the property a shared global
+scroll offset cannot have.
 */
 module pages.scrolling_page;
 
 import std.conv : text;
 
-import sparkles.input : Key, KeyEvent;
-import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs, scrollView;
+import sparkles.input : Key, KeyEvent, PointerEvent;
+import sparkles.ui.components.chrome : scrollbar, scrollView;
 import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.layout : Frame;
+import sparkles.ui.scroll_view : ScrollExtents, ScrollView;
 import sparkles.ui.state : ScrollState, scrollbarThumb;
 import sparkles.ui.style : Slot;
-import sparkles.ui.widget : Builder, Widget, WidgetKind;
+import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import kit;
-import state : GalleryState;
+import scrollbars;
+import state : GalleryState, hitDemoBar;
 
 @safe:
 
 /// ditto
-static immutable string[] keys = ["n/p scroll", "N/P page", "g/G ends"];
+static immutable string[] keys =
+    ["n/p scroll", "N/P page", "g/G ends", "drag the bar"];
 
 /// The specimen document's length, and the viewport's.
 private enum int docRows = 40;
 /// ditto
 private enum int viewRows = 8;
 
+/// What the specimen's bar scrolls over. Stated once — the viewport, the
+/// clamp, the thumb and the grab all read it.
+private enum BarGeometry geom =
+    BarGeometry(content: docRows, viewport: viewRows, track: viewRows);
+
 /// ditto
 uint view(ref Builder b, in GalleryState s)
 {
     const w = s.contentWidth;
-    const offset = s.demoScroll.offset;
+    const offset = s.demoView.v.offset;
     const thumb = scrollbarThumb(docRows, viewRows, offset, viewRows);
 
     uint[] body_;
@@ -51,14 +62,17 @@ uint view(ref Builder b, in GalleryState s)
         ~ "list culls whatever falls fully outside.", w);
     body_ ~= spacer(b);
 
-    body_ ~= section(b, "a forty-row document in an eight-row viewport", [
+    body_ ~= section(b, "forty rows in an eight-row viewport", [
         b.add(Widget(
             kind: WidgetKind.row,
             children: [
-                scrollView(b, document(b), viewRows, s.demoScroll),
-                scrollbar(b, docRows, viewRows, offset, viewRows),
+                scrollView(b, document(b), viewRows, ScrollState(offset)),
+                // The live bar: grabbable, hover-expanding, and carrying the
+                // hit id the page's own pointer handler looks its rect up by.
+                // No gap — the bar brings its own gutter, which is what keeps
+                // the document's width the same whichever width the bar is.
+                verticalBar(b, s.demoView, geom, hitDemoBar),
             ],
-            gap: 1,
         )),
     ]);
     body_ ~= spacer(b);
@@ -136,8 +150,30 @@ bool handleKey(ref GalleryState s, in KeyEvent k)
 
 private bool scrollBy(ref GalleryState s, int delta)
 {
-    s.demoScroll = s.demoScroll.scrolledBy(delta, docRows, viewRows);
+    // Through the machine, so the thumb the page prints and the thumb it draws
+    // move together. `scrolledBy` on a bare `ScrollState` beside a bar would
+    // leave the two to drift.
+    s.demoView.wheeledV(delta, ScrollExtents(geom.content, geom.viewport,
+        geom.track));
     return true;
+}
+
+/**
+The specimen bar's own pointer handling.
+
+The shell cannot do this: the bar's grab zone is its $(B painted rect), and
+only the page knows which node carries it. Handed the frames the painter used,
+the page looks the rect up and the two cannot disagree.
+*/
+bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
+    in Frame[] frames)
+    => driveVertical(s.demoView, s.capture, capDemoBar, p,
+        rectOf(tree, frames, hitDemoBar), geom);
+
+/// Eases the specimen bar's width. Called by the shell, which owns the clock.
+void step(ref GalleryState s, int dtMs)
+{
+    easeVertical(s.demoView, s.caps, dtMs / 1000.0f);
 }
 
 @("ui_gallery.pages.scrollingThumbIsFlushAtBothEnds")
@@ -161,14 +197,14 @@ private bool scrollBy(ref GalleryState s, int delta)
 {
     GalleryState s;
     handleKey(s, KeyEvent(Key.char_, 'G'));
-    assert(s.demoScroll.offset == ScrollState.maxOffset(docRows, viewRows));
+    assert(s.demoView.v.offset == ScrollState.maxOffset(docRows, viewRows));
 
     handleKey(s, KeyEvent(Key.char_, 'g'));
-    assert(s.demoScroll.offset == 0);
+    assert(s.demoView.v.offset == 0);
 
     // And a step past an end clamps rather than running off.
     handleKey(s, KeyEvent(Key.char_, 'p'));
-    assert(s.demoScroll.offset == 0);
+    assert(s.demoView.v.offset == 0);
 }
 
 @("ui_gallery.pages.scrollingIsIndependentOfTheShell")
@@ -179,6 +215,6 @@ private bool scrollBy(ref GalleryState s, int delta)
     // them as they drove the specimen.
     GalleryState s;
     handleKey(s, KeyEvent(Key.char_, 'N'));
-    assert(s.demoScroll.offset > 0);
-    assert(s.contentScroll.offset == 0, "the shell's own pane did not move");
+    assert(s.demoView.v.offset > 0);
+    assert(s.contentView.v.offset == 0, "the shell's own pane did not move");
 }

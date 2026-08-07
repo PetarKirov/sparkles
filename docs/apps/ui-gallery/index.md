@@ -61,7 +61,11 @@ which is how the Tree page owns the arrows without the page list losing them.
 the showing page has claimed.
 
 Mouse, where the target has one: click a page or a theme, press a tab or an
-action segment, drag the split divider.
+action segment, drag the split divider, and **grab a scrollbar** — a press on
+the track jumps the thumb there, a press on the thumb grabs it in place, and
+the drag then follows wherever the pointer goes until you let go. The bar
+widens while the pointer rests on it; on a target with no frame clock it widens
+at once, and on one with no pointer at all it is permanently wide.
 
 ## Rendering a frame without opening anything
 

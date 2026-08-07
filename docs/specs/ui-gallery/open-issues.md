@@ -65,6 +65,22 @@ now does. But "shrunk" and "clipped" being different things is a sharp edge, and
 a caller who has not met it will meet it this way. A `clipX` default on text
 whose allocation is below its natural width would remove the class.
 
+## `UGL-O6` — a widget-level bar cannot be sub-cell · open
+
+hue's window draws a ⅓-cell rail that eases open to 1.5 cells. That is sub-cell
+geometry, reachable only by driving the canvas directly (`ui_raylib`'s
+`scrollbarLayout` / `drawScrollbar`), and the gallery is a pure host consumer
+that paints through the widget display list on both targets.
+
+So its bar eases between **one and two whole columns** instead. The value and
+the rate are the same — `ScrollView.easeV` at 15/s — but the result is
+quantised, so the animation reads as a short delay before the bar widens rather
+than as a smooth slide. In the terminal, where the two look identical anyway,
+this is strictly better than hue, which does not expand at all.
+
+Closes if the widget level grows a sub-cell width hint, or stays open as the
+honest price of never naming a canvas.
+
 ## `UGL-O5` — the wheel always scrolls the shell's pane · open
 
 The gallery routes wheel events to the content pane regardless of what is under
