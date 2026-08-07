@@ -734,7 +734,8 @@ int runGui(
 
         vm.widthCols = widthCols();
         vm.setDocument(name, summary, doc.source, doc.events, doc.preview,
-            doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides, doc.diffSession);
+            doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides, doc.diffSession,
+            doc.diffEmphasis);
         inp.query.clear();
         inp.mode = Mode.normal;
         window.title(("hue — " ~ name).toStringz);
@@ -1592,6 +1593,9 @@ int runGui(
                 case Command.diffToggleFile:  vm.diffToggleFile(); break;
                 case Command.diffCollapseAll: vm.diffSetAllFiles(true); break;
                 case Command.diffExpandAll:   vm.diffSetAllFiles(false); break;
+                case Command.diffToggleStructural:
+                    vm.diffToggleStructural();
+                    break;
                 case Command.diffToggleFormatting:
                     vm.diffToggleFormatting();
                     break;

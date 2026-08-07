@@ -219,7 +219,7 @@ struct WorkspaceTui
         }
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
             startPreview: true, doc.twoslash, doc.lang, doc.diffDoc,
-            doc.diffSides, doc.diffSession);
+            doc.diffSides, doc.diffSession, doc.diffEmphasis);
         syncTreeSession();
         startDiffTypes();
         tree.reveal(path);

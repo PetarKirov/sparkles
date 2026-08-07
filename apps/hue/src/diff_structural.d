@@ -54,7 +54,21 @@ enum StructuralPolicy : ubyte
     /// ceiling exists for: a generated or vendored file large enough to trip
     /// it is exactly the one worth proving is noise.
     on,
+    /// `on`, plus the structural VIEW: intra-line emphasis whose boundaries
+    /// come from the grammar rather than from word/space classes
+    /// (`diff_token_view`). Opt-in because it is a different reading of the
+    /// same diff, not a strictly better one — a prose file is better served
+    /// by word runs.
+    view,
 }
+
+/// Does this policy consult the grammar at all?
+bool parses(StructuralPolicy p) @safe pure nothrow @nogc
+    => p != StructuralPolicy.off;
+
+/// Does this policy waive the size ceiling?
+bool waivesCeiling(StructuralPolicy p) @safe pure nothrow @nogc
+    => p == StructuralPolicy.on || p == StructuralPolicy.view;
 
 /// Parses a `--diff-structural` spelling; `ok` is false for an unknown one,
 /// so the caller can warn in its own voice.
@@ -67,6 +81,7 @@ StructuralPolicy parseStructuralPolicy(scope const(char)[] spelling,
         case "off":  return StructuralPolicy.off;
         case "auto": return StructuralPolicy.automatic;
         case "on":   return StructuralPolicy.on;
+        case "view": return StructuralPolicy.view;
         default:
             ok = false;
             return StructuralPolicy.automatic;
@@ -159,19 +174,28 @@ StructuralVerdict structuralVerdicts(ref TsConfigCache cache,
     scope StructuralVerdict[] verdicts) @system
 in (spans.length == verdicts.length)
 {
-    verdicts[] = StructuralVerdict.unknown;
-
     Token[] a, b;
     const file = compareTokenStreams(cache, language, oldText, newText, a, b);
-    if (file == StructuralVerdict.unknown)
-        return file;
-    if (file == StructuralVerdict.equivalent)
-    {
-        // The grammar sees no change anywhere, so it sees none in any hunk.
-        verdicts[] = StructuralVerdict.equivalent;
-        return file;
-    }
+    hunkVerdicts(file, a, oldText, b, newText, spans, verdicts);
+    return file;
+}
 
+/// ditto, over token streams a caller already has (so the structural view and
+/// the classification share one pair of parses). `file` is the whole-file
+/// verdict `compareTokenStreams` returned alongside them.
+void hunkVerdicts(StructuralVerdict file, scope const(Token)[] a,
+    scope const(char)[] oldText, scope const(Token)[] b,
+    scope const(char)[] newText, scope const(HunkSpan)[] spans,
+    scope StructuralVerdict[] verdicts) @safe pure nothrow @nogc
+in (spans.length == verdicts.length)
+{
+    if (file != StructuralVerdict.differs)
+    {
+        // `unknown` is no claim; `equivalent` means the grammar sees no change
+        // anywhere, so it sees none in any hunk. Neither needs the ranges.
+        verdicts[] = file;
+        return;
+    }
     foreach (i, span; spans)
     {
         const x = tokensInLines(a, span.oldStart, span.oldCount);
@@ -179,7 +203,6 @@ in (spans.length == verdicts.length)
         verdicts[i] = tokensEqual(x, oldText, y, newText)
             ? StructuralVerdict.equivalent : StructuralVerdict.differs;
     }
-    return file;
 }
 
 /// One hunk's unified-header coordinates (1-based first line and line count

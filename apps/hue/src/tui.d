@@ -22,7 +22,7 @@ import lantern : LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;
 import lantern_view : BoxLayout, LabelArena, LanternStyle, Placement,
     viewLantern;
-import document : DiffSides;
+import document : DiffEmphasis, DiffSides;
 import sparkles.base.text.writers : writeInteger;
 
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
@@ -380,7 +380,8 @@ struct PreviewTui
         bool startPreview, TwoslashReturn tw_ = TwoslashReturn.init,
         string lang_ = null, DiffDoc diff_ = DiffDoc.init,
         const(DiffSides)[] diffSides_ = null,
-        DiffSession diffSession_ = DiffSession.init) @system
+        DiffSession diffSession_ = DiffSession.init,
+        DiffEmphasis diffEmphasis_ = DiffEmphasis.init) @system
     {
         hoverSel = -1;
         sel = Selection!long.cleared;
@@ -391,7 +392,7 @@ struct PreviewTui
         if (vm.current.labels.length == 0 && themes.length)
             vm.applyTheme(themeIdx); // first document: resolve the theme once
         vm.setDocument(title_, null, source_, events_, model_, tw_, lang_,
-            diff_, diffSides_, diffSession_);
+            diff_, diffSides_, diffSession_, diffEmphasis_);
         if (!startPreview && vm.showPreview)
         {
             vm.showPreview = false;
@@ -950,6 +951,7 @@ struct PreviewTui
             case Command.diffToggleGap:        toggleDiffGap(); break;
             case Command.diffToggleContext:    toggleDiffContext(); break;
             case Command.diffToggleFormatting: toggleFormattingHunks(); break;
+            case Command.diffToggleStructural: vm.diffToggleStructural(); break;
             case Command.diffPrevFile: moveDiffFile(-1); break;
             case Command.diffNextFile: moveDiffFile(+1); break;
             case Command.diffPrevHunk: moveDiffHunk(-1); break;

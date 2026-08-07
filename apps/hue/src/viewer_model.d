@@ -10,7 +10,7 @@ import ansi_model : AnsiLine, Attr;
 import diff_session : DiffSession;
 import diff_view : diffFileKey, diffGapKeyBase, DiffLayout, FileTypes,
     isDiffGapKey, isDiffHunkKey, viewDiffDoc;
-import document : DiffSides, hueFenceRenderer;
+import document : DiffEmphasis, DiffSides, hueFenceRenderer;
 import sparkles.diff.model : DiffDoc;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
 import gui_text : buildLineStarts, findMatches, lineCount, Match;
@@ -140,6 +140,10 @@ struct ViewerModel
     /// they fold to a dimmed badge — and a keystroke away, which is the
     /// demote-never-hide contract.
     bool showFormattingHunks;
+    /// `DVN3`: the word- and token-level emphasis variants of `diff`'s rows.
+    /// Both were computed at load (the parse is already paid for), so the
+    /// structural view is a swap on this model's own rows.
+    DiffEmphasis diffEmphasis;
     /// `DVT1`: per-file type overlays, parallel to `diff.files`. The host
     /// owns the analyzer sessions and attaches payloads here as they land;
     /// an unattached (or refused) entry simply renders plain rows.
@@ -208,7 +212,8 @@ struct ViewerModel
         const(HighlightEvent)[] events_, PreviewModel preview_,
         TwoslashReturn tw_, string lang_ = null, DiffDoc diff_ = DiffDoc.init,
         const(DiffSides)[] diffSides_ = null,
-        DiffSession diffSession_ = DiffSession.init)
+        DiffSession diffSession_ = DiffSession.init,
+        DiffEmphasis diffEmphasis_ = DiffEmphasis.init)
     {
         title = title_;
         summary = summary_;
@@ -220,6 +225,7 @@ struct ViewerModel
         diff = diff_;
         diffSides = diffSides_;
         diffSession = diffSession_;
+        diffEmphasis = diffEmphasis_;
         srcTotal = lineCount(source);
         lineStarts = buildLineStarts(source);
         showPreview = preview.present || tw.code.length != 0
@@ -821,6 +827,22 @@ struct ViewerModel
         if (diffSession.empty)
             return false;
         showFormattingHunks = !showFormattingHunks;
+        rebuild();
+        const row = diffFileRow(diffSession.index);
+        if (row >= 0)
+            top = row;
+        return true;
+    }
+
+    /// `DVN3`: switches between word-level and grammar-token-level intra-line
+    /// emphasis. Both variants were computed at load, so this is a swap of
+    /// each row's span range — no parse, no re-diff. Returns `false` when the
+    /// document has no token variant (no grammar, or the pass declined).
+    bool diffToggleStructural()
+    {
+        if (diffSession.empty || !diffEmphasis.available)
+            return false;
+        diffEmphasis.show(diff, token: !diffEmphasis.showing);
         rebuild();
         const row = diffFileRow(diffSession.index);
         if (row >= 0)

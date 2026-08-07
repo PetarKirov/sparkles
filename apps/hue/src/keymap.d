@@ -151,6 +151,7 @@ enum Command : ubyte
     diffCollapseAll, diffExpandAll,
     diffToggleFormatting,              /// `zn` — the formatting-only hunks
     diffToggleLayout,                  /// `s` — unified ⇄ split
+    diffToggleStructural,              /// `S` — word ⇄ grammar-token emphasis
     diffToggleContext,                 /// `zx` — every hidden unchanged region
     diffToggleGap,                     /// `+` — just the one in view
 }
@@ -526,8 +527,14 @@ immutable Binding[] hueBindings = [
         require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('}'), Command.diffNextHunk, "next hunk",
         require: CtxFlag.hasDiffSession),
-    bind(Scope_.viewer, chord('s'), Command.diffToggleLayout,
+    bind(Scope_.viewer, chord('s', ShiftReq.no), Command.diffToggleLayout,
         "unified / split", require: CtxFlag.hasDiffSession),
+    // `DVN3`'s view is NOT part of the `z` family: `z` means "things this
+    // view can hide", and this hides nothing — it re-reads the same rows with
+    // the grammar's token boundaries. Next to `s` because both answer "how do
+    // I want to look at this diff".
+    bind(Scope_.viewer, chord('s', ShiftReq.yes), Command.diffToggleStructural,
+        "word / token emphasis", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('+'), Command.diffToggleGap,
         "expand this gap", require: CtxFlag.hasDiffSession),
 
@@ -1186,6 +1193,12 @@ unittest
     // Hunk motions exist only over a session — there is nothing to step
     // through otherwise, so the keys stay unbound rather than no-ops.
     assert(ch('s', diff).cmd == Command.diffToggleLayout);
+    // `DVN3`'s view rides the shifted `s`: same question ("how am I reading
+    // this diff"), so it stays out of the `z` fold family, which means
+    // hiding. Both spellings the two backends produce must resolve.
+    assert(ch('s', diff, Mods(shift: true)).cmd == Command.diffToggleStructural);
+    assert(ch('S', diff, Mods(shift: true)).cmd == Command.diffToggleStructural);
+    assert(ch('S').cmd == Command.none, "no session, no emphasis to swap");
     assert(ch('+', diff).cmd == Command.diffToggleGap);
     assert(ch('+').cmd == Command.none);
     assert(ch('s').cmd == Command.none, "no session, no layout to toggle");

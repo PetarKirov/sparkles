@@ -78,6 +78,28 @@ void refinePair(ref Row oldRow, scope const(char)[] aText,
 
     auto ta = tokenize(aText);
     auto tb = tokenize(bText);
+    refinePairTokens(oldRow, aText, ta, newRow, bText, tb, emphArena, opt);
+}
+
+/**
+`refinePair`'s second half, over token boundaries the caller supplies.
+
+The pass is deliberately agnostic about where tokens come from: $(LREF tokenize)
+splits on word/space/byte classes, and a caller that can do better — hue's
+structural view, which takes the boundaries from a tree-sitter grammar
+(`DVN3`) — gets the LCS, the changed-ratio gate and the span emission
+unchanged. That is what keeps `sparkles:diff` tree-sitter-free (decision 5)
+while still serving a grammar-aware renderer.
+
+Tokens need not tile their row: gaps between them (whitespace a grammar does
+not tokenize) simply carry no emphasis, so a row that only moved sideways
+lights up nothing.
+*/
+void refinePairTokens(ref Row oldRow, scope const(char)[] aText,
+    in SmallBuffer!Token ta, ref Row newRow, scope const(char)[] bText,
+    in SmallBuffer!Token tb, ref SmallBuffer!Span emphArena,
+    in DiffOptions opt) @safe pure nothrow @nogc
+{
     if (ta.length > opt.maxRefineTokens || tb.length > opt.maxRefineTokens)
         return; // guard: no refinement, rows render plainly
 
