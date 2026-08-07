@@ -37,7 +37,7 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.input.events : Key, KeyEvent;
 
 import keymap : Chord, Command, KeyCommand, KeyContext, ResolveKind,
-    maxPathLength, matches, normalise, resolve, resolveAlways;
+    maxPathLength, matches, normalise, resolve, resolveAlways, ShiftReq;
 
 @safe pure nothrow @nogc:
 
@@ -234,14 +234,17 @@ Duration untilShown(in LanternState s, Duration delay = defaultDelay)
     return s.waited >= delay ? Duration.zero : delay - s.waited;
 }
 
-/// The chord a live event names, for pushing onto the pending path. Shift is
-/// recorded literally: the path is compared against table rows by
-/// $(REF matches, keymap), which treats an unnamed modifier as don't-care.
+/// The chord a live event names, for pushing onto the pending path.
+///
+/// Shift is recorded as what was actually pressed — never `ignore`, which is a
+/// table row's way of saying "don't care" and would be a lie about a keystroke.
+/// $(REF acceptsTyped, keymap) is what reconciles the two directions.
 private Chord chordOf(in KeyEvent k)
 {
     Chord c;
     c.key = k.key;
     c.ch = k.key == Key.char_ ? k.ch : 0;
+    c.shift = k.mods.shift ? ShiftReq.yes : ShiftReq.no;
     c.ctrl = k.mods.ctrl;
     c.alt = k.mods.alt;
     return c;

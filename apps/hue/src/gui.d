@@ -1512,10 +1512,25 @@ int runGui(
                     --vm.top;
                     break;
                 case Command.viewHome:
+                case Command.viewTop:
                     vm.top = 0;
                     break;
                 case Command.viewEnd:
+                case Command.viewBottom:
                     vm.top = maxTop;
+                    break;
+                case Command.quit:
+                    // The TUI has always had `q`; the GUI gains it here so one
+                    // table describes both. The window close path is the same
+                    // one `shouldClose` drives.
+                    return 0;
+                case Command.toggleHoverRegions:
+                case Command.cycleHoverPopup:
+                    // TUI-only affordances so far: the terminal has no pointer
+                    // to name a twoslash signature run, so Enter opens the
+                    // popup whole and `p` steps between them. The GUI reaches
+                    // both with the mouse, so the keys resolve to nothing here
+                    // rather than growing a second, worse spelling of hover.
                     break;
                 case Command.viewPageDown:
                     vm.top += visibleRows;
