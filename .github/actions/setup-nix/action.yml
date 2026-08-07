@@ -111,7 +111,7 @@ runs:
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
       run: ci/nix-configure.sh
 
-    - uses: cachix/cachix-action@v15
+    - uses: cachix/cachix-action@v17
       if: ${{ fromJSON(inputs.push-to-cache || 'false') && inputs.cachix-cache != '' && inputs.cachix-auth-token != '' }}
       with:
         name: ${{ inputs.cachix-cache }}
