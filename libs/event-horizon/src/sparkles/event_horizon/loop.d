@@ -6,11 +6,12 @@ completions only inside `runOnce` — the `DEFER_TASKRUN` contract made
 structural.
 
 The loop is thread-affine and non-copyable: every member must be called from
-the owning thread (the off-thread `Waker` door lands in M4).
+the owning thread — except `Waker.wake()` (SPEC §5.6), the one off-thread
+door, obtained via `waker()`.
 */
 module sparkles.event_horizon.loop;
 
-import core.stdc.errno : EAGAIN, ECANCELED, ENOBUFS, ETIME;
+import core.stdc.errno : EAGAIN, ECANCELED, EINTR, ENOBUFS, ETIME;
 import core.lifetime : move;
 import core.time : Duration, MonoTime;
 
@@ -87,12 +88,14 @@ if (isCompletionBackend!Backend)
     }
 
     /// Structured teardown; the scope discipline (M5) guarantees the
-    /// precondition at higher tiers.
+    /// precondition at higher tiers. An armed waker (SPEC §5.6) is loop
+    /// infrastructure, not work — destroy disarms it itself.
     void destroy()
-    in (_slab.liveCount == 0, "destroy with ops in flight")
+    in (_slab.liveCount == (_wakeArmed ? 1 : 0), "destroy with ops in flight")
     {
         if (!_open)
             return;
+        disarmWaker();
         _slab.terminate();
         _backend.close();
         _open = false;
@@ -251,7 +254,10 @@ if (isCompletionBackend!Backend)
             deadlinePtr = &deadline;
         }
         auto waited = _backend.submitAndWait(1, deadlinePtr);
-        if (waited.hasError)
+        // EINTR is a spurious wakeup (a signal — e.g. the GC's suspend —
+        // interrupted the wait), not a failure: drain whatever did arrive
+        // and report the iteration; callers loop anyway.
+        if (waited.hasError && waited.error.errnoValue != EINTR)
             return ioErr!RunStatus(waited.error);
 
         _dispatching = true;
@@ -260,11 +266,14 @@ if (isCompletionBackend!Backend)
         return ioOk(n > 0 ? RunStatus.dispatched : RunStatus.timedOut);
     }
 
-    /// Runs until `stop()` or until drained (no live ops).
+    /// Runs until `stop()` or until drained (no live user/timer ops — an
+    /// armed waker alone does not keep `run()` alive; SPEC §5.6).
     IoResult!void run()
     {
         for (;;)
         {
+            if (inFlight == 0)
+                return ioOk();
             auto r = runOnce();
             if (r.hasError)
                 return ioErr!void(r.error);
@@ -282,15 +291,93 @@ if (isCompletionBackend!Backend)
         }
     }
 
-    /// Makes the next (or current, once M4's waker lands) `runOnce` return
-    /// `stopped`. Loop-thread only in M3 — callbacks may call it.
+    /// Makes the next `runOnce` return `stopped`. Loop-thread callable
+    /// (callbacks may call it); to stop from another thread, set it up as
+    /// `loop.stop()` on the loop thread's behalf is not possible — instead
+    /// pair a shared flag with `waker().wake()` (SPEC §5.4/§5.6).
     void stop()
     {
         _stopRequested = true;
     }
 
-    /// Ops (of every class) currently in flight.
-    uint inFlight() const => _slab.liveCount;
+    // ── the external waker (SPEC §5.6) ──────────────────────────────────
+    // Portable fd path where the backend lowers reads (uring, kqueue):
+    // eventfd on Linux, a pipe elsewhere, drained by one persistently
+    // re-armed internal read. Native path where the backend can post a wake
+    // completion directly (IOCP). A backend with neither has no waker().
+
+    version (Posix)
+        private enum bool fdWaker = canSubmitOp!(Backend, OpRead);
+    else
+        private enum bool fdWaker = false;
+
+    static if (fdWaker)
+    {
+        /**
+        Returns the thread-safe wake handle, arming the wake channel on
+        first call. The armed read is `OpClass.wake` infrastructure:
+        excluded from `inFlight`, invisible to `run()`'s drained decision —
+        but `runOnce(timeout)` on an otherwise-empty loop DOES wait, which
+        is the "park until something external happens" entry point.
+        */
+        IoResult!Waker waker()
+        {
+            if (_wakeArmed)
+                return ioOk(Waker(_wakeWriteFd));
+
+            if (_wakeReadFd < 0)
+            {
+                auto opened = openWakeFds();
+                if (opened.hasError)
+                    return ioErr!Waker(opened.error);
+            }
+            const token = _slab.acquire(OpKind.read, OpClass.wake, null, null);
+            if (!token)
+                return ioErr!Waker(ENOBUFS, OpKind.read, IoErrorStage.submit,
+                    "op slab full");
+            auto slot = _slab.resolve(token);
+            // The drain target lives in the slot's operand store — slab
+            // memory, address-stable for the loop's whole life (§4.1).
+            slot.pinned = (() @trusted => Buf.fromForeign(slot.operands.wake[], null))();
+            if (!trySubmitWithRetry(OpRead(_wakeReadFd, Buf.init, ulong.max),
+                    token, *slot))
+            {
+                _slab.release(token);
+                return ioErr!Waker(EAGAIN, OpKind.read, IoErrorStage.submit,
+                    "submission queue full");
+            }
+            _wakeArmed = true;
+            return ioOk(Waker(_wakeWriteFd));
+        }
+    }
+    else static if (hasNativeWake!Backend)
+    {
+        /// ditto — the backend posts wake completions natively (no armed op).
+        IoResult!Waker waker()
+        {
+            if (_wakeArmed)
+                return ioOk(_nativeWaker);
+            const token = _slab.acquire(OpKind.nop, OpClass.wake, null, null);
+            if (!token)
+                return ioErr!Waker(ENOBUFS, OpKind.nop, IoErrorStage.submit,
+                    "op slab full");
+            auto w = _backend.nativeWaker(token);
+            if (!w)
+            {
+                _slab.release(token);
+                return ioErr!Waker(ENOBUFS, OpKind.nop, IoErrorStage.submit,
+                    "backend wake-op slab full");
+            }
+            _wakeToken = token;
+            _nativeWaker = w;
+            _wakeArmed = true;
+            return ioOk(w);
+        }
+    }
+
+    /// User and timer ops currently in flight (an armed waker is excluded —
+    /// infrastructure, not work; SPEC §5.6).
+    uint inFlight() const => _slab.liveCount - (_wakeArmed ? 1 : 0);
 
     /// The loop's monotonic clock.
     MonoTime now() const => MonoTime.currTime;
@@ -311,9 +398,32 @@ private:
         if (slot is null)
             return; // stale generation: a recycled slot's late completion
 
-        // Internal completions (cancel bookkeeping, future waker) are
-        // consumed silently.
-        if (slot.cls == OpClass.internal || slot.cls == OpClass.wake)
+        // The persistent wake op (SPEC §5.6): drain consumed; re-arm unless
+        // tearing down. Wakes carry no payload by design.
+        if (slot.cls == OpClass.wake)
+        {
+            static if (fdWaker)
+            {
+                if (_wakeShutdown || raw.res < 0)
+                {
+                    _slab.release(token);
+                    _wakeArmed = false;
+                }
+                else if (!trySubmitWithRetry(
+                        OpRead(_wakeReadFd, Buf.init, ulong.max), token, *slot))
+                {
+                    // SQ full even after a flush — degrade: the handle stays
+                    // valid (writes accumulate); a later waker() re-arms.
+                    _slab.release(token);
+                    _wakeArmed = false;
+                }
+            }
+            // Native-wake backends keep no armed op; nothing to re-arm.
+            return;
+        }
+
+        // Internal completions (cancel bookkeeping) are consumed silently.
+        if (slot.cls == OpClass.internal)
         {
             _slab.release(token);
             return;
@@ -376,11 +486,114 @@ private:
         // done.buf recycles to its origin here unless the callback moved it.
     }
 
+    static if (fdWaker)
+    {
+        /// Opens the wake channel: an eventfd on Linux (8-byte counter,
+        /// coalescing by construction), a non-blocking pipe elsewhere.
+        IoResult!void openWakeFds() @trusted nothrow @nogc
+        {
+            version (linux)
+            {
+                import core.sys.linux.sys.eventfd : EFD_CLOEXEC, EFD_NONBLOCK, eventfd;
+
+                const fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+                if (fd < 0)
+                    return ioErr!void(24 /* EMFILE */, OpKind.read,
+                        IoErrorStage.setup, "eventfd failed");
+                _wakeReadFd = fd;
+                _wakeWriteFd = fd;
+                return ioOk();
+            }
+            else
+            {
+                import core.sys.posix.fcntl : F_SETFD, F_SETFL, FD_CLOEXEC,
+                    O_NONBLOCK, fcntl;
+                import core.sys.posix.unistd : pipe;
+
+                int[2] fds;
+                if (pipe(fds) != 0)
+                    return ioErr!void(24 /* EMFILE */, OpKind.read,
+                        IoErrorStage.setup, "wake pipe failed");
+                foreach (fd; fds)
+                    cast(void) fcntl(fd, F_SETFD, FD_CLOEXEC);
+                cast(void) fcntl(fds[1], F_SETFL, O_NONBLOCK);
+                _wakeReadFd = fds[0];
+                _wakeWriteFd = fds[1];
+                return ioOk();
+            }
+        }
+
+        /// Unwinds the armed wake read by self-waking (the read completes
+        /// normally; the dispatch branch releases instead of re-arming) —
+        /// no cancel machinery, identical on every fd backend.
+        void disarmWaker() @trusted
+        {
+            if (_wakeArmed)
+            {
+                _wakeShutdown = true;
+                Waker(_wakeWriteFd).wake();
+                while (_wakeArmed)
+                {
+                    auto waited = _backend.submitAndWait(1, null);
+                    if (waited.hasError)
+                        break; // leak the slot rather than hang teardown
+                    cast(void) _backend.reap(
+                        (ref const RawCompletion c) { dispatch(c); });
+                }
+                _wakeShutdown = false;
+            }
+            closeWakeFds();
+        }
+
+        void closeWakeFds() @trusted nothrow @nogc
+        {
+            import core.sys.posix.unistd : close;
+
+            if (_wakeReadFd >= 0)
+                cast(void) close(_wakeReadFd);
+            if (_wakeWriteFd >= 0 && _wakeWriteFd != _wakeReadFd)
+                cast(void) close(_wakeWriteFd);
+            _wakeReadFd = -1;
+            _wakeWriteFd = -1;
+        }
+    }
+    else static if (hasNativeWake!Backend)
+    {
+        /// The native wake keeps no armed op — just release the routing slot.
+        void disarmWaker() @safe nothrow @nogc
+        {
+            if (!_wakeArmed)
+                return;
+            _slab.release(_wakeToken);
+            _wakeToken = OpToken.init;
+            _nativeWaker = Waker.init;
+            _wakeArmed = false;
+        }
+    }
+    else
+    {
+        void disarmWaker() @safe pure nothrow @nogc
+        {
+        }
+    }
+
     Backend _backend;
     OpSlab!Allocator _slab;
     bool _open;
     bool _dispatching;
     bool _stopRequested;
+    bool _wakeArmed;
+    bool _wakeShutdown;
+    static if (fdWaker)
+    {
+        int _wakeReadFd = -1;
+        int _wakeWriteFd = -1;
+    }
+    else static if (hasNativeWake!Backend)
+    {
+        OpToken _wakeToken;
+        Waker _nativeWaker;
+    }
 }
 
 version (linux)  :  // tests drive the uring backend directly
@@ -725,6 +938,77 @@ unittest
     assert(!loop.run().hasError);
     assert(seen.calls == 1 && seen.bytes == payload.length && seen.ok,
         "READ_FIXED delivered the bytes through the registered buffer");
+}
+
+@("loop.waker.crossThreadWakesBlockedWait")
+@system
+unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs, seconds;
+
+    DefaultLoop loop;
+    createOrSkip(loop);
+
+    auto w = loop.waker();
+    assert(w.hasValue);
+    assert(loop.inFlight == 0, "an armed waker is not user work");
+
+    // A foreign thread wakes the loop after a delay; the blocked wait must
+    // return well before its own deadline.
+    auto waker = w.value;
+    auto t = new Thread({
+        Thread.sleep(20.msecs);
+        waker.wake();
+    });
+    t.start();
+
+    const before = loop.now();
+    // Spurious EINTR wakeups (the GC suspending this thread while parked in
+    // io_uring_enter — tests run in parallel) surface as timedOut; loop
+    // until the real wake arrives.
+    RunStatus st;
+    do
+    {
+        auto status = loop.runOnce(5.seconds);
+        assert(status.hasValue);
+        st = status.value;
+    }
+    while (st == RunStatus.timedOut && loop.now() - before < 5.seconds);
+    const elapsed = loop.now() - before;
+    t.join();
+
+    assert(st == RunStatus.dispatched,
+        "the wake surfaced as a dispatched iteration");
+    assert(elapsed >= 15.msecs && elapsed < 2.seconds,
+        "the wait ended on the wake, not the deadline");
+}
+
+@("loop.waker.wakeBeforeWaitCoalesces")
+@safe nothrow @nogc
+unittest
+{
+    import core.time : seconds;
+
+    DefaultLoop loop;
+    createOrSkip(loop);
+
+    auto w = loop.waker();
+    assert(w.hasValue);
+
+    // Several wakes before any wait: the next wait returns immediately,
+    // exactly once — eventfd coalescing.
+    w.value.wake();
+    w.value.wake();
+    w.value.wake();
+
+    auto first = loop.runOnce(1.seconds);
+    assert(first.hasValue && first.value == RunStatus.dispatched);
+
+    // run() with only the armed waker left returns drained-equivalent
+    // immediately: an armed waker alone is not work.
+    assert(!loop.run().hasError);
+    assert(loop.inFlight == 0);
 }
 
 @("loop.pollAdd.multishotReadinessStream")

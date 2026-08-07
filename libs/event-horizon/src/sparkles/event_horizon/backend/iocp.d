@@ -32,7 +32,7 @@ import core.sys.windows.windef : DWORD, FALSE, TRUE;
 import core.sys.windows.winnt : HANDLE;
 import core.sys.windows.basetsd : ULONG_PTR;
 
-import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
+import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
@@ -146,6 +146,7 @@ enum IoKind : ubyte
     data,     // recv/send: res is the byte count
     accept,   // AcceptEx: res is the new socket fd
     connect,  // ConnectEx: res is 0 / -errno
+    wake,     // external waker post (SPEC §5.6): persistent, res is 0
 }
 
 /// An open-addressing hash set of registered sockets (`INVALID_SOCKET` is the
@@ -367,6 +368,23 @@ struct IocpBackend
         op.token = token.raw;
         PostQueuedCompletionStatus(_port, 0, 0, &op.ov);
         return true;
+    }
+
+    /**
+    The native wake capability (SPEC §5.6): binds one persistent op context
+    to `token` and hands out a `Waker` whose `wake()` posts to the port —
+    IOCP needs no armed op, and `PostQueuedCompletionStatus` is thread-safe
+    by contract. The context lives until `close()` frees the slab.
+    */
+    Waker nativeWaker(OpToken token) @trusted nothrow @nogc
+    {
+        auto op = acquire();
+        if (op is null)
+            return Waker.init;
+        op.token = token.raw;
+        op.kind = IoKind.wake;
+        Waker w = {port: cast(void*) _port, ov: cast(void*) &op.ov};
+        return w;
     }
 
     /// A socket receive into the pinned buffer's capacity (`WSARecv`).
@@ -617,6 +635,10 @@ private:
                 else
                     res = -111 /* ECONNREFUSED */;
                 break;
+            case IoKind.wake:
+                // Persistent (SPEC §5.6): the op context is the posting
+                // target for every future wake — never released here.
+                return RawCompletion(token, 0, 0);
         }
         release(op);
         return RawCompletion(token, res, 0);

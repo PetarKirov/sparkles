@@ -99,10 +99,37 @@ int main()
     });
     assert(!r.hasError);
 
-    if (verified)
-        writefln("ok: %d-byte payload echoed — accept+connect+recv+send all through the IOCP loop",
+    // The external waker (SPEC §5.6): a foreign thread posts to the port
+    // and the blocked wait returns well before its own deadline.
+    bool wokeEarly;
+    {
+        import core.thread : Thread;
+        import core.time : MonoTime, seconds;
+
+        import sparkles.event_horizon.loop : RunStatus;
+
+        auto w = sched.loop.waker();
+        assert(w.hasValue, "waker() must arm on IOCP");
+        auto waker = w.value;
+        auto t = new Thread({
+            Thread.sleep(20.msecs);
+            waker.wake();
+        });
+        t.start();
+        const before = MonoTime.currTime;
+        auto st = sched.loop.runOnce(5.seconds);
+        const elapsed = MonoTime.currTime - before;
+        t.join();
+        assert(st.hasValue && st.value == RunStatus.dispatched,
+            "the cross-thread wake surfaced as a dispatched iteration");
+        wokeEarly = elapsed < 2.seconds;
+        assert(wokeEarly, "the wait ended on the wake, not the deadline");
+    }
+
+    if (verified && wokeEarly)
+        writefln("ok: %d-byte payload echoed — accept+connect+recv+send all through the IOCP loop; cross-thread waker verified",
             payload.length);
     else
         writeln("FAILED");
-    return verified ? 0 : 1;
+    return verified && wokeEarly ? 0 : 1;
 }

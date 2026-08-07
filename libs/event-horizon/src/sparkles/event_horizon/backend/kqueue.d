@@ -317,7 +317,7 @@ struct KqueueBackend
     delivered regardless.
     */
     IoResult!uint submitAndWait(uint want, scope const KernelTimespec* deadline)
-        @trusted nothrow
+        @trusted nothrow @nogc
     {
         if (_synthCount > 0)
             return ioOk(_synthCount); // synthesized work is already ready
@@ -421,7 +421,7 @@ struct KqueueBackend
 private:
     /// Performs the actual syscall for a now-ready op; returns the completion
     /// `res` (bytes / new fd / 0 / -errno).
-    int performOp(KqOp* op, ref const kevent_t ev) @trusted nothrow
+    int performOp(KqOp* op, ref const kevent_t ev) @trusted nothrow @nogc
     {
         import core.sys.posix.sys.socket : getsockopt, socklen_t, SO_ERROR, SOL_SOCKET,
             sockaddr;
