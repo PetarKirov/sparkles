@@ -15,6 +15,7 @@
     ./hello.nix
     ./hue.nix
     ./libghostty-vt.nix
+    ./libkqueue.nix
     ./ndk.nix
     ./raylib.nix
     ./sdk.nix
