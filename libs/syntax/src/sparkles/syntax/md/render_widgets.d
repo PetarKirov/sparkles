@@ -823,6 +823,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         spans, opt.theme.present ? &opt.theme : null,
                         cellOpt.emph);
                     fillDiffTints(spans); // the cell path is not a prose row
+                    trimCellEdges(spans); // measured text sizes the track
                     cellSpans[ri * cols + ci] = spans;
                     int w;
                     foreach (ref s; spans)
@@ -833,14 +834,50 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
 
             auto tracks = new TrackSpec[](cols);
             tracks[] = TrackSpec.auto_;
-            const widths = resolveTracks(tracks, content, 0, 2);
+            const widths = resolveTracks(tracks, content, 0);
+
+            // The full table grid, as glyph runs (the old core-cli table
+            // look): rounded outer corners, `│` column separators, a heavy
+            // rule under the header row. Drawn as text rather than panel
+            // decorations because the cell backends draw whole boxes, not
+            // per-column inner rules — and glyphs render identically on
+            // every backend (the GPU path draws box glyphs procedurally,
+            // so they connect across cells).
+            uint ruleRun(string text_)
+            {
+                Widget w = Widget(kind: WidgetKind.rich, spans: [
+                        TextSpan(text_, Slot.border, opt.baseStyle,
+                            noBreak: true)],
+                    slot: Slot.border, wrap: TextWrap.none,
+                    hitId: opt.hitId, textStyle: opt.baseStyle);
+                if (opt.theme.present)
+                {
+                    w.fgOverride = opt.theme.ruleFg;
+                    w.hasFgOverride = true;
+                }
+                return b.add(w);
+            }
+
+            string borderRow(string l, string fill, string mid, string r)
+            {
+                string s = l;
+                foreach (ci; 0 .. cols)
+                {
+                    foreach (_; 0 .. widths[ci] + 2)
+                        s ~= fill;
+                    s ~= ci + 1 < cols ? mid : r;
+                }
+                return s;
+            }
 
             auto rows = new uint[](0);
+            rows ~= ruleRun(borderRow("╭", "─", "┬", "╮"));
             foreach (ri; 0 .. blk.children.length)
             {
                 auto cells = new uint[](0);
                 foreach (ci; 0 .. cols)
                 {
+                    cells ~= ruleRun("│");
                     auto spans = cellSpans[ri * cols + ci];
                     if (!spans.length)
                         spans = [TextSpan(" ", opt.proseSlot, opt.baseStyle)];
@@ -849,10 +886,13 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         textStyle: opt.baseStyle);
                     const a = ci < blk.aligns.length ? blk.aligns[ci]
                         : ColAlign.none;
-                    // Alignment via a fixed-width single-child column (LAY8).
+                    // Alignment via a fixed-width single-child column (LAY8),
+                    // one padding cell inside each separator.
                     const inner = b.add(cellW);
                     Widget colW = Widget(kind: WidgetKind.column,
-                        children: [inner], width: SizeSpec.fixed(widths[ci]),
+                        children: [inner],
+                        width: SizeSpec.fixed(widths[ci] + 2),
+                        padding: Insets(0, 1, 0, 1),
                         alignX: a == ColAlign.right ? Alignment.end
                             : a == ColAlign.center ? Alignment.center
                             : Alignment.start);
@@ -863,21 +903,13 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                             + blk.children[ri].children[ci].span.start;
                     cells ~= b.add(colW);
                 }
-                rows ~= b.container(WidgetKind.row, cells, gap: 2);
+                cells ~= ruleRun("│");
+                rows ~= b.container(WidgetKind.row, cells);
+                if (ri == 0)
+                    rows ~= ruleRun(borderRow("┝", "━", "┿", "┥"));
             }
-            const grid = b.container(WidgetKind.column, rows);
-            // A perimeter border panel (inner grid rules are a later fidelity
-            // step — the cell backends draw full boxes, not single sides).
-            Widget panel = Widget(kind: WidgetKind.panel, children: [grid],
-                padding: Insets.all(1), hitId: opt.hitId,
-                decoration: Decoration(borderWidth: Insets.all(1),
-                    borderStyle: BorderStyle.solid, borderSlot: Slot.border));
-            if (opt.theme.present)
-            {
-                panel.borderOverride = opt.theme.ruleFg;
-                panel.hasBorderOverride = true;
-            }
-            return b.add(panel);
+            rows ~= ruleRun(borderRow("╰", "─", "┴", "╯"));
+            return b.container(WidgetKind.column, rows);
         }
 
         case listItem, tableRow, tableCell:
@@ -887,6 +919,34 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
         case htmlBlock:
             return proseRow(b, [TextSpan(sliceOf(src, blk.span), Slot.muted,
                 opt.baseStyle)], opt);
+    }
+}
+
+// A table cell's text, edge-trimmed: `| cell |` sources collapse to one
+// leading/trailing space, which would widen the measured track and skew
+// right/center alignment inside it. Collapsing guarantees at most one
+// space per edge; the source identity of a trimmed span follows the text.
+private void trimCellEdges(ref TextSpan[] spans) @safe
+{
+    while (spans.length && spans[0].text.length
+        && spans[0].text[0] == ' ')
+    {
+        spans[0].text = spans[0].text[1 .. $];
+        if (spans[0].srcStart != size_t.max)
+            ++spans[0].srcStart;
+        if (spans[0].text.length)
+            break;
+        spans = spans[1 .. $];
+    }
+    while (spans.length && spans[$ - 1].text.length
+        && spans[$ - 1].text[$ - 1] == ' ')
+    {
+        spans[$ - 1].text = spans[$ - 1].text[0 .. $ - 1];
+        if (spans[$ - 1].srcEnd != size_t.max && spans[$ - 1].srcEnd > 0)
+            --spans[$ - 1].srcEnd;
+        if (spans[$ - 1].text.length)
+            break;
+        spans = spans[0 .. $ - 1];
     }
 }
 
