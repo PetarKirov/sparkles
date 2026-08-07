@@ -20,6 +20,7 @@ import std.string : chompPrefix;
 import sparkles.base.logger : warning;
 import sparkles.base.smallbuffer : SmallBuffer;
 import diff_session : buildDiffSession, DiffSession;
+import diff_structural : StructuralPolicy;
 import sparkles.diff : DiffDoc, DiffOptions, diffText, emitPatch, FileEntry,
     parsePatch, RowKind, WhitespaceMode;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
@@ -88,6 +89,8 @@ struct DocumentPipeline
     bool forcePatch;    /// `--patch`: the input is a unified diff
     /// `DVN1`: the whitespace policy computed diffs run under.
     WhitespaceMode ignoreWhitespace = WhitespaceMode.exact;
+    /// `DVN3`: whether the grammar gets consulted (`--diff-structural`).
+    StructuralPolicy structural = StructuralPolicy.automatic;
 
 @system:
 
@@ -328,29 +331,35 @@ struct DocumentPipeline
     than claiming a failure.
     */
     /**
-    `DVN3`: ask the grammar whether each file changed at all, and stamp the
-    files it says did not as formatting-only.
+    `DVN3`: ask the grammar whether anything changed, and stamp what it says
+    did not as formatting-only.
 
-    A whole-file verdict, which is the shape the common case takes — someone
-    ran the formatter over a file, or over the repository. The oracle is
-    conservative (`unknown` means "no claim"), so this can only ever DEMOTE a
-    change that the parser proves the language cannot see; it never promotes
-    one, and it never hides rows — `DVN2`'s fold is what renders the verdict,
-    and `zn` still expands it.
+    Two granularities from one pair of parses. The whole file covers the case
+    someone ran the formatter over it; the per-hunk verdict covers the
+    narrower and more common one, where a function was reflowed in the same
+    commit that edited another. The oracle is conservative (`unknown` means
+    "no claim"), so this can only ever DEMOTE a change the parser proves the
+    language cannot see; it never promotes one, and it never hides rows —
+    `DVN2`'s fold is what renders the verdict, and `zn` still expands it.
 
     Costs one parse per side of each changed file. Skipped above a size where
-    that stops being cheap, and skipped entirely without a grammar cache.
+    that stops being cheap (unless `--diff-structural=on` waives the ceiling),
+    and skipped entirely without a grammar cache.
     */
     private void classifyStructural(ref Document doc) @system
     {
-        import diff_structural : compareTokenStreams, StructuralVerdict;
+        import diff_structural : HunkSpan, structuralVerdicts,
+            StructuralPolicy, StructuralVerdict;
 
         // Half a megabyte a side: past this the parse stops being free, and a
         // file that large is not what a formatter-noise verdict is for.
         enum size_t maxSideBytes = 512 * 1024;
 
-        if (cache is null)
+        if (cache is null || structural == StructuralPolicy.off)
             return;
+        const ceiling = structural == StructuralPolicy.on
+            ? size_t.max : maxSideBytes;
+
         foreach (fi; 0 .. doc.diffDoc.files.length)
         {
             if (fi >= doc.diffSides.length)
@@ -358,18 +367,30 @@ struct DocumentPipeline
             const sides = doc.diffSides[fi];
             if (sides.lang.length == 0
                 || sides.oldText.length == 0 || sides.newText.length == 0
-                || sides.oldText.length > maxSideBytes
-                || sides.newText.length > maxSideBytes)
-                continue;
-            if (compareTokenStreams(*cache, sides.lang, sides.oldText,
-                    sides.newText) != StructuralVerdict.equivalent)
+                || sides.oldText.length > ceiling
+                || sides.newText.length > ceiling)
                 continue;
             const file = doc.diffDoc.files[fi];
-            foreach (hi; file.hunksStart .. file.hunksStart + file.hunksCount)
+            if (file.hunksCount == 0)
+                continue;
+
+            auto spans = new HunkSpan[](file.hunksCount);
+            foreach (i, ref s; spans)
             {
-                auto h = doc.diffDoc.hunks[hi];
+                const h = doc.diffDoc.hunks[file.hunksStart + i];
+                s = HunkSpan(h.oldStart, h.oldCount, h.newStart, h.newCount);
+            }
+            auto verdicts = new StructuralVerdict[](file.hunksCount);
+            structuralVerdicts(*cache, sides.lang, sides.oldText,
+                sides.newText, spans, verdicts);
+
+            foreach (i, v; verdicts)
+            {
+                if (v != StructuralVerdict.equivalent)
+                    continue;
+                auto h = doc.diffDoc.hunks[file.hunksStart + i];
                 h.formattingOnly = true;
-                doc.diffDoc.hunks[hi] = h;
+                doc.diffDoc.hunks[file.hunksStart + i] = h;
             }
         }
     }
@@ -838,4 +859,58 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
         if (!edited.diffDoc.hunks[i].formattingOnly)
             anyReal = true;
     assert(anyReal, "a changed operator is a change, reflow or not");
+}
+
+@("document.classifyStructural.oneHunkReflowedOneEdited")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    import sparkles.syntax : GrammarRegistry, LabelSet;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    const dir = buildPath(tempDir(), "hue-structural-hunks-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+
+    // The commit every reviewer actually gets: one function reflowed, another
+    // edited, far enough apart to be two hunks. A whole-file verdict has to
+    // give up on both; the per-hunk one demotes the reflow and keeps the edit.
+    enum pad = "int p1() { return 0; }\nint p2() { return 0; }\n"
+        ~ "int p3() { return 0; }\nint p4() { return 0; }\n"
+        ~ "int p5() { return 0; }\nint p6() { return 0; }\n";
+    const oldPath = buildPath(dir, "a.d");
+    const newPath = buildPath(dir, "b.d");
+    // The reflow moves LINE BOUNDARIES, so no whitespace policy and no
+    // row-wise verdict can reach it — only the parser can.
+    write(oldPath, "module s;\n\nint f(int alpha, int beta)\n{\n"
+        ~ "    return alpha + beta;\n}\n\n"
+        ~ pad ~ "\nint g()\n{\n    return 1;\n}\n");
+    write(newPath, "module s;\n\nint f(\n    int alpha,\n    int beta)\n{\n"
+        ~ "    return alpha\n        + beta;\n}\n\n"
+        ~ pad ~ "\nint g()\n{\n    return 2;\n}\n");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    auto pipeline = DocumentPipeline(registry: &reg, cache: &cache);
+    auto doc = pipeline.loadDiffPair(oldPath, newPath);
+
+    assert(doc.diffDoc.hunks.length == 2, "the two changes are far apart");
+    assert(doc.diffDoc.hunks[0].formattingOnly, "the reflowed function is noise");
+    assert(!doc.diffDoc.hunks[1].formattingOnly, "1 -> 2 is a real change");
+
+    // `--diff-structural=off` puts the text-level layers back on their own:
+    // the reflow changed the line structure, so nothing demotes it.
+    auto textOnly = DocumentPipeline(registry: &reg, cache: &cache,
+        structural: StructuralPolicy.off);
+    auto plain = textOnly.loadDiffPair(oldPath, newPath);
+    foreach (i; 0 .. plain.diffDoc.hunks.length)
+        assert(!plain.diffDoc.hunks[i].formattingOnly,
+            "without the grammar there is no evidence to demote either hunk");
 }

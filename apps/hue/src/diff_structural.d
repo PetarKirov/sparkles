@@ -13,11 +13,11 @@
 // tree-sitter-free (diff-view.md decision 5), and the structural pass lives
 // where `sparkles:syntax` already is. This module is that seam.
 //
-// What this first cut deliberately does NOT do: per-hunk verdicts, or the
-// node-level alignment of an opt-in structural VIEW. It answers one question
-// about a whole file, which is the shape the common case takes — someone ran
-// the formatter — and it answers it conservatively: any doubt is "not
-// equivalent", so a real change can never be dismissed as noise.
+// The verdict comes at two granularities from the same pair of parses: the
+// whole file (someone ran the formatter over it) and each hunk (someone
+// reflowed one function while editing another). Both are conservative in the
+// same direction — any doubt is "not equivalent", so a real change can never
+// be dismissed as noise.
 module diff_structural;
 
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -42,6 +42,37 @@ enum StructuralVerdict : ubyte
     differs,
 }
 
+/// Whether to consult the grammar at all (decision 6: the pass auto-engages
+/// when it is cheap, and `--diff-structural` is the override).
+enum StructuralPolicy : ubyte
+{
+    /// Never parse — the text-level layers (`DVN1`/`DVN2`) stand alone.
+    off,
+    /// Parse when a grammar exists and both sides are under the size ceiling.
+    automatic,
+    /// Parse whenever a grammar exists, ceiling or not. For the case the
+    /// ceiling exists for: a generated or vendored file large enough to trip
+    /// it is exactly the one worth proving is noise.
+    on,
+}
+
+/// Parses a `--diff-structural` spelling; `ok` is false for an unknown one,
+/// so the caller can warn in its own voice.
+StructuralPolicy parseStructuralPolicy(scope const(char)[] spelling,
+    out bool ok) @safe pure nothrow @nogc
+{
+    ok = true;
+    switch (spelling)
+    {
+        case "off":  return StructuralPolicy.off;
+        case "auto": return StructuralPolicy.automatic;
+        case "on":   return StructuralPolicy.on;
+        default:
+            ok = false;
+            return StructuralPolicy.automatic;
+    }
+}
+
 /**
 Compares the two sides' token streams under `language`'s grammar.
 
@@ -57,6 +88,17 @@ the intent lives.
 StructuralVerdict compareTokenStreams(ref TsConfigCache cache,
     const(char)[] language, scope const(char)[] oldText,
     scope const(char)[] newText) @system
+{
+    Token[] a, b;
+    return compareTokenStreams(cache, language, oldText, newText, a, b);
+}
+
+/// ditto, keeping the two token streams for a caller that wants to ask
+/// narrower questions about the same parses (`structuralVerdicts`).
+StructuralVerdict compareTokenStreams(ref TsConfigCache cache,
+    const(char)[] language, scope const(char)[] oldText,
+    scope const(char)[] newText, out Token[] oldTokens, out Token[] newTokens)
+    @system
 {
     if (language.length == 0 || oldText.length == 0 || newText.length == 0)
         return StructuralVerdict.unknown;
@@ -85,28 +127,147 @@ StructuralVerdict compareTokenStreams(ref TsConfigCache cache,
     if (!newTree.valid)
         return StructuralVerdict.unknown;
 
-    // Walk both leaf sequences in lockstep rather than materializing them:
-    // the answer is almost always "differs", and the first mismatch ends it.
-    auto a = TokenWalk(oldTree.rootNode, oldText);
-    auto b = TokenWalk(newTree.rootNode, newText);
-    size_t seen;
-    for (;;)
+    if (!tokenize(oldTree.rootNode, oldText, oldTokens)
+        || !tokenize(newTree.rootNode, newText, newTokens))
     {
-        const x = a.next();
-        const y = b.next();
-        if (a.overflowed || b.overflowed || ++seen > maxTokens)
-            return StructuralVerdict.unknown;
-        if (x is null || y is null)
-            return x is null && y is null
-                ? StructuralVerdict.equivalent : StructuralVerdict.differs;
-        if (x != y)
-            return StructuralVerdict.differs;
+        oldTokens = null;
+        newTokens = null;
+        return StructuralVerdict.unknown;
     }
+    return tokensEqual(oldTokens, oldText, newTokens, newText)
+        ? StructuralVerdict.equivalent : StructuralVerdict.differs;
 }
 
-/// A depth-first walk over a tree's leaves, yielding each token's source text.
-/// An explicit stack rather than recursion: the depth cap is then a property
-/// of the walker instead of the C stack.
+/**
+Per-hunk verdicts over one file pair, from the same two parses.
+
+A whole-file verdict only reaches the case where the formatter touched
+everything. The common review case is narrower: one function was reflowed
+while another was edited, and the reflowed hunk deserves the same demotion
+its file-wide cousin gets. `spans` are the hunks' unified-header coordinates
+in document order; `verdicts` (same length) receives one verdict each.
+
+A hunk's verdict compares the token subsequences **overlapping** its line
+range on each side — overlapping, not starting inside, so a string or block
+comment that begins above the hunk and changes within it still counts as a
+difference. The return value is the whole-file verdict; on `unknown` every
+per-hunk entry is `unknown` too, and a caller must treat both like `differs`.
+*/
+StructuralVerdict structuralVerdicts(ref TsConfigCache cache,
+    const(char)[] language, scope const(char)[] oldText,
+    scope const(char)[] newText, scope const(HunkSpan)[] spans,
+    scope StructuralVerdict[] verdicts) @system
+in (spans.length == verdicts.length)
+{
+    verdicts[] = StructuralVerdict.unknown;
+
+    Token[] a, b;
+    const file = compareTokenStreams(cache, language, oldText, newText, a, b);
+    if (file == StructuralVerdict.unknown)
+        return file;
+    if (file == StructuralVerdict.equivalent)
+    {
+        // The grammar sees no change anywhere, so it sees none in any hunk.
+        verdicts[] = StructuralVerdict.equivalent;
+        return file;
+    }
+
+    foreach (i, span; spans)
+    {
+        const x = tokensInLines(a, span.oldStart, span.oldCount);
+        const y = tokensInLines(b, span.newStart, span.newCount);
+        verdicts[i] = tokensEqual(x, oldText, y, newText)
+            ? StructuralVerdict.equivalent : StructuralVerdict.differs;
+    }
+    return file;
+}
+
+/// One hunk's unified-header coordinates (1-based first line and line count
+/// per side) — `sparkles.diff.model.Hunk`'s first four fields, repeated here
+/// so this module stays independent of the diff model.
+struct HunkSpan
+{
+    uint oldStart;
+    uint oldCount;
+    uint newStart;
+    uint newCount;
+}
+
+/// One leaf token: byte range into its side's source plus the rows it spans.
+/// Positions rather than slices, so the sequence stays pointer-free.
+struct Token
+{
+    uint start;
+    uint end;
+    uint startRow;
+    uint endRow;
+
+    const(char)[] text(return scope const(char)[] source)
+        const @safe pure nothrow @nogc => source[start .. end];
+}
+
+/// Do the two token sequences carry the same texts in the same order?
+private bool tokensEqual(scope const(Token)[] a, scope const(char)[] aSrc,
+    scope const(Token)[] b, scope const(char)[] bSrc) @safe pure nothrow @nogc
+{
+    if (a.length != b.length)
+        return false;
+    foreach (i, t; a)
+        if (t.text(aSrc) != b[i].text(bSrc))
+            return false;
+    return true;
+}
+
+/// The tokens overlapping `count` lines starting at 1-based `start`. Tokens
+/// are position-ordered, so this is a bounded scan from a binary search
+/// rather than a pass over the file.
+private const(Token)[] tokensInLines(return scope const(Token)[] toks,
+    uint start, uint count) @safe pure nothrow @nogc
+{
+    if (count == 0 || start == 0 || toks.length == 0)
+        return toks[0 .. 0];
+    const firstRow = start - 1;
+    const lastRow = firstRow + count - 1;
+
+    // Lower bound on `startRow`, then walk back over the multi-line tokens
+    // that begin above the range but reach into it.
+    size_t lo, hi = toks.length;
+    while (lo < hi)
+    {
+        const mid = lo + (hi - lo) / 2;
+        if (toks[mid].startRow < firstRow)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    while (lo != 0 && toks[lo - 1].endRow >= firstRow)
+        --lo;
+
+    auto end = lo;
+    while (end < toks.length && toks[end].startRow <= lastRow)
+        ++end;
+    return toks[lo .. end];
+}
+
+/// Collects a tree's leaves in document order. `false` means the walk hit its
+/// guards (depth or token cap) and its result must not be trusted.
+private bool tokenize(TSNode root, scope const(char)[] source,
+    out Token[] tokens) @system
+{
+    auto walk = TokenWalk(root, source);
+    Token t;
+    while (walk.next(t))
+    {
+        if (tokens.length >= maxTokens)
+            return false;
+        tokens ~= t;
+    }
+    return !walk.overflowed;
+}
+
+/// A depth-first walk over a tree's leaves. An explicit stack rather than
+/// recursion: the depth cap is then a property of the walker instead of the
+/// C stack.
 private struct TokenWalk
 {
     private enum maxDepth = 512;
@@ -132,8 +293,8 @@ private struct TokenWalk
         depth = 1;
     }
 
-    /// The next leaf's text, or `null` when the walk is done.
-    const(char)[] next() @system
+    /// The next leaf, or `false` when the walk is done.
+    bool next(out Token token) @system
     {
         while (depth != 0)
         {
@@ -148,18 +309,24 @@ private struct TokenWalk
             if (kids == 0)
             {
                 const r = nodeRange(child);
-                if (r.end_byte <= source.length && r.start_byte <= r.end_byte)
-                    return source[r.start_byte .. r.end_byte];
-                return null; // a range outside the source: refuse to guess
+                if (r.end_byte > source.length || r.start_byte > r.end_byte)
+                {
+                    // A range outside the source: refuse to guess.
+                    overflowed = true;
+                    return false;
+                }
+                token = Token(r.start_byte, r.end_byte,
+                    r.start_point.row, r.end_point.row);
+                return true;
             }
             if (depth == maxDepth)
             {
                 overflowed = true;
-                return null;
+                return false;
             }
             stack[depth++] = Frame(child, 0, kids);
         }
-        return null;
+        return false;
     }
 }
 
@@ -228,6 +395,88 @@ private bool haveGrammars() @safe
     enum a = "// explains why\nint x = 1;\n";
     enum b = "// explains why not\nint x = 1;\n";
     assert(compareTokenStreams(cache, "d", a, b) == StructuralVerdict.differs);
+}
+
+@("diff_structural.structuralVerdicts.perHunk")
+@system unittest
+{
+    import sparkles.syntax : LabelSet;
+    import sparkles.syntax.ts.registry : GrammarRegistry;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!haveGrammars())
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+
+    // Two functions: the first only reflowed, the second actually edited.
+    // A whole-file verdict has to say `differs` and give up on both; the
+    // per-hunk one demotes the reflow and keeps the edit.
+    enum before =
+        "int f(int a,int b)\n{\nreturn a+b;\n}\n\n"
+        ~ "int g()\n{\n    return 1;\n}\n";
+    enum after =
+        "int f(int a, int b)\n{\n    return a + b;\n}\n\n"
+        ~ "int g()\n{\n    return 2;\n}\n";
+
+    const spans = [HunkSpan(1, 4, 1, 4), HunkSpan(6, 4, 6, 4)];
+    auto verdicts = new StructuralVerdict[](spans.length);
+    assert(structuralVerdicts(cache, "d", before, after, spans, verdicts)
+        == StructuralVerdict.differs);
+    assert(verdicts[0] == StructuralVerdict.equivalent);
+    assert(verdicts[1] == StructuralVerdict.differs);
+
+    // A file the grammar sees no change in at all stamps every hunk, without
+    // consulting the line ranges.
+    enum reflowed =
+        "int f(int a, int b)\n{\n    return a + b;\n}\n\n"
+        ~ "int g()\n{\n    return 1;\n}\n";
+    assert(structuralVerdicts(cache, "d", before, reflowed, spans, verdicts)
+        == StructuralVerdict.equivalent);
+    assert(verdicts[0] == StructuralVerdict.equivalent);
+    assert(verdicts[1] == StructuralVerdict.equivalent);
+
+    // And no claim stays no claim, per hunk as well as per file.
+    assert(structuralVerdicts(cache, "no-such-language", before, after, spans,
+        verdicts) == StructuralVerdict.unknown);
+    assert(verdicts[0] == StructuralVerdict.unknown);
+    assert(verdicts[1] == StructuralVerdict.unknown);
+}
+
+@("diff_structural.structuralVerdicts.multiLineTokenReachingIntoAHunk")
+@system unittest
+{
+    import sparkles.syntax : LabelSet;
+    import sparkles.syntax.ts.registry : GrammarRegistry;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!haveGrammars())
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+
+    // The change is on line 3, inside a block comment that STARTS on line 1.
+    // A token bucketed by its start row would land outside the hunk and the
+    // hunk would read as noise; overlap semantics catch it.
+    enum before = "/* one\n   two\n   three\n*/\nint x = 1;\n";
+    enum after  = "/* one\n   two\n   THREE\n*/\nint x = 1;\n";
+    const spans = [HunkSpan(3, 1, 3, 1)];
+    auto verdicts = new StructuralVerdict[](spans.length);
+    structuralVerdicts(cache, "d", before, after, spans, verdicts);
+    assert(verdicts[0] == StructuralVerdict.differs);
+}
+
+@("diff_structural.parseStructuralPolicy")
+@safe pure nothrow @nogc unittest
+{
+    bool ok;
+    assert(parseStructuralPolicy("off", ok) == StructuralPolicy.off && ok);
+    assert(parseStructuralPolicy("auto", ok) == StructuralPolicy.automatic && ok);
+    assert(parseStructuralPolicy("on", ok) == StructuralPolicy.on && ok);
+    assert(parseStructuralPolicy("yes", ok) == StructuralPolicy.automatic);
+    assert(!ok);
 }
 
 @("diff_structural.compareTokenStreams.declinesRatherThanGuessing")
