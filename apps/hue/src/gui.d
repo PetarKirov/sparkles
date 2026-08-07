@@ -33,9 +33,12 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
     Mods, PointerAction, PointerButton, PointerEvent;
 import sparkles.input.frame : InputFrame, foldFrame, pointerFor;
-import keymap : Command, commandFor, InputMode, KeyContext;
+import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
+    KeyContext;
 import lantern : LanternState, ltnStep = step, ltnTick = tick,
     LtnStepKind = StepKind;
+import lantern_view : BoxLayout, LabelArena, LanternStyle, Placement,
+    viewLantern;
 import sparkles.input.capability : InputCapabilities, mousePointer,
     touchPointer;
 
@@ -90,7 +93,8 @@ import sparkles.ui.state : CaptureState, hoverTargets, HoverState, keyAt,
     keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
     scrollbarThumb, selectionRects, sourceOffsetAt, wantedPointerShape,
     SplitState, Timeline;
-import sparkles.ui.display_list : buildDisplayList;
+import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
+import sparkles.ui.widget : Builder;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : drawScrollbar, namedKey, RaylibCanvas, RaylibEvents,
     ScrollbarAnim,
@@ -785,6 +789,17 @@ int runGui(
             vm.top = vm.visualOfMatch(vm.matches[0]);
     }
 
+    // Debug/CI: HUE_GUI_LANTERN=<keys> seeds the guide's pending path and
+    // shows it at once, so a golden capture can hold the panel open — there is
+    // otherwise no way to photograph something that only exists between two
+    // keystrokes. An empty value shows the root listing.
+    if (auto seed = environment.get("HUE_GUI_LANTERN", null))
+    {
+        foreach (ch; seed)
+            pn.lantern.pending ~= Chord(key: Key.char_, ch: ch);
+        pn.lantern.shown = true;
+    }
+
 
     // The ONE input source (IXB7/UIA7): raylib's polled state is synthesised
     // into `sparkles:input` events by the backend adapter, drained once per
@@ -798,6 +813,13 @@ int runGui(
     RaylibEvents inputSource;
     Event[] evBuf;
     KeyEvent[] keyBuf;
+
+    // The key guide's per-frame scratch, hoisted out of the loop so a panel
+    // that is up every frame costs no allocation to repaint: the label arena
+    // and the display-list sink are cleared and refilled, never regrown
+    // (`NFR2`, via `buildDisplayListInto`).
+    LabelArena ltnLabels;
+    SmallBuffer!(DrawOp, 256) ltnOps;
 
     // Pointer capture (STM11, closing IXR6's GUI half). Every draggable
     // affordance takes an id and asks `inp.capture.available(id)` — "free, or
@@ -1273,6 +1295,12 @@ int runGui(
             window.toggleFullscreen();
         }
 
+        // Hoisted out of the normal-mode branch below: the paint pass
+        // enumerates the guide's items against the SAME context the keys
+        // resolved through, so what the panel lists cannot disagree with what
+        // a press would do.
+        KeyContext kctx;
+
         if (pn.treeFocused && pn.tree.searching)
         {
             // The tree pane's live filter (broot mode): typed chars narrow
@@ -1357,7 +1385,7 @@ int runGui(
             if (pn.treeFocused && pn.treeVisible)
                 pn.tree.height = visibleRows;
 
-            const kctx = KeyContext(
+            kctx = KeyContext(
                 mode: InputMode.normal,
                 treeFocused: pn.treeFocused,
                 treeVisible: pn.treeVisible,
@@ -2457,6 +2485,45 @@ int runGui(
             const barY = screenH - cellH;
             chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
             drawText(fonts, cstrOf(buf, flash.copyModeMsg), 4, cast(float) barY, TextStyle(0), vm.pageBg);
+        }
+
+        // The key guide (`LTN5`), last so it sits over everything — it is a
+        // transient answer to "what can I press", not part of the document.
+        if (pn.lantern.shown)
+        {
+            SmallBuffer!(Binding, 128) listed;
+            bindingsAt(listed, kctx, pn.lantern.pending[]);
+            if (listed.length)
+            {
+                Builder ltnBuilder;
+                BoxLayout ltnBox;
+                const ltnRoot = viewLantern(ltnBuilder, ltnLabels, listed[],
+                    pn.lantern.pending.length, screenW / cellW, ltnBox,
+                    Placement.classic, LanternStyle.init, 0,
+                    pn.lantern.scroll);
+                auto ltnTree = ltnBuilder.finish(ltnRoot);
+                // Bounded to the window, so a `classic` panel actually
+                // spans it rather than shrinking to its content.
+                auto ltnFrames = layout(ltnTree,
+                    Constraints(maxW: screenW / cellW));
+                const panel = ltnFrames[ltnTree.root].rect;
+
+                const panelY = screenH - panel.height * cellH
+                    - (inputMode ? cellH : 0);
+                // A reused sink, so a panel that is up every frame costs no
+                // allocation to repaint (`NFR2`).
+                // A scissor from the viewer pane is still live at this
+                // point; the panel is chrome over everything, not content
+                // inside a pane.
+                window.resetClip();
+                ltnOps.clear();
+                buildDisplayListInto(ltnTree, ltnFrames,
+                    themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
+                    ltnOps);
+                auto ltnCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+                    0, cast(float) panelY);
+                paint(ltnCanvas, ltnOps[]);
+            }
         }
 
         window.resetClip(); // never let a scissor survive the frame

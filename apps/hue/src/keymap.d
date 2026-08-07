@@ -291,7 +291,9 @@ struct Binding
     ubyte forbid;    /// $(LREF CtxFlag) bits that must all be clear
     ModeReq mode;
     string desc;     /// what it does, for the guide
-    string group;    /// non-empty ⇒ a prefix node ("+fold"), not a command
+    /// Non-empty ⇒ a prefix node (`"fold"`), not a command. Stored bare: the
+    /// panel adds the `+` marker, and a name carrying one renders `++fold`.
+    string group;
 }
 
 /// Builds a one-chord row. Optional arguments are named at every call site, so
@@ -445,7 +447,7 @@ immutable Binding[] hueBindings = [
     // (`DVG3`): same vocabulary, the unit that view actually has. The CST
     // fold ranges a source view exposes do not exist there, which is also why
     // the levels are `forbid`den under a session rather than merely unlisted.
-    group(Scope_.viewer, chord('z'), "+fold"),
+    group(Scope_.viewer, chord('z'), "fold"),
     bind(Scope_.viewer, chord('z'), chord('a'), Command.diffToggleFile,
         "toggle file", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('z'), chord('z'), Command.diffToggleFile,
@@ -524,13 +526,13 @@ immutable Binding[] hueBindings = [
     // branches (`f` find, `s` search, `g` git, `/` grep) are specced and land
     // with the picker; reserving their letters now is what keeps the map from
     // being rearranged under users later.
-    group(Scope_.shared_, chord(leader), "+leader"),
+    group(Scope_.shared_, chord(leader), "leader"),
     bind(Scope_.shared_, chord(leader), chord('e'), Command.toggleExplorer,
         "toggle explorer"),
     bind(Scope_.shared_, chord(leader), chord('?'), Command.lanternAll,
         "all bindings"),
 
-    group(Scope_.shared_, chord(leader), chord('v'), "+view"),
+    group(Scope_.shared_, chord(leader), chord('v'), "view"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('r'),
         Command.toggleView, "raw / preview"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('n'),
@@ -538,7 +540,7 @@ immutable Binding[] hueBindings = [
     bind(Scope_.shared_, chord(leader), chord('v'), chord('c'),
         Command.toggleCodeLineNumbers, "code line numbers"),
 
-    group(Scope_.shared_, chord(leader), chord('u'), "+ui"),
+    group(Scope_.shared_, chord(leader), chord('u'), "ui"),
     // Spelled lowercase + `ShiftReq.yes`, never `'T'`: `normalise` folds a
     // capital to its lowercase plus Shift, so an uppercase row would be
     // unreachable. `keymap.tableIsSpelledInNormalisedForm` pins that.
@@ -555,7 +557,7 @@ immutable Binding[] hueBindings = [
     bind(Scope_.shared_, chord(leader), chord('u'), chord('-'),
         Command.fontSmaller, "smaller font"),
 
-    group(Scope_.shared_, chord(leader), chord('d'), "+diff",
+    group(Scope_.shared_, chord(leader), chord('d'), "diff",
         require: CtxFlag.hasDiffSession),
     bind(Scope_.shared_, chord(leader), chord('d'), chord('n'),
         Command.diffNextFile, "next file", require: CtxFlag.hasDiffSession),
