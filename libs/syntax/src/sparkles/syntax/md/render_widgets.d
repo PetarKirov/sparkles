@@ -646,6 +646,30 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             foreach (char c; code)
                 if (c == '\n')
                     ++bodyLines;
+
+            // `DVN6`: a fence is diffed by LINE, and its rows do not go
+            // through the prose path, so a changed line is tinted as a whole
+            // row. Offsets come from the body itself rather than from the
+            // spans, which a fence renderer may leave unanchored.
+            Slot rowSlot(size_t li) @safe
+            {
+                if (opt.diffEmphasis.spans.length == 0)
+                    return Slot.code;
+                size_t at, n;
+                foreach (i, char c; code)
+                {
+                    if (c != '\n')
+                        continue;
+                    if (n++ == li)
+                        return lineTouched(opt, blk.codeBody.start + at,
+                            blk.codeBody.start + i);
+                    at = i + 1;
+                }
+                return n == li
+                    ? lineTouched(opt, blk.codeBody.start + at,
+                        blk.codeBody.start + code.length)
+                    : Slot.code;
+            }
             int numW;
             for (auto n = bodyLines; n; n /= 10)
                 ++numW;
@@ -682,8 +706,8 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     if (opt.codeLineNumbers)
                         spans = numberSpan(li + 1) ~ spans;
                     rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
-                        slot: Slot.code, hitId: opt.hitId,
-                        textStyle: codeStyle(opt)));
+                        slot: rowSlot(li), hitId: opt.hitId,
+                        paintBackground: true, textStyle: codeStyle(opt)));
                 }
             }
             else
@@ -699,7 +723,9 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     if (opt.codeLineNumbers)
                         spans = numberSpan(++lineNo) ~ spans;
                     rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
-                        slot: Slot.code, hitId: opt.hitId,
+                        slot: lineTouched(opt, blk.codeBody.start + at,
+                            blk.codeBody.start + at + t.length),
+                        hitId: opt.hitId, paintBackground: true,
                         textStyle: codeStyle(opt)));
                 }
 
@@ -863,6 +889,16 @@ private Widget richWidget(TextSpan[] spans, MdViewOptions opt, int hang = 0)
 }
 
 /// ditto
+/// The slot for a fence body row covering `[start, end)`: the changed-line
+/// tint when `DVN6` marked it, the plain code slot otherwise.
+private Slot lineTouched(in MdViewOptions opt, size_t start, size_t end) @safe
+{
+    foreach (r; opt.diffEmphasis.spans)
+        if (r.start < end && r.end > start)
+            return opt.diffEmphasis.slot;
+    return Slot.code;
+}
+
 /// `opt` with any verdict for the block starting at `spanStart` applied.
 ///
 /// Added and removed take over the prose slot so every span the subtree emits
