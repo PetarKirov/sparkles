@@ -106,6 +106,14 @@ faking probe results so degradation paths run on any kernel.
 
 **Leaning:** (A) + (C); (B) post-v1 if gaps bite.
 
+**Update:** (A) is done — all 53 degradation sites call `skipTest`, so a
+degraded host reports `N skipped` with reasons instead of a full green. (C) is
+still ad-hoc: forcing `UringBackend.open` to return a `setup` error by hand is
+what proved the skip paths (and found the dead guard fixed in
+`group.threadPerCore.shareNothingWorkers`), but nothing in-tree does it
+repeatably. A version-gated probe-result shim is the remaining work; without it
+the whole skip population is exercised only by hand.
+
 ## O6 — Zero-copy, SQPOLL, NAPI, `uring_cmd`
 
 **Where:** SPEC §3.3, deliberately absent from v1.
