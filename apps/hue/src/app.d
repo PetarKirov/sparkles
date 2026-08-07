@@ -33,6 +33,7 @@ import sparkles.base.term_caps : isTerminal, StdStream;
 
 import ansi_model : BackgroundMode, backgroundOptions;
 import document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
+import diff_commutative : CommutativeKind;
 import diff_structural : StructuralPolicy;
 import diff_view : DiffLayout, DiffViewOptions;
 import sparkles.diff : WhitespaceMode;
@@ -100,6 +101,9 @@ struct CliParams
 
     @CliOption("diff-structural", "Whether the grammar gets asked if a change is real: auto (default, when a grammar exists and the file is under the size ceiling), on (ignore the ceiling), off. Token-stream-identical hunks fold as formatting-only; the parser can only demote a change, never hide one.")
     string diffStructural = "auto";
+
+    @CliOption("diff-commutative", "Containers whose child order carries no meaning, as language:node pairs added to the defaults (D imports, markdown reference definitions); off claims no permutation at all. A hunk that only permutes such a container folds as 'reordered'.")
+    string diffCommutative = "default";
 
     @CliOption("diff-layout","Diff layout: unified (default, one column) or split (two aligned panes). A split narrower than 80 columns degrades to unified, where the same diff reads better.")
     string diffLayout = "unified";
@@ -370,6 +374,17 @@ private StructuralPolicy parseStructural(string spelling) @safe
     return p;
 }
 
+private CommutativeKind[] parseCommutative(string spelling) @safe
+{
+    import diff_commutative : parseCommutativeKinds;
+
+    bool ok;
+    auto kinds = parseCommutativeKinds(spelling, ok);
+    if (!ok)
+        warning(i"--diff-commutative wants language:node entries; ignoring the malformed ones in '$(spelling)'");
+    return kinds;
+}
+
 private GrammarRegistry defaultRegistry() @safe
 {
     version (Android)
@@ -536,7 +551,8 @@ int main(string[] args)
     auto cache = TsConfigCache.create(&registry, labels);
     auto pipeline = DocumentPipeline(&registry, &cache, cli.markdown, cli.raw,
         cli.patch, parseWhitespaceMode(cli.diffIgnoreWhitespace),
-        parseStructural(cli.diffStructural));
+        parseStructural(cli.diffStructural),
+        parseCommutative(cli.diffCommutative));
 
     const backend = pickBackend(cli);
 

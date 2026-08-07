@@ -83,6 +83,15 @@ struct Hunk
     /// them, so a reviewer can always look. Stamped by
     /// `sparkles.diff.classify.classifyHunks`.
     bool formattingOnly;
+    /// `DVN7`: the change is a PERMUTATION — a commutative container's
+    /// children (imports, reference definitions) in a different order, with
+    /// nothing added, removed or edited. Demoted like `formattingOnly` and
+    /// deliberately a separate flag: a reviewer told "formatting only" about
+    /// a reordered import block has been told something false, and the two
+    /// answers come from different evidence (text vs. a grammar's notion of
+    /// which containers commute). Stamped outside the engine, which has no
+    /// grammar (decision 5).
+    bool reordered;
 }
 
 /// Why an expensive pass was skipped (`DVM6` scale guards). Disclosed

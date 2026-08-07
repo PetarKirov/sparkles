@@ -20,6 +20,7 @@ import std.string : chompPrefix;
 import sparkles.base.logger : warning;
 import sparkles.base.smallbuffer : SmallBuffer;
 import diff_session : buildDiffSession, DiffSession;
+import diff_commutative : CommutativeKind, defaultCommutativeKinds;
 import diff_structural : StructuralPolicy;
 import sparkles.diff : DiffDoc, DiffOptions, diffText, emitPatch, FileEntry,
     parsePatch, RowKind, WhitespaceMode;
@@ -159,6 +160,9 @@ struct DocumentPipeline
     WhitespaceMode ignoreWhitespace = WhitespaceMode.exact;
     /// `DVN3`: whether the grammar gets consulted (`--diff-structural`).
     StructuralPolicy structural = StructuralPolicy.automatic;
+    /// `DVN7`: the containers whose child order carries no meaning
+    /// (`--diff-commutative`). Empty means no permutation is ever claimed.
+    const(CommutativeKind)[] commutative = defaultCommutativeKinds;
 
 @system:
 
@@ -416,8 +420,8 @@ struct DocumentPipeline
     */
     private void classifyStructural(ref Document doc) @system
     {
-        import diff_structural : compareTokenStreams, hunkVerdicts, HunkSpan,
-            parses, StructuralPolicy, StructuralVerdict, Token, waivesCeiling;
+        import diff_structural : analyze, HunkSpan, parses, StructuralPolicy,
+            StructuralVerdict, waivesCeiling;
         import diff_token_view : applyTokenEmphasis;
 
         // Half a megabyte a side: past this the parse stops being free, and a
@@ -446,34 +450,33 @@ struct DocumentPipeline
             if (file.hunksCount == 0)
                 continue;
 
-            Token[] oldTokens, newTokens;
-            const verdict = compareTokenStreams(*cache, sides.lang,
-                sides.oldText, sides.newText, oldTokens, newTokens);
-            if (verdict == StructuralVerdict.unknown)
-                continue;
-
             auto spans = new HunkSpan[](file.hunksCount);
             foreach (i, ref s; spans)
             {
                 const h = doc.diffDoc.hunks[file.hunksStart + i];
                 s = HunkSpan(h.oldStart, h.oldCount, h.newStart, h.newCount);
             }
-            auto verdicts = new StructuralVerdict[](file.hunksCount);
-            hunkVerdicts(verdict, oldTokens, sides.oldText, newTokens,
-                sides.newText, spans, verdicts);
 
-            foreach (i, v; verdicts)
+            const seen = analyze(*cache, sides.lang, sides.oldText,
+                sides.newText, spans, commutative);
+            if (seen.file == StructuralVerdict.unknown)
+                continue;
+
+            foreach (i; 0 .. file.hunksCount)
             {
-                if (v != StructuralVerdict.equivalent)
+                const equivalent = seen.verdicts[i] == StructuralVerdict.equivalent;
+                if (!equivalent && !seen.reordered[i])
                     continue;
                 auto h = doc.diffDoc.hunks[file.hunksStart + i];
-                h.formattingOnly = true;
+                h.formattingOnly = equivalent;
+                h.reordered = seen.reordered[i];
                 doc.diffDoc.hunks[file.hunksStart + i] = h;
             }
 
             // The same parse pays for the view (`DVN3`'s second half).
             if (applyTokenEmphasis(doc.diffDoc, file, sides.oldText,
-                    sides.newText, oldTokens, newTokens, diffOptions()) != 0)
+                    sides.newText, seen.oldTokens, seen.newTokens,
+                    diffOptions()) != 0)
                 doc.diffEmphasis.available = true;
         }
 
@@ -949,6 +952,62 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
         if (!edited.diffDoc.hunks[i].formattingOnly)
             anyReal = true;
     assert(anyReal, "a changed operator is a change, reflow or not");
+}
+
+@("document.classifyStructural.sortedImportsAreAReorderNotFormatting")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    import sparkles.syntax : GrammarRegistry, LabelSet;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    const dir = buildPath(tempDir(), "hue-commutative-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+
+    // `DVN7`: sorting an import block is N removals and N additions, and it
+    // reads like a rewrite. The tokens really did change order, so `DVN3`
+    // says `differs` — correctly. Only the commutativity profile can say the
+    // order carried no meaning.
+    const oldPath = buildPath(dir, "a.d");
+    const newPath = buildPath(dir, "b.d");
+    write(oldPath, "module m;\n\nimport std.stdio;\nimport std.conv;\n"
+        ~ "import std.array;\n\nvoid f() {}\n");
+    write(newPath, "module m;\n\nimport std.array;\nimport std.conv;\n"
+        ~ "import std.stdio;\n\nvoid f() {}\n");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    auto doc = DocumentPipeline(registry: &reg, cache: &cache)
+        .loadDiffPair(oldPath, newPath);
+
+    assert(doc.diffDoc.hunks.length == 1);
+    assert(doc.diffDoc.hunks[0].reordered, "the imports only changed places");
+    assert(!doc.diffDoc.hunks[0].formattingOnly,
+        "a reorder is not formatting — the badge must not say so");
+
+    // An import ADDED alongside the sort is a real change, and the whole hunk
+    // stays real: this pass demotes permutations, not edits that came with one.
+    write(newPath, "module m;\n\nimport std.array;\nimport std.conv;\n"
+        ~ "import std.file;\nimport std.stdio;\n\nvoid f() {}\n");
+    auto grown = DocumentPipeline(registry: &reg, cache: &cache)
+        .loadDiffPair(oldPath, newPath);
+    foreach (i; 0 .. grown.diffDoc.hunks.length)
+        assert(!grown.diffDoc.hunks[i].reordered
+            && !grown.diffDoc.hunks[i].formattingOnly);
+
+    // And a project that declares nothing commutative gets no claim at all.
+    auto strict = DocumentPipeline(registry: &reg, cache: &cache,
+        commutative: null).loadDiffPair(oldPath, newPath);
+    foreach (i; 0 .. strict.diffDoc.hunks.length)
+        assert(!strict.diffDoc.hunks[i].reordered);
 }
 
 @("document.structuralView.emphasizesTokensNotCharacterRuns")

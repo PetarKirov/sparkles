@@ -319,7 +319,7 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         const key = opt.fileKey ? diffHunkKey(hi) : 0;
         ++hi;
         uint node;
-        if (hunk.formattingOnly && opt.foldFormattingOnly)
+        if ((hunk.formattingOnly || hunk.reordered) && opt.foldFormattingOnly)
             node = foldedHunk(b, doc, hunk);
         else if (opt.layout == DiffLayout.split)
             node = viewHunkSplit(b, doc, hunk, gutterWidth, opt);
@@ -459,9 +459,13 @@ private Slot statusSlot(FileChange c) @safe pure nothrow @nogc
     }
 }
 
-/// `DVN2`: a formatting-only hunk, folded to one dimmed line that says what
-/// it is standing in for. The count is rows, not hunks, because that is what
-/// the reviewer is deciding whether to read.
+/// `DVN2`: a demoted hunk, folded to one dimmed line that says what it is
+/// standing in for. The count is rows, not hunks, because that is what the
+/// reviewer is deciding whether to read.
+///
+/// The verdict is named, not generalized: `DVN7`'s reorder is not formatting,
+/// and a reviewer told "formatting only" about a sorted import block has been
+/// told something false about their code.
 private uint foldedHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk) @safe
 {
     uint changed;
@@ -471,8 +475,9 @@ private uint foldedHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk) @saf
     return b.add(Widget(kind: WidgetKind.rich, spans: [
         TextSpan(text("@@ -", hunk.oldStart, " +", hunk.newStart, " @@  "),
             slot: Slot.muted),
-        TextSpan(text("formatting only — ", changed,
-            changed == 1 ? " row hidden" : " rows hidden"), slot: Slot.muted),
+        TextSpan(text(hunk.reordered ? "reordered — " : "formatting only — ",
+            changed, changed == 1 ? " row hidden" : " rows hidden"),
+            slot: Slot.muted),
     ]));
 }
 
@@ -1134,6 +1139,35 @@ import sparkles.ui.style : Slot;
         if (n.slot == Slot.hoverUnderline)
             ++underlines;
     assert(underlines == 1, "exactly the one anchored span decorates");
+}
+
+@("diff_view.reordered.foldsUnderItsOwnName")
+@safe unittest
+{
+    // `DVN7`: a permuted commutative container folds like formatting noise
+    // but must not be LABELLED formatting — the reviewer would be told
+    // something false about their code. Same fold, different sentence.
+    enum before = "b\na\n";
+    enum after = "a\nb\n";
+    auto doc = diffText(before, after, "t.d", "t.d");
+    auto hunk = doc.hunks[0];
+    hunk.reordered = true; // stamped by `document.classifyStructural`
+    doc.hunks[0] = hunk;
+
+    DiffViewOptions opt; // foldFormattingOnly defaults on
+    auto b = Builder();
+    auto tree = b.finish(viewDiffInto(b, doc, doc.files[0], opt));
+
+    bool sawBadge;
+    foreach (ref n; tree.nodes)
+        foreach (sp; n.spans)
+        {
+            if (sp.text.length >= 10 && sp.text[0 .. 10] == "reordered ")
+                sawBadge = true;
+            assert(sp.text.length < 16 || sp.text[0 .. 16] != "formatting only ",
+                "a reorder is not formatting");
+        }
+    assert(sawBadge, "the fold names the verdict it actually reached");
 }
 
 @("diff_view.formattingOnly.foldsToABadgeAndExpandsBack")
