@@ -39,7 +39,7 @@ import sparkles.input : Event, InputCapabilities, isEndOfInput;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.host : FrameOps, HostState, isHost, RunConfig,
+import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, RunConfig,
     withRealSize;
 import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
 
@@ -138,6 +138,18 @@ struct TuiHost
 
     /// The cell grid, for an application still painting some chrome by hand.
     ref auto grid() @system => session.grid;
+
+    /// The canvas over that grid (`HST3`) — the terminal counterpart of
+    /// `GuiHost.canvas`, so a component that paints through `host.canvas` in
+    /// its draw phase (`HST13`) instantiates on both arms instead of needing
+    /// a per-target branch.
+    auto canvas() @system
+    {
+        import sparkles.base.term_color : RgbColor;
+        import sparkles.ui_tui.grid_canvas : GridCanvas;
+
+        return GridCanvas(&session.grid, RgbColor(0, 0, 0));
+    }
 }
 
 static assert(isHost!TuiHost);
@@ -145,10 +157,15 @@ static assert(isHost!TuiHost);
 /**
 Runs `present`/`handle` on a terminal until the application quits or input ends.
 
+`draw` is the post-display-list phase (`HST13`): called after the host's
+operations painted into the grid and before the cell diff, so an application
+painting cells of its own lands on top of the display list and still gets
+diffed. A skipped frame skips it too.
+
 Returns `false` when the terminal could not be put into raw mode, which is the
 caller's cue to fall back rather than paint into nothing.
 */
-bool runTui(alias present, alias handle)(in RunConfig cfg)
+bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
 {
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui_tui.grid_canvas : paintGrid;
@@ -175,6 +192,7 @@ bool runTui(alias present, alias handle)(in RunConfig cfg)
             return;
 
         paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[]);
+        draw(host); // `HST13`: the application's own cells, before the diff
         session.present();
     }
 

@@ -140,6 +140,16 @@ enum bool isHost(T) = __traits(compiles, (ref T h) {
 });
 
 /**
+The default draw phase: nothing.
+
+The loop's third callback (`HST13`) — the post-display-list slot inside the
+frame bracket where an application with a renderer of its own paints through
+the host's canvas. Most applications have no such renderer, so the arms take
+this no-op by default and it costs nothing (an empty template instantiation).
+*/
+void noDraw(Host)(ref Host) {}
+
+/**
 Normalizes a resize event to carry the surface size the host actually has
 (`HST7`).
 

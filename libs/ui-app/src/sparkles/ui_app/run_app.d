@@ -42,7 +42,7 @@ import sparkles.input : Event;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayListInto;
 import sparkles.ui.geometry : Constraints, Rect;
-import sparkles.ui.layout : layout;
+import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.style : Palette, Visual;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.widget : WidgetTree;
@@ -108,16 +108,35 @@ AppTheme appThemeOf(O)(const O o)
 }
 
 /**
+Whether `A` carries the optional `paint` member — the component's own renderer,
+run in the draw phase (`HST13`): inside the frame bracket, after the display
+list painted, as `paint(ref host, in WidgetTree, in Frame[])`. The tree and
+frames are the ones this same frame's `view`/layout produced, so the component
+finds its pane with $(REF keyedRects, sparkles,ui,state) and paints into the
+laid-out rect through the host's canvas.
+*/
+enum bool hasPaintPhase(A) = __traits(hasMember, A, "paint");
+
+/// What one frame's `view` + layout produced — kept for the draw phase, which
+/// runs later in the same frame (never across frames).
+struct FrameSnapshot
+{
+    WidgetTree tree; ///
+    Frame[] frames;  ///
+}
+
+/**
 Builds one frame of `app` into `h`'s display list: page fill, `view`, layout
 against the live surface, display list (`NFR2` — straight into the host's
-reused buffer).
+reused buffer). The tree and frames land in `snap` for the draw phase.
 
 The frame an application declines is honoured $(B before) layout: a `view` that
 calls `skipFrame` pays for its own early-out and nothing else.
 */
-void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th)
+void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th, ref FrameSnapshot snap)
 {
-    auto tree = app.view(h);
+    snap = FrameSnapshot.init;
+    snap.tree = app.view(h);
     if (h.frameSkipped)
         return;
 
@@ -129,11 +148,12 @@ void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th)
         visual: Visual(fg: th.pageFg, bg: th.pageBg, hasBg: true));
 
     // An empty tree is a bare page, not a crash — layout indexes its root.
-    if (tree.nodes.length == 0)
+    if (snap.tree.nodes.length == 0)
         return;
 
-    auto frames = layout(tree, Constraints(sz.width, sz.height));
-    buildDisplayListInto(tree, frames, th.palette, th.pageFg, th.pageBg, h.ops());
+    snap.frames = layout(snap.tree, Constraints(sz.width, sz.height));
+    buildDisplayListInto(snap.tree, snap.frames, th.palette, th.pageFg, th.pageBg,
+        h.ops());
 }
 
 /**
@@ -170,10 +190,18 @@ parsing `cfg.gui` and calling this.
 RunOutcome runApp(A)(ref A app, in RunConfig cfg, BackendPolicy policy)
 {
     const th = appThemeOf(cfg.gui);
-    return run!(
-        (ref h) { presentApp(app, h, th); },
-        (ref h, in Event e) { app.handle(h, e); },
-    )(cfg, policy);
+    FrameSnapshot snap;
+    static if (hasPaintPhase!A)
+        return run!(
+            (ref h) { presentApp(app, h, th, snap); },
+            (ref h, in Event e) { app.handle(h, e); },
+            (ref h) { app.paint(h, snap.tree, snap.frames); },
+        )(cfg, policy);
+    else
+        return run!(
+            (ref h) { presentApp(app, h, th, snap); },
+            (ref h, in Event e) { app.handle(h, e); },
+        )(cfg, policy);
 }
 
 /// ditto
@@ -193,8 +221,16 @@ RecordingHost runAppRecorded(A)(ref A app, in RunConfig cfg, in Event[] script,
     scope void delegate(ref RecordingHost) @safe setup = null)
 {
     const th = appThemeOf(cfg.gui);
+    FrameSnapshot snap;
     return runRecorded(cfg,
-        (ref RecordingHost h) { presentApp(app, h, th); },
+        (ref RecordingHost h) {
+            presentApp(app, h, th, snap);
+            // The recorder has no frame bracket, so the draw phase (`HST13`)
+            // runs right here — same frame, same skip rule as the live arms.
+            static if (hasPaintPhase!A)
+                if (!h.frameSkipped)
+                    app.paint(h, snap.tree, snap.frames);
+        },
         (ref RecordingHost h, in Event e) { app.handle(h, e); },
         script, setup);
 }
@@ -333,6 +369,90 @@ unittest
     assert(th.pageFg == RgbColor(0xd0, 0xd0, 0xd0));
 }
 
+@("ui_app.run_app.paintPhaseSeesTheLaidOutPane")
+@safe
+unittest
+{
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.state : keyedRects;
+
+    // A component with a renderer of its own (`HST13`): the pane is a keyed
+    // widget the layout sizes, and `paint` draws into the laid-out rect
+    // through the host's canvas — the terminal-view shape (`TVW2`/`TVW3`).
+    static struct PaneApp
+    {
+        enum size_t paneKey = 42;
+        Rect seenRect;
+
+        WidgetTree view(H)(ref H h)
+        {
+            import sparkles.ui.style : Slot;
+            import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+            auto b = Builder();
+            const label = b.add(Widget(kind: WidgetKind.text, text: "header",
+                slot: Slot.code));
+            const pane = b.add(Widget(kind: WidgetKind.box, key: paneKey,
+                width: SizeSpec.fixed(10), height: SizeSpec.fixed(5)));
+            return b.finish(b.container(WidgetKind.column, [label, pane]));
+        }
+
+        void handle(H)(ref H h, in Event e) {}
+
+        void paint(H)(ref H h, in WidgetTree tree, in Frame[] frames)
+        {
+            foreach (kr; keyedRects(tree, frames))
+                if (kr.key == paneKey)
+                {
+                    seenRect = kr.rect;
+                    // Paint into the laid-out rect through the canvas — on the
+                    // recorder this is captured, on the GPU arm it is pixels.
+                    h.canvas.fillRect(kr.rect,
+                        Visual(bg: RgbColor(1, 2, 3), hasBg: true));
+                }
+        }
+    }
+
+    static assert(hasPaintPhase!PaneApp);
+
+    PaneApp app;
+    auto rec = runAppRecorded(app, RunConfig.init, []);
+
+    // The pane sits below the one-line header, at the layout's say-so.
+    assert(app.seenRect == Rect(0, 1, 10, 5));
+
+    // The draw phase painted through the canvas, not the display list: the
+    // frame's ops carry the page + tree, the canvas carries the pane fill.
+    assert(rec.canvas.ops.length == 1);
+    assert(rec.canvas.ops[0].rect == Rect(0, 1, 10, 5));
+    assert(rec.canvas.ops[0].visual.bg == RgbColor(1, 2, 3));
+}
+
+@("ui_app.run_app.paintPhaseSkipsWithTheFrame")
+@safe
+unittest
+{
+    // A skipped frame skips the draw phase too — the arms skip the whole
+    // bracket, and the recorder must agree (`HST6` × `HST13`).
+    static struct SkippingPainter
+    {
+        int paints;
+
+        WidgetTree view(H)(ref H h)
+        {
+            h.skipFrame();
+            return WidgetTree.init;
+        }
+
+        void handle(H)(ref H h, in Event e) {}
+        void paint(H)(ref H h, in WidgetTree, in Frame[]) { ++paints; }
+    }
+
+    SkippingPainter app;
+    cast(void) runAppRecorded(app, RunConfig.init, [keyEvent(Key.up)]);
+    assert(app.paints == 0, "no frame, no draw phase");
+}
+
 // `runApp` dispatches through `run`, whose `final switch` compiles every arm —
 // so this one static assert type-checks the generic component against BOTH
 // live host types, which is what makes "written once, runs on either" a
@@ -348,4 +468,30 @@ unittest
         cast(void) runApp(app, cfg, policy);
         cast(void) runApp(app, cfg);
     }), "runApp must compile against every arm this build carries");
+
+    // A PAINTING component too: `paint` goes through `host.canvas`, which
+    // both live hosts expose (RaylibCanvas / GridCanvas) precisely so a
+    // draw-phase component does not need a per-target branch.
+    static struct PaintingApp
+    {
+        WidgetTree view(H)(ref H h) => WidgetTree.init;
+        void handle(H)(ref H h, in Event e) {}
+
+        void paint(H)(ref H h, in WidgetTree, in Frame[] frames)
+        {
+            import sparkles.base.term_color : RgbColor;
+            import sparkles.ui.geometry : Rect;
+            import sparkles.ui.style : Visual;
+
+            auto c = h.canvas;
+            c.fillRect(Rect(0, 0, 1, 1), Visual(bg: RgbColor(0, 0, 0), hasBg: true));
+        }
+    }
+
+    static assert(__traits(compiles, {
+        PaintingApp app;
+        RunConfig cfg;
+        BackendPolicy policy;
+        cast(void) runApp(app, cfg, policy);
+    }), "a draw-phase component must compile against every arm too");
 }
