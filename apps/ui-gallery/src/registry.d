@@ -19,9 +19,12 @@ import state : GalleryState;
 // `import pages.welcome;` would introduce the symbol `pages`, which is what the
 // catalog below is called — and the collision is a compile error, not a
 // shadowing surprise.
+import pages.decoration_page : decorationView = view;
 import pages.layout_page : layoutKeys = keys, layoutOnKey = handleKey,
     layoutView = view;
 import pages.primitives : primitivesView = view;
+import pages.slots_page : slotsView = view;
+import pages.themes_page : themesKeys = keys, themesView = view;
 import pages.text_page : textKeys = keys, textOnKey = handleKey,
     textView = view;
 import pages.tracks_page : tracksKeys = keys, tracksOnKey = handleKey,
@@ -67,6 +70,9 @@ static immutable Page[] pages = [
         tracksKeys, &tracksOnKey),
     Page("Text", "wrapping and measurement", &textView,
         textKeys, &textOnKey),
+    Page("Themes", "thirty-six built-ins, live", &themesView, themesKeys),
+    Page("Slots", "the semantic colour vocabulary", &slotsView),
+    Page("Decoration", "box and text chrome", &decorationView),
 ];
 
 /// The index of the page `name` refers to — a title prefix (case-insensitive)
