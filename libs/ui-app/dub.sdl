@@ -1,0 +1,51 @@
+name "ui-app"
+description "The application host for sparkles:ui: backend selection, the shared window/font CLI, and the frame/event loop, so an application never names a canvas"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "../../build"
+
+importPaths "src"
+sourcePaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// The backend-free half. The concrete canvases arrive with a configuration.
+dependency "sparkles:ui" path="../.."
+dependency "sparkles:input" path="../.."
+dependency "sparkles:core-cli" path="../.."
+
+// ── Configurations (APP3) ───────────────────────────────────────────────────
+//
+// ORDER IS LOAD-BEARING: a consumer that declares no `subConfiguration` gets
+// the FIRST configuration, so `tui` must stay at the top to be the default the
+// spec promises. (Measured — see `UIAPP-O2`.)
+//
+// `gui` deliberately does NOT depend on `sparkles:ui-tui`: an Android build has
+// no terminal and must not carry one in its closure.
+
+configuration "tui" {
+    dependency "sparkles:ui-tui" path="../.."
+}
+
+configuration "gui" {
+    dependency "sparkles:ui-raylib" path="../.."
+    versions "UiAppGui"
+}
+
+configuration "full" {
+    dependency "sparkles:ui-tui" path="../.."
+    dependency "sparkles:ui-raylib" path="../.."
+    versions "UiAppGui"
+}
+
+configuration "unittest" {
+    // The test build takes the widest closure, so every arm is compiled and
+    // the recording target can be checked against both live ones.
+    dependency "sparkles:ui-tui" path="../.."
+    dependency "sparkles:ui-raylib" path="../.."
+    versions "UiAppGui"
+
+    dependency "sparkles:test-runner" path="../.."
+    dflags "-checkaction=context" "-allinst"
+}
