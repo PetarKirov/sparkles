@@ -252,8 +252,7 @@ unittest
     import sparkles.event_horizon.capability : hasCaps;
 
     LoopGroup group;
-    if (LoopGroup.start(group).hasError)
-        return; // SKIP: io_uring unavailable
+    groupOrSkip(group);
     scope (exit) group.shutdown();
 
     int fromClock;
@@ -281,8 +280,7 @@ unittest
     import sparkles.event_horizon.net : ipv4;
 
     LoopGroup group;
-    if (LoopGroup.start(group).hasError)
-        return; // SKIP
+    groupOrSkip(group);
     scope (exit) group.shutdown();
 
     static immutable payload = cast(immutable ubyte[]) "env.net echo";
@@ -332,6 +330,22 @@ unittest
 }
 
 version (unittest)
+{
+    import sparkles.event_horizon.errors : skipReason;
+    import sparkles.test_runner.skip : skipTest;
+
+    /// Starts a group for a test, or SKIPs it (no io_uring — SPEC §3.4).
+    /// Call before arming any `scope (exit)`: it does not return on the skip.
+    private void groupOrSkip(ref LoopGroup group,
+        in LoopGroupConfig cfg = LoopGroupConfig())
+    {
+        auto started = LoopGroup.start(group, cfg);
+        if (started.hasError)
+            skipTest(skipReason(started.error));
+    }
+}
+
+version (unittest)
 private ushort boundPort(int fd) @trusted nothrow @nogc
 {
     import core.sys.posix.arpa.inet : ntohs;
@@ -355,8 +369,7 @@ unittest
     LoopGroupConfig cfg;
     cfg.topology = Topology.threadPerCore;
     cfg.workers = 4;
-    if (LoopGroup.start(group, cfg).hasError)
-        return; // SKIP: io_uring unavailable
+    groupOrSkip(group, cfg);
     scope (exit) group.shutdown();
     assert(group.workerCount == 4);
 

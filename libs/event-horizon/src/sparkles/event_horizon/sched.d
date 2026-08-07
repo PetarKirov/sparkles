@@ -445,9 +445,7 @@ private:
 unittest
 {
     Sched s;
-    auto created = Sched.create(s);
-    if (created.hasError)
-        return; // SKIP: io_uring unavailable
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     int order;
@@ -466,8 +464,7 @@ unittest
 unittest
 {
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     int[6] log;
@@ -496,8 +493,7 @@ unittest
     Sched s;
     SchedOptions opts;
     opts.maxFibers = 2;
-    if (Sched.create(s, opts).hasError)
-        return; // SKIP
+    schedOrSkip(s, opts);
     scope (exit) s.destroy();
 
     // Far more sequential spawns than slots: recycling must cover it.
@@ -520,8 +516,7 @@ unittest
     import core.time : msecs;
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     bool fired;
@@ -536,10 +531,41 @@ unittest
     assert(MonoTimeStamp() - before >= 5.msecs);
 }
 
+// NB the gate below is `unittest`, not `linux`: `Sched` rides whichever backend
+// `backend.select` picks (io_uring on Linux, kqueue on the BSDs/macOS), so
+// gating this helper to Linux while leaving its callers ungated made a module
+// fail to compile off Linux with `undefined identifier Sched` — a break that
+// stayed latent until macOS CI first ran on this branch. The tests that use it
+// are not Linux-specific; `schedOrSkip` is what makes them portable.
 version (unittest)
 {
     import core.time : MonoTime;
 
+    import sparkles.event_horizon.errors : skipReason;
+    import sparkles.test_runner.skip : skipTest;
+
     private MonoTime MonoTimeStamp() @safe nothrow @nogc
         => MonoTime.currTime;
+
+    /**
+    Creates a `Sched` for a test, or SKIPs the test: on a host whose backend
+    cannot be created — container/seccomp, `kernel.io_uring_disabled`, a
+    pre-6.1 kernel — SPEC §3.4 makes that a hard error with no fallback, and
+    the test is recorded SKIPPED rather than silently green.
+
+    Does not return on the skip path, which constrains where it may be called:
+    $(UL
+    $(LI before arming any `scope (exit)` — an `Error` unwinding out of a
+        `nothrow` frame is not guaranteed to run cleanup handlers;)
+    $(LI never from inside a fiber body or a `run` callback — `FiberTask.shell`
+        catches every `Throwable`, so under a scope the skip is folded into a
+        `die` cause and resurfaces as a *failure* on the next outcome assert.))
+    */
+    package void schedOrSkip(ref Sched s, in SchedOptions opts = SchedOptions(),
+        in LoopConfig loopCfg = LoopConfig()) @trusted nothrow
+    {
+        auto created = Sched.create(s, opts, loopCfg);
+        if (created.hasError)
+            skipTest(skipReason(created.error));
+    }
 }

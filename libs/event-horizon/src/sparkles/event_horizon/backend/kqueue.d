@@ -578,6 +578,7 @@ version (unittest)
 
     import sparkles.event_horizon.buffer : Buf;
     import sparkles.event_horizon.op : OpClass, OpToken;
+    import sparkles.test_runner.skip : skipTest;
 }
 
 /// The M10 data-path gate (runs on macOS): register recv/send readiness on a
@@ -595,7 +596,7 @@ unittest
 
     KqueueBackend b;
     if (b.open(BackendConfig()).hasError)
-        return; // SKIP
+        skipTest("kqueue unavailable");
 
     const listener = socket(AF_INET, SOCK_STREAM, 0);
     assert(listener >= 0);

@@ -109,6 +109,11 @@ IoResult!int wait(ref Sched s, ref ChildProcess child)
     return ioOk((() @trusted => info._sifields._sigchld.si_status)());
 }
 
+version (unittest)
+{
+    import sparkles.event_horizon.sched : schedOrSkip;
+}
+
 @("proc.spawn.streamAndReap")
 @safe
 unittest
@@ -119,8 +124,7 @@ unittest
     import sparkles.event_horizon.io : read;
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP: io_uring unavailable
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     auto r = s.run(() {
@@ -157,8 +161,7 @@ unittest
 unittest
 {
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     auto r = s.run(() {

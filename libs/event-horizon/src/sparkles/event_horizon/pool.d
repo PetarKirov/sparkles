@@ -144,7 +144,7 @@ struct WorkStealingPool
             loopCfg.backend.sqEntries = cfg.sqEntries;
             Sched sched;
             if (Sched.create(sched, opts, loopCfg).hasError)
-                return;
+                return; // a worker whose ring won't open is silently skipped
             scope (exit) sched.destroy();
 
             sched.run(() {
@@ -586,26 +586,28 @@ unittest
     import sparkles.event_horizon.io : sleep;
     import sparkles.event_horizon.sched : Sched;
 
+    // Probe io_uring once so the whole test SKIPs cleanly on an unsupported
+    // host rather than spinning up threads that all fail to create a ring.
+    // Hoisted above `start` so the skip fires before anything needs tearing
+    // down — `start` itself cannot report an unusable ring (it only sets
+    // fields; each worker builds its own ring on its own thread).
+    {
+        Sched probe;
+        schedOrSkip(probe, SchedOptions.init);
+        probe.destroy();
+    }
+
     WorkStealingPool pool;
     LoopGroupConfig cfg;
     cfg.topology = Topology.workStealing;
     cfg.workers = 4;
     if (WorkStealingPool.start(pool, cfg).hasError)
-        return; // SKIP
+        skipTest("work-stealing pool unavailable");
     scope (exit) pool.shutdown();
 
     enum tasks = 400;
     shared uint completed;
     shared uint worker0Tasks; // tasks run on the seeding thread's worker
-
-    // Probe io_uring once so the whole test SKIPs cleanly on an unsupported
-    // host rather than spinning up threads that all fail to create a ring.
-    {
-        Sched probe;
-        if (Sched.create(probe, SchedOptions.init).hasError)
-            return; // SKIP
-        probe.destroy();
-    }
 
     import core.thread : Thread;
 
@@ -673,6 +675,12 @@ unittest
     pool.run((ref WorkStealingPool p) { fan(p, depth); });
 
     assert(atomicLoad(ran) == (1 << (depth + 1)) - 1, "every task ran exactly once");
+}
+
+version (unittest)
+{
+    import sparkles.event_horizon.sched : schedOrSkip;
+    import sparkles.test_runner.skip : skipTest;
 }
 
 version (unittest)

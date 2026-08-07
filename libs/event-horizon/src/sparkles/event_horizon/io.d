@@ -292,6 +292,12 @@ private BufResult!B rw(Op, Flag!"sized" sized, B, Args...)(
 
 // ── tests ───────────────────────────────────────────────────────────────────
 
+version (unittest)
+{
+    import sparkles.event_horizon.sched : schedOrSkip;
+    import sparkles.test_runner.skip : skipTest;
+}
+
 @("io.pipe.directStyleReadWrite")
 @safe
 unittest
@@ -299,8 +305,7 @@ unittest
     import sparkles.base.smallbuffer : SmallBuffer;
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP: io_uring unavailable
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     int[2] fds;
@@ -350,8 +355,7 @@ unittest
     import core.time : msecs;
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP: io_uring unavailable
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     int[2] fds;
@@ -401,8 +405,7 @@ unittest
     import sparkles.event_horizon.buffer : BufferPool;
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     // libc loopback listener on a kernel-assigned port.
@@ -488,8 +491,7 @@ unittest
     import core.time : MonoTime, msecs;
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     const before = MonoTime.currTime;
@@ -517,8 +519,7 @@ unittest
     alias Counted = StatsCollector!(Mallocator, Options.numAllocate);
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP: io_uring unavailable
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     int[2] fds;
@@ -597,12 +598,14 @@ unittest
     import sparkles.event_horizon.buffer : BufGroupId, BufOrigin, BufRing;
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP: io_uring unavailable
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     if (!s.loop().caps().bufRing)
-        return; // SKIP: provided buffer rings unsupported
+    {
+        s.destroy(); // idempotent; see loop.registeredBuffers.fixedReadPath
+        skipTest("provided buffer rings unsupported");
+    }
 
     // A connected socketpair: recv on one end via a ring-selected buffer.
     int[2] sv;

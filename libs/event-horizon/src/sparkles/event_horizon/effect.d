@@ -301,7 +301,7 @@ version (linux)  :  // parity tests drive the live Sched
 version (unittest)
 {
     import sparkles.event_horizon.errors : IoResult, ioErr, ioOk, OpKind;
-    import sparkles.event_horizon.sched : Sched;
+    import sparkles.event_horizon.sched : Sched, schedOrSkip;
     import sparkles.event_horizon.scope_ : withScope;
 }
 
@@ -310,8 +310,7 @@ version (unittest)
 unittest
 {
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     static struct EmptyCtx { }
@@ -342,8 +341,7 @@ unittest
 unittest
 {
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     static struct EmptyCtx { }
@@ -368,8 +366,7 @@ unittest
 unittest
 {
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     static struct EmptyCtx { }
@@ -399,8 +396,7 @@ unittest
 unittest
 {
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     static struct EmptyCtx { }

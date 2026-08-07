@@ -120,6 +120,11 @@ IoResult!void statxPath(ref Sched s, scope const(char)[] path, ref Statx out_,
     return ioOk();
 }
 
+version (unittest)
+{
+    import sparkles.event_horizon.sched : schedOrSkip;
+}
+
 @("fs.roundTrip.openWriteFsyncStatxRead")
 @safe
 unittest
@@ -132,8 +137,7 @@ unittest
     import sparkles.event_horizon.io : read, write;
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP: io_uring unavailable
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     static immutable payload = cast(immutable ubyte[]) "event horizon fs";
