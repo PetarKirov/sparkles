@@ -892,6 +892,12 @@ version (Posix)
                 _pipes.stdin.close();
         }
 
+        /// The read side's file descriptor (the child's stdout pipe), or -1
+        /// before a spawn — the seam an event loop parks a readiness wait on
+        /// (`waitReadable`) so `tryReadLine` polling becomes event-driven.
+        int readFd() @trusted
+            => _spawned ? _pipes.stdout.fileno : -1;
+
         /**
         One complete line from the child, without its terminator, or `null`
         when none is available yet. Non-blocking: partial lines accumulate
