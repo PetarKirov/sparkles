@@ -1,9 +1,8 @@
-name "terminal"
-description "A minimal terminal emulator using libghostty-vt"
+name "terminal-view"
+description "The terminal core as an embeddable component: libghostty screen, per-cell renderer, input encoding, pty lifecycle"
 authors "Petar Kirov"
 license "BSL-1.0"
 
-targetType "executable"
 targetPath "build"
 
 dflags "-preview=in" "-preview=dip1000"
@@ -11,22 +10,17 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "raylib-d" version="~>6.0.1"
 dependency "expected" version="~>0.4.0"
 
-dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:base" path="../.."
 dependency "sparkles:ghostty" path="../.."
 dependency "sparkles:raylib-text" path="../.."
-dependency "sparkles:terminal-view" path="../.."
 
 libs "raylib"
 
-configuration "application" {
-    targetType "executable"
+configuration "library" {
+    targetType "sourceLibrary"
 }
 
 configuration "unittest" {
-    targetType "library"
-    excludedSourceFiles "src/app.d"
-
     dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
@@ -34,9 +28,6 @@ configuration "unittest" {
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
-// Optimised, assertions live, `debug {}` blocks out — the build every nix
-// artifact uses. Neither `debug` (which compiles those blocks in) nor
-// `release` (which deletes assert *expressions*, side effects included).
 buildType "checked" {
     buildOptions "optimize" "inline" "debugInfo"
 }
