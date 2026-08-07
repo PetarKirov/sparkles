@@ -111,15 +111,26 @@ struct DockLayout
     {
         nodes.length = other.nodes.length;
         foreach (i, ref n; other.nodes)
-            nodes[i] = DockNode(kind: n.kind, axis: n.axis,
-                children: n.children.dup, active: n.active, pane: n.pane,
-                tabExtent: n.tabExtent, extent: n.extent,
-                minExtent: n.minExtent, maxExtent: n.maxExtent,
-                visible: n.visible, headerExtent: n.headerExtent,
-                title: n.title, headerCenter: n.headerCenter,
-                headerTrailing: n.headerTrailing);
+        {
+            // Field by field through `tupleof`, not by naming them: a
+            // hand-written list of a dozen fields silently loses the next
+            // one somebody adds, which is how this constructor had already
+            // stopped copying `tabStripExtent`. Only the mutable slice
+            // needs duplicating — `string` is immutable, so sharing it IS
+            // value semantics.
+            DockNode m;
+            static foreach (j; 0 .. DockNode.tupleof.length)
+            {
+                static if (is(typeof(DockNode.tupleof[j]) == uint[]))
+                    m.tupleof[j] = n.tupleof[j].dup;
+                else
+                    m.tupleof[j] = n.tupleof[j];
+            }
+            nodes[i] = m;
+        }
         root = other.root;
         dividerExtent = other.dividerExtent;
+        tabStripExtent = other.tabStripExtent;
     }
 
     /// Appends a pane leaf and returns its node index.
@@ -162,6 +173,119 @@ struct DockLayout
                         n.active = cast(uint) i;
                         return;
                     }
+    }
+
+    /**
+    This layout with every pane the caller does not know dropped
+    (`DCK2`).
+
+    The restore half of persistence: a saved arrangement names panes by
+    id, and the application that reads it back may no longer offer all of
+    them — a document closed, a tool pane removed by a later version. The
+    spec's requirement is that such a layout $(B degrades) rather than
+    failing, and degrading correctly is not a filter: dropping a leaf
+    leaves its parent with one child (a split of one is not a split) or
+    none (a group of nothing is not a group), and a tabbed group may lose
+    the very child its `active` index pointed at.
+
+    So this rebuilds rather than edits: surviving leaves keep their
+    extents and constraints, a container that keeps one child is REPLACED
+    by that child, a container that keeps none dies with it, and `active`
+    is remapped to the survivors. An empty result means nothing was
+    recognised, which is the caller's cue to use its default layout —
+    reported as data rather than thrown.
+
+    Serialization itself is deliberately absent: `sparkles:ui` may not
+    depend on `sparkles:wired` (`PKG2`), and it does not need to — the
+    arena is plain data, so the application that owns a config file also
+    owns its encoding. What cannot live out there is this reconciliation,
+    which needs to know what a split means.
+    */
+    DockLayout reconciled(scope const(PaneId)[] known) const
+    {
+        static bool isKnown(PaneId p, scope const(PaneId)[] known)
+        {
+            foreach (k; known)
+                if (k == p)
+                    return true;
+            return false;
+        }
+
+        DockLayout r;
+        r.dividerExtent = dividerExtent;
+        r.tabStripExtent = tabStripExtent;
+        if (!nodes.length || root >= nodes.length)
+            return r;
+
+        // Returns the surviving node's index in `r`, or `uint.max`.
+        uint copy(uint idx)
+        {
+            const n = nodes[idx];
+            if (n.kind == DockKind.leaf)
+            {
+                if (!isKnown(n.pane, known))
+                    return uint.max;
+                r.nodes ~= DockNode(kind: DockKind.leaf, pane: n.pane,
+                    tabExtent: n.tabExtent, extent: n.extent,
+                    minExtent: n.minExtent, maxExtent: n.maxExtent,
+                    visible: n.visible, headerExtent: n.headerExtent,
+                    title: n.title, headerCenter: n.headerCenter,
+                    headerTrailing: n.headerTrailing);
+                return cast(uint)(r.nodes.length - 1);
+            }
+
+            uint[] kids;
+            uint active;
+            bool haveActive;
+            foreach (i, c; n.children)
+            {
+                const kept = copy(c);
+                if (kept == uint.max)
+                    continue;
+                // The active tab follows its child; if that child is gone,
+                // the first survivor takes over rather than the index
+                // pointing into a shorter list.
+                if (i == n.active && !haveActive)
+                {
+                    active = cast(uint)(kids.length);
+                    haveActive = true;
+                }
+                kids ~= kept;
+            }
+            if (!kids.length)
+                return uint.max;
+            if (kids.length == 1)
+            {
+                // A container of one is not a container. The survivor
+                // inherits the container's own share of its parent, or
+                // keeps its own when the container merely flexed.
+                if (n.extent > 0)
+                    r.nodes[kids[0]].extent = n.extent;
+                return kids[0];
+            }
+            r.nodes ~= DockNode(kind: n.kind, axis: n.axis, children: kids,
+                active: haveActive ? active : 0, extent: n.extent,
+                minExtent: n.minExtent, maxExtent: n.maxExtent,
+                visible: n.visible);
+            return cast(uint)(r.nodes.length - 1);
+        }
+
+        const kept = copy(root);
+        if (kept == uint.max)
+            return DockLayout.init; // nothing recognised: use your default
+        r.root = kept;
+        return r;
+    }
+
+    /// The pane ids this layout names, in arena order — what a caller
+    /// compares against the panes it can actually offer.
+    PaneId[] panes() const
+    {
+        PaneId[] ps;
+        foreach (ref n; nodes)
+            if (n.kind == DockKind.leaf)
+                ps ~= n.pane;
+        return ps;
     }
 
     /// The node holding `pane`, or `uint.max`.
@@ -1275,4 +1399,82 @@ version (unittest)
     // …and the document pane, which declared no header, starts at its top.
     assert(c.contentCell(Point(50, 0), doc, local) && local == Point(29, 0));
     assert(!c.contentCell(Point(50, 0), 99, local), "an unknown pane hits nothing");
+}
+
+@("ui.dock.copyPreservesEveryField")
+@safe unittest
+{
+    // The test that catches a copy constructor forgetting a field — which
+    // it had already done for `tabStripExtent`. Set everything away from
+    // its default, copy, and compare: no field list to fall out of date.
+    DockLayout a;
+    const l = a.addLeaf(7, extent: 5, minExtent: 2, maxExtent: 9);
+    a.nodes[l].tabExtent = 11;
+    a.nodes[l].headerExtent = 1;
+    a.nodes[l].title = "t";
+    a.nodes[l].headerCenter = "c";
+    a.nodes[l].headerTrailing = "r";
+    a.nodes[l].visible = false;
+    const g = a.addTabs([l]);
+    a.nodes[g].active = 0;
+    a.root = g;
+    a.dividerExtent = 3;
+    a.tabStripExtent = 2;
+
+    auto b = a;
+    assert(b == a, "a copy must equal its original in every field");
+
+    // And be independent: the arena, and each node's child list.
+    b.nodes[l].title = "other";
+    b.nodes[g].children[0] = 0;
+    assert(a.nodes[l].title == "t");
+    assert(a.nodes[g].children[0] == l);
+}
+
+@("ui.dock.reconcileDropsUnknownPanesAndCollapsesHoles")
+@safe unittest
+{
+    // A sidebar beside a tabbed group of two documents.
+    enum PaneId side = 1, docA = 2, docB = 3;
+    DockLayout a;
+    const s = a.addLeaf(side, extent: 20, minExtent: 10);
+    const x = a.addLeaf(docA);
+    const y = a.addLeaf(docB);
+    const g = a.addTabs([x, y]);
+    a.nodes[g].active = 1; // docB showing
+    a.root = a.addSplit(DockAxis.horizontal, [s, g]);
+
+    // Everything known: the arrangement survives, constraints included.
+    const all = a.reconciled([side, docA, docB]);
+    assert(all.panes() == [side, docA, docB]);
+    assert(all.nodes[all.nodeOf(side)].extent == 20);
+    assert(all.nodes[all.nodeOf(side)].minExtent == 10);
+
+    // docB is gone: the group keeps one child, so it stops being a group —
+    // a split of one is not a split — and `active` cannot dangle.
+    const one = a.reconciled([side, docA]);
+    assert(one.panes() == [side, docA]);
+    foreach (ref n; one.nodes)
+        assert(n.kind != DockKind.tabs, "a group of one collapsed");
+
+    // The whole right side gone: the sidebar becomes the root, and
+    // inherits the container's own extent rather than keeping a share of
+    // something that no longer exists.
+    const solo = a.reconciled([side]);
+    assert(solo.panes() == [side]);
+    assert(solo.nodes[solo.root].kind == DockKind.leaf);
+    assert(solo.nodes[solo.root].pane == side);
+
+    // The ACTIVE child dropped: the first survivor shows, rather than an
+    // index pointing past the end of a shorter list.
+    const noB = a.reconciled([side, docA, 99]);
+    assert(noB.panes() == [side, docA]);
+
+    // Nothing recognised: an empty layout, which is the caller's cue to
+    // use its default — data, not an exception.
+    const none = a.reconciled([99]);
+    assert(none.nodes.length == 0);
+
+    // Reconciling is idempotent, so a restore path can run it freely.
+    assert(all.reconciled([side, docA, docB]) == all);
 }
