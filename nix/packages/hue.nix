@@ -25,6 +25,15 @@
         buildInputs = [
           pkgs.tree-sitter
           pkgs.raylib
+          # DPR1: the forge client fetches over libcurl (std.net.curl). The
+          # `application`/`no-gui` dub configurations declare `libs "curl"`;
+          # the Android build does not, and links none.
+          #
+          # `lib.getLib`, not a bare `pkgs.curl`: curl's default output is
+          # `bin`, which carries no `lib/` — so the plain spelling links (from
+          # some other input's closure) and then fails at RUN time with
+          # "libcurl.so.4: cannot open shared object file".
+          (lib.getLib pkgs.curl)
           inputs'.ghostty.packages.libghostty-vt
           inputs'.ghostty.packages.libghostty-vt.dev
         ];
