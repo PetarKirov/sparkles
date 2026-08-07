@@ -26,7 +26,7 @@ version (Windows) version = EhIoStack;
 version (EhIoStack)  :
 
 import core.lifetime : move;
-import core.time : Duration;
+import core.time : Duration, MonoTime;
 
 import sparkles.event_horizon.buffer : Buf, isOwnedIoBuf;
 import sparkles.event_horizon.errors;
@@ -197,6 +197,79 @@ static if (canSubmitOp!(DefaultBackend, OpTimeout))
             return ioErr!void(-o.res, OpKind.timeout);
         return ioOk();
     }
+
+    /// Parks until `deadline` on the loop's monotonic clock. A past (or
+    /// zero-distance) deadline still parks once on a zero-length timer —
+    /// every verb is a cancellation checkpoint and a fairness yield, and a
+    /// hot caller looping on expired deadlines must not starve the loop.
+    IoResult!void sleepUntil(ref Sched s, MonoTime deadline)
+    {
+        const rel = deadline - s.loop.now();
+        return sleep(s, rel > Duration.zero ? rel : Duration.zero);
+    }
+
+    /**
+    The repeating frame clock (SPEC §7.3, §15.2): absolute-deadline pacing.
+    Each tick's deadline is the previous one plus the period — never "now
+    plus the period" — so processing time inside the frame does not
+    accumulate drift. A tick already due returns after a checkpoint park;
+    periods missed while the caller was busy are skipped, not replayed (a
+    UI wants the next frame, not a burst of stale ones), and reported.
+    */
+    struct Ticker
+    {
+        private MonoTime _next;
+        private Duration _period;
+
+        /// Starts the clock: the first tick is due one period from now.
+        static Ticker start(ref Sched s, Duration period)
+        in (period > Duration.zero, "a Ticker needs a positive period")
+        {
+            Ticker t;
+            t._period = period;
+            t._next = s.loop.now() + period;
+            return t;
+        }
+
+        /// Parks until the current deadline is due, then advances it by one
+        /// period. Returns how many whole periods were already missed on
+        /// entry (0 in the steady state); those deadlines are skipped.
+        IoResult!uint tick(ref Sched s)
+        in (_period > Duration.zero, "tick on a default-constructed Ticker")
+        {
+            const now_ = s.loop.now();
+            if (_next <= now_)
+            {
+                // Behind: this tick fires now; realign the next deadline
+                // to the first grid point in the future.
+                const missed = (now_ - _next) / _period;
+                _next += _period * (missed + 1);
+                auto r = sleepUntil(s, now_); // checkpoint + fairness park
+                if (r.hasError)
+                    return ioErr!uint(r.error);
+                return ioOk(cast(uint) missed);
+            }
+            auto r = sleepUntil(s, _next);
+            if (r.hasError)
+                return ioErr!uint(r.error);
+            _next += _period;
+            return ioOk(0u);
+        }
+
+        /// Changes the cadence from the next tick on (the pending deadline
+        /// is not re-cut).
+        void reschedule(Duration period) @safe pure nothrow @nogc
+        in (period > Duration.zero)
+        {
+            _period = period;
+        }
+
+        /// The deadline `tick` will next wait for.
+        MonoTime nextDeadline() const @safe pure nothrow @nogc => _next;
+
+        /// The current period.
+        Duration period() const @safe pure nothrow @nogc => _period;
+    }
 }
 
 static if (canSubmitOp!(DefaultBackend, OpPollAdd))
@@ -345,6 +418,87 @@ unittest
     });
     assert(!r.hasError);
     assert(verified);
+}
+
+@("io.ticker.pacesWithoutDrift")
+@safe
+unittest
+{
+    import core.time : msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    bool done;
+    auto r = s.run(() {
+        const t0 = s.loop.now();
+        auto ticker = Ticker.start(s, 5.msecs);
+        foreach (i; 0 .. 3)
+        {
+            auto ticked = ticker.tick(s);
+            assert(ticked.hasValue);
+            assert(ticked.value == 0, "an on-time consumer misses nothing");
+        }
+        // Absolute-deadline pacing: three 5 ms ticks take >= 15 ms even
+        // though each iteration also spends time between parks.
+        assert(s.loop.now() - t0 >= 15.msecs);
+        done = true;
+    });
+    assert(!r.hasError);
+    assert(done);
+}
+
+@("io.ticker.skipsMissedTicks")
+@safe
+unittest
+{
+    import core.time : msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    bool done;
+    auto r = s.run(() {
+        auto ticker = Ticker.start(s, 2.msecs);
+        // A deliberately slow "frame": sleep several periods past the
+        // deadline, then tick — the missed periods are skipped, not
+        // replayed as a burst.
+        assert(!sleep(s, 9.msecs).hasError);
+        auto late = ticker.tick(s);
+        assert(late.hasValue);
+        assert(late.value >= 1, "being 7+ ms late on a 2 ms grid skips ticks");
+
+        // The realigned grid keeps pacing: the next tick is on time again.
+        auto next = ticker.tick(s);
+        assert(next.hasValue && next.value == 0);
+        assert(ticker.nextDeadline > s.loop.now(),
+            "the deadline realigned to the future");
+        done = true;
+    });
+    assert(!r.hasError);
+    assert(done);
+}
+
+@("io.sleepUntil.pastDeadlineIsCheckpointOnly")
+@safe
+unittest
+{
+    import core.time : msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+
+    bool done;
+    auto r = s.run(() {
+        const past = s.loop.now() - 10.msecs;
+        const before = s.loop.now();
+        assert(!sleepUntil(s, past).hasError);
+        assert(s.loop.now() - before < 1.seconds,
+            "a past deadline parks only on the zero-length timer");
+        done = true;
+    });
+    assert(!r.hasError);
+    assert(done);
 }
 
 @("io.waitReadable.parksUntilBytesArrive")
