@@ -127,11 +127,17 @@ only because the GC kept it alive.
 ### P1.0 — prove version propagation first
 
 `run` is a template, so a version identifier gating one of its arms is resolved
-during the **consumer's** compilation (`APP5`). The design assumes dub propagates a
-dependency's version identifiers to its dependents. Prove it with a throwaway
-two-package spike before anything is built on it. If it does not hold, the fallback
-is splitting the backend arms into their own packages; nothing else in the plan
-changes.
+during the **consumer's** compilation (`APP5`). The design assumed dub propagates a
+dependency's version identifiers to its dependents.
+
+**Done — it holds.** A two-package spike confirms that a dependency's
+configuration `versions` reach the dependent's compilation, and that a
+version-gated template arm resolves the way the selected `subConfiguration` says.
+The package-split fallback is not needed; `APP3`'s three configurations stand.
+Recorded in [UIAPP-O2](./open-issues.md#uiapp-o2), with two details the manifests
+depend on: the **first** configuration is what a consumer gets when it declares
+none, so ordering is load-bearing, and the propagation applies to non-templates
+too.
 
 ### P1.1–P1.5 — the package
 

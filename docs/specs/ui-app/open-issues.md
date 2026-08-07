@@ -28,22 +28,41 @@ Two related user-visible consequences of `CLI1`, tracked here because they land 
 the same change: hue gains `--font-dir` and `--font-codepoint-map` (today internal to
 its Android path), and both applications' `--help` flag ordering changes.
 
-## UIAPP-O2 — Version propagation is assumed, not proven {#uiapp-o2}
+## UIAPP-O2 — Version propagation is proven {#uiapp-o2}
 
-**Status:** open. **Requirements:** `APP4`, `APP5`.
+**Status:** closed — the spike ran and the assumption holds. **Requirements:**
+`APP4`, `APP5`.
 
 The host's backend arms are conditionally compiled behind a version identifier that a
 dub **configuration** sets. Its public entry point is a template, so those arms are
 resolved during the _consumer's_ compilation, and the design assumes dub propagates a
 dependency's version identifiers to its dependents.
 
-If that assumption is wrong, the fallback is to split the backend arms into their own
-packages — a consumer then depends on exactly the arms it wants, with no
-configuration, no version identifier and no propagation question. The requirement
-tree is unaffected either way; only the manifests change.
+A two-package spike settles it. The library declares two configurations, one of
+which sets a version identifier; the consumer selects between them with
+`subConfiguration` and calls both a **template** with a version-gated arm (its
+body analysed at the instantiation, in the consumer's compilation) and a
+non-template (resolved in the library's own):
 
-Close this entry when the spike in [P1.0](./PLAN.md#phase-1) has run and the outcome
-is recorded here.
+| Consumer's `subConfiguration` | Template arm | Non-template arm |
+| ----------------------------- | ------------ | ---------------- |
+| the version-setting one       | gated arm    | gated arm        |
+| the plain one                 | plain arm    | plain arm        |
+| none declared                 | plain arm    | plain arm        |
+
+So a dependency's configuration `versions` **do** reach the dependent's
+compilation, and a version-gated template arm resolves the way the selected
+configuration says. `APP3`'s three configurations are viable as specified; the
+package-split fallback is not needed.
+
+Two things the spike also pins down, both worth knowing before the manifests are
+written: a consumer that declares no `subConfiguration` gets the library's
+**first** configuration, so the order of the blocks is load-bearing — the default
+must be listed first; and the propagation is not special to templates, which
+means a non-template helper behind the same gate behaves consistently rather than
+silently taking the other arm.
+
+Closed by the [P1.0](./PLAN.md#phase-1) spike.
 
 ## UIAPP-O3 — Non-interactive backends have no runtime shape yet {#uiapp-o3}
 
