@@ -337,6 +337,12 @@ struct LiveTypesSession
     bool active() const @safe pure nothrow @nogc
         => !_stopped && _state != State.failed;
 
+    /// The oracle's stdout descriptor while the session is active, else -1 —
+    /// what an event-driven loop parks a readiness wait on instead of
+    /// ticking `poll` on a timer (M17: the 33 ms live tick's replacement).
+    int readFd() @system
+        => active ? _proc.readFd : -1;
+
     /// ditto
     bool failed() const @safe pure nothrow @nogc => _state == State.failed;
 

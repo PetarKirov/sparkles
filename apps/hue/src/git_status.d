@@ -244,11 +244,24 @@ struct GitStatusCache
     GitStatusMap map;
     Duration ttl = 5.seconds;
 
+    /**
+    The async driver seam (M17): when installed, a refresh is handed to this
+    delegate instead of a worker thread — the event-horizon arm points it at
+    a fiber that runs the git calls as spawned children (`capture`) and hands
+    the outcome back through $(LREF deliver) with the same `gen` it was
+    given. The loop can then drop its refresh-polling deadline cap: delivery
+    is an event, not something to poll for ($(LREF asyncMode)).
+    */
+    void delegate(string root, uint gen) asyncSpawn;
+
     private Task!(runGitStatus, string, uint)* inFlight;
     private uint gen;
     private bool pendingForce;
     private MonoTime last;
     private bool haveLast;
+    private bool asyncInFlight;
+    private StatusResult asyncDone;
+    private bool asyncReady;
 
 @system:
 
@@ -264,12 +277,30 @@ struct GitStatusCache
     }
 
     /// True while a refresh is in flight (the host may idle-tick on it).
-    bool refreshing() const pure nothrow @nogc => inFlight !is null;
+    bool refreshing() const pure nothrow @nogc
+        => inFlight !is null || asyncInFlight;
+
+    /// True when refreshes go through $(LREF asyncSpawn) — completion is
+    /// then delivered (and the loop woken) rather than polled for, so a
+    /// host needs no refresh-bounded wait deadline.
+    bool asyncMode() const pure nothrow @nogc => asyncSpawn !is null;
+
+    /// The async driver's completion entry: the counterpart of the worker
+    /// thread finishing. `gen` is the value `asyncSpawn` was handed; a stale
+    /// generation is discarded by the next `poll` exactly like a stale
+    /// thread result.
+    void deliver(uint resultGen, bool ok, string toplevel, string payload)
+        pure nothrow
+    {
+        asyncInFlight = false;
+        asyncDone = StatusResult(resultGen, ok, toplevel, payload);
+        asyncReady = true;
+    }
 
     /// Starts a refresh if the TTL has lapsed and none is in flight.
     void ensureFresh()
     {
-        if (inFlight !is null)
+        if (refreshing)
             return;
         if (haveLast && MonoTime.currTime - last < ttl)
             return;
@@ -281,19 +312,30 @@ struct GitStatusCache
     void force()
     {
         ++gen;
-        if (inFlight is null)
+        if (!refreshing)
             spawn();
         else
             pendingForce = true;
     }
 
-    /// Harvests a finished refresh; returns true when a new map applied.
+    /// Harvests a finished refresh (either driver); returns true when a new
+    /// map applied.
     bool poll()
     {
-        if (inFlight is null || !inFlight.done)
+        StatusResult r;
+        if (asyncReady)
+        {
+            r = asyncDone;
+            asyncReady = false;
+            asyncDone = StatusResult.init;
+        }
+        else if (inFlight !is null && inFlight.done)
+        {
+            r = inFlight.yieldForce;
+            inFlight = null;
+        }
+        else
             return false;
-        const r = inFlight.yieldForce;
-        inFlight = null;
         if (pendingForce)
         {
             pendingForce = false;
@@ -310,6 +352,12 @@ struct GitStatusCache
 
     private void spawn()
     {
+        if (asyncSpawn !is null)
+        {
+            asyncInFlight = true;
+            asyncSpawn(root, gen);
+            return;
+        }
         inFlight = task!runGitStatus(root, gen);
         inFlight.executeInNewThread();
     }
@@ -398,6 +446,54 @@ unittest
     assert(m.statusOf("/repo/build/out.o", false) == GitStatus.ignored);
     assert(m.statusOf("/repo/README.md", false) == GitStatus.none);
     assert(m.statusOf("/elsewhere/x", false) == GitStatus.none);
+}
+
+@("git_status.cache.asyncDriverGenerationGuard")
+@system
+unittest
+{
+    // The async seam replaces the worker thread entirely: every spawn goes
+    // through the delegate, and delivery + the generation guard behave like
+    // the thread path's harvest — a stale in-flight result never clobbers a
+    // newer request's, and a `force` during flight respawns on harvest.
+    GitStatusCache c;
+    c.root = "/repo";
+    string[] spawns;
+    uint[] gens;
+    c.asyncSpawn = (string root, uint g) { spawns ~= root; gens ~= g; };
+
+    c.force();
+    assert(c.asyncMode && c.refreshing);
+    assert(spawns == ["/repo"] && gens.length == 1);
+
+    // A second force while in flight: no respawn yet, just invalidation.
+    c.force();
+    assert(spawns.length == 1);
+
+    // The first (now stale) refresh delivers: discarded, and the pending
+    // force respawns with the current generation.
+    c.deliver(gens[0], true, "/repo", " M src/app.d\0");
+    assert(!c.poll(), "a stale generation must not apply");
+    assert(!c.map.present);
+    assert(spawns.length == 2 && gens[1] == gens[0] + 1, "the force respawned");
+    assert(c.refreshing);
+
+    // The current generation delivers and applies.
+    c.deliver(gens[1], true, "/repo", " M src/app.d\0");
+    assert(c.poll());
+    assert(c.map.present);
+    assert(c.map.statusOf("/repo/src/app.d", false) == GitStatus.modified);
+    assert(!c.refreshing);
+
+    // Fresh within the TTL: ensureFresh spawns nothing.
+    c.ensureFresh();
+    assert(spawns.length == 2);
+
+    // A failed refresh clears the map rather than keeping a stale one.
+    c.force();
+    c.deliver(gens[2], false, null, null);
+    assert(c.poll());
+    assert(!c.map.present);
 }
 
 @("git_status.cache.ttlGenerationAndRealRepo")

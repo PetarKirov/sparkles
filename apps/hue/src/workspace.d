@@ -24,9 +24,9 @@ import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.ui_tui : CellStyle, Color, Grid;
 import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
-import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
-    linesPerNotch, match, PointerAction, PointerButton, PointerEvent,
-    ResizeEvent, WheelEvent;
+import sparkles.input : EndOfInput, Event, isEndOfInput, isNoEvent, Key,
+    KeyEvent, linesPerNotch, match, NoEvent, PointerAction, PointerButton,
+    PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.style : Slot;
@@ -735,16 +735,20 @@ private enum liveTick = 33.msecs;
 
 /// The wait deadline both loop arms compute identically: the lantern
 /// panel's remainder (`LTN4`), capped by the live oracle's tick while an
-/// oracle runs, capped at 150 ms while a git-status refresh is in flight
-/// (the async arm's replacement for the old nested polling loop — one
-/// capped wait instead of `ready(150)` slices).
-private Duration waitDeadline(ref WorkspaceTui w) @system
+/// oracle runs, capped at 150 ms while a git-status refresh is in flight.
+/// An `eventDriven` caller (the async arm with oracle watchers) skips the
+/// oracle tick — arriving lines wake it through the channel — and the git
+/// cap disappears whenever the cache delivers instead of being polled
+/// (`asyncMode`), which is every refresh once the ring drives them.
+private Duration waitDeadline(ref WorkspaceTui w, bool eventDriven = false)
+    @system
 {
     const untilPanel = w.untilLanternShown();
-    Duration deadline = w.liveActive
+    Duration deadline = (w.liveActive && !eventDriven)
         ? (untilPanel < liveTick ? untilPanel : liveTick)
         : untilPanel;
-    if (w.tree.git.refreshing && deadline > 150.msecs)
+    if (w.tree.git.refreshing && !w.tree.git.asyncMode
+        && deadline > 150.msecs)
         deadline = 150.msecs;
     return deadline;
 }
@@ -773,9 +777,77 @@ the blocking arm passes to `next()`. An idle document costs zero wakeups.
 private void runWorkspaceAsync(ref WorkspaceTui w, ref TerminalSession term,
     ref Sched sched) @system
 {
+    import sparkles.event_horizon.backend.concept : canSubmitOp;
+    import sparkles.event_horizon.backend.select : DefaultBackend;
     import sparkles.event_horizon.errors : IoError;
+    import sparkles.event_horizon.op : OpPollAdd, OpWaitid;
     import sparkles.event_horizon.scope_ : withDeadline, withScope;
     import sparkles.ui_app.event_source : EventChannel, pumpTerminalInput;
+
+    // What this backend lets the loop own outright: with `OpPollAdd` the
+    // live oracles become parked pipe reads (no 33 ms tick); with `OpWaitid`
+    // the git refresh becomes a spawned child on the ring (no 150 ms cap).
+    enum liveWatchable = canSubmitOp!(DefaultBackend, OpPollAdd);
+    enum gitAsync = canSubmitOp!(DefaultBackend, OpWaitid);
+
+    // One oracle watcher (a daemon fiber): parks until the oracle's stdout
+    // is readable, wakes the loop with a `NoEvent`, and re-arms. The loop's
+    // poll pass does the draining — the watcher only converts readability
+    // into a wakeup. Exits when the session ends (its fd turns -1); at
+    // worst one spurious wake follows a drained burst (the readiness op
+    // completed before the drain), which the poll pass answers with "no
+    // change" and no repaint.
+    static void watchOracle(Sched* sched, EventChannel* events,
+        LiveTypesSession* session)
+    {
+        import sparkles.event_horizon.io : waitReadable;
+
+        for (;;)
+        {
+            const fd = session.readFd;
+            if (fd < 0)
+                return; // failed, shut down, or replaced
+            if (waitReadable(*sched, fd).hasError)
+                return;
+            if (events.put(*sched, Event(NoEvent())).hasError)
+                return; // channel closed: the loop is tearing down
+        }
+    }
+
+    // One git refresh (a daemon fiber): the `GitStatusCache.asyncSpawn`
+    // driver — the worker thread re-shaped as spawned children on the ring
+    // (M17). Failures deliver `ok: false`, exactly like the thread path.
+    static if (gitAsync)
+        static void refreshGitStatus(Sched* sched, WorkspaceTui* w,
+            EventChannel* events, string root, uint gen)
+        {
+            import std.string : strip;
+            import sparkles.event_horizon.live : capture;
+            import sparkles.event_horizon.proc : ProcessConfig, StdioMode,
+                StdioSpec;
+
+            ProcessConfig cfg;
+            cfg.stdoutSpec = StdioSpec(StdioMode.pipe);
+            cfg.stderrSpec = StdioSpec(StdioMode.nullDev);
+
+            bool ok;
+            string top, payload;
+            auto tl = capture(*sched,
+                ["git", "-C", root, "rev-parse", "--show-toplevel"], cfg);
+            if (!tl.hasError && tl.value.status.ok)
+            {
+                top = (cast(const(char)[]) tl.value.stdout_[]).strip.idup;
+                auto st = capture(*sched, ["git", "-C", root, "status",
+                    "--porcelain", "-z", "--ignored=matching"], cfg);
+                if (!st.hasError && st.value.status.ok)
+                {
+                    payload = (cast(const(char)[]) st.value.stdout_[]).idup;
+                    ok = true;
+                }
+            }
+            w.tree.git.deliver(gen, ok, top, payload);
+            cast(void) events.put(*sched, Event(NoEvent()));
+        }
 
     // SIGWINCH becomes a channel event through a signalfd — never an EINTR
     // side effect (a parked ring read is not interruptible the way the
@@ -802,12 +874,29 @@ private void runWorkspaceAsync(ref WorkspaceTui w, ref TerminalSession term,
     version (linux)
         auto winchP = (() @trusted => &winch)();
 
+    auto eventsP = (() @trusted => &events)();
+
     sched.run(() {
         cast(void) withScope!((ref sc) {
+            auto scP = (() @trusted => &sc)();
             sc.spawnDaemon(() { pumpTerminalInput(*schedP, events, 0); });
             version (linux)
                 if (winchOk)
                     sc.spawnDaemon(() { pumpResizeSignals(*schedP, events, *winchP); });
+
+            // The delegate must not outlive this frame; a root change wipes
+            // the cache (delegate included), so it is re-installed each pass.
+            static if (gitAsync)
+                scope (exit) wP.tree.git.asyncSpawn = null;
+
+            // A real function frame per call: a closure declared in a loop
+            // captures ONE shared slot, so the spawn is factored out to give
+            // each watcher its own `sess`.
+            LiveTypesSession*[3] watched;
+            void watchSession(LiveTypesSession* sess)
+            {
+                scP.spawnDaemon(() { watchOracle(schedP, eventsP, sess); });
+            }
 
             // Every event repaints; a tick only does when it changed the
             // document, so an idle session emits nothing to the terminal.
@@ -818,6 +907,34 @@ private void runWorkspaceAsync(ref WorkspaceTui w, ref TerminalSession term,
                 // or tip paints in the same pass.
                 dirty |= wP.pollLive();
                 dirty |= wP.pollDiffTypes();
+                if (wP.tree.git.poll())
+                {
+                    wP.tree.rebuild();
+                    dirty = true;
+                }
+
+                static if (gitAsync)
+                    if (wP.tree.git.asyncSpawn is null)
+                        wP.tree.git.asyncSpawn = (string root, uint gen) {
+                            scP.spawnDaemon(() {
+                                refreshGitStatus(schedP, wP, eventsP, root, gen);
+                            });
+                        };
+
+                // New oracle sessions get their readiness watchers; a
+                // replaced session's watcher exits on its own (fd -1).
+                static if (liveWatchable)
+                {
+                    LiveTypesSession*[3] sessions =
+                        [wP.live, wP.diffLive[0], wP.diffLive[1]];
+                    foreach (i, s; sessions)
+                        if (s !is watched[i])
+                        {
+                            watched[i] = s;
+                            if (s !is null)
+                                watchSession(s);
+                        }
+                }
 
                 if (dirty)
                 {
@@ -837,7 +954,7 @@ private void runWorkspaceAsync(ref WorkspaceTui w, ref TerminalSession term,
                 if (shape.length)
                     termP.writeOutOfBand(shape); // OSC 22 pointer shape
 
-                const deadline = waitDeadline(*wP);
+                const deadline = waitDeadline(*wP, eventDriven: liveWatchable);
                 Event ev;
                 bool haveEvent;
                 if (deadline == Duration.max)
@@ -883,6 +1000,8 @@ private void runWorkspaceAsync(ref WorkspaceTui w, ref TerminalSession term,
                 }
                 if (ev.isEndOfInput)
                     return;
+                if (ev.isNoEvent)
+                    continue; // a wake: the top-of-loop polls do the work
                 dirty = true;
                 if (ev.match!((in ResizeEvent _) => true, _ => false))
                     continue; // next iteration re-measures + re-arranges

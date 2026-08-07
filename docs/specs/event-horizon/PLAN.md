@@ -238,6 +238,12 @@ applications:
    `git status --porcelain` child (deleting the nested 150 ms wait); the
    resident oracles' non-blocking `tryReadLine` polling becomes parked
    pipe reads. Then the `--gui` frame loop onto the frame driver.
+   (Done: the loops landed with M17; the git child rides `capture` behind
+   a `GitStatusCache.asyncSpawn` driver seam gated on `OpWaitid`, and the
+   oracles keep their `ResidentProcess` wire while daemon watcher fibers
+   park `waitReadable` on their stdout and wake the loop through the event
+   channel — a ~10 s tree-open oracle-active session measures 8 ring
+   waits, no 33/150 ms wakeups.)
 4. `apps/terminal` follows (the M13 port, now with its substrate in
    place): PTY master reads and the child reap park instead of the
    per-frame `EAGAIN` drain; the idle no-swap behavior is preserved.
