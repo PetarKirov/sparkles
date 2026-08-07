@@ -30,6 +30,12 @@ dependency "sparkles:ui-tui" path="../.."
 // which `gui.d` drives). Declared rather than inherited through `sparkles:ui`
 // (`PKG2`).
 dependency "sparkles:input" path="../.."
+// The application host's terminal arm (M17): the ring-driven input source
+// (`sparkles.ui_app.event_source`) the workspace loop's event-horizon arm
+// pumps through. The `tui` configuration sets `UiAppTui` without pulling the
+// GPU arm; the GUI-loop migration flips the application config to `full`.
+dependency "sparkles:ui-app" path="../.."
+subConfiguration "sparkles:ui-app" "tui"
 
 // Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
 // the preview support modules (gui_text.d layout, gui_ansi.d libghostty bridge,
