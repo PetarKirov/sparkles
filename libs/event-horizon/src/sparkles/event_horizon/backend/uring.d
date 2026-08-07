@@ -549,22 +549,26 @@ private:
 version (unittest)
 {
     import sparkles.event_horizon.backend.concept : canSubmitOp, isCompletionBackend;
+    import sparkles.event_horizon.errors : skipReason;
     import sparkles.event_horizon.op : OpClass;
+    import sparkles.test_runner.skip : skipTest;
 
     static assert(isCompletionBackend!UringBackend);
     static assert(canSubmitOp!(UringBackend, OpNop));
 
-    /// Opens a backend for a test; `false` = SKIP (no io_uring / old kernel).
-    private bool openOrSkip(ref UringBackend b) @safe nothrow @nogc
+    /// Opens a backend for a test, or SKIPs it (no io_uring / old kernel).
+    /// Call before arming any `scope (exit)`: it does not return on the skip.
+    private void openOrSkip(ref UringBackend b) @safe nothrow @nogc
     {
         auto r = b.open(BackendConfig());
         if (r.hasError)
         {
+            // See createOrSkip: the §3.4 stage contract stays a hard assert,
+            // so only a conforming failure degrades to a skip.
             assert(r.error.stage == IoErrorStage.setup
                 || r.error.stage == IoErrorStage.probe);
-            return false;
+            skipTest(skipReason(r.error));
         }
-        return true;
     }
 }
 
@@ -588,8 +592,7 @@ unittest
 {
     UringBackend b;
     OpSlot dummySlot;
-    if (!openOrSkip(b))
-        return; // SKIP: io_uring unavailable on this host
+    openOrSkip(b);
     scope (exit) b.close();
 
     const caps = b.caps();
@@ -608,8 +611,7 @@ unittest
 {
     UringBackend b;
     OpSlot dummySlot;
-    if (!openOrSkip(b))
-        return; // SKIP
+    openOrSkip(b);
     scope (exit) b.close();
 
     const token = OpToken.pack(1, 1, OpClass.user);
@@ -635,8 +637,7 @@ unittest
 {
     UringBackend b;
     OpSlot dummySlot;
-    if (!openOrSkip(b))
-        return; // SKIP
+    openOrSkip(b);
     scope (exit) b.close();
 
     // Nothing armed: a 1ms deadline wait must return (not hang) and report
@@ -659,7 +660,7 @@ unittest
     cfg.sqEntries = 4;
     auto opened = b.open(cfg);
     if (opened.hasError)
-        return; // SKIP
+        skipTest(skipReason(opened.error));
     scope (exit) b.close();
 
     // Fill the SQ without flushing: the 5th trySubmit must report full.

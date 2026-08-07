@@ -81,6 +81,12 @@ private:
     int _fd = -1;
 }
 
+version (unittest)
+{
+    import sparkles.event_horizon.sched : schedOrSkip;
+    import sparkles.test_runner.skip : skipTest;
+}
+
 @("signals.signalfd.throughRing")
 @safe
 unittest
@@ -88,13 +94,15 @@ unittest
     import core.sys.posix.signal : SIGUSR1, raise;
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP: io_uring unavailable
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     SignalFd sig;
     if (SignalFd.create(sig, [SIGUSR1]).hasError)
-        return; // SKIP: sandboxed
+    {
+        s.destroy(); // idempotent; see loop.registeredBuffers.fixedReadPath
+        skipTest("signalfd unavailable (sandboxed)");
+    }
     scope (exit) sig.close();
 
     int seen;

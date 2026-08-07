@@ -271,6 +271,12 @@ unittest
 
 version (EventHorizonLibkqueue) {} else version (linux)
 {
+    version (unittest)
+    {
+        import sparkles.event_horizon.errors : skipReason;
+        import sparkles.test_runner.skip : skipTest;
+    }
+
     @("probe.kernelVersion.parses")
     @safe nothrow @nogc
     unittest
@@ -287,11 +293,13 @@ version (EventHorizonLibkqueue) {} else version (linux)
         auto r = probeSystem();
         if (r.hasError)
         {
-            // SKIP-style: io_uring genuinely unavailable (container/seccomp)
-            // or pre-6.1 kernel — the hard-error path is itself the test.
+            // The hard-error path is itself under test, so the stage contract
+            // is asserted even on a degraded host …
             assert(r.error.stage == IoErrorStage.setup
                 || r.error.stage == IoErrorStage.probe);
-            return;
+            // … but none of the capability floor below ran, so this is a SKIP
+            // rather than a pass.
+            skipTest(skipReason(r.error));
         }
         const caps = r.value;
         assert(caps.backend == BackendId.uring);

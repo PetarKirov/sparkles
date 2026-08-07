@@ -429,18 +429,11 @@ IoResult!void checkCancellation(X)(ref X exec) if (isFiberExecutor!X)
 // × protect (inside / outside). Driven against the live Sched, and SKIP-degrading
 // wherever the selected backend cannot be created.
 //
-// NB the gate is `unittest`, not `linux`: `Sched` rides whichever backend
-// `backend.select` picks (io_uring on Linux, kqueue on the BSDs/macOS), so
-// gating this helper to Linux while leaving the tests below ungated made the
-// module fail to compile off Linux with `undefined identifier Sched` — a break
-// that stayed latent until macOS CI first ran on this branch. The tests are not
-// Linux-specific; `schedOrSkip` is what makes them portable.
+// NB the gate is `unittest`, not `linux` — see `schedOrSkip` in `sched.d`: the
+// tests below are not Linux-specific, and it is what makes them portable.
 version (unittest)
 {
-    import sparkles.event_horizon.sched : Sched;
-
-    private bool schedOrSkip(ref Sched s) @trusted nothrow
-        => !Sched.create(s).hasError;
+    import sparkles.event_horizon.sched : Sched, schedOrSkip;
 }
 
 @("scope.join.basicValueAndOrdering")
@@ -448,8 +441,7 @@ version (unittest)
 unittest
 {
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     int children;
@@ -474,8 +466,7 @@ unittest
     import sparkles.event_horizon.io : sleep;
 
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     int siblingErrno;
@@ -510,8 +501,7 @@ unittest
     import sparkles.event_horizon.io : sleep;
 
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     bool childInterrupted;
@@ -538,8 +528,7 @@ unittest
     import sparkles.event_horizon.io : sleep;
 
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     auto r = s.run(() {
@@ -568,8 +557,7 @@ unittest
     import sparkles.event_horizon.io : sleep;
 
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     auto r = s.run(() {
@@ -599,8 +587,7 @@ unittest
     import sparkles.event_horizon.io : sleep;
 
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     auto r = s.run(() {
@@ -631,8 +618,7 @@ unittest
     import sparkles.event_horizon.io : sleep;
 
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     bool sleptCleanly, sawPendingInterrupt;
@@ -664,8 +650,7 @@ unittest
     import sparkles.event_horizon.io : sleep;
 
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     bool daemonInterrupted, workerRan;
@@ -688,8 +673,7 @@ unittest
 unittest
 {
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     auto r = s.run(() {
@@ -712,8 +696,7 @@ unittest
     import sparkles.event_horizon.io : sleep;
 
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     bool innerInterrupted;
@@ -738,8 +721,7 @@ unittest
 unittest
 {
     Sched s;
-    if (!schedOrSkip(s))
-        return; // SKIP
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     int[2] order;

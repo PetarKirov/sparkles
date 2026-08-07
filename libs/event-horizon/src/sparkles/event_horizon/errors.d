@@ -118,6 +118,18 @@ IoResult!T ioErr(T)(int errnoValue, OpKind op,
 IoResult!uint fromRes(int res, OpKind op) @safe pure nothrow @nogc
     => res < 0 ? ioErr!uint(-res, op) : ioOk(cast(uint) res);
 
+version (unittest)
+{
+    /// The `skipTest` reason for an `IoError` that degrades a test to a SKIP.
+    /// Reuses the error's own borrowed CTFE literal, so the skip line reads
+    /// exactly like the diagnostic the production path would have emitted.
+    /// NB by value, not `in`: `-preview=in` makes the parameter `scope`, and
+    /// dip1000 then rejects returning the borrowed `context` slice out of it.
+    package(sparkles.event_horizon) string skipReason(const IoError e)
+        @safe pure nothrow @nogc
+        => e.context.length ? e.context : "io_uring unavailable";
+}
+
 @("errors.ioOk")
 @safe pure nothrow @nogc
 unittest

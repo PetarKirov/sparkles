@@ -119,6 +119,11 @@ private:
     int _fd = -1;
 }
 
+version (unittest)
+{
+    import sparkles.event_horizon.sched : schedOrSkip;
+}
+
 @("watch.inotify.createEventThroughRing")
 @safe
 unittest
@@ -126,8 +131,7 @@ unittest
     import sparkles.event_horizon.io : yieldNow;
 
     Sched s;
-    if (Sched.create(s).hasError)
-        return; // SKIP: io_uring unavailable
+    schedOrSkip(s);
     scope (exit) s.destroy();
 
     enum dir = "/tmp/sparkles-event-horizon-watch-test";

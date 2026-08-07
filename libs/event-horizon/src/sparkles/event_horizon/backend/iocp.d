@@ -679,6 +679,7 @@ version (unittest)
 
     import sparkles.event_horizon.buffer : Buf;
     import sparkles.event_horizon.op : OpSlot;
+    import sparkles.test_runner.skip : skipTest;
 }
 
 /// The M11 data-path gate (runs under Wine): drive a real WSASend through the
@@ -691,7 +692,7 @@ unittest
 {
     IocpBackend b;
     if (b.open(BackendConfig()).hasError)
-        return; // SKIP: winsock unavailable
+        skipTest("winsock unavailable");
     scope (exit) b.close();
 
     // A connected loopback pair: listener + a client thread that connects,

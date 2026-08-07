@@ -387,18 +387,25 @@ version (linux)  :  // tests drive the uring backend directly
 
 version (unittest)
 {
-    /// Creates a loop for a test; `false` = SKIP (no io_uring / old kernel).
-    private bool createOrSkip(ref DefaultLoop loop, LoopConfig cfg = LoopConfig())
+    import sparkles.event_horizon.errors : skipReason;
+    import sparkles.test_runner.skip : skipTest;
+
+    /// Creates a loop for a test, or SKIPs it (no io_uring / old kernel).
+    /// Call before arming any `scope (exit)`: it does not return on the skip.
+    private void createOrSkip(ref DefaultLoop loop, LoopConfig cfg = LoopConfig())
         @safe nothrow @nogc
     {
         auto r = DefaultLoop.create(loop, cfg);
         if (r.hasError)
         {
+            // Asserted before the skip, and deliberately not folded into it:
+            // §3.4 says creation can only fail these two ways, so a violated
+            // contract must still fail the test rather than be laundered
+            // into a skip.
             assert(r.error.stage == IoErrorStage.setup
                 || r.error.stage == IoErrorStage.probe);
-            return false;
+            skipTest(skipReason(r.error));
         }
-        return true;
     }
 }
 
@@ -407,8 +414,7 @@ version (unittest)
 unittest
 {
     DefaultLoop loop;
-    if (!createOrSkip(loop))
-        return; // SKIP
+    createOrSkip(loop);
     scope (exit) loop.destroy();
 
     static struct Seen
@@ -445,8 +451,7 @@ unittest
     import core.time : msecs;
 
     DefaultLoop loop;
-    if (!createOrSkip(loop))
-        return; // SKIP
+    createOrSkip(loop);
     scope (exit) loop.destroy();
 
     static void onTimer(void* ctx, ref Completion done) nothrow @nogc
@@ -475,8 +480,7 @@ unittest
     import core.time : minutes;
 
     DefaultLoop loop;
-    if (!createOrSkip(loop))
-        return; // SKIP
+    createOrSkip(loop);
     scope (exit) loop.destroy();
 
     static struct Seen
@@ -513,8 +517,7 @@ unittest
     import core.time : msecs;
 
     DefaultLoop loop;
-    if (!createOrSkip(loop))
-        return; // SKIP
+    createOrSkip(loop);
     scope (exit) loop.destroy();
 
     static void onTimer(void* ctx, ref Completion) nothrow @nogc
@@ -540,8 +543,7 @@ unittest
     import sparkles.event_horizon.buffer : BufferPool;
 
     DefaultLoop loop;
-    if (!createOrSkip(loop))
-        return; // SKIP
+    createOrSkip(loop);
     scope (exit) loop.destroy();
 
     int[2] fds;
@@ -610,8 +612,7 @@ unittest
     import core.time : minutes;
 
     DefaultLoop loop;
-    if (!createOrSkip(loop))
-        return; // SKIP
+    createOrSkip(loop);
     scope (exit) loop.destroy();
 
     static void onFirst(void* ctx, ref Completion) nothrow @nogc
@@ -645,8 +646,7 @@ unittest
 unittest
 {
     DefaultLoop loop;
-    if (!createOrSkip(loop))
-        return; // SKIP
+    createOrSkip(loop);
     scope (exit) loop.destroy();
 
     auto status = loop.runOnce();
@@ -661,12 +661,17 @@ unittest
     import sparkles.event_horizon.buffer : BufferPool, BufOrigin;
 
     DefaultLoop loop;
-    if (!createOrSkip(loop))
-        return; // SKIP
+    createOrSkip(loop);
     scope (exit) loop.destroy();
 
     if (!loop.caps().registeredBuffers)
-        return; // SKIP: registered buffers unsupported
+    {
+        // Tear down explicitly: an `Error` unwinding out of a `nothrow` frame
+        // is not guaranteed to run the `scope (exit)` above. `destroy` is
+        // idempotent, so doing both is correct.
+        loop.destroy();
+        skipTest("registered buffers unsupported");
+    }
 
     BufferPool!() pool;
     assert(!BufferPool!().create(pool, 2, 64).hasError);
@@ -734,8 +739,7 @@ unittest
 unittest
 {
     DefaultLoop loop;
-    if (!createOrSkip(loop))
-        return; // SKIP
+    createOrSkip(loop);
     scope (exit) loop.destroy();
 
     int[2] fds;
@@ -809,12 +813,14 @@ unittest
 unittest
 {
     DefaultLoop loop;
-    if (!createOrSkip(loop))
-        return; // SKIP
+    createOrSkip(loop);
     scope (exit) loop.destroy();
 
     if (!loop.caps().multishotAccept)
-        return; // SKIP
+    {
+        loop.destroy(); // see loop.registeredBuffers.fixedReadPath
+        skipTest("multishot accept unsupported");
+    }
 
     // A loopback listener.
     int listenFd;
