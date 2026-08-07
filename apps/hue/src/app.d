@@ -93,6 +93,9 @@ struct CliParams
     @CliOption("patch", "Treat the input (a file target or piped stdin) as a unified diff; piped stdin is also sniffed without the flag.")
     bool patch;
 
+    @CliOption("pr", "Open a pull request as a diff session: a number (in this repository), owner/repo#number, or a forge URL. Fetched natively over the forge API; the token comes from $GITHUB_TOKEN, $GH_TOKEN, or gh's config — never a prompt.")
+    string pr;
+
     @CliOption("staged", "Diff the index (staged changes) against HEAD or the given revision; implies --diff.")
     bool staged;
 
@@ -617,7 +620,26 @@ int main(string[] args)
     Document doc;
     try
     {
-        if (cli.diff || cli.staged)
+        if (cli.pr.length)
+        {
+            // `DPR1`: a pull request IS a diff session — fetched through the
+            // forge seam, assembled into a patch, and then handed to exactly
+            // the pipeline a local diff uses.
+            import forge_client : fetchPullRequest;
+            import std.conv : text;
+
+            auto fetched = fetchPullRequest(cli.pr);
+            if (fetched.hasError)
+            {
+                stderr.writeln("hue: ", fetched.error.toString());
+                return 1;
+            }
+            const got = fetched.value;
+            doc = pipeline.fromPatchSource(null,
+                text(got.repo.owner, "/", got.repo.name, " #",
+                    got.pr.number, " ", got.pr.title), got.patch);
+        }
+        else if (cli.diff || cli.staged)
         {
             import std.file : exists, isFile;
 
