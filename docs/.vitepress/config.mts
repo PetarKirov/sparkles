@@ -659,6 +659,14 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Fuzzy',
+              collapsed: false,
+              items: [
+                { text: 'Specification', link: '/specs/fuzzy/SPEC' },
+                { text: 'Delivery Plan', link: '/specs/fuzzy/PLAN' },
+              ],
+            },
+            {
               text: 'Hue',
               collapsed: false,
               items: [
