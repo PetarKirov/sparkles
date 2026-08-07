@@ -277,6 +277,122 @@ struct DockLayout
         return r;
     }
 
+    /**
+    `moved` re-docked against `target` in `zone` (`DCK5`) — a pure
+    `layout → layout` step, so a drop is checkable without a pointer.
+
+    Stacking makes the target a tabbed group (or joins the one it is
+    already in) with the moved pane active, because a reader who just
+    dropped something wants to see it. A directional drop splits the
+    target along the matching axis, with `moved` before or after it.
+
+    Removing the moved pane first is what makes this total: its old
+    parent may collapse, and that collapse can be the target's own
+    ancestor. Reusing $(LREF reconciled) for the removal means the
+    collapse rules are stated once rather than twice — and the target is
+    looked up AFTERWARDS, in the rebuilt arena, so a stale index cannot
+    survive the move.
+
+    A no-op is returned unchanged: dropping a pane onto itself, onto a
+    pane it already sits beside in that direction's degenerate case, or
+    with an unknown id, all leave the layout alone rather than producing a
+    subtly different one.
+    */
+    DockLayout redocked(PaneId moved, PaneId target, DockZone zone) const
+    {
+        if (zone == DockZone.none || moved == target)
+            return DockLayout(this);
+        if (nodeOf(moved) == uint.max || nodeOf(target) == uint.max)
+            return DockLayout(this);
+
+        // The moved pane's own leaf, kept so its extent/constraints and
+        // header survive the trip.
+        const src = nodes[nodeOf(moved)];
+
+        // Take it out first: its parent may collapse, possibly above the
+        // target. `reconciled` already knows those rules.
+        PaneId[] keep;
+        foreach (p; panes())
+            if (p != moved)
+                keep ~= p;
+        auto r = reconciled(keep);
+        if (!r.nodes.length)
+            return DockLayout(this); // nothing left to dock against
+
+        const t = r.nodeOf(target);
+        if (t == uint.max)
+            return DockLayout(this);
+
+        // Re-add the moved leaf into the rebuilt arena. Field by field
+        // through `tupleof` for the same reason the copy constructor does:
+        // a named list would lose the next field somebody adds.
+        DockNode m;
+        static foreach (j; 0 .. DockNode.tupleof.length)
+        {
+            static if (is(typeof(DockNode.tupleof[j]) == uint[]))
+                m.tupleof[j] = null; // a leaf has no children
+            else
+                m.tupleof[j] = src.tupleof[j];
+        }
+        r.nodes ~= m;
+        const leaf = cast(uint)(r.nodes.length - 1);
+
+        uint replacement;
+        if (zone == DockZone.center)
+        {
+            // Join the target's group if it is already tabbed; otherwise
+            // the target becomes one.
+            uint owner = uint.max;
+            foreach (i, ref n; r.nodes)
+                if (n.kind == DockKind.tabs)
+                    foreach (c; n.children)
+                        if (c == t)
+                            owner = cast(uint) i;
+            if (owner != uint.max)
+            {
+                r.nodes[owner].children ~= leaf;
+                r.nodes[owner].active =
+                    cast(uint)(r.nodes[owner].children.length - 1);
+                return r;
+            }
+            r.nodes ~= DockNode(kind: DockKind.tabs, children: [t, leaf],
+                active: 1, extent: r.nodes[t].extent);
+            replacement = cast(uint)(r.nodes.length - 1);
+            // The target keeps its own share only through the group now.
+            r.nodes[t].extent = 0;
+        }
+        else
+        {
+            const vertical = zone == DockZone.north || zone == DockZone.south;
+            const before = zone == DockZone.north || zone == DockZone.west;
+            uint[] kids = before ? [leaf, t] : [t, leaf];
+            r.nodes ~= DockNode(kind: DockKind.split,
+                axis: vertical ? DockAxis.vertical : DockAxis.horizontal,
+                children: kids, extent: r.nodes[t].extent);
+            replacement = cast(uint)(r.nodes.length - 1);
+            // The new container takes the target's share of the parent;
+            // inside it, both children flex unless the moved one was fixed.
+            r.nodes[t].extent = 0;
+        }
+
+        // Hook the replacement where the target used to hang — skipping
+        // the replacement itself, which legitimately holds `t` as a child.
+        // Rewriting that one too made the node its own parent, and the
+        // walk recursed until the stack ran out.
+        if (r.root == t)
+            r.root = replacement;
+        else
+            foreach (i, ref n; r.nodes)
+            {
+                if (i == replacement || n.kind == DockKind.leaf)
+                    continue;
+                foreach (ref c; n.children)
+                    if (c == t)
+                        c = replacement;
+            }
+        return r;
+    }
+
     /// The pane ids this layout names, in arena order — what a caller
     /// compares against the panes it can actually offer.
     PaneId[] panes() const
@@ -596,6 +712,61 @@ private void walkTabs(in DockLayout l, uint idx, in Rect area,
         return;
     walk(l, activeChild, Rect(area.x, area.y + strip, area.width,
         area.height - strip > 0 ? area.height - strip : 0), f, focused);
+}
+
+/// Where a dragged pane would land relative to a target pane (`DCK5`).
+enum DockZone : ubyte
+{
+    none,   /// not over a droppable target
+    center, /// stack into the target — it becomes (or joins) a tabbed group
+    north,  /// split the target, dropping above it
+    south,  /// …below
+    west,   /// …left
+    east,   /// …right
+}
+
+/**
+The hint zone a position falls in, within `rect` (`DCK5`).
+
+Edge bands take a fixed fraction of the target and the middle is the
+stack zone, which is the arrangement every dock framework converged on
+because it is predictable under a moving pointer: bands do not resize as
+the pointer travels, so the hint does not flicker between two answers
+near a boundary. Pure, so the zone a drag would drop into is testable
+without dragging anything.
+*/
+DockZone dockZoneAt(in Rect rect, in Point p, int bandPercent = 25)
+    @safe pure nothrow @nogc
+{
+    if (rect.width <= 0 || rect.height <= 0)
+        return DockZone.none;
+    if (p.x < rect.x || p.x >= rect.x + rect.width
+        || p.y < rect.y || p.y >= rect.y + rect.height)
+        return DockZone.none;
+    const bw = rect.width * bandPercent / 100;
+    const bh = rect.height * bandPercent / 100;
+    const dx = p.x - rect.x, dy = p.y - rect.y;
+    const fromRight = rect.width - 1 - dx, fromBottom = rect.height - 1 - dy;
+    // Nearest edge wins, so a corner resolves to one zone rather than to
+    // whichever test happened to run first.
+    const minEdge = () {
+        int m = dx;
+        if (dy < m) m = dy;
+        if (fromRight < m) m = fromRight;
+        if (fromBottom < m) m = fromBottom;
+        return m;
+    }();
+    if (bw <= 0 || bh <= 0)
+        return DockZone.center;
+    if (dx == minEdge && dx < bw)
+        return DockZone.west;
+    if (fromRight == minEdge && fromRight < bw)
+        return DockZone.east;
+    if (dy == minEdge && dy < bh)
+        return DockZone.north;
+    if (fromBottom == minEdge && fromBottom < bh)
+        return DockZone.south;
+    return DockZone.center;
 }
 
 /// What the container decided an event means (`DCK13`).
@@ -1477,4 +1648,104 @@ version (unittest)
 
     // Reconciling is idempotent, so a restore path can run it freely.
     assert(all.reconciled([side, docA, docB]) == all);
+}
+
+@("ui.dock.dockZoneBandsAndCorners")
+@safe pure nothrow @nogc unittest
+{
+    const r = Rect(0, 0, 100, 40); // bands: 25 wide, 10 tall
+    assert(dockZoneAt(r, Point(50, 20)) == DockZone.center);
+    assert(dockZoneAt(r, Point(2, 20)) == DockZone.west);
+    assert(dockZoneAt(r, Point(97, 20)) == DockZone.east);
+    assert(dockZoneAt(r, Point(50, 1)) == DockZone.north);
+    assert(dockZoneAt(r, Point(50, 38)) == DockZone.south);
+
+    // A corner resolves to its NEAREST edge, not to whichever test ran
+    // first — the property that keeps the hint from flickering there.
+    assert(dockZoneAt(r, Point(1, 5)) == DockZone.west);
+    assert(dockZoneAt(r, Point(8, 1)) == DockZone.north);
+
+    // Outside is no zone; a rect too small for bands is all stack.
+    assert(dockZoneAt(r, Point(-1, 5)) == DockZone.none);
+    assert(dockZoneAt(r, Point(100, 5)) == DockZone.none);
+    assert(dockZoneAt(Rect(0, 0, 2, 2), Point(1, 1)) == DockZone.center);
+    assert(dockZoneAt(Rect(0, 0, 0, 0), Point(0, 0)) == DockZone.none);
+}
+
+@("ui.dock.redockSplitsStacksAndCollapsesTheOldParent")
+@safe unittest
+{
+    enum PaneId side = 1, docA = 2, docB = 3;
+
+    static DockLayout threePane()
+    {
+        DockLayout a;
+        const s = a.addLeaf(side, extent: 20, minExtent: 10);
+        const x = a.addLeaf(docA);
+        const y = a.addLeaf(docB);
+        const rightCol = a.addSplit(DockAxis.vertical, [x, y]);
+        a.root = a.addSplit(DockAxis.horizontal, [s, rightCol]);
+        return a;
+    }
+
+    // Drop docB east of the sidebar: it leaves the right column, which
+    // collapses (a split of one is not a split), and lands beside the
+    // sidebar in a horizontal split.
+    auto east = threePane().redocked(docB, side, DockZone.east);
+    assert(east.panes().length == 3);
+    {
+        DockContainer c;
+        c.layout = east;
+        c.arrange(Rect(0, 0, 100, 40));
+        assert(c.paneFrames.length == 3);
+        // A drop splits the TARGET's area, so the pair shares the
+        // sidebar's 20 cells rather than taking space from docA — the
+        // behaviour every dock framework has, and the reason dropping into
+        // a narrow panel yields a narrow result.
+        assert(c.paneFrames[0].pane == side);
+        assert(c.paneFrames[1].pane == docB);
+        assert(c.paneFrames[0].rect.x == 0);
+        assert(c.paneFrames[0].rect.width + 1 + c.paneFrames[1].rect.width
+            == 20, "the pair tiles the target's former extent");
+        // docA keeps everything to the right of the original divider.
+        assert(c.paneFrames[2] == PaneFrame(docA, Rect(21, 0, 79, 40)));
+        // No stale group survived the move.
+        foreach (ref n; east.nodes)
+            if (n.kind != DockKind.leaf)
+                foreach (cc; n.children)
+                    assert(cc < east.nodes.length);
+    }
+
+    // Stacking onto the sidebar makes a tabbed group with the arrival
+    // showing — a reader who just dropped it wants to see it.
+    auto stacked = threePane().redocked(docB, side, DockZone.center);
+    {
+        DockContainer c;
+        c.layout = stacked;
+        c.arrange(Rect(0, 0, 100, 40));
+        assert(c.tabs.length == 2);
+        assert(c.tabs[1].pane == docB && c.tabs[1].active);
+        // Only the active one has a frame, so the other cannot be hit.
+        assert(c.paneFrames.length == 2);
+    }
+
+    // A second stack JOINS the group rather than nesting another one.
+    auto twice = stacked.redocked(docA, side, DockZone.center);
+    {
+        DockContainer c;
+        c.layout = twice;
+        c.arrange(Rect(0, 0, 100, 40));
+        assert(c.tabs.length == 3);
+        size_t groups;
+        foreach (ref n; twice.nodes)
+            if (n.kind == DockKind.tabs)
+                ++groups;
+        assert(groups == 1, "joined, not nested");
+    }
+
+    // No-ops stay no-ops rather than producing a subtly different layout.
+    auto base = threePane();
+    assert(base.redocked(docA, docA, DockZone.east) == base);
+    assert(base.redocked(docA, side, DockZone.none) == base);
+    assert(base.redocked(99, side, DockZone.east) == base);
 }
