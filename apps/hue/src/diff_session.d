@@ -18,6 +18,7 @@ module diff_session;
 import std.conv : text;
 
 import sparkles.diff.model : DiffDoc, FileEntry, RowKind;
+import sparkles.syntax.md.model : MdDoc;
 
 /// What happened to a file, as a reviewer names it.
 enum FileChange : ubyte
@@ -53,10 +54,35 @@ An ordered set of changed files plus the selected one. Mirrors
 idea over different content, and the keymap should not have to care which is
 under the cursor.
 */
+/**
+`DPR2`: what a fetched pull request puts above its file list.
+
+A session's own header rather than a PR-shaped one: everything here is
+something a local diff could also want to say (what this is, who wrote it,
+what it targets), and nothing here names a forge. Absent (`present == false`)
+for an ordinary diff, which renders exactly as before.
+
+The description is an `MdDoc` because it is rendered through hue's own
+markdown view — the dogfooding the spec asks for, and the reason a PR body's
+tables, fences and callouts look the way they do everywhere else.
+*/
+struct SessionHeader
+{
+    bool present;
+    string title;
+    string state;    /// "open", "merged", "closed", "draft"
+    string author;
+    string baseRef;
+    string headRef;
+    MdDoc description;
+}
+
 struct DiffSession
 {
     SessionEntry[] entries;
     size_t index; /// the selected entry (always < `entries.length` when non-empty)
+    /// `DPR2`: the header this session renders above its files, if any.
+    SessionHeader header;
 
 @safe pure nothrow @nogc:
 

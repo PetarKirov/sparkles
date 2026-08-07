@@ -34,6 +34,8 @@ import sparkles.base.term_caps : isTerminal, StdStream;
 import ansi_model : BackgroundMode, backgroundOptions;
 import document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
 import diff_commutative : CommutativeKind;
+import diff_session : SessionHeader;
+import forge : PullRequest;
 import diff_structural : StructuralPolicy;
 import diff_view : DiffLayout, DiffViewOptions;
 import sparkles.diff : WhitespaceMode;
@@ -369,6 +371,26 @@ private WhitespaceMode parseWhitespaceMode(string spelling) @safe
     }
 }
 
+/// `DPR2`: the PR's metadata and description as a session header. The
+/// description is parsed as markdown here so the view can render it through
+/// hue's own preview rather than as a wall of raw text.
+private SessionHeader prHeader(ref GrammarRegistry reg, in PullRequest pr) @system
+{
+    import sparkles.syntax.md.model : extractMarkdown;
+
+    SessionHeader h = {
+        present: true,
+        title: pr.title,
+        state: pr.draft ? "draft" : pr.state,
+        author: pr.author,
+        baseRef: pr.baseRef,
+        headRef: pr.headRef,
+    };
+    if (pr.description.length)
+        h.description = extractMarkdown(reg, pr.description);
+    return h;
+}
+
 private StructuralPolicy parseStructural(string spelling) @safe
 {
     import diff_structural : parseStructuralPolicy;
@@ -637,7 +659,8 @@ int main(string[] args)
             const got = fetched.value;
             doc = pipeline.fromPatchSource(null,
                 text(got.repo.owner, "/", got.repo.name, " #",
-                    got.pr.number, " ", got.pr.title), got.patch);
+                    got.pr.number), got.patch);
+            doc.diffSession.header = prHeader(registry, got.pr);
         }
         else if (cli.diff || cli.staged)
         {
