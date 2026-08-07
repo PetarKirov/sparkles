@@ -20,7 +20,7 @@ import std.typecons : Flag, No, Yes;
 import sparkles.event_horizon.cause : Cause, Interrupt, InterruptKind, Outcome,
     outcomeErr, outcomeOk;
 import sparkles.event_horizon.errors : IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
-import sparkles.event_horizon.live : Env, RingClock, RingNet;
+import sparkles.event_horizon.live : Env, liveEnv;
 import sparkles.event_horizon.sched : Sched, SchedOptions;
 import sparkles.event_horizon.scope_ : Scope, ScopeOptions, withScope;
 import sparkles.event_horizon.loop : LoopConfig;
@@ -122,7 +122,7 @@ struct LoopGroup
     */
     Outcome!T run(T)(scope T delegate(ref RootScope root, ref Env env) main)
     {
-        auto env = Env(RingClock(&_sched), RingNet(&_sched));
+        auto env = liveEnv(&_sched);
 
         // The Outcome cannot be default-constructed (NoGcHook), so record the
         // result field-by-field from inside the root fiber and rebuild after.
@@ -191,7 +191,7 @@ struct LoopGroup
             if (cfg.pinToCpu)
                 pinToCpu(id);
 
-            auto env = Env(RingClock(&sched), RingNet(&sched));
+            auto env = liveEnv(&sched);
             sched.run(() {
                 cast(void) withScope!((ref RootScope sc) {
                     main(id, sc, env);

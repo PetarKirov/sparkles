@@ -42,6 +42,7 @@ import std.stdio : writefln;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.event_horizon.fs;
 import sparkles.event_horizon.io : read;
+import sparkles.event_horizon.live : spawnProcess, wait;
 import sparkles.event_horizon.proc;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.event_horizon.watch;
@@ -101,7 +102,7 @@ int main()
             for (;;)
             {
                 buf.length = 128;
-                auto got = read(child.stdout_, move(buf));
+                auto got = read(child.stdoutR, move(buf));
                 buf = move(got.buf);
                 if (got.res.hasError || got.res.value == 0)
                     break;
@@ -119,10 +120,11 @@ int main()
 
         // The root fiber: reap the child (in-ring WAITID), then read the
         // artifact back through the ring.
-        auto code = wait(sched, child);
-        assert(code.hasValue);
-        exitCode = code.value;
-        child.stdout_.close();
+        auto st_ = wait(sched, child);
+        assert(st_.hasValue);
+        assert(!st_.value.signaled, "the tool exited on its own");
+        exitCode = st_.value.code;
+        child.stdoutR.close();
 
         auto f = openFile(sched, dir ~ "/result.txt", O_RDONLY);
         assert(f.hasValue);
