@@ -6,6 +6,7 @@
 /// changed cell may light up on the changed row.
 module sparkles.diff.engine;
 
+import sparkles.diff.identity : stampIds;
 import sparkles.diff.model : Degradation, DiffDoc, DiffOptions, FileEntry, Row,
     RowKind, Span;
 import sparkles.diff.myers : buildHunks, buildRows, diffLines, splitDiffLines;
@@ -33,6 +34,7 @@ DiffDoc diffText(const(char)[] oldText, const(char)[] newText,
     {
         file.degraded = Degradation.fileTooLarge;
         doc.files ~= file;
+        stampIds(doc);
         return doc;
     }
 
@@ -65,6 +67,7 @@ DiffDoc diffText(const(char)[] oldText, const(char)[] newText,
         classify.classifyHunks(doc);
 
     doc.files ~= file;
+    stampIds(doc); // `DST1`: no consumer ever sees an unstamped document
     return doc;
 }
 
