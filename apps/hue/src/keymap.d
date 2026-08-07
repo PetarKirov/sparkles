@@ -125,11 +125,15 @@ enum Command : ubyte
     copySelection,         /// `Ctrl-C`
     toggleLineNumbers,     /// `l`
     toggleCodeLineNumbers, /// `c`
-    toggleAnsiCopy,        /// `y`
+    toggleAnsiCopy,        /// `<leader>uy`
     toggleTableCopy,       /// `t`
     startSearch,           /// `/`
-    startGoto,             /// `g`
+    startGoto,             /// `gl`
     lanternAll,            /// `<leader>?` — list every binding live here
+    quit,                  /// `q` — leave the viewer
+    viewTop, viewBottom,   /// `gg` / `G`
+    toggleHoverRegions,    /// Enter — open a twoslash signature's collapsed runs
+    cycleHoverPopup,       /// `p` — step through the twoslash hover popups
 
     // The `z` fold prefix (`FLD5`). `foldLevel` carries 1–9 in
     // $(LREF KeyCommand.arg).
@@ -415,6 +419,10 @@ immutable Binding[] hueBindings = [
     bind(Scope_.tree, chord(Key.home), Command.treeHome, "first row"),
     bind(Scope_.tree, chord(Key.end), Command.treeEnd, "last row"),
     bind(Scope_.tree, chord(Key.enter), Command.treeActivate, "open"),
+    group(Scope_.tree, chord('g', ShiftReq.no), "goto"),
+    bind(Scope_.tree, chord('g', ShiftReq.no), chord('g'), Command.treeHome,
+        "first row"),
+    bind(Scope_.tree, chord('g', ShiftReq.yes), Command.treeEnd, "last row"),
     bind(Scope_.tree, chord('j'), Command.treeDown, "down"),
     bind(Scope_.tree, chord('k'), Command.treeUp, "up"),
     bind(Scope_.tree, chord('l'), Command.treeActivate, "open"),
@@ -441,7 +449,20 @@ immutable Binding[] hueBindings = [
     bind(Scope_.viewer, chord('k'), Command.viewUp, "up"),
     bind(Scope_.viewer, chord('l'), Command.toggleLineNumbers, "line numbers"),
     bind(Scope_.viewer, chord('c'), Command.toggleCodeLineNumbers, "code line numbers"),
-    bind(Scope_.viewer, chord('g'), Command.startGoto, "go to line"),
+    // `ShiftReq.no` on the group, so `Shift-G` below is reachable rather than
+    // being absorbed by a shift-agnostic prefix.
+    group(Scope_.viewer, chord('g', ShiftReq.no), "goto"),
+    bind(Scope_.viewer, chord('g', ShiftReq.no), chord('g'), Command.viewTop, "top"),
+    bind(Scope_.viewer, chord('g', ShiftReq.no), chord('l'), Command.startGoto,
+        "go to line"),
+    bind(Scope_.viewer, chord('g', ShiftReq.yes), Command.viewBottom, "bottom"),
+    // Enter and `p` drive the twoslash overlay: the TUI has no pointer to name
+    // a signature run, so Enter opens the popup whole and `p` steps between
+    // them. Both were TUI-only; binding them here is what lets the GUI grow
+    // the same affordance instead of a second spelling of it.
+    bind(Scope_.viewer, chord(Key.enter), Command.toggleHoverRegions,
+        "expand signature"),
+    bind(Scope_.viewer, chord('p'), Command.cycleHoverPopup, "next popup"),
 
     // `z` — the fold prefix. Over a diff session the family folds FILES
     // (`DVG3`): same vocabulary, the unit that view actually has. The CST
@@ -512,7 +533,8 @@ immutable Binding[] hueBindings = [
     bind(Scope_.shared_, chord(Key.left), Command.themePrev, "prev theme"),
     bind(Scope_.shared_, chord(Key.tab), Command.toggleView, "raw / preview"),
     bind(Scope_.shared_, chord('e'), Command.toggleExplorer, "toggle explorer"),
-    bind(Scope_.shared_, chord('y'), Command.toggleAnsiCopy, "ansi copy mode"),
+    bind(Scope_.shared_, chord('y'), Command.copySelection, "copy selection"),
+    bind(Scope_.shared_, chord('q'), Command.quit, "quit"),
     bind(Scope_.shared_, chord('t'), Command.toggleTableCopy, "table copy mode"),
     bind(Scope_.shared_, chord('n', ShiftReq.no), Command.matchNext, "next match",
         require: CtxFlag.hasMatches),
@@ -604,9 +626,28 @@ bool matches(in Chord c, in KeyEvent k)
 }
 
 /// Whether two chords name the same key — path comparison, no live event.
+/// Exact, including `shift`: `g` and `Shift-G` are different bindings and must
+/// both be listed, so the guide's de-duplication must not conflate them.
 bool sameKey(in Chord a, in Chord b)
     => a.key == b.key && a.ch == b.ch && a.chEnd == b.chEnd
     && a.shift == b.shift && a.ctrl == b.ctrl && a.alt == b.alt;
+
+/**
+Whether a table chord accepts a chord already typed — prefix comparison.
+
+Deliberately $(I not) $(LREF sameKey). A pending chord records what the user
+actually pressed (Shift held or not); a table row may be shift-agnostic
+($(LREF ShiftReq.ignore)), in which case it accepts either. Comparing those
+exactly would make every prefix under a shift-agnostic row unreachable.
+
+The case that forced this: `g` opens the goto group while `Shift-G` jumps to
+the bottom. The group row has to be `ShiftReq.no` so `G` is not swallowed by
+it — and then a typed `g`, which records `ShiftReq.no`, has to still match it.
+*/
+bool acceptsTyped(in Chord table, in Chord typed)
+    => table.key == typed.key && table.ch == typed.ch
+    && table.ctrl == typed.ctrl && table.alt == typed.alt
+    && (table.shift == ShiftReq.ignore || table.shift == typed.shift);
 
 /// Whether `s` applies at all in `ctx` — the conditions the old `if` chain
 /// tested before entering each of its blocks.
@@ -732,7 +773,7 @@ Resolution resolve(scope const Chord[] prefix, in KeyEvent raw, in KeyContext ct
                     continue;
                 bool under = true;
                 foreach (i, ref p; prefix)
-                    if (!sameKey(b.path[i], p))
+                    if (!acceptsTyped(b.path[i], p))
                     {
                         under = false;
                         break;
@@ -812,7 +853,7 @@ void bindingsAt(Sink)(ref Sink sink, in KeyContext ctx, scope const Chord[] pref
                     continue;
                 bool underPrefix = true;
                 foreach (i, ref p; prefix)
-                    if (!sameKey(b.path[i], p))
+                    if (!acceptsTyped(b.path[i], p))
                     {
                         underPrefix = false;
                         break;
@@ -836,240 +877,6 @@ void bindingsAt(Sink)(ref Sink sink, in KeyContext ctx, scope const Chord[] pref
     }}
 }
 
-version (unittest):
-
-/**
-The `if`/`else` chain the table replaced, kept verbatim as a $(B differential
-oracle).
-
-The nine behavioural tests below say what the policy $(I is), and they still
-pass unchanged — but they are examples, and a table rewrite can be wrong in
-places no example visits. This function is the previous implementation, so
-`keymap.tableReproducesTheChainExactly` can sweep every key against every
-context and assert the two agree on all ~46 000 combinations. That turns "the
-tests still pass" into "the behaviour is identical", which is a different and
-much stronger claim.
-
-It is `version (unittest)`, so nothing ships twice. Delete it once the table is
-the only description anyone reasons about — but not before, and not in the same
-commit that introduces the table.
-*/
-private KeyCommand legacyCommandFor(in KeyEvent raw, in KeyContext ctx,
-    bool foldArmed = false)
-{
-    // Producers disagree about how a shifted letter arrives. raylib's
-    // `GetCharPressed` yields the SHIFTED character ('R') and separately
-    // reports `shift`; a terminal may send 'R' with no modifier at all; a
-    // synthesised event may send 'r' + shift. All three mean one keystroke, so
-    // normalise here — once — rather than spelling both cases in every table
-    // row, or asking each producer to normalise, which is how producers drift
-    // apart again.
-    KeyEvent k = raw;
-    if (k.key == Key.char_ && k.ch >= 'A' && k.ch <= 'Z')
-    {
-        k.ch += 'a' - 'A';
-        k.mods.shift = true;
-    }
-
-    // F11 outranks every mode — you can always leave fullscreen.
-    if (k.key == Key.f11)
-        return KeyCommand(Command.toggleFullscreen);
-
-    // Escape and Back both cancel an open input mode. In NORMAL mode they
-    // differ, and the difference is deliberate rather than an oversight to
-    // tidy up here: Android's Back runs the dismiss chain (close the
-    // explorer, else leave), while desktop Escape does nothing today.
-    //
-    // `sparkles.input.isDismiss` already declares the two the same platform
-    // spelling, so unifying them is probably right — but this module is the
-    // oracle a mechanical conversion is checked against, and an oracle that
-    // quietly disagrees with the code it describes is worse than none. The
-    // unification belongs in its own commit, where it can be reviewed as the
-    // behaviour change it is.
-    if (k.key == Key.escape || k.key == Key.back)
-    {
-        if (ctx.mode != InputMode.normal)
-            return KeyCommand(Command.inputCancel);
-        return KeyCommand(k.key == Key.back ? Command.dismiss : Command.none);
-    }
-
-    // A line-editing mode owns the keyboard while it is open.
-    if (ctx.mode != InputMode.normal)
-    {
-        switch (k.key)
-        {
-            case Key.backspace: return KeyCommand(Command.inputBackspace);
-            case Key.enter:     return KeyCommand(Command.inputAccept);
-            default:            return KeyCommand(Command.none);
-        }
-    }
-
-    // An armed `z` claims the next key (and only for the viewer — the tree
-    // has no folds), so `c`/`o`/`r` mean fold operations rather than their
-    // normal-mode meanings.
-    if (foldArmed)
-    {
-        // Over a diff session the `z` family folds FILES (`DVG3`) — same
-        // vocabulary, the unit the view actually has. The CST fold ranges a
-        // source view exposes do not exist here.
-        if (ctx.hasDiffSession && k.key == Key.char_)
-            switch (k.ch)
-            {
-                case 'a', 'z', 'c', 'o':
-                    return KeyCommand(Command.diffToggleFile);
-                case 'r': return KeyCommand(Command.diffExpandAll);
-                case 'm': return KeyCommand(Command.diffCollapseAll);
-                // `n` for noise: the formatting-only hunks (`DVN2`) are a
-                // fold like any other, so they live in the same family.
-                case 'n': return KeyCommand(Command.diffToggleFormatting);
-                // `x` for expand: the unchanged regions between hunks
-                // (`DVG2`) are the other thing a diff hides.
-                case 'x': return KeyCommand(Command.diffToggleContext);
-                default: return KeyCommand(Command.none);
-            }
-        if (k.key == Key.char_)
-            switch (k.ch)
-            {
-                case 'a', 'z': return KeyCommand(Command.foldToggle);
-                case 'c':      return KeyCommand(Command.foldClose);
-                case 'o':      return KeyCommand(Command.foldOpen);
-                case 'r':      return KeyCommand(Command.foldOpenAll);
-                case 'm':      return KeyCommand(Command.foldCloseAll);
-                case '1': .. case '9':
-                    return KeyCommand(Command.foldLevel,
-                        cast(ubyte)(k.ch - '0'));
-                default: break;
-            }
-        return KeyCommand(Command.none); // an unrecognised key just disarms
-    }
-
-    // Ctrl-chorded bindings, before the plain-letter table claims the letter.
-    if (k.mods.ctrl && k.key == Key.char_)
-        switch (k.ch)
-        {
-            case 'c': return KeyCommand(Command.copySelection);
-            case '=', '+': return KeyCommand(Command.fontBigger);
-            case '-': return KeyCommand(Command.fontSmaller);
-            default: return KeyCommand(Command.none);
-        }
-
-    // The explorer pane's own keys, while it is focused AND shown.
-    if (ctx.treeFocused && ctx.treeVisible)
-    {
-        switch (k.key)
-        {
-            case Key.down:  return KeyCommand(Command.treeDown);
-            case Key.up:    return KeyCommand(Command.treeUp);
-            case Key.home:  return KeyCommand(Command.treeHome);
-            case Key.end:   return KeyCommand(Command.treeEnd);
-            case Key.enter: return KeyCommand(Command.treeActivate);
-            default: break;
-        }
-        if (k.key == Key.char_)
-            switch (k.ch)
-            {
-                case 'j': return KeyCommand(Command.treeDown);
-                case 'k': return KeyCommand(Command.treeUp);
-                case 'l': return KeyCommand(Command.treeActivate);
-                case 'r': return KeyCommand(k.mods.shift
-                    ? Command.treeReroot : Command.treeRefresh);
-                case 'i': if (k.mods.shift)
-                    return KeyCommand(Command.treeToggleIgnored);
-                    break;
-                case 'u': return KeyCommand(Command.treeParent);
-                case ']': return KeyCommand(Command.treeNextChange);
-                case '[': return KeyCommand(Command.treePrevChange);
-                case 'c': return KeyCommand(Command.treeCloseAll);
-                case 'h': return KeyCommand(k.mods.shift
-                    ? Command.treeToggleHidden : Command.treeCollapseOrUp);
-                case '/': return KeyCommand(Command.treeFilter);
-                case 'e': return KeyCommand(Command.toggleExplorer);
-                default: break;
-            }
-        // Fall through to the shared normal-mode table below: the theme
-        // arrows, Tab, and the copy-mode toggles work with either pane
-        // focused, exactly as the frame loop has them.
-    }
-    else
-    {
-        // Viewer scrolling — the same keys the tree uses for its rows.
-        switch (k.key)
-        {
-            case Key.down: return KeyCommand(Command.viewDown);
-            case Key.up:   return KeyCommand(Command.viewUp);
-            case Key.home: return KeyCommand(Command.viewHome);
-            case Key.end:  return KeyCommand(Command.viewEnd);
-            default: break;
-        }
-        if (k.key == Key.char_)
-            switch (k.ch)
-            {
-                case 'j': return KeyCommand(Command.viewDown);
-                case 'k': return KeyCommand(Command.viewUp);
-                case 'l': return KeyCommand(Command.toggleLineNumbers);
-                case 'c': return KeyCommand(Command.toggleCodeLineNumbers);
-                // `case 'z': return KeyCommand(Command.foldArm);` — the one
-                // line that cannot be kept verbatim, because `foldArm` no
-                // longer exists: `z` is a prefix, and the sweep excludes it
-                // for exactly that reason.
-                case 'g': return KeyCommand(Command.startGoto);
-                case '/': return ctx.showPreview
-                    ? KeyCommand(Command.none)  // search is raw-view only
-                    : KeyCommand(Command.startSearch);
-                // A diff session claims the bracket pair: its changed-file
-                // list is the set a reviewer is walking.
-                case '[': return ctx.hasDiffSession
-                    ? KeyCommand(Command.diffPrevFile)
-                    : (ctx.hasDocSet
-                        ? KeyCommand(Command.setPrev) : KeyCommand(Command.none));
-                case ']': return ctx.hasDiffSession
-                    ? KeyCommand(Command.diffNextFile)
-                    : (ctx.hasDocSet
-                        ? KeyCommand(Command.setNext) : KeyCommand(Command.none));
-                // `{`/`}` step hunk to hunk — vim's paragraph motion, which is
-                // what a hunk is to a reviewer moving through a file.
-                // `s` for split — free over a diff, and unbound elsewhere so
-                // it stays available to whatever claims it later.
-                case 's': return ctx.hasDiffSession
-                    ? KeyCommand(Command.diffToggleLayout) : KeyCommand(Command.none);
-                // `+` opens the one region in view; `zx` opens them all.
-                case '+': return ctx.hasDiffSession
-                    ? KeyCommand(Command.diffToggleGap) : KeyCommand(Command.none);
-                case '{': return ctx.hasDiffSession
-                    ? KeyCommand(Command.diffPrevHunk) : KeyCommand(Command.none);
-                case '}': return ctx.hasDiffSession
-                    ? KeyCommand(Command.diffNextHunk) : KeyCommand(Command.none);
-                default: break;
-            }
-    }
-
-    // Shared by both panes.
-    switch (k.key)
-    {
-        case Key.pageDown: return KeyCommand(Command.viewPageDown);
-        case Key.pageUp:   return KeyCommand(Command.viewPageUp);
-        case Key.right:    return KeyCommand(Command.themeNext);
-        case Key.left:     return KeyCommand(Command.themePrev);
-        case Key.tab:      return KeyCommand(Command.toggleView);
-        default: break;
-    }
-    if (k.key == Key.char_)
-        switch (k.ch)
-        {
-            case 'e': return KeyCommand(Command.toggleExplorer);
-            case 'y': return KeyCommand(Command.toggleAnsiCopy);
-            case 't': return KeyCommand(Command.toggleTableCopy);
-            case 'n': return ctx.hasMatches
-                ? KeyCommand(k.mods.shift ? Command.matchPrev : Command.matchNext)
-                : KeyCommand(Command.none);
-            case 'i': return ctx.hasDocSet
-                ? KeyCommand(Command.setIndex) : KeyCommand(Command.none);
-            default: break;
-        }
-
-    return KeyCommand(Command.none);
-}
-
 // ---------------------------------------------------------------------------
 // Tests — the oracle IXB7 converts against.
 // ---------------------------------------------------------------------------
@@ -1082,68 +889,6 @@ version (unittest)
         => commandFor(KeyEvent(Key.char_, c, m), ctx);
     KeyCommand nk(Key k, KeyContext ctx = KeyContext.init, Mods m = Mods())
         => commandFor(KeyEvent(k, 0, m), ctx);
-}
-
-@("keymap.tableReproducesTheChainExactly")
-@safe pure nothrow @nogc
-unittest
-{
-    // The rewrite's real safety argument. The nine tests below are examples,
-    // and a table can be wrong in a case no example visits — so sweep the
-    // whole input space against the implementation the table replaced.
-    //
-    // Every context the keymap can consult is a bool or a 3-valued mode, so
-    // "every context" is 3 × 2^6 = 192 of them; every key is a named key or a
-    // printable code point, under each of the 8 modifier combinations. That is
-    // ~46 000 pairs, which is not a sample — it is the domain.
-    static immutable dchar[] chars = [
-        'a', 'c', 'e', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'q', 'r',
-        't', 'u', 'y', 'A', 'C', 'H', 'I', 'N', 'R',
-        '0', '1', '5', '9', '/', '[', ']', '{', '}', '=', '+', '-', '!',
-    ];
-    // `z`, `<space>` and `?` are deliberately absent: they are prefix keys
-    // now, and a prefix has no answer in a vocabulary that only knows
-    // commands. Their sequences are covered by `lantern`'s own tests, which
-    // assert the same outcomes the chain produced with `foldArmed: true`.
-
-    size_t pairs;
-    foreach (ubyte modeI; 0 .. 3)
-    foreach (ubyte bits; 0 .. 32)
-    {
-        const ctx = KeyContext(
-            mode: cast(InputMode) modeI,
-            treeFocused:    (bits & 1) != 0,
-            treeVisible:    (bits & 2) != 0,
-            hasMatches:     (bits & 4) != 0,
-            hasDocSet:      (bits & 8) != 0,
-            hasDiffSession: (bits & 16) != 0,
-            showPreview:    (bits & 32) != 0,
-        );
-
-        foreach (ubyte m; 0 .. 8)
-        {
-            const mods = Mods(ctrl: (m & 1) != 0, alt: (m & 2) != 0,
-                shift: (m & 4) != 0);
-
-            foreach (k; __traits(allMembers, Key))
-            {
-                enum key = __traits(getMember, Key, k);
-                if (key == Key.char_)
-                    continue;
-                const ev = KeyEvent(key, 0, mods);
-                ++pairs;
-                assert(commandFor(ev, ctx) == legacyCommandFor(ev, ctx));
-            }
-
-            foreach (c; chars)
-            {
-                const ev = KeyEvent(Key.char_, c, mods);
-                ++pairs;
-                assert(commandFor(ev, ctx) == legacyCommandFor(ev, ctx));
-            }
-        }
-    }
-    assert(pairs > 20_000, "the sweep must actually cover the domain");
 }
 
 @("keymap.tableIsSpelledInNormalisedForm")
@@ -1459,7 +1204,7 @@ unittest
         assert(nk(Key.left, ctx).cmd == Command.themePrev);
         assert(nk(Key.tab, ctx).cmd == Command.toggleView);
         assert(nk(Key.pageDown, ctx).cmd == Command.viewPageDown);
-        assert(ch('y', ctx).cmd == Command.toggleAnsiCopy);
+        assert(ch('y', ctx).cmd == Command.copySelection);
         assert(ch('t', ctx).cmd == Command.toggleTableCopy);
         assert(ch('e', ctx).cmd == Command.toggleExplorer);
     }
@@ -1470,7 +1215,8 @@ unittest
 unittest
 {
     // The default answer is `none`, so the frame loop needs no catch-all.
-    assert(ch('q').cmd == Command.none);
+    // (`q` used to be here; it quits now, in both backends.)
+    assert(ch('w').cmd == Command.none);
     assert(ch('!').cmd == Command.none);
     assert(nk(Key.f5).cmd == Command.none);
     assert(nk(Key.none).cmd == Command.none);
