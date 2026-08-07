@@ -27,11 +27,6 @@ That is all — the runner registers itself as druntime's unit tester, so
 compiles into your test binary and links a prebuilt implementation library, so
 you pay almost none of the runner's own compile cost on each build.
 
-> [!NOTE]
-> Inside the sparkles monorepo the recipe differs slightly for `base`,
-> `core-cli`, and `test-utils` (they source-include the runner to avoid a
-> dependency cycle). See [Getting started](./tutorial/getting-started.md).
-
 ## Write and run a test
 
 Name a test with a string UDA and always give it an explicit safety attribute:

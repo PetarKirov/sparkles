@@ -41,35 +41,23 @@ to ~0.8s, near a vanilla build. The library is built with `-allinst` so every
 template instance it references (notably `std.uni`, via base's grapheme-aware
 width) is emitted on its side of the link.
 
-Most consumers — external and in-tree — just `dependency "sparkles:test-runner"`.
-The exception is the impl's own dependency closure: `base`, `core-cli`, and
-`test-utils` (dub's cycle detection unions across configs, and
-impl → `core-cli` → `test-utils`) cannot depend on it, so they source-include
-both packages:
+A consumer depends on the shim (`dependency "sparkles:test-runner"`) and gets
+both packages.
 
-```sdl
-importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+Two consequences of the split are handled explicitly:
 
-configuration "unittest" {
-    sourcePaths "../test-runner/src" "../test-runner-impl/src"
-}
-```
-
-Three consequences are handled explicitly:
-
-- `core-cli` can never be in `base`'s test build, so all `core_cli` use is
-  gated with `__traits(compiles, import …)` and degrades gracefully
-  (space-aligned tables, plain `file:line`). This is ordinary Design by
-  Introspection, applied to the build graph.
+- Rendering degrades by introspection rather than by requirement: `core_cli`
+  use is gated with `__traits(compiles, import …)`, so a test binary without
+  it in its closure still reports, with space-aligned tables and plain
+  `file:line` instead of box-drawn tables and OSC 8 links.
 - The shim's modules land in every host's `allModules`, so its own tests are
   discoverable everywhere. They are hidden unless `--self-test` is given or the
   tested package _is_ the runner — decided from `allModules` module names plus
   the test-binary name, because a host whose only D modules are
   `package.d`s/ImportC shims (e.g. `ghostty`) has an `allModules` that looks
   identical to the runner's own.
-- The runner tests itself in two suites: `dub test :test-runner-impl`
-  self-hosts (its `unittest` config source-includes the shim) to exercise the
-  heavy modules, and `dub test :test-runner` runs the shim's own discovery
+- The runner tests itself in two suites: `dub test :test-runner-impl` exercises
+  the heavy modules, and `dub test :test-runner` runs the shim's own discovery
   tests through the linked impl.
 
 ## `@ctfe`: a probe compile as the executor
