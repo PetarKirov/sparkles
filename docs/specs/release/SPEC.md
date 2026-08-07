@@ -345,8 +345,10 @@ The notes are the annotated-tag body — there is no separate changelog file:
 - `agent` — the chosen agent is invoked once with a prompt embedding the
   range's `git log --stat`; the reply is reviewed in `$EDITOR` (skipped under
   `--auto`, where it is used verbatim). The embedded log is capped at 96 KiB
-  (truncated at a line boundary, elision marked) so the prompt fits Linux's
-  128 KiB per-argv-element limit; the editor path is never truncated.
+  (truncated at a line boundary, elision marked) so a hundreds-of-commits
+  range's diffstat noise cannot crowd the notes out of the model's context;
+  the editor path is never truncated. The cap is not a delivery limit — the
+  prompt reaches the agent as a file (§8.4).
 
 ### 8.3 Split-mode additions
 
@@ -360,6 +362,33 @@ The per-segment agent prompt additionally carries:
 
 The same agent is used for segmentation and all per-segment notes; it is
 picked once (via `--agent` or one interactive select).
+
+### 8.4 Prompt delivery
+
+**A prompt is never an argv element.** Linux caps one element at
+`MAX_ARG_STRLEN` (32 pages — 128 KiB where a page is 4 KiB), and a `--split`
+segmentation prompt over a long backlog runs several times that, so passing it
+as an argument fails to spawn at all (`E2BIG` → "Argument list too long",
+status 127).
+
+Instead every prompt is written to a file, and each registry entry says how its
+agent is handed one. A flag may contain the placeholder `{}`, replaced with the
+prompt file's path:
+
+| Form                                                 | Agents                                               | How the agent gets the prompt         |
+| ---------------------------------------------------- | ---------------------------------------------------- | ------------------------------------- |
+| no `{}`                                              | `claude -p`, `codex exec`, `amp -x`                  | the file on standard input            |
+| `{}` in a path flag                                  | `aider --message-file`, `goose run -i`               | the tool opens it itself              |
+| `{}` inside a prompt string ("Read the file `{}` …") | `gemini`, `copilot`, `opencode`, `q`, `crush`, `agy` | the agent reads it with its own tools |
+
+The third form exists for tools that accept only a prompt string (`agy --print`
+ignores standard input); the argument stays a single short line whatever the
+prompt's size. The file lives in the system temp directory and is removed when
+the run returns. Agents that do not name the file are still given a redirected
+(empty) standard input, so none can block on the terminal.
+
+The remaining 96 KiB cap on a notes prompt's `git log --stat` (§8.2) is a model
+budget, not a spawn limit.
 
 ## 9. Artifacts
 

@@ -905,8 +905,9 @@ private Result!string acquireNotesRange(
     assert(spec !is null, "agent mode needs a pre-picked agent");
     info(i"Summarizing $(spec.key) → release notes…");
 
-    // The prompt travels as one argv element; a huge range's log must be
-    // capped (the editor path above has no such limit and stays complete).
+    // The prompt reaches the agent as a file, so its size is unconstrained;
+    // the log is still capped to keep a huge range's diffstat noise from
+    // crowding out the notes (the editor path above stays complete).
     const prompt = buildAgentPrompt(suggestedSubject, range, capLogStat(logStat))
         ~ extraPromptSection;
     if (artifactTag.length)

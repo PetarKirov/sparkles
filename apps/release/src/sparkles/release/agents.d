@@ -6,9 +6,8 @@ Each $(LREF AgentSpec) names a tool, the binary to look for on `$PATH`, and how
 to invoke it once for a single prompt. Only agents actually present on `$PATH`
 are offered to the user ($(LREF availableAgents)).
 
-NOTE: the one-shot invocation flags below are best-effort and drift between tool
-versions. `runAgent` surfaces the child's stderr so a wrong flag is diagnosable;
-fix the offending `AgentSpec` here.
+A prompt always travels as a file — see $(LREF agentRegistry) for the three
+ways an agent is handed one, and why none of them is an argv element.
 +/
 module sparkles.release.agents;
 
@@ -20,39 +19,68 @@ import sparkles.release.segment : SegmentInput;
 
 @safe:
 
-/// How an agent receives its prompt.
-enum PromptDelivery
-{
-    arg,     /// appended as the final argv element
-    stdin_,  /// piped to the child's standard input
-}
+/++
+The marker a $(LREF AgentSpec) flag uses to name the prompt file: every
+occurrence is replaced with that run's prompt path ($(LREF buildArgv)).
 
-/// One CLI agent: its menu `key`, the `binary` to find on `$PATH`, the `flags`
-/// that precede the prompt, and how the prompt is delivered.
+A spec with no occurrence anywhere gets the prompt on standard input instead —
+the same file, redirected rather than named.
++/
+enum promptPathPlaceholder = "{}";
+
+/// The flag text for an agent that takes neither a prompt file nor standard
+/// input, only a prompt string: the string is a one-line pointer at the file.
+private enum followPromptFile =
+    "Read the file " ~ promptPathPlaceholder
+    ~ " and follow the instructions in it exactly.";
+
+/// One CLI agent: its menu `key`, the `binary` to find on `$PATH`, and the
+/// `flags` invoking it once, non-interactively, on a prompt file.
 struct AgentSpec
 {
     string key;
     string binary;
     immutable(string)[] flags;
-    PromptDelivery delivery;
     /// Alternative binary names to try on `$PATH` when `binary` is absent (e.g.
     /// a tool distributed under more than one command name).
     immutable(string)[] aliases;
 }
 
-/// The curated agent menu. Edit/extend freely — it is just data.
+/++
+The curated agent menu. Edit/extend freely — it is just data.
+
+The prompt is never an argv element (Linux caps one at `MAX_ARG_STRLEN`, 32
+pages — a `--split` segmentation prompt over a long backlog is several times
+that, and the spawn fails outright with `E2BIG`). It is written to a file, and
+each entry says how its agent consumes one:
+
+$(LIST
+    * no $(LREF promptPathPlaceholder) — the file arrives on standard input
+        (`claude -p`, `codex exec` and `amp -x` were verified to read it
+        there; `codex exec --help` documents it);
+    * a placeholder in a path flag — the tool reads the file itself
+        (`aider --message-file`, `goose run -i`);
+    * a placeholder inside `followPromptFile` — for a tool that accepts only
+        a prompt string (`agy --print` ignores stdin), the string points at
+        the file and the agent reads it with its own tools.
+)
+
+NOTE: the invocations below are best-effort and drift between tool versions.
+`runAgent` surfaces the child's stderr so a wrong flag is diagnosable; fix the
+offending entry here.
++/
 immutable AgentSpec[] agentRegistry = [
-    AgentSpec(key: "claude-code", binary: "claude",   flags: ["-p"],        delivery: PromptDelivery.arg),
-    AgentSpec(key: "codex",       binary: "codex",    flags: ["exec"],      delivery: PromptDelivery.arg),
-    AgentSpec(key: "gemini",      binary: "gemini",   flags: ["-p"],        delivery: PromptDelivery.arg),
-    AgentSpec(key: "copilot",     binary: "copilot",  flags: ["-p"],        delivery: PromptDelivery.arg),
-    AgentSpec(key: "opencode",    binary: "opencode", flags: ["run"],       delivery: PromptDelivery.arg),
-    AgentSpec(key: "aider",       binary: "aider",    flags: ["--message"], delivery: PromptDelivery.arg),
-    AgentSpec(key: "q",           binary: "q",        flags: ["chat"],      delivery: PromptDelivery.arg),
-    AgentSpec(key: "crush",       binary: "crush",    flags: ["run"],       delivery: PromptDelivery.arg),
-    AgentSpec(key: "goose",       binary: "goose",    flags: ["run", "-t"], delivery: PromptDelivery.arg),
-    AgentSpec(key: "amp",         binary: "amp",      flags: ["-x"],        delivery: PromptDelivery.arg),
-    AgentSpec(key: "agy",         binary: "agy",      flags: ["-p"],        delivery: PromptDelivery.arg, aliases: ["antigravity-cli"]),
+    AgentSpec(key: "claude-code", binary: "claude",   flags: ["-p"]),
+    AgentSpec(key: "codex",       binary: "codex",    flags: ["exec"]),
+    AgentSpec(key: "amp",         binary: "amp",      flags: ["-x"]),
+    AgentSpec(key: "aider",       binary: "aider",    flags: ["--message-file", promptPathPlaceholder]),
+    AgentSpec(key: "goose",       binary: "goose",    flags: ["run", "-i", promptPathPlaceholder]),
+    AgentSpec(key: "gemini",      binary: "gemini",   flags: ["-p", followPromptFile]),
+    AgentSpec(key: "copilot",     binary: "copilot",  flags: ["-p", followPromptFile]),
+    AgentSpec(key: "opencode",    binary: "opencode", flags: ["run", followPromptFile]),
+    AgentSpec(key: "q",           binary: "q",        flags: ["chat", followPromptFile]),
+    AgentSpec(key: "crush",       binary: "crush",    flags: ["run", followPromptFile]),
+    AgentSpec(key: "agy",         binary: "agy",      flags: ["--print", followPromptFile], aliases: ["antigravity-cli"]),
 ];
 
 /// The registry entries resolvable to a `binary` on `$PATH`.
@@ -95,26 +123,81 @@ const(AgentSpec)* findAgent(string key) @safe pure nothrow @nogc
     return found.empty ? null : &found[0];
 }
 
-/// The argv used to invoke `a` for `prompt` (prompt appended only for
-/// `PromptDelivery.arg`).
-string[] buildArgv(const AgentSpec a, string prompt) @safe pure nothrow
+/// Deletes `path`, ignoring a failure to do so (a leftover prompt file in the
+/// temp directory is not worth failing a release over).
+private void removeQuietly(string path) @safe nothrow
 {
-    string[] argv = (a.binary ~ a.flags).dup;
-    if (a.delivery == PromptDelivery.arg)
-        argv ~= prompt;
-    return argv;
+    import std.file : remove;
+
+    try
+        remove(path);
+    catch (Exception)
+    {
+    }
 }
 
-/// Runs `a` once with `prompt`, returning its trimmed stdout as the notes, or a
-/// failure (non-zero exit, or empty output).
+/// The argv invoking `a` on the prompt file at `promptPath`: its flags with
+/// every $(LREF promptPathPlaceholder) replaced by that path.
+string[] buildArgv(const AgentSpec a, string promptPath) @safe pure
+{
+    import std.algorithm.iteration : map;
+    import std.array : array, replace;
+
+    return a.binary ~ a.flags.map!(f => f.replace(promptPathPlaceholder, promptPath)).array;
+}
+
+/// True when `a` names the prompt file in its argv (rather than reading it
+/// from standard input).
+bool namesPromptFile(const AgentSpec a) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    return a.flags.canFind!(f => f.canFind(promptPathPlaceholder));
+}
+
+/++
+Runs `a` once on `prompt`, returning its trimmed stdout as the notes, or a
+failure (non-zero exit, or empty output).
+
+The prompt is written to a file under the system temp directory and removed
+afterwards; the agent either has its path spliced into the argv or receives
+the file on standard input (see $(LREF agentRegistry)). Nothing about the
+prompt's size can make the spawn fail.
++/
 Result!string runAgent(const AgentSpec a, string prompt)
 {
-    import std.conv : to;
+    import std.conv : text, to;
+    import std.file : FileException, tempDir, write;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
     import std.string : strip;
+    import core.atomic : atomicOp;
 
-    const argv = buildArgv(a, prompt);
-    const stdinText = a.delivery == PromptDelivery.stdin_ ? prompt : null;
-    auto r = runCaptured(argv, stdinText);
+    static shared size_t counter;
+    const usesFile = namesPromptFile(a);
+    const promptPath = usesFile
+        ? buildPath(tempDir, text("sparkles-release-prompt-", thisProcessID,
+            "-", atomicOp!"+="(counter, 1), ".md"))
+        : null;
+
+    if (usesFile)
+    {
+        try
+            write(promptPath, prompt);
+        catch (FileException e)
+            return failure!string(
+                "could not write the prompt file for agent `" ~ a.key ~ "`: " ~ e.msg);
+    }
+    scope (exit)
+        if (usesFile)
+            removeQuietly(promptPath);
+
+    // A file-naming agent reads the prompt itself; the rest get the same bytes
+    // on stdin. `runCaptured` reads a *null* text as "inherit this process's
+    // stdin" — an empty literal is non-null, so a file-naming agent still gets
+    // a redirect (an immediate EOF) and cannot fall back to the terminal.
+    static assert("" !is null);
+    auto r = runCaptured(buildArgv(a, promptPath), usesFile ? "" : prompt);
 
     if (r.status != 0)
         return failure!string(
@@ -290,9 +373,10 @@ string buildSegmentNotesSection(
     return app[];
 }
 
-/// Linux caps a single argv element at 128 KiB (`MAX_ARG_STRLEN`); prompts are
-/// delivered as one element, so the embedded `git log --stat` is capped well
-/// under it, leaving room for the fixed prompt parts.
+/// The `git log --stat` budget inside a notes prompt. Nothing about delivery
+/// forces a limit any more — this one is about the model: the full log of a
+/// hundreds-of-commits range is mostly diffstat noise, and summarizing it
+/// costs context the notes themselves need.
 enum promptLogStatCap = 96 * 1024;
 
 /// Truncates `logStat` at a line boundary under `cap`, marking the elision.
@@ -365,30 +449,77 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
     enum absent = "sparkles-nonexistent-binary-xyzzy-123";
 
     // `binary` present → resolves to it directly.
-    const direct = AgentSpec(
-        key: "mock", binary: "sh", flags: [], delivery: PromptDelivery.arg);
+    const direct = AgentSpec(key: "mock", binary: "sh");
     assert(resolveBinary(direct).value.binary == "sh");
 
     // `binary` absent but an alias is present → resolves to the alias.
     const viaAlias = AgentSpec(
-        key: "mock2", binary: absent, flags: [], delivery: PromptDelivery.arg,
-        aliases: [absent, "sh"]);
+        key: "mock2", binary: absent, aliases: [absent, "sh"]);
     assert(resolveBinary(viaAlias).value.binary == "sh");
 
     // No candidate on `$PATH` → a failure, not a null binary.
-    const missing = AgentSpec(
-        key: "mock3", binary: absent, flags: [], delivery: PromptDelivery.arg);
+    const missing = AgentSpec(key: "mock3", binary: absent);
     assert(resolveBinary(missing).hasError);
 }
 
 @("agents.buildArgv")
 @safe unittest
 {
+    // No placeholder: the prompt file is not named, it arrives on stdin.
     const claude = *findAgent("claude-code");
-    assert(buildArgv(claude, "hello") == ["claude", "-p", "hello"]);
+    assert(!namesPromptFile(claude));
+    assert(buildArgv(claude, "/tmp/p.md") == ["claude", "-p"]);
 
+    // A path flag takes the file's path…
     const goose = *findAgent("goose");
-    assert(buildArgv(goose, "hi") == ["goose", "run", "-t", "hi"]);
+    assert(namesPromptFile(goose));
+    assert(buildArgv(goose, "/tmp/p.md") == ["goose", "run", "-i", "/tmp/p.md"]);
+
+    // …and a prompt-string-only agent takes a pointer at the same file.
+    const agy = *findAgent("agy");
+    assert(namesPromptFile(agy));
+    assert(buildArgv(agy, "/tmp/p.md")
+        == ["agy", "--print", "Read the file /tmp/p.md and follow the instructions in it exactly."]);
+}
+
+@("agents.runAgent.hugePromptTravelsAsAFile")
+@safe unittest
+{
+    import std.array : replicate;
+
+    // Over `MAX_ARG_STRLEN` (32 pages), the cap that used to E2BIG the spawn
+    // with "Argument list too long" — both forms must carry it intact.
+    const big = "y".replicate(32 * 4096 + 1);
+
+    // Named in the argv: `cat <path>` prints the prompt file back.
+    const named = AgentSpec(key: "mock-file", binary: "cat",
+        flags: [promptPathPlaceholder]);
+    auto viaFile = runAgent(named, big);
+    assert(viaFile.hasValue);
+    assert(viaFile.value == big);
+
+    // On stdin: `cat` with no operand prints what it is fed.
+    const piped = AgentSpec(key: "mock-stdin", binary: "cat");
+    auto viaStdin = runAgent(piped, big);
+    assert(viaStdin.hasValue);
+    assert(viaStdin.value == big);
+}
+
+@("agents.runAgent.promptFileIsRemoved")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : exists;
+    import std.string : strip;
+
+    // `readlink` on the path prints it back, so the test learns the path the
+    // agent was handed — and can check it is gone once the run returns.
+    const spec = AgentSpec(key: "mock-file", binary: "readlink",
+        flags: ["-m", promptPathPlaceholder]);
+    auto r = runAgent(spec, "prompt body");
+    assert(r.hasValue);
+    assert(r.value.canFind("sparkles-release-prompt-"));
+    assert(!r.value.strip.exists);
 }
 
 @("agents.buildSegmentationPrompt.policyAndInput")
