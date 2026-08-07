@@ -424,9 +424,12 @@ string assemblePatch(in PrFile[] files) @safe pure
     {
         const added = f.status == "added";
         const removed = f.status == "removed";
-        const old_ = removed ? "/dev/null"
+        // An ADDED file has no old side and a REMOVED one has no new side —
+        // the way round that renders `+705 −0` as an addition rather than a
+        // deletion.
+        const old_ = added ? "/dev/null"
             : "a/" ~ (f.previousPath.length ? f.previousPath : f.path);
-        const new_ = added ? "/dev/null" : "b/" ~ f.path;
+        const new_ = removed ? "/dev/null" : "b/" ~ f.path;
 
         out_ ~= "diff --git a/" ~ (f.previousPath.length ? f.previousPath : f.path)
             ~ " b/" ~ f.path ~ "\n";
@@ -576,6 +579,11 @@ string assemblePatch(in PrFile[] files) @safe pure
     auto parsed = parsePatch(patch);
     assert(!parsed.hasError, "the assembled patch must parse");
     assert(parsed.value.files.length == 3);
+
+    // Which side is `/dev/null` is what makes a new file read as an addition
+    // rather than a deletion — the session's status glyph comes from it.
+    assert(parsed.value.pathText(parsed.value.files[1].oldPath) == "/dev/null");
+    assert(parsed.value.pathText(parsed.value.files[1].newPath) == "src/new.d");
     // The parser normalizes the `a/`/`b/` prefixes away, so the session's
     // paths are the repository's own.
     assert(parsed.value.pathText(parsed.value.files[0].newPath) == "src/a.d");
@@ -594,4 +602,20 @@ string assemblePatch(in PrFile[] files) @safe pure
     assert(!parsed.hasError);
     assert(parsed.value.files.length == 1);
     assert(parsed.value.files[0].binary);
+}
+
+@("forge.assemblePatch.aRemovedFileIsADeletion")
+@safe unittest
+{
+    import sparkles.diff : parsePatch, RowKind;
+
+    const patch = assemblePatch([PrFile(path: "gone.d", status: "removed",
+        deletions: 2, patch: "@@ -1,2 +0,0 @@\n-one\n-two\n")]);
+    auto parsed = parsePatch(patch);
+    assert(!parsed.hasError);
+    assert(parsed.value.pathText(parsed.value.files[0].newPath) == "/dev/null");
+
+    // Every row is a removal — the session badges the file `D` from this.
+    foreach (i; 0 .. parsed.value.rows.length)
+        assert(parsed.value.rows[i].kind == RowKind.removed);
 }

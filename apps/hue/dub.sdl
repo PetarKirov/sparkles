@@ -45,6 +45,13 @@ subConfiguration "sparkles:ui-app" "tui"
 configuration "application" {
     targetType "executable"
 
+    // `DPR1`: the forge client fetches over libcurl (std.net.curl). Declared
+    // per-configuration, not at top level, so the Android and unittest builds
+    // link no curl at all — `forge_client` compiles either way and reports
+    // `unsupported` without it, so nothing above the seam is version-gated.
+    libs "curl"
+    versions "HueCurl"
+
     // The shared raylib text core; pulls raylib-d + libs "raylib" transitively.
     dependency "sparkles:raylib-text" path="../.."
     // The sparkles:ui → raylib bridge (RaylibCanvas + input synthesis),
@@ -90,6 +97,9 @@ configuration "android" {
 // `dub build :hue -c no-gui`.
 configuration "no-gui" {
     targetType "executable"
+
+    libs "curl"
+    versions "HueCurl"
 
     excludedSourceFiles "src/gui.d" "src/gui_ansi.d"
 }
