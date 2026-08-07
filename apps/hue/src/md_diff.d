@@ -108,10 +108,10 @@ a tree of any depth.
 */
 private MdBlock[] mergeLevel(in MdBlock[] oldBlocks, in MdBlock[] newBlocks,
     scope const(char)[] oldSrc, scope const(char)[] newSrc, size_t offset,
-    ref MdDecoration[] decos) @safe
+    ref MdDecoration[] decos, MdBlockKind parent = MdBlockKind.document) @safe
 {
     MdBlock[] merged;
-    foreach (p; alignBlocks(oldBlocks, newBlocks, oldSrc, newSrc))
+    foreach (p; alignBlocks(oldBlocks, newBlocks, oldSrc, newSrc, parent))
     {
         if (p.newIndex == absent)
         {
@@ -130,7 +130,8 @@ private MdBlock[] mergeLevel(in MdBlock[] oldBlocks, in MdBlock[] newBlocks,
         }
 
         const before = oldBlocks[p.oldIndex];
-        if (blockKey(before, oldSrc) == blockKey(blk, newSrc))
+        if (blockKey(before, blockText(before, oldSrc))
+            == blockKey(blk, blockText(blk, newSrc)))
         {
             merged ~= blk; // identical: no decoration at all
             continue;
@@ -142,7 +143,7 @@ private MdBlock[] mergeLevel(in MdBlock[] oldBlocks, in MdBlock[] newBlocks,
         const container = blk.children.length != 0 && before.children.length != 0;
         if (container)
             blk.children = mergeLevel(before.children, blk.children, oldSrc,
-                newSrc, offset, decos);
+                newSrc, offset, decos, blk.kind);
 
         // A container NEVER carries its own verdict — its children do, and
         // they are the precise answer. This is the motivating scenario's crux:
@@ -288,14 +289,33 @@ followed by an unrelated addition. Leftovers on either side stay pure
 removals and additions.
 */
 private Pairing[] alignBlocks(in MdBlock[] a, in MdBlock[] b,
-    scope const(char)[] aSrc, scope const(char)[] bSrc) @safe
+    scope const(char)[] aSrc, scope const(char)[] bSrc, MdBlockKind parent) @safe
 {
+    // A table row's children are COLUMNS. Aligning them by content would let
+    // a cell whose text was replaced outright splice in as a removal plus an
+    // addition — a row with one more cell than the table has columns, which
+    // is not a diff of the table but a corruption of it. Column i is column i.
+    if (parent == MdBlockKind.tableRow)
+        return columnPairs(a.length, b.length);
+
     auto keysA = new string[](a.length);
     auto keysB = new string[](b.length);
+    // Texts kept apart from keys on purpose: a key carries the block's KIND
+    // so a heading never matches a paragraph of the same words, but that
+    // prefix is shared by every block of a kind and would inflate the
+    // character-level similarity of two short unrelated ones.
+    auto textsA = new string[](a.length);
+    auto textsB = new string[](b.length);
     foreach (i, ref blk; a)
-        keysA[i] = blockKey(blk, aSrc);
+    {
+        textsA[i] = blockText(blk, aSrc);
+        keysA[i] = blockKey(blk, textsA[i]);
+    }
     foreach (i, ref blk; b)
-        keysB[i] = blockKey(blk, bSrc);
+    {
+        textsB[i] = blockText(blk, bSrc);
+        keysB[i] = blockKey(blk, textsB[i]);
+    }
 
     auto matched = a.length * b.length <= maxAlignBlocks * maxAlignBlocks
         ? lcsPairs(keysA, keysB) : positionalPairs(keysA, keysB);
@@ -307,8 +327,7 @@ private Pairing[] alignBlocks(in MdBlock[] a, in MdBlock[] b,
     {
         const nextA = m < matched.length ? matched[m].oldIndex : a.length;
         const nextB = m < matched.length ? matched[m].newIndex : b.length;
-        out_ ~= pairRun(a[i .. nextA], i, b[j .. nextB], j, aSrc, bSrc, keysA,
-            keysB);
+        out_ ~= pairRun(a[i .. nextA], i, b[j .. nextB], j, textsA, textsB);
         i = nextA;
         j = nextB;
         if (m < matched.length)
@@ -325,8 +344,7 @@ private Pairing[] alignBlocks(in MdBlock[] a, in MdBlock[] b,
 /// One run of unmatched blocks on each side: same-kind blocks similar enough
 /// to be versions of each other pair up; the rest are removals and additions.
 private Pairing[] pairRun(in MdBlock[] a, size_t aBase, in MdBlock[] b,
-    size_t bBase, scope const(char)[] aSrc, scope const(char)[] bSrc,
-    in string[] keysA, in string[] keysB) @safe
+    size_t bBase, in string[] textsA, in string[] textsB) @safe
 {
     Pairing[] out_;
     auto usedB = new bool[](b.length);
@@ -338,7 +356,7 @@ private Pairing[] pairRun(in MdBlock[] a, size_t aBase, in MdBlock[] b,
         {
             if (usedB[y] || a[x].kind != b[y].kind)
                 continue;
-            const s = similarity(keysA[aBase + x], keysB[bBase + y]);
+            const s = similarity(textsA[aBase + x], textsB[bBase + y]);
             if (s > bestScore)
             {
                 bestScore = s;
@@ -406,6 +424,21 @@ private Pairing[] lcsPairs(in string[] a, in string[] b) @safe
     return pairs;
 }
 
+/// Positional alignment: index against index, with the tail on the longer
+/// side left as pure additions or removals (a column gained or lost).
+private Pairing[] columnPairs(size_t n, size_t m) @safe
+{
+    Pairing[] pairs;
+    const common = n < m ? n : m;
+    foreach (i; 0 .. common)
+        pairs ~= Pairing(i, i);
+    foreach (i; common .. n)
+        pairs ~= Pairing(i, absent);
+    foreach (i; common .. m)
+        pairs ~= Pairing(absent, i);
+    return pairs;
+}
+
 /// The scale-guard fallback: match equal keys at equal positions only.
 private Pairing[] positionalPairs(in string[] a, in string[] b) @safe
 {
@@ -416,17 +449,22 @@ private Pairing[] positionalPairs(in string[] a, in string[] b) @safe
     return pairs;
 }
 
-/// A block's identity for alignment: its kind and its normalized text, so
+/// A block's normalized text — what "the same content" means here, so
 /// re-indentation and re-wrapping do not make a block look new.
-private string blockKey(in MdBlock blk, scope const(char)[] src) @safe
+private string blockText(in MdBlock blk, scope const(char)[] src) @safe
+{
+    const text = blk.span.end <= src.length && blk.span.start <= blk.span.end
+        ? src[blk.span.start .. blk.span.end] : "";
+    return normalizedText(text);
+}
+
+/// A block's identity for alignment: its kind and its text, so a heading and
+/// a paragraph of the same words never match each other.
+private string blockKey(in MdBlock blk, string text) @safe
 {
     import std.conv : to;
 
-    const text = blk.span.end <= src.length && blk.span.start <= blk.span.end
-        ? src[blk.span.start .. blk.span.end] : "";
-    // The kind prefix keeps a heading and a paragraph of the same words
-    // from matching each other.
-    return blk.kind.to!string ~ ": " ~ normalizedText(text);
+    return blk.kind.to!string ~ ": " ~ text;
 }
 
 /// Similarity of two keys as the ratio of a character-level LCS to the longer

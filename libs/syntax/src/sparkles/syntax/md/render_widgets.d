@@ -779,6 +779,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     inlinesToSpans(cell.inlines, src, style, cellOpt.proseSlot,
                         spans, opt.theme.present ? &opt.theme : null,
                         cellOpt.emph);
+                    fillDiffTints(spans); // the cell path is not a prose row
                     cellSpans[ri * cols + ci] = spans;
                     int w;
                     foreach (ref s; spans)
@@ -908,7 +909,22 @@ private MdViewOptions decorated(MdViewOptions opt, size_t spanStart) @safe
 
 private uint proseRow(ref Builder b, TextSpan[] spans, MdViewOptions opt,
     int hang = 0)
-    => b.add(richWidget(spans, opt, hang));
+{
+    fillDiffTints(spans);
+    return b.add(richWidget(spans, opt, hang));
+}
+
+/// A slot alone does not tint a span — a span's background is gated by
+/// `paintBackground`, so that an inline-`code` pill is the only thing that
+/// fills by default. `DVN6`'s tints are exactly the other case that should,
+/// and this is the single funnel every prose row passes through.
+private void fillDiffTints(TextSpan[] spans) @safe
+{
+    foreach (ref sp; spans)
+        if (sp.slot == Slot.diffAdded || sp.slot == Slot.diffRemoved
+            || sp.slot == Slot.diffEmphAdded || sp.slot == Slot.diffEmphRemoved)
+            sp.paintBackground = true;
+}
 
 // The hang for a leader span: its own column width.
 private int leaderHang(in TextSpan leader) @safe

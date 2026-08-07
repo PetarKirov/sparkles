@@ -376,6 +376,7 @@ struct ViewerModel
             foldHitBase: foldHitBase,
             inlineFoldMarker: inlineFoldMarker,
             codeLineNumbers: codeLineNumbers,
+            diffBlocks: preview.decorations, // `DVN6`
         };
         foldable = foldableSpans(preview.doc);
         tree = viewMarkdown(preview.doc, opt);

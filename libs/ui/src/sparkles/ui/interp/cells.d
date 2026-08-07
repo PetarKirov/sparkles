@@ -18,6 +18,7 @@ module sparkles.ui.interp.cells;
 import std.range.primitives : put;
 
 import sparkles.ui.canvas : isCanvas, LineStyle;
+import sparkles.base.term_style : TextAttr;
 import sparkles.ui.style : BorderStyle;
 import sparkles.ui.geometry : cellsOf, Point, Rect, Size;
 import sparkles.ui.style : Visual;
@@ -39,6 +40,11 @@ struct Cell
     bool underline;
     bool curly;              /// undercurl (SGR 4:3) — the error squiggle
     RgbColor underColor;
+    /// Struck through (SGR 9). Here for the same reason `underline` is: a
+    /// feature needs it and a cell has nowhere else to put it — `DVN6`'s
+    /// deleted blocks, which must not read as text that is still there. The
+    /// rest of `styleBits` (bold, italic) still has no cell analog.
+    bool strikethrough;
 }
 
 /// How $(LREF CellGrid.writeAnsi) emits backgrounds — the terminal
@@ -236,6 +242,7 @@ struct CellGrid
         auto c = &at(x, y);
         c.glyph = g;
         c.fg = v.fg;
+        c.strikethrough = (v.styleBits & TextAttr.strikethrough.bits) != 0;
         if (v.hasBg)
         {
             c.bg = blend(c.hasBg ? c.bg : pageBg, v.bg, v.bgAlpha);
@@ -301,6 +308,8 @@ struct CellGrid
         }
         if (c.underline)
             put(w, c.curly ? ";4:3" : ";4");
+        if (c.strikethrough)
+            put(w, ";9");
         put(w, 'm');
         char[4] enc;
         const n = encode(enc, c.glyph);
