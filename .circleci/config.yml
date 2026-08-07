@@ -212,11 +212,11 @@ jobs:
           # test suite so the ldc2/dmd dimensions are actually exercised. Both
           # are on PATH via the `default` devShell.
           name: Build and test with dub
-          command: ci --test --fail-fast
+          command: ci/run-batch.sh 20m ci --test --fail-fast
           no_output_timeout: 20m
       - run:
           name: Build and run examples
-          command: ci --example-files --fail-fast
+          command: ci/run-batch.sh 20m ci --example-files --fail-fast
           no_output_timeout: 20m
       - when:
           # OS-API research examples (docs/research/.../os-apis). These are
@@ -257,11 +257,11 @@ jobs:
           no_output_timeout: 20m
       - run:
           name: Build and test with dub
-          command: ci --test --fail-fast
+          command: ci/run-batch.sh 20m ci --test --fail-fast
           no_output_timeout: 20m
       - run:
           name: Build and run examples
-          command: ci --example-files --fail-fast
+          command: ci/run-batch.sh 20m ci --example-files --fail-fast
           no_output_timeout: 20m
       - save_dub_cache
 
@@ -290,7 +290,7 @@ jobs:
           # turning any such skip into a failure — without it a missing wasm-ld
           # would leave this job green having run nothing.
           name: Run --better-c and --wasm for every sub-package that uses them
-          command: ci --test-extracted --fail-fast
+          command: ci/run-batch.sh 20m ci --test-extracted --fail-fast
           no_output_timeout: 20m
       - save_dub_cache
 
@@ -395,11 +395,11 @@ jobs:
             - lychee-v3-
       - run:
           name: Lint and check links
-          command: prek run --all-files --show-diff-on-failure --color always
+          command: ci/run-batch.sh 35m prek run --all-files --show-diff-on-failure --color always
           no_output_timeout: 35m
       - run:
           name: Verify markdown runnable examples
-          command: nix run .#ci -- --verify --fail-fast --files '**.md'
+          command: ci/run-batch.sh 35m nix run .#ci -- --verify --fail-fast --files '**.md'
           no_output_timeout: 35m
       - save_cache:
           # lychee's cache must keep growing, and CircleCI never overwrites an
