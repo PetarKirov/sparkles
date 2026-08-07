@@ -1558,9 +1558,18 @@ path needs the display connection's fd, which raylib does not expose —
 that is the window-system replacement's §15.1 integration, not this
 spec's.)
 
-**Degradation.** Loop creation can fail where a UI must still run —
-Android's app seccomp policy blocks `io_uring` (§3.4 hard-error semantics
-apply; the hue APK is a live consumer). UI adapters therefore keep their
+**Android.** Android is Linux, but its app seccomp policy denies
+`io_uring_setup` — and there is no epoll fallback in this library by
+design (§3.4). The Android triple therefore selects the **kqueue peer
+backend over [mheily/libkqueue](https://github.com/mheily/libkqueue)**
+(an epoll shim the APK links statically) as its `DefaultBackend` — the
+same backend + shim combination Linux CI exercises via
+`EventHorizonLibkqueue`. The loop, scheduler, waker (eventfd), timers,
+poll, signalfd, and inotify all run; only the `WAITID`-backed proc reap
+waits on the O26 lowerings, like the other peer backends.
+
+**Degradation.** Loop creation can still fail where a UI must run (an
+unforeseen sandbox, a broken shim). UI adapters therefore keep their
 plain paced loop as an explicit fallback arm, selected once at startup on
 loop-creation failure — honest degradation in the §3.2 spirit, never a
 silent behavioral fork.
