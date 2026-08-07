@@ -769,6 +769,27 @@ DockZone dockZoneAt(in Rect rect, in Point p, int bandPercent = 25)
     return DockZone.center;
 }
 
+/**
+A drag-to-redock in flight (`DCK5`), and the hint a host paints for it.
+
+Exposed as a value because the overlay is the host's to draw and nobody
+else's to decide: the container knows which pane is moving, which pane it
+is over and which zone that resolves to, so a host renders exactly that
+rather than re-deriving a second opinion from the pointer.
+*/
+struct DockDrag
+{
+    bool active;      /// a drag has passed the threshold
+    PaneId pane;      /// the pane being moved
+    PaneId target;    /// the pane under the pointer (`0` = none)
+    DockZone zone;    /// where it would land in that pane
+    Rect targetRect;  /// the target's frame, so the hint needs no lookup
+
+    /// `true` when releasing now would actually change the layout.
+    bool willDock() const @safe pure nothrow @nogc
+        => active && zone != DockZone.none && target != 0 && target != pane;
+}
+
 /// What the container decided an event means (`DCK13`).
 enum RouteKind : ubyte
 {
@@ -825,6 +846,9 @@ struct DockContainer
     private Rect area;
     private CaptureState capture;
     private PressState tabPress;
+    private DockDrag redock;
+    private PaneId tabPressPane;
+    private Point tabPressAt;
     private SplitState drag;
     private uint dragDivider = uint.max;
     private uint hoverDivider = uint.max;
@@ -929,6 +953,15 @@ struct DockContainer
                 return cast(uint) i;
         return uint.max;
     }
+
+    /// The drag-to-redock in flight, for the host's hint overlay (`DCK5`).
+    /// `active` is false when there is nothing to draw.
+    DockDrag dragHint() const pure nothrow @nogc => redock;
+
+    /// How far a press on a tab must travel before it becomes a re-dock
+    /// rather than an activation. In the container's units, so a terminal
+    /// asks for one cell and a pixel host for a few.
+    int dragThreshold = 2;
 
     /// `true` while a divider drag owns the pointer.
     bool resizing() const pure nothrow @nogc => dragDivider != uint.max;
@@ -1080,13 +1113,64 @@ struct DockContainer
                 && p.button == PointerButton.left && idx != uint.max)
             {
                 tabPress = tabPress.pressed(id);
+                tabPressPane = tabs[idx].pane;
+                tabPressAt = p.pos;
                 capture = capture.capturedBy(id);
                 return Route(RouteKind.container, tabs[idx].pane, Event(p));
             }
+            // A pressed tab that TRAVELS becomes a re-dock rather than an
+            // activation (DCK5). The threshold is what keeps the two
+            // gestures from being the same gesture: without it every
+            // slightly-dragged click would either activate something the
+            // reader was moving, or move something they were clicking.
+            if (tabPress.armed != 0 && p.action == PointerAction.drag)
+            {
+                const dx = p.pos.x - tabPressAt.x;
+                const dy = p.pos.y - tabPressAt.y;
+                const far = (dx < 0 ? -dx : dx) >= dragThreshold
+                    || (dy < 0 ? -dy : dy) >= dragThreshold;
+                if (far || redock.active)
+                {
+                    redock.active = true;
+                    redock.pane = tabPressPane;
+                    redock.target = 0;
+                    redock.zone = DockZone.none;
+                    PaneId over;
+                    if (paneAt(p.pos, over))
+                        foreach (ref f; paneFrames)
+                            if (f.pane == over)
+                            {
+                                redock.target = over;
+                                redock.targetRect = f.rect;
+                                redock.zone = dockZoneAt(f.rect, p.pos);
+                            }
+                }
+                return Route(RouteKind.container, redock.pane, Event(p));
+            }
             if (p.action == PointerAction.release && tabPress.armed != 0)
             {
+                const wasDrag = redock.active;
+                const drop = redock;
                 tabPress = tabPress.released(id);
                 capture = capture.released();
+                redock = DockDrag.init;
+                // A drag that travelled never activates the tab it started
+                // on, whether or not it found somewhere to land.
+                if (wasDrag)
+                {
+                    tabPress = tabPress.cancelled();
+                    if (drop.willDock)
+                    {
+                        layout = layout.redocked(drop.pane, drop.target,
+                            drop.zone);
+                        focused = drop.pane;
+                        layout.activate(drop.pane);
+                        arrange(area);
+                        return Route(RouteKind.container, drop.pane, Event(p),
+                            relayout: true);
+                    }
+                    return Route(RouteKind.container, drop.pane, Event(p));
+                }
                 if (tabPress.activated != 0)
                 {
                     const t = tabs[cast(size_t)(tabPress.activated - tabCapBase)];
@@ -1748,4 +1832,90 @@ version (unittest)
     assert(base.redocked(docA, docA, DockZone.east) == base);
     assert(base.redocked(docA, side, DockZone.none) == base);
     assert(base.redocked(99, side, DockZone.east) == base);
+}
+
+@("ui.dock.dragATabToRedockIt")
+@safe unittest
+{
+    // A tabbed group of two documents beside a sidebar.
+    enum PaneId side = 1, docA = 2, docB = 3;
+    DockContainer c;
+    const s = c.layout.addLeaf(side, extent: 20);
+    const x = c.layout.addLeaf(docA);
+    const y = c.layout.addLeaf(docB);
+    const g = c.layout.addTabs([x, y]);
+    c.layout.root = c.layout.addSplit(DockAxis.horizontal, [s, g]);
+    c.arrange(Rect(0, 0, 100, 40));
+    const docBTab = c.tabs[1].rect;
+
+    static Event press(int x, int y) => Event(PointerEvent(
+        action: PointerAction.press, button: PointerButton.left,
+        pos: Point(x, y)));
+    static Event drag(int x, int y) => Event(PointerEvent(
+        action: PointerAction.drag, button: PointerButton.left,
+        pos: Point(x, y)));
+    static Event release(int x, int y) => Event(PointerEvent(
+        action: PointerAction.release, button: PointerButton.left,
+        pos: Point(x, y)));
+
+    // Press docB's tab, then travel: below the threshold it is still a
+    // press (an activation-in-waiting), past it a drag.
+    c.handle(press(docBTab.x + 1, docBTab.y));
+    assert(!c.dragHint().active, "a press alone is not a drag");
+    c.handle(drag(docBTab.x + 2, docBTab.y));
+    assert(!c.dragHint().active, "one cell is under the threshold");
+    c.handle(drag(docBTab.x + 6, docBTab.y + 6));
+    assert(c.dragHint().active && c.dragHint().pane == docB);
+
+    // Over the sidebar's west band, the hint says where it would land —
+    // the host paints exactly this and derives nothing itself.
+    c.handle(drag(1, 20));
+    auto h = c.dragHint();
+    assert(h.target == side && h.zone == DockZone.west && h.willDock);
+    assert(h.targetRect.width == 20);
+
+    // Release drops it there: the group it left collapses, and the moved
+    // pane is focused and showing.
+    const r = c.handle(release(1, 20));
+    assert(r.kind == RouteKind.container && r.relayout);
+    assert(!c.dragHint().active);
+    assert(c.focused == docB);
+    assert(c.paneFrames[0].pane == docB, "dropped west of the sidebar");
+    foreach (ref n; c.layout.nodes)
+        assert(n.kind != DockKind.tabs, "the group of one collapsed");
+
+    // The dragged tab is NOT also activated by the release that dropped it
+    // — the two gestures stay distinct.
+    assert(c.layout.panes().length == 3);
+}
+
+@("ui.dock.dragCancelledOffAnyTargetChangesNothing")
+@safe unittest
+{
+    enum PaneId docA = 1, docB = 2;
+    DockContainer c;
+    const x = c.layout.addLeaf(docA);
+    const y = c.layout.addLeaf(docB);
+    c.layout.root = c.layout.addTabs([x, y]);
+    c.arrange(Rect(0, 0, 100, 40));
+    const before = c.layout;
+    const tab = c.tabs[1].rect;
+
+    // Drag docB's tab clean off the container and release: nothing to dock
+    // against, so the layout is untouched — and the tab it started on is
+    // not activated as a consolation.
+    c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(tab.x + 1, tab.y))));
+    c.handle(Event(PointerEvent(action: PointerAction.drag,
+        button: PointerButton.left, pos: Point(tab.x + 9, tab.y + 9))));
+    assert(c.dragHint().active && !c.dragHint().willDock
+        || c.dragHint().target != 0);
+    c.handle(Event(PointerEvent(action: PointerAction.drag,
+        button: PointerButton.left, pos: Point(-50, -50))));
+    assert(!c.dragHint().willDock, "off the container docks nowhere");
+    const r = c.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(-50, -50))));
+    assert(!r.relayout);
+    assert(c.layout == before, "a cancelled drag is a no-op");
+    assert(c.paneFrames[0].pane == docA, "and activates nothing");
 }
