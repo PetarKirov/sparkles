@@ -618,8 +618,12 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     : (item.children.length ? item.children[0].inlines : null);
                 inlinesToSpans(inls, src, opt.baseStyle, opt.proseSlot, spans,
                     opt.theme.present ? &opt.theme : null, opt.emph);
-                rows ~= proseRow(b, spans, opt, leaderHang(leader));
-                // Nested blocks (a sub-list, a nested paragraph) after the first.
+                const lead = leaderHang(leader);
+                rows ~= proseRow(b, spans, opt, lead);
+                // Nested blocks (a sub-list, a nested paragraph) after the
+                // first, indented by the item's leader width so depth reads
+                // as the sum of ancestor leaders — 2 cells under "● ", 3
+                // under "1. " — exactly where the item's own text starts.
                 bool first = true;
                 foreach (ref const c; item.children)
                 {
@@ -628,7 +632,10 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         first = false;
                         continue;
                     }
-                    rows ~= viewBlock(b, c, src, opt, listDepth + 1, quoteDepth);
+                    const child = viewBlock(b, c, src, opt, listDepth + 1,
+                        quoteDepth);
+                    rows ~= b.add(Widget(kind: WidgetKind.panel,
+                        children: [child], padding: Insets(0, 0, 0, lead)));
                 }
             }
             return b.container(WidgetKind.column, rows);
