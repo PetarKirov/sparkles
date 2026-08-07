@@ -17,9 +17,6 @@
 
 version: 2.1
 
-orbs:
-  win: circleci/windows@5.0
-
 # ---------------------------------------------------------------------------
 # Executors
 # ---------------------------------------------------------------------------
@@ -31,7 +28,7 @@ executors:
   # cacheable /nix wants a real VM.
   linux:
     machine:
-      image: ubuntu-2404:current
+      image: ubuntu-2604:current
     resource_class: large
     environment:
       # `nproc` and /proc/meminfo report the *host's* resources here, not the
@@ -46,11 +43,21 @@ executors:
   # class here (see ci/README.md § Cost).
   macos:
     macos:
-      xcode: '26.6'
+      xcode: '27.0'
     resource_class: m4pro.medium
     environment:
       # m4pro.medium is 6 vCPU (see the Linux note above).
       SPARKLES_CI_JOBS: 6
+
+  # Declared directly rather than via `circleci/windows`: the orb's value here
+  # was its executor defaults, and naming the image explicitly is what stops a
+  # silent base-image bump from moving under the one job that has no Nix
+  # pinning at all. `shell: bash.exe` on the steps themselves (Git Bash) is
+  # what lets them share ci/lib/common.sh with every other platform.
+  windows:
+    machine:
+      image: 'windows-server-2025-gui:current'
+    resource_class: windows.medium
 
   # The fan-in gate does no work; keep it on the cheapest thing that runs.
   tiny:
@@ -308,9 +315,7 @@ jobs:
   # The Win32 OS-API example builds against druntime's core.sys.windows — no
   # Nix, no third-party deps — so it runs on a plain Windows runner with LDC.
   win32-example:
-    executor:
-      name: win/default
-      size: medium
+    executor: windows
     steps:
       - checkout
       - run:
