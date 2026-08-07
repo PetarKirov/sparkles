@@ -208,27 +208,38 @@ query($owner: String!, $name: String!) {
 
 ### 7.1 Agent input
 
-The unreleased commits, **oldest first**, embedded in the prompt as compact
-JSON:
+The backlog is presented as **PR-atomic units**, oldest first, embedded in the
+prompt as compact JSON. A unit is one merged pull request with all of its
+commits, or a single direct commit (`pr: 0`, §6):
 
 ```json
 {
-  "commits": [
+  "units": [
     {
       "i": 0,
-      "sha": "<40-hex>",
       "pr": 47,
-      "prTitle": "feat(x): …",
-      "subject": "feat(x): …"
+      "title": "feat(x): y",
+      "commits": ["feat(x): part 1", "fix(x): part 2"]
     },
-    { "i": 1, "sha": "<40-hex>", "pr": 0, "prTitle": "", "subject": "chore: …" }
+    {
+      "i": 1,
+      "pr": 0,
+      "title": "chore: direct push",
+      "commits": ["chore: direct push"]
+    }
   ]
 }
 ```
 
-`pr: 0` means "no merged PR" (§6). The prompt states the current version, the
-bump-policy table matching §4 for the current major, and the reply contract
-below.
+Units are contiguous slices covering the whole range: a unit ends at the first
+row where every PR opened so far has closed, so a PR whose commits interleave
+with another's yields one wider unit rather than a split. No commit SHA appears
+in the prompt — the tool maps a unit back to the commit its tag lands on.
+
+The prompt states the current version, the bump-policy table matching §4 for
+the current major, and the reply contract below. Each JSON block is fenced with
+more backticks than its content contains, so a commit subject that itself holds
+a fence cannot close the block early.
 
 ### 7.2 Agent reply contract
 
@@ -239,22 +250,26 @@ The agent must reply with **only** this JSON object (fenced or bare — see
 {
   "segments": [
     {
-      "boundary": "<full sha of the segment's LAST commit>",
+      "boundary": 12,
       "theme": "<short theme for the `vX.Y.Z — <theme>` subject>",
       "bump": "patch|minor|major",
       "highlights": ["<completed, user-visible work to document>", "…"]
     }
   ],
-  "remainderNote": "<why trailing commits were left unreleased; optional>"
+  "remainderNote": "<why trailing units were left unreleased; optional>"
 }
 ```
 
 Semantics the prompt demands and the tool enforces or uses:
 
-- Segments are **contiguous slices** of the oldest-first list, in order.
-- Commits sharing a PR number **must not be split** across segments.
+- `boundary` is the `i` of the segment's **last unit** — a number, strictly
+  increasing across segments. A quoted (`"12"`) or float-shaped (`12.0`)
+  boundary means the same thing.
+- Segments are **contiguous slices** of the oldest-first unit list, in order.
+- A PR is never split across releases: it is one unit, and units are atomic.
+  The agent cannot express a split, so it cannot make that mistake.
 - A **trailing remainder** may be left out of all segments (unreleasable WIP);
-  `remainderNote` explains it. Mid-range commits cannot be excluded — a git tag
+  `remainderNote` explains it. Mid-range units cannot be excluded — a git tag
   always contains its full ancestry.
 - Segment boundaries need **not** wait for an area's work to complete: WIP may
   land inside a segment undocumented. `highlights` names only the completed
@@ -267,15 +282,19 @@ Semantics the prompt demands and the tool enforces or uses:
 
 1. **Fence stripping:** ` ```json `/` ``` ` fences are removed;
    with surrounding prose, the substring from the first `{` to the last `}` is
-   taken. The result must parse as JSON (`std.json`), then decode into the
-   reply shape (`sparkles:wired`; unknown keys are ignored).
-2. **Boundary resolution:** each `boundary` must resolve to a commit in the
-   range — a full 40-hex SHA or a unique prefix of ≥ 7 characters. Resolved
-   indices must be strictly increasing. The last boundary may fall short of the
-   newest commit (that suffix becomes the remainder). At least one segment is
-   required.
+   taken. The result must parse as JSON (`std.json`); each `boundary` is
+   normalized to its decimal text, then the reply decodes into the reply shape
+   (`sparkles:wired`; unknown keys are ignored). A boundary of any other shape
+   (an old-style SHA, say) still decodes, so step 2 rejects it with a message
+   about unit indices rather than one about JSON types.
+2. **Boundary resolution:** each `boundary` must be a unit index in range, and
+   the indices must be strictly increasing. Each resolves to the exclusive end
+   of its unit. The last boundary may fall short of the newest unit (that
+   suffix becomes the remainder). At least one segment is required.
 3. **PR integrity:** for every PR number ≠ 0, all its commits must land in one
-   segment (or all in the remainder). Violations name the PR.
+   segment (or all in the remainder). Unit-atomic boundaries make this
+   structurally true; the check remains as the invariant's guard.
+
 4. **Bump reconciliation:** per segment, the policy floor is `suggestBump`
    (§4) of that segment's tally against the chained previous version. The
    agent's bump is accepted if ≥ the floor; an under-bump is **escalated** to

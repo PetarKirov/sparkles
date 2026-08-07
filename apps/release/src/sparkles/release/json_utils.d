@@ -25,12 +25,19 @@ Result!JSONValue parseJsonText(string raw) @safe
 /// Parses `raw` and decodes it into a `T` via `sparkles:wired`.
 Result!T decodeJson(T)(string raw)
 {
-    import sparkles.wired : fromJSON;
-
     auto dom = parseJsonText(raw);
     if (dom.hasError)
         return failure!T(dom.error);
-    auto decoded = fromJSON!T(dom.value);
+    return decodeJsonValue!T(dom.value);
+}
+
+/// Decodes an already-parsed DOM into a `T` — for callers that must inspect or
+/// normalize the JSON before it meets the typed model.
+Result!T decodeJsonValue(T)(in JSONValue dom)
+{
+    import sparkles.wired : fromJSON;
+
+    auto decoded = fromJSON!T(dom);
     if (decoded.hasError)
         return failure!T(decoded.error.toString);
     return success(decoded.value);
