@@ -19,8 +19,8 @@ module diff_view;
 
 import std.conv : text;
 
-import diff_session : DiffSession, FileChange, SessionEntry, SessionHeader,
-    statusGlyph;
+import diff_session : AnchoredThread, DiffSession, FileChange, SessionEntry,
+    SessionHeader, statusGlyph;
 import document : DiffSides;
 import sparkles.diff.model : Degradation, DiffDoc, FileEntry, Hunk, Row,
     RowKind, Span;
@@ -75,6 +75,10 @@ struct DiffViewOptions
     /// badge. Demote, never hide — the badge says how many rows it stands for
     /// and the reviewer can always expand.
     bool foldFormattingOnly = true;
+    /// `DPR3`/`DCM2`: this file's review conversations. Each renders as a
+    /// block under the row it is anchored to; a resolved one folds to a
+    /// single line, because a settled argument is context, not a task.
+    const(AnchoredThread)[] threads;
     /// `DVT1`: the per-side type payloads for this file. Each attaches only
     /// when its `code` is byte-identical to that side's diff text — see
     /// $(LREF anchors) — so a decoration can never land on the wrong token.
@@ -253,6 +257,12 @@ WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOpti
         // expanded unchanged region is read from.
         if (fi < sides.length)
             fopt.sideText = sides[fi].newText;
+        // `DPR3`: the conversations on THIS file, by path — the session holds
+        // them all, and a collapsed file renders none.
+        if (!fopt.entry.collapsed && session.threads.length)
+            fopt.threads = threadsFor(session.threads,
+                doc.pathText(doc.files[fi].newPath),
+                doc.pathText(doc.files[fi].oldPath));
         // `DVT1`: the file's per-side type overlays, already anchored (or
         // refused) by whoever attached them.
         if (!fopt.entry.collapsed && fi < types.length)
@@ -466,6 +476,90 @@ private Slot statusSlot(FileChange c) @safe pure nothrow @nogc
     }
 }
 
+/// The threads belonging to one file. Matched on either path so a rename
+/// does not orphan a conversation written before it.
+private const(AnchoredThread)[] threadsFor(
+    return scope const(AnchoredThread)[] all, scope const(char)[] newPath,
+    scope const(char)[] oldPath) @safe
+{
+    const(AnchoredThread)[] mine;
+    foreach (ref t; all)
+        if (t.path == newPath || t.path == oldPath)
+            mine ~= t;
+    return mine;
+}
+
+/// Does this thread hang on this row? A thread on the old side anchors to a
+/// removed or context row's old line; one on the new side to an added or
+/// context row's new line.
+private bool anchoredHere(in AnchoredThread t, in Row row) @safe pure nothrow @nogc
+{
+    if (t.line == 0)
+        return false; // outdated: no line to hang on
+    return t.oldSide ? row.oldLine == t.line : row.newLine == t.line;
+}
+
+/**
+`DPR3`/`DCM2`: one review conversation, rendered under its anchor line.
+
+A resolved thread folds to a single line. That is not tidiness — an
+unresolved conversation is a thing the reviewer must act on, and rendering a
+settled argument at the same weight buries the live one. The badge still says
+who and how many, so nothing is hidden, only demoted; the same
+demote-never-hide contract `DVN2` holds for noise.
+
+Indented to the code's column so the conversation reads as belonging to that
+line rather than to the file.
+*/
+private uint threadBlock(ref Builder b, in AnchoredThread t, int gutterWidth,
+    in DiffViewOptions opt) @safe
+{
+    import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
+    import sparkles.ui.geometry : Insets;
+    import sparkles.ui.style : TextStyle;
+
+    const pad = gutterWidth > 0 ? gutterWidth + 2 : 2;
+    auto indent = new char[](pad);
+    indent[] = ' ';
+
+    if (t.resolved)
+    {
+        const who = t.comments.length ? t.comments[0].author : "someone";
+        return b.add(Widget(kind: WidgetKind.rich, spans: [
+            TextSpan(indent.idup, slot: Slot.gutter),
+            TextSpan(text("✓ resolved — ", t.comments.length,
+                t.comments.length == 1 ? " comment by " : " comments, from ",
+                who), slot: Slot.muted),
+        ]));
+    }
+
+    auto rows = new uint[](0);
+    foreach (i, ref c; t.comments)
+    {
+        TextSpan[] head = [TextSpan(indent.idup, slot: Slot.gutter)];
+        head ~= TextSpan(i == 0 ? "▌ " : "│ ", slot: Slot.chromeAccent);
+        head ~= TextSpan(c.author.idup, slot: Slot.chromeAccent,
+            textStyle: TextStyle(bold: true));
+        if (c.when.length)
+            head ~= TextSpan("  " ~ c.when.idup, slot: Slot.muted);
+        if (t.outdated && i == 0)
+            head ~= TextSpan("  (outdated)", slot: Slot.muted);
+        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: head));
+
+        if (c.body_.root.children.length)
+        {
+            // Indented by PADDING, not by a prefix span: a comment body wraps,
+            // and a prefix only ever lands on the first row — leaving the rest
+            // hanging out at the code's own column, which reads as code.
+            MdViewOptions mopt;
+            rows ~= b.add(Widget(kind: WidgetKind.column,
+                children: [viewMarkdownInto(b, c.body_, mopt)],
+                padding: Insets(0, 0, 0, pad + 2)));
+        }
+    }
+    return b.container(WidgetKind.column, rows);
+}
+
 /**
 `DPR2`: the session header — what this change is, then its description.
 
@@ -480,6 +574,7 @@ private uint sessionHeader(ref Builder b, const SessionHeader h,
     SideRenderer render, in DiffViewOptions opt) @safe
 {
     import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
+    import sparkles.ui.geometry : Insets;
     import sparkles.ui.style : TextStyle;
 
     auto rows = new uint[](0);
@@ -759,7 +854,15 @@ private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
     rows ~= hunkHeader(b, hunk);
 
     foreach (ref row; doc.hunkRows(hunk))
+    {
         rows ~= viewRow(b, doc, row, gutterWidth, opt);
+        // `DPR3`: the conversation goes UNDER the line it is about, the way
+        // a reviewer reads it — not in a margin, and not in a separate pane
+        // where the code it refers to is no longer on screen.
+        foreach (ref t; opt.threads)
+            if (anchoredHere(t, row))
+                rows ~= threadBlock(b, t, gutterWidth, opt);
+    }
 
     return b.container(WidgetKind.column, rows);
 }
@@ -1476,4 +1579,100 @@ import sparkles.ui.style : Slot;
             plainText ~= sp.text;
     }
     assert(!plainText.canFind("feat: a thing"));
+}
+
+@("diff_view.threads.anchorUnderTheirLineAndFoldWhenResolved")
+@safe unittest
+{
+    import diff_session : AnchoredThread, buildDiffSession, ThreadComment;
+    import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdDoc, MdInline,
+        MdInlineKind, Span;
+
+    static MdDoc prose(string text) @safe
+    {
+        MdDoc d = {
+            source: text,
+            root: MdBlock(kind: MdBlockKind.document, children: [
+                MdBlock(kind: MdBlockKind.paragraph, span: Span(0, text.length),
+                    inlines: [MdInline(kind: MdInlineKind.text,
+                        span: Span(0, text.length))]),
+            ]),
+        };
+        return d;
+    }
+
+    auto doc = diffText("one\ntwo\nthree\n", "one\nTWO\nthree\n", "f.d", "f.d");
+    auto session = buildDiffSession(doc);
+    session.threads = [
+        AnchoredThread(path: "f.d", line: 2, resolved: false,
+            comments: [ThreadComment("reviewer", "2026-08-07",
+                prose("this needs a why"))]),
+        AnchoredThread(path: "f.d", line: 3, resolved: true,
+            comments: [ThreadComment("reviewer", "2026-08-06",
+                prose("settled long ago"))]),
+    ];
+
+    auto tree = viewDiffDoc(doc, DiffViewOptions.init, null, null, session);
+
+    const(char)[] all;
+    size_t threadRow = size_t.max, anchorRow = size_t.max;
+    foreach (i, ref n; tree.nodes)
+    {
+        const(char)[] row = n.text;
+        foreach (sp; n.spans)
+            row ~= sp.text;
+        all ~= row;
+
+        import std.algorithm.searching : canFind;
+
+        if (row.canFind("this needs a why"))
+            threadRow = i;
+        if (row.canFind("TWO"))
+            anchorRow = i;
+    }
+
+    import std.algorithm.searching : canFind;
+
+    assert(threadRow != size_t.max, "an unresolved thread renders its comments");
+    assert(anchorRow != size_t.max && anchorRow < threadRow,
+        "the conversation goes UNDER the line it is about");
+    assert(all.canFind("reviewer") && all.canFind("2026-08-07"));
+
+    // A resolved thread demotes to one line: still there, no longer shouting.
+    assert(!all.canFind("settled long ago"), "a resolved body folds away");
+    assert(all.canFind("resolved"), "but the badge says it exists");
+
+    // Threads belong to their own file: another path's conversations are not
+    // borrowed by this one.
+    session.threads[0].path = "other.d";
+    auto elsewhere = viewDiffDoc(doc, DiffViewOptions.init, null, null, session);
+    const(char)[] other;
+    foreach (ref n; elsewhere.nodes)
+        foreach (sp; n.spans)
+            other ~= sp.text;
+    assert(!other.canFind("this needs a why"));
+}
+
+@("diff_view.threads.anOutdatedThreadHasNoLineToHangOn")
+@safe unittest
+{
+    import diff_session : AnchoredThread, buildDiffSession, ThreadComment;
+
+    // GitHub reports an outdated thread with a null line, which decodes to
+    // zero. Zero must not match row 0 of anything — it means "nowhere".
+    auto doc = diffText("a\n", "b\n", "f.d", "f.d");
+    auto session = buildDiffSession(doc);
+    session.threads = [AnchoredThread(path: "f.d", line: 0, outdated: true,
+        comments: [ThreadComment("reviewer", "2026-08-01")])];
+
+    auto tree = viewDiffDoc(doc, DiffViewOptions.init, null, null, session);
+    const(char)[] all;
+    foreach (ref n; tree.nodes)
+        foreach (sp; n.spans)
+            all ~= sp.text;
+
+    import std.algorithm.searching : canFind;
+
+    assert(!all.canFind("reviewer"),
+        "a thread with no line anchors nowhere rather than at the top");
 }
