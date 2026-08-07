@@ -494,6 +494,11 @@ jobs:
   # The single fan-in gate, so branch protection has one stable check to
   # require as jobs come and go. CircleCI will not start this job unless every
   # `requires:` dependency succeeded, so reaching it *is* the assertion.
+  #
+  # Reported to GitHub as `ci/circleci: ci`. That is the one check to require
+  # when CircleCI is the primary provider; GitHub Actions' equivalent is `CI`
+  # in .github/workflows/ci.yml. Switching providers is that single change —
+  # see ci/README.md § Switching the primary provider.
   ci:
     executor: tiny
     steps:
