@@ -33,6 +33,7 @@ import sparkles.base.term_caps : isTerminal, StdStream;
 
 import ansi_model : BackgroundMode, backgroundOptions;
 import document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
+import diff_structural : StructuralPolicy;
 import diff_view : DiffLayout, DiffViewOptions;
 import sparkles.diff : WhitespaceMode;
 import source_set : SourceSet;
@@ -97,7 +98,10 @@ struct CliParams
     @CliOption("diff-ignore-whitespace", "How much whitespace difference counts as the same line: exact (default), trailing (git --ignore-space-at-eol), change (git -b), all (git -w). An ignored difference is never a change, not a change that is hidden.")
     string diffIgnoreWhitespace = "exact";
 
-    @CliOption("diff-layout", "Diff layout: unified (default, one column) or split (two aligned panes). A split narrower than 80 columns degrades to unified, where the same diff reads better.")
+    @CliOption("diff-structural", "Whether the grammar gets asked if a change is real: auto (default, when a grammar exists and the file is under the size ceiling), on (ignore the ceiling), off. Token-stream-identical hunks fold as formatting-only; the parser can only demote a change, never hide one.")
+    string diffStructural = "auto";
+
+    @CliOption("diff-layout","Diff layout: unified (default, one column) or split (two aligned panes). A split narrower than 80 columns degrades to unified, where the same diff reads better.")
     string diffLayout = "unified";
 
     @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
@@ -355,6 +359,17 @@ private WhitespaceMode parseWhitespaceMode(string spelling) @safe
     }
 }
 
+private StructuralPolicy parseStructural(string spelling) @safe
+{
+    import diff_structural : parseStructuralPolicy;
+
+    bool ok;
+    const p = parseStructuralPolicy(spelling, ok);
+    if (!ok)
+        warning(i"unknown --diff-structural '$(spelling)'; using auto");
+    return p;
+}
+
 private GrammarRegistry defaultRegistry() @safe
 {
     version (Android)
@@ -520,7 +535,8 @@ int main(string[] args)
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
     auto pipeline = DocumentPipeline(&registry, &cache, cli.markdown, cli.raw,
-        cli.patch, parseWhitespaceMode(cli.diffIgnoreWhitespace));
+        cli.patch, parseWhitespaceMode(cli.diffIgnoreWhitespace),
+        parseStructural(cli.diffStructural));
 
     const backend = pickBackend(cli);
 
