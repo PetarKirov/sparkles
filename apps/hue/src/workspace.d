@@ -775,16 +775,21 @@ private void runWorkspaceAsync(ref WorkspaceTui w, ref TerminalSession term,
 {
     import sparkles.event_horizon.errors : IoError;
     import sparkles.event_horizon.scope_ : withDeadline, withScope;
-    import sparkles.event_horizon.signals : SignalFd;
-    import sparkles.ui_app.event_source : EventChannel, pumpResizeSignals,
-        pumpTerminalInput;
+    import sparkles.ui_app.event_source : EventChannel, pumpTerminalInput;
 
     // SIGWINCH becomes a channel event through a signalfd — never an EINTR
     // side effect (a parked ring read is not interruptible the way the
-    // blocking reader's `read(2)` was).
-    enum int SIGWINCH = 28;
-    SignalFd winch;
-    const winchOk = !SignalFd.create(winch, [SIGWINCH]).hasError;
+    // blocking reader's `read(2)` was). Linux-only; the kqueue platforms
+    // apply a resize on the next event until their EVFILT_SIGNAL lowering.
+    version (linux)
+    {
+        import sparkles.event_horizon.signals : SignalFd;
+        import sparkles.ui_app.event_source : pumpResizeSignals;
+
+        enum int SIGWINCH = 28;
+        SignalFd winch;
+        const winchOk = !SignalFd.create(winch, [SIGWINCH]).hasError;
+    }
 
     EventChannel events;
 
@@ -794,13 +799,15 @@ private void runWorkspaceAsync(ref WorkspaceTui w, ref TerminalSession term,
     auto wP = (() @trusted => &w)();
     auto termP = (() @trusted => &term)();
     auto schedP = (() @trusted => &sched)();
-    auto winchP = (() @trusted => &winch)();
+    version (linux)
+        auto winchP = (() @trusted => &winch)();
 
     sched.run(() {
         cast(void) withScope!((ref sc) {
             sc.spawnDaemon(() { pumpTerminalInput(*schedP, events, 0); });
-            if (winchOk)
-                sc.spawnDaemon(() { pumpResizeSignals(*schedP, events, *winchP); });
+            version (linux)
+                if (winchOk)
+                    sc.spawnDaemon(() { pumpResizeSignals(*schedP, events, *winchP); });
 
             // Every event repaints; a tick only does when it changed the
             // document, so an idle session emits nothing to the terminal.
