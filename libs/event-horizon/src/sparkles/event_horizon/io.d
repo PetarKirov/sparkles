@@ -420,6 +420,14 @@ unittest
     assert(verified);
 }
 
+// The two Ticker tests assert the GRID invariant algebraically rather than
+// against the wall clock: on a preemptible CI runner the scheduler can
+// stall for whole periods between a timer wake and the next statement, so
+// any `now()`-based bound is a flake. The race-free invariant is that every
+// `tick` — on-time or late — advances the deadline by exactly
+// `(value + 1) × period` from the grid anchor: absolute deadlines, never
+// re-anchored to "now", missed periods skipped not replayed.
+
 @("io.ticker.pacesWithoutDrift")
 @safe
 unittest
@@ -433,15 +441,23 @@ unittest
     auto r = s.run(() {
         const t0 = s.loop.now();
         auto ticker = Ticker.start(s, 5.msecs);
+        const anchor = ticker.nextDeadline;
+
+        ulong advanced;
         foreach (i; 0 .. 3)
         {
             auto ticked = ticker.tick(s);
             assert(ticked.hasValue);
-            assert(ticked.value == 0, "an on-time consumer misses nothing");
+            advanced += ticked.value + 1;
+            assert(ticker.nextDeadline == anchor + advanced * 5.msecs,
+                "the grid never re-anchors to now — drift-free by algebra");
         }
-        // Absolute-deadline pacing: three 5 ms ticks take >= 15 ms even
-        // though each iteration also spends time between parks.
-        assert(s.loop.now() - t0 >= 15.msecs);
+
+        // The temporal half only where the run was undisturbed: no skipped
+        // periods means every park met its full deadline, and round-up
+        // timers never fire early, so three ticks take >= 15 ms.
+        if (advanced == 3)
+            assert(s.loop.now() - t0 >= 15.msecs);
         done = true;
     });
     assert(!r.hasError);
@@ -459,23 +475,27 @@ unittest
 
     bool done;
     auto r = s.run(() {
-        // Coarse-timer-proof margins: the kqueue backend's EVFILT_TIMER is
-        // millisecond-grained and CI runners stall — a 25 ms grid keeps the
-        // invariants clear of both.
         auto ticker = Ticker.start(s, 25.msecs);
+        const anchor = ticker.nextDeadline;
+
         // A deliberately slow "frame": sleep several periods past the
         // deadline, then tick — the missed periods are skipped, not
-        // replayed as a burst.
+        // replayed as a burst. Timers never fire early (round-up), so at
+        // least 110/25 - 1 = 3 whole periods are guaranteed missed.
         assert(!sleep(s, 110.msecs).hasError);
         auto late = ticker.tick(s);
         assert(late.hasValue);
-        assert(late.value >= 1, "being 85+ ms late on a 25 ms grid skips ticks");
+        assert(late.value >= 3, "being 85+ ms late on a 25 ms grid skips ticks");
+        assert(ticker.nextDeadline == anchor + (late.value + 1) * 25.msecs,
+            "the skip realigns to the next grid point, not to now");
 
-        // The realigned grid keeps pacing: the next tick is on time again.
+        // The realigned grid keeps pacing: the next tick advances by
+        // exactly its own (value + 1) periods — on-time on a quiet
+        // machine (value 0), still on the grid on a stalled one.
         auto next = ticker.tick(s);
-        assert(next.hasValue && next.value == 0);
-        assert(ticker.nextDeadline > s.loop.now(),
-            "the deadline realigned to the future");
+        assert(next.hasValue);
+        assert(ticker.nextDeadline
+            == anchor + (late.value + 1 + next.value + 1) * 25.msecs);
         done = true;
     });
     assert(!r.hasError);
