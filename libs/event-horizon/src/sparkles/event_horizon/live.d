@@ -1,12 +1,14 @@
 /**
 Live (ring-backed) capability implementations (SPEC §10.3, §11): the
-production `RingClock`/`RingNet` that `LoopGroup` hands to the root fiber as
-the `Env` row. They mirror the effects-side test doubles (`TestClock`,
-`SimNet`) exactly — any function generic over its `Ctx` runs unmodified
-against either.
+production `RingClock`/`RingNet`/`RingProc` that `LoopGroup` hands to the
+root fiber as the `Env` row. They mirror the effects-side test doubles
+(`TestClock`, `SimNet`, `SimProc`) exactly — any function generic over its
+`Ctx` runs unmodified against either.
 
 Loop-side module: these capabilities close over the scheduler and issue real
-ring ops, so they cannot live effects-side.
+ring ops, so they cannot live effects-side. The subprocess spawn machinery
+(SPEC §13.2–§13.3: `ChildProcess`, `spawnProcess`, `spawnPty`, `wait`)
+lives here for the same reason — `proc` keeps the effects-side vocabulary.
 */
 module sparkles.event_horizon.live;
 
@@ -14,10 +16,14 @@ version (Posix)  :  // POSIX sockets; rides the selected backend
 
 import core.time : Duration, MonoTime;
 
+import sparkles.event_horizon.backend.concept : canSubmitOp;
+import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.capability : CtxOf;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr, ioOk;
-import sparkles.event_horizon.io : Listener, Stream, accept, connect;
+import sparkles.event_horizon.io : FileHandle, Listener, Stream, accept, connect;
 import sparkles.event_horizon.net : SockAddr;
+import sparkles.event_horizon.op : OpWaitid;
+import sparkles.event_horizon.proc : ExitStatus, ProcessConfig, StdioMode, StdioSpec;
 import sparkles.event_horizon.sched : Sched;
 
 /// The live clock capability: monotonic time and an in-ring timer sleep.
@@ -123,18 +129,633 @@ struct RingNet
     }
 }
 
-/// The default live capability row handed to the root fiber (SPEC §11);
-/// grows with the M7 domains (`RingFs`, `RingProc`, …) as they gain
-/// capability wrappers.
-alias Env = CtxOf!(RingClock, RingNet);
+// ── subprocesses (SPEC §13.2–§13.3) ─────────────────────────────────────────
+
+/// A spawned child (SPEC §13.2): its pid and the parent ends of whichever
+/// streams were piped (`FileHandle(-1)` otherwise). A PTY child's master
+/// rides `ptyMaster`.
+struct ChildProcess
+{
+    int pid = -1;       /// -1 after a successful `wait`
+    FileHandle stdinW;  /// write end of the child's stdin  (piped only)
+    FileHandle stdoutR; /// read end of the child's stdout  (piped only)
+    FileHandle stderrR; /// read end of the child's stderr  (piped only)
+    FileHandle ptyMaster; /// the PTY master (`spawnPty` only)
+
+    /// `true` while the child is reapable.
+    bool opCast(T : bool)() const @safe pure nothrow @nogc => pid > 0;
+
+    /// Signals the child. `ESRCH` after a successful `wait` — the handle
+    /// nulls the pid before the kernel can recycle it, so a stale kill can
+    /// never reach an unrelated process.
+    IoResult!void kill(int sig = 15 /* SIGTERM */) @trusted nothrow @nogc
+    {
+        import core.stdc.errno : errno;
+        import core.sys.posix.signal : kill_ = kill;
+
+        if (pid <= 0)
+            return ioErr!void(3 /* ESRCH */, OpKind.none, IoErrorStage.submit,
+                "child already reaped");
+        if (kill_(pid, sig) != 0)
+            return ioErr!void(errno, OpKind.none, IoErrorStage.submit,
+                "kill failed");
+        return ioOk();
+    }
+
+    /// Signals the child's process group (requires
+    /// `ProcessConfig.newProcessGroup` at spawn — the group id is the pid).
+    IoResult!void killGroup(int sig = 15 /* SIGTERM */) @trusted nothrow @nogc
+    {
+        import core.stdc.errno : errno;
+        import core.sys.posix.signal : kill_ = kill;
+
+        if (pid <= 0)
+            return ioErr!void(3 /* ESRCH */, OpKind.none, IoErrorStage.submit,
+                "child already reaped");
+        if (kill_(-pid, sig) != 0)
+            return ioErr!void(errno, OpKind.none, IoErrorStage.submit,
+                "killGroup failed");
+        return ioOk();
+    }
+}
+
+/**
+Spawns `argv` (PATH-searched) per `cfg` (SPEC §13.1–§13.2): per-stream
+pipes / /dev/null / borrowed fds, "KEY=value" environment, working
+directory, and an optional fresh process group. `posix_spawnp`, never
+`fork` — a fiber stack is the worst possible place for a fork. Spawning is
+a setup-phase operation and may allocate (argv/env staging is heap-built;
+the M7 4 KiB budget and its `E2BIG` are gone).
+*/
+IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
+    in ProcessConfig cfg = ProcessConfig()) @trusted
+{
+    import core.stdc.errno : errno;
+    import core.sys.posix.fcntl : O_RDONLY, O_WRONLY;
+    import core.sys.posix.spawn : posix_spawn_file_actions_adddup2,
+        posix_spawn_file_actions_addclose, posix_spawn_file_actions_addopen,
+        posix_spawn_file_actions_destroy, posix_spawn_file_actions_init,
+        posix_spawn_file_actions_t, posix_spawnattr_destroy,
+        posix_spawnattr_init, posix_spawnattr_setflags,
+        posix_spawnattr_setpgroup, posix_spawnattr_t, posix_spawnp,
+        POSIX_SPAWN_SETPGROUP;
+    import core.sys.posix.unistd : close;
+
+    if (argv.length == 0)
+        return ioErr!ChildProcess(22 /* EINVAL */, OpKind.none,
+            IoErrorStage.submit, "empty argv");
+
+    // Parent/child pipe ends per stream; -1 = not piped.
+    int[2] inPipe = -1, outPipe = -1, errPipe = -1;
+    scope (failure) closePipes(inPipe, outPipe, errPipe);
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    scope (exit) posix_spawn_file_actions_destroy(&actions);
+
+    // One stream's plumbing; returns false on pipe() failure.
+    bool wire(in StdioSpec spec, int childFd, ref int[2] pipeFds, bool childReads)
+    {
+        final switch (spec.mode)
+        {
+            case StdioMode.inherit:
+                return true;
+            case StdioMode.pipe:
+                if (!openPipe(pipeFds))
+                    return false;
+                const childEnd = childReads ? pipeFds[0] : pipeFds[1];
+                posix_spawn_file_actions_adddup2(&actions, childEnd, childFd);
+                posix_spawn_file_actions_addclose(&actions, pipeFds[0]);
+                posix_spawn_file_actions_addclose(&actions, pipeFds[1]);
+                return true;
+            case StdioMode.nullDev:
+                posix_spawn_file_actions_addopen(&actions, childFd,
+                    "/dev/null", childReads ? O_RDONLY : O_WRONLY, 0);
+                return true;
+            case StdioMode.fd:
+                posix_spawn_file_actions_adddup2(&actions, spec.fd, childFd);
+                return true;
+        }
+    }
+
+    if (!wire(cfg.stdinSpec, 0, inPipe, true)
+        || !wire(cfg.stdoutSpec, 1, outPipe, false)
+        || !wire(cfg.stderrSpec, 2, errPipe, false))
+        return ioErr!ChildProcess(24 /* EMFILE */, OpKind.none,
+            IoErrorStage.submit, "pipe failed");
+
+    if (cfg.cwd !is null)
+        posix_spawn_file_actions_addchdir_np(&actions, zstring(cfg.cwd));
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    scope (exit) posix_spawnattr_destroy(&attr);
+    if (cfg.newProcessGroup)
+    {
+        posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+        posix_spawnattr_setpgroup(&attr, 0);
+    }
+
+    auto cargv = cstrings(argv);
+    auto cenv = cfg.env is null ? environ : cstrings(cfg.env).ptr;
+
+    int pid;
+    const rc = posix_spawnp(&pid, cargv[0], &actions, &attr, cargv.ptr, cenv);
+
+    // Parent keeps only its own ends; the child-side ends close now.
+    closeIf(cfg.stdinSpec, inPipe[0]);
+    closeIf(cfg.stdoutSpec, outPipe[1]);
+    closeIf(cfg.stderrSpec, errPipe[1]);
+    if (rc != 0)
+    {
+        closeIf(cfg.stdinSpec, inPipe[1]);
+        closeIf(cfg.stdoutSpec, outPipe[0]);
+        closeIf(cfg.stderrSpec, errPipe[0]);
+        return ioErr!ChildProcess(rc, OpKind.none, IoErrorStage.submit,
+            "posix_spawnp failed");
+    }
+
+    ChildProcess child;
+    child.pid = pid;
+    child.stdinW = FileHandle(inPipe[1]);
+    child.stdoutR = FileHandle(outPipe[0]);
+    child.stderrR = FileHandle(errPipe[0]);
+    return ioOk(child);
+}
+
+static if (canSubmitOp!(DefaultBackend, OpWaitid))
+{
+    /// Parks until the child exits (in-ring `WAITID`, SPEC §13.2); decodes
+    /// exited-vs-signaled. Sets `pid = -1` on success.
+    IoResult!ExitStatus wait(ref Sched s, ref ChildProcess child) @trusted
+    {
+        import core.sys.posix.signal : siginfo_t;
+        import core.sys.posix.sys.wait : WEXITED, idtype_t;
+
+        if (child.pid <= 0)
+            return ioErr!ExitStatus(10 /* ECHILD */, OpKind.waitid,
+                IoErrorStage.submit, "no child to reap");
+
+        // The siginfo out-buffer lives on this parked frame (SPEC §6.5).
+        siginfo_t info;
+        auto o = s.await(OpWaitid(cast(int) idtype_t.P_PID,
+            cast(uint) child.pid, cast(void*) &info, WEXITED));
+        if (o.res < 0)
+            return ioErr!ExitStatus(-o.res, OpKind.waitid);
+        child.pid = -1;
+
+        enum CLD_EXITED = 1; // si_code: normal exit vs killed/dumped
+        const code = info._sifields._sigchld.si_status;
+        return ioOk(info.si_code == CLD_EXITED
+            ? ExitStatus(false, code)
+            : ExitStatus(true, code));
+    }
+}
+
+/**
+Spawns `argv` as a session leader on a fresh PTY (SPEC §13.3): the child
+acquires the slave as its controlling terminal by opening it inside the
+child, after the `setsid` attribute — the reason this is
+`posix_spawn`-expressible at all. The stdio specs of `cfg` are ignored:
+all three streams point at the slave. The master rides `ptyMaster`.
+*/
+IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
+    ushort cols, ushort rows, in ProcessConfig cfg = ProcessConfig()) @trusted
+{
+    import core.stdc.errno : errno;
+    import core.sys.posix.fcntl : O_NOCTTY, O_RDWR;
+    import core.sys.posix.spawn : posix_spawn_file_actions_adddup2,
+        posix_spawn_file_actions_addopen, posix_spawn_file_actions_destroy,
+        posix_spawn_file_actions_init, posix_spawn_file_actions_t,
+        posix_spawnattr_destroy, posix_spawnattr_init,
+        posix_spawnattr_setflags, posix_spawnattr_t, posix_spawnp;
+    import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
+    import core.sys.posix.unistd : close;
+
+    if (argv.length == 0)
+        return ioErr!ChildProcess(22 /* EINVAL */, OpKind.none,
+            IoErrorStage.submit, "empty argv");
+
+    const master = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master < 0 || grantpt(master) != 0 || unlockpt(master) != 0)
+    {
+        if (master >= 0)
+            close(master);
+        return ioErr!ChildProcess(errno ? errno : 5, OpKind.none,
+            IoErrorStage.setup, "pty allocation failed");
+    }
+    scope (failure) close(master);
+
+    const slavePath = ptsname(master);
+    if (slavePath is null)
+        return ioErr!ChildProcess(5 /* EIO */, OpKind.none,
+            IoErrorStage.setup, "ptsname failed");
+
+    // Preset the window size on the master (the slave shares it).
+    winsize ws = {ws_row: rows, ws_col: cols};
+    cast(void) ioctl(master, TIOCSWINSZ, &ws);
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    scope (exit) posix_spawnattr_destroy(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    scope (exit) posix_spawn_file_actions_destroy(&actions);
+    // Attributes (setsid) apply before file actions, so this open — the
+    // session leader's first tty, without O_NOCTTY — acquires the slave as
+    // the controlling terminal.
+    posix_spawn_file_actions_addopen(&actions, 0, slavePath, O_RDWR, 0);
+    posix_spawn_file_actions_adddup2(&actions, 0, 1);
+    posix_spawn_file_actions_adddup2(&actions, 0, 2);
+
+    auto cargv = cstrings(argv);
+    auto cenv = cfg.env is null ? environ : cstrings(cfg.env).ptr;
+
+    int pid;
+    const rc = posix_spawnp(&pid, cargv[0], &actions, &attr, cargv.ptr, cenv);
+    if (rc != 0)
+        return ioErr!ChildProcess(rc, OpKind.none, IoErrorStage.submit,
+            "posix_spawnp failed");
+
+    ChildProcess child;
+    child.pid = pid;
+    child.ptyMaster = FileHandle(master);
+    return ioOk(child);
+}
+
+/// Propagates a resize to the PTY (SPEC §13.3); the child sees `SIGWINCH`.
+IoResult!void resizePty(ref ChildProcess child, ushort cols, ushort rows)
+    @trusted nothrow @nogc
+{
+    import core.stdc.errno : errno;
+
+    if (child.ptyMaster.fd < 0)
+        return ioErr!void(9 /* EBADF */, OpKind.none, IoErrorStage.submit,
+            "not a PTY child");
+    winsize ws = {ws_row: rows, ws_col: cols};
+    if (ioctl(child.ptyMaster.fd, TIOCSWINSZ, &ws) != 0)
+        return ioErr!void(errno, OpKind.none, IoErrorStage.submit,
+            "TIOCSWINSZ failed");
+    return ioOk();
+}
+
+static if (canSubmitOp!(DefaultBackend, OpWaitid))
+{
+    /// The live proc capability (SPEC §13.4): `isProc` over the real spawn
+    /// machinery, `Child = ChildProcess`.
+    struct RingProc
+    {
+        enum string capName = "proc";
+
+        /// The live child handle type.
+        alias Child = ChildProcess;
+
+        private Sched* _sched;
+
+        /// Binds to the scheduler whose ring reaps the children.
+        this(Sched* sched) @safe pure nothrow @nogc
+        {
+            _sched = sched;
+        }
+
+        /// Spawns per `cfg` (SPEC §13.2).
+        IoResult!ChildProcess spawn(scope const(char[])[] argv,
+            in ProcessConfig cfg = ProcessConfig())
+            => spawnProcess(argv, cfg);
+
+        /// Parks until the child exits (in-ring `WAITID`).
+        IoResult!ExitStatus wait(ref ChildProcess child)
+            => .wait(*_sched, child);
+    }
+
+    /// The default live capability row handed to the root fiber (SPEC §11).
+    alias Env = CtxOf!(RingClock, RingNet, RingProc);
+}
+else
+{
+    /// On a backend without a `WAITID` lowering (kqueue/IOCP until their
+    /// O26 reap refinements land) the row carries no proc capability.
+    alias Env = CtxOf!(RingClock, RingNet);
+}
+
+/// Builds the live capability row for a scheduler — the one place that
+/// knows which capabilities this backend can actually field (`LoopGroup`
+/// calls this; SPEC §11).
+Env liveEnv(Sched* sched) @safe pure nothrow @nogc
+{
+    static if (canSubmitOp!(DefaultBackend, OpWaitid))
+        return Env(RingClock(sched), RingNet(sched), RingProc(sched));
+    else
+        return Env(RingClock(sched), RingNet(sched));
+}
+
+// ── spawn plumbing ──────────────────────────────────────────────────────────
+
+private:
+
+extern (C) extern __gshared char** environ;
+
+// glibc ≥ 2.29 / musl ≥ 1.1.24; absent from druntime's posix.spawn.
+extern (C) int posix_spawn_file_actions_addchdir_np(
+    void* actions, const(char)* path) nothrow @nogc;
+
+version (linux)
+    enum ulong TIOCSWINSZ = 0x5414;
+else version (OSX)
+    enum ulong TIOCSWINSZ = 0x8008_7467;
+
+enum POSIX_SPAWN_SETSID = 0x80; // glibc and musl agree
+
+struct winsize
+{
+    ushort ws_row, ws_col, ws_xpixel, ws_ypixel;
+}
+
+extern (C) int ioctl(int fd, ulong request, ...) nothrow @nogc;
+
+/// NUL-terminated C-string array on the GC heap (spawn may allocate).
+char*[] cstrings(scope const(char[])[] items) @trusted
+{
+    auto ptrs = new char*[](items.length + 1);
+    foreach (i, item; items)
+    {
+        auto z = new char[](item.length + 1);
+        z[0 .. item.length] = item[];
+        z[item.length] = '\0';
+        ptrs[i] = z.ptr;
+    }
+    ptrs[items.length] = null;
+    return ptrs;
+}
+
+/// One NUL-terminated C string on the GC heap.
+const(char)* zstring(scope const(char)[] s) @trusted
+{
+    auto z = new char[](s.length + 1);
+    z[0 .. s.length] = s[];
+    z[s.length] = '\0';
+    return z.ptr;
+}
+
+bool openPipe(ref int[2] fds) @trusted nothrow @nogc
+{
+    import core.sys.posix.fcntl : F_SETFD, FD_CLOEXEC, fcntl;
+    import core.sys.posix.unistd : pipe;
+
+    if (pipe(fds) != 0)
+        return false;
+    // Parent-held ends must not leak into OTHER spawned children; the
+    // intended child's copies come from the dup2 file actions.
+    cast(void) fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    cast(void) fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+    return true;
+}
+
+void closeIf(in StdioSpec spec, int fd) @trusted nothrow @nogc
+{
+    import core.sys.posix.unistd : close;
+
+    if (spec.mode == StdioMode.pipe && fd >= 0)
+        close(fd);
+}
+
+void closePipes(ref int[2] a, ref int[2] b, ref int[2] c) @trusted nothrow @nogc
+{
+    import core.sys.posix.unistd : close;
+
+    static void closePair(ref int[2] p) nothrow @nogc
+    {
+        foreach (fd; p[])
+            if (fd >= 0)
+                close(fd);
+    }
+
+    closePair(a);
+    closePair(b);
+    closePair(c);
+}
 
 version (unittest)
 {
     import sparkles.event_horizon.capability : hasCaps;
     import sparkles.event_horizon.clock : isClock;
     import sparkles.event_horizon.net : isNet;
+    import sparkles.event_horizon.proc : isProc;
 
     static assert(isClock!RingClock);
     static assert(isNet!RingNet);
     static assert(hasCaps!(Env, "clock", "net"));
+    static if (canSubmitOp!(DefaultBackend, OpWaitid))
+    {
+        static assert(isProc!RingProc);
+        static assert(hasCaps!(Env, "clock", "net", "proc"));
+    }
+}
+
+// ── live subprocess tests ───────────────────────────────────────────────────
+
+version (unittest)
+{
+    import core.lifetime : move;
+
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.event_horizon.io : read, write;
+    import sparkles.event_horizon.sched : schedOrSkip;
+
+    /// Ring-reads `f` to EOF (or EIO — a drained PTY master) into `into`.
+    private void drainInto(ref Sched s, FileHandle f,
+        ref SmallBuffer!(ubyte, 512) into) @safe
+    {
+        SmallBuffer!(ubyte, 128) buf;
+        for (;;)
+        {
+            buf.length = 128;
+            auto got = read(f, move(buf));
+            buf = move(got.buf);
+            if (got.res.hasError)
+            {
+                assert(got.res.error.errnoValue == 5 /* EIO: pty master EOF */,
+                    "unexpected read error");
+                break;
+            }
+            if (got.res.value == 0)
+                break;
+            into ~= buf[][0 .. got.res.value];
+        }
+    }
+}
+
+static if (canSubmitOp!(DefaultBackend, OpWaitid)):
+
+@("live.spawn.streamStdoutAndReap")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        auto spawned = spawnProcess(["echo", "event", "horizon"]);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+        assert(child.stdinW.fd < 0 && child.stderrR.fd < 0,
+            "only stdout is piped by default");
+
+        SmallBuffer!(ubyte, 512) collected;
+        drainInto(s, child.stdoutR, collected);
+        assert(collected[] == cast(const(ubyte)[]) "event horizon\n");
+
+        auto st = wait(s, child);
+        assert(st.hasValue && st.value.ok);
+        assert(!child, "reaped");
+        child.stdoutR.close();
+    });
+    assert(!r.hasError);
+}
+
+@("live.spawn.stdinRoundTripThroughCat")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        ProcessConfig cfg;
+        cfg.stdinSpec = StdioSpec(StdioMode.pipe);
+        auto spawned = spawnProcess(["cat"], cfg);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+        assert(child.stdinW.fd >= 0, "stdin piped on request");
+
+        SmallBuffer!(ubyte, 64) ping;
+        ping ~= cast(const(ubyte)[]) "ping through the ring";
+        auto sent = write(child.stdinW, move(ping));
+        assert(!sent.res.hasError);
+        child.stdinW.close(); // EOF: cat exits after echoing
+
+        SmallBuffer!(ubyte, 512) back;
+        drainInto(s, child.stdoutR, back);
+        assert(back[] == cast(const(ubyte)[]) "ping through the ring");
+
+        auto st = wait(s, child);
+        assert(st.hasValue && st.value.ok);
+        child.stdoutR.close();
+    });
+    assert(!r.hasError);
+}
+
+@("live.spawn.stderrCaptureAndCwd")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // stderr piped, stdout to /dev/null, cwd redirected: one child
+        // exercises three ProcessConfig axes at once.
+        ProcessConfig cfg;
+        cfg.stdoutSpec = StdioSpec(StdioMode.nullDev);
+        cfg.stderrSpec = StdioSpec(StdioMode.pipe);
+        cfg.cwd = "/tmp";
+        auto spawned = spawnProcess(["sh", "-c", "pwd; pwd >&2"], cfg);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+        assert(child.stdoutR.fd < 0 && child.stderrR.fd >= 0);
+
+        SmallBuffer!(ubyte, 512) err;
+        drainInto(s, child.stderrR, err);
+        assert(err[] == cast(const(ubyte)[]) "/tmp\n",
+            "stderr captured; stdout discarded; cwd applied");
+
+        auto st = wait(s, child);
+        assert(st.hasValue && st.value.ok);
+        child.stderrR.close();
+    });
+    assert(!r.hasError);
+}
+
+@("live.spawn.envReplacement")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        ProcessConfig cfg;
+        static immutable const(char[])[] env =
+            ["SPARKLES_PROBE=42", "PATH=/usr/bin:/bin"];
+        cfg.env = env;
+        auto spawned = spawnProcess(["sh", "-c", "echo $SPARKLES_PROBE"], cfg);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+
+        SmallBuffer!(ubyte, 512) out_;
+        drainInto(s, child.stdoutR, out_);
+        assert(out_[] == cast(const(ubyte)[]) "42\n");
+
+        auto st = wait(s, child);
+        assert(st.hasValue && st.value.ok);
+        child.stdoutR.close();
+    });
+    assert(!r.hasError);
+}
+
+@("live.kill.waitReportsSignaled")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        ProcessConfig cfg;
+        cfg.stdoutSpec = StdioSpec(StdioMode.inherit);
+        auto spawned = spawnProcess(["sleep", "30"], cfg);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+
+        assert(!child.kill().hasError);
+        auto st = wait(s, child);
+        assert(st.hasValue);
+        assert(st.value.signaled && st.value.code == 15,
+            "SIGTERM death decodes as signaled, not exit code");
+        assert(!st.value.ok);
+
+        auto again = child.kill();
+        assert(again.hasError && again.error.errnoValue == 3 /* ESRCH */,
+            "kill after reap is refused by the handle");
+    });
+    assert(!r.hasError);
+}
+
+@("live.spawnPty.sessionLeaderOnTheMaster")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // The child sees a real controlling terminal: `tty -s` succeeds
+        // only when stdin is a tty, and the winsize preset is observable.
+        auto spawned = spawnPty(["sh", "-c", "stty size"], 80, 24);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+        assert(child.ptyMaster.fd >= 0);
+
+        SmallBuffer!(ubyte, 512) out_;
+        drainInto(s, child.ptyMaster, out_);
+        assert(out_[] == cast(const(ubyte)[]) "24 80\r\n",
+            "the child ran on the slave with the preset winsize");
+
+        auto st = wait(s, child);
+        assert(st.hasValue && st.value.ok);
+        child.ptyMaster.close();
+    });
+    assert(!r.hasError);
 }

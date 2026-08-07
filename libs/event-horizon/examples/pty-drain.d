@@ -12,17 +12,16 @@
     }
 +/
 /**
- * The M13b core: `apps/terminal`'s PTY drain, ported onto the event loop.
+ * The M13b core, completed by M15: `apps/terminal`'s PTY drain AND reap,
+ * both on the event loop.
  *
  * The terminal today spawns a shell with `forkpty`, sets the master fd
  * non-blocking, and polls it inside the raylib render loop. On event-horizon
- * the same master fd is drained through the ring: a `read` verb parks the
- * fiber and resumes on the next chunk — no polling, no non-blocking EAGAIN
- * spin. This example spawns a short command under a PTY, drains its output
- * through the loop until the child exits (the master reports EIO once the
- * slave side is gone), reaps it, and verifies the captured output. (The
- * in-ring WAITID reap is shown by the agent-tooling example; forkpty here
- * owns the pid directly, so a plain waitpid on an already-dead child does.)
+ * the child is spawned with `spawnPty` (a `posix_spawn` session leader on a
+ * fresh PTY — SPEC §13.3), the master is drained through the ring — a `read`
+ * verb parks the fiber and resumes on the next chunk, no EAGAIN spin — and
+ * the child is reaped with the in-ring `WAITID` (`wait` → `ExitStatus`),
+ * which `forkpty` could never route through the loop.
  *
  * The raylib window + libghostty-vt feed are unchanged in the real port;
  * this isolates the loop-side I/O so it stays CI-verifiable headlessly.
@@ -37,10 +36,9 @@ import core.lifetime : move;
 import std.stdio : writefln, writeln;
 
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.event_horizon.io : FileHandle, read;
+import sparkles.event_horizon.io : read;
+import sparkles.event_horizon.live : spawnPty, wait;
 import sparkles.event_horizon.sched : Sched;
-
-extern (C) int forkpty(int* amaster, char* name, const void* termp, const void* winp);
 
 int main()
 {
@@ -52,65 +50,52 @@ int main()
     }
     scope (exit) sched.destroy();
 
-    // Spawn a short-lived command under a fresh PTY.
-    int masterFd;
-    const pid = forkpty(&masterFd, null, null, null);
-    if (pid < 0)
-    {
-        writeln("SKIP: forkpty failed (no PTY available)");
-        return 0;
-    }
-    if (pid == 0)
-    {
-        // Child: exec the command over the PTY slave (stdin/out/err), then
-        // exit. The output flows to the master the parent drains.
-        import core.stdc.stdlib : exit;
-        import core.sys.posix.unistd : execlp;
-
-        execlp("printf".ptr, "printf".ptr, "pty-line-1\npty-line-2\n".ptr,
-            cast(char*) null);
-        exit(127); // execlp only returns on failure
-    }
-
-    // Parent: drain the master through the event loop until the child's
-    // output ends, then reap it in-ring.
     SmallBuffer!(char, 256) captured;
-    int exitCode = -1;
-    auto r = sched.run(() @trusted {
-        auto master = FileHandle(masterFd);
+    bool cleanExit;
+    bool skipped;
+    auto r = sched.run(() {
+        // A short-lived command as a session leader on a fresh PTY, with a
+        // preset 80×24 winsize.
+        auto spawned = spawnPty(["printf", "pty-line-1\npty-line-2\n"], 80, 24);
+        if (spawned.hasError)
+        {
+            skipped = true; // no PTY available in this sandbox
+            return;
+        }
+        auto child = spawned.value;
+
+        // Drain the master through the loop until the child's output ends
+        // (the master reports EIO once the slave side is gone).
         for (;;)
         {
             SmallBuffer!(ubyte, 128) buf;
             buf.length = 128;
-            auto got = read(master, move(buf));
+            auto got = read(child.ptyMaster, move(buf));
             buf = move(got.buf);
-            if (got.res.hasError)
-                break; // EIO: the slave closed and the child is gone
-            if (got.res.value == 0)
-                break; // clean EOF
+            if (got.res.hasError || got.res.value == 0)
+                break; // EIO / clean EOF: the child is done
             captured ~= cast(const(char)[]) buf[][0 .. got.res.value];
         }
-        master.close();
 
-        // Reap the child — it has already exited (that's why the master
-        // reported EOF/EIO), so a plain waitpid returns immediately. (The
-        // in-ring WAITID path is demonstrated by the agent-tooling example,
-        // which spawns via posix_spawn; forkpty here owns the pid directly.)
-        exitCode = (() @trusted {
-            import core.sys.posix.sys.wait : waitpid, WEXITSTATUS;
-
-            int status;
-            waitpid(pid, &status, 0);
-            return WEXITSTATUS(status);
-        })();
+        // Reap in-ring: the fiber parks on WAITID and resumes with the
+        // decoded status.
+        auto st = wait(sched, child);
+        assert(st.hasValue);
+        cleanExit = st.value.ok;
+        child.ptyMaster.close();
     });
     assert(!r.hasError);
+    if (skipped)
+    {
+        writeln("SKIP: no PTY available");
+        return 0;
+    }
 
     // PTYs translate \n to \r\n on output; check the payload lines are there.
-    const ok = contains(captured[], "pty-line-1") && contains(captured[], "pty-line-2");
+    const ok = cleanExit && contains(captured[], "pty-line-1")
+        && contains(captured[], "pty-line-2");
     if (ok)
-        writefln("ok: drained %d bytes from the PTY, child exited %d",
-            captured.length, exitCode);
+        writefln("ok: drained %d bytes from the PTY, child reaped in-ring", captured.length);
     else
         writeln("FAILED: expected PTY output not captured");
     return ok ? 0 : 1;

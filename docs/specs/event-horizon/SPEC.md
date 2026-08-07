@@ -1358,6 +1358,7 @@ struct ChildProcess
     FileHandle stdinW;     /// write end of the child's stdin  (piped only)
     FileHandle stdoutR;    /// read end of the child's stdout  (piped only)
     FileHandle stderrR;    /// read end of the child's stderr  (piped only)
+    FileHandle ptyMaster;  /// the PTY master (spawnPty only, §13.3)
 
     bool opCast(T : bool)() const;              /// true while reapable
     IoResult!void kill(int sig = SIGTERM);      /// signal the child
