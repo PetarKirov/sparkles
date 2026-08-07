@@ -13,7 +13,7 @@ hue's configuration surface is real and entirely **ephemeral**. Today it is:
 | ------------------------------------------------------------------------ | -------- | ---------------- |
 | CLI options (`@CliOption`)                                               | ~28      | one invocation   |
 | Runtime toggles (`l`, `c`, `y`, `t`, `Tab`, `e`, `Ctrl-±`, theme arrows) | ~10      | until exit       |
-| Keybindings (`keymap.commandFor`)                                        | ~45 keys | hardcoded        |
+| Keybindings (`keymap.hueBindings`)                                       | ~60 rows | hardcoded table  |
 | Environment variables (`HUE_GUI_*`)                                      | 13       | test/debug hooks |
 
 Three consequences, each observed rather than hypothetical:
@@ -26,8 +26,11 @@ Three consequences, each observed rather than hypothetical:
    change state the user then loses on exit, which makes them feel like
    experiments rather than settings.
 3. **Keybindings cannot be changed.** `keymap.d` made the policy pure and
-   testable, which is what makes it configurable at all — but the table is
-   still compiled in.
+   testable, and [lantern](./lantern.md) made it a table — which is what makes
+   it configurable at all — but the table is still compiled in. Note that a
+   user table must overlay `hueBindings` **row by row**: the guide reads the
+   same table, so a wholesale replacement would leave the panel describing
+   bindings the user no longer has.
 
 ## Design & rationale
 
@@ -97,8 +100,10 @@ the raw-source renderer.
 
 ### Keybindings (`CFG6`)
 
-`keymap.d` already reduced the policy to `(KeyEvent, KeyContext) → Command`.
-Configuration replaces the hardcoded table with a loaded one:
+`keymap.d` already reduced the policy to `(KeyEvent, KeyContext) → Command`,
+and [lantern](./lantern.md) `KEY1` turned it into an actual **table**
+(`hueBindings`) that every backend resolves through — so the thing this section
+assumed exists now does. Configuration overlays it:
 
 ```json
 {
@@ -252,7 +257,7 @@ not merely a line number.
 | `CFG3`  | `appearance`: theme, background mode, the four font faces, font size, window size.                                                                                                                                                                                                                                                                                                               | not started |
 | `CFG4`  | `panes`: tree width/visibility filters/globs; viewer line numbers, code line numbers, tab width, whitespace rendering.                                                                                                                                                                                                                                                                           | not started |
 | `CFG5`  | `behaviour`: default view, ansi-copy and table-copy modes, overlay defaults, gallery output dir.                                                                                                                                                                                                                                                                                                 | not started |
-| `CFG6`  | `keys`: per-context binding tables over the `Command` enum, applied as an **overlay** on the built-in map; `null` unbinds.                                                                                                                                                                                                                                                                       | not started |
+| `CFG6`  | `keys`: per-context binding tables over the `Command` enum, applied as an **overlay** on `hueBindings` ([lantern](./lantern.md) `KEY12`); `null` unbinds. The guide enumerates the same table, so a rebinding is described correctly without a second declaration.                                                                                                                               | not started |
 | `CFG7`  | Per-invocation concerns (output format, target, backend choice, test hooks) are **not** configurable.                                                                                                                                                                                                                                                                                            | not started |
 | `CFG8`  | A malformed config reports file/line/column and hue continues with defaults.                                                                                                                                                                                                                                                                                                                     | not started |
 | `CFG9`  | A JSON Schema is **generated** from the same reflection for editor completion — never hand-maintained.                                                                                                                                                                                                                                                                                           | not started |
@@ -263,6 +268,8 @@ not merely a line number.
 | `CFG14` | `behaviour.grammarPaths[]` adds tree-sitter grammar directories. Search paths **compose** rather than override — configured, then `SPARKLES_TS_GRAMMAR_PATH`, then the built-in default — the one documented exception to `CFG2`'s scalar layering.                                                                                                                                              | not started |
 | `CFG15` | `diff`: default layout, whitespace/noise toggles, structural engagement, preview-diff default, diff-copy mode — the persistent home of the [diff-view.md](./diff-view.md) runtime toggles (`DVL3`/`DVL8`/`DVN1`/`DVN3`); the review-command family joins the `Command` enum under `keys` (`CFG6`).                                                                                               | not started |
 | `CFG16` | `forges`: the **host → adapter map** (self-hosted GitLab/Gitea/Forgejo/Codeberg instances have arbitrary hosts — [`DPR7`](./diff-view.md) requires it user-extendable) plus per-forge token sources. On Android this file is the **only** route ([`CFG12`], [`AND11`](./android.md)) — token storage there is plain-text, documented as such.                                                    | not started |
+| `CFG18` | `lantern`: the key guide's `enabled`, `delayMs`, `placement` (`classic`/`helix`) and `leader` key ([lantern](./lantern.md) `LTN14`/`LTN15`). The delay in particular is a taste setting — it is the whole difference between a guide that teaches and one that interrupts.                                                                                                                       | not started |
+| `CFG19` | `picker`: the default layout, the grep mode, and the **frecency store's** location. The store is machine-managed state rather than a preference ([picker](./picker.md) `PKR5`), and the setting exists so it can be moved off a small or network-mounted `$XDG_STATE_HOME`.                                                                                                                      | not started |
 | `CFG17` | `diff.types`: the type overlay ([`DVT`](./diff-view.md)) — `auto`/`off`, the bound on concurrently live analyzer processes, and the **worktree cache root** where old revisions are materialized (`DVT2`). The cache is machine-managed state, not preferences: hue prunes its own worktrees, and the setting exists so a user can relocate it off a small or network-mounted `$XDG_CACHE_HOME`. | not started |
 
 ## Milestones
@@ -272,7 +279,7 @@ not merely a line number.
 | C1        | The struct + wired round-trip + located errors                            | `CFG1`, `CFG8`                 |
 | C2        | Layering and the sparse-overlay merge                                     | `CFG2`                         |
 | C3        | Appearance / panes / behaviour sections wired to their consumers          | `CFG3`–`CFG5`, `CFG7`, `CFG14` |
-| C4        | Configurable keymap over the `Command` enum                               | `CFG6`                         |
+| C4        | Configurable keymap over the `Command` enum, plus lantern/picker settings | `CFG6`, `CFG18`, `CFG19`       |
 | C5        | `--show-config`, `--write-config`, `--save-config`, generated JSON Schema | `CFG9`–`CFG11`, `CFG13`        |
 | C6        | Android config path                                                       | `CFG12`                        |
 
@@ -328,10 +335,11 @@ not merely a line number.
 
 ## Relationship to existing specs
 
-| Piece                                                         | Role                                                          |
-| ------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`feature-requirements.md`](./feature-requirements.md) `CLI*` | the flags this layers under; every `CLI` option keeps winning |
-| [`android.md`](./android.md) `AND*`                           | why `CFG12` is not optional — no command line exists there    |
-| `apps/hue/src/keymap.d`                                       | the pure policy `CFG6` makes table-driven                     |
-| `sparkles:wired`                                              | the reflection that makes `CFG1` and `CFG9` one mechanism     |
-| `sparkles.core_cli.common_dirs`                               | the platform-correct locations for `CFG2`                     |
+| Piece                                                         | Role                                                                   |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [`feature-requirements.md`](./feature-requirements.md) `CLI*` | the flags this layers under; every `CLI` option keeps winning          |
+| [`android.md`](./android.md) `AND*`                           | why `CFG12` is not optional — no command line exists there             |
+| `apps/hue/src/keymap.d`                                       | the table `CFG6` overlays — made one by [lantern](./lantern.md) `KEY1` |
+| [`lantern.md`](./lantern.md) `KEY12`                          | the overlay requirement, stated from the keymap's side                 |
+| `sparkles:wired`                                              | the reflection that makes `CFG1` and `CFG9` one mechanism              |
+| `sparkles.core_cli.common_dirs`                               | the platform-correct locations for `CFG2`                              |
