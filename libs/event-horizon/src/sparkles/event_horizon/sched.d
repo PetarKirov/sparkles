@@ -276,26 +276,52 @@ struct Sched
 
         while (_liveFibers > 0 || _loop.inFlight > 0)
         {
-            uint ran;
-            while (ran < _opts.resumeBudget)
-            {
-                auto t = dequeue();
-                if (t is null)
-                    break;
-                resume(t);
-                ++ran;
-            }
-            if (_readyHead !is null)
-                continue;
-            if (_liveFibers == 0 && _loop.inFlight == 0)
-                break;
-            if (_loop.inFlight == 0)
+            if (_readyHead is null && _liveFibers > 0 && _loop.inFlight == 0)
                 assert(0, "deadlock: parked fibers with nothing in flight");
-            auto r = _loop.runOnce();
+            auto r = tick(Duration.max);
             if (r.hasError)
                 return ioErr!void(r.error);
         }
         return ioOk();
+    }
+
+    /**
+    One scheduler iteration — the embedding hatch (SPEC §7.2) for a host
+    that must interleave this scheduler with a loop it does not own: run
+    ready fibers (up to `resumeBudget`), then — if none became ready and
+    ops are in flight — one `runOnce(timeout)`.
+
+    Returns `dispatched` (fibers ran or completions arrived), `timedOut`
+    (nothing within `timeout`; also when every fiber is parked with nothing
+    in flight — only an external wake between ticks can help), or `drained`
+    (no live fibers, no user ops). Must not be called from inside a fiber;
+    `run()` and `tick()` do not interleave concurrently.
+    */
+    IoResult!RunStatus tick(Duration timeout = Duration.zero) @trusted
+    in (_running is null, "tick from inside a fiber")
+    {
+        uint ran;
+        while (ran < _opts.resumeBudget)
+        {
+            auto t = dequeue();
+            if (t is null)
+                break;
+            resume(t);
+            ++ran;
+        }
+        if (ran > 0 || _readyHead !is null)
+            return ioOk(RunStatus.dispatched);
+        if (_liveFibers == 0 && _loop.inFlight == 0)
+            return ioOk(RunStatus.drained);
+        // Parked fibers (or detached ops): wait. With an armed waker the
+        // wait blocks even when no user op is in flight — the
+        // park-until-external-wake pattern (SPEC §5.6). Without one,
+        // runOnce reports drained instantly; surface that as timedOut
+        // (only an external wake between ticks can make progress).
+        auto r = _loop.runOnce(timeout);
+        if (r.hasError)
+            return r;
+        return ioOk(r.value == RunStatus.drained ? RunStatus.timedOut : r.value);
     }
 
     /**
@@ -504,6 +530,40 @@ unittest
     });
     assert(!r.hasError);
     assert(completed == 16);
+}
+
+@("sched.tick.embedsInAForeignLoop")
+@safe
+unittest
+{
+    import core.time : Duration, msecs;
+
+    import sparkles.event_horizon.op : KernelTimespec, OpTimeout;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // The O7 embedding shape: a host loop the scheduler does not own calls
+    // tick() per iteration — here until the workload drains.
+    bool slept;
+    assert(!s.spawn(() {
+        auto o = s.await(OpTimeout(KernelTimespec(0, 5_000_000)));
+        assert(o.res == 0);
+        slept = true;
+    }).hasError);
+
+    uint iterations;
+    for (;;)
+    {
+        auto r = s.tick(10.msecs);
+        assert(r.hasValue);
+        ++iterations;
+        if (r.value == RunStatus.drained)
+            break;
+        assert(iterations < 1000, "tick must converge");
+    }
+    assert(slept, "the fiber ran to completion under tick-driven pacing");
+    assert(s.liveFibers == 0);
 }
 
 @("sched.await.timerParksAndResumes")
