@@ -62,6 +62,11 @@ struct Row
     /// means "effectively rewritten".
     uint emphStart;
     uint emphCount;
+    /// `DST1`: a content-derived identity, stable across a recompute — the
+    /// key interactive state (a staging selection, a comment anchor) is
+    /// remembered by, because an index into a rebuilt arena names something
+    /// else. Stamped by `sparkles.diff.identity.stampIds`.
+    ulong id;
 }
 
 /// One hunk: its unified-header coordinates plus its row range in the
@@ -92,6 +97,9 @@ struct Hunk
     /// which containers commute). Stamped outside the engine, which has no
     /// grammar (decision 5).
     bool reordered;
+    /// `DST1`: the hunk's content identity — its rows' text and kinds, NOT
+    /// its header coordinates, so it survives anything changing above it.
+    ulong id;
 }
 
 /// Why an expensive pass was skipped (`DVM6` scale guards). Disclosed
