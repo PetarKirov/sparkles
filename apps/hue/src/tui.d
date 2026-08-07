@@ -818,6 +818,7 @@ struct PreviewTui
             // The explorer pane owns these; a focused tree never routes here.
             case Command.treeDown:  case Command.treeUp:
             case Command.treeHome:  case Command.treeEnd:
+            case Command.treePageDown: case Command.treePageUp:
             case Command.treeActivate: case Command.treeRefresh:
             case Command.treeReroot: case Command.treeToggleIgnored:
             case Command.treeParent: case Command.treeNextChange:

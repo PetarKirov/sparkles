@@ -1441,6 +1441,14 @@ int runGui(
                     --pn.tree.sel;
                     pn.tree.clamp();
                     break;
+                case Command.treePageDown:
+                    pn.tree.sel += visibleRows;
+                    pn.tree.clamp();
+                    break;
+                case Command.treePageUp:
+                    pn.tree.sel -= visibleRows;
+                    pn.tree.clamp();
+                    break;
                 case Command.treeHome:
                     pn.tree.sel = 0;
                     pn.tree.clamp();

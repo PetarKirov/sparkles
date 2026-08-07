@@ -17,6 +17,8 @@ import std.file : dirEntries, SpanMode;
 import std.path : baseName, buildPath, dirName;
 
 import diff_session : FileChange, SessionEntry;
+import keymap : Command, KeyContext;
+import lantern : LanternState, ltnStep = step, LtnStepKind = StepKind;
 import git_status : GitBadge, gitBadge, GitStatus, GitStatusCache;
 
 import sparkles.base.term_color : mix;
@@ -183,6 +185,10 @@ struct ExplorerTui
     /// The live filter's editor — the one line-edit machine (STM10);
     /// `filter.active` IS filter mode.
     LineEditState filter;
+
+    /// The key guide's pending path (`LTN2`), so `gg` and `<leader>` work in
+    /// this pane too — the same machine the viewer uses, not a copy.
+    private LanternState lantern;
     /// The pane's ScrollView (SCV1): the vertical machine (`sb`) and the
     /// horizontal bar (IXB2, live when a visible label overflows) as one
     /// value BOTH backends step; the old names remain as accessors.
@@ -930,68 +936,110 @@ struct ExplorerTui
 
     private bool handleKey(in KeyEvent e) @system
     {
-        switch (e.key)
+        const st = ltnStep(lantern, e, KeyContext(
+            treeFocused: true, treeVisible: true));
+        // Escape leaves the pane when nothing is pending; the guide takes it
+        // first when a sequence is in flight, which is what makes a mistyped
+        // prefix recoverable instead of an exit.
+        if (st.kind == LtnStepKind.closed)
+            return true;
+        if (st.kind != LtnStepKind.execute)
+            return e.key != Key.escape;
+        return handleCommand(st.cmd.cmd);
+    }
+
+    /// The explorer's keys — the ONE table (`KEY1`), dispatched.
+    ///
+    /// This was hue's third copy of the keyboard policy. Routing it here is
+    /// what makes `gg`/`Shift-G` mean the same motion in both panes, and what
+    /// gives the tree the key guide without a second implementation of it.
+    private bool handleCommand(Command cmd) @system
+    {
+        final switch (cmd)
         {
-            case Key.up:    --sel; clamp(); break;
-            case Key.down:  ++sel; clamp(); break;
-            case Key.pageUp:   sel -= bodyRows; clamp(); break;
-            case Key.pageDown: sel += bodyRows; clamp(); break;
-            case Key.home:  sel = 0; clamp(); break;
-            case Key.end:   sel = cast(long) rows.length - 1; clamp(); break;
-            case Key.enter, Key.right:
-                return activate();
-            case Key.left:
-                // Close the selected dir, or jump to the parent.
-                if (sel < cast(long) rows.length)
-                {
-                    const node = rows[cast(size_t) sel].node;
-                    ref const v = data.nodes[node].value;
-                    if (v.isDir && open.isOpen(v.path))
-                    {
-                        open = open.closed(v.path);
-                        rebuild();
-                    }
-                    else if (data.nodes[node].parent != uint.max)
-                    {
-                        const p = data.nodes[node].parent;
-                        foreach (i, ref const r; rows)
-                            if (r.node == p)
-                            {
-                                sel = cast(long) i;
-                                break;
-                            }
-                        clamp();
-                    }
-                }
+            case Command.none:
+            case Command.dismiss:
+            case Command.inputBackspace:
+            case Command.inputAccept:
+            case Command.inputCancel:
+            case Command.toggleFullscreen:
+            case Command.lanternAll:
                 break;
-            case Key.escape:
-                return false;
-            case Key.char_:
-                switch (e.ch)
-                {
-                    case 'q': return false;
-                    case 'j': ++sel; clamp(); break;
-                    case 'k': --sel; clamp(); break;
-                    case 'g': sel = 0; clamp(); break;
-                    case 'G': sel = cast(long) rows.length - 1; clamp(); break;
-                    case '/': filterStart(); break;
-                    // Next/prev git change (XPF1) — the tree pane owns the
-                    // brackets while focused (the viewer keeps them for
-                    // document navigation).
-                    case ']': jumpChange(1); break;
-                    case '[': jumpChange(-1); break;
-                    case 'r': refreshNow(); break;
-                    case 'H': toggleHidden(); break;
-                    case 'I': toggleIgnored(); break;
-                    case 'R': rerootSel(); break;
-                    case 'u': rerootParent(); break;
-                    case 'c': closeAll(); break;
-                    default: break;
-                }
+
+            case Command.quit: return false;
+
+            case Command.treeDown:  ++sel; clamp(); break;
+            case Command.treeUp:    --sel; clamp(); break;
+            case Command.treeHome:  sel = 0; clamp(); break;
+            case Command.treeEnd:   sel = cast(long) rows.length - 1; clamp(); break;
+            case Command.treePageDown: sel += bodyRows; clamp(); break;
+            case Command.treePageUp:   sel -= bodyRows; clamp(); break;
+            case Command.treeActivate: return activate();
+            case Command.treeCollapseOrUp: collapseOrUp(); break;
+            case Command.treeFilter:   filterStart(); break;
+            case Command.treeNextChange: jumpChange(1); break;
+            case Command.treePrevChange: jumpChange(-1); break;
+            case Command.treeRefresh:  refreshNow(); break;
+            case Command.treeToggleHidden:  toggleHidden(); break;
+            case Command.treeToggleIgnored: toggleIgnored(); break;
+            case Command.treeReroot:   rerootSel(); break;
+            case Command.treeParent:   rerootParent(); break;
+            case Command.treeCloseAll: closeAll(); break;
+
+            // The workspace owns the pane split and the viewer owns its own
+            // document; a focused tree simply does not answer these. Explicit
+            // arms rather than a `default:`, so a new command is a compile
+            // error here until someone decides whether the tree answers it.
+            case Command.toggleExplorer:
+            case Command.viewDown: case Command.viewUp:
+            case Command.viewHome: case Command.viewEnd:
+            case Command.viewTop:  case Command.viewBottom:
+            case Command.viewPageDown: case Command.viewPageUp:
+            case Command.themeNext: case Command.themePrev:
+            case Command.fontBigger: case Command.fontSmaller:
+            case Command.matchNext: case Command.matchPrev:
+            case Command.setNext: case Command.setPrev: case Command.setIndex:
+            case Command.toggleView: case Command.copySelection:
+            case Command.toggleLineNumbers: case Command.toggleCodeLineNumbers:
+            case Command.toggleAnsiCopy: case Command.toggleTableCopy:
+            case Command.startSearch: case Command.startGoto:
+            case Command.toggleHoverRegions: case Command.cycleHoverPopup:
+            case Command.foldToggle: case Command.foldClose: case Command.foldOpen:
+            case Command.foldOpenAll: case Command.foldCloseAll: case Command.foldLevel:
+            case Command.diffNextFile: case Command.diffPrevFile:
+            case Command.diffNextHunk: case Command.diffPrevHunk:
+            case Command.diffToggleFile: case Command.diffCollapseAll:
+            case Command.diffExpandAll: case Command.diffToggleFormatting:
+            case Command.diffToggleLayout: case Command.diffToggleContext:
+            case Command.diffToggleGap:
                 break;
-            default: break;
         }
         return true;
+    }
+
+    /// Close the selected directory, else jump to its parent — `h` and `←`.
+    private void collapseOrUp() @system
+    {
+        if (sel >= cast(long) rows.length)
+            return;
+        const node = rows[cast(size_t) sel].node;
+        ref const v = data.nodes[node].value;
+        if (v.isDir && open.isOpen(v.path))
+        {
+            open = open.closed(v.path);
+            rebuild();
+            return;
+        }
+        if (data.nodes[node].parent == uint.max)
+            return;
+        const p = data.nodes[node].parent;
+        foreach (i, ref const r; rows)
+            if (r.node == p)
+            {
+                sel = cast(long) i;
+                break;
+            }
+        clamp();
     }
 
     private bool handleSearch(in Event ev) @system
@@ -1511,6 +1559,8 @@ unittest
 @system unittest
 {
     import diff_session : FileChange, SessionEntry;
+import keymap : Command, KeyContext;
+import lantern : LanternState, ltnStep = step, LtnStepKind = StepKind;
 
     // `TVU6`: the tree is built from the session's paths alone — no
     // filesystem is touched, which is the property that lets a diff of files

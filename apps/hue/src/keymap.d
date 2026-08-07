@@ -98,6 +98,7 @@ enum Command : ubyte
 
     // The explorer pane, while it holds focus.
     treeDown, treeUp, treeHome, treeEnd,
+    treePageDown, treePageUp,
     treeActivate,
     treeRefresh,       /// `r`
     treeReroot,        /// `Shift-R` — re-root at the selection
@@ -419,6 +420,10 @@ immutable Binding[] hueBindings = [
     bind(Scope_.tree, chord(Key.home), Command.treeHome, "first row"),
     bind(Scope_.tree, chord(Key.end), Command.treeEnd, "last row"),
     bind(Scope_.tree, chord(Key.enter), Command.treeActivate, "open"),
+    bind(Scope_.tree, chord(Key.right), Command.treeActivate, "open"),
+    bind(Scope_.tree, chord(Key.left), Command.treeCollapseOrUp, "collapse / up"),
+    bind(Scope_.tree, chord(Key.pageDown), Command.treePageDown, "page down"),
+    bind(Scope_.tree, chord(Key.pageUp), Command.treePageUp, "page up"),
     group(Scope_.tree, chord('g', ShiftReq.no), "goto"),
     bind(Scope_.tree, chord('g', ShiftReq.no), chord('g'), Command.treeHome,
         "first row"),
@@ -1195,19 +1200,30 @@ unittest
 {
     auto tree = KeyContext(treeFocused: true, treeVisible: true);
 
-    // The theme arrows, Tab and the copy-mode toggles are deliberately NOT
+    // Tab, the copy keys and the explorer toggle are deliberately NOT
     // pane-scoped — the frame loop has them outside the focus branch, and
     // that is preserved here.
     foreach (ctx; [KeyContext.init, tree])
     {
-        assert(nk(Key.right, ctx).cmd == Command.themeNext);
-        assert(nk(Key.left, ctx).cmd == Command.themePrev);
         assert(nk(Key.tab, ctx).cmd == Command.toggleView);
-        assert(nk(Key.pageDown, ctx).cmd == Command.viewPageDown);
         assert(ch('y', ctx).cmd == Command.copySelection);
         assert(ch('t', ctx).cmd == Command.toggleTableCopy);
         assert(ch('e', ctx).cmd == Command.toggleExplorer);
     }
+
+    // The arrows ARE pane-scoped, and this is a deliberate change: a focused
+    // tree navigates with ←/→ (open a row, collapse it) the way every tree
+    // does, which the terminal explorer already did and the window did not.
+    // Theme cycling loses the arrows while the tree has focus and keeps them
+    // in the viewer, plus `<leader>ut`/`<leader>uT` from anywhere.
+    assert(nk(Key.right, KeyContext.init).cmd == Command.themeNext);
+    assert(nk(Key.left, KeyContext.init).cmd == Command.themePrev);
+    assert(nk(Key.right, tree).cmd == Command.treeActivate);
+    assert(nk(Key.left, tree).cmd == Command.treeCollapseOrUp);
+
+    // Paging likewise: whichever pane has focus pages its own rows.
+    assert(nk(Key.pageDown, KeyContext.init).cmd == Command.viewPageDown);
+    assert(nk(Key.pageDown, tree).cmd == Command.treePageDown);
 }
 
 @("keymap.unboundKeysResolveToNone")
