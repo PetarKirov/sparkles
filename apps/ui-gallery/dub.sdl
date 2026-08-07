@@ -1,0 +1,51 @@
+name "ui-gallery"
+description "A browsable catalog of the sparkles:ui toolkit, in the terminal and in a window"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetName "ui-gallery"
+targetPath "build"
+mainSourceFile "src/app.d"
+
+// The `dumpTree` goldens the catalog sweep compares against.
+stringImportPaths "test/data"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:ui" path="../.."
+dependency "sparkles:ui-app" path="../.."
+dependency "sparkles:input" path="../.."
+dependency "sparkles:core-cli" path="../.."
+
+// Both arms. The gallery's whole claim is that one `view` serves a terminal and
+// a window, so a configuration carrying only one of them would make the claim
+// unfalsifiable rather than true.
+subConfiguration "sparkles:ui-app" "full"
+
+// `debug` to test, `checked` to ship, never `release`: `-release` deletes an
+// assert's whole expression, so a call written inside one silently stops
+// happening. See docs/guidelines/AGENTS.md § Build types.
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+
+// Explicit, because a package with any `configuration` block loses the implicit
+// default one — and with only `unittest` declared, `dub build :ui-gallery`
+// would select *it*.
+configuration "application" {
+    targetType "executable"
+}
+
+// Last in the file and running to EOF: `nix/packages/build-sparkles-app.nix`
+// derives this package's source closure by truncating the manifest here.
+configuration "unittest" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+    dependency "sparkles:test-runner" path="../.."
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
