@@ -18,6 +18,16 @@ wake it besides input — an application that asked for another frame
 ($(REF HostState.requestFrame, sparkles,ui_app,host), what an animation needs on
 a target that would otherwise sleep), and `RunConfig.idleTimeoutMs`, which is
 how background work gets a turn without dropping keystrokes.
+
+$(B Where a ring is available, event-horizon owns the wait) (its SPEC §15.3,
+the TUI shape): stdin and `SIGWINCH` become daemon fibers feeding one
+channel through `sparkles.ui_app.event_source`, the loop above runs in the
+root fiber, and the thread's single blocking point is the ring wait — the
+same repaint policy, expressed as a deadline on the channel take, with any
+background fibers the application spawns sharing the wait. Where loop
+creation fails (a seccomp'd sandbox with no io_uring and no kqueue shim),
+the plain blocking arm below is the explicit fallback, selected once and
+reported on `TuiHost.asyncLoop` — honest degradation, never a silent fork.
 */
 module sparkles.ui_app.tui_loop;
 
@@ -46,6 +56,10 @@ struct TuiHost
 
     private TerminalSession* session;
     private Size size_;
+
+    /// `true` when the event-horizon arm is driving (one ring wait);
+    /// `false` on the blocking fallback (no ring available).
+    bool asyncLoop;
 
     /// The surface, in cells.
     Size size() const @safe pure nothrow @nogc => size_;
@@ -164,7 +178,120 @@ bool runTui(alias present, alias handle)(in RunConfig cfg)
         session.present();
     }
 
-    frame();
+    frame(); // an application draws before anything happens to it
+
+    // The event-horizon arm (its SPEC §15.3): fibers need UI-sized stacks —
+    // a frame runs arbitrary application paint code, and one FrameOps
+    // operation can cost a quarter-megabyte stack temporary in a debug
+    // build; the 64 KiB I/O-sized default blows instantly. Virtual memory
+    // is lazily paged, so 1 MiB × few fibers costs what it touches.
+    import sparkles.event_horizon.sched : Sched, SchedOptions;
+
+    SchedOptions schedOpts;
+    schedOpts.stackSize = 1024 * 1024;
+    schedOpts.maxFibers = 64;
+
+    Sched sched;
+    if (!Sched.create(sched, schedOpts).hasError)
+    {
+        scope (exit) sched.destroy();
+        host.asyncLoop = true;
+
+        import core.time : msecs;
+
+        import sparkles.event_horizon.errors : IoError;
+        import sparkles.event_horizon.scope_ : withDeadline, withScope;
+        import sparkles.ui_app.event_source : EventChannel, pumpTerminalInput;
+
+        // Block SIGWINCH into a signalfd BEFORE any ring wait: resize must
+        // be an event, never an EINTR side effect. Linux-only (signalfd);
+        // the kqueue platforms apply a resize on the next event until their
+        // EVFILT_SIGNAL lowering lands (event-horizon O26's sibling).
+        version (linux)
+        {
+            import sparkles.event_horizon.signals : SignalFd;
+            import sparkles.ui_app.event_source : pumpResizeSignals;
+
+            enum int SIGWINCH = 28; // absent from druntime's posix.signal
+            SignalFd winch;
+            const winchOk = !SignalFd.create(winch, [SIGWINCH]).hasError;
+        }
+
+        EventChannel events;
+        // `cfg` is a scope parameter — closures must not capture it (a
+        // captured parameter slot, not the referent); everything the
+        // fibers touch below is a plain local of this frame, which
+        // provably outlives them (sched.run blocks here).
+        const idleTimeoutMs = cfg.idleTimeoutMs;
+
+        sched.run(() {
+            cast(void) withScope!((ref sc) {
+                sc.spawnDaemon(() { pumpTerminalInput(sched, events, 0); });
+                version (linux)
+                    if (winchOk)
+                        sc.spawnDaemon(() { pumpResizeSignals(sched, events, winch); });
+
+                while (!host.quitRequested)
+                {
+                    Event e;
+                    bool haveEvent = true;
+                    if (host.frameRequested)
+                    {
+                        // An animation frame: do not block; drain one event
+                        // if one is already queued.
+                        haveEvent = events.tryTake(e);
+                    }
+                    else if (idleTimeoutMs >= 0)
+                    {
+                        // Out-variable shape: the deadline body must not
+                        // return an Expected (the scope would double-wrap).
+                        Event taken;
+                        bool gotOne;
+                        auto o = withDeadline!((ref _) {
+                            auto t = events.take(sched);
+                            if (!t.hasError)
+                            {
+                                taken = t.value;
+                                gotOne = true;
+                            }
+                        })(sched, idleTimeoutMs.msecs);
+                        if (o.hasError)
+                        {
+                            if (!o.error.isTimeout)
+                                return; // teardown
+                            haveEvent = false; // idle turn: re-present only
+                        }
+                        else if (gotOne)
+                            e = taken;
+                        else
+                            return; // channel closed: input ended
+                    }
+                    else
+                    {
+                        auto taken = events.take(sched);
+                        if (taken.hasError)
+                            return; // channel closed / teardown
+                        e = taken.value;
+                    }
+
+                    if (haveEvent)
+                    {
+                        if (e.isEndOfInput)
+                            return;
+                        // `HST7`: the size the application reads is the
+                        // one the host has.
+                        handle(host, withRealSize(e, host.size));
+                    }
+                    frame();
+                }
+            }, IoError)(sched);
+            // Scope exit reaps the daemon pumps: their parked reads are
+            // cancelled in-ring before the session restores the terminal.
+        });
+        return true;
+    }
+
+    // The blocking fallback arm: same protocol over session reads.
     while (!host.quitRequested)
     {
         // Block unless the application asked for another frame, or the caller

@@ -14,6 +14,12 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:core-cli" path="../.."
+// The loop substrate (event-horizon SPEC §15): the live arms run the frame
+// loop as fibers on one ring wait. Backend-free code never touches it, and
+// where loop creation fails at runtime the arms degrade to their plain
+// blocking loops (SPEC §15.3) — the dependency is unconditional, the ring
+// is not.
+dependency "sparkles:event-horizon" path="../.."
 
 // ── Configurations (APP3) ───────────────────────────────────────────────────
 //
