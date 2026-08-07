@@ -89,6 +89,23 @@ struct RecordingHost
     /// ditto
     void toggleFullscreen() pure nothrow { fullscreenToggled = true; }
 
+    /// The font errand (`HST14`), recorded: each request is captured and
+    /// becomes the reported size — a test asserts both the asks and the value
+    /// the application then reads back. The cell `size` does not change (the
+    /// recorder has no real glyphs to re-measure).
+    int fontSizePx() const pure nothrow @nogc => fontSizePxValue;
+    /// ditto
+    void fontSize(int px) pure nothrow
+    {
+        fontSizePxValue = px;
+        fontSizeRequests ~= px;
+    }
+
+    /// ditto
+    int fontSizePxValue = 18;
+    /// ditto
+    int[] fontSizeRequests;
+
     /// The operations of the last frame, for the common single-frame assertion.
     const(DrawOp)[] lastOps() const pure nothrow @nogc
         => frames.length ? frames[$ - 1].ops : null;
@@ -286,6 +303,22 @@ unittest
     // Fullscreen is reported unsupported by default — a terminal and Android
     // both lack it, so a test that assumes otherwise has to say so.
     assert(!rec.fullscreenSupported);
+}
+
+@("ui_app.record.fontSizeErrandIsCaptured")
+@safe
+unittest
+{
+    // The font errand (`HST14`): each ask is recorded, and the value the
+    // application reads back is the one it set — a Ctrl+= handler's whole
+    // observable contract, with no window and no atlas.
+    auto rec = runRecorded(RunConfig.init,
+        (ref RecordingHost h) {},
+        (ref RecordingHost h, in Event e) { h.fontSize(h.fontSizePx + 2); },
+        [charEvent('+'), charEvent('+')]);
+
+    assert(rec.fontSizeRequests == [20, 22]);
+    assert(rec.fontSizePx == 22);
 }
 
 @("ui_app.record.resizeIsNormalized")

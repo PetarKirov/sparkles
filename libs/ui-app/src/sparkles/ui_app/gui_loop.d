@@ -66,6 +66,14 @@ struct GuiHost
     /// Seconds the last frame took — the clock every animation reads.
     float frameSeconds() const @system => session.window.frameSeconds;
 
+    /// The font pixel size, and the errand changing it (`HST14`): reloads the
+    /// face set and re-measures the cell metrics, so `size` changes on its
+    /// next read. Call from `handle` — it runs outside the frame bracket,
+    /// where the reload's texture upload is safe.
+    int fontSizePx() const @system => session.fontSizePx;
+    /// ditto
+    void fontSize(int px) @system => session.setFontSize(px);
+
     void pointerShape(PointerShape s) @system => session.window.pointerShape(s);
 
     void clipboard(scope const(char)[] text) @system
@@ -226,6 +234,7 @@ unittest
         h.title("a title");
         h.writeOutOfBand("ignored here");
         h.toggleFullscreen();
+        h.fontSize(h.fontSizePx + 2);
         auto c = h.canvas;
     }));
 }
