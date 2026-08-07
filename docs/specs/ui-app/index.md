@@ -1,9 +1,9 @@
 # `sparkles:ui-app` — Overview
 
-_**Status:** proposed — no implementation yet · **Date:** 2026-08-06 · **Scope:**
-the planned `libs/ui-app` package: the **application host** that owns backend
-selection, the shared window/font CLI, and the frame/event loop, so an
-application never names a canvas._
+_**Status:** phase 1 shipped, phase 2 (app migration) in progress · **Date:**
+2026-08-07 · **Scope:** the `libs/ui-app` package: the **application host** that
+owns backend selection, the shared window/font CLI, and the frame/event loop, so
+an application never names a canvas._
 
 `sparkles:ui` is backend-free by construction ([`PKG1`](../ui/feature-requirements.md),
 [`TGT6`](../ui/backends.md)), and the concrete canvases live in sibling packages.
@@ -38,6 +38,7 @@ untestable, but because it sits next to a window.
 | Window/font CLI      | `gui_options.d`            | [`CLI`](./feature-requirements.md#window-and-font-cli-cli) |
 | Window/font setup    | `gui_setup.d`              | [`CLI`](./feature-requirements.md#window-and-font-cli-cli) |
 | Frame/event loop     | `run.d`, `host.d`          | [`HST`](./feature-requirements.md#the-host-contract-hst)   |
+| Component entry      | `run_app.d`                | [`HST`](./feature-requirements.md#the-host-contract-hst)   |
 | Backend arms         | `tui_loop.d`, `gui_loop.d` | [`APP`](./feature-requirements.md#architecture-app)        |
 | Headless test target | `record.d`                 | [`TST`](./feature-requirements.md#testability-tst)         |
 
@@ -95,8 +96,8 @@ sparkles:ui-app  → ui, input, core-cli        config "tui":  + ui-tui
 
 Identical to the [`sparkles:ui` scheme](../ui/index.md#status-scheme) —
 **not started** · **researched** · **partial** · **full (`<sha>`)** · **decided** —
-so the trees cross-reference without translation. Every row on this tree is
-currently **not started** or **decided**; the package does not exist yet.
+so the trees cross-reference without translation. Phase 1's rows are **full**;
+the remaining open rows (`TST3`, `TST4`) belong to the phase-2 migrations.
 
 ## ID scheme
 
@@ -115,17 +116,20 @@ currently **not started** or **decided**; the package does not exist yet.
 Planned files, each owned by at least one requirement. The table is the code →
 requirement direction; the "Traces to" column of each row is the reverse.
 
-| Planned source file                             | Areas                  |
-| ----------------------------------------------- | ---------------------- |
-| `libs/ui-app/src/sparkles/ui_app/backend.d`     | `BKD1`–`BKD5`          |
-| `libs/ui-app/src/sparkles/ui_app/gui_options.d` | `CLI1`–`CLI3`          |
-| `libs/ui-app/src/sparkles/ui_app/gui_setup.d`   | `CLI4`–`CLI6`          |
-| `libs/ui-app/src/sparkles/ui_app/host.d`        | `HST1`–`HST8`          |
-| `libs/ui-app/src/sparkles/ui_app/run.d`         | `HST1`, `HST9`, `BKD5` |
-| `libs/ui-app/src/sparkles/ui_app/tui_loop.d`    | `APP4`, `HST6`, `HST7` |
-| `libs/ui-app/src/sparkles/ui_app/gui_loop.d`    | `APP4`, `HST6`, `HST7` |
-| `libs/ui-app/src/sparkles/ui_app/record.d`      | `TST1`–`TST3`          |
-| `libs/ui-app/dub.sdl`                           | `APP2`–`APP4`          |
+| Planned source file                              | Areas                  |
+| ------------------------------------------------ | ---------------------- |
+| `libs/ui-app/src/sparkles/ui_app/backend.d`      | `BKD1`–`BKD5`          |
+| `libs/ui-app/src/sparkles/ui_app/gui_options.d`  | `CLI1`–`CLI3`          |
+| `libs/ui-app/src/sparkles/ui_app/gui_setup.d`    | `CLI4`–`CLI6`          |
+| `libs/ui-app/src/sparkles/ui_app/host.d`         | `HST1`–`HST8`          |
+| `libs/ui-app/src/sparkles/ui_app/run.d`          | `HST1`, `HST9`, `BKD5` |
+| `libs/ui-app/src/sparkles/ui_app/run_app.d`      | `HST10`–`HST12`        |
+| `libs/ui-app/src/sparkles/ui_app/display.d`      | `BKD3`                 |
+| `libs/ui-app/src/sparkles/ui_app/event_source.d` | `HST9`                 |
+| `libs/ui-app/src/sparkles/ui_app/tui_loop.d`     | `APP4`, `HST6`, `HST7` |
+| `libs/ui-app/src/sparkles/ui_app/gui_loop.d`     | `APP4`, `HST6`, `HST7` |
+| `libs/ui-app/src/sparkles/ui_app/record.d`       | `TST1`–`TST3`          |
+| `libs/ui-app/dub.sdl`                            | `APP2`–`APP4`          |
 
 ## Relationship to existing specs
 

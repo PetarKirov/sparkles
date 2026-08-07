@@ -153,6 +153,22 @@ Acceptance: all three configurations build; the contract tests run with no windo
 and no tty; a scripted session produces the same operations through the recorder and
 through the live terminal arm.
 
+**Status: P1.1–P1.5 shipped.** All three configurations build on ldc2 and dmd, the
+contract tests run headlessly, and both live arms now run on `event-horizon` rings
+(with the blocking paths kept as explicit fallbacks). The remaining acceptance
+clause — recorder ↔ live-terminal operation parity (`TST3`) — is still open; the
+PTY harness for it comes with the `apps/terminal` migration, which already needs
+one for the behavior gate.
+
+### P1.6 — the component entry point (`runApp`)
+
+**Done.** One call above `run`: an application is a value with `view`/`handle`
+(`isAppFor`), and `runApp` owns theme resolution, layout, the display-list build
+and a themed page fill — with `probedPolicy` as the single environment read and
+`runAppRecorded` as the headless twin (`HST10`–`HST12`). This is the entry point
+every app migrates onto in phase 2; the direct `run` level remains for the loop
+shapes `runApp` does not cover.
+
 ## Phase 2 — migrate the applications {#phase-2}
 
 Both applications migrate fully — CLI, backend decision and event loop. Terminal
