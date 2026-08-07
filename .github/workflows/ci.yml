@@ -23,9 +23,22 @@ on:
   # Seeding only lychee's cache is the deliberate trade: the ~1.8 GB `nix-v2-*`
   # and `Linux-dub-*` entries stay per-PR, because warming those would mean
   # running the whole matrix on every merge while CircleCI runs it too.
+  #
+  # That seeding is now a fallback rather than the plan. A cache written once
+  # per merge is, by construction, the least-recently-used entry in a repository
+  # whose pull requests write multi-gigabyte caches on every push — so it is
+  # always the first thing evicted, and raising the quota moves that threshold
+  # without changing the ordering. A pull request therefore no longer depends on
+  # it: `lychee-offline` covers the whole tree without the network, and the
+  # networked check runs over the diff. The full sweep is the `schedule` below.
   push:
     branches:
       - main
+
+  # The full network link sweep. Rot appears with nobody committing, so it is
+  # found on a timer rather than by whichever pull request happens to be open.
+  schedule:
+    - cron: '17 4 * * *'
 
 # Least privilege by default: no job here writes to the repository. The cachix
 # push authenticates with its own token, not GITHUB_TOKEN.
@@ -41,11 +54,11 @@ concurrency:
 
 jobs:
   test:
-    # See the `push` trigger: a `main` run exists only to seed the base cache
-    # scope, and the sole cache worth seeding that way is lychee's. Everything
-    # but `lint` therefore stays PR-only rather than duplicating a full matrix
-    # that CircleCI is already running on `main`.
-    if: github.event_name != 'push'
+    # `main` and `schedule` runs exist for the link sweep and the cache it
+    # seeds. Everything but `lint` is therefore pull-request-only, rather than
+    # duplicating a full matrix that CircleCI already runs on `main` — and, for
+    # the nightly, one that nothing has changed since the last run.
+    if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -135,7 +148,7 @@ jobs:
   # exercise the compiler far more than the host.
   extracted-tests:
     name: Extracted test modes (--better-c, --wasm)
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -183,7 +196,7 @@ jobs:
   # third-party deps), so it runs on a plain windows-latest runner via setup-dlang.
   win32-example:
     name: Win32 OS-API example (windows-latest)
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request'
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -213,7 +226,7 @@ jobs:
   # in its own `nix-build-android` job below.
   nix-build:
     name: Nix build & push (${{ matrix.runner }})
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -265,7 +278,7 @@ jobs:
   # (nix/packages/android/sdk.nix) — no env flags needed here.
   nix-build-android:
     name: Nix build & push (Android APK)
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     # From a warm cache this is minutes; a cold cache rebuilds the cross
     # druntimes and the Maple font pipeline — give it real headroom.
@@ -326,17 +339,46 @@ jobs:
           restore-keys: |
             cache-lychee-v4-
 
-      - name: Lint and check links
+      # Everything over the whole tree EXCEPT the networked link check — which
+      # includes `lychee-offline`, a ~0.4 s pass that catches the thing a diff
+      # cannot see: a renamed heading or a deleted page breaking a relative link
+      # in a file this change never touched.
+      - name: Lint (and check local links)
         run: prek run --all-files --show-diff-on-failure --color always
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          SKIP: verify-md-examples
+          SKIP: verify-md-examples,lychee
+
+      # The networked half, over the DIFF only. A pull request can only
+      # introduce a dead URL in a file it touched, and re-checking the other
+      # ~8.7k links costs minutes and depends on a cache that PR-scoped caches
+      # evict. Rot in untouched files is found by the scheduled sweep instead —
+      # it appears with nobody committing, so a pull request is the wrong place
+      # to look for it.
+      - name: Check links added or changed by this PR
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          prek run lychee \
+            --from-ref "origin/$BASE_REF" --to-ref HEAD \
+            --show-diff-on-failure --color always
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ github.base_ref }}
+
+      # The full network sweep: every link in the repository, on a schedule and
+      # on `main`, where minutes are free and the cache it writes lands in the
+      # base scope every other run can read.
+      - name: Check every link
+        if: github.event_name != 'pull_request'
+        run: prek run lychee --all-files --show-diff-on-failure --color always
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Verify markdown runnable examples
-        # The `main` run is here for the lychee cache, which only the `prek`
-        # step above writes. This step compiles and runs every example — half
-        # an hour of runner time that seeds nothing.
-        if: github.event_name != 'push'
+        # Pull requests only: this compiles and runs every example, half an hour
+        # of runner time, and the non-PR runs exist for the link sweep.
+        if: github.event_name == 'pull_request'
         run: |
           nix run .#ci -- --verify --fail-fast --files '**.md'
 
@@ -355,7 +397,7 @@ jobs:
 
   docs:
     name: Build documentation site
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

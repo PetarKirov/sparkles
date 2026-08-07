@@ -115,101 +115,21 @@ in
             "^libs/twoslash-d/examples/fixtures/"
           ];
 
-          hooks = {
-            editorconfig-checker.enable = true;
-
-            # *.nix formatting
-            nixfmt.enable = true;
-
-            # *.{js,jsx,ts,tsx,css,html,md,json} formatting
-            prettier = {
-              enable = true;
-              args = [
-                "--check"
-                "--list-different=false"
-                "--log-level=warn"
-                "--ignore-unknown"
-                "--write"
-              ];
-              excludes = builtins.map lib.escapeRegex (generatedJsonFiles ++ yarnPnPFiles);
-            };
-
-            fix-markdown-reference-links = {
-              enable = true;
-              files = "\\.md$";
-              language = "system";
-              name = "fix-markdown-reference-links";
-              require_serial = false;
-              pass_filenames = true;
-              entry = lib.getExe config.packages.ci;
-              args = [
-                "--fix-reference-links"
-                "--files"
-              ];
-            };
-
-            verify-md-examples = {
-              enable = true;
-              files = "\\.md$";
-              language = "system";
-              name = "verify-md-examples";
-              # Hand every matched *.md to ONE `ci` invocation instead of letting
-              # prek fan out file batches across parallel processes. `ci` then
-              # parallelizes the per-example builds itself, capped by available
-              # cores/memory (see SPARKLES_CI_JOBS) — example builds are OOM-prone,
-              # and one coordinator bounds total concurrency where N independent
-              # prek processes (~32 here) cannot. The build-artifact race itself is
-              # fixed in `ci` via dub `--temp-build`; serializing here is about
-              # bounded, predictable parallelism rather than correctness.
-              require_serial = true;
-              pass_filenames = true;
-              entry = lib.getExe config.packages.ci;
-              args = [
-                "--verify"
-                "--fail-fast"
-                "--files"
-              ];
-            };
-
-            # Regenerate the cell-grid SVG for docs/specs/base/text/ whenever the
-            # text algorithm or its generator changes. The generator is the
-            # prebuilt standalone example (rebuilt by Nix when the sources change),
-            # so the committed SVG can never drift from `byGraphemeCluster`; prek
-            # reports a failure if the file was rewritten, mirroring prettier.
-            gen-text-svg = {
-              enable = true;
-              files = "(^libs/base/src/sparkles/base/text/.*\\.d$)|(^libs/base/examples/text-cell-svg\\.d$)";
-              language = "system";
-              name = "gen-text-svg";
-              pass_filenames = false;
-              entry = toString (
-                pkgs.writeShellScript "gen-text-svg" ''
-                  set -euo pipefail
-                  repo_root=$(git rev-parse --show-toplevel)
-                  ${lib.getExe config.legacyPackages.examples.base."text-cell-svg"} \
-                    --out "$repo_root/docs/public/text-cells.svg"
-                ''
-              );
-            };
-
-            lychee = {
-              enable = true;
-              files = "\\.md$";
-              excludes = [
+          hooks =
+            let
+              # Shared by both lychee hooks below.
+              lycheeExcludes = [
                 "^AGENTS\\.md$"
                 "^docs/research/.*/grounding/"
               ];
-              pass_filenames = true;
-              # Run a single lychee process over all matched files. Without this,
-              # prek splits `--all-files` into many parallel lychee invocations
-              # (~32 on this repo); the aggregate connection rate exhausts local
-              # sockets (ResourceBusy / connect failures) and each process keeps
-              # its own per-host throttle governor, defeating the web.archive.org
-              # request_interval and re-tripping its connection-refusal limit.
-              require_serial = true;
-              entry = lib.mkForce (
+
+              # One wrapper, two variants. `offline` blocks network requests, so
+              # the same config, exclude files and auth handling serve both.
+              mkLycheeEntry =
+                { offline }:
                 toString (
-                  pkgs.writeShellScript "lychee-with-auth" ''
+                  pkgs.writeShellScript "lychee-with-auth${lib.optionalString offline "-offline"}" ''
+                                ${lib.optionalString offline "export LYCHEE_OFFLINE=1"}
                     extra_args=()
                     repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
 
@@ -246,6 +166,10 @@ in
                         extra_args+=(--exclude "$pattern")
                       done < "$exclude_file"
                     done
+                    if [ -n "$LYCHEE_OFFLINE" ]; then
+                      extra_args+=(--offline)
+                    fi
+
                     if [ -n "$GITHUB_TOKEN" ]; then
                       extra_args+=(--header "Authorization: Bearer $GITHUB_TOKEN")
                     fi
@@ -255,41 +179,159 @@ in
                       "''${extra_args[@]}" \
                       "$@"
                   ''
-                )
-              );
-            };
+                );
+            in
+            {
+              editorconfig-checker.enable = true;
 
-            check-vcs-urls = {
-              enable = true;
-              name = "check-vcs-urls";
-              files = "\\.md$";
-              entry = lib.getExe config.packages.ci;
-              args = [
-                "--check-vcs-urls"
-                "--files"
-              ];
-              language = "system";
-              pass_filenames = true;
-              require_serial = true;
-            };
+              # *.nix formatting
+              nixfmt.enable = true;
 
-            # VitePress sidebar ↔ published docs/**/*.md consistency (pages must
-            # appear in the sidebar; sidebar links must resolve to pages). Logic
-            # lives in D (apps/ci --check-docs-sidebar) per the project guideline
-            # that substantial hook logic must not be shell. pass_filenames=false:
-            # the check is whole-tree (orphans are about files *not* staged), and
-            # runs when any path under docs/ changes — including the sidebar config.
-            check-docs-sidebar = {
-              enable = true;
-              name = "check-docs-sidebar";
-              files = "^docs/";
-              entry = lib.getExe config.packages.ci;
-              args = [ "--check-docs-sidebar" ];
-              language = "system";
-              pass_filenames = false;
-              require_serial = true;
+              # *.{js,jsx,ts,tsx,css,html,md,json} formatting
+              prettier = {
+                enable = true;
+                args = [
+                  "--check"
+                  "--list-different=false"
+                  "--log-level=warn"
+                  "--ignore-unknown"
+                  "--write"
+                ];
+                excludes = builtins.map lib.escapeRegex (generatedJsonFiles ++ yarnPnPFiles);
+              };
+
+              fix-markdown-reference-links = {
+                enable = true;
+                files = "\\.md$";
+                language = "system";
+                name = "fix-markdown-reference-links";
+                require_serial = false;
+                pass_filenames = true;
+                entry = lib.getExe config.packages.ci;
+                args = [
+                  "--fix-reference-links"
+                  "--files"
+                ];
+              };
+
+              verify-md-examples = {
+                enable = true;
+                files = "\\.md$";
+                language = "system";
+                name = "verify-md-examples";
+                # Hand every matched *.md to ONE `ci` invocation instead of letting
+                # prek fan out file batches across parallel processes. `ci` then
+                # parallelizes the per-example builds itself, capped by available
+                # cores/memory (see SPARKLES_CI_JOBS) — example builds are OOM-prone,
+                # and one coordinator bounds total concurrency where N independent
+                # prek processes (~32 here) cannot. The build-artifact race itself is
+                # fixed in `ci` via dub `--temp-build`; serializing here is about
+                # bounded, predictable parallelism rather than correctness.
+                require_serial = true;
+                pass_filenames = true;
+                entry = lib.getExe config.packages.ci;
+                args = [
+                  "--verify"
+                  "--fail-fast"
+                  "--files"
+                ];
+              };
+
+              # Regenerate the cell-grid SVG for docs/specs/base/text/ whenever the
+              # text algorithm or its generator changes. The generator is the
+              # prebuilt standalone example (rebuilt by Nix when the sources change),
+              # so the committed SVG can never drift from `byGraphemeCluster`; prek
+              # reports a failure if the file was rewritten, mirroring prettier.
+              gen-text-svg = {
+                enable = true;
+                files = "(^libs/base/src/sparkles/base/text/.*\\.d$)|(^libs/base/examples/text-cell-svg\\.d$)";
+                language = "system";
+                name = "gen-text-svg";
+                pass_filenames = false;
+                entry = toString (
+                  pkgs.writeShellScript "gen-text-svg" ''
+                    set -euo pipefail
+                    repo_root=$(git rev-parse --show-toplevel)
+                    ${lib.getExe config.legacyPackages.examples.base."text-cell-svg"} \
+                      --out "$repo_root/docs/public/text-cells.svg"
+                  ''
+                );
+              };
+
+              # Link checking is split in two, because the halves cost different things
+              # and catch different things.
+              #
+              # `lychee` is the NETWORK half: minutes, subject to rate limits and
+              # outages, and it only says something about the URLs a change introduces.
+              # CI runs it over the diff; the full sweep runs on a schedule, where slow
+              # is free.
+              #
+              # `lychee-offline` is the LOCAL half: ~0.4 s over the whole repository, and
+              # it catches what a diff cannot see — a renamed heading or a deleted page
+              # breaks relative links in files the change never touched. CI runs it over
+              # `--all-files` on every push.
+              #
+              # See `.github/workflows/ci.yml` for the invocations.
+              lychee = {
+                enable = true;
+                files = "\\.md$";
+                excludes = lycheeExcludes;
+                pass_filenames = true;
+                # Run a single lychee process over all matched files. Without this,
+                # prek splits `--all-files` into many parallel lychee invocations
+                # (~32 on this repo); the aggregate connection rate exhausts local
+                # sockets (ResourceBusy / connect failures) and each process keeps
+                # its own per-host throttle governor, defeating the web.archive.org
+                # request_interval and re-tripping its connection-refusal limit.
+                require_serial = true;
+                entry = lib.mkForce (mkLycheeEntry {
+                  offline = false;
+                });
+              };
+
+              lychee-offline = {
+                enable = true;
+                name = "lychee (local links)";
+                files = "\\.md$";
+                excludes = lycheeExcludes;
+                pass_filenames = true;
+                require_serial = true;
+                entry = lib.mkForce (mkLycheeEntry {
+                  offline = true;
+                });
+              };
+
+              check-vcs-urls = {
+                enable = true;
+                name = "check-vcs-urls";
+                files = "\\.md$";
+                entry = lib.getExe config.packages.ci;
+                args = [
+                  "--check-vcs-urls"
+                  "--files"
+                ];
+                language = "system";
+                pass_filenames = true;
+                require_serial = true;
+              };
+
+              # VitePress sidebar ↔ published docs/**/*.md consistency (pages must
+              # appear in the sidebar; sidebar links must resolve to pages). Logic
+              # lives in D (apps/ci --check-docs-sidebar) per the project guideline
+              # that substantial hook logic must not be shell. pass_filenames=false:
+              # the check is whole-tree (orphans are about files *not* staged), and
+              # runs when any path under docs/ changes — including the sidebar config.
+              check-docs-sidebar = {
+                enable = true;
+                name = "check-docs-sidebar";
+                files = "^docs/";
+                entry = lib.getExe config.packages.ci;
+                args = [ "--check-docs-sidebar" ];
+                language = "system";
+                pass_filenames = false;
+                require_serial = true;
+              };
             };
-          };
 
           # Prek built-in hooks:
           # https://prek.j178.dev/builtin/#supported-hooks_1
