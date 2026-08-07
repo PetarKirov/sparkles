@@ -1,0 +1,35 @@
+# Tables
+
+Basic:
+
+| Module  | Role                 |
+| ------- | -------------------- |
+| width.d | width of a codepoint |
+| wrap.d  | greedy line wrapping |
+
+Alignments:
+
+| Left | Center | Right |
+| :--- | :----: | ----: |
+| a    |   b    |     c |
+| aa   |   bb   |    cc |
+
+Inline styles in cells:
+
+| Feature   | Status           | Notes                    |
+| --------- | ---------------- | ------------------------ |
+| `code`    | **done**         | with [a link](https://x) |
+| *italics* | ~~was planned~~  | plain                    |
+
+Ragged (missing trailing cells):
+
+| One | Two | Three |
+| --- | --- | ----- |
+| a   |
+| b   | c   |
+
+Single column:
+
+| Only |
+| ---- |
+| one  |

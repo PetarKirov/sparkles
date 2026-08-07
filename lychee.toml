@@ -79,6 +79,8 @@ fallback_extensions = ["md", "html"]
 exclude_path = [
     '^AGENTS\.md$',
     '^docs/research/.*/grounding/',
+    # Markdown rendering fixtures: links are deliberately fake test inputs.
+    '^libs/syntax/test/data/',
 ]
 
 # Don't check URLs inside code blocks (they're often illustrative, not real)

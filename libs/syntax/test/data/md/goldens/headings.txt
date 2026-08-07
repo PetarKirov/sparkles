@@ -1,0 +1,21 @@
+󰲡 Heading level one
+
+Intro paragraph under the first heading.
+
+󰲣 Heading level two
+
+󰲥 Heading level three
+
+󰲧 Heading level four
+
+󰲩 Heading level five
+
+󰲫 Heading level six
+
+󰲣 Heading with inline code
+
+󰲣 Heading with bold and italic
+
+󰲡 Setext heading one
+
+󰲣 Setext heading two
