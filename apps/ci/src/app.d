@@ -1926,18 +1926,6 @@ private int runCoverageMode()
         auto result = executeLogged(cmd, "coverage " ~ pkgName);
         if (result.status != 0)
         {
-            // Not every package runs `sparkles:test-runner`: `event-horizon`,
-            // `http` and `terminal-benchmark` still use silly, which parses
-            // argv with `std.getopt` and rejects druntime's own `--DRT-*`
-            // options — exactly as our runner did before `a5c5d040`. Retry
-            // without the redirect and collect the listings from where they
-            // land instead, so which runner a package uses does not decide
-            // whether it can be measured.
-            result = executeLogged(cmd[0 .. $ - 2], "coverage " ~ pkgName ~ " (retry)");
-            sweepListings(repoRoot, dest);
-        }
-        if (result.status != 0)
-        {
             failed ~= pkgName;
             // Show WHY, next to the package that failed. Naming it and stopping
             // leaves the reader to reproduce the run by hand for information
@@ -1985,23 +1973,6 @@ private int runCoverageMode()
         warning(i"{yellow tests failed} for $(failed.length) package(s): $(failed.join(", ")) — their rows are not meaningful");
 
     return 0;
-}
-
-/**
-Moves any `-cov` listings left in `from` into `into`.
-
-Without `--DRT-covopt=dstpath:` the runtime writes them to the process's working
-directory, which for `dub test` is the repository root — so a package whose
-runner rejects that option scatters its listings across the tree. Sweeping them
-is what keeps the retry above from leaving litter behind.
-*/
-private void sweepListings(string from, string into)
-{
-    import std.file : dirEntries, rename, SpanMode;
-    import std.path : baseName, buildPath;
-
-    foreach (entry; from.dirEntries("*.lst", SpanMode.shallow))
-        rename(entry.name, buildPath(into, entry.name.baseName));
 }
 
 /// Which of the test runner's extracted-test modes a sub-package opts into.
