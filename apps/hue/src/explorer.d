@@ -1026,6 +1026,8 @@ struct ExplorerTui
             case Command.diffExpandAll: case Command.diffToggleFormatting:
             case Command.diffToggleLayout: case Command.diffToggleContext:
             case Command.diffToggleGap: case Command.diffToggleStructural:
+            case Command.diffStage: case Command.diffUnstage:
+            case Command.diffDiscard:
                 break;
         }
         return true;

@@ -383,6 +383,12 @@ size_t diffHunkKey(size_t hunkIndex) @safe pure nothrow @nogc
 bool isDiffHunkKey(size_t key) @safe pure nothrow @nogc
     => key >= diffHunkKeyBase && key < diffGapKeyBase;
 
+/// The document-global hunk index a hunk key names — $(LREF diffHunkKey)
+/// read back, so a laid-out row resolves to the model element it came from.
+size_t diffHunkIndexOf(size_t key) @safe pure nothrow @nogc
+in (isDiffHunkKey(key))
+    => key - diffHunkKeyBase;
+
 /// `DVG2`: the key an unchanged-region band carries, in a third id space above
 /// the hunk keys — so one `keyedRects` sweep locates files, hunks and gaps
 /// without any of them having to know about the others.

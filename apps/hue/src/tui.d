@@ -23,6 +23,7 @@ import lantern : LanternState, ltnStep = step, ltnTick = tick,
 import lantern_view : BoxLayout, LabelArena, LanternStyle, Placement,
     viewLantern;
 import document : DiffEmphasis, DiffSides;
+import staging : StageAction;
 import sparkles.base.text.writers : writeInteger;
 
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
@@ -136,6 +137,22 @@ struct PreviewTui
     private RgbColor selBg;
     private SmallBuffer!char clip;
     private bool clipReady;
+
+    /// `DST2`/`DST4`: the answer to the reviewer's last write action, shown
+    /// in the status bar until the next keystroke. A write that reports
+    /// nothing is indistinguishable from a key that is not bound.
+    private string notice;
+    /// `DST4`: a discard is armed but not yet confirmed. Destroying work
+    /// takes two deliberate keystrokes, and the second is `y` — never the
+    /// same key again, so a repeated `X` cannot run away with the file.
+    private bool discardArmed;
+    /// The host's "the diff changed underneath us" hook: applying a patch
+    /// invalidates the document, and only the host owns the loader that
+    /// produced it.
+    void delegate() @system onStaged;
+    /// The repository the patches apply in (the host's working directory
+    /// when empty).
+    string repoRoot;
 
     /// The key guide's pending path (`LTN2`) — what `zPending` used to be,
     /// except it handles every prefix, three levels deep, and can say what
@@ -633,10 +650,13 @@ struct PreviewTui
 
         const y = height > 0 ? height - 1 : 0;
         auto b = Builder();
+        // A notice outranks the key hints: it is the answer to what the
+        // reviewer just did, and the hints are always true anyway.
         const line = b.add(Widget(kind: WidgetKind.text,
             text: searching ? text("/", query, "▏")
+                : notice.length ? notice
                 : "scroll ↑↓ · ←→ theme · Tab raw/preview · / search · za fold · drag+y copy · q quit",
-            slot: searching ? Slot.inherit : Slot.gutter));
+            slot: searching || notice.length ? Slot.inherit : Slot.gutter));
         paintBar(g, y, [line], null, null, b);
     }
 
@@ -757,6 +777,55 @@ struct PreviewTui
     const(SessionEntry)[] diffEntries() const @safe pure nothrow @nogc
         => diffNav() ? vm.diffSession.entries : null;
 
+    /**
+    `DST2`/`DST4`: stage, unstage or discard the hunk under the cursor.
+
+    The host supplies `onStaged`, because applying a patch changes the diff
+    the reviewer is looking at and only the host can re-run the loader that
+    produced it. Without the hook the keys are inert rather than misleading.
+
+    A discard destroys work, so it asks first — `DST4`'s explicit
+    confirmation, and the reason it is never the same keystroke as a stage.
+    */
+    void applyStaging(StageAction action) @system
+    {
+        import staging : applyPatch;
+
+        if (!diffNav())
+            return;
+        scope (exit) discardArmed = action == StageAction.discard && discardArmed;
+        if (!vm.diffSession.stageable)
+        {
+            notice = "this diff has no index to stage into";
+            return;
+        }
+        const patch = vm.diffCursorPatch();
+        if (patch.length == 0)
+        {
+            notice = "nothing to stage here";
+            return;
+        }
+        if (action == StageAction.discard && !discardArmed)
+        {
+            discardArmed = true;
+            notice = "discard this hunk? press y to confirm";
+            return;
+        }
+
+        discardArmed = false;
+        auto res = applyPatch(patch, action, repoRoot);
+        if (res.hasError)
+        {
+            notice = res.error.detail;
+            return;
+        }
+        notice = action == StageAction.stage ? "staged this hunk"
+            : action == StageAction.unstage ? "unstaged this hunk"
+            : "discarded this hunk";
+        if (onStaged !is null)
+            onStaged(); // the diff changed underneath us
+    }
+
     /// `DVG2`: expand or re-fold the one unchanged region in view.
     void toggleDiffGap() @system
     {
@@ -843,6 +912,24 @@ struct PreviewTui
     private bool handleKey(in KeyEvent e) @system
     {
         const rows = bodyRows();
+
+        // `DST4`: an armed discard is answered before anything else looks at
+        // the key. `y` goes through; ANY other key disarms, so a reviewer who
+        // reaches for something else has already said no.
+        if (discardArmed)
+        {
+            const confirmed = e.key == Key.char_ && e.ch == 'y';
+            discardArmed = false;
+            notice = null;
+            if (confirmed)
+            {
+                discardArmed = true; // the second pass performs it
+                applyStaging(StageAction.discard);
+                return true;
+            }
+        }
+        // A notice answers the previous keystroke, not this one.
+        notice = null;
 
         // Escape closes an open popup before it means anything else; the
         // guide only sees it when there is nothing to close.
@@ -950,6 +1037,9 @@ struct PreviewTui
 
             case Command.diffToggleLayout:     toggleDiffLayout(); break;
             case Command.diffToggleGap:        toggleDiffGap(); break;
+            case Command.diffStage:   applyStaging(StageAction.stage); break;
+            case Command.diffUnstage: applyStaging(StageAction.unstage); break;
+            case Command.diffDiscard: applyStaging(StageAction.discard); break;
             case Command.diffToggleContext:    toggleDiffContext(); break;
             case Command.diffToggleFormatting: toggleFormattingHunks(); break;
             case Command.diffToggleStructural: vm.diffToggleStructural(); break;

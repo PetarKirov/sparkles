@@ -154,6 +154,11 @@ enum Command : ubyte
     diffToggleStructural,              /// `S` — word ⇄ grammar-token emphasis
     diffToggleContext,                 /// `zx` — every hidden unchanged region
     diffToggleGap,                     /// `+` — just the one in view
+
+    // The write surface (`DST2`/`DST4`), over a worktree diff only.
+    diffStage,                         /// `space` — stage the hunk in view
+    diffUnstage,                       /// `u` — take it back out of the index
+    diffDiscard,                       /// `Shift-X` — throw the change away
 }
 
 /// A resolved command plus its argument (only `foldLevel` uses one: the
@@ -537,6 +542,16 @@ immutable Binding[] hueBindings = [
         "word / token emphasis", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('+'), Command.diffToggleGap,
         "expand this gap", require: CtxFlag.hasDiffSession),
+    // `DST2`: staging keys, lazygit's spelling. They are bound whenever a
+    // session is showing; whether THIS session can be staged is a property of
+    // the document, and the command reports that in the reviewer's own terms
+    // rather than the key silently doing nothing.
+    bind(Scope_.viewer, chord(' '), Command.diffStage,
+        "stage this hunk", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('u'), Command.diffUnstage,
+        "unstage this hunk", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('x', ShiftReq.yes), Command.diffDiscard,
+        "discard this hunk", require: CtxFlag.hasDiffSession),
 
     // ── shared ───────────────────────────────────────────────────────────
     bind(Scope_.shared_, chord(Key.pageDown), Command.viewPageDown, "page down"),
