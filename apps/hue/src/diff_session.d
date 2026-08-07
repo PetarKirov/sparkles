@@ -77,12 +77,48 @@ struct SessionHeader
     MdDoc description;
 }
 
+/// One message of a review conversation, ready to render.
+///
+/// The body is an `MdDoc` for the same reason a PR description is: a review
+/// comment is markdown, and rendering it as raw text would be the one place
+/// in hue where markdown is not markdown.
+struct ThreadComment
+{
+    string author;
+    string when;
+    MdDoc body_;
+}
+
+/**
+`DPR3`: a review conversation anchored to a file and a line.
+
+Forge-neutral on purpose. This is the shape the VIEW renders, and `DCM2`'s
+local comments produce exactly the same value — which is what "the thread
+block is one widget" means concretely: no forge type reaches the renderer, and
+a locally-authored thread is not a second kind of thing.
+*/
+struct AnchoredThread
+{
+    string path;
+    /// 1-based line on its side; zero when the forge could not place it.
+    uint line;
+    /// The thread hangs on the old text (a comment on a removed line).
+    bool oldSide;
+    bool resolved;
+    /// The code it was written against has changed since.
+    bool outdated;
+    ThreadComment[] comments;
+}
+
 struct DiffSession
 {
     SessionEntry[] entries;
     size_t index; /// the selected entry (always < `entries.length` when non-empty)
     /// `DPR2`: the header this session renders above its files, if any.
     SessionHeader header;
+    /// `DPR3`/`DCM2`: every conversation on this session, any file. The view
+    /// selects each file's own by path.
+    AnchoredThread[] threads;
 
 @safe pure nothrow @nogc:
 

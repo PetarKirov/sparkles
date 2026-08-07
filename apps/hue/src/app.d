@@ -24,6 +24,7 @@ import std.stdio : stderr, write;
 import std.string : chompPrefix;
 
 import sparkles.syntax;
+import sparkles.syntax.md.model : MdDoc;
 import sparkles.twoslash;
 import sparkles.core_cli.args;
 
@@ -34,8 +35,8 @@ import sparkles.base.term_caps : isTerminal, StdStream;
 import ansi_model : BackgroundMode, backgroundOptions;
 import document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
 import diff_commutative : CommutativeKind;
-import diff_session : SessionHeader;
-import forge : PullRequest;
+import diff_session : AnchoredThread, SessionHeader, ThreadComment;
+import forge : CommentThread, PullRequest, ThreadSide;
 import diff_structural : StructuralPolicy;
 import diff_view : DiffLayout, DiffViewOptions;
 import sparkles.diff : WhitespaceMode;
@@ -391,6 +392,37 @@ private SessionHeader prHeader(ref GrammarRegistry reg, in PullRequest pr) @syst
     return h;
 }
 
+/// `DPR3`: the forge's conversations as the view's own anchored threads —
+/// each comment's markdown parsed here, so the renderer draws a review
+/// comment the way it draws every other piece of markdown hue shows.
+private AnchoredThread[] prThreads(ref GrammarRegistry reg,
+    in CommentThread[] threads) @system
+{
+    import sparkles.syntax.md.model : extractMarkdown;
+
+    AnchoredThread[] out_;
+    foreach (ref t; threads)
+    {
+        AnchoredThread a = {
+            path: t.path,
+            line: t.line,
+            oldSide: t.side == ThreadSide.oldSide,
+            resolved: t.resolved,
+            outdated: t.outdated,
+        };
+        foreach (ref c; t.comments)
+            a.comments ~= ThreadComment(c.author, shortDate(c.createdAt),
+                c.body_.length ? extractMarkdown(reg, c.body_) : MdDoc.init);
+        out_ ~= a;
+    }
+    return out_;
+}
+
+/// An ISO-8601 timestamp trimmed to its date. A review thread wants "when,
+/// roughly"; the clock time is noise beside the comment it labels.
+private string shortDate(string iso) @safe pure nothrow
+    => iso.length >= 10 ? iso[0 .. 10] : iso;
+
 private StructuralPolicy parseStructural(string spelling) @safe
 {
     import diff_structural : parseStructuralPolicy;
@@ -661,6 +693,9 @@ int main(string[] args)
                 text(got.repo.owner, "/", got.repo.name, " #",
                     got.pr.number), got.patch);
             doc.diffSession.header = prHeader(registry, got.pr);
+            doc.diffSession.threads = prThreads(registry, got.threads);
+            if (got.threadsNote.length)
+                warning(i"review threads unavailable: $(got.threadsNote)");
         }
         else if (cli.diff || cli.staged)
         {
