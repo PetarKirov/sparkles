@@ -122,11 +122,11 @@ Fonts are owned by `sparkles:raylib-text` (`FontSet`); hue configures and drives
 
 ## Navigation & scroll (`NAV`)
 
-| ID   | Requirement                                                                                                     | Status            | Traces to                         |
-| ---- | --------------------------------------------------------------------------------------------------------------- | ----------------- | --------------------------------- |
-| NAV1 | Mouse wheel must scroll (3 lines/notch); ↑/↓ and j/k scroll one line; PageUp/PageDown a page; Home/End to ends. | full (`e813f99a`) | normal-mode key block in `runGui` |
-| NAV2 | `g` must enter goto-line mode; entering a number jumps to that **source** line's visual row.                    | full (`1e218180`) | `Mode.gotoLine`; `visualOfSrc`    |
-| NAV3 | Scroll position must be clamped to `[0, maxTop]` every frame.                                                   | full (`a0b0f93a`) | `top` clamp                       |
+| ID   | Requirement                                                                                                                                                                                                           | Status            | Traces to                         |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | --------------------------------- |
+| NAV1 | Mouse wheel must scroll (3 lines/notch); ↑/↓ and j/k scroll one line; PageUp/PageDown a page; Home/End to ends.                                                                                                       | full (`e813f99a`) | normal-mode key block in `runGui` |
+| NAV2 | `gl` must enter goto-line mode; entering a number jumps to that **source** line's visual row. (`g` became a prefix when the keymap was unified — `gg`/`Shift-G` are the vim motions, [lantern](./lantern.md) `LMP3`.) | full (`1e218180`) | `Mode.gotoLine`; `visualOfSrc`    |
+| NAV3 | Scroll position must be clamped to `[0, maxTop]` every frame.                                                                                                                                                         | full (`a0b0f93a`) | `top` clamp                       |
 
 ## Scrollbar (`SCB`)
 

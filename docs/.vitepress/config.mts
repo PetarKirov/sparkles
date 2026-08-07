@@ -680,6 +680,8 @@ export default withMermaid(
                 },
                 { text: 'Overlays (planned)', link: '/specs/hue/overlays' },
                 { text: 'Notifier (planned)', link: '/specs/hue/notifier' },
+                { text: 'Lantern (key guide)', link: '/specs/hue/lantern' },
+                { text: 'Picker (planned)', link: '/specs/hue/picker' },
                 {
                   text: 'UI architecture',
                   link: '/specs/hue/ui-architecture',
