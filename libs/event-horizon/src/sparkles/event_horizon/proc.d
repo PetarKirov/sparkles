@@ -125,7 +125,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     auto r = s.run(() {
         auto spawned = spawnProcess(["echo", "event", "horizon"]);
@@ -162,7 +161,6 @@ unittest
 {
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     auto r = s.run(() {
         auto spawned = spawnProcess(["false"]);

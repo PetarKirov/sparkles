@@ -446,7 +446,6 @@ unittest
 {
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     int order;
     int rootSaw, childSaw;
@@ -465,7 +464,6 @@ unittest
 {
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     int[6] log;
     size_t i;
@@ -494,7 +492,6 @@ unittest
     SchedOptions opts;
     opts.maxFibers = 2;
     schedOrSkip(s, opts);
-    scope (exit) s.destroy();
 
     // Far more sequential spawns than slots: recycling must cover it.
     int completed;
@@ -517,7 +514,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     bool fired;
     const before = MonoTimeStamp();

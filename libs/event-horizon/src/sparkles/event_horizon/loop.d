@@ -415,7 +415,6 @@ unittest
 {
     DefaultLoop loop;
     createOrSkip(loop);
-    scope (exit) loop.destroy();
 
     static struct Seen
     {
@@ -452,7 +451,6 @@ unittest
 
     DefaultLoop loop;
     createOrSkip(loop);
-    scope (exit) loop.destroy();
 
     static void onTimer(void* ctx, ref Completion done) nothrow @nogc
     {
@@ -481,7 +479,6 @@ unittest
 
     DefaultLoop loop;
     createOrSkip(loop);
-    scope (exit) loop.destroy();
 
     static struct Seen
     {
@@ -518,7 +515,6 @@ unittest
 
     DefaultLoop loop;
     createOrSkip(loop);
-    scope (exit) loop.destroy();
 
     static void onTimer(void* ctx, ref Completion) nothrow @nogc
     {
@@ -544,7 +540,6 @@ unittest
 
     DefaultLoop loop;
     createOrSkip(loop);
-    scope (exit) loop.destroy();
 
     int[2] fds;
     if ((() @trusted {
@@ -613,7 +608,6 @@ unittest
 
     DefaultLoop loop;
     createOrSkip(loop);
-    scope (exit) loop.destroy();
 
     static void onFirst(void* ctx, ref Completion) nothrow @nogc
     {
@@ -647,7 +641,6 @@ unittest
 {
     DefaultLoop loop;
     createOrSkip(loop);
-    scope (exit) loop.destroy();
 
     auto status = loop.runOnce();
     assert(status.hasValue && status.value == RunStatus.drained);
@@ -662,13 +655,13 @@ unittest
 
     DefaultLoop loop;
     createOrSkip(loop);
-    scope (exit) loop.destroy();
 
     if (!loop.caps().registeredBuffers)
     {
         // Tear down explicitly: an `Error` unwinding out of a `nothrow` frame
-        // is not guaranteed to run the `scope (exit)` above. `destroy` is
-        // idempotent, so doing both is correct.
+        // is not guaranteed to run destructors, so the usual RAII teardown
+        // cannot be relied on here. `destroy` is idempotent, so calling it
+        // and letting `~this` run too is correct.
         loop.destroy();
         skipTest("registered buffers unsupported");
     }
@@ -740,7 +733,6 @@ unittest
 {
     DefaultLoop loop;
     createOrSkip(loop);
-    scope (exit) loop.destroy();
 
     int[2] fds;
     if ((() @trusted {
@@ -814,7 +806,6 @@ unittest
 {
     DefaultLoop loop;
     createOrSkip(loop);
-    scope (exit) loop.destroy();
 
     if (!loop.caps().multishotAccept)
     {

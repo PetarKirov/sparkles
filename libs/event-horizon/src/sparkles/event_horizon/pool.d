@@ -603,7 +603,6 @@ unittest
     cfg.workers = 4;
     if (WorkStealingPool.start(pool, cfg).hasError)
         skipTest("work-stealing pool unavailable");
-    scope (exit) pool.shutdown();
 
     enum tasks = 400;
     shared uint completed;
@@ -657,7 +656,6 @@ unittest
     cfg.workers = 4;
     cfg.cpuBound = typeof(cfg.cpuBound).yes;
     assert(!WorkStealingPool.start(pool, cfg).hasError);
-    scope (exit) pool.shutdown();
 
     shared uint ran;
 

@@ -311,7 +311,6 @@ unittest
 {
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     static struct EmptyCtx { }
 
@@ -342,7 +341,6 @@ unittest
 {
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     static struct EmptyCtx { }
 
@@ -367,7 +365,6 @@ unittest
 {
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     static struct EmptyCtx { }
 
@@ -397,7 +394,6 @@ unittest
 {
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     static struct EmptyCtx { }
 
