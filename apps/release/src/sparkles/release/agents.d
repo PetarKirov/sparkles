@@ -221,7 +221,7 @@ struct SegmentationPrompt
 
 /// The reply contract shown to the agent, in both densities.
 private enum compactReplySchema =
-    `{"segments": [{"boundary": "<full sha>", "theme": "<short theme>",`
+    `{"segments": [{"boundary": <last unit's i>, "theme": "<short theme>",`
     ~ ` "bump": "patch|minor|major", "highlights": ["<completed work>"]}],`
     ~ ` "remainderNote": "<optional>"}`;
 
@@ -229,7 +229,7 @@ private enum prettyReplySchema =
 `{
     "segments": [
         {
-            "boundary": "<full sha>",
+            "boundary": <last unit's i>,
             "theme": "<short theme>",
             "bump": "patch|minor|major",
             "highlights": ["<completed work>"]
@@ -238,54 +238,68 @@ private enum prettyReplySchema =
     "remainderNote": "<optional>"
 }`;
 
-/// Builds the segmentation prompt (SPEC §7.1–§7.2): the bump-policy context
-/// for `current`, the reply contract, and the oldest-first commit list with
-/// its PR association embedded as JSON — compact toward the agent, pretty in
-/// the artifact rendering.
+/++
+Builds the segmentation prompt (SPEC §7.1–§7.2): the bump-policy context for
+`current`, the reply contract, and the oldest-first backlog embedded as JSON —
+compact toward the agent, pretty in the artifact rendering.
+
+The backlog is presented as $(REF SegmentUnit, sparkles,release,segment)s
+rather than raw commits: an agent picking a unit index cannot split a PR or
+mistype an OID, and dropping the per-commit SHA and the PR title repeated on
+every commit shrinks the prompt several-fold.
++/
 Result!SegmentationPrompt buildSegmentationPrompt(
     const(SegmentInput)[] rows, in SemVer current) @system
 {
     import sparkles.release.json_utils : encodeJson;
+    import sparkles.release.segment : buildUnits;
 
-    static struct PromptCommit
+    static struct PromptUnit
     {
         size_t i;
-        string sha;
         uint pr;
-        string prTitle;
-        string subject;
+        string title;
+        string[] commits;
     }
 
     static struct PromptInput
     {
-        PromptCommit[] commits;
+        PromptUnit[] units;
     }
 
-    PromptCommit[] commits;
-    commits.reserve(rows.length);
-    foreach (i, ref row; rows)
-        commits ~= PromptCommit(i: i, sha: row.sha, pr: row.prNumber,
-            prTitle: row.prTitle, subject: row.subject);
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    import std.range : enumerate;
 
-    auto compact = encodeJson(PromptInput(commits));
+    const units = buildUnits(rows);
+    auto promptUnits = units.enumerate
+        .map!(u => PromptUnit(
+            i: u[0],
+            pr: u[1].pr,
+            title: u[1].title,
+            commits: rows[u[1].begin .. u[1].end].map!(r => r.subject[]).array))
+        .array;
+
+    auto compact = encodeJson(PromptInput(promptUnits));
     if (compact.hasError)
         return failure!SegmentationPrompt("segmentation prompt: " ~ compact.error);
-    auto pretty = encodeJson(PromptInput(commits), pretty: true);
+    auto pretty = encodeJson(PromptInput(promptUnits), pretty: true);
     if (pretty.hasError)
         return failure!SegmentationPrompt("segmentation prompt: " ~ pretty.error);
 
     return success(SegmentationPrompt(
         forAgent: segmentationPromptText(
-            rows.length, current, compactReplySchema, compact.value),
+            units.length, rows.length, current, compactReplySchema, compact.value),
         forArtifact: segmentationPromptText(
-            rows.length, current, prettyReplySchema, pretty.value)));
+            units.length, rows.length, current, prettyReplySchema, pretty.value)));
 }
 
-/// The shared prompt skeleton — valid markdown (JSON rides in ```json
-/// fences), so the artifact rendering needs no post-processing.
+/// The shared prompt skeleton — valid markdown, with each JSON block fenced
+/// long enough to survive a commit subject that contains a fence of its own,
+/// so the artifact rendering needs no post-processing.
 private string segmentationPromptText(
-    size_t commitCount, in SemVer current, string replySchema, string inputJson)
-    @safe pure
+    size_t unitCount, size_t commitCount, in SemVer current,
+    string replySchema, string inputJson) @safe pure
 {
     import std.conv : text;
 
@@ -301,14 +315,18 @@ private string segmentationPromptText(
     return text(
         "You are planning retroactive releases for the D monorepo `sparkles`.\n",
         "The last released version is v", verString(current), ". Below are the ",
-        commitCount, " unreleased commits, OLDEST FIRST, as JSON; `pr` is the",
-        " number of the merged PR that introduced each commit (0 = none).\n",
+        unitCount, " units of unreleased work (", commitCount, " commits),",
+        " OLDEST FIRST, as JSON. A unit is one merged pull request with its",
+        " commit subjects, or a single direct commit (`pr: 0`); `i` is its",
+        " index.\n",
         "Split them into a chain of releases.\n\n",
         "Rules:\n\n",
-        "- Segments are contiguous slices of the list, in order; each segment",
-        " becomes one release tag.\n",
-        "- `boundary` is the FULL SHA of the LAST commit of its segment.\n",
-        "- Commits sharing a `pr` number MUST all land in the same segment.\n",
+        "- Segments are contiguous slices of the unit list, in order; each",
+        " segment becomes one release tag.\n",
+        "- `boundary` is the `i` of the LAST unit of its segment: a number,",
+        " strictly increasing across segments.\n",
+        "- A unit is atomic — it is never split between two releases, which is",
+        " why you choose units and not commits.\n",
         "- You MAY leave a trailing remainder of genuinely unreleasable",
         " work-in-progress out of all segments; explain why in `remainderNote`.",
         " Do not leave releasable work unassigned.\n",
@@ -319,15 +337,39 @@ private string segmentationPromptText(
         " an earlier segment (its notes will then summarize the whole arc).",
         " Everything not highlighted is deferred to the release where it",
         " completes.\n",
-        "- Prefer coherent themes, with boundaries at PR edges and natural",
-        " feature completions.\n",
+        "- Prefer coherent themes, with boundaries at natural feature",
+        " completions.\n",
         "- `theme` is short; it becomes the tag subject `vX.Y.Z — <theme>`.\n",
         policy,
         "\nReply with ONLY a JSON object of this exact shape — no prose around",
         " it:\n\n",
-        "```json\n", replySchema, "\n```\n",
+        jsonFence(replySchema),
         "\nInput:\n\n",
-        "```json\n", inputJson, "\n```\n");
+        jsonFence(inputJson));
+}
+
+/++
+Wraps `json` in a ```` ```json ```` fence long enough to survive the content:
+a commit subject may itself contain a fence (this repository has a
+`feat(ci): require ` ```` ```[Output] ```` ` for runnable-example output blocks`),
+which would otherwise close the block early — leaving the agent, and the
+artifact's reader, with a prompt that ends mid-input.
++/
+private string jsonFence(string json) @safe pure
+{
+    import std.algorithm.comparison : max;
+    import std.algorithm.iteration : filter, group, map;
+    import std.algorithm.searching : maxElement;
+    import std.array : replicate;
+
+    // The longest backtick run in the content, so the fence can outrun it.
+    const longest = json.group
+        .filter!(run => run[0] == '`')
+        .map!(run => run[1])
+        .maxElement(0);
+
+    const fence = "`".replicate(max(3, longest + 1));
+    return fence ~ "json\n" ~ json ~ "\n" ~ fence ~ "\n";
 }
 
 /// The corrective coda appended (with the original prompt) when the agent's
@@ -542,16 +584,19 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
     assert(agent.canFind("OLDEST FIRST"));
     assert(agent.canFind(`"pr":47`));
     assert(agent.canFind(`"remainderNote"`));
-    assert(agent.canFind("2 unreleased commits"));
+    // Two PR-atomic units (PR #47's commit, then the direct one), not 2 rows
+    // of commits — and no SHA anywhere, since boundaries are unit indices.
+    assert(agent.canFind("2 units of unreleased work (2 commits)"));
+    assert(!agent.canFind("aaaaaaaaaaaa"));
+    assert(agent.canFind(`"i":1,"pr":0`));
+
     // Toward the agent the JSON stays compact (token-efficient)…
-    assert(agent.canFind(`"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`));
     assert(agent.canFind("```json\n{\"segments\":"));
-    assert(agent.canFind("```json\n{\"commits\":"));
+    assert(agent.canFind("```json\n{\"units\":"));
 
     // …while the artifact rendering pretty-prints it for human review.
     const artifact = pre.value.forArtifact;
     assert(artifact.canFind("\"pr\": 47"));
-    assert(artifact.canFind("\"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\""));
     assert(artifact.canFind("```json\n{\n"));
 
     // Both are valid markdown: two closed ```json fences each.
@@ -563,6 +608,32 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
     assert(post.hasValue);
     assert(!post.value.forAgent.canFind("pre-1.0"));
     assert(post.value.forAgent.canFind(`a breaking change means "major"`));
+}
+
+@("agents.buildSegmentationPrompt.subjectFenceCannotCloseTheBlock")
+@system unittest
+{
+    import std.algorithm.searching : canFind, count;
+
+    // A real subject from this repository's history: an unguarded ```json
+    // fence would end at the subject, truncating the input the agent sees.
+    const rows = [
+        SegmentInput(sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", prNumber: 0,
+            subject: "feat(ci): require ```[Output] for example output blocks"),
+    ];
+
+    auto pre = buildSegmentationPrompt(rows, SemVer(major: 0, minor: 4, patch: 0));
+    assert(pre.hasValue);
+    foreach (rendering; [pre.value.forAgent, pre.value.forArtifact])
+    {
+        // The input block is fenced with more backticks than the subject has…
+        assert(rendering.canFind("````json\n"));
+        // …and the whole subject survives inside it.
+        assert(rendering.canFind("```[Output]"));
+        // Four fence markers: two ``` around the schema, two ```` around the
+        // input — the subject's own run is not one of them.
+        assert(rendering.count("````") == 2);
+    }
 }
 
 @("agents.capLogStat.truncatesAtLineBoundary")
