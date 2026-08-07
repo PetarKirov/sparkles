@@ -1317,6 +1317,10 @@ private uint calloutPanel(ref Builder b, ref const MdBlock blk,
         }
         rows ~= viewBlock(b, c, src, opt, listDepth, quoteDepth + 1);
     }
+    // The title sits tight on the first body block (the old chrome — a
+    // callout reads as one unit); further blocks keep the blank-line gap.
+    if (rows.length > 1)
+        rows = [b.container(WidgetKind.column, rows[0 .. 2])] ~ rows[2 .. $];
     const body_ = b.container(WidgetKind.column, rows, gap: 1);
     return b.add(Widget(kind: WidgetKind.panel, children: [body_],
         padding: Insets(0, 0, 0, 2), hitId: opt.hitId,

@@ -198,16 +198,19 @@ struct GridCanvas
         {
             const bw = v.border.width;
             const bottomOnly = bw.bottom > 0 && bw.top == 0 && bw.left == 0 && bw.right == 0;
+            const leftOnly = bw.left > 0 && bw.top == 0 && bw.bottom == 0 && bw.right == 0;
             const fullBox = bw.top > 0 && bw.bottom > 0 && bw.left > 0 && bw.right > 0;
-            if (bottomOnly && v.border.style == BorderStyle.solid && r.height == 1)
+            if (leftOnly)
+                barColumn(r, v); // the quote / callout accent bar
+            else if (bottomOnly && v.border.style == BorderStyle.solid && r.height == 1)
                 ruleRow(r, v); // a thematic break: `─` glyphs, not an underline
             else if (bottomOnly)
                 underlineRow(r, v);
             else if (fullBox)
                 drawBoxBorder(r, v);
-            // else: a single-side sub-cell accent (the docs top divider, the
-            // error/tag left bar) has no cell analog and is dropped — the block's
-            // background tint (if any) still conveys it.
+            // else: a single-side sub-cell accent (the docs top divider) has
+            // no cell analog and is dropped — the block's background tint
+            // (if any) still conveys it.
         }
     }
 
@@ -222,6 +225,20 @@ struct GridCanvas
                 auto st = c.style;
                 st.fg = Color.fromRgb(v.border.color);
                 c.setCodepoint('─', 1, st);
+            }
+    }
+
+    /// A left-only border → `│` glyphs down the rect's left column (the quote /
+    /// callout accent bar; the panel's padding keeps content clear of it).
+    private void barColumn(in Rect r, in Visual v) scope
+    {
+        foreach (y; r.y .. r.y + r.height)
+            if (inBounds(r.x, y))
+            {
+                auto c = &cell(r.x, y);
+                auto st = c.style;
+                st.fg = Color.fromRgb(v.border.color);
+                c.setCodepoint('│', 1, st);
             }
     }
 
