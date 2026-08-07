@@ -106,7 +106,8 @@ Close this entry when the phase-2 targets are met or the shortfall is explained 
 
 ## UIAPP-O5 — Terminal-emulator rendering stays outside the display list {#uiapp-o5}
 
-**Status:** open by design. **Requirements:** `HST3`.
+**Status:** open by design — the embedding mechanism is now decided.
+**Requirements:** `HST3`, `HST10`.
 
 `apps/terminal` migrates onto the host but keeps its own renderer, reached through
 the host's direct-canvas level. Its paint loop walks a terminal screen cell by cell
@@ -117,3 +118,17 @@ That is a legitimate use of the third render level rather than a shortcoming —
 does mean one of the host's three consumers exercises the widget and display-list
 levels only for its chrome. Revisit if the display list ever becomes cheap enough
 that the distinction stops mattering; the measurement, not the aesthetics, decides.
+
+**How the two levels compose** (decided with `HST10`, built with
+`libs/terminal-view`): the terminal core becomes a component whose `view` emits a
+_keyed_ widget for its pane — `Widget.key` plus
+`keyedRects(tree, frames)` already report a keyed node's laid-out rect, so
+layout sizes and positions the pane like any other widget while the per-cell
+renderer paints _into_ that rect through the backend canvas, clipped. No new
+widget kind is needed and the closed sum ([`PRN12`](../ui/principles.md)) stands.
+The missing piece is **when** that paint runs: on the GPU arm, canvas calls are
+only valid inside the frame bracket (`beginFrame`/`endFrame`), which the loop
+owns — so the arms need a post-layout paint hook in their draw phase. That hook
+is deliberately designed in the `libs/terminal-view` PR, against the real
+consumer, under the no-regression gate — not speculated here. Until it lands,
+`runApp` (`HST10`) is widget-level only.
