@@ -125,6 +125,17 @@ struct MdViewOptions
     /// interactive backend resolves back to the document's cell structure
     /// (2-D table selection, per-cell copy) via the cells' frames.
     size_t tableKeyBase = 0;
+
+    /// Non-zero punches the whole-table copy button into a cutout of the
+    /// table's top border, just before the corner (`╭──   ╮` — `TBL6`):
+    /// `hitId = tableCopyHitBase + table.span.start`, source-anchored like
+    /// the fence copy targets.
+    size_t tableCopyHitBase = 0;
+
+    /// The `span.start` of the table just copied (`size_t.max` = none): its
+    /// cutout shows the copied glyph — feedback state lives in the app, like
+    /// `copiedFence`.
+    size_t copiedTable = size_t.max;
 }
 
 /// The emphasis in force while rendering a subtree: which source ranges are
@@ -465,9 +476,10 @@ private string foldChip(const(char)[] src, size_t start, size_t end) @safe
     return "\u22EF " ~ n[].idup ~ " lines";
 }
 
-// The themed fence header band: devicon + language label (+ copy glyph
-// when a fence hit base is set), carrying the fence's opening line as
-// identity — shared by the open panel and the collapsed face.
+// The themed fence header band: devicon + language label, carrying the
+// fence's opening line as identity — shared by the open panel (which
+// composes the copy affordance beside it, `fenceHeaderRow`) and the
+// collapsed face (which re-shapes this widget alone).
 private Widget themedFenceHeader(ref const MdBlock blk, MdViewOptions opt)
 {
     const icon = langIcon(blk.infoLang);
@@ -478,15 +490,9 @@ private Widget themedFenceHeader(ref const MdBlock blk, MdViewOptions opt)
     if (blk.label.length && opt.fenceLabelInHeader)
         lbl = lbl ~ " " ~ blk.label;
     // With a fence hit base the whole band is a copy target, its identity
-    // anchored at the body's source position; the glyph is the affordance,
-    // the copied state comes from the app.
-    size_t headerHit = opt.hitId;
-    if (opt.fenceHitBase != 0)
-    {
-        headerHit = opt.fenceHitBase + blk.codeBody.start;
-        lbl = lbl ~ "  " ~ (opt.copiedFence == blk.codeBody.start
-            ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon);
-    }
+    // anchored at the body's source position.
+    const headerHit = opt.fenceHitBase != 0
+        ? opt.fenceHitBase + blk.codeBody.start : opt.hitId;
     return Widget(kind: WidgetKind.rich, spans: [
             TextSpan(lbl, Slot.code, codeStyle(opt),
                 srcStart: blk.span.start,
@@ -496,6 +502,32 @@ private Widget themedFenceHeader(ref const MdBlock blk, MdViewOptions opt)
         textStyle: codeStyle(opt),
         bgOverride: opt.theme.codeHeaderBg, hasBgOverride: true,
         fgOverride: opt.theme.codeFg, hasFgOverride: true);
+}
+
+// The open fence's header: the label band with the copy affordance at its
+// right edge — the top-right corner the old top-border cutout put it in
+// (`COD3`). Without a fence hit base there is nothing to click, so the
+// band renders alone.
+private uint fenceHeaderRow(ref Builder b, ref const MdBlock blk,
+    MdViewOptions opt)
+{
+    if (opt.fenceHitBase == 0)
+        return b.add(themedFenceHeader(blk, opt));
+
+    const hit = opt.fenceHitBase + blk.codeBody.start;
+    Widget lblW = themedFenceHeader(blk, opt);
+    lblW.width = SizeSpec.grow();
+    Widget iconW = Widget(kind: WidgetKind.rich, spans: [
+            TextSpan(opt.copiedFence == blk.codeBody.start
+                ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon,
+                Slot.code, codeStyle(opt), noBreak: true)],
+        slot: Slot.code, hitId: hit, paintBackground: true,
+        padding: Insets.symmetric(0, 1), textStyle: codeStyle(opt),
+        bgOverride: opt.theme.codeHeaderBg, hasBgOverride: true,
+        fgOverride: opt.theme.codeFg, hasFgOverride: true);
+    return b.add(Widget(kind: WidgetKind.row,
+        children: [b.add(lblW), b.add(iconW)],
+        width: SizeSpec.grow(), hitId: hit));
 }
 
 private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
@@ -766,7 +798,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             // Themed: a language-label header band over the tinted panel.
             panel.bgOverride = opt.theme.codePanelBg;
             panel.hasBgOverride = true;
-            const hdr = b.add(themedFenceHeader(blk, opt));
+            const hdr = fenceHeaderRow(b, blk, opt);
             const pnl = b.add(panel);
             // Width-transparent wrapper: without `grow` this column would
             // shrink-wrap to the longest code line and the panel's own
@@ -871,7 +903,40 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             }
 
             auto rows = new uint[](0);
-            rows ~= ruleRun(borderRow("╭", "─", "┬", "╮"));
+            // `TBL6`: the whole-table copy button sits in a 3-cell cutout of
+            // the top border just before the corner (`╭──   ╮`), mirroring
+            // the fence header's affordance; too-narrow tables skip it.
+            const cutout = opt.tableCopyHitBase != 0
+                && widths[cols - 1] + 2 >= 3;
+            if (!cutout)
+                rows ~= ruleRun(borderRow("╭", "─", "┬", "╮"));
+            else
+            {
+                const hit = opt.tableCopyHitBase + blk.span.start;
+                string prefix = "╭";
+                foreach (ci; 0 .. cols)
+                {
+                    foreach (_; 0 .. widths[ci] + 2 - (ci + 1 == cols ? 3 : 0))
+                        prefix ~= "─";
+                    if (ci + 1 < cols)
+                        prefix ~= "┬";
+                }
+                const copied = opt.copiedTable == blk.span.start;
+                Widget iconW = Widget(kind: WidgetKind.rich, spans: [
+                        TextSpan(" " ~ (copied ? opt.glyphs.copiedIcon
+                            : opt.glyphs.copyIcon) ~ " ", Slot.gutter,
+                            opt.baseStyle, noBreak: true)],
+                    slot: Slot.gutter, wrap: TextWrap.none, hitId: hit,
+                    textStyle: opt.baseStyle);
+                if (opt.theme.present)
+                {
+                    iconW.fgOverride = copied ? opt.theme.accentGreen
+                        : opt.theme.ruleFg;
+                    iconW.hasFgOverride = true;
+                }
+                rows ~= b.container(WidgetKind.row,
+                    [ruleRun(prefix), b.add(iconW), ruleRun("╮")]);
+            }
             foreach (ri; 0 .. blk.children.length)
             {
                 auto cells = new uint[](0);

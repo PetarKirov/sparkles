@@ -180,7 +180,9 @@ struct ViewerModel
     KeyedRect[] cells;              /// source-keyed table-cell rects
     MdFence[] fences;
     MdCell[] cellList;
+    size_t[] tableSpans;            /// each table's `span.start`, by table index
     size_t copiedFenceSrc = size_t.max; /// body start of the just-copied fence
+    size_t copiedTableSrc = size_t.max; /// span start of the just-copied table
     DisclosureState!size_t folds = DisclosureState!size_t(true);
     Span[] foldable;
     /// The showing fence of each code group, by `codeBody.start` (`MDP22`)
@@ -198,6 +200,7 @@ struct ViewerModel
     int widthCols = -1;             /// the width the pipeline is laid out for
 
     // Source-anchored identity bases (disjoint id spaces — see the md view).
+    enum size_t tableCopyHitBase = size_t.max / 8 + 1;
     enum size_t codeTabHitBase = size_t.max / 4 + 1;
     enum size_t fenceHitBase = size_t.max / 2 + 1;
     enum size_t foldHitBase = size_t.max / 4 * 3 + 1;
@@ -240,6 +243,7 @@ struct ViewerModel
         matchRects = null;
         curMatch = 0;
         copiedFenceSrc = size_t.max;
+        copiedTableSrc = size_t.max;
         folds = DisclosureState!size_t(true);
         rebuild();
     }
@@ -370,7 +374,9 @@ struct ViewerModel
             codeTabHitBase: codeTabHitBase,
             activeCodeTabs: activeCodeTabs,
             tableKeyBase: tableKeyBase,
+            tableCopyHitBase: tableCopyHitBase,
             copiedFence: copiedFenceSrc,
+            copiedTable: copiedTableSrc,
             fenceRenderer: fenceRenderer(),
             foldedSpans: folds.exceptions,
             foldHitBase: foldHitBase,
@@ -471,6 +477,7 @@ struct ViewerModel
     {
         fences.length = 0;
         cellList.length = 0;
+        tableSpans.length = 0;
         int tableIdx = -1;
         void collect(in MdBlock blk)
         {
@@ -479,6 +486,7 @@ struct ViewerModel
             if (blk.kind == MdBlockKind.table)
             {
                 ++tableIdx;
+                tableSpans ~= blk.span.start;
                 foreach (ri, ref const row; blk.children)
                     foreach (ci, ref const cell; row.children)
                         cellList ~= MdCell(tableIdx, ri, ci, cell.span);
@@ -701,6 +709,15 @@ struct ViewerModel
     void markCopied(size_t bodyStart)
     {
         copiedFenceSrc = bodyStart;
+        copiedTableSrc = size_t.max;
+        rebuild();
+    }
+
+    /// The table at `spanStart` was just copied: its cutout shows the ✔.
+    void markTableCopied(size_t spanStart)
+    {
+        copiedTableSrc = spanStart;
+        copiedFenceSrc = size_t.max;
         rebuild();
     }
 
@@ -708,7 +725,17 @@ struct ViewerModel
     void clearCopied()
     {
         copiedFenceSrc = size_t.max;
+        copiedTableSrc = size_t.max;
         rebuild();
+    }
+
+    /// The table index of the table starting at `spanStart`, else -1.
+    int tableIndexOfSpan(size_t spanStart) const @safe pure nothrow @nogc
+    {
+        foreach (i, s; tableSpans)
+            if (s == spanStart)
+                return cast(int) i;
+        return -1;
     }
 
     // ── diff session navigation (`DVG1`/`DVG3`) ─────────────────────────────

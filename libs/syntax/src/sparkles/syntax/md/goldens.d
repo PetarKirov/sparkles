@@ -56,9 +56,11 @@ private string goldenDir()
 
 /// Renders `source` exactly as the fixture tests see it: themed, line-numbered
 /// fences, width-bounded — no fence renderer (highlighting changes only
-/// colors, which the glyph grid does not record).
+/// colors, which the glyph grid does not record). `interactive` arms the copy
+/// hit bases the way hue's viewer does, so the fence header's copy glyph and
+/// the table's top-border cutout render.
 private string renderGridText(ref GrammarRegistry registry,
-    const(char)[] source)
+    const(char)[] source, bool interactive = false)
 {
     const labels = LabelSet.standard();
     const theme = resolveTheme(builtinThemes["catppuccin-mocha"], labels);
@@ -69,6 +71,8 @@ private string renderGridText(ref GrammarRegistry registry,
     MdViewOptions opt = {
         theme: MdViewTheme.derive(theme, pageFg, pageBg),
         codeLineNumbers: true,
+        fenceHitBase: interactive ? size_t.max / 2 + 1 : 0,
+        tableCopyHitBase: interactive ? size_t.max / 8 + 1 : 0,
     };
     auto tree = viewMarkdown(doc, opt);
     auto frames = layout(tree, Constraints(maxW: goldenWidth));
@@ -99,8 +103,7 @@ private string renderGridText(ref GrammarRegistry registry,
     return text;
 }
 
-@("md.goldens.fixtures")
-@system unittest
+private void checkFixtures(in string[] names, string suffix, bool interactive)
 {
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
@@ -109,25 +112,40 @@ private string renderGridText(ref GrammarRegistry registry,
     const update = environment.get("SPARKLES_UPDATE_GOLDENS", "").length != 0;
     const dir = goldenDir();
 
-    foreach (name; fixtureNames)
+    foreach (name; names)
     {
         const mdPath = dir.buildNormalizedPath(name ~ ".md");
-        const txtPath = dir.buildNormalizedPath(name ~ ".txt");
-        const rendered = renderGridText(registry, readText(mdPath));
+        const txtPath = dir.buildNormalizedPath(name ~ suffix);
+        const rendered = renderGridText(registry, readText(mdPath),
+            interactive);
 
         if (update)
         {
             write(txtPath, rendered);
             continue;
         }
-        assert(txtPath.exists, name ~ ".txt is missing — regenerate with "
-            ~ "SPARKLES_UPDATE_GOLDENS=1 dub test :syntax -- -i md.goldens");
+        assert(txtPath.exists, name ~ suffix ~ " is missing — regenerate "
+            ~ "with SPARKLES_UPDATE_GOLDENS=1 dub test :syntax -- -i md.goldens");
         const expected = readText(txtPath);
         assert(rendered == expected, name ~ ": rendered grid differs from "
-            ~ name ~ ".txt (first divergence at line "
+            ~ name ~ suffix ~ " (first divergence at line "
             ~ firstDivergingLine(expected, rendered) ~ ") — if intended, "
             ~ "regenerate with SPARKLES_UPDATE_GOLDENS=1 and review the diff");
     }
+}
+
+@("md.goldens.fixtures")
+@system unittest
+{
+    checkFixtures(fixtureNames, ".txt", interactive: false);
+}
+
+/// The copy affordances the viewer arms: the fence header's right-edge copy
+/// glyph and the whole-table cutout in the top border (`COD3`/`TBL6`).
+@("md.goldens.interactiveChrome")
+@system unittest
+{
+    checkFixtures(["code", "tables"], ".interactive.txt", interactive: true);
 }
 
 /// 1-based line number of the first differing line, as text for the message.
