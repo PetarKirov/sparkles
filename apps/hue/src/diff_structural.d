@@ -24,6 +24,8 @@ import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.tree_sitter : nodeChild, nodeChildCount, nodeRange,
     ParseGuards, TsError, TsParser, TSNode;
 
+import diff_commutative : CommutativeKind, findPermutations, Permutation;
+
 /// A cap on the tokens compared per side (`DVM6`'s family): past this the
 /// oracle declines rather than walking a pathological tree. Chosen so a
 /// 10k-line source file fits comfortably.
@@ -115,42 +117,147 @@ StructuralVerdict compareTokenStreams(ref TsConfigCache cache,
     scope const(char)[] newText, out Token[] oldTokens, out Token[] newTokens)
     @system
 {
+    auto r = analyze(cache, language, oldText, newText, null, null);
+    oldTokens = r.oldTokens;
+    newTokens = r.newTokens;
+    return r.file;
+}
+
+/// Everything the grammar has to say about one file pair.
+struct StructuralAnalysis
+{
+    /// The whole-file verdict.
+    StructuralVerdict file;
+    /// One verdict per requested hunk span, in the same order.
+    StructuralVerdict[] verdicts;
+    /// `DVN7`: per hunk, the change is a permutation of a commutative
+    /// container's children — the same members in a different order.
+    bool[] reordered;
+    /// The two leaf-token sequences, for a caller that wants to ask further
+    /// questions (`diff_token_view`) without paying for a second parse.
+    Token[] oldTokens;
+    Token[] newTokens;
+}
+
+/**
+The one pass: parse each side once, then answer everything from those trees.
+
+Whole-file verdict, per-hunk verdicts (`DVN3`), permutation detection over the
+declared commutative containers (`DVN7`) and the token streams the structural
+view needs all come out of the same two parses, because the parse is the
+expensive part and the trees cannot outlive this call.
+*/
+StructuralAnalysis analyze(ref TsConfigCache cache, const(char)[] language,
+    scope const(char)[] oldText, scope const(char)[] newText,
+    scope const(HunkSpan)[] spans, scope const(CommutativeKind)[] kinds)
+    @system
+{
+    StructuralAnalysis result;
+    result.verdicts = new StructuralVerdict[](spans.length);
+    result.reordered = new bool[](spans.length);
+
     if (language.length == 0 || oldText.length == 0 || newText.length == 0)
-        return StructuralVerdict.unknown;
+        return result; // `unknown` throughout: no claim
     // Identical bytes are not this pass's business — the differ would not
     // have produced a hunk, and answering `equivalent` would invite callers
     // to skip work they still need to do.
     if (oldText == newText)
-        return StructuralVerdict.equivalent;
+    {
+        result.file = StructuralVerdict.equivalent;
+        result.verdicts[] = StructuralVerdict.equivalent;
+        return result;
+    }
 
     // Through the registry rather than the resolved highlight config: the
     // config's grammar handle is package-private to `sparkles:syntax`, and
     // this pass wants the language itself, not a highlight query.
     auto g = cache.registry.grammar(language);
     if (g.hasError)
-        return StructuralVerdict.unknown;
+        return result;
 
     auto parser = TsParser.create();
     if (parser.setLanguage(g.value.language).hasError)
-        return StructuralVerdict.unknown;
+        return result;
 
     TsError err;
     auto oldTree = parser.parse(oldText, err, ParseGuards());
     if (!oldTree.valid)
-        return StructuralVerdict.unknown;
+        return result;
     auto newTree = parser.parse(newText, err, ParseGuards());
     if (!newTree.valid)
-        return StructuralVerdict.unknown;
+        return result;
 
-    if (!tokenize(oldTree.rootNode, oldText, oldTokens)
-        || !tokenize(newTree.rootNode, newText, newTokens))
-    {
-        oldTokens = null;
-        newTokens = null;
-        return StructuralVerdict.unknown;
-    }
-    return tokensEqual(oldTokens, oldText, newTokens, newText)
+    Token[] a, b;
+    if (!tokenize(oldTree.rootNode, oldText, a)
+        || !tokenize(newTree.rootNode, newText, b))
+        return result;
+    result.oldTokens = a;
+    result.newTokens = b;
+    result.file = tokensEqual(a, oldText, b, newText)
         ? StructuralVerdict.equivalent : StructuralVerdict.differs;
+    hunkVerdicts(result.file, a, oldText, b, newText, spans, result.verdicts);
+
+    if (result.file == StructuralVerdict.differs && kinds.length != 0)
+    {
+        auto perms = findPermutations(oldTree.rootNode, oldText,
+            newTree.rootNode, newText, language, kinds);
+        foreach (i, span; spans)
+        {
+            if (result.verdicts[i] != StructuralVerdict.differs)
+                continue;
+            result.reordered[i] = isPermuted(perms, span, a, oldText, b,
+                newText);
+        }
+    }
+    return result;
+}
+
+/// Is this hunk's difference only that a commutative container's children
+/// changed places?
+///
+/// Two conditions, and both are needed. The hunk's two sides must hold the
+/// same MULTISET of tokens — nothing added, removed or renamed — and a
+/// declared commutative container must have been permuted inside the hunk on
+/// each side. Multiset equality alone would call `a - b` → `b - a` a reorder;
+/// the profile is what says the container's order carries no meaning.
+private bool isPermuted(scope const(Permutation)[] perms, in HunkSpan span,
+    scope const(Token)[] a, const(char)[] aSrc, scope const(Token)[] b,
+    const(char)[] bSrc) @safe
+{
+    if (perms.length == 0 || span.oldCount == 0 || span.newCount == 0)
+        return false;
+    const oldFirst = span.oldStart - 1, oldLast = oldFirst + span.oldCount - 1;
+    const newFirst = span.newStart - 1, newLast = newFirst + span.newCount - 1;
+
+    bool touches;
+    foreach (p; perms)
+        if (p.oldRows.overlaps(oldFirst, oldLast)
+            && p.newRows.overlaps(newFirst, newLast))
+        {
+            touches = true;
+            break;
+        }
+    if (!touches)
+        return false;
+
+    return sameTokenMultiset(tokensInLines(a, span.oldStart, span.oldCount),
+        aSrc, tokensInLines(b, span.newStart, span.newCount), bSrc);
+}
+
+private bool sameTokenMultiset(scope const(Token)[] a, const(char)[] aSrc,
+    scope const(Token)[] b, const(char)[] bSrc) @safe
+{
+    import std.algorithm.sorting : sort;
+
+    if (a.length != b.length)
+        return false;
+    auto x = new const(char)[][](a.length);
+    auto y = new const(char)[][](b.length);
+    foreach (i, t; a)
+        x[i] = t.text(aSrc);
+    foreach (i, t; b)
+        y[i] = t.text(bSrc);
+    return x.sort.release == y.sort.release;
 }
 
 /**
@@ -174,10 +281,9 @@ StructuralVerdict structuralVerdicts(ref TsConfigCache cache,
     scope StructuralVerdict[] verdicts) @system
 in (spans.length == verdicts.length)
 {
-    Token[] a, b;
-    const file = compareTokenStreams(cache, language, oldText, newText, a, b);
-    hunkVerdicts(file, a, oldText, b, newText, spans, verdicts);
-    return file;
+    auto r = analyze(cache, language, oldText, newText, spans, null);
+    verdicts[] = r.verdicts[];
+    return r.file;
 }
 
 /// ditto, over token streams a caller already has (so the structural view and
