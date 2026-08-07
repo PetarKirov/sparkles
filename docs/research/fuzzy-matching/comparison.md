@@ -2,7 +2,7 @@
 
 The cross-subject synthesis: what converged, where the designs genuinely
 split, which published numbers survive scrutiny, and the delta table bridging
-into the `sparkles:fuzzy` specification.
+into the [`sparkles:fuzzy` specification][fuzzy-spec].
 
 **Last reviewed:** August 7, 2026
 
@@ -132,7 +132,7 @@ state-of-the-art wall-clock:
 
 | Capability (best-in-field)                                                                      | sparkles today                                                                     | The spec's position                                                                                             |
 | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Affine-gap scoring w/ calibrated constants ([fzf] family)                                       | none                                                                               | port [fff]/[frizbee]'s constants + smart-case (the proven file-picking stack)                                   |
+| Affine-gap scoring w/ calibrated constants ([fzf] family)                                       | none                                                                               | port [fff]/[frizbee]'s constants + smart-case (the proven file-picking stack) — [`SPEC` §4][fuzzy-spec]         |
 | Typo tolerance ([frizbee])                                                                      | none                                                                               | substitution DP + budgeted prefilter; **verify the budget once on the score path** (fixing the tier divergence) |
 | Subsequence prefilter + window trim ([nucleo]/[frizbee])                                        | none                                                                               | greedy case-pair scan, multi-path typo variants                                                                 |
 | Never-zeroed reusable matrices ([nucleo]/[frizbee])                                             | `SmallBuffer` exists (`libs/base`)                                                 | fixed-stride matrices in `SmallBuffer`, allocated at matcher construction                                       |
@@ -170,3 +170,4 @@ artifacts behind this synthesis:
 [fzf-3491]: https://github.com/junegunn/fzf/discussions/3491
 [fuzzy-benches]: https://github.com/noib3/fuzzy-benches
 [wired-baseline]: ../../specs/wired/bench-baseline.md
+[fuzzy-spec]: ../../specs/fuzzy/SPEC.md

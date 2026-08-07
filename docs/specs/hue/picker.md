@@ -174,28 +174,33 @@ Each row is one `<leader>` binding. The map reserves them all today.
 
 A new library — `libs/fuzzy` — because the matcher is a self-contained, testable,
 benchmarkable engine with no dependency on hue, exactly as `sparkles:diff` is.
+Its contract-level design now lives in its own spec —
+[`docs/specs/fuzzy/SPEC.md`](../fuzzy/SPEC.md), milestoned in
+[`PLAN.md`](../fuzzy/PLAN.md) — grounded in the
+[fuzzy-matching research catalog](../../research/fuzzy-matching/index.md);
+the rows below are hue's requirements on it, traced there.
 
-| ID     | Requirement                                                                                                                                                        | Status      | Traces to                      |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | ------------------------------ |
-| `PKM1` | The library must be **100% `@safe pure nothrow @nogc`**, with `SmallBuffer` as its only dynamic container and `Expected` for errors — no exceptions.               | not started | `libs/fuzzy`                   |
-| `PKM2` | Its unittests must carry those attributes **explicitly**, so an accidental allocation is a compile error rather than a review note.                                | not started | the repo's existing idiom      |
-| `PKM3` | Every returned span must **borrow** from the caller's input; the library must own no string.                                                                       | not started | `PKQ1`                         |
-| `PKM4` | Scoring must be **benchmarked** (`@benchmark`) from the first commit, since a picker's whole value is that it answers within a frame.                              | not started | `libs/fuzzy/bench`             |
-| `PKM5` | It must ship a `docs/libs/fuzzy/` Diátaxis tree, as `AGENTS.md` requires of a new library.                                                                         | not started | `docs/libs/fuzzy/`             |
-| `PKM6` | A **bigram prefilter** should narrow candidates before content scoring, once the grep source's scale justifies it. Deferred, and recorded so it is not re-derived. | not started | fff's `index/bigram_filter.rs` |
+| ID     | Requirement                                                                                                                                                        | Status      | Traces to                                                                                                 |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | --------------------------------------------------------------------------------------------------------- |
+| `PKM1` | The library must be **100% `@safe pure nothrow @nogc`**, with `SmallBuffer` as its only dynamic container and `Expected` for errors — no exceptions.               | researched  | [SPEC §1, §10](../fuzzy/SPEC.md)                                                                          |
+| `PKM2` | Its unittests must carry those attributes **explicitly**, so an accidental allocation is a compile error rather than a review note.                                | researched  | [SPEC §1](../fuzzy/SPEC.md)                                                                               |
+| `PKM3` | Every returned span must **borrow** from the caller's input; the library must own no string.                                                                       | researched  | [SPEC §3.2, §10](../fuzzy/SPEC.md)                                                                        |
+| `PKM4` | Scoring must be **benchmarked** (`@benchmark`) from the first commit, since a picker's whole value is that it answers within a frame.                              | researched  | [SPEC §9](../fuzzy/SPEC.md), [PLAN M0](../fuzzy/PLAN.md)                                                  |
+| `PKM5` | It must ship a `docs/libs/fuzzy/` Diátaxis tree, as `AGENTS.md` requires of a new library.                                                                         | not started | [PLAN M7](../fuzzy/PLAN.md)                                                                               |
+| `PKM6` | A **bigram prefilter** should narrow candidates before content scoring, once the grep source's scale justifies it. Deferred, and recorded so it is not re-derived. | researched  | [PLAN § deferred](../fuzzy/PLAN.md) — the catalog records it is a **content** index, not a path prefilter |
 
 ## Milestones
 
-| Milestone | Scope                                                                 | Requirements                   |
-| --------- | --------------------------------------------------------------------- | ------------------------------ |
-| `F0`      | `sparkles:fuzzy` — query parser, scoring, ranking, glob               | `PKM1`–`PKM5`, `PKQ*`, `PKR1`  |
-| `P0`      | The picker state machine, the `Finder` seam, and the **files** source | `PIK1`–`PIK8`, `PKS1`          |
-| `P1`      | The view, both backends, and the layouts                              | `PIK3`, `PKL1`                 |
-| `P2`      | The preview pane                                                      | `PKL2`                         |
-| `P3`      | Frecency + query-history persistence; the **recent** source           | `PKR2`–`PKR6`, `PKS3`          |
-| `P4`      | The **grep** source: three modes, the definition classifier           | `PKS2`, `PKL5`, `PKL6`         |
-| `P5`      | The remaining sources, actions, and `resume`                          | `PKS4`–`PKS10`, `PKL3`, `PIK9` |
-| `P6`      | Touch: tappable rows and the soft keyboard                            | `PKL4`                         |
+| Milestone | Scope                                                                                                                      | Requirements                   |
+| --------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `F0`      | `sparkles:fuzzy` — query parser, scoring, ranking, glob (broken down as `M0`–`M7` in [../fuzzy/PLAN.md](../fuzzy/PLAN.md)) | `PKM1`–`PKM5`, `PKQ*`, `PKR1`  |
+| `P0`      | The picker state machine, the `Finder` seam, and the **files** source                                                      | `PIK1`–`PIK8`, `PKS1`          |
+| `P1`      | The view, both backends, and the layouts                                                                                   | `PIK3`, `PKL1`                 |
+| `P2`      | The preview pane                                                                                                           | `PKL2`                         |
+| `P3`      | Frecency + query-history persistence; the **recent** source                                                                | `PKR2`–`PKR6`, `PKS3`          |
+| `P4`      | The **grep** source: three modes, the definition classifier                                                                | `PKS2`, `PKL5`, `PKL6`         |
+| `P5`      | The remaining sources, actions, and `resume`                                                                               | `PKS4`–`PKS10`, `PKL3`, `PIK9` |
+| `P6`      | Touch: tappable rows and the soft keyboard                                                                                 | `PKL4`                         |
 
 ## Module coverage (proposed)
 
@@ -211,14 +216,16 @@ No code on any branch yet.
 
 ## Relationship to existing specs
 
-| Piece                                                       | Role                                                                   |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [lantern.md](./lantern.md) `LMP7`/`LMP8`                    | the reserved keys this opens, and the table its actions join           |
-| [tree-view.md](./tree-view.md) `TVU1`                       | the explorer this complements — browse there, find here                |
-| [feature-requirements.md](./feature-requirements.md) `SRC6` | the document set `PKS4` picks from                                     |
-| [diff-view.md](./diff-view.md)                              | what `PKS6` opens, and the `NFR8` budget this shares                   |
-| [config.md](./config.md)                                    | where the frecency store and the picker's defaults live                |
-| [`sparkles:event-horizon`](../event-horizon/benchmarks.md)  | the measured work-stealing walker the file and grep sources fan out on |
-| `sparkles:build-primitives`                                 | the `.gitignore`-aware walk `PKS1` reuses                              |
+| Piece                                                                | Role                                                                   |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [`sparkles:fuzzy` SPEC](../fuzzy/SPEC.md) + [PLAN](../fuzzy/PLAN.md) | the engine's own contract-level spec and milestones (`F0`)             |
+| [fuzzy-matching research](../../research/fuzzy-matching/index.md)    | the prior-art evidence base behind both specs                          |
+| [lantern.md](./lantern.md) `LMP7`/`LMP8`                             | the reserved keys this opens, and the table its actions join           |
+| [tree-view.md](./tree-view.md) `TVU1`                                | the explorer this complements — browse there, find here                |
+| [feature-requirements.md](./feature-requirements.md) `SRC6`          | the document set `PKS4` picks from                                     |
+| [diff-view.md](./diff-view.md)                                       | what `PKS6` opens, and the `NFR8` budget this shares                   |
+| [config.md](./config.md)                                             | where the frecency store and the picker's defaults live                |
+| [`sparkles:event-horizon`](../event-horizon/benchmarks.md)           | the measured work-stealing walker the file and grep sources fan out on |
+| `sparkles:build-primitives`                                          | the `.gitignore`-aware walk `PKS1` reuses                              |
 
 → [Lantern requirements](./lantern.md) · [Tree / DAG view](./tree-view.md) · [Overview](./index.md)
