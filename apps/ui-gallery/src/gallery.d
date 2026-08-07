@@ -90,12 +90,20 @@ struct Gallery
         s.contentScroll = s.contentScroll.scrolledBy(0, contentRows, viewport);
 
         const header = shellHeader(b);
-        const nav = navPane(b);
         const content = contentPane(b, pageRoot, contentRows, viewport);
+
+        // On a narrow surface the list yields its width rather than squeezing
+        // the catalog into a third of the screen. `collapsed`, not `hidden`:
+        // hidden would keep the 22 cells and give the page nothing.
+        uint[] bodyChildren;
+        if (s.navVisible)
+            bodyChildren ~= navPane(b);
+        bodyChildren ~= content;
+
         const body_ = b.add(Widget(
             kind: WidgetKind.row,
-            children: [nav, content],
-            gap: 1,
+            children: bodyChildren,
+            gap: s.navVisible ? 1 : 0,
             height: SizeSpec.grow(),
         ));
         const footer = statusBar(b);
@@ -190,8 +198,14 @@ struct Gallery
             case ']': return cycleTheme(1);
             case '[': return cycleTheme(-1);
             case ' ': s.region = Region.content; return;
+            case 'n': s.navPinned = !s.navPinned; return;
             default: break;
         }
+
+        // The page's own bindings come after the shell's, never before: a page
+        // that saw input first could claim `j` and strand a reader on it.
+        if (pages[s.page].onKey !is null && pages[s.page].onKey(s, k.ch))
+            return;
 
         // `1`..`9` then `0` jump straight to a page — the fastest route on a
         // target where the sidebar is not clickable.
@@ -674,6 +688,11 @@ version (unittest)
     // measures a page against the pane it is *told* it has. This measures the
     // assembled frame, and so catches the case the first one cannot: a pane
     // whose advertised width did not account for the chrome beside it.
+    //
+    // The invariant is "nothing overflows unless it is deliberately clipped".
+    // A node under a `clipX` ancestor is allowed past the edge — that is what
+    // clipping is for, and the display list culls it — so the walk carries the
+    // clip state down rather than testing every frame blindly.
     static immutable int[2][] surfaces = [[80, 24], [120, 40], [46, 12]];
     foreach (i, ref p; pages)
         foreach (ref wh; surfaces)
@@ -684,13 +703,20 @@ version (unittest)
             g.s.page = i;
             auto tree = g.view(h);
             auto frames = layout(tree, Constraints(maxW: wh[0], maxH: wh[1]));
-            foreach (n, ref f; frames)
+
+            void walk(uint n, bool clipped)
             {
-                if (tree.nodes[n].visibility == Visibility.collapsed)
-                    continue;
-                assert(f.rect.right <= wh[0],
-                    p.title ~ " overflows the surface sideways");
+                const node = tree.nodes[n];
+                if (node.visibility == Visibility.collapsed)
+                    return;
+                if (!clipped)
+                    assert(frames[n].rect.right <= wh[0],
+                        p.title ~ " overflows the surface sideways");
+                foreach (c; node.children)
+                    walk(c, clipped || node.clipX);
             }
+
+            walk(tree.root, false);
         }
 }
 

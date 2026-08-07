@@ -178,6 +178,20 @@ struct GalleryState
     }
 
     /**
+    Whether the page list is showing.
+
+    Below the threshold the sidebar is more than a third of the surface and the
+    catalog becomes unreadable, so it yields — the pages are still reachable by
+    `←`/`→` and by number, which is why hiding it costs nothing. A reader who
+    wants it back on a narrow terminal presses `n`.
+    */
+    bool navVisible() const scope
+        => navPinned || surface.width >= navMinSurface;
+
+    /// ditto — `n` forces the sidebar on regardless of width.
+    bool navPinned;
+
+    /**
     The content pane's width: the surface less the sidebar, the gap between
     them, and the scroll gutter.
 
@@ -188,7 +202,7 @@ struct GalleryState
     */
     int contentWidth() const scope
     {
-        const w = surface.width - navWidth - 1 - scrollGutter;
+        const w = surface.width - (navVisible ? navWidth + 1 : 0) - scrollGutter;
         return w > 8 ? w : 8;
     }
 }
@@ -203,6 +217,10 @@ enum int navWidth = 22;
 /// The columns reserved beside the content for the scrollbar: the bar itself
 /// and one cell of separation. Always reserved — see `GalleryState.contentWidth`.
 enum int scrollGutter = 2;
+
+/// The narrowest surface that still carries the sidebar. Below it the list
+/// yields the width — see `GalleryState.navVisible`.
+enum int navMinSurface = 60;
 
 /**
 How long a toast holds — which depends on whether the target has a frame clock.
