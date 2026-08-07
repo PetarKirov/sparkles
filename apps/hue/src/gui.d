@@ -31,7 +31,7 @@ import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
 // applies the notch multiplier itself (INP12).
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
-    Mods, PointerAction, PointerButton, PointerEvent;
+    Mods, PointerAction, PointerButton, PointerEvent, WheelEvent;
 import sparkles.input.frame : InputFrame, foldFrame, pointerFor;
 import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
     KeyContext;
@@ -1693,10 +1693,20 @@ int runGui(
             // the same direction, expressed against the other convention.
             if (inp.fin.wheelCells != 0)
             {
-                if (pn.treeVisible && inp.fin.pos.x < treeCols * cellW)
-                    pn.tree.scrollBy(inp.fin.wheelCells);
-                else
-                    vm.top += inp.fin.wheelCells;
+                // WHERE a wheel goes is the container's (DCK7): the pane
+                // under the pointer, regardless of focus, with chrome
+                // falling back to the focused pane so a notch is never
+                // dropped. What scrolling MEANS is still the pane's.
+                const wheelRoute = pn.dock.handle(Event(WheelEvent(
+                    dy: inp.fin.wheelCells,
+                    pos: pointerFor(inp.fin, cellW, cellH).pos)));
+                if (wheelRoute.kind == RouteKind.pane)
+                {
+                    if (wheelRoute.pane == treePane)
+                        pn.tree.scrollBy(inp.fin.wheelCells);
+                    else
+                        vm.top += inp.fin.wheelCells;
+                }
             }
 
             // The mouse back/forward buttons walk the document set regardless
