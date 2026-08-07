@@ -521,7 +521,7 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
 }
 
 // The frame's draw calls, bracket-free — callable from a raylib
-// BeginDrawing/EndDrawing pair (renderFrame below) or from a host's draw
+// BeginDrawing/EndDrawing pair or from a host's draw
 // phase (`HST13`), which owns its own bracket: background fill, kitty image
 // layers, the two-pass cell render, scrollbar, cursor styles, exit banner,
 // bell flash, and the per-row + global dirty reset. The caller owns the
@@ -771,28 +771,4 @@ void paintFrame(ref CoreState s)
         // Reset global dirty state so the next update reports changes accurately.
         GhosttyRenderStateDirty clean_state = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
         ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean_state);
-}
-
-// The polling loop's frame: paintFrame inside its own raylib bracket, then
-// the deferred-texture flush (safe only once EndDrawing pushed the commands
-// to the GPU). Returns `true` when the on-demand atlas folded new glyphs in —
-// the caller's cue to force one extra frame so they get painted. A host-driven
-// component calls paintFrame from its draw phase instead and does the flush
-// and the atlas check at the START of its next frame, which is the same
-// after-the-bracket point reached without a post-bracket hook.
-@system nothrow @nogc
-bool renderFrame(ref CoreState s)
-{
-    BeginDrawing();
-    paintFrame(s);
-    EndDrawing();
-    flush_deferred_textures();
-
-    // On-demand atlas growth: if the glyph pass requested codepoints the
-    // primary face covers but the atlas lacked, the library folds them in and
-    // rebuilds the primary + styled atlases once (done after EndDrawing so it
-    // never reuploads the font texture mid-frame). "M" is unchanged, so cell
-    // metrics hold. The caller forces a redraw next frame so the now-rasterized
-    // glyphs get painted.
-    return s.fonts.flushPending();
 }

@@ -12,6 +12,8 @@ discover `package.d`).
 */
 module sparkles.terminal_view;
 
+public import sparkles.terminal_view.child_env;
+public import sparkles.terminal_view.component;
 public import sparkles.terminal_view.event_map;
 public import sparkles.terminal_view.input;
 public import sparkles.terminal_view.osc_query;

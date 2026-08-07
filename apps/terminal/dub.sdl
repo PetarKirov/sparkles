@@ -16,11 +16,13 @@ dependency "sparkles:base" path="../.."
 dependency "sparkles:ghostty" path="../.."
 dependency "sparkles:raylib-text" path="../.."
 dependency "sparkles:terminal-view" path="../.."
+dependency "sparkles:ui-app" path="../.."
 
 libs "raylib"
 
 configuration "application" {
     targetType "executable"
+    subConfiguration "sparkles:ui-app" "gui"
 }
 
 configuration "unittest" {

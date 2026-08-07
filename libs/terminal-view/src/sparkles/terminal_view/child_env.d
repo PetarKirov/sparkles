@@ -6,7 +6,7 @@
 /// leaked `ZELLIJ_SESSION_NAME` makes it assume a multiplexer that can't pass
 /// graphics through — so images degrade to chafa block art even though this
 /// terminal supports the Kitty graphics protocol.
-module child_env;
+module sparkles.terminal_view.child_env;
 
 /// Variables dropped by exact name.
 private static immutable droppedVars = [
