@@ -132,7 +132,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     enum dir = "/tmp/sparkles-event-horizon-watch-test";
     (() @trusted {
@@ -147,7 +146,6 @@ unittest
 
     Watcher w;
     assert(!Watcher.create(w).hasError);
-    scope (exit) w.close();
 
     auto wd = w.addWatch(dir, IN_CREATE);
     assert(wd.hasValue);

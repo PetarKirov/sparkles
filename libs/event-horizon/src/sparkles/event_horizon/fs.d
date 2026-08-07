@@ -138,7 +138,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     static immutable payload = cast(immutable ubyte[]) "event horizon fs";
     enum path = "/tmp/sparkles-event-horizon-fs-test.txt";

@@ -442,7 +442,6 @@ unittest
 {
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     int children;
     auto r = s.run(() {
@@ -467,7 +466,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     int siblingErrno;
     auto r = s.run(() {
@@ -502,7 +500,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     bool childInterrupted;
     auto r = s.run(() {
@@ -529,7 +526,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     auto r = s.run(() {
         // Expiry: the joiner's own park is swept (the body counts as a
@@ -558,7 +554,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     auto r = s.run(() {
         auto outcome = withScope!((ref sc) {
@@ -588,7 +583,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     auto r = s.run(() {
         auto outcome = withScope!((ref sc) {
@@ -619,7 +613,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     bool sleptCleanly, sawPendingInterrupt;
     auto r = s.run(() {
@@ -651,7 +644,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     bool daemonInterrupted, workerRan;
     auto r = s.run(() {
@@ -674,7 +666,6 @@ unittest
 {
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     auto r = s.run(() {
         auto outcome = withScope!((ref sc) {
@@ -697,7 +688,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     bool innerInterrupted;
     auto r = s.run(() {
@@ -722,7 +712,6 @@ unittest
 {
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     int[2] order;
     size_t i;

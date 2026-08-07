@@ -253,7 +253,6 @@ unittest
 
     LoopGroup group;
     groupOrSkip(group);
-    scope (exit) group.shutdown();
 
     int fromClock;
     auto outcome = group.run((ref root, ref env) {
@@ -281,7 +280,6 @@ unittest
 
     LoopGroup group;
     groupOrSkip(group);
-    scope (exit) group.shutdown();
 
     static immutable payload = cast(immutable ubyte[]) "env.net echo";
 
@@ -382,7 +380,6 @@ unittest
     cfg.topology = Topology.threadPerCore;
     cfg.workers = 4;
     groupOrSkip(group, cfg);
-    scope (exit) group.shutdown();
     assert(group.workerCount == 4);
 
     shared uint ran;

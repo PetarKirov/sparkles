@@ -306,7 +306,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     int[2] fds;
     if ((() @trusted {
@@ -356,7 +355,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     int[2] fds;
     if ((() @trusted {
@@ -406,7 +404,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     // libc loopback listener on a kernel-assigned port.
     int listenFd;
@@ -492,7 +489,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     const before = MonoTime.currTime;
     auto r = s.run(() { assert(!sleep(s, 5.msecs).hasError); });
@@ -520,7 +516,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     int[2] fds;
     if ((() @trusted {
@@ -599,7 +594,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     if (!s.loop().caps().bufRing)
     {

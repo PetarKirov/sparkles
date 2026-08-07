@@ -95,7 +95,6 @@ unittest
 
     Sched s;
     schedOrSkip(s);
-    scope (exit) s.destroy();
 
     SignalFd sig;
     if (SignalFd.create(sig, [SIGUSR1]).hasError)
@@ -103,7 +102,6 @@ unittest
         s.destroy(); // idempotent; see loop.registeredBuffers.fixedReadPath
         skipTest("signalfd unavailable (sandboxed)");
     }
-    scope (exit) sig.close();
 
     int seen;
     auto r = s.run(() {
