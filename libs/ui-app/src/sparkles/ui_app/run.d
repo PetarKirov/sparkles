@@ -15,7 +15,7 @@ module sparkles.ui_app.run;
 
 import sparkles.ui_app.backend : Backend, BackendPolicy, isInteractive,
     pickBackend, platformForcedBackend;
-import sparkles.ui_app.host : RunConfig;
+import sparkles.ui_app.host : noDraw, RunConfig;
 
 /// Why a run did not happen. `ok` is the only value that means a loop ran.
 enum RunOutcome : ubyte
@@ -114,12 +114,16 @@ predicate: `run!(present, handle)(cfg, policy)`.
 Params:
     present = called to build a frame, as `(ref host)`
     handle = called per event, as `(ref host, in Event)`
+    draw = the optional post-display-list phase (`HST13`), as `(ref host)` —
+        called inside the frame bracket after the host's operations painted,
+        which is the only place a canvas call is valid. Defaults to a no-op.
     cfg = the run configuration, including the window/font request
     policy = the backend decision's inputs. Its `guiCompiledIn` is overwritten
         with the truth, so a caller cannot accidentally claim an arm this build
         does not carry.
 */
-RunOutcome run(alias present, alias handle)(in RunConfig cfg, BackendPolicy policy)
+RunOutcome run(alias present, alias handle, alias draw = noDraw)(
+    in RunConfig cfg, BackendPolicy policy)
 {
     const arms = compiledArms();
     policy.guiCompiledIn = arms.gui;
@@ -149,7 +153,7 @@ RunOutcome run(alias present, alias handle)(in RunConfig cfg, BackendPolicy poli
                 req.fontSizePoints = cfg.gui.fontSize;
                 req.targetFps = cfg.targetFps;
 
-                return runGui!(present, handle)(cfg, req)
+                return runGui!(present, handle, draw)(cfg, req)
                     ? RunOutcome.ok : RunOutcome.openFailed;
             }
             else
@@ -168,7 +172,7 @@ RunOutcome run(alias present, alias handle)(in RunConfig cfg, BackendPolicy poli
                         {
                             import sparkles.ui_app.tui_loop : runTui;
 
-                            return runTui!(present, handle)(cfg)
+                            return runTui!(present, handle, draw)(cfg)
                                 ? RunOutcome.ok : RunOutcome.openFailed;
                         }
                     }

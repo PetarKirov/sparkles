@@ -32,7 +32,7 @@ import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
-import sparkles.ui_app.host : FrameOps, HostState, isHost, RunConfig,
+import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, RunConfig,
     withRealSize;
 import sparkles.ui_raylib.raylib_canvas : RaylibCanvas;
 import sparkles.ui_raylib.events : RaylibEvents;
@@ -104,10 +104,16 @@ static assert(isHost!GuiHost);
 Runs `present`/`handle` in a window until the application quits or the platform
 closes it.
 
+`draw` is the post-display-list phase (`HST13`): called $(B inside) the frame
+bracket, after the host's operations painted — the only place a canvas call is
+valid, which is why an application with a renderer of its own cannot paint from
+`present`. A skipped frame skips it with the rest of the bracket.
+
 Returns `false` when the window opened but no font resolved — the caller reports
 which family it asked for, since a window painting without a font is a blank one.
 */
-bool runGui(alias present, alias handle)(in RunConfig cfg, in GuiRequest req)
+bool runGui(alias present, alias handle, alias draw = noDraw)(
+    in RunConfig cfg, in GuiRequest req)
 {
     import sparkles.base.term_color : RgbColor;
     import sparkles.ui.interp.immediate : paint;
@@ -151,6 +157,7 @@ bool runGui(alias present, alias handle)(in RunConfig cfg, in GuiRequest req)
         session.window.clear(RgbColor(0, 0, 0));
         auto canvas = host.canvas;
         paint(canvas, host.ops()[]);
+        draw(host); // `HST13`: the application's own renderer, inside the bracket
         session.window.endFrame();
     }
 
