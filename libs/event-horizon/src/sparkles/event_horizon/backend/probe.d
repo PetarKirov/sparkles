@@ -85,7 +85,7 @@ static assert(OpKind.max < 64, "opBits packs one bit per OpKind");
 /// ≤ 5.19 tier-3 feature set are guaranteed at or above this version.
 enum KernelVersion kernelFloor = KernelVersion(6, 1);
 
-version (EventHorizonLibkqueue) {} else version (linux)
+version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux)
 {
     /// The running kernel's version, parsed from `uname(2)`'s release
     /// string (e.g. `"6.18.26-gentoo"` → 6.18).
@@ -269,7 +269,7 @@ unittest
     assert(!v.atLeast(7, 0));
 }
 
-version (EventHorizonLibkqueue) {} else version (linux)
+version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux)
 {
     version (unittest)
     {

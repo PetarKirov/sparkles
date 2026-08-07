@@ -27,8 +27,12 @@ module sparkles.event_horizon.backend.kqueue;
 
 // The kqueue backend is macOS/BSD-native; `EventHorizonLibkqueue` also builds
 // it on Linux over mheily/libkqueue (an epoll shim), so the full
-// `EventLoop!KqueueBackend` integration can be tested on Linux CI.
+// `EventLoop!KqueueBackend` integration can be tested on Linux CI. Android
+// ships the same backend + shim combination as its DEFAULT (io_uring is
+// seccomp-denied for apps; the APK links libkqueue statically).
 version (OSX)
+    version = EventHorizonKqueue;
+version (Android)
     version = EventHorizonKqueue;
 version (EventHorizonLibkqueue)
     version = EventHorizonKqueue;

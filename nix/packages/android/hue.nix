@@ -46,6 +46,11 @@
           version = "1.3.1";
           sha256 = "1klz02r13r3yq8vcw1gkv39r02vpnv7wlhhb5kkjnybc3s86w1q8";
         }
+        # NOTE: `during` (event-horizon's io_uring binding) is deliberately
+        # absent: the uring backend is version-gated OFF the Android triple
+        # (app seccomp denies io_uring_setup), and the triple selects the
+        # kqueue backend over the statically linked libkqueue-android
+        # instead — see backend/select.d and libkqueue.nix.
       ];
 
       dubZip =
@@ -60,6 +65,9 @@
       # (HueGui + the Have_* set of the dependency graph).
       versions = [
         "HueGui"
+        # hue selects sparkles:ui-app's `tui` configuration (dub sets this
+        # version identifier for dependents — UIAPP-O2).
+        "UiAppTui"
         "Have_sparkles_hue"
         "Have_sparkles_ghostty"
         "Have_sparkles_syntax"
@@ -74,10 +82,13 @@
         "Have_sparkles_wired"
         "Have_sparkles_ui_raylib"
         "Have_sparkles_ui_tui"
+        "Have_sparkles_ui_app"
+        "Have_sparkles_event_horizon"
         "Have_sparkles_input"
         "Have_raylib_d"
         "Have_optional"
         "Have_bolts"
+        "Have_during"
       ];
 
       # The app closure + apps/hue/android, which `sourceFor` turns into this
@@ -122,6 +133,7 @@
               ${config.packages.raylib-android}/lib/${t.abi}/libraylib.a \
               ${config.packages.tree-sitter-android}/lib/${t.abi}/libtree-sitter.a \
               ${config.packages.libghostty-vt-android}/lib/${t.abi}/libghostty-vt.a \
+              ${config.packages.libkqueue-android}/lib/${t.abi}/libkqueue.a \
               -shared -link-defaultlib-shared=false \
               -L-Wl,-u,ANativeActivity_onCreate \
               -L-Wl,--wrap=fopen \

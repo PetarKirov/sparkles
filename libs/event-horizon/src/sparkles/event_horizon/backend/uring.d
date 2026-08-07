@@ -10,7 +10,13 @@ with the callback tier (M3).
 */
 module sparkles.event_horizon.backend.uring;
 
-version (linux)  :  // io_uring is Linux-only; peer backends land in M10/M11.
+// io_uring is Linux-only — and OFF on Android, where the app seccomp policy
+// denies io_uring_setup: the Android triple takes the kqueue-over-libkqueue
+// peer backend instead (backend.select), and `during` never enters its build.
+version (Android)
+{
+}
+else version (linux)  :
 
 import during : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags,
     MsgFlags, Operation,

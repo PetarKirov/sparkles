@@ -16,6 +16,15 @@ version (EventHorizonLibkqueue)
 {
     public import sparkles.event_horizon.backend.kqueue : DefaultBackend = KqueueBackend;
 }
+else version (Android)
+{
+    // Android is Linux, but the app seccomp policy denies io_uring_setup —
+    // and there is no epoll fallback in this library by design (SPEC §3.4).
+    // The port is the kqueue PEER backend over mheily/libkqueue (an epoll
+    // shim the Android build links statically): the same backend + shim
+    // combination Linux CI already exercises via EventHorizonLibkqueue.
+    public import sparkles.event_horizon.backend.kqueue : DefaultBackend = KqueueBackend;
+}
 else version (linux)
 {
     public import sparkles.event_horizon.backend.uring : DefaultBackend = UringBackend;
