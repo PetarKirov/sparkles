@@ -41,8 +41,8 @@ supplies them from the `sparkles-ci` context.
 | `CI_DEVSHELL`             | `nix-devshell`                                | devShell to activate (`ci`, `pre-commit`)          |
 | `CI_NIX_SINGLE_USER`      | `nix-install`                                 | Single-user store, required to cache `/nix`        |
 | `GITHUB_TOKEN`            | `lint`, `pr-comment`                          | lychee's GitHub API budget; PR preview comment     |
-| `CLOUDFLARE_API_TOKEN`    | `deploy-cloudflare-pages`                     | Pages deploy                                       |
-| `CLOUDFLARE_ACCOUNT_ID`   | `deploy-cloudflare-pages`                     | Pages deploy                                       |
+| `CLOUDFLARE_API_TOKEN`    | `deploy-cloudflare-pages`                     | Pages deploy (GitHub Actions only)                 |
+| `CLOUDFLARE_ACCOUNT_ID`   | `deploy-cloudflare-pages`                     | Pages deploy (GitHub Actions only)                 |
 | `DUB_REGISTRY_SECRET`     | `notify-dub-registry`                         | Optional; only if the package has an update secret |
 | `DC`                      | job step                                      | D compiler for the test suite (`ldc2` / `dmd`)     |
 
@@ -58,13 +58,11 @@ PR — which gets no secrets — still run the pipeline.
 | `nix-install.sh`             | Installs Nix if absent; re-exports `PATH` when a cached `/nix` was restored              |
 | `nix-configure.sh`           | Writes `nix.conf` + `netrc`; adds the job user to `trusted-users` on daemon installs     |
 | `nix-devshell.sh`            | Builds a devShell (fail-fast), then exports it to later steps via direnv                 |
-| `nix-tool-path.sh`           | Puts nixpkgs attrs on `PATH` — Node for the docs build, pinned by this flake             |
 | `with-cachix.sh`             | Runs a command under `cachix watch-exec`, pushing paths as they are built                |
 | `release-pin.sh`             | Highest-tag guard, then `cachix push` + `cachix pin --keep-revisions`                    |
 | `notify-dub-registry.sh`     | Pokes code.dlang.org to ingest a new tag                                                 |
 | `deploy-cloudflare-pages.sh` | `wrangler pages deploy`, then upserts the preview-URL comment                            |
 | `pr-comment.sh`              | Marker-keyed comment upsert, so re-runs edit instead of appending                        |
-| `paths-changed.sh`           | CircleCI's stand-in for `on: push: paths:` — pair with `circleci-agent step halt`        |
 | `run-batch.sh`               | Wall-clock `timeout` + non-interactive stdout for the long steps                         |
 | `install-ldc-windows.sh`     | LDC + bundled dub on a Windows runner (CircleCI has no D orb)                            |
 
@@ -81,8 +79,8 @@ Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
 | `nix-build` (ubuntu, macos)         | `nix-build-linux`, `nix-build-macos` |                                                            |
 | `nix-build-android`                 | `nix-build-android`                  |                                                            |
 | `lint`                              | `lint`                               |                                                            |
-| `docs` (build)                      | `docs`                               |                                                            |
-| `docs.yml` `deploy`                 | `docs-deploy`                        | Path filter moves into the job (`paths-changed.sh`)        |
+| `docs` (build)                      | —                                    | GitHub Actions only (see below)                            |
+| `docs.yml` `deploy`                 | —                                    | GitHub Actions only (see below)                            |
 | `release.yml` `notify-dub-registry` | `notify-dub-registry`                |                                                            |
 | `release.yml` `nix-build-pin`       | `nix-build-pin-linux/-macos`         |                                                            |
 | `ci` (fan-in)                       | `ci`                                 | CircleCI will not start it unless every `requires:` passed |
@@ -122,8 +120,9 @@ then disable the project (CircleCI) or the workflow triggers (GitHub).
 
 1. Create a **context** named `sparkles-ci` and add every variable from the
    table above that applies (the two Cachix values, `NIX_SUBSTITUTERS`,
-   `NIX_TRUSTED_PUBLIC_KEYS`, `GITHUB_TOKEN`, the two Cloudflare values, and
-   optionally `DUB_REGISTRY_SECRET`).
+   `NIX_TRUSTED_PUBLIC_KEYS`, `GITHUB_TOKEN`, and optionally
+   `DUB_REGISTRY_SECRET`). The Cloudflare values are **not** needed — the docs
+   deploy does not run here.
    - `GITHUB_TOKEN` must be a real PAT with `public_repo`. CircleCI has no
      equivalent of the automatic `github.token`.
 2. Turn on **Auto-cancel redundant workflows** in project settings. That is the
@@ -216,6 +215,18 @@ on a developer's terminal, where `ci --verify` would otherwise stall on the
 same prompt. If you add a step that runs a program which might prompt, either
 route it through `ci` or redirect `</dev/null` yourself.
 
+## The docs site is GitHub-only
+
+`docs` (build) and the Cloudflare Pages deploy run on GitHub Actions alone.
+Both providers _could_ build the site, but only one can deploy it: there is a
+single Pages project behind one set of credentials, and two pipelines pushing
+to it would race for the same deployment and post duplicate preview comments.
+
+So CircleCI runs neither — building it twice to deploy it once buys nothing,
+and it keeps the Cloudflare credentials out of the CircleCI context entirely.
+`ci/deploy-cloudflare-pages.sh` and `ci/pr-comment.sh` stay: GitHub Actions
+still uses them, and they were never provider-specific.
+
 ## Behaviour that could not be ported
 
 - **No `merge_group` trigger.** CircleCI does not integrate with GitHub merge
@@ -231,8 +242,10 @@ route it through `ci` or redirect `</dev/null` yourself.
   TTY), so a stalled step produces output forever and can never trip it. The
   long steps therefore run under `ci/run-batch.sh <limit> …`, which supplies
   a real `timeout` and pipes stdout so the spinner degrades to plain lines.
-- **`paths:` filters** become an in-job `paths-changed.sh` check plus
-  `circleci-agent step halt`. The job still spins up before deciding.
+- **`paths:` filters** have no CircleCI equivalent short of dynamic config.
+  Nothing needs one now that the docs jobs are GitHub-only; the pattern if it
+  is ever wanted again is a first step that diffs against the base ref and
+  calls `circleci-agent step halt`.
 
 ## Cost
 

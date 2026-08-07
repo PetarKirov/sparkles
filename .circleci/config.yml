@@ -1,14 +1,16 @@
 # CircleCI pipeline for sparkles.
 #
-# A port of .github/workflows/{ci,docs,release}.yml. The two providers share
+# A port of .github/workflows/{ci,release}.yml. The docs site — its build and
+# its Cloudflare deploy — is GitHub Actions' alone: it is a single deploy
+# target with a single set of credentials, and running it on both providers
+# would mean two deploys racing for the same Pages project. The two providers share
 # every non-trivial step through the scripts in ci/ — this file and the GitHub
 # workflows are meant to stay thin enough that a behaviour change happens in
 # one place. See ci/README.md for the environment contract.
 #
 # Differences from GitHub Actions that are inherent to CircleCI, not choices:
 #
-#   * No `merge_group` trigger, and no `paths:` filter. The docs deploy gates
-#     itself with `ci/paths-changed.sh` + `circleci-agent step halt` instead.
+#   * No `merge_group` trigger.
 #   * No "release published" event. The release workflow fires on the `v*` tag
 #     push, so the grace window between tagging and publishing is gone.
 #   * No per-job wall-clock timeout. `no_output_timeout` bounds a *silent* step
@@ -169,36 +171,6 @@ commands:
           paths:
             - ~/.dub
             - ~/.local/share/dub
-
-  install_node:
-    description: Node from this flake's pinned nixpkgs, plus the npm cache.
-    steps:
-      - run:
-          name: Put Node on PATH
-          command: ci/nix-tool-path.sh nodejs_24
-      - restore_cache:
-          keys:
-            - npm-v1-{{ arch }}-{{ checksum "package-lock.json" }}
-            - npm-v1-{{ arch }}-
-      - run:
-          name: npm ci
-          command: npm ci
-      - save_cache:
-          key: npm-v1-{{ arch }}-{{ checksum "package-lock.json" }}
-          paths:
-            - ~/.npm
-
-  build_docs:
-    description: >
-      `docs:build` first runs `build:wasm`, which shells out to
-      `nix build .#table-wasm` for the drawTable playground module — hence Nix
-      in a job that otherwise only needs Node.
-    steps:
-      - install_node
-      - run:
-          name: Build the VitePress site
-          command: npm run docs:build
-          no_output_timeout: 20m
 
 # ---------------------------------------------------------------------------
 # Jobs
@@ -428,37 +400,6 @@ jobs:
       - save_nix_cache:
           cache_suffix: devshell-pre-commit
 
-  docs:
-    executor: linux
-    steps:
-      - checkout
-      - setup_nix:
-          cache_suffix: docs
-      - build_docs
-      - save_nix_cache:
-          cache_suffix: docs
-
-  docs-deploy:
-    executor: linux
-    steps:
-      - checkout
-      - run:
-          name: Skip unless the docs sources changed
-          # The twoslash showcase gallery is rendered from libs/twoslash at
-          # docs-build time (docs/scripts/build-twoslash-showcase.sh), so a
-          # fixture/renderer change must redeploy the docs too.
-          command: |
-            ci/paths-changed.sh docs/ libs/twoslash/ package.json package-lock.json \
-              || circleci-agent step halt
-      - setup_nix:
-          cache_suffix: docs
-      - build_docs
-      - run:
-          name: Deploy to Cloudflare Pages
-          command: ci/deploy-cloudflare-pages.sh
-      - save_nix_cache:
-          cache_suffix: docs
-
   # Pokes code.dlang.org to ingest the new release immediately. The registry
   # also background-scans registered repos on its own schedule, so this only
   # *speeds up* ingestion — it is not what makes a tag public.
@@ -537,8 +478,6 @@ workflows:
           context: sparkles-ci
       - lint:
           context: sparkles-ci
-      - docs:
-          context: sparkles-ci
       - ci:
           requires:
             - test-linux-ldc2
@@ -550,12 +489,6 @@ workflows:
             - nix-build-macos
             - nix-build-android
             - lint
-            - docs
-
-  docs:
-    jobs:
-      - docs-deploy:
-          context: sparkles-ci
 
   release:
     jobs:
