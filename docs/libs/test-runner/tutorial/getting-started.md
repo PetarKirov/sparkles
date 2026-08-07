@@ -6,28 +6,15 @@ without druntime, and as a benchmark.
 
 ## 1. Wire the runner into a package
 
-Both external projects and most in-tree sub-packages add one dependency to
-`configuration "unittest"` — a thin shim compiles in and links the prebuilt
-implementation library, so `dub test` stays close to a vanilla build:
+Add one dependency to `configuration "unittest"` — a thin shim compiles in and
+links the prebuilt implementation library, so `dub test` stays close to a
+vanilla build:
 
 ```sdl
 configuration "unittest" {
     dependency "sparkles:test-runner" version="*"   # in-tree: path="../.."
 
     dflags "-checkaction=context" "-allinst"
-}
-```
-
-The exception is `base`, `core-cli`, and `test-utils`: they are in the
-implementation library's dependency closure, so they cannot depend on it and
-source-include both packages instead (see
-[Design](../explanation/design.md) for why):
-
-```sdl
-importPaths "src" "../test-runner/src" "../test-runner-impl/src"
-
-configuration "unittest" {
-    sourcePaths "../test-runner/src" "../test-runner-impl/src"
 }
 ```
 
