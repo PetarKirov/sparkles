@@ -694,6 +694,216 @@ private int[] buildKeysToCheck()
 /// old code rebuilt this list with a GC `appender` every frame.
 private static immutable int[] keysToCheck = buildKeysToCheck();
 
+/// One keystroke as plain data — the seam between an input source (raylib
+/// polling today, `sparkles:input` events after the host migration) and the
+/// libghostty key encoder. Everything the encoder is told about a stroke lives
+/// here, so the byte stream a stroke produces is testable without a window or
+/// a pty — the oracle the migration is verified against.
+struct KeyStroke {
+    GhosttyKey key;
+    GhosttyKeyAction action;
+    GhosttyMods mods;
+    /// The key's unshifted codepoint (0 = none) — what lets the encoder tell
+    /// Ctrl+A (`\x01`) from a bare `a`.
+    uint unshiftedCodepoint;
+    /// The associated text, when the stroke produced any (empty on release
+    /// and for non-printable keys).
+    const(char)[] utf8;
+}
+
+/// Encodes `stroke` into `buf`, returning the bytes to write to the pty (a
+/// slice of `buf`; empty when the stroke encodes to nothing, e.g. a release
+/// under the legacy protocol). Shift consumed by a printable key is reported
+/// to the encoder, matching what a keyboard layout does — `A` is Shift+a with
+/// the shift consumed, not Shift applied to `A`.
+@system nothrow @nogc
+const(char)[] encodeKeyStroke(GhosttyKeyEncoder encoder, GhosttyKeyEvent event,
+    in KeyStroke stroke, return scope char[] buf)
+{
+    ghostty_key_event_set_key(event, stroke.key);
+    ghostty_key_event_set_action(event, stroke.action);
+    ghostty_key_event_set_mods(event, stroke.mods);
+    ghostty_key_event_set_unshifted_codepoint(event, stroke.unshiftedCodepoint);
+
+    GhosttyMods consumed = 0;
+    if (stroke.unshiftedCodepoint != 0 && (stroke.mods & GHOSTTY_MODS_SHIFT))
+        consumed |= GHOSTTY_MODS_SHIFT;
+    ghostty_key_event_set_consumed_mods(event, consumed);
+
+    if (stroke.utf8.length > 0)
+        ghostty_key_event_set_utf8(event, stroke.utf8.ptr, stroke.utf8.length);
+    else
+        ghostty_key_event_set_utf8(event, null, 0);
+
+    size_t written = 0;
+    GhosttyResult res = ghostty_key_encoder_encode(encoder, event, buf.ptr, buf.length, &written);
+    return res == GHOSTTY_SUCCESS ? buf[0 .. written] : null;
+}
+
+version (unittest)
+{
+    /// A live encoder + event pair for the fixtures, freed on scope exit.
+    private struct EncoderFixture
+    {
+        GhosttyKeyEncoder encoder;
+        GhosttyKeyEvent event;
+
+        @system nothrow @nogc:
+
+        static EncoderFixture open()
+        {
+            EncoderFixture f;
+            assert(ghostty_key_encoder_new(null, &f.encoder) == GHOSTTY_SUCCESS);
+            assert(ghostty_key_event_new(null, &f.event) == GHOSTTY_SUCCESS);
+            return f;
+        }
+
+        @disable this(this);
+
+        ~this()
+        {
+            if (event) ghostty_key_event_free(event);
+            if (encoder) ghostty_key_encoder_free(encoder);
+        }
+
+        void set(GhosttyKeyEncoderOption opt, bool v)
+            => ghostty_key_encoder_setopt(encoder, opt, &v);
+
+        const(char)[] encode(in KeyStroke s, return scope char[] buf)
+            => encodeKeyStroke(encoder, event, s, buf);
+    }
+
+    // `int m`, because the GHOSTTY_MODS_* constants come through ImportC as
+    // ints while GhosttyMods is a ushort.
+    private KeyStroke press(GhosttyKey k, int m = 0,
+        uint unshifted = 0, const(char)[] utf8 = null) @safe pure nothrow @nogc
+        => KeyStroke(key: k, action: GHOSTTY_KEY_ACTION_PRESS,
+            mods: cast(GhosttyMods) m,
+            unshiftedCodepoint: unshifted, utf8: utf8);
+}
+
+// The byte oracle: what each stroke writes to the pty, pinned per encoder
+// mode. This is the contract the host migration must preserve — when the
+// input source swaps from raylib polling to `sparkles:input` events, these
+// exact bytes must still come out.
+@("input.encodeKeyStroke.legacyDefaults")
+@system nothrow @nogc
+unittest
+{
+    auto f = EncoderFixture.open();
+    char[128] buf;
+
+    // The classics, under a fresh encoder (no terminal modes set).
+    assert(f.encode(press(GHOSTTY_KEY_ENTER), buf) == "\r");
+    assert(f.encode(press(GHOSTTY_KEY_TAB), buf) == "\t");
+    assert(f.encode(press(GHOSTTY_KEY_ESCAPE), buf) == "\x1b");
+    assert(f.encode(press(GHOSTTY_KEY_BACKSPACE), buf) == "\x7f",
+        "backarrow mode off: backspace is DEL");
+
+    // Cursor and navigation keys, normal (non-application) mode.
+    assert(f.encode(press(GHOSTTY_KEY_ARROW_UP), buf) == "\x1b[A");
+    assert(f.encode(press(GHOSTTY_KEY_ARROW_DOWN), buf) == "\x1b[B");
+    assert(f.encode(press(GHOSTTY_KEY_ARROW_RIGHT), buf) == "\x1b[C");
+    assert(f.encode(press(GHOSTTY_KEY_ARROW_LEFT), buf) == "\x1b[D");
+    assert(f.encode(press(GHOSTTY_KEY_HOME), buf) == "\x1b[H");
+    assert(f.encode(press(GHOSTTY_KEY_END), buf) == "\x1b[F");
+    assert(f.encode(press(GHOSTTY_KEY_PAGE_UP), buf) == "\x1b[5~");
+    assert(f.encode(press(GHOSTTY_KEY_PAGE_DOWN), buf) == "\x1b[6~");
+    assert(f.encode(press(GHOSTTY_KEY_INSERT), buf) == "\x1b[2~");
+    assert(f.encode(press(GHOSTTY_KEY_DELETE), buf) == "\x1b[3~");
+
+    // Function keys: F1-F4 are SS3, F5+ are CSI.
+    assert(f.encode(press(GHOSTTY_KEY_F1), buf) == "\x1bOP");
+    assert(f.encode(press(GHOSTTY_KEY_F4), buf) == "\x1bOS");
+    assert(f.encode(press(GHOSTTY_KEY_F5), buf) == "\x1b[15~");
+    assert(f.encode(press(GHOSTTY_KEY_F12), buf) == "\x1b[24~");
+}
+
+@("input.encodeKeyStroke.textAndModifiers")
+@system nothrow @nogc
+unittest
+{
+    auto f = EncoderFixture.open();
+    char[128] buf;
+
+    // A printable key passes its text through.
+    assert(f.encode(press(GHOSTTY_KEY_A, 0, 'a', "a"), buf) == "a");
+
+    // Shift+a producing "A": the shift is consumed by the layout, so the
+    // encoder emits the text — not a modified sequence.
+    assert(f.encode(press(GHOSTTY_KEY_A, GHOSTTY_MODS_SHIFT, 'a', "A"), buf) == "A");
+
+    // Ctrl+letter is the C0 control, from the unshifted codepoint.
+    assert(f.encode(press(GHOSTTY_KEY_A, GHOSTTY_MODS_CTRL, 'a'), buf) == "\x01");
+    assert(f.encode(press(GHOSTTY_KEY_C, GHOSTTY_MODS_CTRL, 'c'), buf) == "\x03");
+
+    // Ctrl+modified cursor key: the xterm modifier encoding.
+    assert(f.encode(press(GHOSTTY_KEY_ARROW_UP, GHOSTTY_MODS_CTRL), buf) == "\x1b[1;5A");
+    assert(f.encode(press(GHOSTTY_KEY_ARROW_LEFT, GHOSTTY_MODS_SHIFT), buf) == "\x1b[1;2D");
+
+    // A release encodes to nothing under the legacy protocol.
+    KeyStroke rel = press(GHOSTTY_KEY_ENTER);
+    rel.action = GHOSTTY_KEY_ACTION_RELEASE;
+    assert(f.encode(rel, buf).length == 0);
+
+    // A repeat encodes like a press.
+    KeyStroke rep = press(GHOSTTY_KEY_ARROW_DOWN);
+    rep.action = GHOSTTY_KEY_ACTION_REPEAT;
+    assert(f.encode(rep, buf) == "\x1b[B");
+}
+
+@("input.encodeKeyStroke.encoderModes")
+@system nothrow @nogc
+unittest
+{
+    auto f = EncoderFixture.open();
+    char[128] buf;
+
+    // DEC mode 1 (cursor key application): CSI becomes SS3.
+    f.set(GHOSTTY_KEY_ENCODER_OPT_CURSOR_KEY_APPLICATION, true);
+    assert(f.encode(press(GHOSTTY_KEY_ARROW_UP), buf) == "\x1bOA");
+    f.set(GHOSTTY_KEY_ENCODER_OPT_CURSOR_KEY_APPLICATION, false);
+
+    // DEC mode 1036: Alt prefixes the text with ESC. On macOS the encoder
+    // additionally gates this on option-as-alt (Option types text by default,
+    // so a fresh encoder emits plain "x" there); the fixture is about mode
+    // 1036, not the platform default, so pin option-as-alt explicitly —
+    // ignored on the other platforms, deterministic on macOS.
+    f.set(GHOSTTY_KEY_ENCODER_OPT_ALT_ESC_PREFIX, true);
+    GhosttyOptionAsAlt optAsAlt = GHOSTTY_OPTION_AS_ALT_TRUE;
+    ghostty_key_encoder_setopt(f.encoder,
+        GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT, &optAsAlt);
+    assert(f.encode(press(GHOSTTY_KEY_X, GHOSTTY_MODS_ALT, 'x', "x"), buf) == "\x1bx");
+    optAsAlt = GHOSTTY_OPTION_AS_ALT_FALSE;
+    ghostty_key_encoder_setopt(f.encoder,
+        GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT, &optAsAlt);
+    f.set(GHOSTTY_KEY_ENCODER_OPT_ALT_ESC_PREFIX, false);
+
+    // Backarrow mode: backspace flips from DEL to BS.
+    f.set(GHOSTTY_KEY_ENCODER_OPT_BACKARROW_KEY_MODE, true);
+    assert(f.encode(press(GHOSTTY_KEY_BACKSPACE), buf) == "\x08");
+    f.set(GHOSTTY_KEY_ENCODER_OPT_BACKARROW_KEY_MODE, false);
+}
+
+@("input.encodeKeyStroke.kittyProtocol")
+@system nothrow @nogc
+unittest
+{
+    auto f = EncoderFixture.open();
+    char[128] buf;
+
+    // Kitty disambiguate mode (flag 1): the keys that are ambiguous in the
+    // legacy encoding get CSI-u sequences, and a release reports.
+    ubyte flags = 1;
+    ghostty_key_encoder_setopt(f.encoder, GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &flags);
+
+    assert(f.encode(press(GHOSTTY_KEY_ESCAPE), buf) == "\x1b[27u");
+    assert(f.encode(press(GHOSTTY_KEY_A, GHOSTTY_MODS_CTRL, 'a'), buf) == "\x1b[97;5u");
+
+    // Plain text still passes through as text under disambiguate-only.
+    assert(f.encode(press(GHOSTTY_KEY_A, 0, 'a', "a"), buf) == "a");
+}
+
 @system nothrow @nogc
 void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, GhosttyTerminal terminal, ref SelectionState selState)
 {
@@ -779,34 +989,23 @@ void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, 
         if (gkey == GHOSTTY_KEY_UNIDENTIFIED)
             continue;
 
-        GhosttyKeyAction action = released ? GHOSTTY_KEY_ACTION_RELEASE :
-            pressed  ? GHOSTTY_KEY_ACTION_PRESS :
-            GHOSTTY_KEY_ACTION_REPEAT;
-
-        ghostty_key_event_set_key(event, gkey);
-        ghostty_key_event_set_action(event, action);
-        ghostty_key_event_set_mods(event, mods);
-
-        uint ucp = raylib_key_unshifted_codepoint(rl_key);
-        ghostty_key_event_set_unshifted_codepoint(event, ucp);
-
-        GhosttyMods consumed = 0;
-        if (ucp != 0 && (mods & GHOSTTY_MODS_SHIFT))
-            consumed |= GHOSTTY_MODS_SHIFT;
-        ghostty_key_event_set_consumed_mods(event, consumed);
-
-        if (char_utf8_len > 0 && !released) {
-            ghostty_key_event_set_utf8(event, char_utf8.ptr, char_utf8_len);
+        KeyStroke stroke = {
+            key: gkey,
+            action: released ? GHOSTTY_KEY_ACTION_RELEASE :
+                pressed  ? GHOSTTY_KEY_ACTION_PRESS :
+                GHOSTTY_KEY_ACTION_REPEAT,
+            mods: mods,
+            unshiftedCodepoint: raylib_key_unshifted_codepoint(rl_key),
+            utf8: (char_utf8_len > 0 && !released) ? char_utf8[0 .. char_utf8_len] : null,
+        };
+        // The typed text attaches to at most one stroke per frame.
+        if (stroke.utf8.length > 0)
             char_utf8_len = 0;
-        } else {
-            ghostty_key_event_set_utf8(event, null, 0);
-        }
 
         char[128] buf;
-        size_t written = 0;
-        GhosttyResult res = ghostty_key_encoder_encode(encoder, event, buf.ptr, buf.sizeof, &written);
-        if (res == GHOSTTY_SUCCESS && written > 0) {
-            pty_write(pty_fd, buf.ptr, written);
+        const bytes = encodeKeyStroke(encoder, event, stroke, buf);
+        if (bytes.length > 0) {
+            pty_write(pty_fd, bytes.ptr, bytes.length);
             char_utf8_len = 0;
         }
     }
