@@ -15,11 +15,13 @@ module sparkles.diff;
 public import sparkles.diff.classify : classifyHunks, formattingOnlyCount,
     isFormattingOnly;
 public import sparkles.diff.engine : diffText;
+public import sparkles.diff.identity : rowId, stampIds;
 public import sparkles.diff.model : Degradation, DiffDoc, DiffOptions, FileEntry,
     Hunk, Row, RowKind, Span;
 public import sparkles.diff.normalize : compareLines, isBlank, linesEqual,
     WhitespaceMode;
 public import sparkles.diff.patch : emitPatch, parsePatch;
+public import sparkles.diff.stage : emitSelectionPatch, selectHunk;
 public import sparkles.diff.refine : refinePairTokens,
     refineTokenize = tokenize, RefineToken = Token;
 public import sparkles.diff.table : cellsEqual, cellSpans, isSeparatorRow,

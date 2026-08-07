@@ -16,6 +16,7 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr, parseOk;
 import sparkles.base.text.writers : writeInteger;
 
+import sparkles.diff.identity : stampIds;
 import sparkles.diff.model : DiffDoc, DiffOptions, FileEntry, Hunk, Row, RowKind, Span;
 import sparkles.diff.pairing : pairChangeBlocks;
 import sparkles.diff.refine : refineRows;
@@ -214,6 +215,7 @@ ParseExpected!DiffDoc parsePatch(const(char)[] patch,
         // index …, mode lines, similarity index, commit preambles: skipped.
     }
     finishFile();
+    stampIds(doc); // `DST1`, as for a computed document
     return parseOk(doc);
 }
 
