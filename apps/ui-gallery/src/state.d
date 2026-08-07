@@ -154,6 +154,7 @@ struct GalleryState
     size_t componentsTab;    /// the Components page's active tab
     size_t componentsAction = size_t.max; /// …and its last activated segment
     ScrollState demoScroll;  /// the Scrolling page's own viewport offset
+    int inspectorLines = 40; /// how much of a dump the Inspector builds
 
     // ── what the host told us ───────────────────────────────────────────────
     Size surface = Size(80, 24); ///

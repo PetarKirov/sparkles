@@ -200,6 +200,17 @@ export default withMermaid(
                 },
               ],
             },
+            {
+              text: 'ui-gallery',
+              link: '/apps/ui-gallery/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Open issues',
+                  link: '/specs/ui-gallery/open-issues',
+                },
+              ],
+            },
           ],
         },
         {
@@ -820,6 +831,14 @@ export default withMermaid(
                   link: '/specs/diagram/feature-requirements',
                 },
                 { text: 'Delivery Plan', link: '/specs/diagram/PLAN' },
+              ],
+            },
+            {
+              text: 'UI Gallery',
+              collapsed: false,
+              items: [
+                { text: 'Overview', link: '/specs/ui-gallery/' },
+                { text: 'Open issues', link: '/specs/ui-gallery/open-issues' },
               ],
             },
             {

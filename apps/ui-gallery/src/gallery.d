@@ -96,6 +96,12 @@ struct Gallery
 
         const header = shellHeader(b);
         const content = contentPane(b, pageRoot, contentRows, viewport);
+        // The bands are pinned to one row each rather than left to fit. On a
+        // short terminal the sidebar's natural height exceeds the surface, and
+        // a column that has to reclaim the difference takes it from whichever
+        // child will give — which was the header, leaving it drawn on top of
+        // the page. `grow` on the body is what absorbs the shortfall.
+        b.nodes[header].height = SizeSpec.fixed(1);
 
         // On a narrow surface the list yields its width rather than squeezing
         // the catalog into a third of the screen. `collapsed`, not `hidden`:
@@ -112,6 +118,7 @@ struct Gallery
             height: SizeSpec.grow(),
         ));
         const footer = statusBar(b);
+        b.nodes[footer].height = SizeSpec.fixed(1);
 
         uint root = b.add(Widget(
             kind: WidgetKind.column,
@@ -384,7 +391,20 @@ struct Gallery
             text: s.themeName,
             slot: Slot.chrome,
         ));
-        return headerBar(b, [title, blurb], centre, [themeTag]);
+
+        // Segments are dropped by priority as the surface narrows, rather than
+        // squeezed into each other: the layout engine reclaims overflow by
+        // shrinking allocations, and a shrunk text run still paints its whole
+        // string — so three segments that no longer fit overprint. The title
+        // always survives; the blurb goes first, the theme name next.
+        uint[] leading = [title];
+        if (s.surface.width >= 56)
+            leading ~= blurb;
+        uint[] trailing;
+        if (s.surface.width >= 40)
+            trailing ~= themeTag;
+
+        return headerBar(b, leading, centre, trailing);
     }
 
     private uint navPane(ref Builder b) @safe
@@ -720,6 +740,48 @@ version (unittest)
             pos: Point(3, cast(int)(1 + i))), targets);
         assert(hover.hot == hitNav + i, "nav row " ~ p.title ~ " hit mismatch");
     }
+}
+
+@("ui_gallery.gallery.theShellsBandsTileTheSurfaceAndNeverOverlap")
+@safe unittest
+{
+    import registry : pages;
+    import sparkles.ui.geometry : Constraints;
+
+    // The defect this rules out, found on a 12-row terminal: the sidebar's
+    // natural height exceeded the surface, the root column reclaimed the
+    // difference from the header, and the page was drawn on top of it. Bands
+    // that tile — each starting where the last ended, together spanning the
+    // surface — cannot express that.
+    static immutable int[2][] surfaces =
+        [[80, 24], [120, 40], [60, 12], [46, 8], [30, 6]];
+
+    foreach (i, ref p; pages)
+        foreach (ref wh; surfaces)
+        {
+            Gallery g;
+            g.s.page = i;
+            RecordingHost h;
+            h.size = sizeOf(wh[0], wh[1]);
+            auto tree = g.view(h);
+            auto frames = layout(tree, Constraints(maxW: wh[0], maxH: wh[1]));
+
+            // The root is the shell column (or the stack over it when the help
+            // overlay is open, which it is not here).
+            const bands = tree.nodes[tree.root].children;
+            assert(bands.length == 3, "header, body, footer");
+
+            int edge = frames[tree.root].rect.y;
+            foreach (band; bands)
+            {
+                assert(frames[band].rect.y == edge,
+                    p.title ~ ": the shell's bands overlap");
+                edge += frames[band].rect.height;
+            }
+            assert(edge <= wh[1], p.title ~ ": the shell exceeds the surface");
+            assert(frames[bands[0]].rect.height == 1, "the header is one row");
+            assert(frames[bands[2]].rect.height == 1, "so is the status bar");
+        }
 }
 
 @("ui_gallery.gallery.pageKeysAreGatedOnTheContentRegion")
