@@ -65,6 +65,7 @@ PR — which gets no secrets — still run the pipeline.
 | `deploy-cloudflare-pages.sh` | `wrangler pages deploy`, then upserts the preview-URL comment                            |
 | `pr-comment.sh`              | Marker-keyed comment upsert, so re-runs edit instead of appending                        |
 | `paths-changed.sh`           | CircleCI's stand-in for `on: push: paths:` — pair with `circleci-agent step halt`        |
+| `run-batch.sh`               | Wall-clock `timeout` + non-interactive stdout for the long steps                         |
 | `install-ldc-windows.sh`     | LDC + bundled dub on a Windows runner (CircleCI has no D orb)                            |
 
 Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
@@ -189,8 +190,10 @@ route it through `ci` or redirect `</dev/null` yourself.
 - **No per-job wall-clock timeout.** The GitHub `timeout-minutes` caps exist
   because the hosted Apple-Silicon runner occasionally hangs (a 5m job has
   stalled for 78m). CircleCI's `no_output_timeout` only catches a step that
-  goes _silent_, which is not the same failure. The project-wide max-runtime
-  setting is the closest equivalent.
+  goes _silent_ — and worse, `ci` renders a live spinner here (stdout is a
+  TTY), so a stalled step produces output forever and can never trip it. The
+  long steps therefore run under `ci/run-batch.sh <limit> …`, which supplies
+  a real `timeout` and pipes stdout so the spinner degrades to plain lines.
 - **`paths:` filters** become an in-job `paths-changed.sh` check plus
   `circleci-agent step halt`. The job still spins up before deciding.
 
