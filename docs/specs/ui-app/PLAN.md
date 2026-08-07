@@ -239,7 +239,8 @@ the two hosts already share.
 A draw.io-style board — infinite canvas, camera pan, wheel zoom, minimap, create /
 select / group / label, orthogonal connectors, context menu — built on the host with
 **zero** backend imports (`APP2`). It exists to stress the abstraction with an
-application neither existing app resembles.
+application neither existing app resembles. The full requirement tree and its
+delivery plan live in [docs/specs/diagram](../diagram/index.md).
 
 Two commit series: the MVP board (scaffold, camera, world, input, render, minimap),
 then menus, groups, labels, connectors and fit-all.
