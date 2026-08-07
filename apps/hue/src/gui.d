@@ -1699,6 +1699,13 @@ int runGui(
                 case Command.viewScrollEnd:
                     vm.scrollEndHorizontal();
                     break;
+                // `DST2`/`DST4`: the write surface is terminal-only for now —
+                // the GUI has no place to put a discard confirmation yet, and
+                // offering stage without it would be lopsided.
+                case Command.diffStage:
+                case Command.diffUnstage:
+                case Command.diffDiscard:
+                    break;
                 case Command.toggleView:
                     toggleView();
                     break;
