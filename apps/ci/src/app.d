@@ -97,7 +97,7 @@ module app;
 import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
 import std.array : array, join;
 import std.conv : text, to;
-import core.time : msecs, seconds;
+import core.time : Duration, msecs, seconds;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
 import std.parallelism : TaskPool, totalCPUs;
 import std.path : baseName, buildPath;
@@ -111,8 +111,11 @@ import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight,
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
 import sparkles.base.logger : error, info, initLogger, LogLevel, trace, warning;
 import sparkles.core_cli.process_utils :
-    ChildStdin, executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes;
+    ChildStdin, executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes,
+    timedOutStatus;
+import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.styled_template : styledText, styledWritelnErr;
+import sparkles.base.text.writers : writeDuration;
 import sparkles.core_cli.term_unstyle : unstyle;
 import sparkles.ui.components.box : BoxProps, drawBox, TitleOverflow;
 import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
@@ -1021,6 +1024,32 @@ private uint exampleJobCount()
     return jobs > hardCap ? hardCap : jobs;
 }
 
+/**
+Wall-clock budget for a single example.
+
+An example that wedges must fail naming itself rather than consuming the whole
+CI step. One stuck example (`valgrind-attribution.d`, on a CircleCI runner)
+burned a 20-minute job and the log named nothing at all — the last line was the
+*previous* example's success.
+
+Deliberately generous: examples normally take a couple of seconds, so this only
+ever fires on a genuine wedge. Override with `SPARKLES_CI_EXAMPLE_TIMEOUT`
+(seconds; `0` disables the cap).
+*/
+private Duration exampleTimeout()
+{
+    if (auto raw = environment.get("SPARKLES_CI_EXAMPLE_TIMEOUT"))
+    {
+        try
+        {
+            const n = raw.to!long;
+            return n <= 0 ? Duration.zero : n.seconds;
+        }
+        catch (Exception) { /* fall through to the default */ }
+    }
+    return 300.seconds;
+}
+
 /// Total physical memory in GiB, or 0 when it cannot be determined (non-Linux,
 /// or `/proc/meminfo` unavailable) — callers treat 0 as "no memory-based cap".
 private size_t totalMemoryGiB()
@@ -1077,6 +1106,13 @@ private ExecutionResult[] executeExamplesParallel(Example[] examples, string rep
     }
 
     const jobs = exampleJobCount();
+
+    // Log the fan-out, because it is the single biggest lever on this mode's
+    // runtime and was previously invisible. It also exposes a host whose
+    // reported core count is not what the job may actually use: a CI runner
+    // that applies a cgroup CPU limit still reports the *host's* cores here,
+    // so the pool silently oversubscribes. `SPARKLES_CI_JOBS` is the override.
+    info(i"{dim Examples:} $(examples.length){dim , parallel jobs:} $(jobs){dim , totalCPUs:} $(totalCPUs)");
 
     // The calling thread no longer participates in the work (it polls), so the
     // pool holds all `jobs` workers.
@@ -1533,7 +1569,7 @@ ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqu
     auto dubHome = buildPath(exampleDir, "dub-home");
     auto cmd = ["/usr/bin/env", "DUB_HOME=" ~ dubHome]
         ~ dubSingleFileCommand("run", tmpFile, repoRoot);
-    auto result = executeLogged(cmd, "run " ~ example.name);
+    auto result = executeLogged(cmd, "run " ~ example.name, exampleTimeout());
 
     // Strip ANSI codes, then trim trailing whitespace from each line
     // so output matches what pre-commit hooks produce in markdown files.
@@ -1566,7 +1602,22 @@ terminal made it render a select prompt and then fail on the EOF that followed.
 An empty stdin makes the answer `false` everywhere, including on a developer's
 terminal.
 */
-private MonitoredResult executeLogged(const(string)[] args, string label)
+/// Fold the timeout into the captured output, so the reason travels with the
+/// result to every renderer. A wedged child produces no output at all, so
+/// without this its failure box is simply empty.
+private MonitoredResult noteIfTimedOut(MonitoredResult result, Duration timeout)
+{
+    if (!result.timedOut)
+        return result;
+
+    SmallBuffer!(char, 32) budget;
+    writeDuration(budget, timeout);
+    result.output ~= i"\n[ci] no output — killed after $(budget[]) (timeout)\n".text;
+    return result;
+}
+
+private MonitoredResult executeLogged(
+    const(string)[] args, string label, Duration timeout = Duration.zero)
 {
     import std.array : join;
     import std.logger : globalLogLevel;
@@ -1574,7 +1625,9 @@ private MonitoredResult executeLogged(const(string)[] args, string label)
     import sparkles.base.text.writers : writeBytes, writeDuration;
 
     if (globalLogLevel > LogLevel.trace)
-        return executeMonitored(args, 5.seconds, null, ChildStdin.empty);
+        return noteIfTimedOut(
+            executeMonitored(args, 5.seconds, null, ChildStdin.empty, timeout),
+            timeout);
 
     const cmd = args.join(" ");
     trace(i"{dim ▸ $(label):} {dim $(cmd)}");
@@ -1592,7 +1645,7 @@ private MonitoredResult executeLogged(const(string)[] args, string label)
             writeDuration(cpu, u.cpuTime);
             trace(i"{dim   $(label)} rss=$(rss[]) cpu=$(cpu[])");
         }
-    }, ChildStdin.empty);
+    }, ChildStdin.empty, timeout);
 
     if (res.usage.sampled)
     {
@@ -1605,7 +1658,7 @@ private MonitoredResult executeLogged(const(string)[] args, string label)
     else
         trace(i"{dim ◂ $(label):} exit=$(res.status) (resource sampling unavailable here)");
 
-    return res;
+    return noteIfTimedOut(res, timeout);
 }
 
 private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
@@ -1712,7 +1765,8 @@ private ExecutionResult executeStandaloneExampleFile(
 {
     auto result = executeLogged(
         dubSingleFileCommand(standaloneExampleAction(mode), exampleFile, repoRoot),
-        standaloneExampleAction(mode) ~ " " ~ exampleFile.baseName);
+        standaloneExampleAction(mode) ~ " " ~ exampleFile.baseName,
+        exampleTimeout());
     auto cleaned = result.output.unstyle
         .lineSplitter
         .map!(l => l.stripRight)
