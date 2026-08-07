@@ -160,7 +160,7 @@ private Group[] collectGroups(TSNode root, scope const(char)[] source,
                 }
                 else
                     open.rows.end = r.end_point.row;
-                open.keys ~= normalized(source[r.start_byte .. r.end_byte]);
+                open.keys ~= normalizedText(source[r.start_byte .. r.end_byte]);
             }
             else
             {
@@ -177,10 +177,11 @@ private Group[] collectGroups(TSNode root, scope const(char)[] source,
     return groups;
 }
 
-/// The child's text with whitespace runs collapsed to one space and the ends
-/// trimmed — so a re-indented or re-wrapped member still matches itself, and
-/// `DVN7` composes with `DVN1` rather than fighting it.
-private string normalized(scope const(char)[] text) @safe pure nothrow
+/// Text with whitespace runs collapsed to one space and the ends trimmed — so
+/// a re-indented or re-wrapped construct still matches itself, and `DVN7`
+/// composes with `DVN1` rather than fighting it. Shared with `DVN6`, whose
+/// block alignment wants exactly the same notion of "the same content".
+string normalizedText(scope const(char)[] text) @safe pure nothrow
 {
     char[] out_;
     bool pendingSpace, seen;
@@ -269,11 +270,11 @@ CommutativeKind[] parseCommutativeKinds(const(char)[] spec, out bool ok) @safe
     assert(partial[$ - 1] == CommutativeKind("ini", "section"));
 }
 
-@("diff_commutative.normalized.collapsesWhitespace")
+@("diff_commutative.normalizedText.collapsesWhitespace")
 @safe pure nothrow unittest
 {
-    assert(normalized("  import  std.stdio ;\n") == "import std.stdio ;");
-    assert(normalized("import\n    std.stdio;") == "import std.stdio;");
+    assert(normalizedText("  import  std.stdio ;\n") == "import std.stdio ;");
+    assert(normalizedText("import\n    std.stdio;") == "import std.stdio;");
 }
 
 @("diff_commutative.findPermutations.sortedImports")
