@@ -16,6 +16,7 @@ import sparkles.base.term_color : mix;
 import sparkles.diff.model : DiffDoc;
 import diff_session : DiffSession, SessionEntry;
 import diff_view : TypeOverlay;
+import table_select : serializeTable, TableCopyFormat, TableRegion;
 import core.time : Duration;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
 import lantern : LanternState, ltnStep = step, ltnTick = tick,
@@ -199,6 +200,7 @@ struct PreviewTui
     private enum size_t fenceHitBase = ViewerModel.fenceHitBase;
     private enum size_t codeTabHitBase = ViewerModel.codeTabHitBase;
     private enum size_t foldHitBase = ViewerModel.foldHitBase;
+    private enum size_t tableCopyHitBase = ViewerModel.tableCopyHitBase;
 
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
 
@@ -675,6 +677,34 @@ struct PreviewTui
             }
     }
 
+    // Copy a whole table (TBL6) as TSV, resolved from the top-border
+    // cutout's source-anchored hit id; the cutout then shows the ✔ glyph.
+    private void copyTableAt(size_t spanStart) @system
+    {
+        const ti = vm.tableIndexOfSpan(spanStart);
+        if (ti < 0)
+            return;
+        const dims = vm.tableDims(ti);
+        TableRegion reg = {
+            rowLo: 0, colLo: 0,
+            rowHi: dims.rows ? dims.rows - 1 : 0,
+            colHi: dims.cols ? dims.cols - 1 : 0,
+        };
+        const(char)[] cellText(size_t r, size_t c)
+        {
+            foreach (ref const mc; vm.cellList)
+                if (mc.table == ti && mc.row == r && mc.col == c
+                    && mc.span.end <= vm.source.length)
+                    return vm.source[mc.span.start .. mc.span.end];
+            return "";
+        }
+
+        const txt = serializeTable(reg, &cellText, TableCopyFormat.tsv);
+        if (txt.length)
+            writeClipboard(txt);
+        vm.markTableCopied(spanStart);
+    }
+
     // Applies `op` at the selection (else the top row), over the row's
     // source identity — the model owns the innermost-region policy (FLD5).
     /// `DVG1`/`DVG3`: whether the diff session is the thing the fold and
@@ -1082,6 +1112,12 @@ struct PreviewTui
                         && t.rect.contains(p))
                     {
                         vm.activateCodeTab(t.hitId - codeTabHitBase);
+                        return true;
+                    }
+                    if (t.hitId >= tableCopyHitBase
+                        && t.hitId < codeTabHitBase && t.rect.contains(p))
+                    {
+                        copyTableAt(t.hitId - tableCopyHitBase);
                         return true;
                     }
                 }

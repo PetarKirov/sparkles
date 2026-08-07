@@ -1913,8 +1913,7 @@ int runGui(
         if (flash.copiedShown && !flash.copiedFlash.visible)
         {
             flash.copiedShown = false;
-            vm.copiedFenceSrc = size_t.max;
-            vm.rebuild();
+            vm.clearCopied(); // fence header / table cutout revert + rebuild
         }
 
         bool copyClicked; // a click landing on a copy button is not a selection
@@ -1978,13 +1977,49 @@ int runGui(
                                 const txt = (cm.ansiStrip && f.isAnsi)
                                     ? stripSgr(fbody) : fbody;
                                 copyToClipboard(txt);
-                                vm.copiedFenceSrc = bodyStart;
                                 flash.copiedFlash = Timeline.triggered(copiedCfg);
                                 flash.copiedShown = true;
                                 copyClicked = true;
-                                vm.rebuild(); // the header now shows the ✔
+                                vm.markCopied(bodyStart); // header shows the ✔
                                 break;
                             }
+                        break;
+                    }
+                    // The whole-table copy button in the top-border cutout
+                    // (TBL6): serialize the full grid per `--table-copy`.
+                    if (tgt.hitId >= vm.tableCopyHitBase
+                        && tgt.hitId < vm.codeTabHitBase
+                        && tgt.rect.contains(dp))
+                    {
+                        const spanStart = tgt.hitId - vm.tableCopyHitBase;
+                        const ti = vm.tableIndexOfSpan(spanStart);
+                        if (ti >= 0)
+                        {
+                            const dims = vm.tableDims(ti);
+                            TableRegion reg = {
+                                rowLo: 0, colLo: 0,
+                                rowHi: dims.rows ? dims.rows - 1 : 0,
+                                colHi: dims.cols ? dims.cols - 1 : 0,
+                            };
+                            const(char)[] cellText(size_t r, size_t c)
+                            {
+                                foreach (ref const mc; vm.cellList)
+                                    if (mc.table == ti && mc.row == r
+                                        && mc.col == c
+                                        && mc.span.end <= vm.source.length)
+                                        return vm.source[mc.span.start
+                                            .. mc.span.end];
+                                return "";
+                            }
+                            const txt = serializeTable(reg, &cellText,
+                                cm.tableFmt);
+                            if (txt.length)
+                                copyToClipboard(txt);
+                            flash.copiedFlash = Timeline.triggered(copiedCfg);
+                            flash.copiedShown = true;
+                            copyClicked = true;
+                            vm.markTableCopied(spanStart); // cutout shows ✔
+                        }
                         break;
                     }
                 }
