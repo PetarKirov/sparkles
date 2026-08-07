@@ -11,8 +11,9 @@ Adding a page is two lines: the module, and its row here.
 */
 module registry;
 
-import sparkles.input : KeyEvent;
-import sparkles.ui.widget : Builder;
+import sparkles.input : KeyEvent, PointerEvent;
+import sparkles.ui.layout : Frame;
+import sparkles.ui.widget : Builder, WidgetTree;
 
 import state : GalleryState;
 
@@ -30,7 +31,8 @@ import pages.machines_page : machinesAnimating = animating,
     machinesKeys = keys, machinesOnActivate = handleActivate,
     machinesOnKey = handleKey, machinesStep = step, machinesView = view;
 import pages.scrolling_page : scrollingKeys = keys,
-    scrollingOnKey = handleKey, scrollingView = view;
+    scrollingOnKey = handleKey, scrollingOnPointer = handlePointer,
+    scrollingStep = step, scrollingView = view;
 import pages.split_page : splitKeys = keys, splitOnKey = handleKey,
     splitView = view;
 import pages.tree_page : treeKeys = keys, treeOnActivate = handleActivate,
@@ -81,6 +83,19 @@ struct Page
     page can be interactive without the shell importing it to find out how.
     */
     bool function(ref GalleryState s, size_t hitId) @safe onActivate;
+
+    /**
+    The page's own pointer handling, or `null`. Returns `true` iff it consumed
+    the event.
+
+    Handed the tree and the frames the painter used, because an affordance that
+    is grabbed — a scrollbar, a divider — needs its $(B painted rect) and the
+    shell has no way to know which node that is. Offered before the shell's own
+    hover/press routing, since a grab in flight outranks whatever the pointer
+    happens to be passing over.
+    */
+    bool function(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
+        in Frame[] frames) @safe onPointer;
 }
 
 /**
@@ -107,7 +122,7 @@ static immutable Page[] pages = [
     Page("Tree", "data, interaction, view", &treeView_,
         treeKeys, &treeOnKey, &treeOnActivate),
     Page("Scrolling", "one thumb formula", &scrollingView,
-        scrollingKeys, &scrollingOnKey),
+        scrollingKeys, &scrollingOnKey, null, &scrollingOnPointer),
     Page("State", "the interaction machines", &machinesView,
         machinesKeys, &machinesOnKey, &machinesOnActivate),
     Page("Split", "a divider between two panes", &splitView,
@@ -121,6 +136,7 @@ static immutable Page[] pages = [
 bool stepPage(ref GalleryState s, int dtMs)
 {
     machinesStep(s, dtMs);
+    scrollingStep(s, dtMs);
     return machinesAnimating(s);
 }
 

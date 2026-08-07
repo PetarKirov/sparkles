@@ -39,6 +39,7 @@ real consumer.
 | `UGL13` | A frame can be rendered with no terminal and no display (`--render` / `--render-plain`).                                                                      | full   |
 | `UGL14` | An animation asks for one frame at a time and stops asking; a target with no frame clock is never woken by one.                                               | full   |
 | `UGL15` | The sidebar yields its width below a 60-column surface and is restorable with a key.                                                                          | full   |
+| `UGL16` | Every scrollbar is a `ScrollView`: grabbable, capture-arbitrated, hover-expanding, and eased — never a drawn thumb over a bare offset.                        | full   |
 
 ## Shape
 
@@ -50,6 +51,7 @@ apps/ui-gallery/src/
 ├── state.d      # GalleryState: every machine the shell owns
 ├── registry.d   # the Page table, and the catalog sweep
 ├── kit.d        # the small view vocabulary the pages are written in
+├── scrollbars.d # driving a ScrollView: grab, capture, ease, and the widget
 ├── render.d     # one frame to ANSI or glyphs, no backend
 └── pages/       # one module per catalog entry
 ```

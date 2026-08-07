@@ -15,9 +15,9 @@ module state;
 
 import sparkles.input : InputCapabilities;
 import sparkles.ui.geometry : Size;
+import sparkles.ui.scroll_view : ScrollbarAnim, ScrollView;
 import sparkles.ui.state : CaptureState, DisclosureState, FocusState,
-    HoverState, PressState, ScrollbarState, ScrollState, Selection, SplitState,
-    Timeline;
+    HoverState, PressState, ScrollState, Selection, SplitState, Timeline;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinThemes;
 import sparkles.ui.widget : Alignment, Visibility;
@@ -68,7 +68,8 @@ enum size_t hitTheme = 3000;    /// the theme browser's rows
 enum size_t hitTabs = 4000;     /// the components page's tab strip
 enum size_t hitActions = 5000;  /// the components page's action bar
 enum size_t hitTree = 6000;     /// the tree page's rows
-enum size_t hitScrollbar = 7000; /// the scrolling page's bar
+enum size_t hitContentBar = 7000; /// the shell's content-pane scrollbar
+enum size_t hitDemoBar = 7100;    /// the Scrolling page's specimen bar
 enum size_t hitSplit = 8000;    /// the split page's divider
 enum size_t hitMachines = 9000; /// the state-machine page's tiles
 
@@ -136,9 +137,21 @@ struct GalleryState
     HoverState hover;    ///
     PressState press;    ///
     CaptureState capture; ///
-    ScrollState contentScroll; ///
+    /**
+    The content pane's scrolling, whole.
+
+    A `ScrollView` rather than a `ScrollState`: the offset is the least of what
+    a scrollbar is, and an application that keeps only the offset has silently
+    given up the grab, the hover, the capture arbitration and the easing. The
+    animation starts at the idle width rather than the type's px-shaped default
+    of four.
+    */
+    ScrollView contentView = ScrollView(
+        vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
+    /// The page's height at the last measurement, so a key handler — which has
+    /// no builder — can clamp against the same number the thumb came from.
+    int contentRows;
     ScrollState navScroll;     ///
-    ScrollbarState contentBar; ///
     Timeline toast;      /// the transient "theme: nord" notice
     string toastText;    /// ditto
     bool hasFrameClock;  /// ditto — see `toastConfigFor`
@@ -153,7 +166,10 @@ struct GalleryState
     size_t themeListTop;     /// first visible row of the theme browser
     size_t componentsTab;    /// the Components page's active tab
     size_t componentsAction = size_t.max; /// …and its last activated segment
-    ScrollState demoScroll;  /// the Scrolling page's own viewport offset
+    /// The Scrolling page's own viewport — a second `ScrollView` over a
+    /// second document, so a reader can grab one without the other moving.
+    ScrollView demoView = ScrollView(
+        vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
     int inspectorLines = 40; /// how much of a dump the Inspector builds
 
     // ── what the host told us ───────────────────────────────────────────────
@@ -289,12 +305,15 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
     // Every base is non-zero (zero means "not hit-testable") and they are
     // ordered with room to grow — an overlap would let a press on one region
     // activate an affordance in another.
+    // Ascending, non-zero, and never equal. The gap is a thousand except
+    // between the two scrollbars, which are a hundred apart because they are
+    // one kind of thing and neither will ever mint more than one id.
     static immutable size_t[] bases = [hitNav, hitTheme, hitTabs, hitActions,
-        hitTree, hitScrollbar, hitSplit, hitMachines];
+        hitTree, hitContentBar, hitDemoBar, hitSplit, hitMachines];
     foreach (i, b; bases)
     {
         assert(b != 0);
         if (i > 0)
-            assert(b >= bases[i - 1] + 1000);
+            assert(b > bases[i - 1]);
     }
 }

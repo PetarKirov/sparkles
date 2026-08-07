@@ -17,10 +17,11 @@ import std.conv : text;
 
 import sparkles.input : Event, isDismiss, Key, KeyAction, KeyEvent, match,
     PointerAction, PointerEvent, ResizeEvent, WheelEvent;
-import sparkles.ui.components.chrome : headerBar, scrollbar, scrollView;
+import sparkles.ui.components.chrome : headerBar, scrollView;
 import sparkles.ui.geometry : Constraints, Insets, Point, SizeSpec;
 import sparkles.ui.layout : layout;
-import sparkles.ui.state : hoverTargets;
+import sparkles.ui.scroll_view : ScrollExtents, ScrollView;
+import sparkles.ui.state : hoverTargets, ScrollState, wantedPointerShape;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
@@ -28,6 +29,7 @@ import compat : AppTheme;
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
 import registry : pages, stepPage;
+import scrollbars;
 import state;
 
 // No module-level `@safe:` here, deliberately. `view` and `handle` are member
@@ -90,12 +92,22 @@ struct Gallery
         // view that clips it is built — one measurement, shared by the
         // viewport, the clamp and the scrollbar, so the three cannot disagree.
         const pageRoot = pages[s.page].view(b, s);
-        const contentRows = measureHeight(b, pageRoot, s.contentWidth);
+        s.contentRows = measureHeight(b, pageRoot, s.contentWidth);
         const viewport = s.contentHeight;
-        s.contentScroll = s.contentScroll.scrolledBy(0, contentRows, viewport);
+        const geom = contentBarGeometry();
+
+        // Sync the machine from the measurement and clamp: a page that shrank
+        // under a scrolled-down viewport must not leave the thumb past its own
+        // track. `scrolledTo` is how an external move keeps the bar honest.
+        s.contentView.v = s.contentView.v.scrolledTo(
+            ScrollView.clampOffset(s.contentView.v.offset, geom.content,
+                geom.viewport));
+        // The hover-expand easing, at the shared rate. On a target with no
+        // frame clock this snaps instead — see `scrollbars.easeVertical`.
+        easeVertical(s.contentView, s.caps, dtMs / 1000.0f);
 
         const header = shellHeader(b);
-        const content = contentPane(b, pageRoot, contentRows, viewport);
+        const content = contentPane(b, pageRoot, viewport, geom);
         // The bands are pinned to one row each rather than left to fit. On a
         // short terminal the sidebar's natural height exceeds the surface, and
         // a column that has to reclaim the difference takes it from whichever
@@ -137,7 +149,12 @@ struct Gallery
 
         // An animation asks for one more frame at a time, so a finished one
         // stops costing anything without having to remember to turn itself off.
-        if ((s.toast.visible || pageAnimating) && s.hasFrameClock)
+        // …including the scrollbar's width, which is why hovering one is an
+        // animation rather than a jump: the frames it asks for are the frames
+        // the ease needs.
+        if ((s.toast.visible || pageAnimating
+                || easing(s.contentView, s.caps)
+                || easing(s.demoView, s.caps)) && s.hasFrameClock)
             h.requestFrame();
 
         return b.finish(root);
@@ -249,13 +266,24 @@ struct Gallery
         scrollContent(delta);
     }
 
+    /// What the content pane's bar scrolls over, from the last measurement.
+    /// One definition, because the viewport, the clamp, the thumb and the grab
+    /// all read it and three of the four being right is indistinguishable from
+    /// all four being right until someone drags.
+    private BarGeometry contentBarGeometry() @safe
+        => BarGeometry(
+            content: s.contentRows,
+            viewport: s.contentHeight,
+            track: s.contentHeight,
+        );
+
     private void scrollContent(int delta) @safe
     {
-        // Clamped against the last measured content height, which `view` keeps
-        // current — the same number the scrollbar's thumb comes from.
-        s.contentScroll = s.contentScroll.scrolledBy(delta,
-            s.contentScroll.offset + s.contentHeight + measuredOverflow,
-            s.contentHeight);
+        // Through the machine, not around it: an offset moved behind the bar's
+        // back leaves the thumb where it was until something else re-syncs it.
+        const g = contentBarGeometry();
+        s.contentView.wheeledV(delta,
+            ScrollExtents(g.content, g.viewport, g.track));
     }
 
     private void setPage(size_t to) @safe
@@ -265,8 +293,9 @@ struct Gallery
         s.lastPage = s.page;
         s.page = to;
         // A new page starts at its top. Carrying the previous page's offset
-        // would land a short page scrolled past its own end.
-        s.contentScroll = typeof(s.contentScroll).init;
+        // would land a short page scrolled past its own end. The bar's own
+        // state — hover, animation width — is kept: the pointer has not moved.
+        s.contentView.v = s.contentView.v.scrolledTo(0);
     }
 
     private void cycleTheme(int delta) @safe
@@ -290,8 +319,36 @@ struct Gallery
         // clickable cannot drift. Rebuilding the tree here costs one extra
         // layout per pointer event and buys the invariant outright.
         auto tree = view(h);
-        const targets = hoverTargets(tree, layout(tree,
-            Constraints(maxW: s.surface.width, maxH: s.surface.height)));
+        auto frames = layout(tree,
+            Constraints(maxW: s.surface.width, maxH: s.surface.height));
+        const targets = hoverTargets(tree, frames);
+
+        // The scrollbars first, and unconditionally. A grab owns the pointer
+        // for its whole span, so the bar must see every move — including the
+        // ones that stray off it, which is exactly when a bar wired only to
+        // its own hover rect lets go halfway through a drag.
+        if (driveVertical(s.contentView, s.capture, capContentBar, p,
+                rectOf(tree, frames, hitContentBar), contentBarGeometry()))
+        {
+            // Consumed: a live grab is not also a press on whatever it passes
+            // over. Hover still updates, so the bar stays lit while held.
+            s.hover.update(p, targets);
+            reportPointerShape(h);
+            return;
+        }
+
+        // …then the showing page's own affordances, which know geometry the
+        // shell does not.
+        if (pages[s.page].onPointer !is null
+            && pages[s.page].onPointer(s, p, tree, frames))
+        {
+            s.hover.update(p, targets);
+            reportPointerShape(h);
+            return;
+        }
+
+        scope (exit)
+            reportPointerShape(h);
 
         final switch (p.action)
         {
@@ -358,6 +415,23 @@ struct Gallery
         // The producer already multiplied by `linesPerNotch`; multiplying again
         // here is the bug `INP12` names.
         scrollContent(w.dy);
+    }
+
+    /**
+    Asks the host for the pointer shape the interaction wants.
+
+    A live grab outranks every hover, including one belonging to something
+    else — otherwise the cursor flickers back to an arrow the moment a drag
+    leaves the affordance that started it. Re-asserted on every event rather
+    than only on change, because some terminals reset the pointer themselves
+    when a drag begins and a repeated OSC 22 is a few idempotent bytes.
+    */
+    private void reportPointerShape(H)(ref H h)
+    {
+        const overDivider = s.pointerAffordances && s.hover.isHot(hitSplit);
+        auto want = wantedPointerShape(s.split, overDivider,
+            s.contentView.v, s.demoView.v);
+        h.pointerShape(want);
     }
 
     // ── views ───────────────────────────────────────────────────────────────
@@ -461,26 +535,23 @@ struct Gallery
         ));
     }
 
-    private uint contentPane(ref Builder b, uint pageRoot, int contentRows,
-        int viewport) @safe
+    private uint contentPane(ref Builder b, uint pageRoot, int viewport,
+        in BarGeometry geom) @safe
     {
-        const view_ = scrollView(b, pageRoot, viewport, s.contentScroll,
-            keyContentScroll);
+        const view_ = scrollView(b, pageRoot, viewport,
+            ScrollState(s.contentView.v.offset), keyContentScroll);
 
         // The gutter is always there; only the bar inside it comes and goes. A
         // track beside content that fits says nothing, but a gutter that
         // appeared with it would reflow the whole page sideways the moment it
         // grew past the viewport (`GalleryState.contentWidth`).
-        const bar = contentRows > viewport
-            ? scrollbar(b, contentRows, viewport, s.contentScroll.offset, viewport)
-            : b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+        const bar = verticalBar(b, s.contentView, geom, hitContentBar);
 
         return b.add(Widget(
             kind: WidgetKind.row,
             children: [view_, bar],
             width: SizeSpec.grow(),
             height: SizeSpec.grow(),
-            gap: 1,
         ));
     }
 
@@ -556,11 +627,6 @@ struct Gallery
         ));
     }
 
-    /// How far the content extends past the viewport, from the last frame's
-    /// measurement. Kept as a field rather than recomputed, because a key
-    /// handler has no builder and clamping is the one thing it needs it for.
-    private int measuredOverflow;
-
     private int measureHeight(ref Builder b, uint root, int width) @safe
     {
         // A throwaway layout of the page subtree alone. It is the same engine
@@ -568,9 +634,7 @@ struct Gallery
         // the frame will actually have — not an estimate the scrollbar would
         // then contradict.
         auto probe = WidgetTree(b.nodes, root);
-        const rows = layout(probe, Constraints(maxW: width))[root].rect.height;
-        measuredOverflow = rows > s.contentHeight ? rows - s.contentHeight : 0;
-        return rows;
+        return layout(probe, Constraints(maxW: width))[root].rect.height;
     }
 }
 
@@ -589,7 +653,7 @@ version (unittest)
 {
     import pages.themes_page : themeAt;
     import compat : RecordingHost, runAppRecorded;
-    import sparkles.input : charEvent, keyEvent, Mods;
+    import sparkles.input : charEvent, keyEvent, Mods, PointerButton;
     import sparkles.ui_app.host : RunConfig;
 
     // A run at a given surface, with the shell's own default state.
@@ -782,6 +846,106 @@ version (unittest)
             assert(frames[bands[0]].rect.height == 1, "the header is one row");
             assert(frames[bands[2]].rect.height == 1, "so is the status bar");
         }
+}
+
+@("ui_gallery.gallery.theContentBarIsGrabbable")
+@safe unittest
+{
+    import registry : pageIndexOf;
+    import sparkles.ui.geometry : Constraints;
+
+    // The bug this fixes: the shell drew a correct thumb over a bare
+    // `ScrollState` and wired no pointer path at all, so the bar was a
+    // picture. Press it, drag it, and the page must move.
+    Gallery g;
+    g.s.page = pageIndexOf("slots"); // long enough to overflow any surface
+
+    RecordingHost h;
+    h.size = sizeOf(96, 24);
+    auto tree = g.view(h);
+    auto frames = layout(tree, Constraints(maxW: 96, maxH: 24));
+    const bar = rectOf(tree, frames, hitContentBar);
+    assert(!bar.empty, "the content bar is not painted");
+
+    // A press near the bottom of the track jumps the thumb there…
+    const low = Point(bar.x, bar.y + bar.height - 2);
+    drive(g, [Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: low))], 96, 24);
+    const jumped = g.s.contentView.v.offset;
+    assert(jumped > 0, "a press on the track moves the page");
+    assert(g.s.contentView.v.dragging, "…and takes the grab");
+
+    // …a drag back to the top brings it home, even though the pointer has
+    // left the bar's own column entirely.
+    drive(g, [Event(PointerEvent(action: PointerAction.drag,
+        button: PointerButton.left, pos: Point(2, bar.y)))], 96, 24);
+    assert(g.s.contentView.v.offset < jumped, "the drag tracked the pointer");
+
+    drive(g, [Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(2, bar.y)))], 96, 24);
+    assert(!g.s.contentView.v.dragging);
+    assert(g.s.capture.isFree, "the release freed the pointer for everything");
+}
+
+@("ui_gallery.gallery.aScrollbarGrabDoesNotAlsoPressWhatItPassesOver")
+@safe unittest
+{
+    import registry : pageIndexOf;
+    import sparkles.ui.geometry : Constraints;
+
+    // A grab owns the pointer. Dragging the bar across the page list must not
+    // arm a nav row — the failure every hand-wired bar has, where letting go
+    // over the sidebar navigates somewhere.
+    Gallery g;
+    g.s.page = pageIndexOf("slots");
+
+    RecordingHost h;
+    h.size = sizeOf(96, 24);
+    auto tree = g.view(h);
+    const bar = rectOf(tree, layout(tree, Constraints(maxW: 96, maxH: 24)),
+        hitContentBar);
+
+    const page = g.s.page;
+    drive(g, [
+        Event(PointerEvent(action: PointerAction.press,
+            button: PointerButton.left, pos: Point(bar.x, bar.y + 4))),
+        Event(PointerEvent(action: PointerAction.drag,
+            button: PointerButton.left, pos: Point(3, 2))),
+        Event(PointerEvent(action: PointerAction.release,
+            button: PointerButton.left, pos: Point(3, 2))),
+    ], 96, 24);
+
+    assert(g.s.page == page, "the drag did not activate a nav row");
+    assert(g.s.press.activated == 0);
+}
+
+@("ui_gallery.gallery.hoveringTheBarWidensItOverSeveralFrames")
+@safe unittest
+{
+    import registry : pageIndexOf;
+    import sparkles.ui.geometry : Constraints;
+
+    // The second half of the report: no animation. The width is eased, so the
+    // bar takes several frames to widen — and the frames it needs are the ones
+    // it asks for, or the transition would stall wherever the pointer stopped.
+    Gallery g;
+    g.s.page = pageIndexOf("slots");
+
+    RecordingHost h;
+    h.size = sizeOf(96, 24);
+    auto tree = g.view(h);
+    const bar = rectOf(tree, layout(tree, Constraints(maxW: 96, maxH: 24)),
+        hitContentBar);
+    const narrow = g.s.contentView.vAnim.width;
+
+    auto rec = drive(g, [Event(PointerEvent(action: PointerAction.move,
+        pos: Point(bar.x, bar.y + 3)))], 96, 24);
+
+    assert(g.s.contentView.v.hovered, "the bar knows the pointer is on it");
+    assert(g.s.contentView.vAnim.width > narrow, "and it is widening");
+    assert(rec.frames.length > 2,
+        "the run kept framing until the ease finished");
+    assert(!rec.frames[$ - 1].requested, "…and then stopped");
 }
 
 @("ui_gallery.gallery.pageKeysAreGatedOnTheContentRegion")
