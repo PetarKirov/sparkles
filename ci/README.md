@@ -159,8 +159,9 @@ The first pipeline on a new project has an empty `/nix` cache and pays for the
 whole closure, and that is much worse on Linux than on macOS: `devShells.full`
 carries Linux-only tools no CI job touches.
 
-So the jobs activate **`devShells.ci`** (`nix/shells/default.nix`), not
-`default`. It is the same shell minus everything interactive:
+So the test jobs on **both** providers activate **`devShells.ci`**
+(`nix/shells/default.nix`), not `default`. It is the same shell minus
+everything interactive:
 
 |                     | Closure (x86_64-linux) |
 | ------------------- | ---------------------- |
@@ -183,7 +184,12 @@ and `elfutils`/`libpfm` (the cpu-pmu examples link `dw`/`elf`/`pfm`, so a
 missing one is a link error).
 
 `devShells.ci` is in the `all-desktop` aggregate, so `nix-build-*` pushes it to
-Cachix and the other jobs restore rather than build it.
+Cachix and the other jobs restore rather than build it. `devShells.full` is in
+that aggregate too, so dropping it from the test jobs does not stop it being
+built — a breakage in the full shell still fails `nix-build-*`. What the test
+jobs would no longer catch is a _test_ that needs something only `full` has, so
+everything a CI job links, execs, or skips without deliberately stays in `ci`
+(see the list above).
 
 Even so, let the first pipeline finish — it is what populates both the
 CircleCI `/nix` cache and Cachix. Subsequent runs restore instead of fetching.
