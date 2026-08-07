@@ -1,7 +1,7 @@
 /**
 `sparkles:event-horizon` — the completion-first event loop with a native
 algebraic-effect layer. This package module re-exports the public surface
-(SPEC §13); import `sparkles.event_horizon` for the whole API, or a specific
+(SPEC §16); import `sparkles.event_horizon` for the whole API, or a specific
 module for a narrower dependency.
 */
 module sparkles.event_horizon;
