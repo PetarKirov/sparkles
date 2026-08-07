@@ -20,6 +20,7 @@ version (HueGui):
 
 
 import core.stdc.stdarg : va_list; // for the TraceLogCallback bridge (NFR7)
+import core.time : dur;
 
 // The shared raylib text core (extracted in M5). Pulls raylib-d + libs
 // "raylib" transitively, so it is present only in the `gui` build.
@@ -33,6 +34,8 @@ import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
     Mods, PointerAction, PointerButton, PointerEvent;
 import sparkles.input.frame : InputFrame, foldFrame, pointerFor;
 import keymap : Command, commandFor, InputMode, KeyContext;
+import lantern : LanternState, ltnStep = step, ltnTick = tick,
+    LtnStepKind = StepKind;
 import sparkles.input.capability : InputCapabilities, mousePointer,
     touchPointer;
 
@@ -146,6 +149,11 @@ private struct Panes
     ExplorerTui tree;
     DockContainer dock;
 
+    /// The key guide's pending path and panel state (`LTN2`). Owned here
+    /// because it is view state like any other, and because both panes feed
+    /// it — the guide is not the viewer's or the tree's.
+    LanternState lantern;
+
     /// Whether the explorer pane is shown at all ('e' toggles it).
     bool treeVisible() const @safe pure nothrow
         => dock.layout.visible(treePane);
@@ -200,7 +208,6 @@ private struct Flashes
     bool copiedShown; // the ✔ glyph is in the tree; rebuild when the flash ends
     string copyModeMsg;
     Timeline toast;
-    int foldSeqFrames;
 }
 
 /// The twoslash hover latch (M15 GROUP-T): the open popup's node (+1;
@@ -1350,16 +1357,10 @@ int runGui(
             if (pn.treeFocused && pn.treeVisible)
                 pn.tree.height = visibleRows;
 
-            // A pending `z` claims the next key — the same condition the old
-            // block computed inline, now an input to the keymap instead of a
-            // guard scattered across the sites it affected.
-            const foldSeq = !pn.treeFocused && flash.foldSeqFrames > 0;
-
             const kctx = KeyContext(
                 mode: InputMode.normal,
                 treeFocused: pn.treeFocused,
                 treeVisible: pn.treeVisible,
-                foldArmed: foldSeq,
                 hasMatches: vm.matches.length > 0,
                 hasDocSet: set !is null && !set.empty && loadDoc !is null,
                 // Only while the diff view is actually showing: Tab drops to
@@ -1368,14 +1369,20 @@ int runGui(
                 showPreview: vm.showPreview,
             );
 
-            // The armed fold sequence expires on a frame clock, as before; a
-            // recognised fold key clears it early by zeroing the counter.
-            if (foldSeq)
-                --flash.foldSeqFrames;
+            // The key sequence's delay runs on wall time, not a frame count:
+            // `lantern` owns the pending path, and the panel's appearance must
+            // not depend on how fast this machine renders.
+            ltnTick(pn.lantern, dur!"msecs"(frameMs(window.frameSeconds)));
 
             foreach (kev; keyBuf)
             {
-                const kc = commandFor(kev, kctx);
+                // `lantern` owns the pending key path (`LTN2`): a prefix
+                // descends and nothing runs, a leaf resolves. Only `execute`
+                // reaches the dispatch below, so the arms are unchanged.
+                const st = ltnStep(pn.lantern, kev, kctx);
+                if (st.kind != LtnStepKind.execute)
+                    continue;
+                const kc = st.cmd;
                 final switch (kc.cmd)
                 {
                 case Command.none:
@@ -1584,34 +1591,29 @@ int runGui(
                     inp.mode = Mode.gotoLine;
                     inp.query.clear();
                     break;
-                case Command.foldArm:
-                    flash.foldSeqFrames = 60;
+                case Command.lanternAll:
+                    // `lantern` shows the panel itself and never hands this
+                    // one out as a command to run.
                     break;
 
-                // ── the armed fold sequence (FLD5) ───────────────────────
+                // ── the `z` fold sequence (FLD5) ─────────────────────────
                 case Command.foldToggle:
                     foldAtCursor(ViewerModel.FoldOp.toggle);
-                    flash.foldSeqFrames = 0;
                     break;
                 case Command.foldClose:
                     foldAtCursor(ViewerModel.FoldOp.close);
-                    flash.foldSeqFrames = 0;
                     break;
                 case Command.foldOpen:
                     foldAtCursor(ViewerModel.FoldOp.open);
-                    flash.foldSeqFrames = 0;
                     break;
                 case Command.foldOpenAll:
                     vm.setAllFolds(false);
-                    flash.foldSeqFrames = 0;
                     break;
                 case Command.foldCloseAll:
                     vm.setAllFolds(true);
-                    flash.foldSeqFrames = 0;
                     break;
                 case Command.foldLevel:
                     vm.foldToLevel(kc.arg); // z1–z9, vim's foldlevel
-                    flash.foldSeqFrames = 0;
                     break;
                 }
             }

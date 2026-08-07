@@ -67,7 +67,6 @@ struct KeyContext
     InputMode mode;      /// which surface owns the keyboard
     bool treeFocused;    /// the explorer pane holds focus
     bool treeVisible;    /// the explorer pane is shown at all
-    bool foldArmed;      /// a `z` fold sequence is waiting for its next key
     bool hasMatches;     /// a search produced matches (enables n / N)
     bool hasDocSet;      /// a multi-document set is loaded (enables [ / ] / i)
     /// a multi-file diff session is showing (`DVG1`: `[`/`]` walk its files,
@@ -130,9 +129,9 @@ enum Command : ubyte
     toggleTableCopy,       /// `t`
     startSearch,           /// `/`
     startGoto,             /// `g`
-    foldArm,               /// `z` — arms the fold sequence below
+    lanternAll,            /// `<leader>?` — list every binding live here
 
-    // The armed fold sequence (`FLD5`). `foldLevel` carries 1–9 in
+    // The `z` fold prefix (`FLD5`). `foldLevel` carries 1–9 in
     // $(LREF KeyCommand.arg).
     foldToggle, foldClose, foldOpen, foldOpenAll, foldCloseAll,
     foldLevel,
@@ -222,28 +221,23 @@ chords, then whichever pane has focus, then the keys both panes share.
 */
 enum Scope_ : ubyte
 {
-    always,   /// resolves in every context (fullscreen, dismiss)
-    input,    /// a line-editing mode owns the keyboard
-    foldDiff, /// an armed fold sequence over a diff session (`DVG3`)
-    fold,     /// an armed fold sequence over source
-    ctrl,     /// a Ctrl chord, before the plain letter is considered
-    tree,     /// the explorer pane, while focused and shown
-    viewer,   /// the document viewer (i.e. not the above)
-    shared_,  /// available from either pane
+    always,  /// resolves in every context (fullscreen, dismiss)
+    input,   /// a line-editing mode owns the keyboard
+    ctrl,    /// a Ctrl chord, before the plain letter is considered
+    tree,    /// the explorer pane, while focused and shown
+    viewer,  /// the document viewer (i.e. not the above)
+    shared_, /// available from either pane
 }
 
 /**
 Whether an active scope stops resolution.
 
 A terminal scope is one the old chain `return`ed from: while a line-editing mode
-is open, a letter is $(I text) and must not reach a command; while a fold
-sequence is armed, an unrecognised key disarms rather than falling through to
-its normal meaning. The pane scopes are deliberately not terminal — that is what
-lets `Tab` and the theme arrows work with either pane focused.
+is open, a letter is $(I text) and must not reach a command. The pane scopes are
+deliberately not terminal — that is what lets `Tab` and the theme arrows work
+with either pane focused.
 */
-bool terminal(Scope_ s)
-    => s == Scope_.input || s == Scope_.foldDiff
-    || s == Scope_.fold || s == Scope_.ctrl;
+bool terminal(Scope_ s) => s == Scope_.input || s == Scope_.ctrl;
 
 /// Which $(LREF KeyContext) facts a binding may require or forbid, as bits so a
 /// row states its gate inline instead of the caller filtering afterwards.
@@ -318,6 +312,57 @@ private Binding bind(Scope_ scope_, Chord a, Command cmd, string desc,
     return b;
 }
 
+/// ditto, for a two-chord path (`z c`, `<leader> e`).
+private Binding bind(Scope_ scope_, Chord a, Chord b_, Command cmd, string desc,
+    ubyte require = 0, ubyte forbid = 0, ubyte arg = 0)
+{
+    Binding b = bind(scope_, a, cmd, desc, require, forbid, ModeReq.any, arg);
+    b.path[1] = b_;
+    b.depth = 2;
+    return b;
+}
+
+/// ditto, for a three-chord path (`<leader> v r`).
+private Binding bind(Scope_ scope_, Chord a, Chord b_, Chord c_, Command cmd,
+    string desc, ubyte require = 0, ubyte forbid = 0)
+{
+    Binding b = bind(scope_, a, b_, cmd, desc, require, forbid);
+    b.path[2] = c_;
+    b.depth = 3;
+    return b;
+}
+
+/**
+Builds a $(B prefix node) — a key that opens a group rather than running a
+command.
+
+A group row carries no `cmd`; it exists so the path is nameable and so the
+guide has something to label the key with. Declare one before its children:
+resolution does not require it (a deeper row makes its own prefix descendable),
+but $(LREF bindingsAt) lists whichever row it meets first, and the group's
+`+name` is the better label.
+*/
+private Binding group(Scope_ scope_, Chord a, string name,
+    ubyte require = 0, ubyte forbid = 0)
+{
+    Binding b = bind(scope_, a, Command.none, name, require, forbid);
+    b.group = name;
+    return b;
+}
+
+/// ditto, for a nested group (`<leader> v`).
+private Binding group(Scope_ scope_, Chord a, Chord b_, string name,
+    ubyte require = 0, ubyte forbid = 0)
+{
+    Binding b = bind(scope_, a, b_, Command.none, name, require, forbid);
+    b.group = name;
+    return b;
+}
+
+/// The leader key (`LMP1`). `<space>` because that is the muscle memory the
+/// LazyVim-shaped map this table is growing into is built on.
+enum leader = ' ';
+
 /**
 hue's keyboard policy.
 
@@ -351,33 +396,6 @@ immutable Binding[] hueBindings = [
     // ── input (terminal: a letter is text while typing) ───────────────────
     bind(Scope_.input, chord(Key.backspace), Command.inputBackspace, "erase"),
     bind(Scope_.input, chord(Key.enter), Command.inputAccept, "accept"),
-
-    // ── foldDiff (terminal) ──────────────────────────────────────────────
-    // `DVG3`: over a diff session the `z` family folds FILES — same
-    // vocabulary, the unit the view actually has. The CST fold ranges a
-    // source view exposes do not exist here, which is also why the levels
-    // below have no counterpart in this scope.
-    bind(Scope_.foldDiff, chord('a'), Command.diffToggleFile, "toggle file"),
-    bind(Scope_.foldDiff, chord('z'), Command.diffToggleFile, "toggle file"),
-    bind(Scope_.foldDiff, chord('c'), Command.diffToggleFile, "collapse file"),
-    bind(Scope_.foldDiff, chord('o'), Command.diffToggleFile, "expand file"),
-    bind(Scope_.foldDiff, chord('r'), Command.diffExpandAll, "expand all files"),
-    bind(Scope_.foldDiff, chord('m'), Command.diffCollapseAll, "collapse all files"),
-    // `DVN2`'s formatting-only hunks and `DVG2`'s hidden context join the
-    // family: both are "things this view can hide", which is what `z` means.
-    bind(Scope_.foldDiff, chord('n'), Command.diffToggleFormatting,
-        "formatting-only hunks"),
-    bind(Scope_.foldDiff, chord('x'), Command.diffToggleContext,
-        "unchanged context"),
-
-    // ── fold (terminal) ──────────────────────────────────────────────────
-    bind(Scope_.fold, chord('a'), Command.foldToggle, "toggle fold"),
-    bind(Scope_.fold, chord('z'), Command.foldToggle, "toggle fold"),
-    bind(Scope_.fold, chord('c'), Command.foldClose, "close fold"),
-    bind(Scope_.fold, chord('o'), Command.foldOpen, "open fold"),
-    bind(Scope_.fold, chord('r'), Command.foldOpenAll, "open all folds"),
-    bind(Scope_.fold, chord('m'), Command.foldCloseAll, "close all folds"),
-    bind(Scope_.fold, chordRange('1', '9'), Command.foldLevel, "fold level", arg: 1),
 
     // ── ctrl (terminal) ──────────────────────────────────────────────────
     bind(Scope_.ctrl, Chord(key: Key.char_, ch: 'c', ctrl: true),
@@ -421,8 +439,45 @@ immutable Binding[] hueBindings = [
     bind(Scope_.viewer, chord('k'), Command.viewUp, "up"),
     bind(Scope_.viewer, chord('l'), Command.toggleLineNumbers, "line numbers"),
     bind(Scope_.viewer, chord('c'), Command.toggleCodeLineNumbers, "code line numbers"),
-    bind(Scope_.viewer, chord('z'), Command.foldArm, "fold…"),
     bind(Scope_.viewer, chord('g'), Command.startGoto, "go to line"),
+
+    // `z` — the fold prefix. Over a diff session the family folds FILES
+    // (`DVG3`): same vocabulary, the unit that view actually has. The CST
+    // fold ranges a source view exposes do not exist there, which is also why
+    // the levels are `forbid`den under a session rather than merely unlisted.
+    group(Scope_.viewer, chord('z'), "+fold"),
+    bind(Scope_.viewer, chord('z'), chord('a'), Command.diffToggleFile,
+        "toggle file", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('z'), Command.diffToggleFile,
+        "toggle file", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('c'), Command.diffToggleFile,
+        "collapse file", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('o'), Command.diffToggleFile,
+        "expand file", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('r'), Command.diffExpandAll,
+        "expand all files", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('m'), Command.diffCollapseAll,
+        "collapse all files", require: CtxFlag.hasDiffSession),
+    // `DVN2`'s formatting-only hunks and `DVG2`'s hidden context join the
+    // family: both are "things this view can hide", which is what `z` means.
+    bind(Scope_.viewer, chord('z'), chord('n'), Command.diffToggleFormatting,
+        "formatting-only hunks", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('x'), Command.diffToggleContext,
+        "unchanged context", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('a'), Command.foldToggle,
+        "toggle fold", forbid: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('z'), Command.foldToggle,
+        "toggle fold", forbid: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('c'), Command.foldClose,
+        "close fold", forbid: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('o'), Command.foldOpen,
+        "open fold", forbid: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('r'), Command.foldOpenAll,
+        "open all folds", forbid: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chord('m'), Command.foldCloseAll,
+        "close all folds", forbid: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('z'), chordRange('1', '9'), Command.foldLevel,
+        "fold level", forbid: CtxFlag.hasDiffSession, arg: 1),
     // Search is raw-view only, so `/` is unbound under a preview.
     bind(Scope_.viewer, chord('/'), Command.startSearch, "search",
         forbid: CtxFlag.showPreview),
@@ -463,6 +518,51 @@ immutable Binding[] hueBindings = [
         require: CtxFlag.hasMatches),
     bind(Scope_.shared_, chord('i'), Command.setIndex, "document index",
         require: CtxFlag.hasDocSet),
+
+    // ── the leader tree (`LMP`) ──────────────────────────────────────────
+    // Only commands that already exist are bound here. The map's remaining
+    // branches (`f` find, `s` search, `g` git, `/` grep) are specced and land
+    // with the picker; reserving their letters now is what keeps the map from
+    // being rearranged under users later.
+    group(Scope_.shared_, chord(leader), "+leader"),
+    bind(Scope_.shared_, chord(leader), chord('e'), Command.toggleExplorer,
+        "toggle explorer"),
+    bind(Scope_.shared_, chord(leader), chord('?'), Command.lanternAll,
+        "all bindings"),
+
+    group(Scope_.shared_, chord(leader), chord('v'), "+view"),
+    bind(Scope_.shared_, chord(leader), chord('v'), chord('r'),
+        Command.toggleView, "raw / preview"),
+    bind(Scope_.shared_, chord(leader), chord('v'), chord('n'),
+        Command.toggleLineNumbers, "line numbers"),
+    bind(Scope_.shared_, chord(leader), chord('v'), chord('c'),
+        Command.toggleCodeLineNumbers, "code line numbers"),
+
+    group(Scope_.shared_, chord(leader), chord('u'), "+ui"),
+    // Spelled lowercase + `ShiftReq.yes`, never `'T'`: `normalise` folds a
+    // capital to its lowercase plus Shift, so an uppercase row would be
+    // unreachable. `keymap.tableIsSpelledInNormalisedForm` pins that.
+    bind(Scope_.shared_, chord(leader), chord('u'), chord('t', ShiftReq.no),
+        Command.themeNext, "next theme"),
+    bind(Scope_.shared_, chord(leader), chord('u'), chord('t', ShiftReq.yes),
+        Command.themePrev, "prev theme"),
+    bind(Scope_.shared_, chord(leader), chord('u'), chord('y'),
+        Command.toggleAnsiCopy, "ansi copy mode"),
+    bind(Scope_.shared_, chord(leader), chord('u'), chord('b'),
+        Command.toggleTableCopy, "table copy mode"),
+    bind(Scope_.shared_, chord(leader), chord('u'), chord('+'),
+        Command.fontBigger, "bigger font"),
+    bind(Scope_.shared_, chord(leader), chord('u'), chord('-'),
+        Command.fontSmaller, "smaller font"),
+
+    group(Scope_.shared_, chord(leader), chord('d'), "+diff",
+        require: CtxFlag.hasDiffSession),
+    bind(Scope_.shared_, chord(leader), chord('d'), chord('n'),
+        Command.diffNextFile, "next file", require: CtxFlag.hasDiffSession),
+    bind(Scope_.shared_, chord(leader), chord('d'), chord('p'),
+        Command.diffPrevFile, "prev file", require: CtxFlag.hasDiffSession),
+    bind(Scope_.shared_, chord(leader), chord('d'), chord('f'),
+        Command.diffToggleFile, "toggle file", require: CtxFlag.hasDiffSession),
 ];
 
 // ---------------------------------------------------------------------------
@@ -525,14 +625,12 @@ bool reachable(Scope_ s, in KeyContext ctx)
 {
     final switch (s)
     {
-        case Scope_.always:   return true;
-        case Scope_.input:    return ctx.mode != InputMode.normal;
-        case Scope_.foldDiff: return ctx.foldArmed && ctx.hasDiffSession;
-        case Scope_.fold:     return ctx.foldArmed;
-        case Scope_.ctrl:     return true;
-        case Scope_.tree:     return ctx.treeFocused && ctx.treeVisible;
-        case Scope_.viewer:   return !(ctx.treeFocused && ctx.treeVisible);
-        case Scope_.shared_:  return true;
+        case Scope_.always:  return true;
+        case Scope_.input:   return ctx.mode != InputMode.normal;
+        case Scope_.ctrl:    return true;
+        case Scope_.tree:    return ctx.treeFocused && ctx.treeVisible;
+        case Scope_.viewer:  return !(ctx.treeFocused && ctx.treeVisible);
+        case Scope_.shared_: return true;
     }
 }
 
@@ -540,14 +638,12 @@ bool reachable(Scope_ s, in KeyContext ctx)
 Whether an active scope hides every later scope from $(LREF bindingsAt).
 
 Narrower than $(LREF terminal), and the difference is the whole reason both
-exist. `input`, `foldDiff` and `fold` swallow $(I every) key while they are
-active, so nothing below them is reachable and listing it would be a lie.
-$(LREF Scope_.ctrl) is terminal during resolution but swallows only Ctrl'd
-letters — which are exactly its own rows — so the plain letters below it stay
-reachable and must still be listed.
+exist. `input` swallows $(I every) key while it is active, so nothing below it
+is reachable and listing it would be a lie. $(LREF Scope_.ctrl) is terminal
+during resolution but swallows only Ctrl'd letters — which are exactly its own
+rows — so the plain letters below it stay reachable and must still be listed.
 */
-private bool hidesLaterScopes(Scope_ s)
-    => s == Scope_.input || s == Scope_.foldDiff || s == Scope_.fold;
+private bool hidesLaterScopes(Scope_ s) => s == Scope_.input;
 
 /// Whether `b`'s context gates are satisfied — the `hasMatches`/`hasDocSet`/…
 /// conditions, plus the input-mode requirement Escape and Back need.
@@ -587,20 +683,41 @@ KeyEvent normalise(in KeyEvent raw)
     return k;
 }
 
+/// What a key resolved to under a prefix.
+enum ResolveKind : ubyte
+{
+    none,    /// not bound here
+    group,   /// a prefix node — more keys are expected
+    command, /// a command, ready to run
+}
+
+/// ditto
+struct Resolution
+{
+    ResolveKind kind;
+    Command cmd;
+    ubyte arg;
+}
+
 /**
-The keymap. Returns $(LREF Command.none) when `k` is not bound in `ctx`.
+Resolves `raw` against the table, given the chords already typed.
 
 A lookup over $(LREF hueBindings), walking $(LREF Scope_) in declaration order.
-That order mirrors the frame loop's own precedence, which is load-bearing: an
-armed fold sequence claims letters that otherwise toggle things, and an open
-input mode claims Enter/Escape/Backspace before anything else sees them. An
-active $(LREF terminal) scope ends the search whether or not it matched, which
-is what makes an unrecognised key disarm the fold sequence instead of falling
-through to its normal meaning.
+That order mirrors the frame loop's own precedence, which is load-bearing: a
+Ctrl chord resolves before the plain letter, an open input mode claims
+Enter/Escape/Backspace before anything else sees them, and a focused tree claims
+`j` before the viewer does. An active $(LREF terminal) scope ends the search
+whether or not it matched.
+
+A key resolves to $(LREF ResolveKind.group) when the row it matched has more
+chords after this one — so a prefix is descendable whether or not anyone wrote
+an explicit $(LREF group) row for it. That is what keeps the table's shape and
+its behaviour from being able to disagree.
 */
-KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
+Resolution resolve(scope const Chord[] prefix, in KeyEvent raw, in KeyContext ctx)
 {
     const k = normalise(raw);
+    const depth = prefix.length;
 
     static foreach (s; __traits(allMembers, Scope_))
     {{
@@ -609,20 +726,61 @@ KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
         {
             foreach (ref b; hueBindings)
             {
-                if (b.scope_ != sc || b.depth != 1)
+                if (b.scope_ != sc || b.depth <= depth || !gated(b, ctx))
                     continue;
-                if (!gated(b, ctx) || !matches(b.path[0], k))
+                bool under = true;
+                foreach (i, ref p; prefix)
+                    if (!sameKey(b.path[i], p))
+                    {
+                        under = false;
+                        break;
+                    }
+                if (!under || !matches(b.path[depth], k))
                     continue;
-                const arg = b.path[0].chEnd
-                    ? cast(ubyte)(b.arg + (k.ch - b.path[0].ch))
+                if (b.depth > depth + 1)
+                    return Resolution(ResolveKind.group);
+                if (b.group.length)
+                    return Resolution(ResolveKind.group);
+                const arg = b.path[depth].chEnd
+                    ? cast(ubyte)(b.arg + (k.ch - b.path[depth].ch))
                     : b.arg;
-                return KeyCommand(b.cmd, arg);
+                return Resolution(ResolveKind.command, b.cmd, arg);
             }
             if (terminal(sc))
-                return KeyCommand(Command.none);
+                return Resolution(ResolveKind.none);
         }
     }}
-    return KeyCommand(Command.none);
+    return Resolution(ResolveKind.none);
+}
+
+/**
+The keymap, for a caller with no pending prefix.
+
+Returns $(LREF Command.none) both when `k` is unbound and when it opens a
+group — a caller using this entry point has nowhere to put the pending chord,
+so a prefix key is simply not a command to it. Drive
+$(REF step, lantern) instead to reach anything behind a prefix.
+*/
+KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
+{
+    const r = resolve(null, raw, ctx);
+    return r.kind == ResolveKind.command
+        ? KeyCommand(r.cmd, r.arg) : KeyCommand(Command.none);
+}
+
+/// Resolves only the always-available bindings — the ones that outrank a
+/// pending prefix, so Escape and fullscreen keep working mid-sequence.
+Resolution resolveAlways(in KeyEvent raw, in KeyContext ctx)
+{
+    const k = normalise(raw);
+    foreach (ref b; hueBindings)
+    {
+        if (b.scope_ != Scope_.always || b.depth != 1 || !gated(b, ctx))
+            continue;
+        if (matches(b.path[0], k))
+            return Resolution(ResolveKind.command, b.cmd, b.arg);
+    }
+    return Resolution(ResolveKind.none);
 }
 
 /**
@@ -694,7 +852,8 @@ It is `version (unittest)`, so nothing ships twice. Delete it once the table is
 the only description anyone reasons about — but not before, and not in the same
 commit that introduces the table.
 */
-private KeyCommand legacyCommandFor(in KeyEvent raw, in KeyContext ctx)
+private KeyCommand legacyCommandFor(in KeyEvent raw, in KeyContext ctx,
+    bool foldArmed = false)
 {
     // Producers disagree about how a shifted letter arrives. raylib's
     // `GetCharPressed` yields the SHIFTED character ('R') and separately
@@ -746,7 +905,7 @@ private KeyCommand legacyCommandFor(in KeyEvent raw, in KeyContext ctx)
     // An armed `z` claims the next key (and only for the viewer — the tree
     // has no folds), so `c`/`o`/`r` mean fold operations rather than their
     // normal-mode meanings.
-    if (ctx.foldArmed)
+    if (foldArmed)
     {
         // Over a diff session the `z` family folds FILES (`DVG3`) — same
         // vocabulary, the unit the view actually has. The CST fold ranges a
@@ -847,7 +1006,10 @@ private KeyCommand legacyCommandFor(in KeyEvent raw, in KeyContext ctx)
                 case 'k': return KeyCommand(Command.viewUp);
                 case 'l': return KeyCommand(Command.toggleLineNumbers);
                 case 'c': return KeyCommand(Command.toggleCodeLineNumbers);
-                case 'z': return KeyCommand(Command.foldArm);
+                // `case 'z': return KeyCommand(Command.foldArm);` — the one
+                // line that cannot be kept verbatim, because `foldArm` no
+                // longer exists: `z` is a prefix, and the sweep excludes it
+                // for exactly that reason.
                 case 'g': return KeyCommand(Command.startGoto);
                 case '/': return ctx.showPreview
                     ? KeyCommand(Command.none)  // search is raw-view only
@@ -934,23 +1096,26 @@ unittest
     // ~46 000 pairs, which is not a sample — it is the domain.
     static immutable dchar[] chars = [
         'a', 'c', 'e', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'q', 'r',
-        't', 'u', 'y', 'z', 'A', 'C', 'H', 'I', 'N', 'R', 'Z',
-        '0', '1', '5', '9', '/', '[', ']', '{', '}', '=', '+', '-', '!', ' ',
+        't', 'u', 'y', 'A', 'C', 'H', 'I', 'N', 'R',
+        '0', '1', '5', '9', '/', '[', ']', '{', '}', '=', '+', '-', '!',
     ];
+    // `z`, `<space>` and `?` are deliberately absent: they are prefix keys
+    // now, and a prefix has no answer in a vocabulary that only knows
+    // commands. Their sequences are covered by `lantern`'s own tests, which
+    // assert the same outcomes the chain produced with `foldArmed: true`.
 
     size_t pairs;
     foreach (ubyte modeI; 0 .. 3)
-    foreach (ubyte bits; 0 .. 64)
+    foreach (ubyte bits; 0 .. 32)
     {
         const ctx = KeyContext(
             mode: cast(InputMode) modeI,
             treeFocused:    (bits & 1) != 0,
             treeVisible:    (bits & 2) != 0,
-            foldArmed:      (bits & 4) != 0,
-            hasMatches:     (bits & 8) != 0,
-            hasDocSet:      (bits & 16) != 0,
-            hasDiffSession: (bits & 32) != 0,
-            showPreview:    (bits & 64) != 0,
+            hasMatches:     (bits & 4) != 0,
+            hasDocSet:      (bits & 8) != 0,
+            hasDiffSession: (bits & 16) != 0,
+            showPreview:    (bits & 32) != 0,
         );
 
         foreach (ubyte m; 0 .. 8)
@@ -976,7 +1141,27 @@ unittest
             }
         }
     }
-    assert(pairs > 40_000, "the sweep must actually cover the domain");
+    assert(pairs > 20_000, "the sweep must actually cover the domain");
+}
+
+@("keymap.tableIsSpelledInNormalisedForm")
+@safe pure nothrow @nogc
+unittest
+{
+    // `normalise` folds `A` to `a` + Shift before anything is compared, so a
+    // row spelling an uppercase letter is dead on arrival — it matches no
+    // event that can ever reach it. That is a silent failure: the binding
+    // simply never fires, and only a test that looks for it will say so.
+    // (`<leader>uT` shipped in exactly this shape for one edit.)
+    foreach (ref b; hueBindings)
+        foreach (i; 0 .. b.depth)
+        {
+            const c = b.path[i];
+            assert(!(c.key == Key.char_ && c.ch >= 'A' && c.ch <= 'Z'),
+                "spell a shifted letter lowercase + ShiftReq.yes");
+            assert(!(c.chEnd != 0 && c.chEnd < c.ch),
+                "a chord range must not run backwards");
+        }
 }
 
 @("keymap.bindingsAtEnumeratesWhatWouldFire")
@@ -986,41 +1171,65 @@ unittest
     import sparkles.base.smallbuffer : SmallBuffer;
 
     // The property that makes the table worth having: whatever `bindingsAt`
-    // lists, `commandFor` actually does. Anything weaker and the guide is a
+    // lists, `resolve` actually does. Anything weaker and the guide is a
     // second description of the policy, free to drift from it — which is the
     // defect this whole change exists to remove.
-    foreach (ubyte bits; 0 .. 64)
+    //
+    // Checked at every level, not just the root: a leader tree is exactly
+    // where a listing and its behaviour could quietly disagree.
+    static void checkLevel(scope const Chord[] prefix, in KeyContext ctx,
+        int depthLeft)
     {
-        const ctx = KeyContext(
-            treeFocused:    (bits & 1) != 0,
-            treeVisible:    (bits & 2) != 0,
-            foldArmed:      (bits & 4) != 0,
-            hasMatches:     (bits & 8) != 0,
-            hasDocSet:      (bits & 16) != 0,
-            hasDiffSession: (bits & 32) != 0,
-            showPreview:    (bits & 64) != 0,
-        );
-
-        SmallBuffer!(Binding, 96) listed;
-        bindingsAt(listed, ctx);
+        SmallBuffer!(Binding, 128) listed;
+        bindingsAt(listed, ctx, prefix);
 
         foreach (ref b; listed[])
         {
             // A ranged row is listed once but fires for each key in the range;
             // check its first key, which is the one the guide labels.
-            const c = b.path[0];
-            auto ev = KeyEvent(c.key, c.ch, Mods(ctrl: c.ctrl, alt: c.alt,
+            const c = b.path[prefix.length];
+            const ev = KeyEvent(c.key, c.ch, Mods(ctrl: c.ctrl, alt: c.alt,
                 shift: c.shift == ShiftReq.yes));
-            assert(commandFor(ev, ctx).cmd == b.cmd,
-                "a listed binding must be the one that fires");
+            const r = resolve(prefix, ev, ctx);
+
+            const isLeaf = b.depth == prefix.length + 1 && b.group.length == 0;
+            if (isLeaf)
+                assert(r.kind == ResolveKind.command && r.cmd == b.cmd,
+                    "a listed command must be the one that fires");
+            else
+            {
+                assert(r.kind == ResolveKind.group,
+                    "a listed prefix must actually descend");
+                if (depthLeft > 0)
+                {
+                    Chord[maxPathLength] next;
+                    next[0 .. prefix.length] = prefix[];
+                    next[prefix.length] = c;
+                    checkLevel(next[0 .. prefix.length + 1], ctx, depthLeft - 1);
+                }
+            }
         }
 
         // …and nothing is listed twice: a key bound in both `tree` and
         // `shared_` appears once, as the row that would win.
         foreach (i, ref a; listed[])
             foreach (j, ref b; listed[])
-                assert(i == j || !sameKey(a.path[0], b.path[0]),
+                assert(i == j
+                    || !sameKey(a.path[prefix.length], b.path[prefix.length]),
                     "a shadowed duplicate must not be listed");
+    }
+
+    foreach (ubyte bits; 0 .. 32)
+    {
+        const ctx = KeyContext(
+            treeFocused:    (bits & 1) != 0,
+            treeVisible:    (bits & 2) != 0,
+            hasMatches:     (bits & 4) != 0,
+            hasDocSet:      (bits & 8) != 0,
+            hasDiffSession: (bits & 16) != 0,
+            showPreview:    (bits & 32) != 0,
+        );
+        checkLevel(null, ctx, maxPathLength);
     }
 }
 
@@ -1046,9 +1255,10 @@ unittest
     assert(nk(Key.escape).cmd == Command.none);
     assert(nk(Key.back, search).cmd == Command.inputCancel);
 
-    // F11 outranks everything — you can always leave fullscreen.
+    // F11 outranks everything — you can always leave fullscreen. That it also
+    // outranks a half-typed key sequence is `lantern`'s to assert, since the
+    // sequence lives there now.
     assert(nk(Key.f11, search).cmd == Command.toggleFullscreen);
-    assert(nk(Key.f11, KeyContext(foldArmed: true)).cmd == Command.toggleFullscreen);
 }
 
 @("keymap.focusSelectsThePane")
@@ -1131,32 +1341,32 @@ unittest
     assert(ch('y', KeyContext.init, ctrl).cmd == Command.none);
 }
 
-@("keymap.foldSequenceClaimsItsKeys")
+@("keymap.foldSequenceIsAPrefixNotACommand")
 @safe pure nothrow @nogc
 unittest
 {
-    assert(ch('z').cmd == Command.foldArm);
+    // `z` used to be a command (`foldArm`) that set a flag the next call read
+    // back. It is a prefix node now, so it has no answer in a vocabulary that
+    // only knows commands — the sequence lives in `lantern`, and
+    // `lantern.foldLevelsCarryTheirArgument` and friends assert the same
+    // outcomes the flag produced.
+    assert(resolve(null, KeyEvent(Key.char_, 'z'), KeyContext.init).kind
+        == ResolveKind.group);
+    assert(ch('z').cmd == Command.none, "…and so is not a command to a flat caller");
 
-    auto armed = KeyContext(foldArmed: true);
-    assert(ch('a', armed).cmd == Command.foldToggle);
-    assert(ch('z', armed).cmd == Command.foldToggle);
-    assert(ch('o', armed).cmd == Command.foldOpen);
-    assert(ch('m', armed).cmd == Command.foldCloseAll);
+    // What the prefix leads to is still resolvable directly, which is what
+    // lets the guide list it without simulating keystrokes.
+    const Chord[1] z = [chord('z')];
+    assert(resolve(z, KeyEvent(Key.char_, 'c'), KeyContext.init)
+        == Resolution(ResolveKind.command, Command.foldClose));
+    assert(resolve(z, KeyEvent(Key.char_, '3'), KeyContext.init)
+        == Resolution(ResolveKind.command, Command.foldLevel, 3));
+    assert(resolve(z, KeyEvent(Key.char_, '0'), KeyContext.init).kind
+        == ResolveKind.none, "no level 0");
 
-    // While armed, `c` and `r` mean folds — NOT their normal-mode meanings.
-    // This is the precedence the frame loop encodes by ordering; here it is
-    // asserted.
-    assert(ch('c', armed).cmd == Command.foldClose);
+    // And `c` outside the sequence still means what it always did — the
+    // precedence the frame loop encoded by ordering, now by path.
     assert(ch('c').cmd == Command.toggleCodeLineNumbers);
-    assert(ch('r', armed).cmd == Command.foldOpenAll);
-
-    // z1–z9 carry the level as an argument rather than nine enum members.
-    assert(ch('1', armed) == KeyCommand(Command.foldLevel, 1));
-    assert(ch('9', armed) == KeyCommand(Command.foldLevel, 9));
-    assert(ch('0', armed).cmd == Command.none, "no level 0");
-
-    // An unrecognised key resolves to nothing (the caller disarms).
-    assert(ch('q', armed).cmd == Command.none);
 }
 
 @("keymap.contextGatesTheOptionalBindings")
@@ -1201,21 +1411,25 @@ unittest
 
     // `DVG3`: the `z` family folds files, not syntax ranges — the diff view
     // has no CST fold ranges for the other meaning to act on.
-    auto armed = KeyContext(foldArmed: true, hasDiffSession: true);
-    assert(ch('a', armed).cmd == Command.diffToggleFile);
-    assert(ch('c', armed).cmd == Command.diffToggleFile);
-    assert(ch('m', armed).cmd == Command.diffCollapseAll);
-    assert(ch('r', armed).cmd == Command.diffExpandAll);
+    const Chord[1] z = [chord('z')];
+    assert(resolve(z, KeyEvent(Key.char_, 'a'), diff).cmd == Command.diffToggleFile);
+    assert(resolve(z, KeyEvent(Key.char_, 'c'), diff).cmd == Command.diffToggleFile);
+    assert(resolve(z, KeyEvent(Key.char_, 'm'), diff).cmd == Command.diffCollapseAll);
+    assert(resolve(z, KeyEvent(Key.char_, 'r'), diff).cmd == Command.diffExpandAll);
     // `DVN2`'s noise fold and `DVG2`'s context join the same family.
-    assert(ch('n', armed).cmd == Command.diffToggleFormatting);
-    assert(ch('x', armed).cmd == Command.diffToggleContext);
-    assert(ch('x', KeyContext(foldArmed: true)).cmd == Command.none);
-    assert(ch('n', KeyContext(foldArmed: true)).cmd == Command.none,
-        "no session, no noise to fold");
+    assert(resolve(z, KeyEvent(Key.char_, 'n'), diff).cmd
+        == Command.diffToggleFormatting);
+    assert(resolve(z, KeyEvent(Key.char_, 'x'), diff).cmd
+        == Command.diffToggleContext);
+    assert(resolve(z, KeyEvent(Key.char_, 'n'), KeyContext.init).kind
+        == ResolveKind.none, "no session, no noise to fold");
+    assert(resolve(z, KeyEvent(Key.char_, 'x'), KeyContext.init).kind
+        == ResolveKind.none);
     // Levels are meaningless over a flat file list, so they stay unbound.
-    assert(ch('3', armed).cmd == Command.none);
+    assert(resolve(z, KeyEvent(Key.char_, '3'), diff).kind == ResolveKind.none);
     // Without a session the same keys keep their syntax-fold meanings.
-    assert(ch('m', KeyContext(foldArmed: true)).cmd == Command.foldCloseAll);
+    assert(resolve(z, KeyEvent(Key.char_, 'm'), KeyContext.init).cmd
+        == Command.foldCloseAll);
 
     // Hunk motions exist only over a session — there is nothing to step
     // through otherwise, so the keys stay unbound rather than no-ops.
