@@ -5,7 +5,7 @@ algorithms that rank `usr` against 500,000 file paths in milliseconds, the
 prefilters and memory disciplines that make that wall-clock real, and the
 picker architectures (streaming injection, budgeted rematch, generation-based
 cancellation) that make it _feel_ instant. The evidence base for the
-`sparkles:fuzzy` specification, which powers hue's
+[`sparkles:fuzzy` specification][fuzzy-spec], which powers hue's
 [picker][hue-picker] (`<leader>ff`, `<leader>/`).
 
 This survey answers six questions:
@@ -136,9 +136,9 @@ This survey answers six questions:
 - **"I want the whole-engine view."** [fff] (ranking, frecency, query
   language, arena) → [comparison].
 - **"I'm designing `sparkles:fuzzy`."** [comparison] (consensus + delta
-  table) → [fff] + [frizbee] (the porting sources) → the `sparkles:fuzzy`
-  spec under `docs/specs/fuzzy/`; UI-side requirements in
-  [hue's picker spec][hue-picker].
+  table) → [fff] + [frizbee] (the porting sources) → the
+  [`sparkles:fuzzy` spec][fuzzy-spec] and its [delivery plan][fuzzy-plan];
+  UI-side requirements in [hue's picker spec][hue-picker].
 
 ### Synthesis
 
@@ -170,4 +170,6 @@ revisions surveyed here are fzf `0579bb0e`, fzy `34b88869`, nucleo
 [comparison]: ./comparison.md
 [frizbee-63]: https://github.com/Saghen/frizbee/issues/63
 [fuzzy-benches]: https://github.com/noib3/fuzzy-benches
+[fuzzy-spec]: ../../specs/fuzzy/SPEC.md
+[fuzzy-plan]: ../../specs/fuzzy/PLAN.md
 [hue-picker]: ../../specs/hue/picker.md
