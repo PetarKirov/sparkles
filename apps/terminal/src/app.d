@@ -113,6 +113,11 @@ int main(string[] args)
     }
 
     CoreState s;
+    // The face set, owned here and borrowed by CoreState — the same shape the
+    // runApp component uses with the host session's set (one atlas per
+    // window, whoever drives the loop). Non-copyable; stack-pinned for the
+    // whole run.
+    FontSet fonts;
     // Point size → pixels for raylib's pixel-based rasterizer (96-DPI points:
     // 1pt = 1/72in, 96px/in). Converted once; the rest of the renderer works in
     // pixels (Ctrl +/- then adjusts the pixel size directly).
@@ -141,13 +146,14 @@ int main(string[] args)
     // bold-italic variants, a regular and a Nerd-Font fallback, any
     // --font-codepoint-map faces, and the on-demand base atlas. Must run after
     // InitWindow (LoadFontEx needs the GL context).
-    if (!FontSet.tryLoad(fontPath, s.fontSize, s.fonts, codepointMapOpt,
+    if (!FontSet.tryLoad(fontPath, s.fontSize, fonts, codepointMapOpt,
         FontSet.FaceOverrides.init, fontSources))
     {
         stderr.writeln("Error: could not load font: ", fontPath);
         CloseWindow();
         return 1;
     }
+    s.fonts = &fonts;
     // The library measures and zero-guards the cell metric internally.
     s.cellWidth = s.fonts.cellW();
     s.cellHeight = s.fonts.cellH();

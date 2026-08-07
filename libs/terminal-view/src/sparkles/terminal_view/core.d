@@ -174,7 +174,7 @@ private void defer_unload_texture(Texture2D tex)
 }
 
 @system nothrow @nogc
-private void flush_deferred_textures()
+void flush_deferred_textures()
 {
     foreach (i; 0 .. deferred_texture_count)
         UnloadTexture(deferred_textures[i]);
@@ -410,7 +410,10 @@ struct CoreState
     // The shared multi-face font resource (sparkles:raylib-text): primary + real
     // bold/italic/bold-italic variants, regular/Nerd fallbacks, --font-codepoint-map
     // faces, on-demand atlas growth, and per-face O(log n) glyph maps.
-    FontSet fonts;
+    /// Borrowed: the window session owns the face set (one atlas per window,
+    /// whoever drives the loop). The polling loop points this at its own
+    /// stack instance; the runApp component at the host session's.
+    FontSet* fonts;
 
     int fontSize = 20;
     int cellWidth = 1;
@@ -517,21 +520,27 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
             cast(const(ubyte)*) chunk.ptr + segStart, cast(uint)(chunk.length - segStart));
 }
 
-// Everything between BeginDrawing and the deferred-texture flush: the two-pass
-// cell render, kitty image layers, scrollbar, cursor, exit banner, bell flash.
-// Returns `true` when the on-demand atlas folded new glyphs in — the caller's
-// cue to force one extra frame so they get painted.
+// The frame's draw calls, bracket-free — callable from a raylib
+// BeginDrawing/EndDrawing pair (renderFrame below) or from a host's draw
+// phase (`HST13`), which owns its own bracket: background fill, kitty image
+// layers, the two-pass cell render, scrollbar, cursor styles, exit banner,
+// bell flash, and the per-row + global dirty reset. The caller owns the
+// bracket and the deferred-texture flush (textures freed only after the
+// bracket's commands reach the GPU).
 @system nothrow @nogc
-bool renderFrame(ref CoreState s)
+void paintFrame(ref CoreState s)
 {
-        // Resolved default colors (used for the window clear, default cell
+        // Resolved default colors (used for the background fill, default cell
         // colors, and the cursor) instead of hardcoded white-on-black.
         GhosttyRenderStateColors colors;
         colors.size = GhosttyRenderStateColors.sizeof;
         ghostty_render_state_colors_get(s.render_state, &colors);
 
-        BeginDrawing();
-        ClearBackground(Color(colors.background.r, colors.background.g, colors.background.b, 255));
+        // The page: a full-surface fill rather than ClearBackground, because
+        // inside a host's bracket the clear already happened (to the host's
+        // page) and clearing is not a draw call the hook may make.
+        drawSolid(s.fonts.whiteFace, 0, 0, GetScreenWidth(), GetScreenHeight(),
+            Color(colors.background.r, colors.background.g, colors.background.b, 255));
 
         // Kitty graphics storage (borrowed; valid until the next mutating
         // terminal call). Images draw in three z-layers around the text.
@@ -762,12 +771,22 @@ bool renderFrame(ref CoreState s)
         // Reset global dirty state so the next update reports changes accurately.
         GhosttyRenderStateDirty clean_state = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
         ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean_state);
+}
 
-        EndDrawing();
-
-        // Free textures uploaded during this frame's kitty rendering, now that
-        // EndDrawing() has flushed all draw commands to the GPU.
-        flush_deferred_textures();
+// The polling loop's frame: paintFrame inside its own raylib bracket, then
+// the deferred-texture flush (safe only once EndDrawing pushed the commands
+// to the GPU). Returns `true` when the on-demand atlas folded new glyphs in —
+// the caller's cue to force one extra frame so they get painted. A host-driven
+// component calls paintFrame from its draw phase instead and does the flush
+// and the atlas check at the START of its next frame, which is the same
+// after-the-bracket point reached without a post-bracket hook.
+@system nothrow @nogc
+bool renderFrame(ref CoreState s)
+{
+    BeginDrawing();
+    paintFrame(s);
+    EndDrawing();
+    flush_deferred_textures();
 
     // On-demand atlas growth: if the glyph pass requested codepoints the
     // primary face covers but the atlas lacked, the library folds them in and
