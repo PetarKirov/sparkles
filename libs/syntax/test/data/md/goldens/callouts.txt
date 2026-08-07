@@ -1,44 +1,38 @@
 󰲡 Callouts
 
-  󰋽 Note
+│ 󰋽 Note
+│ A note callout with inline code and bold text.
 
-  A note callout with inline code and bold text.
+│ 󰌶 Tip
+│ A tip callout.
 
-  󰌶 Tip
+│ 󰅾 Important
+│ An important callout spanning two source lines.
 
-  A tip callout.
+│ 󰀪 Warning
+│ A warning callout.
 
-  󰅾 Important
+│ 󰳦 Caution
+│ A caution callout.
 
-  An important callout spanning two source lines.
-
-  󰀪 Warning
-
-  A warning callout.
-
-  󰳦 Caution
-
-  A caution callout.
-
-  󰋽 Note
-
-  A callout with more structure:
-
-  ● a list inside
-  ● another item
-
-    d
-  ╭───────────────────────────────────────────╮
-  │ 1 auto x = 1; // a fence inside a callout │
-  │ 2                                         │
-  ╰───────────────────────────────────────────╯
+│ 󰋽 Note
+│ A callout with more structure:
+│
+│ ● a list inside
+│ ● another item
+│
+│   d
+│ ╭───────────────────────────────────────────╮
+│ │ 1 auto x = 1; // a fence inside a callout │
+│ │ 2                                         │
+│ ╰───────────────────────────────────────────╯
 
 Plain quotes:
 
-  A plain block quote with no marker.
+│ A plain block quote with no marker.
 
-  Outer quote
-
-    Nested quote, depth two
-
-      Depth three
+│ Outer quote
+│
+│ │ Nested quote, depth two
+│ │
+│ │ │ Depth three

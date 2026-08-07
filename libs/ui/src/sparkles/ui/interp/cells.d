@@ -128,7 +128,9 @@ struct CellGrid
     /// draws the box chrome the cell grid can express: a full border becomes
     /// box-drawing glyphs on the perimeter, a solid bottom-only border on a
     /// one-row box becomes a `─` rule, any other bottom-only border a cell
-    /// underline. Other single-side accents have no cell analog and drop.
+    /// underline, and a left-only border a `│` bar column (the quote /
+    /// callout accent bar). Other single-side accents have no cell analog
+    /// and drop.
     void fillRect(in Rect r, in Visual v)
     {
         if (v.hasBg)
@@ -146,9 +148,23 @@ struct CellGrid
             const bw = v.border.width;
             const bottomOnly = bw.bottom > 0 && bw.top == 0 && bw.left == 0
                 && bw.right == 0;
+            const leftOnly = bw.left > 0 && bw.top == 0 && bw.bottom == 0
+                && bw.right == 0;
             const fullBox = bw.top > 0 && bw.bottom > 0 && bw.left > 0
                 && bw.right > 0;
-            if (bottomOnly && v.border.style == BorderStyle.solid && r.height == 1)
+            if (leftOnly)
+            {
+                // The quote / callout accent bar: `│` glyphs down the rect's
+                // left column (the panel's padding keeps content clear of it).
+                foreach (y; r.y .. r.y + r.height)
+                    if (inBounds(r.x, y))
+                    {
+                        auto c = &at(r.x, y);
+                        c.glyph = '│';
+                        c.fg = v.border.color;
+                    }
+            }
+            else if (bottomOnly && v.border.style == BorderStyle.solid && r.height == 1)
             {
                 // A thematic break: `─` glyphs, not an invisible underline row.
                 foreach (x; r.x .. r.x + r.width)

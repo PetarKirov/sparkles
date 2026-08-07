@@ -13,12 +13,11 @@ one paragraph.
 │ wrap.d  │ greedy line wrapping in cells — a sparkles extension │
 ╰─────────┴──────────────────────────────────────────────────────╯
 
-  󰋽 Note
-
-  A note directly under a table, holding code, bold, and a nested list:
-
-  ● one thing
-  ● another thing
+│ 󰋽 Note
+│ A note directly under a table, holding code, bold, and a nested list:
+│
+│ ● one thing
+│ ● another thing
 
 󰲣 Lists, deeply composed
 
@@ -29,7 +28,7 @@ one paragraph.
    │ 2             │
    ╰───────────────╯
 2. An item with a nested table? No — but a nested quote:
-     quoted inside an ordered item
+   │ quoted inside an ordered item
 3. An item with nested mixed lists:
    ○ bullet child
      1. ordinal grandchild
@@ -52,12 +51,11 @@ one paragraph.
 
 󰲥 Trailing callout
 
-  󰀪 Warning
-
-  The last block is a callout with a trailing fence:
-
-    sh
-  ╭─────────────────────────────────────────────────╮
-  │ 1 echo done                                     │
-  │ 2                                               │
-  ╰─────────────────────────────────────────────────╯
+│ 󰀪 Warning
+│ The last block is a callout with a trailing fence:
+│
+│   sh
+│ ╭─────────────────────────────────────────────────╮
+│ │ 1 echo done                                     │
+│ │ 2                                               │
+│ ╰─────────────────────────────────────────────────╯
