@@ -61,6 +61,74 @@ struct Document
     /// `kind == diff`: the changed-file session (`DVS4`) — status, counts,
     /// fold state and per-file errors, parallel to `diffDoc.files`.
     DiffSession diffSession;
+    /// `kind == diff`: `DVN3`'s word- and token-level emphasis variants, so
+    /// the structural view toggles without re-parsing.
+    DiffEmphasis diffEmphasis;
+}
+
+/**
+`DVN3`'s two readings of the same rows: word-level emphasis (the engine's
+`DVM4` refinement) and token-level emphasis (boundaries from the grammar).
+
+Both variants live in the document's one `emph` arena — appending never
+invalidates what is already there — so a variant is just each row's
+`(emphStart, emphCount)` pair, and switching between them is a swap rather
+than a re-parse. That is what lets `zs` toggle the structural view at a
+keystroke on a diff whose parses happened once, at load.
+*/
+struct DiffEmphasis
+{
+    private uint[] wordStart, wordCount;
+    private uint[] tokenStart, tokenCount;
+    /// The token variant was computed (a grammar was available and at least
+    /// one row pair re-emphasized).
+    bool available;
+    /// The token variant is the one currently on the rows.
+    bool showing;
+
+    /// Snapshots the emphasis currently on `doc`'s rows as the word variant.
+    void captureWord(in DiffDoc doc) @safe
+    {
+        capture(doc, wordStart, wordCount);
+    }
+
+    /// ditto, as the token variant.
+    void captureToken(in DiffDoc doc) @safe
+    {
+        capture(doc, tokenStart, tokenCount);
+    }
+
+    /// Puts one variant back on the rows. A no-op when the token variant was
+    /// never computed and it is the one asked for.
+    void show(ref DiffDoc doc, bool token) @safe
+    {
+        if (token && !available)
+            return;
+        const starts = token ? tokenStart : wordStart;
+        const counts = token ? tokenCount : wordCount;
+        if (starts.length != doc.rows.length)
+            return;
+        foreach (i; 0 .. doc.rows.length)
+        {
+            auto row = doc.rows[i];
+            row.emphStart = starts[i];
+            row.emphCount = counts[i];
+            doc.rows[i] = row;
+        }
+        showing = token;
+    }
+
+    private static void capture(in DiffDoc doc, ref uint[] starts,
+        ref uint[] counts) @safe
+    {
+        starts.length = doc.rows.length;
+        counts.length = doc.rows.length;
+        foreach (i; 0 .. doc.rows.length)
+        {
+            starts[i] = doc.rows[i].emphStart;
+            counts[i] = doc.rows[i].emphCount;
+        }
+    }
 }
 
 /// The per-side full texts of a diff document (`DVM5` syntax composition):
@@ -348,17 +416,21 @@ struct DocumentPipeline
     */
     private void classifyStructural(ref Document doc) @system
     {
-        import diff_structural : HunkSpan, structuralVerdicts,
-            StructuralPolicy, StructuralVerdict;
+        import diff_structural : compareTokenStreams, hunkVerdicts, HunkSpan,
+            parses, StructuralPolicy, StructuralVerdict, Token, waivesCeiling;
+        import diff_token_view : applyTokenEmphasis;
 
         // Half a megabyte a side: past this the parse stops being free, and a
         // file that large is not what a formatter-noise verdict is for.
         enum size_t maxSideBytes = 512 * 1024;
 
-        if (cache is null || structural == StructuralPolicy.off)
+        if (cache is null || !structural.parses)
             return;
-        const ceiling = structural == StructuralPolicy.on
-            ? size_t.max : maxSideBytes;
+        const ceiling = structural.waivesCeiling ? size_t.max : maxSideBytes;
+
+        // The word-level emphasis the engine just produced, kept so the
+        // structural view is a swap at runtime rather than a re-parse.
+        doc.diffEmphasis.captureWord(doc.diffDoc);
 
         foreach (fi; 0 .. doc.diffDoc.files.length)
         {
@@ -374,6 +446,12 @@ struct DocumentPipeline
             if (file.hunksCount == 0)
                 continue;
 
+            Token[] oldTokens, newTokens;
+            const verdict = compareTokenStreams(*cache, sides.lang,
+                sides.oldText, sides.newText, oldTokens, newTokens);
+            if (verdict == StructuralVerdict.unknown)
+                continue;
+
             auto spans = new HunkSpan[](file.hunksCount);
             foreach (i, ref s; spans)
             {
@@ -381,7 +459,7 @@ struct DocumentPipeline
                 s = HunkSpan(h.oldStart, h.oldCount, h.newStart, h.newCount);
             }
             auto verdicts = new StructuralVerdict[](file.hunksCount);
-            structuralVerdicts(*cache, sides.lang, sides.oldText,
+            hunkVerdicts(verdict, oldTokens, sides.oldText, newTokens,
                 sides.newText, spans, verdicts);
 
             foreach (i, v; verdicts)
@@ -392,6 +470,18 @@ struct DocumentPipeline
                 h.formattingOnly = true;
                 doc.diffDoc.hunks[file.hunksStart + i] = h;
             }
+
+            // The same parse pays for the view (`DVN3`'s second half).
+            if (applyTokenEmphasis(doc.diffDoc, file, sides.oldText,
+                    sides.newText, oldTokens, newTokens, diffOptions()) != 0)
+                doc.diffEmphasis.available = true;
+        }
+
+        if (doc.diffEmphasis.available)
+        {
+            doc.diffEmphasis.captureToken(doc.diffDoc);
+            doc.diffEmphasis.show(doc.diffDoc,
+                token: structural == StructuralPolicy.view);
         }
     }
 
@@ -859,6 +949,70 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
         if (!edited.diffDoc.hunks[i].formattingOnly)
             anyReal = true;
     assert(anyReal, "a changed operator is a change, reflow or not");
+}
+
+@("document.structuralView.emphasizesTokensNotCharacterRuns")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    import sparkles.diff : RowKind;
+    import sparkles.syntax : GrammarRegistry, LabelSet;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    const dir = buildPath(tempDir(), "hue-structural-view-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+
+    // One operator changed, and the spacing around it changed with it — the
+    // case where word runs and tokens disagree about what the reviewer
+    // should be looking at.
+    const oldPath = buildPath(dir, "a.d");
+    const newPath = buildPath(dir, "b.d");
+    write(oldPath, "module s;\n\nint f()\n{\n    return alpha+beta;\n}\n");
+    write(newPath, "module s;\n\nint f()\n{\n    return alpha - beta;\n}\n");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+
+    static const(char)[][] addedEmphasis(ref Document doc) @system
+    {
+        const(char)[][] spans;
+        foreach (i; 0 .. doc.diffDoc.rows.length)
+        {
+            const row = doc.diffDoc.rows[i];
+            if (row.kind != RowKind.added)
+                continue;
+            const rowText = doc.diffDoc.rowText(row);
+            foreach (s; doc.diffDoc.rowEmph(row))
+                spans ~= rowText[s.start .. s.end];
+        }
+        return spans;
+    }
+
+    // Word refinement cannot separate the operator from the padding that
+    // moved with it: the whole run reads as changed.
+    auto words = DocumentPipeline(registry: &reg, cache: &cache)
+        .loadDiffPair(oldPath, newPath);
+    assert(addedEmphasis(words) == [" - "], "word runs swallow the spacing");
+
+    // The grammar has no token for padding, so exactly the operator lights up.
+    auto tokens = DocumentPipeline(registry: &reg, cache: &cache,
+        structural: StructuralPolicy.view).loadDiffPair(oldPath, newPath);
+    assert(addedEmphasis(tokens) == ["-"], "the change is one token");
+
+    // Both readings are held at once, so the runtime toggle is a swap.
+    assert(tokens.diffEmphasis.available && tokens.diffEmphasis.showing);
+    tokens.diffEmphasis.show(tokens.diffDoc, token: false);
+    assert(addedEmphasis(tokens) == [" - "]);
+    tokens.diffEmphasis.show(tokens.diffDoc, token: true);
+    assert(addedEmphasis(tokens) == ["-"]);
 }
 
 @("document.classifyStructural.oneHunkReflowedOneEdited")
