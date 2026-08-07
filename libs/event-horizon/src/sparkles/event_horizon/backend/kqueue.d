@@ -42,7 +42,8 @@ import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
-    OpRead, OpRecv, OpSend, OpSlot, OpTimeout, OpToken, OpWrite;
+    OpPollAdd, OpRead, OpRecv, OpSend, OpSlot, OpTimeout, OpToken, OpWrite,
+    PollEvents;
 
 // ── minimal kqueue bindings (the exact BSD struct layout) ───────────────────
 
@@ -78,7 +79,9 @@ enum short EVFILT_TIMER = -7;
 enum ushort EV_ADD = 0x0001;
 enum ushort EV_DELETE = 0x0002;
 enum ushort EV_ONESHOT = 0x0010;
+enum ushort EV_CLEAR = 0x0020;
 enum ushort EV_ERROR = 0x4000;
+enum ushort EV_EOF = 0x8000;
 
 /// A backend-owned pending op; its address is the kevent `udata`.
 struct KqOp
@@ -91,6 +94,7 @@ struct KqOp
     short filter;  // the registered filter (for EV_DELETE on cancel)
     uint nextFree; // freelist link (uint.max = none)
     bool live;     // acquired and not yet released — the cancel lookup's guard
+    bool multishot; // poll_ only: the registration persists across completions
 }
 
 enum OpKindLocal : ubyte
@@ -102,6 +106,7 @@ enum OpKindLocal : ubyte
     accept_,
     connect_,
     timer,
+    poll_,
 }
 
 public:
@@ -164,12 +169,12 @@ struct KqueueBackend
     /// The negotiated capabilities (kqueue: readiness-synthesized proactor).
     ref const(BackendCaps) caps() const return @safe pure nothrow @nogc => _caps;
 
-    /// Maps raw completion flags to the portable set. kqueue synthesizes one
-    /// completion per op, so there are no `MORE`/buffer-select flags.
+    /// Maps raw completion flags to the portable set. The only raw flag this
+    /// backend produces is its own more-marker on retained multishot polls.
     import sparkles.event_horizon.op : CompletionFlags;
 
-    CompletionFlags mapFlags(uint) const @safe pure nothrow @nogc
-        => CompletionFlags.init;
+    CompletionFlags mapFlags(uint rawFlags) const @safe pure nothrow @nogc
+        => (rawFlags & rawFlagMore) ? CompletionFlags.more : CompletionFlags.init;
 
     /// Never called (kqueue sets no buffer-select flag); present for the
     /// dispatch's static shape.
@@ -275,6 +280,22 @@ struct KqueueBackend
         return armFilter(op, EVFILT_WRITE);
     }
 
+    /// Foreign-fd readiness: the readiness event IS the completion — no
+    /// syscall is performed on the fd (SPEC §15.1). Multishot registers
+    /// `EV_CLEAR` (edge-per-completion) and keeps the op live.
+    bool trySubmit(in OpPollAdd o, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        auto op = acquire();
+        if (op is null)
+            return false;
+        const filter = (o.events & PollEvents.writable) ? EVFILT_WRITE : EVFILT_READ;
+        *op = KqOp(token.raw, o.fd, null, 0, OpKindLocal.poll_, filter, uint.max);
+        op.multishot = o.multishot;
+        const flags = o.multishot ? cast(ushort)(EV_ADD | EV_CLEAR)
+            : cast(ushort)(EV_ADD | EV_ONESHOT);
+        return armFilter(op, filter, flags);
+    }
+
     /// A relative timer via `EVFILT_TIMER` (unique ident from the op index).
     bool trySubmit(in OpTimeout o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
@@ -319,8 +340,13 @@ struct KqueueBackend
             auto op = cast(KqOp*) evs[i].udata;
             if (op is null)
                 continue;
-            _ready[_readyCount++] = RawCompletion(op.token, performOp(op, evs[i]), 0);
-            release(op);
+            // A multishot poll's registration persists (EV_CLEAR): keep the
+            // op live and flag the completion non-final.
+            const retained = op.kind == OpKindLocal.poll_ && op.multishot;
+            _ready[_readyCount++] = RawCompletion(op.token, performOp(op, evs[i]),
+                retained ? rawFlagMore : 0);
+            if (!retained)
+                release(op);
         }
         return ioOk(cast(uint) _readyCount);
     }
@@ -422,10 +448,18 @@ private:
                 return err == 0 ? 0 : -err;
             case OpKindLocal.timer:
                 return 0; // expiry is success (the loop maps timeout res)
+            case OpKindLocal.poll_:
+                // The readiness event IS the result: the ready-events mask.
+                int events = op.filter == EVFILT_WRITE
+                    ? PollEvents.writable : PollEvents.readable;
+                if (ev.flags & EV_EOF)
+                    events |= PollEvents.hangup;
+                return events;
         }
     }
 
-    bool armFilter(KqOp* op, short filter) @trusted nothrow @nogc
+    bool armFilter(KqOp* op, short filter,
+        ushort flags = cast(ushort)(EV_ADD | EV_ONESHOT)) @trusted nothrow @nogc
     {
         // Mark liveness HERE, not in `acquire`: every `trySubmit` overwrites
         // the slot wholesale (`*op = KqOp(…)`), which would clear a flag set
@@ -435,7 +469,7 @@ private:
         kevent_t change;
         change.ident = cast(size_t) op.fd;
         change.filter = filter;
-        change.flags = EV_ADD | EV_ONESHOT;
+        change.flags = flags;
         change.udata = op;
         if (kevent(_kq, &change, 1, null, 0, null) < 0)
         {
@@ -515,6 +549,9 @@ private:
     enum size_t maxBatch = 128;
     // Timer idents live in a high range so they never collide with fds.
     enum uint _timerBase = 0x4000_0000;
+    // This backend's one raw completion flag: a retained multishot poll's
+    // non-final marker (mapFlags translates it to CompletionFlags.more).
+    enum uint rawFlagMore = 1;
 
     int _kq = -1;
     KqOp[] _ops;

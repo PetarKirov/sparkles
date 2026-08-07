@@ -40,6 +40,7 @@ enum OpKind : ubyte
     futexWake,       /// in-ring futex wake
     msgRing,         /// cross-ring message
     waitid,          /// child-process reap
+    pollAdd,         /// foreign-fd readiness (no I/O performed)
 }
 
 /// Which stage of an operation's life produced the failure.

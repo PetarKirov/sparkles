@@ -241,6 +241,38 @@ struct OpWaitid
     int options;   /// `WEXITED`, …
 }
 
+/**
+Portable readiness-event bits for `OpPollAdd` — the `POLLIN`/`POLLOUT`/
+`POLLERR`/`POLLHUP` subset every backend can honour. The values match
+POSIX `poll(2)` on all supported platforms, so lowering is a pass-through;
+`error`/`hangup` are result-only (requesting them is a no-op — the kernel
+always reports them).
+*/
+enum PollEvents : ushort
+{
+    none     = 0,
+    readable = 0x001, /// POLLIN
+    writable = 0x004, /// POLLOUT
+    error    = 0x008, /// POLLERR (result-only)
+    hangup   = 0x010, /// POLLHUP (result-only)
+}
+
+/**
+Foreign-fd readiness (SPEC §15.1): completes when `fd` is ready for
+`events` rather than when I/O finishes — the integration op for
+descriptors whose I/O a foreign library performs itself. The completion
+`res` is the ready `PollEvents` mask (a level snapshot, not a byte count).
+`multishot` keeps the submission armed, one completion per readiness edge
+(`flags.more`).
+*/
+struct OpPollAdd
+{
+    enum kind = OpKind.pollAdd;
+    int fd;
+    PollEvents events;
+    bool multishot;
+}
+
 /// DbI trait: exactly what submission accepts — any struct naming its
 /// portable `OpKind`.
 enum bool isOpDesc(Op) = __traits(compiles, { enum OpKind k = Op.kind; });
