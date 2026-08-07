@@ -78,6 +78,15 @@ struct DockNode
     int minExtent;      /// lower clamp for a divider drag
     int maxExtent;      /// upper clamp; `0` = unbounded
     bool visible = true;
+    /// `leaf` only: rows reserved at the pane's top for its header
+    /// (`DCK10`). `0` = no header, which is how a pane opts out.
+    int headerExtent;
+    /// `leaf` only: what the header says (`DCK11`). The container places
+    /// and focuses the bar; the application still supplies the words,
+    /// because only it knows them.
+    string title;
+    string headerCenter;
+    string headerTrailing;
 }
 
 /// The arrangement as data (`DCK1`).
@@ -106,7 +115,9 @@ struct DockLayout
                 children: n.children.dup, active: n.active, pane: n.pane,
                 tabExtent: n.tabExtent, extent: n.extent,
                 minExtent: n.minExtent, maxExtent: n.maxExtent,
-                visible: n.visible);
+                visible: n.visible, headerExtent: n.headerExtent,
+                title: n.title, headerCenter: n.headerCenter,
+                headerTrailing: n.headerTrailing);
         root = other.root;
         dividerExtent = other.dividerExtent;
     }
@@ -220,34 +231,85 @@ struct TabFrame
 }
 
 /**
+A pane's header strip (`DCK10`): the rect the container reserved at the
+top of the pane, plus what goes in it and whether it should read focused.
+
+The host paints it through the shared `headerBar` component; it does not
+decide WHERE, because the same walk that placed the pane placed this —
+which is what stops a header and its pane disagreeing about which rows
+belong to whom.
+*/
+struct HeaderFrame
+{
+    PaneId pane;
+    Rect rect;
+    string title;
+    string center;
+    string trailing;
+    bool focused;
+}
+
+/**
+One arrangement's derived geometry, owned together (`PRN1`).
+
+Panes, dividers, tabs and headers are not four unrelated buffers: they are
+one answer to "where is everything this frame", and every one of them is
+invalidated by the same event. Owning them as a value keeps that true by
+construction, and gives the next kind of frame — a redock hint — a home
+that does not lengthen anybody's parameter list.
+*/
+struct DockFrames
+{
+    PaneFrame[] panes;
+    DividerFrame[] dividers;
+    TabFrame[] tabs;
+    HeaderFrame[] headers;
+}
+
+/**
 Computes the frames (`DCK1` geometry): pure, so a layout's arrangement is
 checkable without a canvas. Buffers are reused — the caller keeps them
 across frames and pays no per-frame allocation after warm-up.
 */
-void dockFrames(in DockLayout l, in Rect area, ref PaneFrame[] panes,
-    ref DividerFrame[] dividers, ref TabFrame[] tabs)
+void dockFrames(in DockLayout l, in Rect area, ref DockFrames f,
+    PaneId focused = 0)
 {
-    panes.length = 0;
-    dividers.length = 0;
-    tabs.length = 0;
+    f.panes.length = 0;
+    f.dividers.length = 0;
+    f.tabs.length = 0;
+    f.headers.length = 0;
     if (l.nodes.length && l.root < l.nodes.length)
-        walk(l, l.root, area, panes, dividers, tabs);
+        walk(l, l.root, area, f, focused);
 }
 
 private void walk(in DockLayout l, uint idx, in Rect area,
-    ref PaneFrame[] panes, ref DividerFrame[] dividers, ref TabFrame[] tabs)
+    ref DockFrames f, PaneId focused)
 {
     const n = l.nodes[idx];
     if (!n.visible)
         return;
     if (n.kind == DockKind.leaf)
     {
-        panes ~= PaneFrame(n.pane, area);
+        // A pane's header is reserved from its own area (DCK10), so the
+        // content rect a host paints into already excludes it — the row
+        // cannot be claimed twice, and a pane that wants no header simply
+        // leaves `headerExtent` at zero.
+        Rect content = area;
+        if (n.headerExtent > 0 && area.height > n.headerExtent)
+        {
+            f.headers ~= HeaderFrame(n.pane,
+                Rect(area.x, area.y, area.width, n.headerExtent),
+                n.title, n.headerCenter, n.headerTrailing,
+                n.pane == focused);
+            content = Rect(area.x, area.y + n.headerExtent, area.width,
+                area.height - n.headerExtent);
+        }
+        f.panes ~= PaneFrame(n.pane, content);
         return;
     }
     if (n.kind == DockKind.tabs)
     {
-        walkTabs(l, idx, area, panes, dividers, tabs);
+        walkTabs(l, idx, area, f, focused);
         return;
     }
 
@@ -322,7 +384,7 @@ private void walk(in DockLayout l, uint idx, in Rect area,
         const childArea = horiz
             ? Rect(pos, area.y, ext[i], area.height)
             : Rect(area.x, pos, area.width, ext[i]);
-        walk(l, c, childArea, panes, dividers, tabs);
+        walk(l, c, childArea, f, focused);
         const start = pos;
         pos += ext[i];
         if (i + 1 < vis.length)
@@ -339,7 +401,7 @@ private void walk(in DockLayout l, uint idx, in Rect area,
                 hi = start + before.maxExtent;
             if (hi < lo)
                 hi = lo;
-            dividers ~= DividerFrame(idx, c, vis[i + 1], n.axis, horiz
+            f.dividers ~= DividerFrame(idx, c, vis[i + 1], n.axis, horiz
                     ? Rect(pos, area.y, l.dividerExtent, area.height)
                     : Rect(area.x, pos, area.width, l.dividerExtent),
                 start, lo, hi);
@@ -352,7 +414,7 @@ private void walk(in DockLayout l, uint idx, in Rect area,
 // Only the active child is walked, so an inactive pane has no frame at all
 // — it cannot be hit, scrolled or painted by accident.
 private void walkTabs(in DockLayout l, uint idx, in Rect area,
-    ref PaneFrame[] panes, ref DividerFrame[] dividers, ref TabFrame[] tabs)
+    ref DockFrames f, PaneId focused)
 {
     const n = l.nodes[idx];
     const strip = l.tabStripExtent;
@@ -392,7 +454,7 @@ private void walkTabs(in DockLayout l, uint idx, in Rect area,
         const isActive = i == n.active;
         if (isActive)
             activeChild = c;
-        tabs ~= TabFrame(idx, cast(uint) i, l.nodes[c].pane,
+        f.tabs ~= TabFrame(idx, cast(uint) i, l.nodes[c].pane,
             Rect(x, area.y, w, strip), isActive);
         x += w;
     }
@@ -409,8 +471,7 @@ private void walkTabs(in DockLayout l, uint idx, in Rect area,
     if (activeChild == uint.max)
         return;
     walk(l, activeChild, Rect(area.x, area.y + strip, area.width,
-        area.height - strip > 0 ? area.height - strip : 0),
-        panes, dividers, tabs);
+        area.height - strip > 0 ? area.height - strip : 0), f, focused);
 }
 
 /// What the container decided an event means (`DCK13`).
@@ -440,13 +501,24 @@ per event, then applies the returned $(LREF Route).
 struct DockContainer
 {
     DockLayout layout;
-    /// Derived by $(LREF arrange) — the host paints from these.
-    PaneFrame[] paneFrames;
+    /// Derived by $(LREF arrange) — the host paints from these. Owned as
+    /// one value because they are one answer, invalidated together.
+    DockFrames frames;
+
+    /// The pane content rects. (Named accessors over $(LREF frames), so a
+    /// host reads the part it needs without spelling the whole.)
+    ref inout(PaneFrame[]) paneFrames() inout return @safe pure nothrow @nogc
+        => frames.panes;
     /// ditto
-    DividerFrame[] dividers;
+    ref inout(DividerFrame[]) dividers() inout return @safe pure nothrow @nogc
+        => frames.dividers;
     /// ditto — the tab strips (`DCK4`); the host paints labels into these
     /// and the container hit-tests the same rects.
-    TabFrame[] tabs;
+    ref inout(TabFrame[]) tabs() inout return @safe pure nothrow @nogc
+        => frames.tabs;
+    /// ditto — the reserved header strips (`DCK10`).
+    ref inout(HeaderFrame[]) headers() inout return @safe pure nothrow @nogc
+        => frames.headers;
     /// The focused pane (`DCK6`); click-to-focus and $(LREF focusNext)
     /// maintain it.
     PaneId focused;
@@ -488,7 +560,7 @@ struct DockContainer
             if (n.maxExtent > 0 && n.extent > n.maxExtent)
                 n.extent = n.maxExtent;
         }
-        dockFrames(layout, area, paneFrames, dividers, tabs);
+        dockFrames(layout, area, frames, focused);
     }
 
     /// A pane's laid-out extent along its split's axis, or `0` when it is
@@ -1093,4 +1165,54 @@ version (unittest)
     c.layout.activate(one);
     c.arrange(Rect(0, 0, 60, 10));
     assert(c.paneFrames[0].pane == one);
+}
+
+@("ui.dock.headerIsReservedFromThePaneItBelongsTo")
+@safe unittest
+{
+    // Both panes carry a one-row header; the sidebar is fixed, the
+    // document flexes — hue's workspace with DCK10's chrome declared.
+    enum PaneId side = 1, doc = 2;
+    DockContainer c;
+    const s = c.layout.addLeaf(side, extent: 20, minExtent: 10);
+    const d = c.layout.addLeaf(doc);
+    c.layout.nodes[s].headerExtent = 1;
+    c.layout.nodes[s].title = "explorer";
+    c.layout.nodes[d].headerExtent = 1;
+    c.layout.nodes[d].title = "README.md";
+    c.layout.nodes[d].headerTrailing = "2/7";
+    c.layout.root = c.layout.addSplit(DockAxis.horizontal, [s, d]);
+    c.focused = doc;
+    c.arrange(Rect(0, 0, 100, 40));
+
+    // The header is taken from the pane's OWN area, so the content rect
+    // already excludes it: the row cannot be claimed by both.
+    assert(c.headers.length == 2);
+    assert(c.headers[0].rect == Rect(0, 0, 20, 1));
+    assert(c.paneFrames[0].rect == Rect(0, 1, 20, 39));
+    assert(c.headers[1].rect == Rect(21, 0, 79, 1));
+    assert(c.paneFrames[1].rect == Rect(21, 1, 79, 39));
+
+    // What the bar says travels with it, and so does which one reads
+    // focused — the host paints, the container decides neither word nor
+    // place independently of the pane.
+    assert(c.headers[0].title == "explorer" && !c.headers[0].focused);
+    assert(c.headers[1].title == "README.md" && c.headers[1].trailing == "2/7");
+    assert(c.headers[1].focused, "the focused pane's header says so");
+
+    // Focus moves, the chrome follows on the next arrange — no host flag.
+    c.focused = side;
+    c.arrange(Rect(0, 0, 100, 40));
+    assert(c.headers[0].focused && !c.headers[1].focused);
+
+    // A pane opting out costs nothing: no strip, and its content is whole.
+    c.layout.nodes[d].headerExtent = 0;
+    c.arrange(Rect(0, 0, 100, 40));
+    assert(c.headers.length == 1);
+    assert(c.paneFrames[1].rect == Rect(21, 0, 79, 40));
+
+    // A pane too short for its header keeps its content rather than
+    // rendering a bar with nothing under it.
+    c.arrange(Rect(0, 0, 100, 1));
+    assert(c.headers.length == 0 && c.paneFrames.length == 2);
 }
