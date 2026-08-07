@@ -19,8 +19,8 @@ module sparkles.syntax.md.render_widgets;
 import sparkles.base.term_color : mix, RgbColor, toRgb;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
-import sparkles.syntax.md.model : ColAlign, MdBlock, MdBlockKind, MdDoc,
-    MdInline, MdInlineKind, Span;
+import sparkles.syntax.md.model : ColAlign, MdBlock, MdBlockKind, MdDecoration,
+    MdDiffStatus, MdDoc, MdInline, MdInlineKind, Span;
 import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -106,11 +106,33 @@ struct MdViewOptions
     /// a muted 1-based number gutter inside the panel.
     bool codeLineNumbers;
 
+    /// `DVN6`: per-block diff verdicts, sorted by `spanStart`. A block whose
+    /// `span.start` appears here renders decorated — added/removed tint the
+    /// whole subtree through `proseSlot`, changed marks its `emphasis` ranges
+    /// — and the verdict is inherited by everything nested inside it.
+    const(MdDecoration)[] diffBlocks;
+
+    /// The emphasis in force for the subtree being rendered (set by
+    /// `viewBlock` from `diffBlocks`; not something a caller fills in).
+    private MdEmphasis diffEmphasis;
+
+    /// The emphasis to hand the inline mapper, or `null` when none is armed.
+    private const(MdEmphasis)* emph() const return @safe pure nothrow @nogc
+        => diffEmphasis.spans.length != 0 ? &diffEmphasis : null;
+
     /// Non-zero stamps every table cell wrapper with
     /// `key = tableKeyBase + cell.span.start` — source-anchored identity an
     /// interactive backend resolves back to the document's cell structure
     /// (2-D table selection, per-cell copy) via the cells' frames.
     size_t tableKeyBase = 0;
+}
+
+/// The emphasis in force while rendering a subtree: which source ranges are
+/// marked and with what slot.
+struct MdEmphasis
+{
+    const(Span)[] spans;
+    Slot slot = Slot.inherit;
 }
 
 /**
@@ -473,6 +495,13 @@ private Widget themedFenceHeader(ref const MdBlock blk, MdViewOptions opt)
 private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
     MdViewOptions opt, int listDepth = 0, int quoteDepth = 0)
 {
+    // `DVN6`: a decorated block hands its treatment to its whole subtree
+    // through the options that already flow down it — an added or removed
+    // block by taking over the prose slot (and, removed, the strike), a
+    // changed one by arming the emphasis its words are marked with. No block
+    // case below has to know a diff is being rendered.
+    opt = decorated(opt, blk.span.start);
+
     if (opt.depthBudget <= 0) // recursion cap: degrade to the raw source slice
         return proseRow(b, [TextSpan(sliceOf(src, blk.span), opt.proseSlot,
             opt.baseStyle)], opt);
@@ -498,7 +527,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 spans ~= TextSpan(opt.glyphs.headingIcons[lvl - 1] ~ " ",
                     opt.proseSlot, style, fg: accent, hasFg: true, noBreak: true);
                 inlinesToSpans(blk.inlines, src, style, opt.proseSlot, spans,
-                    &opt.theme);
+                    &opt.theme, opt.emph);
                 foreach (ref s; spans[1 .. $])
                     if (!s.hasFg)
                     {
@@ -512,7 +541,8 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 w.hasBgOverride = true;
                 return b.add(w);
             }
-            inlinesToSpans(blk.inlines, src, style, Slot.chromeAccent, spans);
+            inlinesToSpans(blk.inlines, src, style, Slot.chromeAccent, spans,
+                null, opt.emph);
             return proseRow(b, spans, opt);
         }
 
@@ -520,7 +550,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
         {
             TextSpan[] spans;
             inlinesToSpans(blk.inlines, src, opt.baseStyle, opt.proseSlot, spans,
-                opt.theme.present ? &opt.theme : null);
+                opt.theme.present ? &opt.theme : null, opt.emph);
             return proseRow(b, spans, opt);
         }
 
@@ -581,7 +611,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 const inls = item.inlines.length ? item.inlines
                     : (item.children.length ? item.children[0].inlines : null);
                 inlinesToSpans(inls, src, opt.baseStyle, opt.proseSlot, spans,
-                    opt.theme.present ? &opt.theme : null);
+                    opt.theme.present ? &opt.theme : null, opt.emph);
                 rows ~= proseRow(b, spans, opt, leaderHang(leader));
                 // Nested blocks (a sub-list, a nested paragraph) after the first.
                 bool first = true;
@@ -740,10 +770,15 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 foreach (ci, ref const cell; row.children)
                 {
                     TextSpan[] spans;
-                    TextStyle style = opt.baseStyle;
+                    // A cell is rendered here rather than through `viewBlock`,
+                    // so its `DVN6` verdict has to be resolved here too — this
+                    // is the level a re-aligned table's one real edit lands on.
+                    const cellOpt = decorated(opt, cell.span.start);
+                    TextStyle style = cellOpt.baseStyle;
                     style.bold = ri == 0; // the header row
-                    inlinesToSpans(cell.inlines, src, style, opt.proseSlot,
-                        spans, opt.theme.present ? &opt.theme : null);
+                    inlinesToSpans(cell.inlines, src, style, cellOpt.proseSlot,
+                        spans, opt.theme.present ? &opt.theme : null,
+                        cellOpt.emph);
                     cellSpans[ri * cols + ci] = spans;
                     int w;
                     foreach (ref s; spans)
@@ -827,6 +862,50 @@ private Widget richWidget(TextSpan[] spans, MdViewOptions opt, int hang = 0)
 }
 
 /// ditto
+/// `opt` with any verdict for the block starting at `spanStart` applied.
+///
+/// Added and removed take over the prose slot so every span the subtree emits
+/// is tinted, and removed also strikes the base style: a deletion should read
+/// as struck-out prose, not as a red paragraph the reviewer might mistake for
+/// current text. Changed arms the word ranges instead, leaving the block
+/// itself untinted — the words carry the answer.
+private MdViewOptions decorated(MdViewOptions opt, size_t spanStart) @safe
+{
+    if (opt.diffBlocks.length == 0)
+        return opt;
+
+    size_t lo, hi = opt.diffBlocks.length;
+    while (lo < hi)
+    {
+        const mid = lo + (hi - lo) / 2;
+        if (opt.diffBlocks[mid].spanStart < spanStart)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (lo >= opt.diffBlocks.length
+        || opt.diffBlocks[lo].spanStart != spanStart)
+        return opt;
+
+    const d = opt.diffBlocks[lo];
+    final switch (d.status) with (MdDiffStatus)
+    {
+        case unchanged:
+            break;
+        case added:
+            opt.proseSlot = Slot.diffAdded;
+            break;
+        case removed:
+            opt.proseSlot = Slot.diffRemoved;
+            opt.baseStyle.strikethrough = true;
+            break;
+        case changed:
+            opt.diffEmphasis = MdEmphasis(d.emphasis, Slot.diffEmphAdded);
+            break;
+    }
+    return opt;
+}
+
 private uint proseRow(ref Builder b, TextSpan[] spans, MdViewOptions opt,
     int hang = 0)
     => b.add(richWidget(spans, opt, hang));
@@ -854,34 +933,35 @@ popup and the document view share it, which is what "JSDoc renders through
 the same markdown view" means concretely.
 */
 void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
-    Slot slot, ref TextSpan[] spans, scope const(MdViewTheme)* vt = null)
+    Slot slot, ref TextSpan[] spans, scope const(MdViewTheme)* vt = null,
+    scope const(MdEmphasis)* em = null)
 {
     foreach (ref const inl; inls)
         final switch (inl.kind) with (MdInlineKind)
         {
             case text:
                 pushProse(sliceOf(src, inl.span), base, slot, spans,
-                    inl.span.start);
+                    inl.span.start, em);
                 break;
             case strong:
             {
                 auto s = base;
                 s.bold = true;
-                inlinesToSpans(inl.children, src, s, slot, spans, vt);
+                inlinesToSpans(inl.children, src, s, slot, spans, vt, em);
                 break;
             }
             case emphasis:
             {
                 auto s = base;
                 s.italic = true;
-                inlinesToSpans(inl.children, src, s, slot, spans, vt);
+                inlinesToSpans(inl.children, src, s, slot, spans, vt, em);
                 break;
             }
             case strikethrough:
             {
                 auto s = base;
                 s.strikethrough = true;
-                inlinesToSpans(inl.children, src, s, slot, spans, vt);
+                inlinesToSpans(inl.children, src, s, slot, spans, vt, em);
                 break;
             }
             case codeSpan:
@@ -902,7 +982,7 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
                 auto s = base;
                 s.underline = UnderlineStyle.single;
                 const before = spans.length;
-                inlinesToSpans(inl.children, src, s, Slot.info, spans, vt);
+                inlinesToSpans(inl.children, src, s, Slot.info, spans, vt, em);
                 if (vt !is null)
                     foreach (ref sp; spans[before .. $])
                         if (!sp.hasFg)
@@ -913,7 +993,7 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
                 break;
             }
             case image:
-                inlinesToSpans(inl.children, src, base, slot, spans, vt);
+                inlinesToSpans(inl.children, src, base, slot, spans, vt, em);
                 break;
             case lineBreak:
                 spans ~= TextSpan("\n", slot, base); // hard break
@@ -926,15 +1006,52 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
 /// owns every breaking decision. `srcStart` (when given) stamps the source
 /// identity the normalized text came from.
 void pushProse(const(char)[] text, TextStyle style, Slot slot,
-    ref TextSpan[] spans, size_t srcStart = size_t.max)
+    ref TextSpan[] spans, size_t srcStart = size_t.max,
+    scope const(MdEmphasis)* em = null)
 {
     if (!text.length)
         return;
     char[] norm;
     norm.reserve(text.length);
     bool ws;
-    foreach (char c; text)
+    // `DVN6`: emphasis is decided HERE because this is the one place that
+    // still knows both the source offset and the output offset. Whitespace
+    // collapsing makes them diverge, so a post-pass over the finished spans
+    // could not place a boundary correctly.
+    const marking = em !is null && em.spans.length != 0
+        && srcStart != size_t.max;
+    bool inEmph;
+    size_t runStart;
+
+    void flush(size_t at, bool emphasized)
     {
+        if (norm.length == 0)
+            return;
+        spans ~= TextSpan(norm, emphasized ? em.slot : slot, style,
+            srcStart: runStart,
+            srcEnd: at);
+        norm = null;
+    }
+
+    if (marking)
+        runStart = srcStart;
+
+    foreach (i, char c; text)
+    {
+        if (marking)
+        {
+            const here = srcStart + i;
+            const nowEmph = covers(em.spans, here);
+            if (nowEmph != inEmph)
+            {
+                if (ws && norm.length)
+                    norm ~= ' ';
+                ws = false;
+                flush(here, inEmph);
+                runStart = here;
+                inEmph = nowEmph;
+            }
+        }
         if (c == ' ' || c == '\t' || c == '\n')
         {
             ws = true;
@@ -949,10 +1066,28 @@ void pushProse(const(char)[] text, TextStyle style, Slot slot,
     }
     if (ws)
         norm ~= ' ';
+    if (marking)
+    {
+        flush(srcStart + text.length, inEmph);
+        return;
+    }
     if (norm.length)
         spans ~= TextSpan(norm, slot, style, // freshly allocated, never mutated
             srcStart: srcStart,
             srcEnd: srcStart != size_t.max ? srcStart + text.length : 0);
+}
+
+/// Is `offset` inside any of the (sorted, non-overlapping) ranges?
+private bool covers(scope const(Span)[] ranges, size_t offset) @safe pure nothrow @nogc
+{
+    foreach (r; ranges)
+    {
+        if (offset < r.start)
+            return false; // sorted: nothing later can contain it
+        if (offset < r.end)
+            return true;
+    }
+    return false;
 }
 
 // ── Callouts (GitHub admonitions) ───────────────────────────────────────────
@@ -1046,7 +1181,7 @@ private uint calloutPanel(ref Builder b, ref const MdBlock blk,
             inlinesToSpans(trimLeadingBytes(c.inlines,
                     c.span.start + co.markerLen), src,
                 opt.baseStyle, opt.proseSlot, spans,
-                opt.theme.present ? &opt.theme : null);
+                opt.theme.present ? &opt.theme : null, opt.emph);
             if (spans.length)
                 rows ~= proseRow(b, spans, opt);
             continue;
@@ -1730,4 +1865,82 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
             if (s.text == "B") sawB2 = true;
         }
     assert(sawB2 && !sawA2);
+}
+
+@("render_widgets.diff.decoratedBlocksCarryTheirVerdict")
+@safe unittest
+{
+    // `DVN6`: the view is told what happened to each block, keyed by span
+    // start, and hands the verdict to that block's whole subtree.
+    enum src = "kept\n\ngone\n\nfresh\n";
+    MdDoc doc = {
+        source: src,
+        root: MdBlock(kind: MdBlockKind.document, children: [
+            MdBlock(kind: MdBlockKind.paragraph, span: Span(0, 4),
+                inlines: [MdInline(kind: MdInlineKind.text, span: Span(0, 4))]),
+            MdBlock(kind: MdBlockKind.paragraph, span: Span(6, 10),
+                inlines: [MdInline(kind: MdInlineKind.text, span: Span(6, 10))]),
+            MdBlock(kind: MdBlockKind.paragraph, span: Span(12, 17),
+                inlines: [MdInline(kind: MdInlineKind.text, span: Span(12, 17))]),
+        ]),
+    };
+
+    MdViewOptions opt;
+    opt.diffBlocks = [
+        MdDecoration(6, MdDiffStatus.removed),
+        MdDecoration(12, MdDiffStatus.added),
+    ];
+    auto tree = viewMarkdown(doc, opt);
+
+    bool sawRemoved, sawAdded, sawPlain;
+    foreach (ref n; tree.nodes)
+        foreach (sp; n.spans)
+        {
+            if (sp.text == "gone")
+            {
+                sawRemoved = sp.slot == Slot.diffRemoved && sp.textStyle.strikethrough;
+                // Struck, not merely tinted: a deletion must not read as text
+                // that is still there.
+            }
+            else if (sp.text == "fresh")
+                sawAdded = sp.slot == Slot.diffAdded;
+            else if (sp.text == "kept")
+                sawPlain = sp.slot != Slot.diffAdded && sp.slot != Slot.diffRemoved;
+        }
+    assert(sawRemoved, "a removed block renders struck through and tinted");
+    assert(sawAdded, "an added block renders tinted");
+    assert(sawPlain, "an undecorated block is untouched");
+}
+
+@("render_widgets.diff.changedWordsSplitTheirSpan")
+@safe unittest
+{
+    // A changed block tints only the words that differ — and the split has to
+    // land on the right bytes even though prose collapses whitespace on the
+    // way to a span.
+    enum src = "alpha beta gamma";
+    MdDoc doc = {
+        source: src,
+        root: MdBlock(kind: MdBlockKind.document, children: [
+            MdBlock(kind: MdBlockKind.paragraph, span: Span(0, src.length),
+                inlines: [MdInline(kind: MdInlineKind.text,
+                    span: Span(0, src.length))]),
+        ]),
+    };
+
+    MdViewOptions opt;
+    opt.diffBlocks = [MdDecoration(0, MdDiffStatus.changed, [Span(6, 10)])];
+    auto tree = viewMarkdown(doc, opt);
+
+    const(char)[] marked;
+    const(char)[] plain;
+    foreach (ref n; tree.nodes)
+        foreach (sp; n.spans)
+            if (sp.slot == Slot.diffEmphAdded)
+                marked ~= sp.text;
+            else
+                plain ~= sp.text;
+    assert(marked == "beta", "exactly the changed word is marked");
+    assert(plain == "alpha  gamma" || plain == "alpha gamma",
+        "the rest of the paragraph is untouched");
 }
