@@ -151,6 +151,9 @@ struct GalleryState
     MachinesDemo machines;   ///
     SplitState split = SplitState(24); ///
     size_t themeListTop;     /// first visible row of the theme browser
+    size_t componentsTab;    /// the Components page's active tab
+    size_t componentsAction = size_t.max; /// …and its last activated segment
+    ScrollState demoScroll;  /// the Scrolling page's own viewport offset
 
     // ── what the host told us ───────────────────────────────────────────────
     Size surface = Size(80, 24); ///

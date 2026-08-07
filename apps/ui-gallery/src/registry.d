@@ -11,6 +11,7 @@ Adding a page is two lines: the module, and its row here.
 */
 module registry;
 
+import sparkles.input : KeyEvent;
 import sparkles.ui.widget : Builder;
 
 import state : GalleryState;
@@ -19,12 +20,25 @@ import state : GalleryState;
 // `import pages.welcome;` would introduce the symbol `pages`, which is what the
 // catalog below is called — and the collision is a compile error, not a
 // shadowing surprise.
+import pages.components_page : componentsKeys = keys,
+    componentsOnActivate = handleActivate, componentsOnKey = handleKey,
+    componentsView = view;
 import pages.decoration_page : decorationView = view;
+import pages.machines_page : machinesAnimating = animating,
+    machinesKeys = keys, machinesOnActivate = handleActivate,
+    machinesOnKey = handleKey, machinesStep = step, machinesView = view;
+import pages.scrolling_page : scrollingKeys = keys,
+    scrollingOnKey = handleKey, scrollingView = view;
+import pages.split_page : splitKeys = keys, splitOnKey = handleKey,
+    splitView = view;
+import pages.tree_page : treeKeys = keys, treeOnActivate = handleActivate,
+    treeOnKey = handleKey, treeView_ = view;
 import pages.layout_page : layoutKeys = keys, layoutOnKey = handleKey,
     layoutView = view;
 import pages.primitives : primitivesView = view;
 import pages.slots_page : slotsView = view;
-import pages.themes_page : themesKeys = keys, themesView = view;
+import pages.themes_page : themesKeys = keys, themesOnActivate = handleActivate,
+    themesView = view;
 import pages.text_page : textKeys = keys, textOnKey = handleKey,
     textView = view;
 import pages.tracks_page : tracksKeys = keys, tracksOnKey = handleKey,
@@ -46,13 +60,25 @@ struct Page
     /// (navigation, theme, quit) are not repeated here.
     immutable(string)[] keys;
     /**
-    The page's own key handling, or `null`.
+    The page's own key handling, or `null`. Returns `true` iff it consumed the
+    key.
 
-    Returns `true` iff it consumed the key. The shell tries its own bindings
-    first, so a page cannot capture navigation and strand a reader on it —
-    which is the failure mode of letting a page see input first.
+    Offered the key $(B only while the keyboard is in the content region), and
+    only after the shell has taken the four bindings that must always work:
+    quit, dismiss, `Tab`, and the help overlay. So a page may claim `j` for its
+    own tree without stranding a reader who cannot then leave it — `Tab` is
+    never the page's to take.
     */
-    bool function(ref GalleryState s, dchar ch) @safe onKey;
+    bool function(ref GalleryState s, in KeyEvent k) @safe onKey;
+
+    /**
+    What a completed press on one of the page's own hit ids does, or `null`.
+    Returns `true` iff the id was the page's.
+
+    The shell routes its own chrome first and then offers the id here, so a
+    page can be interactive without the shell importing it to find out how.
+    */
+    bool function(ref GalleryState s, size_t hitId) @safe onActivate;
 }
 
 /**
@@ -70,10 +96,29 @@ static immutable Page[] pages = [
         tracksKeys, &tracksOnKey),
     Page("Text", "wrapping and measurement", &textView,
         textKeys, &textOnKey),
-    Page("Themes", "thirty-six built-ins, live", &themesView, themesKeys),
+    Page("Themes", "thirty-six built-ins, live", &themesView, themesKeys,
+        null, &themesOnActivate),
     Page("Slots", "the semantic colour vocabulary", &slotsView),
     Page("Decoration", "box and text chrome", &decorationView),
+    Page("Components", "the application chrome", &componentsView,
+        componentsKeys, &componentsOnKey, &componentsOnActivate),
+    Page("Tree", "data, interaction, view", &treeView_,
+        treeKeys, &treeOnKey, &treeOnActivate),
+    Page("Scrolling", "one thumb formula", &scrollingView,
+        scrollingKeys, &scrollingOnKey),
+    Page("State", "the interaction machines", &machinesView,
+        machinesKeys, &machinesOnKey, &machinesOnActivate),
+    Page("Split", "a divider between two panes", &splitView,
+        splitKeys, &splitOnKey),
 ];
+
+/// Advances whatever the showing page animates, and says whether it wants
+/// another frame. The shell owns the clock, so a page cannot read one.
+bool stepPage(ref GalleryState s, int dtMs)
+{
+    machinesStep(s, dtMs);
+    return machinesAnimating(s);
+}
 
 /// The index of the page `name` refers to — a title prefix (case-insensitive)
 /// or a 1-based number — or `0` when nothing matches, which is `Welcome` and

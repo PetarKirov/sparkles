@@ -26,8 +26,8 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import compat : AppTheme;
 import kit;
-import pages.themes_page : themeAt;
-import registry : pages;
+import pages.split_page : splitMax = maxPane, splitMin = minPane;
+import registry : pages, stepPage;
 import state;
 
 // No module-level `@safe:` here, deliberately. `view` and `handle` are member
@@ -80,6 +80,10 @@ struct Gallery
         if (s.toast.visible && s.hasFrameClock)
             s.toast = s.toast.stepped(dtMs, toastConfigFor(true));
 
+        // The shell owns the clock, so a page cannot read one: it is handed the
+        // delta and says whether it wants another frame.
+        const pageAnimating = stepPage(s, dtMs);
+
         auto b = Builder();
 
         // The page first, so its natural height is known before the scroll
@@ -126,7 +130,7 @@ struct Gallery
 
         // An animation asks for one more frame at a time, so a finished one
         // stops costing anything without having to remember to turn itself off.
-        if (s.toast.visible && s.hasFrameClock)
+        if ((s.toast.visible || pageAnimating) && s.hasFrameClock)
             h.requestFrame();
 
         return b.finish(root);
@@ -171,14 +175,25 @@ struct Gallery
         if (isDismiss(k) || k.ch == 'q')
             return h.quit();
 
+        if (k.key == Key.tab)
+        {
+            // Two regions, so forward and backward are the same move. Shift-Tab
+            // is accepted anyway, because a reader who knows the convention will
+            // press it. Taken before the page sees anything: a page that could
+            // claim Tab could strand a reader inside itself.
+            s.region = s.region == Region.nav ? Region.content : Region.nav;
+            return;
+        }
+
+        // With the keyboard in the content region the page gets first refusal —
+        // which is what lets a tree own the arrow keys without the page list
+        // losing them. In the nav region the shell keeps everything.
+        if (s.region == Region.content
+            && pages[s.page].onKey !is null && pages[s.page].onKey(s, k))
+            return;
+
         switch (k.key)
         {
-            case Key.tab:
-                // Two regions, so forward and backward are the same move.
-                // Shift-Tab is accepted anyway, because a reader who knows the
-                // convention will press it.
-                s.region = s.region == Region.nav ? Region.content : Region.nav;
-                return;
             case Key.up: return moveWithin(-1);
             case Key.down: return moveWithin(1);
             case Key.left: return setPage(s.page == 0 ? pages.length - 1 : s.page - 1);
@@ -199,14 +214,12 @@ struct Gallery
             case ']': return cycleTheme(1);
             case '[': return cycleTheme(-1);
             case ' ': s.region = Region.content; return;
-            case 'n': s.navPinned = !s.navPinned; return;
+            // A punctuation key, not a letter: pages get first refusal in the
+            // content region, and every plausible letter is spoken for by one
+            // of them (`n`/`p` scroll, `d` discloses, `t` cycles a template).
+            case '\\': s.navPinned = !s.navPinned; return;
             default: break;
         }
-
-        // The page's own bindings come after the shell's, never before: a page
-        // that saw input first could claim `j` and strand a reader on it.
-        if (pages[s.page].onKey !is null && pages[s.page].onKey(s, k.ch))
-            return;
 
         // `1`..`9` then `0` jump straight to a page — the fastest route on a
         // target where the sidebar is not clickable.
@@ -276,20 +289,38 @@ struct Gallery
         final switch (p.action)
         {
             case PointerAction.move:
+                s.hover.update(p, targets);
+                return;
             case PointerAction.drag:
                 s.hover.update(p, targets);
+                // A drag belongs to whatever the press captured, not to
+                // whatever is under the pointer now — which is the whole point
+                // of `CaptureState`, and the reason a divider does not let go
+                // when you drag past the pane beside it.
+                if (s.capture.ownedBy(hitSplit))
+                    s.split = s.split.draggedTo(p.pos.x, splitMin,
+                        splitMax(s.contentWidth - 1));
                 return;
             case PointerAction.leave:
                 s.hover.update(p, targets);
                 s.press = s.press.cancelled;
+                s.capture = s.capture.released;
+                s.split = s.split.released;
                 return;
             case PointerAction.press:
                 s.hover.update(p, targets);
                 s.press = s.press.pressed(s.hover.hot);
+                if (s.hover.hot == hitSplit)
+                {
+                    s.capture = s.capture.capturedBy(hitSplit);
+                    s.split = s.split.started(p.pos.x);
+                }
                 return;
             case PointerAction.release:
                 s.hover.update(p, targets);
                 s.press = s.press.released(s.hover.hot);
+                s.capture = s.capture.released;
+                s.split = s.split.released;
                 activate(s.press.activated);
                 return;
         }
@@ -309,9 +340,10 @@ struct Gallery
             return setPage(id - hitNav);
         }
 
-        const theme = themeAt(id);
-        if (theme != size_t.max)
-            return selectTheme(theme);
+        // Anything else belongs to the page. The shell does not know what a
+        // theme row or a tab is, and does not import a page to find out.
+        if (pages[s.page].onActivate !is null && pages[s.page].onActivate(s, id))
+            s.region = Region.content;
     }
 
     private void onWheel(in WheelEvent w) @safe
@@ -472,6 +504,7 @@ struct Gallery
             ["PgUp / PgDn", "scroll the page"],
             ["Home / End", "top / bottom"],
             ["[ / ]", "previous / next theme"],
+            ["\\", "show the page list on a narrow terminal"],
             ["?", "this overlay"],
             ["q / Esc", "quit"],
         ];
@@ -534,6 +567,7 @@ private auto rgbOr(C)(in C c, ubyte r, ubyte g, ubyte bl) @safe
 
 version (unittest)
 {
+    import pages.themes_page : themeAt;
     import compat : RecordingHost, runAppRecorded;
     import sparkles.input : charEvent, keyEvent, Mods;
     import sparkles.ui_app.host : RunConfig;
@@ -686,6 +720,84 @@ version (unittest)
             pos: Point(3, cast(int)(1 + i))), targets);
         assert(hover.hot == hitNav + i, "nav row " ~ p.title ~ " hit mismatch");
     }
+}
+
+@("ui_gallery.gallery.pageKeysAreGatedOnTheContentRegion")
+@safe unittest
+{
+    import registry : pageIndexOf;
+
+    // A page owns its keys only while the keyboard is in it. In the page list
+    // the same keystroke is the shell's — which is what keeps `j`/`k` moving
+    // between pages on a page whose own bindings include them.
+    Gallery g;
+    g.s.page = pageIndexOf("layout");
+    g.s.region = Region.nav;
+
+    drive(g, [charEvent('w')]);
+    assert(g.s.layoutDemo.widthMode == 0, "the page did not see the key");
+
+    drive(g, [keyEvent(Key.tab), charEvent('w')]);
+    assert(g.s.region == Region.content);
+    assert(g.s.layoutDemo.widthMode == 1, "…and now it does");
+}
+
+@("ui_gallery.gallery.tabIsNeverThePagesToTake")
+@safe unittest
+{
+    import registry : pageIndexOf;
+
+    // Whatever a page claims, Tab gets a reader back out. A page that could
+    // capture it could strand them inside itself with no keyboard route home.
+    Gallery g;
+    g.s.page = pageIndexOf("tree");
+    g.s.region = Region.content;
+    drive(g, [keyEvent(Key.tab)]);
+    assert(g.s.region == Region.nav);
+}
+
+@("ui_gallery.gallery.aSplitDragIsOwnedByThePress")
+@safe unittest
+{
+    import registry : pageIndexOf;
+    import sparkles.ui.geometry : Constraints;
+
+    // Press the divider, then drag well past the pane beside it. The capture
+    // keeps every subsequent move, so the divider follows the pointer instead
+    // of letting go the moment the pointer is over something else.
+    Gallery g;
+    g.s.page = pageIndexOf("split");
+    const before = g.s.split.size;
+
+    RecordingHost h;
+    h.size = sizeOf(96, 30);
+    auto tree = g.view(h);
+    const targets = hoverTargets(tree, layout(tree, Constraints(maxW: 96, maxH: 30)));
+
+    Point grab;
+    bool found;
+    foreach (t; targets)
+        if (t.hitId == hitSplit)
+        {
+            grab = Point(t.rect.x, t.rect.y + 1);
+            found = true;
+            break;
+        }
+    assert(found, "the divider is not hit-testable");
+
+    drive(g, [
+        Event(PointerEvent(action: PointerAction.press, pos: grab)),
+        Event(PointerEvent(action: PointerAction.drag,
+            pos: Point(grab.x + 6, grab.y))),
+    ], 96, 30);
+
+    assert(g.s.split.size == before + 6, "the pane followed the delta");
+    assert(g.s.split.dragging, "and the grab is still in flight");
+
+    drive(g, [Event(PointerEvent(action: PointerAction.release,
+        pos: Point(grab.x + 6, grab.y)))], 96, 30);
+    assert(!g.s.split.dragging);
+    assert(g.s.split.size == before + 6, "the size survives the release");
 }
 
 @("ui_gallery.gallery.clickingAThemeRowSelectsIt")

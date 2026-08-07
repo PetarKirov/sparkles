@@ -12,6 +12,7 @@ module pages.layout_page;
 
 import std.conv : text;
 
+import sparkles.input : Key, KeyEvent;
 import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Visibility, Widget, WidgetKind;
@@ -143,9 +144,9 @@ SizeSpec widthOf(in LayoutDemo d) pure nothrow @nogc
 
 /// The page's own key handling, applied by the shell when this page is showing.
 /// Returns `true` iff it consumed the key.
-bool handleKey(ref GalleryState s, dchar ch)
+bool handleKey(ref GalleryState s, in KeyEvent k)
 {
-    switch (ch)
+    switch (k.ch)
     {
         case 'w': s.layoutDemo.widthMode = (s.layoutDemo.widthMode + 1) % 4; return true;
         case 'a': s.layoutDemo.alignX = cycle(s.layoutDemo.alignX); return true;
@@ -224,15 +225,15 @@ private int clampCells(int n) pure nothrow @nogc
     // look broken.
     GalleryState s;
     foreach (_; 0 .. 3)
-        handleKey(s, 'a');
+        handleKey(s, KeyEvent(Key.char_, 'a'));
     assert(s.layoutDemo.alignX == Alignment.start);
 
     foreach (_; 0 .. 50)
-        handleKey(s, '+');
+        handleKey(s, KeyEvent(Key.char_, '+'));
     assert(s.layoutDemo.fixedCells == 60);
     foreach (_; 0 .. 50)
-        handleKey(s, '-');
+        handleKey(s, KeyEvent(Key.char_, '-'));
     assert(s.layoutDemo.fixedCells == 4);
 
-    assert(!handleKey(s, 'z'), "an unclaimed key falls through to the shell");
+    assert(!handleKey(s, KeyEvent(Key.char_, 'z')), "an unclaimed key falls through to the shell");
 }
