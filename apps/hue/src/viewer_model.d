@@ -8,8 +8,8 @@ module viewer_model;
 
 import ansi_model : AnsiLine, Attr;
 import diff_session : DiffSession;
-import diff_view : diffFileKey, diffGapKeyBase, DiffLayout, FileTypes,
-    isDiffGapKey, isDiffHunkKey, viewDiffDoc;
+import diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
+    FileTypes, isDiffGapKey, isDiffHunkKey, viewDiffDoc;
 import document : DiffEmphasis, DiffSides, hueFenceRenderer;
 import sparkles.diff.model : DiffDoc;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
@@ -908,6 +908,55 @@ struct ViewerModel
         return true;
     }
 
+    /**
+    `DST2`/`DST3`: the zero-context patch for the hunk under the cursor.
+
+    Hunk granularity, which the spec makes the default selection mode: it is
+    the unit a reviewer already navigates with `{`/`}`, so "stage this" needs
+    no second cursor to exist first. Empty when this session cannot be staged
+    (a PR, a revision range) or when no hunk is in view — the caller reports
+    that once rather than applying nothing and claiming success.
+
+    `DST6` holds by construction: the selection is built over MODEL rows, so
+    a hunk folded as noise stages exactly the same bytes as an expanded one.
+    */
+    string diffCursorPatch()
+    {
+        import sparkles.diff : selectHunk;
+        import staging : selectionPatch;
+
+        if (!diffSession.stageable || diff.files.length == 0)
+            return null;
+        const hi = diffCursorHunk();
+        if (hi >= diff.hunks.length)
+            return null;
+
+        auto selected = new bool[](diff.rows.length);
+        selectHunk(diff, diff.hunks[hi].id, selected);
+        return selectionPatch(diff, selected);
+    }
+
+    /// The document-global index of the hunk the cursor is in: the last one
+    /// whose keyed row is at or above the viewport's top, which is exactly
+    /// where `{`/`}` left it.
+    size_t diffCursorHunk()
+    {
+        size_t best = size_t.max;
+        long bestY = long.min;
+        foreach (ref kr; cells)
+        {
+            if (!isDiffHunkKey(kr.key))
+                continue;
+            const y = cast(long) kr.rect.y;
+            if (y > top || y <= bestY)
+                continue;
+            bestY = y;
+            best = diffHunkIndexOf(kr.key);
+        }
+        // Nothing above the fold yet: the first hunk is the one in view.
+        return best == size_t.max ? 0 : best;
+    }
+
     /// `DVG3`: folds or unfolds every file at once.
     bool diffSetAllFiles(bool collapsed)
     {
@@ -1321,4 +1370,52 @@ struct ViewerModel
     // An offset belonging to no group is ignored rather than rebuilding.
     vm.activateCodeTab(size_t.max - 1);
     assert(vm.activeCodeTabs.length == 1 && shows(vm, "AAA"));
+}
+
+@("viewer_model.diffCursorPatch.stagesTheHunkInViewOrNothing")
+@system unittest
+{
+    import sparkles.diff : diffText, parsePatch;
+    import sparkles.syntax : builtinDark;
+    import diff_session : buildDiffSession;
+    import std.algorithm.searching : canFind;
+
+    enum before = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\n";
+    enum after = "a\nB\nc\nd\ne\nf\ng\nh\ni\nj\nk\nL\n";
+    auto dd = diffText(before, after, "f.txt", "f.txt");
+    assert(dd.hunks.length == 2, "precondition: two hunks");
+
+    ViewerModel vm;
+    vm.themes = [builtinDark];
+    vm.names = ["dark"];
+    vm.widthCols = 80;
+    vm.applyTheme(0);
+    auto session = buildDiffSession(dd);
+    session.stageable = true;
+    vm.setDocument("diff", "", "", null, PreviewModel.init,
+        TwoslashReturn.init, "diff", dd, null, session);
+
+    // At the top, the hunk in view is the first one — and the patch carries
+    // that change and not the other.
+    const first = vm.diffCursorPatch();
+    assert(first.length != 0);
+    assert(!parsePatch(first).hasError, "must be a patch git could take");
+    assert(first.canFind("+B") && !first.canFind("+L"));
+
+    // Move to the second hunk: the cursor decides, so the patch follows it.
+    // `}` from the top lands ON the first hunk, so reaching the second takes
+    // two moves — the navigation the reviewer already has, unchanged.
+    assert(vm.diffMoveHunk(1));
+    assert(vm.diffCursorHunk() == 0);
+    assert(vm.diffMoveHunk(1));
+    assert(vm.diffCursorHunk() == 1);
+    const second = vm.diffCursorPatch();
+    assert(second.canFind("+L") && !second.canFind("+B"));
+
+    // A session with no index behind it yields nothing at all, rather than a
+    // patch that would be applied somewhere meaningless.
+    auto readOnly = buildDiffSession(dd); // `stageable` defaults false
+    vm.setDocument("diff", "", "", null, PreviewModel.init,
+        TwoslashReturn.init, "diff", dd, null, readOnly);
+    assert(vm.diffCursorPatch().length == 0);
 }

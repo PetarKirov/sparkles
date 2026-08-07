@@ -65,6 +65,10 @@ struct Document
     /// `kind == diff`: `DVN3`'s word- and token-level emphasis variants, so
     /// the structural view toggles without re-parsing.
     DiffEmphasis diffEmphasis;
+    /// `kind == diff`: the path filters this git diff was produced with, so
+    /// re-running it after a `DST2` apply narrows to the same files. Widening
+    /// the view as a side effect of staging would be its own small betrayal.
+    string[] diffPaths;
 }
 
 /**
@@ -271,6 +275,11 @@ struct DocumentPipeline
         doc.diffSides = sidesFromGit(doc.diffDoc, revspec, staged);
         classifyStructural(doc);
         attachSession(doc);
+        // `DST2`: only the unstaged worktree diff has an index to move things
+        // into. `--staged` is already there; a revision range has no index at
+        // all, and a reviewer must not be shown keys that cannot work.
+        doc.diffSession.stageable = revspec.length == 0 && !staged;
+        doc.diffPaths = paths.dup;
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
     }
