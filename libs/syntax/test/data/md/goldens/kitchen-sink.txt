@@ -23,10 +23,10 @@ one paragraph.
 
 1. An ordered item with a nested fence:
   d
-╭───────────────╮
-│ 1 auto x = 1; │
-│ 2             │
-╰───────────────╯
+╭──────────────────────────────────────────────────────╮
+│ 1 auto x = 1;                                        │
+│ 2                                                    │
+╰──────────────────────────────────────────────────────╯
 2. An item with a nested table? No — but a nested quote:
   quoted inside an ordered item
 3. An item with nested mixed lists:
@@ -41,13 +41,13 @@ one paragraph.
 
  main.d  run
   d
-╭───────────────────────────────────╮
-│ 1 void main()                     │
-│ 2 {                               │
-│ 3     import std.stdio : writeln; │
-│ 4     writeln("composed");        │
-│ 5 }                               │
-╰───────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ 1 void main()                                                                │
+│ 2 {                                                                          │
+│ 3     import std.stdio : writeln;                                            │
+│ 4     writeln("composed");                                                   │
+│ 5 }                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
 
 󰲥 Trailing callout
 
@@ -56,7 +56,7 @@ one paragraph.
   The last block is a callout with a trailing fence:
 
     sh
-  ╭─────────────╮
-  │ 1 echo done │
-  │ 2           │
-  ╰─────────────╯
+  ╭─────────────────────────────────────────────────╮
+  │ 1 echo done                                     │
+  │ 2                                               │
+  ╰─────────────────────────────────────────────────╯
