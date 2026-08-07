@@ -15,6 +15,7 @@ module pages.text_page;
 
 import std.conv : text;
 
+import sparkles.input : Key, KeyEvent;
 import sparkles.ui.geometry : cellsOf, SizeSpec;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
@@ -145,9 +146,9 @@ int clampWidth(int want, int pane) pure nothrow @nogc
 }
 
 /// ditto
-bool handleKey(ref GalleryState s, dchar ch)
+bool handleKey(ref GalleryState s, in KeyEvent k)
 {
-    switch (ch)
+    switch (k.ch)
     {
         case '+': case '=': s.textDemo.width += 2; return true;
         case '-': s.textDemo.width = s.textDemo.width > 12 ? s.textDemo.width - 2 : 12; return true;

@@ -19,7 +19,7 @@ import sparkles.ui.themes : builtinThemes;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind;
 
 import kit;
-import state : GalleryState, hitTheme, themeNames;
+import state : GalleryState, hitTheme, themeNames, toastConfigFor;
 
 @safe:
 
@@ -177,6 +177,19 @@ private uint scene(ref Builder b)
 size_t themeAt(size_t id) pure nothrow @nogc
     => id >= hitTheme && id < hitTheme + themeNames.length
         ? id - hitTheme : size_t.max;
+
+/// ditto — the shell's activation hook. Selecting from the list is the same
+/// transition `]` makes, notice and all, so the two routes cannot drift.
+bool handleActivate(ref GalleryState s, size_t id)
+{
+    const which = themeAt(id);
+    if (which == size_t.max)
+        return false;
+    s.themeIndex = which;
+    s.toastText = "theme · " ~ s.themeName;
+    s.toast = typeof(s.toast).triggered(toastConfigFor(s.hasFrameClock));
+    return true;
+}
 
 private RgbColor bgOf(in Color c) pure nothrow @nogc
     => c.kind == Color.Kind.rgb ? c.rgb : RgbColor(0, 0, 0);

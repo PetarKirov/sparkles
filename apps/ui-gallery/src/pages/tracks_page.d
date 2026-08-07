@@ -12,6 +12,7 @@ module pages.tracks_page;
 import std.array : appender;
 import std.conv : text;
 
+import sparkles.input : Key, KeyEvent;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : Slot;
 import sparkles.ui.tracks : resolveTracks, TrackSpec;
@@ -146,9 +147,9 @@ private int total(in int[] ns) pure nothrow @nogc
 }
 
 /// ditto
-bool handleKey(ref GalleryState s, dchar ch)
+bool handleKey(ref GalleryState s, in KeyEvent k)
 {
-    switch (ch)
+    switch (k.ch)
     {
         case 't': s.tracksDemo.preset = (s.tracksDemo.preset + 1) % presets().length; return true;
         case '+': case '=': s.tracksDemo.avail = clampAvail(s.tracksDemo.avail + 4); return true;
@@ -206,9 +207,9 @@ private int clampAvail(int n) pure nothrow @nogc
 {
     GalleryState s;
     foreach (_; 0 .. 40)
-        handleKey(s, '+');
+        handleKey(s, KeyEvent(Key.char_, '+'));
     assert(s.tracksDemo.avail == 72);
     foreach (_; 0 .. 40)
-        handleKey(s, '-');
+        handleKey(s, KeyEvent(Key.char_, '-'));
     assert(s.tracksDemo.avail == 12);
 }
