@@ -538,9 +538,29 @@ int runGui(
     {
         const cw = fonts.cellW();
         const ch = fonts.cellH();
-        pn.dock.layout.nodes[pn.dock.layout.nodeOf(treePane)].maxExtent =
+        auto tn = pn.dock.layout.nodeOf(treePane);
+        pn.dock.layout.nodes[tn].maxExtent =
             (window.width / cw) / 2 < 12 ? 12 : (window.width / cw) / 2;
-        pn.dock.arrange(Rect(0, 0, window.width / cw, window.height / ch));
+        // Each pane wears one header row, and the container reserves it
+        // (DCK10): the content rects below already exclude it, which is
+        // what lets the hit tests stop subtracting chrome by hand.
+        pn.dock.layout.nodes[tn].headerExtent = 1;
+        pn.dock.layout.nodes[pn.dock.layout.nodeOf(docPane)].headerExtent = 1;
+        // The document-set bar spans BOTH panes, so it is not a pane's
+        // header: the container's area simply starts below it.
+        const setRows = set !is null && !set.empty ? 1 : 0;
+        pn.dock.arrange(Rect(0, setRows, window.width / cw,
+            window.height / ch - setRows));
+    }
+
+    /// A pane's content rect in cells (empty when the pane is hidden) —
+    /// the container's answer, not a hand-subtracted one.
+    Rect paneContent(PaneId p)
+    {
+        foreach (ref f; pn.dock.paneFrames)
+            if (f.pane == p)
+                return f.rect;
+        return Rect.init;
     }
 
     int treeCols() => pn.dock.paneExtent(treePane);
@@ -1156,10 +1176,14 @@ int runGui(
         // beneath the bar any more); the panes are docRows tall.
         const treeTopRows = set !is null && !set.empty ? 1 : 0;
         // Each pane renders the shared headerBar chrome on its first row
-        // (title + focus indication — the same component the TUI paints).
-        const docRows = visibleRows - treeTopRows - 1;
-        const docY0 = (treeTopRows + 1) * cellH;
-        const hdrY = treeTopRows * cellH;
+        // (title + focus indication — the same component the TUI paints),
+        // and the CONTAINER reserved that row: these three come from the
+        // frames it produced rather than from chrome arithmetic repeated
+        // at every site that needed them (DCK10/DCK11).
+        const docCells = paneContent(docPane);
+        const docRows = docCells.height;
+        const docY0 = docCells.y * cellH;
+        const hdrY = (docCells.y - 1) * cellH;
 
         // Hoisted above the touch block on purpose: the Android toolbar's tap
         // handler lives there and must obey the SAME gate as the toolbar's
@@ -2066,9 +2090,15 @@ int runGui(
             if (overTree && !overTreeSb && !overHBar && inp.capture.isFree
                 && clickPressed())
             {
-                const row = pn.tree.top
-                    + cast(long)((mp.y - (treeTopRows + 1) * cellH) / cellH);
-                if (row >= 0 && row < cast(long) pn.tree.rows.length)
+                // The container answers which of the pane's CONTENT cells
+                // this is (DCK11) — the row cannot drift from the header
+                // above it, and a screenshot could never have told us if
+                // it had.
+                Point tcell;
+                const inTree = pn.dock.contentCell(
+                    pointerFor(inp.fin, cellW, cellH).pos, treePane, tcell);
+                const row = pn.tree.top + tcell.y;
+                if (inTree && row >= 0 && row < cast(long) pn.tree.rows.length)
                 {
                     const again = row == pn.tree.sel;
                     pn.tree.sel = row;

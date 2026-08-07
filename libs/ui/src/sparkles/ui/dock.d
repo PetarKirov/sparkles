@@ -854,6 +854,36 @@ struct DockContainer
         return Route(RouteKind.pane, target, Event(q));
     }
 
+    /**
+    The cell of `pane`'s CONTENT a position lands on, if any (`DCK11`).
+
+    The one place a host converts a pointer into a pane's own row and
+    column. It answers `false` outside that pane's content — including
+    over its header strip, which belongs to the chrome and not to the
+    content beneath it — so a caller cannot accidentally treat a click on
+    a title bar as a click on the first row.
+
+    Hosts computed this themselves, each subtracting its own idea of how
+    many rows the chrome above had taken; that arithmetic is what made a
+    hit rect drift from the paint it was supposed to match, and it is
+    invisible to a screenshot because a mis-placed hit rect renders
+    exactly like a correct one.
+    */
+    bool contentCell(in Point p, PaneId pane, out Point local)
+        const pure nothrow @nogc
+    {
+        foreach (ref f; paneFrames)
+            if (f.pane == pane)
+            {
+                if (p.x < f.rect.x || p.x >= f.rect.x + f.rect.width
+                    || p.y < f.rect.y || p.y >= f.rect.y + f.rect.height)
+                    return false;
+                local = Point(p.x - f.rect.x, p.y - f.rect.y);
+                return true;
+            }
+        return false;
+    }
+
     /// The pane-local spelling of a container position.
     Point toLocal(in Point p, PaneId pane) const pure nothrow @nogc
     {
@@ -1215,4 +1245,34 @@ version (unittest)
     // rendering a bar with nothing under it.
     c.arrange(Rect(0, 0, 100, 1));
     assert(c.headers.length == 0 && c.paneFrames.length == 2);
+}
+
+@("ui.dock.contentCellExcludesTheHeaderAndTheNeighbour")
+@safe unittest
+{
+    enum PaneId side = 1, doc = 2;
+    DockContainer c;
+    const s = c.layout.addLeaf(side, extent: 20);
+    const d = c.layout.addLeaf(doc);
+    c.layout.nodes[s].headerExtent = 1;
+    c.layout.nodes[s].title = "explorer";
+    c.layout.root = c.layout.addSplit(DockAxis.horizontal, [s, d]);
+    c.arrange(Rect(0, 0, 100, 40));
+
+    // Inside the sidebar's content: row 0 of the CONTENT is the row below
+    // its header, not the header itself.
+    Point local;
+    assert(c.contentCell(Point(3, 1), side, local) && local == Point(3, 0));
+    assert(c.contentCell(Point(3, 39), side, local) && local == Point(3, 38));
+
+    // The header row is chrome: a click there is not row 0 of the content,
+    // which is the confusion the hosts' own arithmetic kept producing.
+    assert(!c.contentCell(Point(3, 0), side, local));
+
+    // Neither the divider nor the other pane answers for this one.
+    assert(!c.contentCell(Point(20, 5), side, local));
+    assert(!c.contentCell(Point(50, 5), side, local));
+    // …and the document pane, which declared no header, starts at its top.
+    assert(c.contentCell(Point(50, 0), doc, local) && local == Point(29, 0));
+    assert(!c.contentCell(Point(50, 0), 99, local), "an unknown pane hits nothing");
 }
