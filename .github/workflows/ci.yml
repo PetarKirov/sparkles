@@ -10,6 +10,23 @@ on:
   # Run this workflow for all PRs:
   pull_request:
 
+  # …and on `main` itself, where only `lint` runs — see the `if:` guards below.
+  #
+  # This is what populates the *base* cache scope. A `pull_request` run may
+  # only read caches written by its own `refs/pull/N/merge` ref, by the base
+  # branch, or by the default branch, and it may only *write* to its own ref.
+  # Without a run on `refs/heads/main` nothing ever lands in the shared scope,
+  # so every PR starts cold and then saves its own private copy of each cache
+  # — which is how 13 caches came to occupy 14.64 GB against a 10 GB quota,
+  # evicting each other by LRU.
+  #
+  # Seeding only lychee's cache is the deliberate trade: the ~1.8 GB `nix-v2-*`
+  # and `Linux-dub-*` entries stay per-PR, because warming those would mean
+  # running the whole matrix on every merge while CircleCI runs it too.
+  push:
+    branches:
+      - main
+
 # Least privilege by default: no job here writes to the repository. The cachix
 # push authenticates with its own token, not GITHUB_TOKEN.
 permissions:
@@ -17,10 +34,18 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Superseded PR pushes are worth cancelling; a `main` run is not. It is the
+  # only writer of the base-scope cache above, so cancelling it on the next
+  # merge would leave every PR cold again.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
+    # See the `push` trigger: a `main` run exists only to seed the base cache
+    # scope, and the sole cache worth seeding that way is lychee's. Everything
+    # but `lint` therefore stays PR-only rather than duplicating a full matrix
+    # that CircleCI is already running on `main`.
+    if: github.event_name != 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -110,6 +135,7 @@ jobs:
   # exercise the compiler far more than the host.
   extracted-tests:
     name: Extracted test modes (--better-c, --wasm)
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -157,6 +183,7 @@ jobs:
   # third-party deps), so it runs on a plain windows-latest runner via setup-dlang.
   win32-example:
     name: Win32 OS-API example (windows-latest)
+    if: github.event_name != 'push'
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -186,6 +213,7 @@ jobs:
   # in its own `nix-build-android` job below.
   nix-build:
     name: Nix build & push (${{ matrix.runner }})
+    if: github.event_name != 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -237,6 +265,7 @@ jobs:
   # (nix/packages/android/sdk.nix) — no env flags needed here.
   nix-build-android:
     name: Nix build & push (Android APK)
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     # From a warm cache this is minutes; a cold cache rebuilds the cross
     # druntimes and the Maple font pipeline — give it real headroom.
@@ -293,9 +322,9 @@ jobs:
         with:
           path: .lycheecache
           enableCrossOsArchive: true
-          key: cache-lychee-v3
+          key: cache-lychee-v4-${{ github.run_id }}
           restore-keys: |
-            cache-lychee-v3
+            cache-lychee-v4-
 
       - name: Lint and check links
         run: prek run --all-files --show-diff-on-failure --color always
@@ -304,6 +333,10 @@ jobs:
           SKIP: verify-md-examples
 
       - name: Verify markdown runnable examples
+        # The `main` run is here for the lychee cache, which only the `prek`
+        # step above writes. This step compiles and runs every example — half
+        # an hour of runner time that seeds nothing.
+        if: github.event_name != 'push'
         run: |
           nix run .#ci -- --verify --fail-fast --files '**.md'
 
@@ -313,10 +346,16 @@ jobs:
         with:
           path: .lycheecache
           enableCrossOsArchive: true
-          key: cache-lychee-v3
+          # Same reasoning as the CircleCI `lint` job: lychee's cache has to
+          # keep growing, and neither provider overwrites an existing key — so
+          # the key changes every run while the restore prefix stays stable.
+          # The old fixed `cache-lychee-v3` key made every save after the first
+          # a silent no-op, freezing the cache at its first-ever contents.
+          key: cache-lychee-v4-${{ github.run_id }}
 
   docs:
     name: Build documentation site
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
