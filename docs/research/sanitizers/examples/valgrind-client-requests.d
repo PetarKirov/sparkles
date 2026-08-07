@@ -4,6 +4,8 @@
     platforms "linux"
     targetPath "build"
     dflags "-g"
+    dependency "sparkles:core-cli" path="../../../.."
+    dflags "-I$PACKAGE_DIR/.." "-i=valgrind_helpers"
     dflags "-i=etc.valgrind"
     debugVersions "VALGRIND"
 +/
@@ -52,6 +54,8 @@ module sanitizers_valgrind_client_requests;
 version (linux)
 {
     import std.stdio : writefln;
+
+    import valgrind_helpers : valgrindCanInstrument;
 
     enum childEnvVar = "SANITIZERS_PROBE_CHILD";
 
@@ -105,18 +109,10 @@ version (linux)
         clientRequestDemo();
         writefln("outside valgrind: wrappers are no-ops (no crash, getVBits 0)");
 
-        try
+        string whyNotUsable;
+        if (!valgrindCanInstrument(whyNotUsable))
         {
-            const probe = execute(["valgrind", "--version"]);
-            if (probe.status != 0)
-            {
-                writefln("SKIP: `valgrind --version` failed (status %d)", probe.status);
-                return 0;
-            }
-        }
-        catch (Exception e)
-        {
-            writefln("SKIP: valgrind not found on PATH (%s)", e.msg);
+            writefln("SKIP: %s", whyNotUsable);
             return 0;
         }
 
@@ -152,6 +148,7 @@ version (linux)
         return 0;
     }
 }
+
 
 int main()
 {

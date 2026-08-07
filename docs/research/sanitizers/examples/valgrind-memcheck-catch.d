@@ -4,6 +4,8 @@
     platforms "linux"
     targetPath "build"
     dflags "-g"
+    dependency "sparkles:core-cli" path="../../../.."
+    dflags "-I$PACKAGE_DIR/.." "-i=valgrind_helpers"
 +/
 /**
  * Valgrind memcheck catching a heap use-after-free in an UNinstrumented D
@@ -48,6 +50,8 @@ version (linux)
 {
     import std.stdio : writefln;
 
+    import valgrind_helpers : valgrindCanInstrument;
+
     enum childEnvVar = "SANITIZERS_PROBE_CHILD";
 
     /// The faulty demo the child runs: classic heap use-after-free. Memcheck
@@ -79,21 +83,13 @@ version (linux)
 
         // Parent: require valgrind on PATH, else SKIP (the devshell carries
         // it; bare `nix run .#ci` hosts may not).
-        try
+        string whyNotUsable;
+        if (!valgrindCanInstrument(whyNotUsable))
         {
-            const probe = execute(["valgrind", "--version"]);
-            if (probe.status != 0)
-            {
-                writefln("SKIP: `valgrind --version` failed (status %d)", probe.status);
-                return 0;
-            }
-            writefln("using %s", probe.output.length ? probe.output : "valgrind");
-        }
-        catch (Exception e)
-        {
-            writefln("SKIP: valgrind not found on PATH (%s)", e.msg);
+            writefln("SKIP: %s", whyNotUsable);
             return 0;
         }
+        writefln("using valgrind");
 
         import std.file : thisExePath;
 
@@ -126,16 +122,22 @@ version (linux)
         assert(xml.canFind("<protocoltool>memcheck</protocoltool>"), "protocol-4 tool tag");
         assert(xml.canFind("<kind>InvalidRead</kind>"),
             "expected <kind>InvalidRead</kind> in the XML error stream");
-        assert(xml.canFind("<file>valgrind-memcheck-catch.d</file>"),
+        // Match the tail, not the whole tag: DWARF records the source path as
+        // it was handed to the compiler, so `<file>` is the bare basename for
+        // some invocations and the full relative path for others (adding any
+        // `-I` is enough to flip it). The property under test is that the
+        // faulting frame names *this file*, which both forms satisfy.
+        assert(xml.canFind("valgrind-memcheck-catch.d</file>"),
             "expected the faulting frame to carry this file's name");
         writefln("XML report: <kind>InvalidRead</kind> at %s",
-            "<file>valgrind-memcheck-catch.d</file>");
+            "<file>…valgrind-memcheck-catch.d</file>");
 
         writefln("PASS: memcheck caught the use-after-free in an uninstrumented "
             ~ "binary; XML + --error-exitcode form a parseable per-run pipeline");
         return 0;
     }
 }
+
 
 int main()
 {
