@@ -13,6 +13,7 @@ module workspace;
 
 version (Posix):
 
+import core.time : Duration;
 import core.time : msecs;
 import std.path : dirName;
 
@@ -465,6 +466,23 @@ struct WorkspaceTui
     }
 
     /// Applies one event; returns false to quit.
+    /// How long until the key guide's panel would appear — the loop's second
+    /// deadline (`LTN4`). `Duration.max` when nothing is pending, i.e. block
+    /// until a key arrives.
+    Duration untilLanternShown() const @safe pure nothrow @nogc
+    {
+        const a = viewer.untilLanternShown();
+        const b = tree.untilLanternShown();
+        return a < b ? a : b;
+    }
+
+    /// Advances both panes' guide clocks after a wait expires.
+    void tickLantern(Duration elapsed) @safe pure nothrow @nogc
+    {
+        viewer.tickLantern(elapsed);
+        tree.tickLantern(elapsed);
+    }
+
     bool handle(in Event e) @system
     {
         // Pointer shape (observes only — never consumes). The panes hover
@@ -724,12 +742,27 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             // With an oracle running the loop wakes on a deadline as well as
             // on input, so the analysis lands without a keystroke; with none it
             // blocks exactly as it always has (no idle wakeups).
-            const ev = w.liveActive
-                ? term.next(cast(int) liveTick.total!"msecs") : term.next();
+            //
+            // A pending key sequence is the second deadline (`LTN4`): the
+            // guide's panel appears after a delay with no keystroke to wake
+            // us, so the wait is capped at whatever is left of it. This is
+            // exactly why the delay is a `Duration` and not a frame count —
+            // a terminal has no frames to count.
+            const untilPanel = w.untilLanternShown();
+            const deadline = w.liveActive
+                ? (untilPanel < liveTick ? untilPanel : liveTick)
+                : untilPanel;
+            const ev = deadline == Duration.max
+                ? term.next() : term.next(cast(int) deadline.total!"msecs");
             if (ev.isEndOfInput)
                 break;
             if (ev == Event.init)
-                continue; // the live tick expired (or an unrecognized sequence)
+            {
+                // The wait expired rather than a key arriving: advance the
+                // guide's clock so the panel opens on time, and repaint.
+                w.tickLantern(deadline);
+                continue;
+            }
             dirty = true;
             if (ev.match!((in ResizeEvent _) => true, _ => false))
                 continue; // next iteration re-measures + re-arranges

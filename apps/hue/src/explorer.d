@@ -17,8 +17,10 @@ import std.file : dirEntries, SpanMode;
 import std.path : baseName, buildPath, dirName;
 
 import diff_session : FileChange, SessionEntry;
+import core.time : Duration;
 import keymap : Command, KeyContext;
-import lantern : LanternState, ltnStep = step, LtnStepKind = StepKind;
+import lantern : LanternState, ltnStep = step, ltnTick = tick,
+    untilShown, LtnStepKind = StepKind;
 import git_status : GitBadge, gitBadge, GitStatus, GitStatusCache;
 
 import sparkles.base.term_color : mix;
@@ -189,6 +191,18 @@ struct ExplorerTui
     /// The key guide's pending path (`LTN2`), so `gg` and `<leader>` work in
     /// this pane too — the same machine the viewer uses, not a copy.
     private LanternState lantern;
+
+    /// How long until the guide's panel appears (`LTN4`); `Duration.max` when
+    /// nothing is pending. The host uses it as its poll timeout, so the panel
+    /// opens on time with no keystroke to wake it.
+    Duration untilLanternShown() const @safe pure nothrow @nogc
+        => .untilShown(lantern);
+
+    /// ditto — advances the clock when that wait expires.
+    void tickLantern(Duration elapsed) @safe pure nothrow @nogc
+    {
+        ltnTick(lantern, elapsed);
+    }
     /// The pane's ScrollView (SCV1): the vertical machine (`sb`) and the
     /// horizontal bar (IXB2, live when a visible label overflows) as one
     /// value BOTH backends step; the old names remain as accessors.
@@ -1560,7 +1574,8 @@ unittest
 {
     import diff_session : FileChange, SessionEntry;
 import keymap : Command, KeyContext;
-import lantern : LanternState, ltnStep = step, LtnStepKind = StepKind;
+import lantern : LanternState, ltnStep = step, ltnTick = tick,
+    untilShown, LtnStepKind = StepKind;
 
     // `TVU6`: the tree is built from the session's paths alone — no
     // filesystem is touched, which is the property that lets a diff of files

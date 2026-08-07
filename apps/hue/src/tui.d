@@ -16,8 +16,12 @@ import sparkles.base.term_color : mix;
 import sparkles.diff.model : DiffDoc;
 import diff_session : DiffSession, SessionEntry;
 import diff_view : TypeOverlay;
-import keymap : Command, InputMode, KeyContext;
-import lantern : LanternState, ltnStep = step, LtnStepKind = StepKind;
+import core.time : Duration;
+import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
+import lantern : LanternState, ltnStep = step, ltnTick = tick,
+    untilShown, LtnStepKind = StepKind;
+import lantern_view : BoxLayout, LabelArena, LanternStyle, Placement,
+    viewLantern;
 import document : DiffSides;
 import sparkles.base.text.writers : writeInteger;
 
@@ -137,6 +141,20 @@ struct PreviewTui
     /// except it handles every prefix, three levels deep, and can say what
     /// follows.
     private LanternState lantern;
+
+    /// How long until the guide's panel appears (`LTN4`); `Duration.max` when
+    /// nothing is pending. The host uses it as its poll timeout, so the panel
+    /// opens on time with no keystroke to wake it.
+    Duration untilLanternShown() const @safe pure nothrow @nogc
+        => .untilShown(lantern);
+
+    /// ditto — advances the clock when that wait expires.
+    void tickLantern(Duration elapsed) @safe pure nothrow @nogc
+    {
+        ltnTick(lantern, elapsed);
+    }
+    /// The guide's label arena, reused across frames (`NFR2`).
+    private LabelArena ltnLabels;
 
     // Twoslash hover popups in the pane: the hover-typed node indices (for
     // `p` cycling) and the selected one (-1 = none; click toggles).
@@ -421,6 +439,38 @@ struct PreviewTui
         paintHoverPopup(g);
         paintScrollbar(g);
         paintStatus(g);
+        paintLantern(g);
+    }
+
+    /**
+    The key guide (`LTN5`), over everything and along the bottom edge.
+
+    The same widget tree the window paints — `viewLantern` builds it, the
+    cell canvas interprets it — so the two backends cannot drift the way the
+    scrollbars and the selection tint did. Nothing here measures a label or
+    divides a width.
+    */
+    private void paintLantern(ref Grid g) @system
+    {
+        if (!lantern.shown)
+            return;
+        SmallBuffer!(Binding, 128) listed;
+        bindingsAt(listed, keyContext(), lantern.pending[]);
+        if (listed.length == 0)
+            return;
+
+        Builder b;
+        BoxLayout box;
+        const root = viewLantern(b, ltnLabels, listed[],
+            lantern.pending.length, width, box, Placement.classic,
+            LanternStyle.init, 0, lantern.scroll);
+        auto tree = b.finish(root);
+        auto frames = layout(tree, Constraints(maxW: width));
+        const panel = frames[tree.root].rect;
+        const y = height - panel.height;
+        paintGrid(g, pageBg, buildDisplayList(tree, frames,
+            defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg, pageBg),
+            originX, y > 0 ? y : 0, Rect(0, 0, width, panel.height));
     }
 
     // Paint the markdown widget tree's precomputed ops with a scroll offset:
@@ -1415,6 +1465,71 @@ unittest
 
     // …and an unbound key is still unbound rather than swallowed.
     assert(t.handle(Event(k('w'))));
+}
+
+@("tui.lantern.panelPaintsIntoTheCellGrid")
+@system
+unittest
+{
+    import core.time : msecs;
+    import sparkles.input : Mods;
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+    import std.algorithm.searching : canFind;
+
+    // `UIA2`'s claim is that one widget tree serves both backends. That is
+    // only worth anything if the terminal actually paints it, so: press the
+    // prefix, let the delay elapse, and read the cells back.
+    static immutable src = "alpha\nbeta\ngamma\n";
+    static HighlightEvent[1] ev = [HighlightEvent.sourceSpan(0, src.length)];
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+
+    PreviewTui t;
+    t.title = "d.txt";
+    t.source = src;
+    t.events = ev[];
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 70;
+    t.height = 20;
+    t.relayout();
+
+    // Nothing pending: no panel, and nothing asking to be woken.
+    assert(t.untilLanternShown == Duration.max);
+
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
+    assert(t.untilLanternShown < Duration.max,
+        "a prefix must give the loop a deadline to wait on");
+
+    Grid g;
+    g.resize(70, 20);
+    t.paint(g);
+    assert(!panelText(g).canFind("close fold"),
+        "the panel must not appear before the delay elapses");
+
+    t.tickLantern(500.msecs);
+    g.resize(70, 20);
+    t.paint(g);
+    const shown = panelText(g);
+    assert(shown.canFind("close fold"), "zc must be listed once the delay is up");
+    assert(shown.canFind("open fold"), "…and so must its siblings");
+}
+
+version (unittest)
+{
+    /// The grid's bottom rows as text — where the `classic` panel lands.
+    private string panelText(ref Grid g) @system
+    {
+        string s;
+        foreach (y; 0 .. g.rows)
+        {
+            foreach (x; 0 .. g.cols)
+                s ~= g[cast(ushort) x, cast(ushort) y].grapheme;
+            s ~= '\n';
+        }
+        return s;
+    }
 }
 
 @("tui.twoslash.paneRendersAndPopups")
