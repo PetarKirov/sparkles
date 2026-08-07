@@ -87,6 +87,37 @@ Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
 | `release.yml` `nix-build-pin`       | `nix-build-pin-linux/-macos`         |                                                            |
 | `ci` (fan-in)                       | `ci`                                 | CircleCI will not start it unless every `requires:` passed |
 
+## Switching the primary provider
+
+Both providers run the same suite and each ends in exactly **one** aggregate
+job, so which one gates merges is a single setting — not a config change:
+
+| Provider       | Required status check | Defined in                           |
+| -------------- | --------------------- | ------------------------------------ |
+| GitHub Actions | `CI`                  | `.github/workflows/ci.yml`, job `ci` |
+| CircleCI       | `ci/circleci: ci`     | `.circleci/config.yml`, job `ci`     |
+
+To switch, change that one entry in the branch-protection rule for `main`
+(Settings → Branches → `main` → Require status checks). Nothing else moves:
+both aggregates already `require`/`need` every other job, so adding or
+removing a job never touches the protection rule.
+
+Currently **GitHub Actions is primary and CircleCI is the backup.** Keep both
+green while both are enabled; to retire one, drop its required check first,
+then disable the project (CircleCI) or the workflow triggers (GitHub).
+
+> [!NOTE]
+> Neither aggregate covers the docs _deploy_ — it lives in a separate workflow
+> on both sides (`docs-deploy` / `deploy`) and posts its own status. That is
+> deliberate and symmetric: a failed preview deploy should not block a merge.
+
+> [!WARNING]
+> On GitHub Actions everything except `lint` is guarded by
+> `if: github.event_name != 'push'`, so a run on `main` deliberately does only
+> the cache seeding. That was written while CircleCI ran the full matrix on
+> `main`. Once CircleCI is disabled, **nothing runs the full suite on `main`**
+> — only per-PR. Drop those guards if you want post-merge coverage back.
+
 ## Setting up the CircleCI project
 
 1. Create a **context** named `sparkles-ci` and add every variable from the

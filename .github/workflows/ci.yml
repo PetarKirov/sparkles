@@ -392,6 +392,11 @@ jobs:
   # `if: always()` so the job still runs when a dependency failed (otherwise
   # it would be skipped, which branch protection reads as "not failed").
   # Skipped dependencies are tolerated; failed and cancelled ones are not.
+  #
+  # Reported to GitHub as `CI`. That is the one check to require when GitHub
+  # Actions is the primary provider (it currently is); CircleCI's equivalent is
+  # `ci/circleci: ci`. Switching providers is that single change — see
+  # ci/README.md § Switching the primary provider.
   ci:
     name: CI
     needs:
