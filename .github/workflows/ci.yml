@@ -7,10 +7,8 @@ on:
   # Allow this workflow to be run in merge queues:
   merge_group:
 
-  # Run this workflow when PRs target `main` and when they're merged in `main`:
+  # Run this workflow for all PRs:
   pull_request:
-    branches:
-      - main
 
 # Least privilege by default: no job here writes to the repository. The cachix
 # push authenticates with its own token, not GITHUB_TOKEN.
