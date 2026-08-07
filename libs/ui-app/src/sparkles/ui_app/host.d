@@ -145,6 +145,10 @@ enum bool isHost(T) = __traits(compiles, (ref T h) {
     DrawOp op;
     h.ops() ~= op;
     h.pointerShape(PointerShape.default_);
+    // The font errand (`HST14`): the GPU host reloads and re-measures; the
+    // terminal accepts and drops (the emulator owns the glyphs there).
+    int fs = h.fontSizePx;
+    h.fontSize(fs + 2);
 });
 
 /**
@@ -185,6 +189,8 @@ version (unittest)
         InputCapabilities capabilities;
         Backend backend;
         void pointerShape(PointerShape) @safe pure nothrow @nogc {}
+        int fontSizePx() const @safe pure nothrow @nogc => 18;
+        void fontSize(int) @safe pure nothrow @nogc {}
     }
 
     static assert(isHost!FullFake, "the concept must accept a complete host");

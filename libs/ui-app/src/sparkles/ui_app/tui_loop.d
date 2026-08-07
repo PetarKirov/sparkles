@@ -136,6 +136,13 @@ struct TuiHost
     /// ditto
     void toggleFullscreen() @safe pure nothrow @nogc {}
 
+    /// A terminal has no font of its own either (`HST14`) — the emulator owns
+    /// the glyphs. Accepted and dropped, like the window's out-of-band writes,
+    /// so an application does not branch on the target.
+    int fontSizePx() const @safe pure nothrow @nogc => 0;
+    /// ditto
+    void fontSize(int) @safe pure nothrow @nogc {}
+
     /// The cell grid, for an application still painting some chrome by hand.
     ref auto grid() @system => session.grid;
 
@@ -350,5 +357,6 @@ unittest
         h.title("a title");
         h.writeOutOfBand("\x1b[0m");
         h.toggleFullscreen();
+        h.fontSize(h.fontSizePx + 2);
     }));
 }

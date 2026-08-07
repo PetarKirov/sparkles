@@ -78,6 +78,20 @@ struct GuiSession
     int cellW() const @safe pure nothrow @nogc => fonts.cellW;
     /// ditto
     int cellH() const @safe pure nothrow @nogc => fonts.cellH;
+
+    /**
+    Reloads every face at `px` (clamped to $(LREF minFontSizePx)) and
+    re-measures the cell metrics — the host errand behind Ctrl+`=`/`-`
+    (`HST14`). Call $(B outside) the frame bracket: reloading uploads font
+    textures. The surface size in cells changes on the next read; the window's
+    pixel size does not (matching what every terminal emulator does — more or
+    fewer cells, same window).
+    */
+    void setFontSize(int px) @system nothrow @nogc
+    {
+        fontSizePx = px < minFontSizePx ? minFontSizePx : px;
+        fonts.reload(fontSizePx);
+    }
 }
 
 /**
