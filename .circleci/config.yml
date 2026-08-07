@@ -33,6 +33,14 @@ executors:
     machine:
       image: ubuntu-2404:current
     resource_class: large
+    environment:
+      # `nproc` and /proc/meminfo report the *host's* resources here, not the
+      # 4 vCPU / 15 GB this class actually gets — the limit is a cgroup, not a
+      # right-sized VM. `ci` sizes its *markdown*-example pool from those
+      # numbers (the `--verify` path in the lint job; `--example-files` is a
+      # sequential loop and unaffected), so without this it fans out to its
+      # 12-job cap on 4 real cores. Pin it to the class instead.
+      SPARKLES_CI_JOBS: 4
 
   # macOS is Performance-plan-only and by far the most expensive resource
   # class here (see ci/README.md § Cost).
@@ -40,6 +48,9 @@ executors:
     macos:
       xcode: '26.6'
     resource_class: m4pro.medium
+    environment:
+      # m4pro.medium is 6 vCPU (see the Linux note above).
+      SPARKLES_CI_JOBS: 6
 
   # The fan-in gate does no work; keep it on the cheapest thing that runs.
   tiny:

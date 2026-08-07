@@ -1,6 +1,6 @@
 module sparkles.core_cli.process_utils;
 
-import core.time : Duration, msecs;
+import core.time : Duration, MonoTime, msecs;
 
 import sparkles.base.text.errors :
     ParseErrorCode, ParseExpected, parseErr, parseOk;
@@ -238,7 +238,16 @@ struct MonitoredResult
     int status;
     string output;
     ResourceUsage usage;
+
+    /// Set when the child was killed for exceeding its timeout rather than
+    /// exiting on its own. Distinguishes "wedged" from "failed", which a bare
+    /// exit status cannot: a program is free to exit 124 by itself.
+    bool timedOut;
 }
+
+/// Exit status reported for a child killed by its timeout. Matches GNU
+/// `timeout(1)`, so a wrapper script and this library agree.
+enum int timedOutStatus = 124;
 
 /**
 What a spawned child sees on its standard input.
@@ -282,9 +291,10 @@ MonitoredResult executeMonitored(
     Duration sampleInterval = 250.msecs,
     scope void delegate(in ResourceUsage sample) @safe onSample = null,
     ChildStdin childStdin = ChildStdin.inherit,
+    Duration timeout = Duration.zero,
 )
 {
-    import std.process : spawnProcess, tryWait, wait;
+    import std.process : kill, spawnProcess, tryWait, wait;
     import std.stdio : File, stdin;
     import std.file : tempDir, readText, remove;
     import std.path : buildPath;
@@ -320,6 +330,12 @@ MonitoredResult executeMonitored(
     // into the caller's requested sampling density.
     Duration pollDelay = 1.msecs;
 
+    // Deadline measured against the clock, not by summing the sleeps. On Linux
+    // each iteration also walks /proc for the whole tree, which costs real time
+    // the sleeps do not account for — summing them overshot a 20s deadline by
+    // 60%.
+    const started = MonoTime.currTime;
+
     for (;;)
     {
         const w = tryWait(pid);
@@ -342,6 +358,18 @@ MonitoredResult executeMonitored(
             result.status = w.status;
             break;
         }
+        // A child that wedges must not take the whole job with it. Without
+        // this, one stuck example burned a 20-minute CI step producing no
+        // output at all, so the log said nothing about which one it was.
+        if (timeout > Duration.zero && MonoTime.currTime - started >= timeout)
+        {
+            kill(pid);
+            wait(pid);
+            result.status = timedOutStatus;
+            result.timedOut = true;
+            break;
+        }
+
         Thread.sleep(pollDelay);
         if (pollDelay < sampleInterval)
         {
@@ -402,6 +430,30 @@ unittest
         // Deliberately loose — the assertion is "nowhere near the interval",
         // not a latency budget, so a loaded machine cannot make it flaky.
         assert(sw.peek < 2.seconds, "a coarse sampleInterval floored a fast child");
+    }
+}
+
+/// A wedged child is killed at its timeout and reported as such.
+@("process_utils.executeMonitored.timeout")
+@system
+unittest
+{
+    version (Posix)
+    {
+        import core.time : seconds;
+        import std.datetime.stopwatch : AutoStart, StopWatch;
+
+        auto sw = StopWatch(AutoStart.yes);
+        const r = executeMonitored(
+            ["sleep", "60"], 50.msecs, null, ChildStdin.empty, 1.seconds);
+        sw.stop();
+
+        assert(r.timedOut);
+        assert(r.status == timedOutStatus);
+        // Tight-ish: the deadline is measured against the clock, so sampling
+        // cost must not push the kill far past it. A summed-sleep deadline
+        // overshot 20s by ~12s, which this would catch.
+        assert(sw.peek < 5.seconds, "the timeout overshot its deadline badly");
     }
 }
 
