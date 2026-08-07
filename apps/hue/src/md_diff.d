@@ -21,38 +21,10 @@
 // and table cells.
 module md_diff;
 
-import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdDoc, MdInline, Span;
+import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdDecoration,
+    MdDiffStatus, MdDoc, MdInline, Span;
 
 import diff_commutative : normalizedText;
-
-/// What happened to one block.
-enum MdDiffStatus : ubyte
-{
-    /// Present and identical on both sides.
-    unchanged,
-    /// Only on the new side.
-    added,
-    /// Only on the old side — rendered in place, struck through.
-    removed,
-    /// Matched to a block on the other side that is not identical. Its
-    /// `emphasis` says where, when the pass could localize it.
-    changed,
-}
-
-/// One block's verdict, keyed by `MdBlock.span.start` in the merged source.
-///
-/// Source-anchored identity rather than a tree path: the renderer already
-/// resolves folds, code tabs and table cells this way, a span start survives
-/// a rebuild, and no index can drift out of step with the tree.
-struct MdDecoration
-{
-    size_t spanStart;
-    MdDiffStatus status;
-    /// `changed` blocks only: byte ranges into the merged source marking the
-    /// words that differ. Empty means "changed, but not localized" — the
-    /// whole block reads as changed.
-    Span[] emphasis;
-}
 
 /// The merged document plus its decorations, sorted by `spanStart`.
 struct MdDiffResult

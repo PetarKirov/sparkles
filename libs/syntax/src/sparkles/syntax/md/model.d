@@ -109,6 +109,31 @@ struct MdInline
     const(char)[] linkDest; /// link/image destination (raw), else ""
 }
 
+/// `DVN6`: what a rendered-preview diff found for one block.
+enum MdDiffStatus : ubyte
+{
+    unchanged, /// present and identical on both sides
+    added,     /// only on the new side
+    removed,   /// only on the old side — rendered in place, struck through
+    changed,   /// matched to a differing block; `emphasis` says where
+}
+
+/// One block's verdict, keyed by its `MdBlock.span.start`.
+///
+/// Source-anchored identity rather than a tree path — the same convention
+/// folds, code tabs and table cells already use, and the reason a decoration
+/// survives a rebuild. The producer is hue's `md_diff`; the consumer is
+/// $(MREF sparkles,syntax,md,render_widgets), which is why the vocabulary
+/// lives here with the model rather than in either of them.
+struct MdDecoration
+{
+    size_t spanStart;
+    MdDiffStatus status;
+    /// `changed` only: byte ranges into the document source marking the words
+    /// that differ. Empty means "changed, but not localized".
+    Span[] emphasis;
+}
+
 /// A parsed markdown document: the block tree plus the source it indexes into.
 struct MdDoc
 {
