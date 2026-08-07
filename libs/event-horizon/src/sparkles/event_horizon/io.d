@@ -501,6 +501,37 @@ unittest
     assert(done);
 }
 
+@("io.channel.liveSchedProducerConsumer")
+@safe
+unittest
+{
+    import core.time : msecs;
+
+    import sparkles.event_horizon.channel : Channel;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // The §15.3 shape in miniature: a consumer parks on the channel (a
+    // non-I/O park) while the producer parks on the ring (a timer) — the
+    // scheduler must keep waiting because ops are in flight, then hand off.
+    Channel!(int, 2) ch;
+    int received = -1;
+    auto r = s.run(() {
+        cast(void) s.spawn(() {
+            auto got = ch.take(s); // parks first: nothing buffered yet
+            assert(got.hasValue);
+            received = got.value;
+        });
+        cast(void) s.spawn(() {
+            assert(!sleep(s, 2.msecs).hasError); // ring park
+            assert(!ch.put(s, 99).hasError);
+        });
+    });
+    assert(!r.hasError);
+    assert(received == 99, "the ring-parked producer woke the channel-parked consumer");
+}
+
 @("io.waitReadable.parksUntilBytesArrive")
 @safe
 unittest
