@@ -160,6 +160,24 @@ The `nix-build-*` jobs additionally pay ~380 MiB for the `cachix` binary's own
 closure (it pulls `aws-sdk-cpp` and `boost`), since they run without a devShell
 and `with-cachix.sh` has to fetch it via `nix run`.
 
+## stdin is a TTY on CircleCI
+
+A CircleCI `run` step allocates a terminal on stdin; a GitHub Actions step does
+not. Anything that branches on `isatty(0)` therefore behaves differently on the
+two providers, and the CircleCI side is the surprising one — a batch job that
+looks interactive.
+
+This is not hypothetical: `README.md`'s `readme_prompts` example picks
+`PromptPolicy.interactive` vs `takeDefault` exactly that way, and inheriting a
+terminal made it render a select prompt and then die on the EOF behind it.
+
+The fix is in `apps/ci`, not here: `executeLogged` spawns every example and
+`dub test` with `ChildStdin.empty`, so children always see a non-terminal,
+already-EOF stdin. That makes the behaviour identical on both providers _and_
+on a developer's terminal, where `ci --verify` would otherwise stall on the
+same prompt. If you add a step that runs a program which might prompt, either
+route it through `ci` or redirect `</dev/null` yourself.
+
 ## Behaviour that could not be ported
 
 - **No `merge_group` trigger.** CircleCI does not integrate with GitHub merge

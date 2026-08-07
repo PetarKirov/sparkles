@@ -241,6 +241,28 @@ struct MonitoredResult
 }
 
 /**
+What a spawned child sees on its standard input.
+
+The distinction matters for any child that probes `isatty(0)` to decide
+whether it may prompt: CI runners disagree about this. A CircleCI `run` step
+allocates a TTY, a GitHub Actions step does not — so a program that is
+interactive on a terminal renders a prompt on one and not the other, then
+blocks on input that never arrives.
+*/
+enum ChildStdin
+{
+    /// The parent's standard input, as `std.process.execute` does.
+    inherit,
+
+    /**
+    A stream already at end-of-file (`/dev/null`; `NUL` on Windows). The child
+    sees `isatty(0) == false` and any read returns EOF immediately, so a
+    batch runner gets the same behaviour on every host.
+    */
+    empty,
+}
+
+/**
 Runs `args` to completion like `std.process.execute` — returning the exit
 status and the combined stdout+stderr — but spawns it non-blocking and samples
 the resident-set size and CPU of the whole process tree every `sampleInterval`
@@ -259,6 +281,7 @@ MonitoredResult executeMonitored(
     const(string)[] args,
     Duration sampleInterval = 250.msecs,
     scope void delegate(in ResourceUsage sample) @safe onSample = null,
+    ChildStdin childStdin = ChildStdin.inherit,
 )
 {
     import std.process : spawnProcess, tryWait, wait;
@@ -277,11 +300,25 @@ MonitoredResult executeMonitored(
 
     MonitoredResult result;
 
+    version (Windows)
+        enum nullDevice = "NUL";
+    else
+        enum nullDevice = "/dev/null";
+
     auto sink = File(logPath, "w");
-    auto pid = spawnProcess(args, stdin, sink, sink);
+    auto childIn = childStdin == ChildStdin.empty ? File(nullDevice, "r") : stdin;
+    auto pid = spawnProcess(args, childIn, sink, sink);
 
     version (linux)
         result.usage.sampled = true;
+
+    // Poll tightly at first and back off towards `sampleInterval`, because the
+    // sleep happens *after* the terminated check: a fixed interval therefore
+    // puts a floor under every child's wall time, however fast it really is.
+    // At a 5s interval that floor cost ~9 minutes across a 108-example run.
+    // Backing off keeps short children cheap while a long build still settles
+    // into the caller's requested sampling density.
+    Duration pollDelay = 1.msecs;
 
     for (;;)
     {
@@ -305,7 +342,13 @@ MonitoredResult executeMonitored(
             result.status = w.status;
             break;
         }
-        Thread.sleep(sampleInterval);
+        Thread.sleep(pollDelay);
+        if (pollDelay < sampleInterval)
+        {
+            pollDelay *= 2;
+            if (pollDelay > sampleInterval)
+                pollDelay = sampleInterval;
+        }
     }
 
     sink.close();
@@ -316,6 +359,50 @@ MonitoredResult executeMonitored(
     {
     }                                    // best-effort cleanup
     return result;
+}
+
+/// `ChildStdin.empty` makes the child see a non-terminal, already-EOF stdin.
+@("process_utils.executeMonitored.emptyStdin")
+@system
+unittest
+{
+    version (Posix)
+    {
+        import std.string : strip;
+
+        // Asserted via `test -t 0` rather than by reading, so a regression
+        // fails the test instead of blocking it forever on a real terminal.
+        // This is what keeps a batch runner's children from going
+        // interactive on a host whose stdin happens to be a TTY.
+        const r = executeMonitored(
+            ["sh", "-c", "test -t 0 && echo tty || echo not-tty"],
+            50.msecs, null, ChildStdin.empty);
+        assert(r.status == 0);
+        assert(r.output.strip == "not-tty");
+    }
+}
+
+/// A coarse `sampleInterval` must not put a floor under a fast child: the
+/// sleep follows the terminated check, so a naive fixed wait makes every
+/// child cost at least one interval.
+@("process_utils.executeMonitored.fastChildIsNotFloored")
+@system
+unittest
+{
+    version (Posix)
+    {
+        import core.time : seconds;
+        import std.datetime.stopwatch : AutoStart, StopWatch;
+
+        auto sw = StopWatch(AutoStart.yes);
+        const r = executeMonitored(["true"], 5.seconds, null, ChildStdin.empty);
+        sw.stop();
+
+        assert(r.status == 0);
+        // Deliberately loose — the assertion is "nowhere near the interval",
+        // not a latency budget, so a loaded machine cannot make it flaky.
+        assert(sw.peek < 2.seconds, "a coarse sampleInterval floored a fast child");
+    }
 }
 
 /// Current resident-set size of this process in bytes (`0` off Linux).

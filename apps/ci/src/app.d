@@ -97,7 +97,7 @@ module app;
 import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
 import std.array : array, join;
 import std.conv : text, to;
-import core.time : msecs;
+import core.time : msecs, seconds;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
 import std.parallelism : TaskPool, totalCPUs;
 import std.path : baseName, buildPath;
@@ -111,7 +111,7 @@ import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight,
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
 import sparkles.base.logger : error, info, initLogger, LogLevel, trace, warning;
 import sparkles.core_cli.process_utils :
-    executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes;
+    ChildStdin, executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes;
 import sparkles.base.styled_template : styledText, styledWritelnErr;
 import sparkles.core_cli.term_unstyle : unstyle;
 import sparkles.ui.components.box : BoxProps, drawBox, TitleOverflow;
@@ -1554,8 +1554,17 @@ Runs `args` like `std.process.execute`, returning a `MonitoredResult` (same
 `status`/`output` fields the callers read). At `--log-level trace` it routes
 through $(REF executeMonitored, sparkles,core_cli,process_utils), emitting the
 process tree's resident-set size as it climbs plus a per-command summary — the
-instrumentation for troubleshooting OOM during a build. At coarser levels it is
-a plain `execute` with no sampling overhead.
+instrumentation for troubleshooting OOM during a build. At coarser levels it
+samples on a lazy interval instead, which costs a `tryWait` poll and nothing
+else.
+
+Children always get `ChildStdin.empty`. Examples are batch work and must never
+go interactive, but several probe `isatty(0)` to decide — and runners disagree
+about it: a CircleCI `run` step allocates a TTY where a GitHub Actions step
+does not. `README.md`'s `readme_prompts` example is the live case; inheriting a
+terminal made it render a select prompt and then fail on the EOF that followed.
+An empty stdin makes the answer `false` everywhere, including on a developer's
+terminal.
 */
 private MonitoredResult executeLogged(const(string)[] args, string label)
 {
@@ -1565,10 +1574,7 @@ private MonitoredResult executeLogged(const(string)[] args, string label)
     import sparkles.base.text.writers : writeBytes, writeDuration;
 
     if (globalLogLevel > LogLevel.trace)
-    {
-        auto r = execute(args);
-        return MonitoredResult(r.status, r.output);
-    }
+        return executeMonitored(args, 5.seconds, null, ChildStdin.empty);
 
     const cmd = args.join(" ");
     trace(i"{dim ▸ $(label):} {dim $(cmd)}");
@@ -1586,7 +1592,7 @@ private MonitoredResult executeLogged(const(string)[] args, string label)
             writeDuration(cpu, u.cpuTime);
             trace(i"{dim   $(label)} rss=$(rss[]) cpu=$(cpu[])");
         }
-    });
+    }, ChildStdin.empty);
 
     if (res.usage.sampled)
     {
