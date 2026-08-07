@@ -1313,10 +1313,14 @@ replaces.)
 /// Where one of the child's standard streams goes.
 enum StdioMode : ubyte
 {
-    inherit,  /// share the parent's descriptor (the default for stdin/stderr)
-    pipe,     /// a pipe whose parent end rides the returned handle
-    nullDev,  /// /dev/null
-    fd,       /// a caller-supplied descriptor (borrowed, not closed)
+    inherit,     /// share the parent's descriptor (the default for stdin/stderr)
+    pipe,        /// a pipe whose parent end rides the returned handle
+    nullDev,     /// /dev/null
+    fd,          /// a caller-supplied descriptor (borrowed, not closed)
+    mergeStdout, /// stderr only: dup onto the child's stdout, so one pipe
+                 /// carries both streams in output order (the
+                 /// `Redirect.stderrToStdout` shape monitored/streaming
+                 /// runs need)
 }
 
 struct StdioSpec
@@ -1378,6 +1382,24 @@ reap path: there is no `SIGCHLD` handler and no blocking `waitpid` anywhere
 in the library. `kill` after a successful `wait` returns `ESRCH` — the pid
 is gone and never reused through this handle (no wrap-around hazard: the
 handle nulls the pid before the kernel can recycle it).
+
+The run-to-completion convenience — spawn, feed stdin, drain the piped
+outputs concurrently (parked reads, so a chatty child can never deadlock
+against an undrained pipe — the hazard `runCaptured`'s temp files work
+around), reap:
+
+```d
+struct CapturedOutput
+{
+    ExitStatus status;
+    SmallBuffer!(ubyte, 256) stdout_;  /// empty unless stdoutSpec piped
+    SmallBuffer!(ubyte, 256) stderr_;  /// empty unless stderrSpec piped
+}
+
+IoResult!CapturedOutput capture(ref Sched s, scope const(char[])[] argv,
+    in ProcessConfig cfg = ProcessConfig(),
+    scope const(ubyte)[] stdinBytes = null);
+```
 
 Portability: the `WAITID` lowering is io_uring's today. The kqueue backend
 maps child exit onto `EVFILT_PROC`/`NOTE_EXIT` (M10 refinement, planned in

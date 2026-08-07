@@ -235,8 +235,20 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
             case StdioMode.fd:
                 posix_spawn_file_actions_adddup2(&actions, spec.fd, childFd);
                 return true;
+            case StdioMode.mergeStdout:
+                // Valid for stderr only (checked before wiring). The stdout
+                // action has already run by the time this one does, so child
+                // fd 1 is whatever stdoutSpec chose — pipe, null, or a
+                // borrowed fd alike.
+                posix_spawn_file_actions_adddup2(&actions, 1, childFd);
+                return true;
         }
     }
+
+    if (cfg.stdinSpec.mode == StdioMode.mergeStdout
+        || cfg.stdoutSpec.mode == StdioMode.mergeStdout)
+        return ioErr!ChildProcess(22 /* EINVAL */, OpKind.none,
+            IoErrorStage.submit, "mergeStdout is stderr-only");
 
     if (!wire(cfg.stdinSpec, 0, inPipe, true)
         || !wire(cfg.stdoutSpec, 1, outPipe, false)
@@ -401,8 +413,98 @@ IoResult!void resizePty(ref ChildProcess child, ushort cols, ushort rows)
     return ioOk();
 }
 
+/// The run-to-completion outcome of `capture` (SPEC §13.2).
+struct CapturedOutput
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    ExitStatus status;
+    SmallBuffer!(ubyte, 256) stdout_; /// empty unless stdoutSpec piped
+    SmallBuffer!(ubyte, 256) stderr_; /// empty unless stderrSpec piped
+}
+
 static if (canSubmitOp!(DefaultBackend, OpWaitid))
 {
+    /**
+    Runs `argv` to completion (SPEC §13.2): spawn per `cfg`, feed
+    `stdinBytes` (a non-null value upgrades a default `inherit` stdin to a
+    pipe), drain the piped outputs **concurrently** — parked reads, so a
+    chatty child can never deadlock against an undrained pipe (the hazard
+    `runCaptured`'s temp files work around) — then reap.
+
+    The scope join is the lifetime argument: the drain fibers borrow this
+    frame's locals and are all joined before it returns.
+    */
+    IoResult!CapturedOutput capture(ref Sched s, scope const(char[])[] argv,
+        in ProcessConfig cfg = ProcessConfig(),
+        scope const(ubyte)[] stdinBytes = null) @trusted
+    {
+        import core.lifetime : move;
+
+        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.event_horizon.io : read, write;
+        import sparkles.event_horizon.scope_ : withScope;
+
+        scope ProcessConfig effective = cfg;
+        if (stdinBytes !is null && effective.stdinSpec.mode == StdioMode.inherit)
+            effective.stdinSpec = StdioSpec(StdioMode.pipe);
+
+        auto spawned = spawnProcess(argv, effective);
+        if (spawned.hasError)
+            return ioErr!CapturedOutput(spawned.error);
+        auto child = spawned.value;
+
+        // Fibers capture plain locals, never `ref`/`scope` parameters (a
+        // captured parameter slot outlives nothing — the tui-loop lesson).
+        CapturedOutput out_;
+        SmallBuffer!(ubyte, 256) stdinCopy;
+        if (stdinBytes !is null)
+            stdinCopy ~= stdinBytes;
+        auto childP = &child;
+        auto outP = &out_;
+        auto stdinP = &stdinCopy;
+        const feedStdin = stdinBytes !is null && child.stdinW.fd >= 0;
+
+        static void drain(FileHandle from, SmallBuffer!(ubyte, 256)* into)
+        {
+            for (;;)
+            {
+                SmallBuffer!(ubyte, 512) chunk;
+                chunk.length = 512;
+                auto got = read(from, move(chunk));
+                chunk = move(got.buf);
+                if (got.res.hasError || got.res.value == 0)
+                    return; // EOF or error: the stream is done
+                *into ~= chunk[][0 .. got.res.value];
+            }
+        }
+
+        auto joined = withScope!((ref sc) {
+            if (childP.stdoutR.fd >= 0)
+                sc.spawn(() { drain(childP.stdoutR, &outP.stdout_); });
+            if (childP.stderrR.fd >= 0)
+                sc.spawn(() { drain(childP.stderrR, &outP.stderr_); });
+            // The body is a member fiber: feed stdin concurrently with the
+            // drains, then signal EOF.
+            if (feedStdin)
+                cast(void) write(childP.stdinW, move(*stdinP));
+            if (childP.stdinW.fd >= 0)
+                childP.stdinW.close();
+        })(s);
+
+        child.stdoutR.close();
+        child.stderrR.close();
+        if (joined.hasError)
+            return ioErr!CapturedOutput(125 /* ECANCELED */, OpKind.none,
+                IoErrorStage.completion, "capture scope interrupted");
+
+        auto st = wait(s, child);
+        if (st.hasError)
+            return ioErr!CapturedOutput(st.error);
+        out_.status = st.value;
+        return ioOk(move(out_));
+    }
+
     /// The live proc capability (SPEC §13.4): `isProc` over the real spawn
     /// machinery, `Child = ChildProcess`.
     struct RingProc
@@ -701,6 +803,68 @@ unittest
         auto st = wait(s, child);
         assert(st.hasValue && st.value.ok);
         child.stdoutR.close();
+    });
+    assert(!r.hasError);
+}
+
+@("live.capture.stdinBothStreamsAndStatus")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // Separate streams + stdin feed + non-zero exit, in one run: the
+        // runCaptured replacement shape (SPEC §13.2).
+        ProcessConfig cfg;
+        cfg.stderrSpec = StdioSpec(StdioMode.pipe);
+        auto got = capture(s, ["sh", "-c", "cat; printf err 1>&2; exit 3"],
+            cfg, cast(const(ubyte)[]) "fed via stdin");
+        assert(got.hasValue);
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "fed via stdin");
+        assert(got.value.stderr_[] == cast(const(ubyte)[]) "err");
+        assert(!got.value.status.signaled && got.value.status.code == 3);
+    });
+    assert(!r.hasError);
+}
+
+@("live.capture.mergeStdoutInterleavesInOrder")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // One pipe carries both streams in output order — the
+        // executeMonitored / runStreaming shape.
+        ProcessConfig cfg;
+        cfg.stderrSpec = StdioSpec(StdioMode.mergeStdout);
+        auto got = capture(s,
+            ["sh", "-c", "echo one; echo two 1>&2; echo three"], cfg);
+        assert(got.hasValue);
+        assert(got.value.status.ok);
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "one\ntwo\nthree\n",
+            "stderr rides the stdout pipe, in output order");
+        assert(got.value.stderr_.length == 0);
+    });
+    assert(!r.hasError);
+}
+
+@("live.spawn.mergeStdoutIsStderrOnly")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        ProcessConfig cfg;
+        cfg.stdoutSpec = StdioSpec(StdioMode.mergeStdout);
+        auto spawned = spawnProcess(["true"], cfg);
+        assert(spawned.hasError, "mergeStdout on stdout must be rejected");
+        assert(spawned.error.errnoValue == 22 /* EINVAL */);
     });
     assert(!r.hasError);
 }

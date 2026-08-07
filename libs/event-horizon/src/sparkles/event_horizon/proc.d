@@ -28,6 +28,11 @@ enum StdioMode : ubyte
     pipe,    /// a pipe whose parent end rides the returned handle
     nullDev, /// /dev/null
     fd,      /// a caller-supplied descriptor (borrowed, not closed)
+
+    /// stderr only: dup onto the child's stdout, so one pipe carries both
+    /// streams in output order (the `Redirect.stderrToStdout` shape
+    /// monitored/streaming runs need).
+    mergeStdout,
 }
 
 /// One stream's destination.
