@@ -61,6 +61,14 @@ struct RunConfig
     bool autoBackend = true;    /// ignore `backend` and pick one
     bool mouse = true;          /// ask the terminal for mouse reporting
     bool motion;                /// ...including bare motion (hover)
+    /**
+    Ask the GPU target for the terminal-grade keyboard: the full physical key
+    set as press/repeat/release with the unshifted codepoint, typed text
+    paired onto its keystroke. What a terminal emulator component needs
+    (`INP15`); everything else leaves it off and gets the classic stream.
+    The terminal target ignores it — a tty cannot report releases (`INP16`).
+    */
+    bool keyRelease;
     int targetFps = 60;         /// GPU pacing
     int idleTimeoutMs = -1;     /// TUI: wake `present` without input (< 0 = never)
 }

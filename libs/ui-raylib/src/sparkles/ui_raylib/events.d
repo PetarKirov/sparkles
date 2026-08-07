@@ -178,6 +178,16 @@ struct RaylibEvents
         }
 
         // -- keyboard ------------------------------------------------------
+        // Two grades, declared by the capability (`INP16`): a window that
+        // reports key releases carries the full physical keyboard with edges
+        // (what a terminal's key encoder needs); the default grade stays
+        // exactly what every existing consumer sees.
+        if (capabilities.keyRelease)
+        {
+            pollFullKeyboard(sink, mods);
+            return;
+        }
+
         for (int cp = GetCharPressed(); cp != 0; cp = GetCharPressed())
             sink(charEvent(cast(dchar) cp, mods));
         for (int k = GetKeyPressed(); k != 0; k = GetKeyPressed())
@@ -200,6 +210,81 @@ struct RaylibEvents
         foreach (rk; repeatable)
             if (IsKeyPressedRepeat(rk))
                 sink(keyEvent(namedKey(rk), mods, KeyAction.repeat));
+    }
+
+    /**
+    The terminal-grade keyboard (opt-in via `capabilities.keyRelease`): every
+    physical key a terminal encoder addresses arrives as press / repeat /
+    release carrying its layout-independent `unshifted` codepoint (a key with
+    no named spelling is `Key.char_` with `ch` 0 — the codepoint identifies
+    it), and this frame's typed text rides $(B on) the first press-or-repeat.
+    The pairing is the point: a pty key encoder must know which keystroke
+    produced the text, and a detached char event cannot say (`INP15`).
+
+    Text no keystroke claimed — or a burst larger than an event's inline
+    capacity — still arrives as plain char events, $(B after) the keys: the
+    same bytes in the same order a terminal's raylib-polling loop wrote them.
+    */
+    private void pollFullKeyboard(Sink)(scope Sink sink, Mods mods) @system
+    {
+        import std.typecons : Yes;
+        import std.utf : encode;
+
+        // This frame's typed text, in arrival order — both as UTF-8 (to pair
+        // onto a keystroke) and as code points (the unclaimed fallback).
+        char[64] textBuf = void;
+        size_t textLen;
+        dchar[16] cps = void;
+        size_t cpCount;
+        for (int cp = GetCharPressed(); cp != 0; cp = GetCharPressed())
+        {
+            char[4] u8;
+            const n = encode!(Yes.useReplacementDchar)(u8, cast(dchar) cp);
+            if (textLen + n <= textBuf.length)
+            {
+                textBuf[textLen .. textLen + n] = u8[0 .. n];
+                textLen += n;
+            }
+            if (cpCount < cps.length)
+                cps[cpCount++] = cast(dchar) cp;
+        }
+        // Pair only when the whole burst fits the event's inline text; a
+        // larger one falls back to char events rather than truncating input.
+        bool pending = textLen > 0 && textLen <= maxKeyText;
+
+        foreach (rk; fullKeySet)
+        {
+            const k = cast(KeyboardKey) rk;
+            const pressed = IsKeyPressed(k);
+            const repeated = IsKeyPressedRepeat(k);
+            const released = IsKeyReleased(k);
+            if (!pressed && !repeated && !released)
+                continue;
+
+            const named = namedKey(rk);
+            auto e = KeyEvent(
+                key: named != Key.none ? named : Key.char_,
+                ch: 0,
+                mods: mods,
+                action: released ? KeyAction.release
+                    : pressed ? KeyAction.press : KeyAction.repeat,
+                unshifted: unshiftedCodepoint(rk));
+
+            // The typed text attaches to at most one stroke per frame, and
+            // never to a release — the terminal loop's exact rule.
+            if (pending && !released)
+            {
+                e.text(textBuf[0 .. textLen]);
+                pending = false;
+                cpCount = 0;
+            }
+            sink(Event(e));
+        }
+
+        // Unclaimed text: no keystroke this frame (IME, compose) or an
+        // oversize burst.
+        foreach (c; cps[0 .. cpCount])
+            sink(charEvent(c, mods));
     }
 
     /**
@@ -298,6 +383,85 @@ unittest
 
 /// Maps raylib's named keys onto the shared `Key` vocabulary (printable input
 /// arrives through `GetCharPressed` instead; unmapped keys are `Key.none`).
+// The physical keys the full-keyboard grade polls each frame: letters,
+// digits, the named/special set, punctuation, F1–F12 — the same coverage a
+// terminal emulator's raylib-polling loop had, built once at compile time.
+private int[] buildFullKeySet() @safe pure nothrow
+{
+    int[] keys;
+    with (KeyboardKey)
+    {
+        for (int k = KEY_A; k <= KEY_Z; k++)
+            keys ~= k;
+        for (int k = KEY_ZERO; k <= KEY_NINE; k++)
+            keys ~= k;
+        keys ~= [
+            cast(int) KEY_SPACE, KEY_ENTER, KEY_TAB, KEY_BACKSPACE,
+            KEY_DELETE, KEY_ESCAPE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
+            KEY_HOME, KEY_END, KEY_PAGE_UP, KEY_PAGE_DOWN, KEY_INSERT,
+            KEY_MINUS, KEY_EQUAL, KEY_LEFT_BRACKET, KEY_RIGHT_BRACKET,
+            KEY_BACKSLASH, KEY_SEMICOLON, KEY_APOSTROPHE, KEY_COMMA,
+            KEY_PERIOD, KEY_SLASH, KEY_GRAVE,
+        ];
+        for (int k = KEY_F1; k <= KEY_F12; k++)
+            keys ~= k;
+    }
+    return keys;
+}
+
+/// ditto
+private static immutable int[] fullKeySet = buildFullKeySet();
+
+/// The layout-independent codepoint a physical key spells with no modifiers —
+/// `'a'` for the `A` key whatever the shift state, `0` where the key has no
+/// such spelling (arrows, function keys). What `KeyEvent.unshifted` carries in
+/// the full-keyboard grade; a terminal's key encoder tells Ctrl+A (`0x01`)
+/// from a bare `a` with it.
+dchar unshiftedCodepoint(int rk) @safe pure nothrow @nogc
+{
+    with (KeyboardKey)
+    {
+        if (rk >= KEY_A && rk <= KEY_Z)
+            return 'a' + cast(uint)(rk - KEY_A);
+        if (rk >= KEY_ZERO && rk <= KEY_NINE)
+            return '0' + cast(uint)(rk - KEY_ZERO);
+
+        switch (cast(KeyboardKey) rk)
+        {
+            case KEY_SPACE:         return ' ';
+            case KEY_MINUS:         return '-';
+            case KEY_EQUAL:         return '=';
+            case KEY_LEFT_BRACKET:  return '[';
+            case KEY_RIGHT_BRACKET: return ']';
+            case KEY_BACKSLASH:     return '\\';
+            case KEY_SEMICOLON:     return ';';
+            case KEY_APOSTROPHE:    return '\'';
+            case KEY_COMMA:         return ',';
+            case KEY_PERIOD:        return '.';
+            case KEY_SLASH:         return '/';
+            case KEY_GRAVE:         return '`';
+            default:                return 0;
+        }
+    }
+}
+
+@("ui_raylib.events.unshiftedCodepoint")
+@safe pure nothrow @nogc
+unittest
+{
+    with (KeyboardKey)
+    {
+        assert(unshiftedCodepoint(KEY_A) == 'a');
+        assert(unshiftedCodepoint(KEY_Z) == 'z');
+        assert(unshiftedCodepoint(KEY_NINE) == '9');
+        assert(unshiftedCodepoint(KEY_SLASH) == '/');
+        // Keys without an unshifted printable spelling report 0.
+        assert(unshiftedCodepoint(KEY_F1) == 0);
+        assert(unshiftedCodepoint(KEY_UP) == 0);
+        assert(unshiftedCodepoint(KEY_LEFT_SHIFT) == 0);
+    }
+}
+
 Key namedKey(int rk) @safe pure nothrow @nogc
 {
     with (KeyboardKey) switch (rk)
