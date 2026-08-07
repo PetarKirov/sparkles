@@ -20,7 +20,9 @@ version (HueGui):
 
 
 import core.stdc.stdarg : va_list; // for the TraceLogCallback bridge (NFR7)
-import core.time : dur;
+import core.time : dur, Duration, MonoTime, usecs;
+
+import sparkles.event_horizon.sched : Sched;
 
 // The shared raylib text core (extracted in M5). Pulls raylib-d + libs
 // "raylib" transitively, so it is present only in the `gui` build.
@@ -405,6 +407,21 @@ int runGui(
     // hands us; everything bridged lands at trace level (silent by default).
     traceLogTo(&raylibTraceLog);
 
+    // The frame cadence's owner (M17, event-horizon SPEC §15.3 GUI shape):
+    // when the ring is available, raylib's own pacing is disabled
+    // (`targetFps: 0`) and the loop paces on absolute frame deadlines via
+    // `Sched.tick` — parking in the ring, where subprocess and watch
+    // completions run between frames. Where loop creation fails (Android's
+    // app seccomp blocks io_uring), raylib keeps its SetTargetFPS sleep —
+    // the explicit fallback arm, selected once here.
+    import sparkles.event_horizon.sched : Sched, SchedOptions;
+
+    SchedOptions schedOpts;
+    schedOpts.stackSize = 1024 * 1024;
+    schedOpts.maxFibers = 16;
+    Sched sched;
+    const asyncLoop = !Sched.create(sched, schedOpts).hasError;
+
     // Android: 0×0 = the native surface resolution (a non-zero size is NOT
     // ignored there — raylib letterboxes it onto the screen); the surface is
     // the app, so no resizable state and no cell-sizing either.
@@ -412,10 +429,12 @@ int runGui(
     // so it is neither sized nor resizable there.
     version (Android)
         auto window = Window.open(WindowRequest(
-            title: "hue — " ~ title, width: 0, height: 0, resizable: false));
+            title: "hue — " ~ title, width: 0, height: 0, resizable: false,
+            targetFps: asyncLoop ? 0 : 60));
     else
         auto window = Window.open(WindowRequest(
-            title: "hue — " ~ title, width: 800, height: 600));
+            title: "hue — " ~ title, width: 800, height: 600,
+            targetFps: asyncLoop ? 0 : 60));
 
     // LoadFontEx uploads a GPU texture, so the FontSet must load after InitWindow.
     // `fontName` may be a path, a family, or a fontconfig preference list.
@@ -1038,8 +1057,22 @@ int runGui(
         bool selectStartPressed() => inp.fin.leftPressed;
     }
 
+    // The frame clock (asyncLoop only): absolute deadlines, missed frames
+    // skipped — the Ticker discipline, inline at the embedding hatch.
+    import core.time : MonoTime;
+
+    enum framePeriod = 1_000_000.usecs / 60;
+    auto nextFrame = MonoTime.currTime + framePeriod;
+
     while (!window.shouldClose())
     {
+        // Pace + pump: park in the ring until the frame deadline; any async
+        // completions (subprocesses, watches, timers) dispatch during the
+        // park. Raylib is sampled below as before — it no longer sleeps
+        // (`targetFps: 0`), so the cadence belongs to event-horizon.
+        if (asyncLoop)
+            pumpUntilFrame(sched, nextFrame, framePeriod);
+
         // Gesture thresholds are PHYSICAL, so they track the cell size: a
         // pinch or Ctrl-± changes it, and values fixed before the loop would
         // misclassify after any zoom. Set before the drain, because the drain
@@ -2610,6 +2643,47 @@ int runGui(
     }
 
     return 0;
+}
+
+/**
+One frame's pacing and async pump — the `Sched.tick` embedding hatch
+(event-horizon SPEC §7.2), the incremental-migration shape for a loop the
+application still owns: park in the ring until the frame deadline, running
+any completions that arrive meanwhile. When nothing is armed (`drained` —
+no oracle, no subprocess, no watch), a plain sleep paces the remainder:
+there is nothing to wake for, and that is raylib's own idle behavior.
+
+Absolute deadlines, missed frames skipped (the `Ticker` discipline): a
+slow frame does not queue a burst of stale ones.
+*/
+private void pumpUntilFrame(ref Sched sched, ref MonoTime nextFrame,
+    Duration period) @system
+{
+    import core.thread : Thread;
+    import core.time : MonoTime;
+
+    import sparkles.event_horizon.loop : RunStatus;
+
+    for (;;)
+    {
+        const now = MonoTime.currTime;
+        if (now >= nextFrame)
+            break;
+        auto r = sched.tick(nextFrame - now);
+        if (r.hasError)
+            break;
+        if (r.value == RunStatus.drained)
+        {
+            const left = nextFrame - MonoTime.currTime;
+            if (left > Duration.zero)
+                Thread.sleep(left);
+            break;
+        }
+    }
+    nextFrame += period;
+    const after = MonoTime.currTime;
+    if (nextFrame <= after)
+        nextFrame = after + period; // missed frames: skip, never replay
 }
 
 /// The source (physical) line containing byte `off` — a binary search over the
