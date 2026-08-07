@@ -40,6 +40,28 @@ user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/1
 # Reduce concurrent requests in CI to avoid rate limits and connection resets
 max_concurrency = 16
 
+# Accept HTTP 429 as a live link.
+#
+# A rate-limited response is the OPPOSITE of link rot: the server answered, so
+# the URL resolves and the host is reachable. Failing a link check on it reports
+# "this documentation moved" when what happened is "we asked sixteen times at
+# once". The measured run that motivated this: 16 errors, every one a 429, every
+# host Read-the-Docs-fronted — and FOUR of them already had a per-host
+# `request_interval` below and still got one.
+#
+# Which is the limit of the per-host strategy, and the same hole documented for
+# nick-black.com/notcurses.com further down: lychee paces per HOSTNAME, but a
+# rate limit belongs to the SERVER. Read the Docs fronts `*.readthedocs.io`,
+# `packaging.python.org`, `ox.softwaremill.com` and others from shared
+# infrastructure, so eight separately-paced hostnames still arrive as one burst.
+# No arrangement of `[hosts."…"]` blocks can see that; only the global
+# concurrency or the accepted status set can, and halving concurrency would slow
+# the whole 8.7k-link run to fix one provider.
+#
+# What this gives up: a host that rate-limits us permanently would go unchecked.
+# That is the right trade against reporting live documentation as broken.
+accept = ["200..=299", "429"]
+
 # Maximum number of retries per request
 max_retries = 2
 
@@ -255,4 +277,20 @@ request_interval = "500ms"
 request_interval = "500ms"
 
 [hosts."docs.flatpak.org"]
+request_interval = "500ms"
+
+# Same provider, added after a run in which each of these returned 429. Pacing
+# them does not by itself prevent it (see `accept` above — this is one server
+# behind many names), but it keeps us from provoking the limit for the links
+# that are still uncached, which is what keeps the cache useful.
+[hosts."highlightjs.readthedocs.io"]
+request_interval = "500ms"
+
+[hosts."python-prompt-toolkit.readthedocs.io"]
+request_interval = "500ms"
+
+[hosts."rich.readthedocs.io"]
+request_interval = "500ms"
+
+[hosts."pint.readthedocs.io"]
 request_interval = "500ms"
