@@ -19,6 +19,13 @@ import state : GalleryState;
 // `import pages.welcome;` would introduce the symbol `pages`, which is what the
 // catalog below is called — and the collision is a compile error, not a
 // shadowing surprise.
+import pages.layout_page : layoutKeys = keys, layoutOnKey = handleKey,
+    layoutView = view;
+import pages.primitives : primitivesView = view;
+import pages.text_page : textKeys = keys, textOnKey = handleKey,
+    textView = view;
+import pages.tracks_page : tracksKeys = keys, tracksOnKey = handleKey,
+    tracksView = view;
 import pages.welcome : welcomeView = view;
 
 @safe:
@@ -34,7 +41,15 @@ struct Page
     uint function(ref Builder b, in GalleryState s) @safe view;
     /// Page-local bindings, rendered into the status bar. Shell-wide keys
     /// (navigation, theme, quit) are not repeated here.
-    string[] keys;
+    immutable(string)[] keys;
+    /**
+    The page's own key handling, or `null`.
+
+    Returns `true` iff it consumed the key. The shell tries its own bindings
+    first, so a page cannot capture navigation and strand a reader on it —
+    which is the failure mode of letting a page see input first.
+    */
+    bool function(ref GalleryState s, dchar ch) @safe onKey;
 }
 
 /**
@@ -45,6 +60,13 @@ compile-time fact rather than a hope.
 */
 static immutable Page[] pages = [
     Page("Welcome", "what this build is", &welcomeView),
+    Page("Primitives", "the ten widget kinds", &primitivesView),
+    Page("Layout", "sizing, spacing, alignment", &layoutView,
+        layoutKeys, &layoutOnKey),
+    Page("Tracks", "the grid subset, resolved live", &tracksView,
+        tracksKeys, &tracksOnKey),
+    Page("Text", "wrapping and measurement", &textView,
+        textKeys, &textOnKey),
 ];
 
 /// The index of the page `name` refers to — a title prefix (case-insensitive)
