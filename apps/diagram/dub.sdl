@@ -1,0 +1,50 @@
+name "diagram"
+description "A draw.io-style diagram board on sparkles:ui-app — the abstraction-stress app"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// The whole point (DIA1): the application never names a backend. The host's
+// configuration decides which arms exist; nothing here imports ui-tui,
+// ui-raylib, raylib, or sparkles.tui — checked by the manual isolation grep
+// (DIA2): rg -n "ui_tui|ui_raylib|sparkles\.tui|import raylib" apps/diagram/
+dependency "sparkles:base" path="../.."
+dependency "sparkles:core-cli" path="../.."
+dependency "sparkles:input" path="../.."
+dependency "sparkles:ui" path="../.."
+dependency "sparkles:ui-app" path="../.."
+
+configuration "application" {
+    targetType "executable"
+    subConfiguration "sparkles:ui-app" "full"
+}
+
+// The terminal-only build (DIA4): proves the app builds and runs where no GPU
+// stack exists at all.
+configuration "no-gui" {
+    targetType "executable"
+    subConfiguration "sparkles:ui-app" "tui"
+}
+
+configuration "unittest" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+
+    dependency "sparkles:test-runner" path="../.."
+    subConfiguration "sparkles:ui-app" "full"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses. Neither `debug` (which compiles those blocks in) nor
+// `release` (which deletes assert *expressions*, side effects included).
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
