@@ -132,30 +132,32 @@ modules never import ring, loop, or scheduler modules (nor `during`), so a
 future extraction into a standalone `sparkles:effects` package is mechanical.
 _Loop-side_ modules may import anything.
 
-| Module                           | Stratum      | Contents                                                                                                                             |
-| -------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `errors`                         | effects-side | `OpKind`, `IoError`, `IoErrorStage`, `NoGcHook`, `IoResult`, `ioOk`/`ioErr`, `fromRes` (§9.1) — leaf                                 |
-| `cause`                          | effects-side | `Cause`, `Interrupt`, `Outcome`, `widen`; `FiberContext`, `CancelContext`, `CancelFn`, `cancelTree` (§8, §9.2)                       |
-| `capability`                     | effects-side | `isCapability`, `Ctx`, `hasCaps`, `CtxOf`; the `isWaker` and `isFiberExecutor` seams (§10)                                           |
-| `scope_`                         | effects-side | `Scope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle` (§8)                                              |
-| `schedule`                       | effects-side | `Schedule` values + `retry`/`repeat`/`timeout`/`race` drivers (§10.4)                                                                |
-| `clock`                          | effects-side | `isClock` + `TestClock` (§10.3)                                                                                                      |
-| `net`                            | effects-side | `SockAddr` + helpers (`ipv4`, …), `isNet`, `isByteStream` + `SimNet` (§10.3)                                                         |
-| `testing`                        | effects-side | `TestSched` (deterministic executor) + `advanceAndSettle` (§10.3)                                                                    |
-| `buffer`                         | loop-side    | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf` (§6)                                          |
-| `op`                             | loop-side    | op descriptors, `KernelTimespec`, `OpToken`, `OpClass`, `OpSlot`/`OpSlab`, `Completion`, `OpCallback` (§4); re-exports `SockAddr`    |
-| `handle`                         | loop-side    | `LoopHandle` — opt-in type-erased loop access for loop-side plumbing and `-betterC` users (§5.5)                                     |
-| `backend.concept`                | loop-side    | `isCompletionBackend` + optional-capability traits, `RawCompletion`, `BackendConfig`, `Waker` (§3.1)                                 |
-| `backend.probe`                  | loop-side    | `BackendCaps`, `LoopMode`, `ModePolicy`, `probeSystem` (§3.2–3.4)                                                                    |
-| `backend.uring`                  | loop-side    | `UringBackend` over `during` (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                             |
-| `loop`                           | loop-side    | `EventLoop!Backend`, `LoopConfig`, `DefaultLoop` — tier A (§5)                                                                       |
-| `sched`                          | loop-side    | `Sched`, `SchedOptions`, `FiberTask`, `currentTask`, `RootScope` — tier B scheduler (§7)                                             |
-| `io`                             | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`FileHandle` handles (§7.3) |
-| `live`                           | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, …) and the `Env` row (§10.3, §11)                                    |
-| `fs`, `proc`, `signals`, `watch` | effects-side | capability concepts + test doubles; their ring implementations join `live` (loop-side); land in M7                                   |
-| `group`                          | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                     |
-| `effect`                         | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                            |
-| `package`                        | —            | public re-exports                                                                                                                    |
+| Module                   | Stratum      | Contents                                                                                                                             |
+| ------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `errors`                 | effects-side | `OpKind`, `IoError`, `IoErrorStage`, `NoGcHook`, `IoResult`, `ioOk`/`ioErr`, `fromRes` (§9.1) — leaf                                 |
+| `cause`                  | effects-side | `Cause`, `Interrupt`, `Outcome`, `widen`; `FiberContext`, `CancelContext`, `CancelFn`, `cancelTree` (§8, §9.2)                       |
+| `capability`             | effects-side | `isCapability`, `Ctx`, `hasCaps`, `CtxOf`; the `isWaker` and `isFiberExecutor` seams (§10)                                           |
+| `scope_`                 | effects-side | `Scope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle` (§8)                                              |
+| `schedule`               | effects-side | `Schedule` values + `retry`/`repeat`/`timeout`/`race` drivers (§10.4)                                                                |
+| `clock`                  | effects-side | `isClock` + `TestClock` (§10.3)                                                                                                      |
+| `net`                    | effects-side | `SockAddr` + helpers (`ipv4`, …), `isNet`, `isByteStream` + `SimNet` (§10.3)                                                         |
+| `testing`                | effects-side | `TestSched` (deterministic executor) + `advanceAndSettle` (§10.3)                                                                    |
+| `buffer`                 | loop-side    | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf` (§6)                                          |
+| `op`                     | loop-side    | op descriptors, `KernelTimespec`, `OpToken`, `OpClass`, `OpSlot`/`OpSlab`, `Completion`, `OpCallback` (§4); re-exports `SockAddr`    |
+| `handle`                 | loop-side    | `LoopHandle` — opt-in type-erased loop access for loop-side plumbing and `-betterC` users (§5.5)                                     |
+| `backend.concept`        | loop-side    | `isCompletionBackend` + optional-capability traits, `RawCompletion`, `BackendConfig`, `Waker` (§3.1)                                 |
+| `backend.probe`          | loop-side    | `BackendCaps`, `LoopMode`, `ModePolicy`, `probeSystem` (§3.2–3.4)                                                                    |
+| `backend.uring`          | loop-side    | `UringBackend` over `during` (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                             |
+| `loop`                   | loop-side    | `EventLoop!Backend`, `LoopConfig`, `DefaultLoop` — tier A (§5)                                                                       |
+| `sched`                  | loop-side    | `Sched`, `SchedOptions`, `FiberTask`, `currentTask`, `RootScope` — tier B scheduler (§7)                                             |
+| `io`                     | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`FileHandle` handles (§7.3) |
+| `live`                   | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, `RingProc`), the process spawn machinery (§13), and the `Env` row    |
+| `proc`                   | effects-side | process vocabulary (`StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`), `isProc`, `SimProc` (§13)                              |
+| `channel`                | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                               |
+| `fs`, `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): file verbs, `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                            |
+| `group`                  | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                     |
+| `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                            |
+| `package`                | —            | public re-exports                                                                                                                    |
 
 **Foundation:** `sparkles:base` supplies `SmallBuffer` (staging buffers, test
 helpers) and `recycledErrorInstance`; the `expected` package (`~>0.4.1`)
@@ -349,6 +351,13 @@ struct OpRecvFrom { enum kind = OpKind.recvFrom; int fd; Buf buf; }
 /// carries a ring-leased Buf (§6.4). multishot keeps one submission armed.
 struct OpRecvSelect { enum kind = OpKind.recvSelect; int fd; BufGroupId group; uint maxLen; bool multishot; }
 
+/// Foreign-fd readiness (§15.1): completes when `fd` is ready for `events`
+/// (a portable POLLIN/POLLOUT/POLLERR/POLLHUP subset). No buffer, no
+/// syscall on the fd — the integration op for descriptors whose I/O a
+/// foreign library performs itself (a Wayland/X11 connection, a GPGME fd).
+/// multishot keeps one submission armed (flags.more per readiness edge).
+struct OpPollAdd { enum kind = OpKind.pollAdd; int fd; PollEvents events; bool multishot; }
+
 enum bool isOpDesc(Op) = __traits(compiles, { enum OpKind k = Op.kind; });
 ```
 
@@ -534,6 +543,40 @@ the backend and for `-betterC` consumers; it is itself loop-side (it imports
 scheduler only through the `isFiberExecutor`/`isWaker` seams (§10.3). Hot
 paths hold the concrete `EventLoop`.
 
+### 5.6 The external waker
+
+`loop.waker()` returns the one loop object callable off-thread (§3.1). The
+first call **arms** the wake channel: the loop opens an `eventfd`
+(`EFD_CLOEXEC`, Linux) and keeps one internal read persistently armed
+against it, re-armed inside `dispatch` on every wake completion. The
+returned `Waker` is a copyable value holding the descriptor;
+`Waker.wake()` writes 8 bytes to it — **thread-safe and async-signal-safe**,
+`nothrow @nogc`, callable from any thread and from signal handlers. Wakes
+coalesce (an eventfd is a counter): N wakes before the loop runs deliver at
+least one wake completion, not N.
+
+Peer backends satisfy the same contract with their native primitive:
+kqueue arms an `EVFILT_USER` filter that `wake()` triggers with
+`NOTE_TRIGGER` (under libkqueue on Linux, a self-pipe read serves the same
+role); IOCP needs no armed op at all — `wake()` posts a zero-byte
+`PostQueuedCompletionStatus` packet carrying the wake token.
+
+**Accounting.** The armed wake op is `OpClass.wake` and is **excluded from
+drain accounting**: `inFlight()` and the `RunStatus.drained` decision count
+user and timer ops only, so a loop whose only live op is its waker still
+reports `drained` from `run()` — an armed waker is infrastructure, not
+work. `runOnce(timeout)` on such a loop **does block**: that is precisely
+the "park until something external happens" entry point (§15.3).
+`destroy()` disarms: it cancels the internal read, drains to its terminal
+CQE, and closes the eventfd — the §4.3 invariant applies to the wake slot
+like any other.
+
+The waker completes two contracts stated earlier: off-thread `stop()`
+(§5.4 — set the flag, then `waker().wake()`) and the group-level idle
+nudge (§11). It deliberately carries **no payload**: a wake means "re-check
+your state," and any cross-thread data travels through its own channel
+(a mailbox the woken code polls, or the M9 `MSG_RING`/futex machinery).
+
 ## 6. Buffers
 
 ### 6.1 The pinned-buffer currency
@@ -671,6 +714,26 @@ instantiation used across tiers B/C:
 alias RootScope = Scope!(Sched, IoError);
 ```
 
+**Embedding (`Sched.tick`).** `run()` owns the calling thread until every
+fiber finishes. For a host that must interleave the scheduler with a loop
+it does not own (a foreign windowing loop, a macOS `CFRunLoop` observer, an
+incremental app migration), `tick` performs exactly one iteration of
+`run()`'s body and returns:
+
+```d
+/// One scheduler iteration: run ready fibers (up to resumeBudget), then —
+/// if none became ready and ops are in flight — one runOnce(timeout).
+/// Returns: dispatched (fibers ran or completions arrived), timedOut
+/// (nothing within `timeout`), or drained (no live fibers, no user ops).
+/// Must not be called from inside a fiber; run() and tick() do not mix
+/// concurrently.
+IoResult!RunStatus tick(Duration timeout = Duration.zero);
+```
+
+`tick` is the O7 escape hatch, not the recommended shape: an application
+that can invert control (its frame loop as the root fiber, §15.3) gets the
+single-wait-point guarantee for free and never needs it.
+
 ### 7.3 The await seam and the direct-style verbs
 
 Every I/O verb funnels through one choke point:
@@ -717,7 +780,26 @@ IoResult!Buf recv(ref Stream s, ref BufRing ring);
 IoResult!Stream accept(ref Listener l);
 IoResult!void connect(ref Stream s, in SockAddr addr);
 IoResult!void sleep(ref Sched s, Duration d);
+IoResult!void sleepUntil(ref Sched s, MonoTime deadline); // absolute; past = no-op
 IoResult!void yieldNow(ref Sched s);      // cooperative reschedule + checkpoint
+
+/// Foreign-fd readiness (§15.1): parks until `fd` is ready. The verbs for
+/// descriptors whose I/O a foreign library performs itself.
+IoResult!PollEvents waitReadable(ref Sched s, int fd);
+IoResult!PollEvents waitWritable(ref Sched s, int fd);
+
+/// The repeating frame clock (§15.3). Absolute-deadline pacing: each tick's
+/// deadline is the previous one plus the period, never "now plus the
+/// period", so processing time does not accumulate drift. A tick that is
+/// already due returns without parking; ticks missed while the fiber was
+/// busy are skipped, not replayed — the frame-clock discipline (a UI wants
+/// the next frame, not a burst of stale ones) — and reported in the count.
+struct Ticker
+{
+    static Ticker start(ref Sched s, Duration period);   // first tick: now+period
+    IoResult!uint tick(ref Sched s);   // parks until due; missed ticks skipped
+    void reschedule(Duration period);  // change cadence from the next tick on
+}
 ```
 
 Every verb is a cancellation checkpoint, parks at most once, and resumes only
@@ -871,7 +953,7 @@ enum OpKind : ubyte
     accept, acceptMultishot, connect, shutdown,
     openAt, close, statx, fsync,
     timeout, linkTimeout, cancel,
-    futexWait, futexWake, msgRing, waitid,
+    futexWait, futexWake, msgRing, waitid, pollAdd,
 }
 
 enum IoErrorStage : ubyte { setup, probe, registration, submit, completion, cancel }
@@ -1020,15 +1102,18 @@ Capability modules are effects-side and ship the concept plus a deterministic
 test double; live ring-backed implementations live loop-side (module `live`)
 and are constructed by `LoopGroup` into the root row:
 
-| Concept                                  | Test double                                                   | Live implementation     |
-| ---------------------------------------- | ------------------------------------------------------------- | ----------------------- |
-| `isClock`                                | `TestClock` (virtual time)                                    | `RingClock` (`TIMEOUT`) |
-| `isNet`                                  | `SimNet` (in-memory, fault-injectable, latency via any Clock) | `RingNet`               |
-| `isFs`, `isProc`, `isWatch`, `isSignals` | land in M7                                                    | land in M7              |
+| Concept                        | Test double                                                   | Live implementation     |
+| ------------------------------ | ------------------------------------------------------------- | ----------------------- |
+| `isClock`                      | `TestClock` (virtual time)                                    | `RingClock` (`TIMEOUT`) |
+| `isNet`                        | `SimNet` (in-memory, fault-injectable, latency via any Clock) | `RingNet`               |
+| `isProc`                       | `SimProc` (scripted stdio + exit statuses; §13.4)             | `RingProc` (§13.4)      |
+| `isFs`, `isWatch`, `isSignals` | M7 shipped the concrete Linux modules; concepts follow demand | (concrete modules)      |
 
-The `isFs`/`isProc`/`isWatch`/`isSignals` concept shapes follow the `isClock`
-pattern and are specified as an amendment to this section as the first task
-of M7. `isNet` requires `capName == "net"`, member types `Stream`/`Listener`,
+The `isProc` concept shape is specified in §13.4. `isFs`/`isWatch`/
+`isSignals` follow the `isClock` pattern when a consumer needs to swap
+them; M7 shipped their concrete ring-driven implementations
+(`fs`/`watch`/`signals`) without concept seams, which no current consumer
+misses. `isNet` requires `capName == "net"`, member types `Stream`/`Listener`,
 and `listen(SockAddr)`/`connect(SockAddr)` returning `IoResult`s of them;
 `isByteStream` requires the owned-buffer `recv`/`send` shapes of §7.3 plus
 `shutdown()` — both as exact-expression traits, `isClock`-style.
@@ -1126,8 +1211,8 @@ struct LoopGroup
     IoResult!void shutdown(Duration grace = 5.seconds);
 }
 
-/// The live capability row handed to the root fiber; grows with M7.
-alias Env = CtxOf!(RingClock, RingNet /* , RingFs, RingProc, … after M7 */);
+/// The live capability row handed to the root fiber.
+alias Env = CtxOf!(RingClock, RingNet, RingProc);
 ```
 
 `LoopGroup.run` hands the root fiber the root `RootScope` and the live
@@ -1203,7 +1288,261 @@ calling `sc.spawn`/`retry`/`timeout`. The veneer has no semantics of its own;
 parity with the direct core holds by construction and is enforced by the M12
 parity suite.
 
-## 13. Public API surface
+## 13. Subprocesses
+
+Split along the import firewall the way `net` is: module `proc`
+(effects-side) owns the vocabulary (`StdioMode`, `StdioSpec`,
+`ProcessConfig`, `ExitStatus`), the `isProc` concept, and the `SimProc`
+double; the spawn machinery (`ChildProcess`, `spawnProcess`, `spawnPty`,
+`wait`) and the `RingProc` handler are loop-side in `live` (all re-exported
+by `package`, so consumer spellings do not change).
+
+The design premise, taken from what `apps/hue`
+actually runs: **background work in this repository is subprocess-shaped**
+(`git status`, `git diff`, a resident twoslash oracle, an LLM agent, a PTY
+child). A spawned child's pipes are ordinary descriptors the ring already
+knows how to read — so once spawning is right, "async background work" is
+plain fiber I/O with no second scheduler, no worker threads, and no
+polling. (`apps/hue`'s thread-backed `GitStatusCache`, and the nested
+150 ms wait loop it forces on the TUI, are the anti-pattern this section
+replaces.)
+
+### 13.1 Spawn configuration
+
+```d
+/// Where one of the child's standard streams goes.
+enum StdioMode : ubyte
+{
+    inherit,  /// share the parent's descriptor (the default for stdin/stderr)
+    pipe,     /// a pipe whose parent end rides the returned handle
+    nullDev,  /// /dev/null
+    fd,       /// a caller-supplied descriptor (borrowed, not closed)
+}
+
+struct StdioSpec
+{
+    StdioMode mode = StdioMode.inherit;
+    int fd = -1;                       /// used when mode == fd
+}
+
+struct ProcessConfig
+{
+    StdioSpec stdinSpec  = StdioSpec(StdioMode.inherit);
+    StdioSpec stdoutSpec = StdioSpec(StdioMode.pipe);
+    StdioSpec stderrSpec = StdioSpec(StdioMode.inherit);
+    const(char[])[] env = null;   /// null = inherit; entries are "KEY=value"
+    const(char)[] cwd = null;     /// null = inherit
+    bool newProcessGroup = false; /// setpgid(0, 0) in the child (kill the tree)
+}
+```
+
+Spawning is `posix_spawnp` (PATH-searched), never `fork` — a fiber stack is
+the worst possible place for a fork. The argv/env staging buffer grows on
+the heap (the M7 4 KiB static budget and its `E2BIG` are gone); spawn is a
+setup-phase operation and may allocate.
+
+### 13.2 The child handle
+
+```d
+/// How the child ended.
+struct ExitStatus
+{
+    bool signaled;   /// killed by a signal rather than exiting
+    int code;        /// exit code, or the signal number when signaled
+    bool ok() const @safe pure nothrow @nogc => !signaled && code == 0;
+}
+
+struct ChildProcess
+{
+    int pid = -1;          /// -1 after a successful wait
+    FileHandle stdinW;     /// write end of the child's stdin  (piped only)
+    FileHandle stdoutR;    /// read end of the child's stdout  (piped only)
+    FileHandle stderrR;    /// read end of the child's stderr  (piped only)
+
+    bool opCast(T : bool)() const;              /// true while reapable
+    IoResult!void kill(int sig = SIGTERM);      /// signal the child
+    IoResult!void killGroup(int sig = SIGTERM); /// signal its process group
+}
+
+IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
+    in ProcessConfig cfg = ProcessConfig());
+
+/// Parks until the child exits (in-ring WAITID). Sets pid = -1 on success.
+IoResult!ExitStatus wait(ref Sched s, ref ChildProcess child);
+```
+
+Piped ends the caller does not use must still be closed (`FileHandle.close`
+— handles are copyable views; exactly one owner closes). `wait` is the only
+reap path: there is no `SIGCHLD` handler and no blocking `waitpid` anywhere
+in the library. `kill` after a successful `wait` returns `ESRCH` — the pid
+is gone and never reused through this handle (no wrap-around hazard: the
+handle nulls the pid before the kernel can recycle it).
+
+Portability: the `WAITID` lowering is io_uring's today. The kqueue backend
+maps child exit onto `EVFILT_PROC`/`NOTE_EXIT` (M10 refinement, planned in
+M15); IOCP waits on the process handle via the wait-packet path (M11
+refinement). The `OpWaitid` descriptor is already portable-shaped — peer
+backends implement it without API change.
+
+### 13.3 PTY spawning
+
+```d
+/// Spawns argv as a session leader on a fresh PTY; the master rides the
+/// handle's ptyMaster. cols/rows preset the winsize; resizePty follows the
+/// host's resize events (a SIGWINCH relay is the caller's policy).
+IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
+    ushort cols, ushort rows, in ProcessConfig cfg = ProcessConfig());
+IoResult!void resizePty(ref ChildProcess child, ushort cols, ushort rows);
+```
+
+The child becomes a session leader (`POSIX_SPAWN_SETSID`) and acquires the
+slave as its controlling terminal by **opening it inside the child** (a
+spawn file action, ordered after the setsid attribute) — the reason this is
+`posix_spawn`-expressible at all. `stdinSpec`/`stdoutSpec`/`stderrSpec`
+are ignored for a PTY spawn: all three point at the slave. The master is a
+`FileHandle` like any other — `apps/terminal`'s per-frame `EAGAIN` drain
+becomes one parked ring read (the `pty-drain` example, completed by the
+in-ring reap that `forkpty` could not offer).
+
+### 13.4 The proc capability
+
+Like `isNet`'s `Stream`/`Listener`, the concept names the capability's
+**own** child type, so the effects-side concept never imports the
+loop-side handle:
+
+```d
+enum bool isProc(P) = isCapability!P && P.capName == "proc" && is(P.Child)
+    && __traits(compiles, (ref P p) {
+        IoResult!(P.Child) c = p.spawn(["true"], ProcessConfig());
+        IoResult!ExitStatus st = p.wait(lvalueOf!(P.Child));
+    });
+```
+
+`RingProc` (module `live`, `Child = ChildProcess`) is the live handler and
+joins `Env` (§11: `Env = CtxOf!(RingClock, RingNet, RingProc)`). `SimProc`
+(module `proc`, effects-side, `Child = SimChild`) is the deterministic
+double: scripted per-command stdout bytes and exit statuses, with no
+process and no ring — the double that makes an application's "run git,
+parse, decide" path a unit test.
+
+## 14. Channels
+
+Module `channel` (effects-side — it parks through the executor seam, never
+touching the ring). The producer/consumer primitive O20 deferred to its
+first consumer; the consumer arrived (the PTY-reader → render-fiber and
+input-fiber → UI-fiber handoffs of §15.3).
+
+```d
+/// Bounded intra-worker SPSC-ish channel (any number of fibers may put or
+/// take, but all belong to ONE executor — cross-worker channels are the
+/// M9 MSG_RING work). Capacity is fixed at creation.
+struct Channel(T, uint N = 16)
+{
+    IoResult!void put(X)(ref X exec, T item);   // parks while full
+    IoResult!T take(X)(ref X exec);             // parks while empty
+    bool tryPut(T item);                        // non-parking
+    bool tryTake(out T item);                   // non-parking
+    void close();      // wakes all: put fails EPIPE; take drains then EPIPE
+    bool closed() const;
+    uint length() const;
+}
+```
+
+Semantics: `put`/`take` are cancellation checkpoints (park through the
+same one-shot cancel discipline as I/O parks — §8.4's "non-I/O park"
+clause, previously occupied by `JoinHandle.join` alone). `close` is
+idempotent; takers drain buffered items before observing `EPIPE` — no data
+loss on graceful shutdown. Elements move in and out (`T` need not be
+copyable). The channel itself is address-pinned like every intrusive
+structure (§8.1): create it in a frame that outlives all users — scope
+join order makes that natural.
+
+## 15. The UI event loop
+
+The integration layer that lets an interactive application — `apps/hue`,
+`apps/terminal`, the planned `sparkles:ui-app` host
+([ui-app spec](../ui-app/index.md), esp. `HST9`) — make event-horizon its
+**only** loop: one wait point observing input, frame pacing, subprocesses,
+file watches, and timers together. The window-system research
+([recommendations](../../research/window-system-integration/recommendations.md)
+§2.2, §2.9) fixes the long-term shape — callback-first loop ownership, a
+frame clock folding native vsync sources; this section is the substrate
+those land on.
+
+### 15.1 Foreign-fd readiness
+
+`OpPollAdd` (§4.1) completes when a descriptor is ready rather than when
+I/O finishes — the op for descriptors whose I/O someone else performs: a
+windowing connection (Wayland/X11), a library-owned socket. The completion
+`res` carries the ready `PollEvents`; `multishot: true` keeps one
+submission armed and delivers a completion per readiness edge
+(`flags.more`). `PollEvents` is a portable POD over the
+`POLLIN`/`POLLOUT`/`POLLERR`/`POLLHUP` subset every backend can honour:
+uring lowers to `POLL_ADD` (+`ADD_MULTI`); kqueue registers
+`EVFILT_READ`/`EVFILT_WRITE` and — uniquely for this op — performs **no
+syscall at readiness**; IOCP has no general poll and does not lower it
+(`canSubmitOp` gates every call site, §3.1).
+
+The readiness result is a **level snapshot, not a byte count**: the caller
+performs its own non-blocking I/O (or calls the foreign library's
+dispatch) and re-arms. This is deliberately the winit/calloop
+"loop-as-pollable-fd" integration inverted: event-horizon does not export
+its fd for a foreign loop to poll — foreign fds join _this_ loop, which is
+what "owning the event loop" means.
+
+### 15.2 Wake, pace, hand off
+
+Three primitives specified elsewhere combine into the loop's UI substrate:
+the external waker (§5.6) for off-thread nudges (a non-loop thread finishing
+work, a future `requestFrame` from another thread); `Ticker` (§7.3) as the
+frame clock — absolute-deadline pacing, missed ticks skipped; `Channel`
+(§14) for fiber-to-fiber event handoff. None of them is UI-specific;
+together they are sufficient.
+
+### 15.3 Owning an application's loop
+
+The recommended shape inverts today's `while (!WindowShouldClose())`: **the
+application's frame loop runs inside the root fiber**, and everything else
+is sibling fibers on the same scheduler. The thread's single blocking point
+is the ring wait; the app never blocks anywhere else.
+
+**The TUI shape** (consumer: `sparkles:ui-tui`, then hue's workspace loop):
+
+- an **input fiber**: chunked ring reads of the raw-mode stdin feeding a
+  resumable escape-sequence assembler (the `sparkles:tui` pure decoders
+  over a buffer, not its one-byte blocking pulls); decoded
+  `sparkles:input` events go into a `Channel`;
+- a **signal fiber**: `SignalFd([SIGWINCH])` → resize events into the same
+  channel (replacing the `EINTR` trick — the loop's reads must not rely on
+  signal interruption);
+- **subprocess fibers** per background job (git status, oracles): spawn,
+  read the pipe, post a typed result;
+- the **UI fiber**: `take` from the channel (parking — zero idle CPU, the
+  `HST9` "blocks on input" arm), or race the channel against a `Ticker`
+  when animating (the idle-interval arm); paint; present.
+
+**The GUI shape** (consumer: `sparkles:ui-raylib`, then hue `--gui`): the
+GPU surface has no event fd under raylib/GLFW, so input is _sampled_, not
+awaited — the root fiber runs a `Ticker` at the target rate; each tick
+pumps raylib's polled input synthesis (`RaylibEvents.poll`), folds, paints,
+and swaps with raylib's own pacing disabled (`SetTargetFPS(0)`, no vsync
+block). Between ticks the thread parks in the ring wait, where subprocess
+and watch completions run — the "background work without dropping input"
+obligation, met by construction. Raylib is thereby demoted to **render +
+window + input sampling**; cadence, waiting, and every async source belong
+to event-horizon. (A sampled-input tick is the honest v1: a _waited_ input
+path needs the display connection's fd, which raylib does not expose —
+that is the window-system replacement's §15.1 integration, not this
+spec's.)
+
+**Degradation.** Loop creation can fail where a UI must still run —
+Android's app seccomp policy blocks `io_uring` (§3.4 hard-error semantics
+apply; the hue APK is a live consumer). UI adapters therefore keep their
+plain paced loop as an explicit fallback arm, selected once at startup on
+loop-creation failure — honest degradation in the §3.2 spirit, never a
+silent behavioral fork.
+
+## 16. Public API surface
 
 Re-exported from `sparkles.event_horizon` (`package.d`):
 
@@ -1214,7 +1553,9 @@ Re-exported from `sparkles.event_horizon` (`package.d`):
 | Tier A       | `EventLoop`, `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle` |
 | Buffers      | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                            |
 | Probing      | `BackendCaps`, `BackendId`, `LoopMode`, `ModePolicy`, `probeSystem`                                                                                                                                               |
-| Tier B       | `Sched`, `SchedOptions`, `RootScope`, the `io` verbs, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                                                                                            |
+| Tier B       | `Sched`, `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                             |
+| Subprocesses | `StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`, `isProc`, `SimProc`, `ChildProcess`, `spawnProcess`, `spawnPty`, `resizePty`, `wait`, `RingProc`                                                         |
+| Channels     | `Channel`                                                                                                                                                                                                         |
 | Scopes       | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                   |
 | Capabilities | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`   |
 | Schedules    | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                       |

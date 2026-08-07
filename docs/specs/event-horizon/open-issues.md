@@ -126,8 +126,15 @@ faking probe results so degradation paths run on any kernel.
 **Options:** (A) `run()`/`runOnce(timeout)` as the two entry points (in spec
 now); (B) a first-class external-waker capability later.
 
-**Leaning:** (A) suffices for v1; deeper integration designed with the
-window-system work after M8.
+**Resolved (2026-08-07): both, folded into SPEC as §5.6 + §15 (M16).** The
+external waker landed as the `eventfd`/`EVFILT_USER`/`PostQueuedCompletionStatus`
+mechanism of SPEC §5.6, and the GUI/TUI integration is specified in §15:
+the recommended shape is inversion (the frame loop as the root fiber over
+a `Ticker`, §15.3), with `Sched.tick` (§7.2) as the embedding hatch for a
+loop the application does not own, and `OpPollAdd` (§15.1) as the
+foreign-fd door a real windowing connection will use. Deeper
+Wayland/Vulkan-native pacing (frame callbacks as a vsync source) stays
+with the window-system replacement work, as planned.
 
 ## O8 — Kernel floor: 6.1 baseline vs a compat mode
 
@@ -298,12 +305,17 @@ recognized gap.
 **Options:** (A) design in M5 alongside the park/wake machinery it reuses;
 (B) defer to M13 and let the terminal port drive the shape.
 
-**Leaning:** (B) — the consumer's needs should shape it; the cancel-function
-dispatch in M5 must simply not preclude additional park types.
+**Resolved (2026-08-07): (B) ran its course — the consumers arrived and the
+shape is folded into SPEC §14 (M16).** The UI-loop work (SPEC §15.3) is
+exactly the deferred-to consumer: the input-fiber → UI-fiber and
+PTY-reader → render-fiber handoffs. v1 is the bounded **intra-worker**
+channel parking through the executor seam (effects-side, ring-free), with
+close-then-drain semantics and cancellation checkpoints; the cross-worker
+variant stays open with the M9 `MSG_RING`/futex machinery it needs.
 
 ## O21 — How far the `Allocator` parameters spread
 
-**Where:** SPEC §4.2, §6.3, §13 (memory-management policy).
+**Where:** SPEC §4.2, §6.3, §16 (memory-management policy).
 
 `BufferPool`, `OpSlab`, and `EventLoop` are generic over their allocator
 (M8). Unplumbed: `SchedOptions` (the fiber slab stays GC by design, but a
@@ -439,7 +451,7 @@ runner's is the one with statistics.
 
 ## O25 — Peer-backend attribute parity is uneven (and CI cannot see most of it)
 
-**Where:** `backend/{uring,kqueue,iocp}.d`; SPEC §3.1, §13.
+**Where:** `backend/{uring,kqueue,iocp}.d`; SPEC §3.1, §16.
 
 macOS CI running for the first time exposed that the peer backends had drifted
 from `uring`'s attribute surface, in ways Linux-only development cannot catch.
@@ -494,7 +506,7 @@ enum submitIsNoGcNothrow(B, Op) =
 
 static assert(submitIsNoGcNothrow!(B, Op),
     B.stringof ~ ".trySubmit(" ~ Op.stringof ~ ") is not @nogc nothrow"
-    ~ " — tier A promises a @nogc submit path (SPEC §13)");
+    ~ " — tier A promises a @nogc submit path (SPEC §16)");
 ```
 
 A `static assert`, **not** a `bool` folded into the constraint: a failed
@@ -502,8 +514,36 @@ constraint makes the backend silently _not a backend_, surfacing as a baffling
 "no matching overload" far from the cause. The assert names the backend, the
 op, and the promise broken.
 
-What tier A actually promises needs stating in SPEC §13 as part of this: the
+What tier A actually promises needs stating in SPEC §16 as part of this: the
 `@nogc nothrow` submit path is the documented headline property, so that is the
 minimum the seam enforces. `submitAndWait`/`open` are deliberately **not**
 included — nothing requires `run`/`runOnce` to be `@nogc`, and asserting more
 than is promised would block backends for no user-visible gain.
+
+## O26 — Peer-backend child reap: `EVFILT_PROC` and IOCP wait packets
+
+**Where:** SPEC §13.2 (portability paragraph); PLAN M15.
+
+`OpWaitid` is portable-shaped but only uring lowers it. The peer lowerings
+each carry a sharp edge the implementation must decide on:
+
+- **kqueue `EVFILT_PROC`/`NOTE_EXIT`** delivers the exit status in `data`,
+  but registering the filter races the exit: a child that dies before
+  `kevent` registration returns `ESRCH`, so the lowering needs a
+  register-then-`waitpid(WNOHANG)` back-check to close the window. Under
+  libkqueue on Linux the filter is emulated via pidfd — semantics to
+  verify, not assume.
+- **IOCP** has no process-completion primitive; the options are a
+  wait-packet (`NtAssociateWaitCompletionPacket`, undocumented-ish but
+  what modern runtimes use) vs a thread-pool `RegisterWaitForSingleObject`
+  bounce. Job objects enter only if `killGroup` is to mean anything on
+  Windows.
+
+**Options:** (A) implement both lowerings in M15 to the semantics above;
+(B) keep peer-platform reap on a helper-thread `waitpid`/`WaitForSingleObject`
+bounce feeding the backend's completed queue (the kqueue worker-pool
+pattern) until the native paths are proven.
+
+**Leaning:** (B) as the correctness baseline shipped with M15, with (A) as
+per-backend refinements — the API is identical either way, and the bounce
+is exactly how the kqueue backend already handles regular files.

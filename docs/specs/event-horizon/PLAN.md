@@ -11,7 +11,7 @@ cross-runtime matrix and the results doc land._
 completion vocabulary (§4), the callback tier (§5), buffers (§6), the fiber tier
 (§7), structured concurrency (§8), errors (§9), capabilities and effect rows
 (§10), scheduler topologies (§11), the `Effect!T` veneer sketch (§12), and the
-public API (§13). Spec examples that need not-yet-implemented modules are parked
+public API (§16). Spec examples that need not-yet-implemented modules are parked
 with `<!-- md-example-skip -->` directives; the implementation milestones
 unpark them and make them pass under `nix run .#ci -- --verify`.
 
@@ -187,3 +187,67 @@ Gate: one command runs the matrix locally; the results + methodology doc
 (research-docs style) is committed; event-horizon lands within its target
 envelopes (≥ vibe.d throughput at lower tail latency; competitive with
 Tokio/Glommio on echo).
+
+## M15 — Async process management v2
+
+The `proc` rebuild to SPEC §13, replacing the M7 sketch: the effects-side
+vocabulary (`StdioMode`/`StdioSpec`/`ProcessConfig`/`ExitStatus`), full
+per-stream stdio control with heap-staged argv/env (`spawnProcess` v2),
+`kill`/`killGroup`, signaled-vs-exited status decoding, PTY spawning
+(`spawnPty` via `POSIX_SPAWN_SETSID` + in-child slave open, `resizePty`),
+and the capability layer — `isProc` (associated-`Child` shape), `RingProc`
+joining `Env`, `SimProc` as the deterministic double. Portability
+refinements ride the backend milestones: kqueue `EVFILT_PROC`/`NOTE_EXIT`
+lowering for `OpWaitid`, IOCP wait-packet reap.
+
+Gate: the `agent-tooling` example upgraded to v2 (stdin round-trip, stderr
+capture, kill, signaled exit); `pty-drain` reaps in-ring via `spawnPty`;
+a `SimProc` unit test drives an app-shaped "run, parse, decide" path with
+no process.
+
+## M16 — UI-loop substrate
+
+The SPEC §5.6/§14/§15 primitives, in dependency order: the external
+`Waker` (eventfd / `EVFILT_USER` / `PostQueuedCompletionStatus`; drain
+accounting excludes the armed wake op; `destroy` disarms), `OpPollAdd`
+(single + multishot; uring `POLL_ADD`, kqueue filter-only) with the
+`waitReadable`/`waitWritable` verbs, `sleepUntil` + `Ticker`
+(absolute-deadline frame clock, missed ticks skipped), `Channel!T`
+(bounded intra-worker; park/wake through the executor seam;
+close-then-drain semantics), and `Sched.tick` (the O7 embedding hatch).
+
+Gate: unit tests for each primitive (cross-thread wake; poll on a pipe;
+tick cadence + missed-tick skip under a deliberately slow consumer;
+channel producer/consumer/close/cancel; tick-driven echo identical to
+`run`-driven); the `io.steadyState.zeroAllocations` gate still green with
+a waker armed.
+
+## M17 — Owning the application loops
+
+The SPEC §15.3 shapes delivered through the UI adapters, then the
+applications:
+
+1. `sparkles:ui-tui` gains the ring-driven input source (chunked stdin
+   reads through a resumable escape assembler over `sparkles:tui`'s pure
+   decoders; `SignalFd([SIGWINCH])` resize; events into a `Channel`).
+2. `sparkles:ui-raylib` gains the `Ticker`-paced frame driver
+   (`SetTargetFPS(0)`; sampled input per tick; the plain-loop fallback arm
+   for loop-creation failure — Android seccomp).
+3. `apps/hue`: the workspace TUI loop moves onto the input/UI-fiber shape;
+   `GitStatusCache` re-shaped from a `std.parallelism` thread to a spawned
+   `git status --porcelain` child (deleting the nested 150 ms wait); the
+   resident oracles' non-blocking `tryReadLine` polling becomes parked
+   pipe reads. Then the `--gui` frame loop onto the frame driver.
+4. `apps/terminal` follows (the M13 port, now with its substrate in
+   place): PTY master reads and the child reap park instead of the
+   per-frame `EAGAIN` drain; the idle no-swap behavior is preserved.
+
+Coordinate with the [`sparkles:ui-app` plan](../ui-app/PLAN.md): the host
+package's `tui_loop.d`/`gui_loop.d` arms are the natural final home of
+these loops (`HST9`); the adapters land the machinery so either migration
+order works.
+
+Gate: hue TUI runs with **zero** polling timeouts on an idle document
+(strace-verifiable: the loop makes one blocking ring wait, no 33/150 ms
+tick wakeups); the `apps/terminal` render-CPU benchmark's idle scenario
+stays at its near-zero baseline after the port.
