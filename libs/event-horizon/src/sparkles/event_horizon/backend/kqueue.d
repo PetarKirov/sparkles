@@ -308,7 +308,11 @@ struct KqueueBackend
             return false;
         const ident = cast(int)(_timerBase + (op - _ops.ptr));
         *op = KqOp(token.raw, ident, null, 0, OpKindLocal.timer, EVFILT_TIMER, uint.max);
-        const ms = o.rel.tv_sec * 1000 + o.rel.tv_nsec / 1_000_000;
+        // Round UP to the millisecond: a timer must never fire EARLY, and
+        // truncation makes every fractional-ms deadline do exactly that
+        // (found by absolute-deadline pacing: sleepUntil remainders are
+        // fractional, and early wakes let a Ticker lap its own grid).
+        const ms = o.rel.tv_sec * 1000 + (o.rel.tv_nsec + 999_999) / 1_000_000;
         return armTimer(op, ms < 0 ? 0 : ms);
     }
 

@@ -459,14 +459,17 @@ unittest
 
     bool done;
     auto r = s.run(() {
-        auto ticker = Ticker.start(s, 2.msecs);
+        // Coarse-timer-proof margins: the kqueue backend's EVFILT_TIMER is
+        // millisecond-grained and CI runners stall — a 25 ms grid keeps the
+        // invariants clear of both.
+        auto ticker = Ticker.start(s, 25.msecs);
         // A deliberately slow "frame": sleep several periods past the
         // deadline, then tick — the missed periods are skipped, not
         // replayed as a burst.
-        assert(!sleep(s, 9.msecs).hasError);
+        assert(!sleep(s, 110.msecs).hasError);
         auto late = ticker.tick(s);
         assert(late.hasValue);
-        assert(late.value >= 1, "being 7+ ms late on a 2 ms grid skips ticks");
+        assert(late.value >= 1, "being 85+ ms late on a 25 ms grid skips ticks");
 
         // The realigned grid keeps pacing: the next tick is on time again.
         auto next = ticker.tick(s);
