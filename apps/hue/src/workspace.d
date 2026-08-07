@@ -21,6 +21,7 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
     Theme, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
+import sparkles.event_horizon.sched : Sched;
 import sparkles.ui_tui : CellStyle, Color, Grid;
 import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
 import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
@@ -695,80 +696,27 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         if (!term.active)
             return 1;
         scope (exit) w.stopLive();
-        // Every event repaints; a live tick only does when it changed the
-        // document, so an idle session emits nothing to the terminal.
-        bool dirty = true;
-        for (;;)
+
+        // The event-horizon arm (its SPEC §15.3, `UIA10`): input and
+        // SIGWINCH are fibers feeding a channel, the workspace loop is the
+        // root fiber, and the thread's single blocking point is the ring
+        // wait — same dynamic deadlines, no nested git polling loop, no
+        // EINTR resize. Where loop creation fails (no io_uring — a
+        // seccomp'd sandbox), the classic blocking loop below is the
+        // explicit fallback arm, never a silent one.
+        import sparkles.event_horizon.sched : Sched, SchedOptions;
+
+        SchedOptions schedOpts;
+        schedOpts.stackSize = 1024 * 1024; // frames paint on the fiber stack
+        schedOpts.maxFibers = 16;
+        Sched sched;
+        if (!Sched.create(sched, schedOpts).hasError)
         {
-            // Live types tick before the frame, so an arriving payload or tip
-            // paints in the same pass.
-            dirty |= w.pollLive();
-            dirty |= w.pollDiffTypes();
-
-            if (dirty)
-            {
-                const sz = term.resizeToTerminal();
-                if (sz.width != w.width || sz.height != w.height)
-                    w.arrange(sz.width, sz.height);
-
-                w.paint(term.grid);
-                term.present();
-                dirty = false;
-            }
-
-            const clip = w.viewer.takeClipboard();
-            if (clip.length)
-                term.writeOutOfBand(clip); // OSC 52 clipboard (out of band)
-            const shape = w.takeCursorShape();
-            if (shape.length)
-                term.writeOutOfBand(shape); // OSC 22 pointer shape
-
-            // While a git-status refresh is in flight, wait in short slices so
-            // the finished snapshot paints without requiring a keypress.
-            bool gitApplied;
-            while (w.tree.git.refreshing && !term.ready(150))
-                if (w.tree.git.poll())
-                {
-                    gitApplied = true;
-                    break;
-                }
-            if (gitApplied)
-            {
-                w.tree.rebuild();
-                dirty = true;
-                continue; // repaint with the badges, then wait again
-            }
-
-            // With an oracle running the loop wakes on a deadline as well as
-            // on input, so the analysis lands without a keystroke; with none it
-            // blocks exactly as it always has (no idle wakeups).
-            //
-            // A pending key sequence is the second deadline (`LTN4`): the
-            // guide's panel appears after a delay with no keystroke to wake
-            // us, so the wait is capped at whatever is left of it. This is
-            // exactly why the delay is a `Duration` and not a frame count —
-            // a terminal has no frames to count.
-            const untilPanel = w.untilLanternShown();
-            const deadline = w.liveActive
-                ? (untilPanel < liveTick ? untilPanel : liveTick)
-                : untilPanel;
-            const ev = deadline == Duration.max
-                ? term.next() : term.next(cast(int) deadline.total!"msecs");
-            if (ev.isEndOfInput)
-                break;
-            if (ev == Event.init)
-            {
-                // The wait expired rather than a key arriving: advance the
-                // guide's clock so the panel opens on time, and repaint.
-                w.tickLantern(deadline);
-                continue;
-            }
-            dirty = true;
-            if (ev.match!((in ResizeEvent _) => true, _ => false))
-                continue; // next iteration re-measures + re-arranges
-            if (!w.handle(ev))
-                break;
+            scope (exit) sched.destroy();
+            runWorkspaceAsync(w, term, sched);
         }
+        else
+            runWorkspaceBlocking(w, term);
     }
 
     const notice = w.takeLiveNotice();
@@ -784,6 +732,209 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
 /// How long the loop waits for input before ticking the live oracle again
 /// (~30 Hz — imperceptible for a ~0.6 ms tip answer, idle when no session).
 private enum liveTick = 33.msecs;
+
+/// The wait deadline both loop arms compute identically: the lantern
+/// panel's remainder (`LTN4`), capped by the live oracle's tick while an
+/// oracle runs, capped at 150 ms while a git-status refresh is in flight
+/// (the async arm's replacement for the old nested polling loop — one
+/// capped wait instead of `ready(150)` slices).
+private Duration waitDeadline(ref WorkspaceTui w) @system
+{
+    const untilPanel = w.untilLanternShown();
+    Duration deadline = w.liveActive
+        ? (untilPanel < liveTick ? untilPanel : liveTick)
+        : untilPanel;
+    if (w.tree.git.refreshing && deadline > 150.msecs)
+        deadline = 150.msecs;
+    return deadline;
+}
+
+/// A deadline expired with no event: apply a finished git snapshot, advance
+/// the guide's clock. `true` when the tree changed and a repaint is due.
+private bool onWaitExpired(ref WorkspaceTui w, Duration waited) @system
+{
+    if (w.tree.git.refreshing && w.tree.git.poll())
+    {
+        w.tree.rebuild();
+        return true;
+    }
+    // The wait expired rather than a key arriving: advance the guide's
+    // clock so the panel opens on time.
+    w.tickLantern(waited);
+    return false;
+}
+
+/**
+The event-horizon workspace loop (M17): the SPEC §15.3 TUI shape. Input
+bytes and `SIGWINCH` are daemon fibers feeding one channel; the workspace
+runs in the root fiber and parks on `take` with the same dynamic deadline
+the blocking arm passes to `next()`. An idle document costs zero wakeups.
+*/
+private void runWorkspaceAsync(ref WorkspaceTui w, ref TerminalSession term,
+    ref Sched sched) @system
+{
+    import sparkles.event_horizon.errors : IoError;
+    import sparkles.event_horizon.scope_ : withDeadline, withScope;
+    import sparkles.event_horizon.signals : SignalFd;
+    import sparkles.ui_app.event_source : EventChannel, pumpResizeSignals,
+        pumpTerminalInput;
+
+    // SIGWINCH becomes a channel event through a signalfd — never an EINTR
+    // side effect (a parked ring read is not interruptible the way the
+    // blocking reader's `read(2)` was).
+    enum int SIGWINCH = 28;
+    SignalFd winch;
+    const winchOk = !SignalFd.create(winch, [SIGWINCH]).hasError;
+
+    EventChannel events;
+
+    // Fibers capture plain locals, never `ref` parameters — a closure
+    // captures the parameter slot, not the referent. The frames provably
+    // outlive the run: `sched.run` blocks here until every fiber is done.
+    auto wP = (() @trusted => &w)();
+    auto termP = (() @trusted => &term)();
+    auto schedP = (() @trusted => &sched)();
+    auto winchP = (() @trusted => &winch)();
+
+    sched.run(() {
+        cast(void) withScope!((ref sc) {
+            sc.spawnDaemon(() { pumpTerminalInput(*schedP, events, 0); });
+            if (winchOk)
+                sc.spawnDaemon(() { pumpResizeSignals(*schedP, events, *winchP); });
+
+            // Every event repaints; a tick only does when it changed the
+            // document, so an idle session emits nothing to the terminal.
+            bool dirty = true;
+            for (;;)
+            {
+                // Live types tick before the frame, so an arriving payload
+                // or tip paints in the same pass.
+                dirty |= wP.pollLive();
+                dirty |= wP.pollDiffTypes();
+
+                if (dirty)
+                {
+                    const sz = termP.resizeToTerminal();
+                    if (sz.width != wP.width || sz.height != wP.height)
+                        wP.arrange(sz.width, sz.height);
+
+                    wP.paint(termP.grid);
+                    termP.present();
+                    dirty = false;
+                }
+
+                const clip = wP.viewer.takeClipboard();
+                if (clip.length)
+                    termP.writeOutOfBand(clip); // OSC 52 clipboard (out of band)
+                const shape = wP.takeCursorShape();
+                if (shape.length)
+                    termP.writeOutOfBand(shape); // OSC 22 pointer shape
+
+                const deadline = waitDeadline(*wP);
+                Event ev;
+                bool haveEvent;
+                if (deadline == Duration.max)
+                {
+                    auto taken = events.take(*schedP);
+                    if (taken.hasError)
+                        return; // input ended / teardown
+                    ev = taken.value;
+                    haveEvent = true;
+                }
+                else
+                {
+                    // Out-variable shape: the deadline body must not return
+                    // an Expected (the scope would double-wrap it).
+                    Event taken;
+                    bool gotOne;
+                    auto o = withDeadline!((ref _) {
+                        auto t = events.take(*schedP);
+                        if (!t.hasError)
+                        {
+                            taken = t.value;
+                            gotOne = true;
+                        }
+                    })(*schedP, deadline);
+                    if (o.hasError)
+                    {
+                        if (!o.error.isTimeout)
+                            return; // teardown
+                    }
+                    else if (gotOne)
+                    {
+                        ev = taken;
+                        haveEvent = true;
+                    }
+                    else
+                        return; // channel closed: input ended
+                }
+
+                if (!haveEvent)
+                {
+                    dirty |= onWaitExpired(*wP, deadline);
+                    continue;
+                }
+                if (ev.isEndOfInput)
+                    return;
+                dirty = true;
+                if (ev.match!((in ResizeEvent _) => true, _ => false))
+                    continue; // next iteration re-measures + re-arranges
+                if (!wP.handle(ev))
+                    return;
+            }
+        }, IoError)(*schedP);
+        // Scope exit reaps the daemon pumps: their parked reads are
+        // cancelled in-ring before the session restores the terminal.
+    });
+}
+
+/// The fallback arm: the classic blocking loop, byte-for-byte the pre-M17
+/// behavior (minus the nested git polling loop, which both arms now express
+/// as a capped wait deadline).
+private void runWorkspaceBlocking(ref WorkspaceTui w, ref TerminalSession term)
+    @system
+{
+    bool dirty = true;
+    for (;;)
+    {
+        dirty |= w.pollLive();
+        dirty |= w.pollDiffTypes();
+
+        if (dirty)
+        {
+            const sz = term.resizeToTerminal();
+            if (sz.width != w.width || sz.height != w.height)
+                w.arrange(sz.width, sz.height);
+
+            w.paint(term.grid);
+            term.present();
+            dirty = false;
+        }
+
+        const clip = w.viewer.takeClipboard();
+        if (clip.length)
+            term.writeOutOfBand(clip); // OSC 52 clipboard (out of band)
+        const shape = w.takeCursorShape();
+        if (shape.length)
+            term.writeOutOfBand(shape); // OSC 22 pointer shape
+
+        const deadline = waitDeadline(w);
+        const ev = deadline == Duration.max
+            ? term.next() : term.next(cast(int) deadline.total!"msecs");
+        if (ev.isEndOfInput)
+            break;
+        if (ev == Event.init)
+        {
+            dirty |= onWaitExpired(w, deadline);
+            continue;
+        }
+        dirty = true;
+        if (ev.match!((in ResizeEvent _) => true, _ => false))
+            continue; // next iteration re-measures + re-arranges
+        if (!w.handle(ev))
+            break;
+    }
+}
 
 @("workspace.splitPane.composeToggleAndSync")
 @system
