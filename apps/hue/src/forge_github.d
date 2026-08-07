@@ -15,10 +15,12 @@ module forge_github;
 
 import expected : err;
 
-import forge : ForgeError, ForgeErrorKind, ForgeResult, HttpRequest,
-    HttpResponse, isForge, PrFile, PrRef, PullRequest, RepoId, Transport;
+import forge : Comment, CommentThread, ForgeError, ForgeErrorKind,
+    ForgeResult, HttpRequest, HttpResponse, isForge, PrFile, PrRef,
+    PullRequest, RepoId, ThreadSide, Transport;
 
-import sparkles.wired.policy : CaseStyle, WireCase, WireName, WireOptional;
+import sparkles.wired.policy : CaseStyle, WireCase, WireInvalid,
+    WireName, WireOptional;
 
 /// GitHub's own page size for the files endpoint, and the cap on how many
 /// pages hue will walk. 3000 files is GitHub's own hard limit for a PR diff;
@@ -55,6 +57,71 @@ struct GitHubForge
     /// GitHub renders a ` ```suggestion ` fence in a review comment as an
     /// applyable suggestion (`DCM4`'s first emitter).
     enum suggestionFence = "suggestion";
+
+    /**
+    `DPR3`: the PR's review conversations, with their resolved state.
+
+    GraphQL rather than REST, and not by preference: REST's review comments
+    carry no notion of a resolved THREAD at all — only individual comments and
+    `in_reply_to_id` links to rebuild the grouping from. Resolution is the
+    thing that decides whether a conversation folds to a badge or demands
+    attention, so a view built on REST would have to show every settled
+    argument at full size forever.
+
+    That costs authentication: GitHub's GraphQL endpoint refuses anonymous
+    requests entirely, where its REST endpoints serve public repositories. So
+    a tokenless session still reads the diff and simply has no threads —
+    `noAuth`, which the caller can report once rather than per thread.
+    */
+    ForgeResult!(CommentThread[]) reviewThreads(in PrRef pr, scope Transport http)
+        @system
+    {
+        import std.conv : text;
+
+        if (token.length == 0)
+            return err!(CommentThread[])(ForgeError(ForgeErrorKind.noAuth,
+                "review threads need a token (GitHub's GraphQL API refuses "
+                ~ "anonymous requests)"));
+
+        const query = `{"query":"query($o:String!,$n:String!,$p:Int!){`
+            ~ `repository(owner:$o,name:$n){pullRequest(number:$p){`
+            ~ `reviewThreads(first:100){nodes{isResolved isOutdated path line `
+            ~ `diffSide comments(first:50){nodes{body createdAt `
+            ~ `author{login}}}}}}}}","variables":{"o":"` ~ pr.repo.owner
+            ~ `","n":"` ~ pr.repo.name ~ `","p":` ~ text(pr.number) ~ `}}`;
+
+        auto res = post(graphqlUrl, query, http);
+        if (res.hasError)
+            return err!(CommentThread[])(res.error);
+        return decodeThreads(res.value);
+    }
+
+    /// The GraphQL endpoint beside `apiBase`. On github.com the REST root is
+    /// `api.github.com` and GraphQL hangs off the same host; an Enterprise
+    /// instance puts it beside `/api/v3` as `/api/graphql`.
+    private string graphqlUrl() const @safe pure
+    {
+        import std.string : endsWith;
+
+        return apiBase.endsWith("/api/v3")
+            ? apiBase[0 .. $ - 3] ~ "graphql" : apiBase ~ "/graphql";
+    }
+
+    /// One POST, with the failure vocabulary applied (`DPR6`).
+    private ForgeResult!string post(string url, string body_, scope Transport http)
+        @system
+    {
+        string[] headers = [
+            "Accept: application/vnd.github+json",
+            "Content-Type: application/json",
+            "User-Agent: hue",
+            "Authorization: Bearer " ~ token,
+        ];
+        auto res = http(HttpRequest(url, headers, body_));
+        if (res.hasError)
+            return err!string(res.error);
+        return classify(res.value, url, true);
+    }
 
     /**
     Fetches a pull request: metadata, description and file list.
@@ -280,6 +347,106 @@ ForgeResult!(PrFile[]) decodeFiles(scope const(char)[] json) @safe
     return typeof(return)(out_);
 }
 
+// GraphQL answers in camelCase, which is D's own spelling — so unlike the
+// REST shapes above these need no recasing, only the `body` keyword dodge.
+
+private struct GqlAuthor
+{
+    @WireOptional() string login;
+}
+
+private struct GqlComment
+{
+    @WireOptional() GqlAuthor author;
+    @WireOptional() @WireName("body") string body_;
+    @WireOptional() string createdAt;
+}
+
+private struct GqlCommentNodes
+{
+    @WireOptional() GqlComment[] nodes;
+}
+
+private struct GqlThread
+{
+    @WireOptional() bool isResolved;
+    @WireOptional() bool isOutdated;
+    @WireOptional() string path;
+    /// Null for a thread whose line no longer exists. That is not a
+    /// malformed answer, it is exactly what `isOutdated` reports — so the
+    /// field takes the default rather than rejecting the whole payload and
+    /// costing the reviewer every OTHER thread in it.
+    @WireOptional(onInvalid: WireInvalid.useDefault) uint line;
+    @WireOptional() string diffSide;
+    @WireOptional() GqlCommentNodes comments;
+}
+
+private struct GqlThreadNodes
+{
+    @WireOptional() GqlThread[] nodes;
+}
+
+private struct GqlPullRequest
+{
+    @WireOptional() GqlThreadNodes reviewThreads;
+}
+
+private struct GqlRepository
+{
+    @WireOptional() GqlPullRequest pullRequest;
+}
+
+private struct GqlData
+{
+    @WireOptional() GqlRepository repository;
+}
+
+private struct GqlResponse
+{
+    @WireOptional() GqlData data;
+}
+
+/**
+Decodes a `reviewThreads` GraphQL answer (`DPR3`).
+
+A GraphQL error arrives with HTTP 200 and an `errors` array, so a decode that
+only looked at the status would report success on a refusal. An answer with no
+`repository` is that case: it becomes a `malformed` failure rather than an
+empty thread list, because "no threads" and "the query was rejected" must not
+look the same to a reviewer.
+*/
+ForgeResult!(CommentThread[]) decodeThreads(scope const(char)[] json) @safe
+{
+    import std.string : indexOf;
+
+    auto res = parse!GqlResponse(json);
+    if (res.hasError)
+        return err!(CommentThread[])(res.error);
+
+    const nodes = res.value.data.repository.pullRequest.reviewThreads.nodes;
+    if (nodes.length == 0 && json.indexOf(`"errors"`) >= 0)
+        return err!(CommentThread[])(ForgeError(ForgeErrorKind.malformed,
+            "the forge rejected the thread query"));
+
+    CommentThread[] out_;
+    foreach (ref t; nodes)
+    {
+        CommentThread thread = {
+            path: t.path,
+            line: t.line,
+            // GraphQL says LEFT for the old side; anything else is the new
+            // one, which is also the right default for a missing field.
+            side: t.diffSide == "LEFT" ? ThreadSide.oldSide : ThreadSide.newSide,
+            resolved: t.isResolved,
+            outdated: t.isOutdated,
+        };
+        foreach (ref c; t.comments.nodes)
+            thread.comments ~= Comment(c.author.login, c.body_, c.createdAt);
+        out_ ~= thread;
+    }
+    return ForgeResult!(CommentThread[])(out_);
+}
+
 private ForgeResult!T parse(T)(scope const(char)[] json) @safe
 {
     import std.json : JSONValue, parseJSON;
@@ -440,4 +607,100 @@ private ForgeResult!T parse(T)(scope const(char)[] json) @safe
     auto res = gh.pullRequest(PrRef(RepoId("github.com", "o", "r"), 1), refuse);
     assert(res.hasError && res.error.kind == ForgeErrorKind.rateLimited,
         "a rate limit must survive as itself, not as a generic failure");
+}
+
+@("forge_github.decodeThreads.groupsWhatTheReviewerMustRead")
+@safe unittest
+{
+    import forge : ThreadSide;
+
+    // A real-shaped answer: one live thread on the new side, one resolved,
+    // and one outdated whose line GitHub reports as null.
+    enum json = `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+        {"isResolved": false, "isOutdated": false, "path": "src/a.d",
+            "line": 42, "diffSide": "RIGHT", "comments": {"nodes": [
+                {"body": "why this way?", "createdAt": "2026-08-07T10:00:00Z",
+                    "author": {"login": "reviewer"}},
+                {"body": "because X", "createdAt": "2026-08-07T11:00:00Z",
+                    "author": {"login": "author"}}]}},
+        {"isResolved": true, "isOutdated": false, "path": "src/b.d",
+            "line": 7, "diffSide": "LEFT", "comments": {"nodes": [
+                {"body": "settled", "createdAt": "2026-08-06T09:00:00Z",
+                    "author": {"login": "reviewer"}}]}},
+        {"isResolved": false, "isOutdated": true, "path": "src/c.d",
+            "line": null, "diffSide": "RIGHT", "comments": {"nodes": [
+                {"body": "stale", "createdAt": "2026-08-05T09:00:00Z",
+                    "author": {"login": "reviewer"}}]}}]}}}}}`;
+
+    auto res = decodeThreads(json);
+    assert(!res.hasError, res.hasError ? res.error.toString() : "");
+    const threads = res.value;
+    assert(threads.length == 3);
+
+    assert(threads[0].path == "src/a.d" && threads[0].line == 42);
+    assert(threads[0].side == ThreadSide.newSide && !threads[0].resolved);
+    assert(threads[0].comments.length == 2);
+    assert(threads[0].comments[1].author == "author");
+
+    // A comment on a removed line belongs to the OLD text; anchoring it to
+    // the new one would attach it to a line its author never saw.
+    assert(threads[1].side == ThreadSide.oldSide && threads[1].resolved);
+
+    // A null line decodes to zero rather than failing the whole answer —
+    // which is precisely what `isOutdated` is reporting.
+    assert(threads[2].outdated && threads[2].line == 0);
+}
+
+@("forge_github.decodeThreads.aRejectedQueryIsNotAnEmptyList")
+@safe unittest
+{
+    // GraphQL answers a refusal with HTTP 200 and an `errors` array, so a
+    // decode that trusted the status would report success. "No threads" and
+    // "the query was rejected" must not look the same to a reviewer.
+    enum refused = `{"data":{"repository":null},"errors":[
+        {"message":"Could not resolve to a Repository."}]}`;
+    auto res = decodeThreads(refused);
+    assert(res.hasError && res.error.kind == ForgeErrorKind.malformed);
+
+    // A genuinely empty list stays a success.
+    enum empty = `{"data":{"repository":{"pullRequest":{"reviewThreads":
+        {"nodes":[]}}}}}`;
+    auto none = decodeThreads(empty);
+    assert(!none.hasError && none.value.length == 0);
+}
+
+@("forge_github.reviewThreads.needsATokenAndSaysSo")
+@system unittest
+{
+    import forge : HttpRequest;
+
+    // Unauthenticated: GitHub's GraphQL endpoint refuses outright, so this
+    // must be reported once — not attempted and failed per thread.
+    auto never = delegate ForgeResult!HttpResponse(in HttpRequest req) @system {
+        assert(false, "an anonymous thread query must not be sent");
+    };
+    auto anon = GitHubForge();
+    auto res = anon.reviewThreads(PrRef(RepoId("github.com", "o", "r"), 1),
+        never);
+    assert(res.hasError && res.error.kind == ForgeErrorKind.noAuth);
+
+    // With a token the query is a POST carrying a body, to the GraphQL root.
+    string url, body_;
+    auto capture = delegate ForgeResult!HttpResponse(in HttpRequest req) @system {
+        url = req.url;
+        body_ = req.body_;
+        return ForgeResult!HttpResponse(HttpResponse(200,
+            `{"data":{"repository":{"pullRequest":{"reviewThreads":
+                {"nodes":[]}}}}}`));
+    };
+    auto gh = GitHubForge(token: "t");
+    assert(!gh.reviewThreads(PrRef(RepoId("github.com", "o", "r"), 9),
+        capture).hasError);
+    assert(url == "https://api.github.com/graphql");
+    assert(body_.length != 0, "a GraphQL query travels as a body");
+
+    import std.algorithm.searching : canFind;
+
+    assert(body_.canFind(`"p":9`) && body_.canFind(`"n":"r"`),
+        "the variables name the PR being asked about");
 }
