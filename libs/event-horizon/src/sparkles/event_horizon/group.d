@@ -332,6 +332,7 @@ unittest
 version (unittest)
 {
     import sparkles.event_horizon.errors : skipReason;
+    import sparkles.event_horizon.sched : schedOrSkip;
     import sparkles.test_runner.skip : skipTest;
 
     /// Starts a group for a test, or SKIPs it (no io_uring — SPEC §3.4).
@@ -364,6 +365,17 @@ unittest
 {
     import core.atomic : atomicOp;
     import core.time : msecs;
+
+    // `start` creates a `Sched` eagerly only for the `single` topology; a
+    // thread-per-core worker builds its ring on its own thread, where a
+    // failure is silently dropped (`runEach`'s `runWorker`). So `groupOrSkip`
+    // alone cannot see an unusable io_uring here, and the run would fail
+    // `ran == 4` instead of skipping. Probe once, before anything is armed.
+    {
+        Sched probe;
+        schedOrSkip(probe);
+        probe.destroy();
+    }
 
     LoopGroup group;
     LoopGroupConfig cfg;
