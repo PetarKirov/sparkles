@@ -1619,6 +1619,52 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Fuzzy Matching & Pickers',
+              link: '/research/fuzzy-matching/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Matchers',
+                  collapsed: true,
+                  items: [
+                    { text: 'fzf', link: '/research/fuzzy-matching/fzf' },
+                    { text: 'fzy', link: '/research/fuzzy-matching/fzy' },
+                    {
+                      text: 'nucleo',
+                      link: '/research/fuzzy-matching/nucleo',
+                    },
+                    {
+                      text: 'frizbee',
+                      link: '/research/fuzzy-matching/frizbee',
+                    },
+                    {
+                      text: 'telescope-fzf-native',
+                      link: '/research/fuzzy-matching/telescope-fzf-native',
+                    },
+                  ],
+                },
+                {
+                  text: 'Engines & Picker Hosts',
+                  collapsed: true,
+                  items: [
+                    { text: 'fff', link: '/research/fuzzy-matching/fff' },
+                    {
+                      text: 'snacks.picker',
+                      link: '/research/fuzzy-matching/snacks-picker',
+                    },
+                    {
+                      text: 'Helix × nucleo',
+                      link: '/research/fuzzy-matching/helix-integration',
+                    },
+                  ],
+                },
+                {
+                  text: 'Comparison',
+                  link: '/research/fuzzy-matching/comparison',
+                },
+              ],
+            },
+            {
               text: 'Diff Viewers & PR Review',
               link: '/research/diff-review/',
               collapsed: true,
