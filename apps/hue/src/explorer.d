@@ -1028,6 +1028,8 @@ struct ExplorerTui
             case Command.diffToggleGap: case Command.diffToggleStructural:
             case Command.viewScrollLeft: case Command.viewScrollRight:
             case Command.viewScrollHome: case Command.viewScrollEnd:
+            case Command.diffStage: case Command.diffUnstage:
+            case Command.diffDiscard:
                 break;
         }
         return true;

@@ -162,6 +162,11 @@ enum Command : ubyte
     viewScrollRight,                   /// `zl` / `Shift-→`
     viewScrollHome,                    /// `Shift-Home` — back to the left edge
     viewScrollEnd,                     /// `Shift-End` — out to the right edge
+
+    // The write surface (`DST2`/`DST4`), over a worktree diff only.
+    diffStage,                         /// `space` — stage the hunk in view
+    diffUnstage,                       /// `u` — take it back out of the index
+    diffDiscard,                       /// `Shift-X` — throw the change away
 }
 
 /// A resolved command plus its argument (only `foldLevel` uses one: the
@@ -545,6 +550,16 @@ immutable Binding[] hueBindings = [
         "word / token emphasis", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('+'), Command.diffToggleGap,
         "expand this gap", require: CtxFlag.hasDiffSession),
+    // `DST2`: staging keys, lazygit's spelling. They are bound whenever a
+    // session is showing; whether THIS session can be staged is a property of
+    // the document, and the command reports that in the reviewer's own terms
+    // rather than the key silently doing nothing.
+    bind(Scope_.viewer, chord(' '), Command.diffStage,
+        "stage this hunk", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('u'), Command.diffUnstage,
+        "unstage this hunk", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('x', ShiftReq.yes), Command.diffDiscard,
+        "discard this hunk", require: CtxFlag.hasDiffSession),
 
     // Horizontal scrolling, in vim's own spelling — `zh`/`zl` mean exactly
     // this there, and they sit in the `z` family without colliding with the

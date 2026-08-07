@@ -639,10 +639,22 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     bool liveTypes = true,
     DiffLayout diffLayout = DiffLayout.unified,
     CodeOverflow codeOverflow = CodeOverflow.scroll,
-    int codeMaxLines = -1) @system
+    int codeMaxLines = -1,
+    WorkspaceDoc delegate() @system reloadDiff = null) @system
 {
     WorkspaceTui w;
     w.loadDoc = loadDoc;
+    // `DST2`: after a patch is applied the diff on screen is stale — the rows
+    // just staged are no longer part of it. Only the host owns the loader
+    // that produced the document, so it hands one back.
+    if (reloadDiff !is null)
+        w.viewer.onStaged = () @system {
+            auto fresh = reloadDiff();
+            w.viewer.setDocument(fresh.title, fresh.source, fresh.events,
+                fresh.preview, startPreview: true, fresh.twoslash, fresh.lang,
+                fresh.diffDoc, fresh.diffSides, fresh.diffSession,
+                fresh.diffEmphasis);
+        };
     w.liveTypes = liveTypes;
     // `DVL3`: the layout the reviewer asked for on the command line; `s`
     // toggles it, and a narrow pane degrades it at render time.

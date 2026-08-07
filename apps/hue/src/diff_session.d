@@ -116,6 +116,11 @@ struct DiffSession
     size_t index; /// the selected entry (always < `entries.length` when non-empty)
     /// `DPR2`: the header this session renders above its files, if any.
     SessionHeader header;
+    /// `DST2`: this session's changes live in the working tree, so staging
+    /// them means something. False for a PR, a two-file diff or a diff
+    /// between revisions — where there is no index to move anything into,
+    /// and offering the keys would be offering a lie.
+    bool stageable;
     /// `DPR3`/`DCM2`: every conversation on this session, any file. The view
     /// selects each file's own by path.
     AnchoredThread[] threads;

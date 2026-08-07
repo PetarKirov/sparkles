@@ -1005,13 +1005,25 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             loader = delegate WorkspaceDoc(string path) @system
                 => pl.load(path);
         }
+        // `DST2`: a stageable worktree diff can be re-read after a patch is
+        // applied — the same invocation, run again, which is exactly what
+        // makes the staged rows leave the view.
+        WorkspaceDoc delegate() @system reloadDiff;
+        if (pipeline !is null && doc.diffSession.stageable)
+        {
+            auto pl = pipeline;
+            auto paths = doc.diffPaths.dup;
+            reloadDiff = delegate WorkspaceDoc() @system
+                => pl.loadGitDiff(null, false, paths.dup);
+        }
         return runWorkspace(doc.path, isDir: false, doc,
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
             cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes,
             diffLayout: parseDiffLayout(cli.diffLayout),
             codeOverflow: parseCodeOverflow(cli.codeOverflow),
-                    codeMaxLines: cli.codeMaxLines);
+            codeMaxLines: cli.codeMaxLines,
+            reloadDiff: reloadDiff);
     }
     else
     {
