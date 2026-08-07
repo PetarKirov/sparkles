@@ -6,7 +6,7 @@
 /// called from the terminal's `nothrow @nogc` core loop. For now it hosts only
 /// what the loop needs (`spawnDetached`); grow it (e.g. a `captureCommand`)
 /// before promoting it into `core-cli`.
-module posix_util;
+module sparkles.terminal_view.posix_util;
 
 import expected : Expected, ok, err;
 import sparkles.base.text.errors : NoGcHook;

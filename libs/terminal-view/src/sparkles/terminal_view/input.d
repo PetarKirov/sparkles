@@ -1,4 +1,4 @@
-module input;
+module sparkles.terminal_view.input;
 
 import core.sys.posix.unistd : write;
 
@@ -6,7 +6,7 @@ import raylib;
 
 import sparkles.ghostty.c;
 import sparkles.base.smallbuffer : SmallBuffer;
-import posix_util : spawnDetached;
+import sparkles.terminal_view.posix_util : spawnDetached;
 
 // --- @nogc byte-string helpers (URL hover detection) ------------------------
 

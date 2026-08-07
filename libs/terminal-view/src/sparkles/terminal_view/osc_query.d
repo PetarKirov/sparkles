@@ -8,7 +8,7 @@
 /// module extracts the way xterm and Ghostty do — programs rely on this to
 /// adapt to the terminal's theme (e.g. yazi queries OSC 11 to pick its light
 /// or dark flavor).
-module osc_query;
+module sparkles.terminal_view.osc_query;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 
