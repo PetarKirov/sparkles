@@ -143,7 +143,6 @@ import sparkles.event_horizon.channel : Channel;
 import sparkles.event_horizon.io : FileHandle, read;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.event_horizon.scope_ : withDeadline;
-import sparkles.event_horizon.signals : SignalFd;
 
 /// The channel type the loop arms share.
 alias EventChannel = Channel!(Event, 64);
@@ -219,20 +218,30 @@ void pumpTerminalInput(ref Sched sched, ref EventChannel events, int fd,
     }
 }
 
-/**
-The resize pump (spawned as a daemon fiber): blocks `SIGWINCH` into a
-`signalfd` and delivers each one as a zero-size `ResizeEvent` (the loop
-normalizes it with the real size, `HST7`). Replaces the `EINTR` trick —
-ring reads must never rely on signal interruption.
-*/
-void pumpResizeSignals(ref Sched sched, ref EventChannel events, ref SignalFd winch)
+// signalfd is Linux-only; on the kqueue platforms the async arm applies a
+// resize on the next delivered event (session.resizeToTerminal runs per
+// frame), and the immediate-repaint path arrives with the kqueue
+// EVFILT_SIGNAL lowering (event-horizon open-issues O26's sibling
+// refinement).
+version (linux)
 {
-    for (;;)
+    import sparkles.event_horizon.signals : SignalFd;
+
+    /**
+    The resize pump (spawned as a daemon fiber): blocks `SIGWINCH` into a
+    `signalfd` and delivers each one as a zero-size `ResizeEvent` (the loop
+    normalizes it with the real size, `HST7`). Replaces the `EINTR` trick —
+    ring reads must never rely on signal interruption.
+    */
+    void pumpResizeSignals(ref Sched sched, ref EventChannel events, ref SignalFd winch)
     {
-        auto got = winch.nextSignal(sched);
-        if (got.hasError)
-            return; // cancelled at teardown
-        cast(void) events.put(sched, Event(ResizeEvent()));
+        for (;;)
+        {
+            auto got = winch.nextSignal(sched);
+            if (got.hasError)
+                return; // cancelled at teardown
+            cast(void) events.put(sched, Event(ResizeEvent()));
+        }
     }
 }
 
