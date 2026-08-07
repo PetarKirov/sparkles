@@ -807,6 +807,18 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Diagram',
+              collapsed: false,
+              items: [
+                { text: 'Overview', link: '/specs/diagram/' },
+                {
+                  text: 'Feature Requirements',
+                  link: '/specs/diagram/feature-requirements',
+                },
+                { text: 'Delivery Plan', link: '/specs/diagram/PLAN' },
+              ],
+            },
+            {
               text: 'Versions',
               collapsed: false,
               items: [
