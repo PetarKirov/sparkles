@@ -190,6 +190,13 @@ A target that cannot be met is a finding to record, not a number to move.
 Hard requirements: **identical behavior** and **no measured performance
 regression**.
 
+The migration's destination grew since these steps were written: the core is
+extracted into a new **`libs/terminal-view`** library so it is embeddable as a
+`runApp` component — the full design, the paint-hook host extension, and the
+gates live in [terminal-view.md](./terminal-view.md) (`TVW`). `P2.A2` is done
+(the `KeyStroke` byte oracle in `apps/terminal/src/input.d`); the steps below
+execute inside that spec's order of work.
+
 | Step  | Deliverable                                                                                                   |
 | ----- | ------------------------------------------------------------------------------------------------------------- |
 | P2.A1 | Adopt the shared CLI and setup helpers; loop untouched                                                        |

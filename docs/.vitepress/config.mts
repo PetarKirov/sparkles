@@ -802,6 +802,7 @@ export default withMermaid(
                   link: '/specs/ui-app/feature-requirements',
                 },
                 { text: 'Delivery Plan', link: '/specs/ui-app/PLAN' },
+                { text: 'Terminal View', link: '/specs/ui-app/terminal-view' },
                 { text: 'Open issues', link: '/specs/ui-app/open-issues' },
               ],
             },

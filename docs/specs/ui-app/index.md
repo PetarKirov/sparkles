@@ -90,6 +90,7 @@ sparkles:ui-app  → ui, input, core-cli        config "tui":  + ui-tui
 | **Overview** (this page)                          | what the host is · why it exists · targets · render levels · the status/ID scheme                                                      |
 | [Feature requirements](./feature-requirements.md) | the requirement tree: architecture (`APP`), backend selection (`BKD`), the CLI (`CLI`), the host contract (`HST`), testability (`TST`) |
 | [Delivery plan](./PLAN.md)                        | execution: the four phases, their dependencies, the acceptance gates, and what each phase makes testable                               |
+| [Terminal view](./terminal-view.md)               | phase 2's `apps/terminal` extraction: the core as an embeddable `runApp` component (`TVW`), the paint hook, and the parity/perf gates  |
 | [Open issues](./open-issues.md)                   | deferred decisions and the constraints behind them                                                                                     |
 
 ## Status scheme
