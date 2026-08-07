@@ -373,6 +373,11 @@ int runGui(
     // HUE_GUI_SCREENSHOT_FRAME=<n> delays the capture (default 20) so a QA
     // harness can drive synthetic input first.
     int shotFrame = 20;
+    // Capture bookkeeping: when the git worker was first seen idle, when the
+    // shot was taken, and how long we will wait for the former.
+    int settledAt = -1;
+    int shotAt = -1;
+    enum shotSettleCap = 240; // ~4 s at 60 FPS
     try
         if (environment.get("HUE_GUI_SCREENSHOT_FRAME", null).length)
             shotFrame = environment.get("HUE_GUI_SCREENSHOT_FRAME").to!int;
@@ -2665,9 +2670,25 @@ int runGui(
             // uploads over the first frames, and under a headless GL context the
             // framebuffer swap lags the draw, so an early TakeScreenshot grabs a
             // black frame. ~20 frames is reliably past both.
-            if (frame == shotFrame)
+            //
+            // Then WAIT OUT the async git-status worker. Its landing rebuilds
+            // the tree, so a capture that races it is not reproducible: four
+            // runs of one binary produced two different images, differing in
+            // the explorer's selection — which quietly made this fixture
+            // useless as a regression oracle. Two frames after it settles,
+            // the rebuild it triggered has been laid out and painted.
+            if (!(pn.treeVisible && pn.tree.git.refreshing) && settledAt < 0)
+                settledAt = frame;
+            const settled = settledAt >= 0 && frame >= settledAt + 2;
+            // A worker that never finishes must not hang the capture: past
+            // the cap, shoot anyway and let the diff say so.
+            if (shotAt < 0 && frame >= shotFrame
+                && (settled || frame >= shotFrame + shotSettleCap))
+            {
                 window.screenshot(shotPath.toStringz);
-            if (frame >= shotFrame + 1)
+                shotAt = frame;
+            }
+            if (shotAt >= 0 && frame >= shotAt + 1)
                 break;
         }
     }
