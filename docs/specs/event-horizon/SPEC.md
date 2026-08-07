@@ -289,8 +289,8 @@ If `io_uring_setup` fails — `ENOSYS` (kernel too old or compiled out),
 lockdown) — or the kernel is below the 6.1 floor, loop creation returns
 `IoError(errnoValue, OpKind.none, IoErrorStage.setup, "io_uring unavailable")`
 (or `stage: probe` for the floor). **There is no epoll fallback.** Tests for
-this path follow the repo's `SKIP` convention on hosts where the condition
-cannot be produced.
+this path call `skipTest` (`sparkles:test-runner`) on hosts where the condition
+cannot be produced, so a degraded host reports skips rather than passes.
 
 ### 3.5 The uring backend
 

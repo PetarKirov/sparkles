@@ -86,7 +86,7 @@ below give the rule, the syntax, and the caveats.
 - **Package modules — `package.d`, DIP37** ([2.064]) — `docs/libs`-style
   re-export points: a `package.d` holding `public import`s lets users
   `import sparkles.core_cli;`. Keep it to re-exports only — unittests in
-  `package.d` [don't run under silly][agents-silly].
+  `package.d` [don't run under `sparkles:test-runner`][agents-test-runner].
 - **Module encapsulation is real — DIP22 two-pass lookup** ([2.071]) —
   `private` symbols are invisible to other modules, imports no longer shadow
   locals, selective/renamed imports are private by default, and fully
@@ -315,7 +315,7 @@ this(this)` when migrating a type that has postblit-bearing fields.
 | Trait                                                       | Since           | Use for                                                                |
 | ----------------------------------------------------------- | --------------- | ---------------------------------------------------------------------- |
 | `getAttributes`                                             | [2.061]         | read UDAs (per overload via `getOverloads` — required since [2.102])   |
-| `getUnitTests`                                              | [2.064]         | custom test runners (what `silly` builds on)                           |
+| `getUnitTests`                                              | [2.064]         | custom test runners (what `sparkles:test-runner` builds on)            |
 | `getFunctionAttributes`                                     | [2.066]         | `"pure"`/`"nothrow"`/`"@safe"`/`"ref"`… of a callable                  |
 | `getParameterStorageClasses`                                | [2.075]         | detect `return`/`scope`/`out`/`lazy` per parameter                     |
 | `getFunctionVariadicStyle`, `getLinkage`                    | [2.075]         | variadic kind; linkage of symbols (aggregates since [2.081])           |
@@ -573,7 +573,7 @@ constructs **still compile silently** but have a strictly better modern form.
 [agents-attrs]: ../AGENTS.md#safety-attributes--annotate-non-templates-infer-on-templates
 [agents-nogc]: ../AGENTS.md#nogc-primitives-and-what-breaks-nogcnothrow
 [agents-preview]: ../AGENTS.md#preview-flags
-[agents-silly]: ../AGENTS.md#test-runner-silly
+[agents-test-runner]: ../AGENTS.md#test-runner-sparklestest-runner
 [changelog-index]: https://dlang.org/changelog/
 [code-style]: ../code-style.md
 [code-style-contracts]: ../code-style.md#expression-based-contracts-dip1009
