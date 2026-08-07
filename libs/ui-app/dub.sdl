@@ -26,6 +26,7 @@ dependency "sparkles:core-cli" path="../.."
 
 configuration "tui" {
     dependency "sparkles:ui-tui" path="../.."
+    versions "UiAppTui"
 }
 
 configuration "gui" {
@@ -36,7 +37,7 @@ configuration "gui" {
 configuration "full" {
     dependency "sparkles:ui-tui" path="../.."
     dependency "sparkles:ui-raylib" path="../.."
-    versions "UiAppGui"
+    versions "UiAppTui" "UiAppGui"
 }
 
 configuration "unittest" {
@@ -44,7 +45,7 @@ configuration "unittest" {
     // the recording target can be checked against both live ones.
     dependency "sparkles:ui-tui" path="../.."
     dependency "sparkles:ui-raylib" path="../.."
-    versions "UiAppGui"
+    versions "UiAppTui" "UiAppGui"
 
     dependency "sparkles:test-runner" path="../.."
     dflags "-checkaction=context" "-allinst"

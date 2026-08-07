@@ -35,6 +35,7 @@ import sparkles.input : Event, InputCapabilities;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
+import sparkles.ui_app.gui_options : GuiOptions;
 
 /// How many draw operations a host's per-frame buffer holds before it spills to
 /// the heap. Sized for a full screen of decorated content; a frame that exceeds
@@ -55,6 +56,7 @@ nothing arrived.
 struct RunConfig
 {
     string title = "app";       /// window title, where there is one
+    GuiOptions gui;             /// the window/font/theme settings (`CLI`)
     Backend backend;            /// `Backend.init` (gui) unless overridden; see `run`
     bool autoBackend = true;    /// ignore `backend` and pick one
     bool mouse = true;          /// ask the terminal for mouse reporting
