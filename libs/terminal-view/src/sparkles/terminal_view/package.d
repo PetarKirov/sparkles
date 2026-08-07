@@ -12,6 +12,7 @@ discover `package.d`).
 */
 module sparkles.terminal_view;
 
+public import sparkles.terminal_view.event_map;
 public import sparkles.terminal_view.input;
 public import sparkles.terminal_view.osc_query;
 public import sparkles.terminal_view.posix_util;

@@ -743,7 +743,7 @@ const(char)[] encodeKeyStroke(GhosttyKeyEncoder encoder, GhosttyKeyEvent event,
 version (unittest)
 {
     /// A live encoder + event pair for the fixtures, freed on scope exit.
-    private struct EncoderFixture
+    package(sparkles.terminal_view) struct EncoderFixture
     {
         GhosttyKeyEncoder encoder;
         GhosttyKeyEvent event;
