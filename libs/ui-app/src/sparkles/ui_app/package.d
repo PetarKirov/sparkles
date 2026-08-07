@@ -29,3 +29,6 @@ out.
 Specified in $(LINK2 ../../../../docs/specs/ui-app/index.md, docs/specs/ui-app).
 */
 module sparkles.ui_app;
+
+public import sparkles.ui_app.backend;
+public import sparkles.ui_app.display;
