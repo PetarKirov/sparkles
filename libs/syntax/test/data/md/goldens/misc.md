@@ -1,0 +1,17 @@
+# Misc blocks
+
+A paragraph, then a thematic break:
+
+---
+
+Another paragraph, then an HTML block:
+
+<div class="raw">
+raw html content
+</div>
+
+A paragraph after the HTML block.
+
+***
+
+Final paragraph after a second rule spelled with asterisks.
