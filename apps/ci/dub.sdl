@@ -28,6 +28,19 @@ buildType "checked" {
 // instantiations those reference; without it the test binary fails to link
 // against `sparkles:wired` on dmd (ldc emits them either way). Same recipe as
 // every library package's unittest configuration.
+// The tool. Explicit because a package with any `configuration` block loses the
+// implicit default one — and with only a `unittest` configuration declared,
+// `dub build :ci` would select *it*.
+configuration "application" {
+    targetType "executable"
+}
+
 configuration "unittest" {
+    // A library target, like every other package's unittest configuration.
+    // Without it the test build inherits `targetType "executable"` and lands on
+    // `build/ci`, the same path as the tool itself — so `dub test :ci`
+    // overwrites the installed binary with a test runner, and a `ci` mode that
+    // builds its own package races with the file it is running from.
+    targetType "library"
     dflags "-checkaction=context" "-allinst"
 }
