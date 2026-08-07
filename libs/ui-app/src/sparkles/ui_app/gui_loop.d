@@ -125,6 +125,9 @@ bool runGui(alias present, alias handle, alias draw = noDraw)(
     GuiHost host;
     host.session = &session;
     host.capabilities = mousePointer;
+    // The terminal-grade keyboard, where the application asked for it: the
+    // capability declaration IS the switch — RaylibEvents reads it back.
+    host.capabilities.keyRelease = cfg.keyRelease;
 
     RaylibEvents events;
     events.capabilities = host.capabilities;
