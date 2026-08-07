@@ -22,18 +22,18 @@ one paragraph.
 󰲣 Lists, deeply composed
 
 1. An ordered item with a nested fence:
-  d
-╭──────────────────────────────────────────────────────╮
-│ 1 auto x = 1;                                        │
-│ 2                                                    │
-╰──────────────────────────────────────────────────────╯
+     d
+   ╭───────────────╮
+   │ 1 auto x = 1; │
+   │ 2             │
+   ╰───────────────╯
 2. An item with a nested table? No — but a nested quote:
-  quoted inside an ordered item
+     quoted inside an ordered item
 3. An item with nested mixed lists:
-○ bullet child
-1. ordinal grandchild
-2. with a link
-󰱒 a checked task child
+   ○ bullet child
+     1. ordinal grandchild
+     2. with a link
+   󰱒 a checked task child
 
 ────────────────────────────────────────────────────────────────────────────────
 
