@@ -26,6 +26,7 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import compat : AppTheme;
 import kit;
+import pages.themes_page : themeAt;
 import registry : pages;
 import state;
 
@@ -251,7 +252,12 @@ struct Gallery
     private void cycleTheme(int delta) @safe
     {
         const n = cast(long) themeNames.length;
-        s.themeIndex = cast(size_t)((cast(long) s.themeIndex + delta % n + n) % n);
+        selectTheme(cast(size_t)((cast(long) s.themeIndex + delta % n + n) % n));
+    }
+
+    private void selectTheme(size_t to) @safe
+    {
+        s.themeIndex = to % themeNames.length;
         s.toastText = "theme · " ~ s.themeName;
         s.toast = typeof(s.toast).triggered(toastConfigFor(s.hasFrameClock));
     }
@@ -296,11 +302,16 @@ struct Gallery
     {
         if (id == 0)
             return;
+
         if (id >= hitNav && id < hitNav + pages.length)
         {
             s.region = Region.nav;
-            setPage(id - hitNav);
+            return setPage(id - hitNav);
         }
+
+        const theme = themeAt(id);
+        if (theme != size_t.max)
+            return selectTheme(theme);
     }
 
     private void onWheel(in WheelEvent w) @safe
@@ -675,6 +686,47 @@ version (unittest)
             pos: Point(3, cast(int)(1 + i))), targets);
         assert(hover.hot == hitNav + i, "nav row " ~ p.title ~ " hit mismatch");
     }
+}
+
+@("ui_gallery.gallery.clickingAThemeRowSelectsIt")
+@safe unittest
+{
+    import registry : pageIndexOf;
+    import sparkles.ui.geometry : Constraints;
+
+    // A page mints hit ids from its own base and the shell routes them back —
+    // the seam that lets a page be interactive without the shell knowing what
+    // it is showing. The click point comes from the target the painter used,
+    // so this cannot pass by clicking somewhere the row is not drawn.
+    Gallery g;
+    g.s.page = pageIndexOf("themes");
+    g.s.themeIndex = 10;
+
+    RecordingHost h;
+    h.size = sizeOf(96, 30);
+    auto tree = g.view(h);
+    const targets = hoverTargets(tree, layout(tree, Constraints(maxW: 96, maxH: 30)));
+
+    // The row for whichever theme the list happens to be showing first.
+    size_t wanted = size_t.max;
+    Point at;
+    foreach (t; targets)
+    {
+        const which = themeAt(t.hitId);
+        if (which != size_t.max && which != g.s.themeIndex)
+        {
+            wanted = which;
+            at = Point(t.rect.x + 1, t.rect.y);
+            break;
+        }
+    }
+    assert(wanted != size_t.max, "no theme row is hit-testable");
+
+    drive(g, [
+        Event(PointerEvent(action: PointerAction.press, pos: at)),
+        Event(PointerEvent(action: PointerAction.release, pos: at)),
+    ], 96, 30);
+    assert(g.s.themeIndex == wanted);
 }
 
 @("ui_gallery.gallery.noPageOverflowsTheSurfaceSideways")
