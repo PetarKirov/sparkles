@@ -16,16 +16,18 @@ import during : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags
     MsgFlags, Operation,
     SetupFlags, SubmissionEntry, TimeoutFlags, Uring, io_uring_getevents_arg,
     prepAccept, prepClose, prepConnect, prepFsync, prepMultishotAccept, prepNop,
-    prepOpenat, prepRW, prepRead, prepReadFixed, prepRecv, prepRecvMsg, prepSend,
+    prepOpenat, prepPollAdd, prepPollMultishot, prepRW, prepRead, prepReadFixed,
+    prepRecv, prepRecvMsg, prepSend,
     prepSendMsg, prepStatx, prepTimeout, prepWaitid, prepWrite, prepWriteFixed,
     setup;
-import during : DuringTimespec = KernelTimespec;
+import during : DuringTimespec = KernelTimespec, DuringPollEvents = PollEvents;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
 import sparkles.event_horizon.backend.probe;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : CompletionFlags, KernelTimespec, OpAccept,
-    OpAcceptMultishot, OpClose, OpConnect, OpFsync, OpNop, OpOpenAt, OpRead,
+    OpAcceptMultishot, OpClose, OpConnect, OpFsync, OpNop, OpOpenAt, OpPollAdd,
+    OpRead,
     OpRecv, OpRecvFrom, OpRecvSelect, OpSend, OpSendTo, OpSlot, OpStatx,
     OpTimeout, OpToken, OpWaitid, OpWrite, SockAddr;
 
@@ -357,6 +359,22 @@ struct UringBackend
             return false;
         _io.putWith!((ref SubmissionEntry e, in OpWaitid o, ulong ud) {
             e.prepWaitid(o.idType, o.id, cast(siginfo_t*) o.siginfo, o.options);
+            e.user_data = ud;
+        })(op, token.raw);
+        return true;
+    }
+
+    /// Lowers a foreign-fd readiness watch (`POLL_ADD`; `ADD_MULTI` when
+    /// multishot). The CQE `res` is the ready-events mask.
+    bool trySubmit(in OpPollAdd op, OpToken token, ref OpSlot) @safe nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpPollAdd o, ulong ud) {
+            if (o.multishot)
+                e.prepPollMultishot(o.fd, cast(DuringPollEvents) o.events);
+            else
+                e.prepPollAdd(o.fd, cast(DuringPollEvents) o.events);
             e.user_data = ud;
         })(op, token.raw);
         return true;

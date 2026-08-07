@@ -729,6 +729,81 @@ unittest
         "READ_FIXED delivered the bytes through the registered buffer");
 }
 
+@("loop.pollAdd.multishotReadinessStream")
+@safe nothrow @nogc
+unittest
+{
+    DefaultLoop loop;
+    if (!createOrSkip(loop))
+        return; // SKIP
+    scope (exit) loop.destroy();
+
+    int[2] fds;
+    if ((() @trusted {
+        import core.sys.posix.unistd : pipe;
+
+        return pipe(fds);
+    })() != 0)
+        return;
+    scope (exit) () @trusted {
+        import core.sys.posix.unistd : close;
+
+        close(fds[0]);
+        close(fds[1]);
+    }();
+
+    static struct Watch
+    {
+        int fires;
+        bool sawMore;
+        bool sawReadable;
+        int readFd;
+        DefaultLoop* loop;
+        OpHandle handle;
+    }
+
+    static void onReady(void* ctx, ref Completion done) nothrow @nogc
+    {
+        auto w = cast(Watch*) ctx;
+        if (done.res < 0)
+            return; // the cancelled terminal completion
+        ++w.fires;
+        w.sawReadable |= (done.res & PollEvents.readable) != 0;
+        w.sawMore |= !done.isFinal;
+        // Drain the pipe so a level-triggered re-arm does not flood, then
+        // end the stream after the first delivery.
+        (() @trusted {
+            import core.sys.posix.unistd : read;
+
+            ubyte[8] sink;
+            cast(void) read(w.readFd, sink.ptr, sink.length);
+        })();
+        cast(void) w.loop.cancel(w.handle);
+    }
+
+    Watch w;
+    w.readFd = fds[0];
+    w.loop = &loop;
+    auto h = (() @trusted => loop.submit(
+        OpPollAdd(fds[0], PollEvents.readable, true), &onReady, &w))();
+    assert(h.hasValue);
+    w.handle = h.value;
+
+    const wrote = (() @trusted {
+        import core.sys.posix.unistd : write;
+
+        ubyte one = 1;
+        return write(fds[1], &one, 1);
+    })();
+    assert(wrote == 1);
+
+    assert(!loop.run().hasError);
+    assert(w.fires >= 1, "readiness delivered");
+    assert(w.sawReadable, "the completion res carries the ready mask");
+    assert(w.sawMore, "multishot completions are flagged non-final");
+    assert(loop.inFlight == 0);
+}
+
 @("loop.multishotAccept.streamsConnections")
 @safe nothrow @nogc
 unittest

@@ -199,6 +199,27 @@ static if (canSubmitOp!(DefaultBackend, OpTimeout))
     }
 }
 
+static if (canSubmitOp!(DefaultBackend, OpPollAdd))
+{
+    /// Parks until `fd` is readable (SPEC §15.1): a readiness snapshot, not
+    /// a byte count — the caller performs its own I/O (or calls the foreign
+    /// library's dispatch) and re-arms as needed.
+    IoResult!PollEvents waitReadable(ref Sched s, int fd)
+        => waitReady(s, fd, PollEvents.readable);
+
+    /// ditto, writable.
+    IoResult!PollEvents waitWritable(ref Sched s, int fd)
+        => waitReady(s, fd, PollEvents.writable);
+
+    private IoResult!PollEvents waitReady(ref Sched s, int fd, PollEvents events)
+    {
+        auto o = s.await(OpPollAdd(fd, events, false));
+        if (o.res < 0)
+            return ioErr!PollEvents(-o.res, OpKind.pollAdd);
+        return ioOk(cast(PollEvents) o.res);
+    }
+}
+
 /// Cooperative reschedule (a checkpoint once M5's cancellation lands).
 IoResult!void yieldNow(ref Sched s)
 {
@@ -320,6 +341,56 @@ unittest
     });
     assert(!r.hasError);
     assert(verified);
+}
+
+@("io.waitReadable.parksUntilBytesArrive")
+@safe
+unittest
+{
+    import core.time : msecs;
+
+    Sched s;
+    if (Sched.create(s).hasError)
+        return; // SKIP: io_uring unavailable
+    scope (exit) s.destroy();
+
+    int[2] fds;
+    if ((() @trusted {
+        import core.sys.posix.unistd : pipe;
+
+        return pipe(fds);
+    })() != 0)
+        return;
+    auto rd = FileHandle(fds[0]);
+    auto wr = FileHandle(fds[1]);
+    scope (exit)
+    {
+        rd.close();
+        wr.close();
+    }
+
+    bool ready, wroteFirst;
+    auto r = s.run(() {
+        // A sibling makes the pipe readable only after a delay, proving the
+        // waiter parks rather than spinning.
+        cast(void) s.spawn(() {
+            assert(!sleep(s, 5.msecs).hasError);
+            wroteFirst = true;
+            (() @trusted {
+                import core.sys.posix.unistd : write;
+
+                ubyte one = 42;
+                cast(void) write(fds[1], &one, 1);
+            })();
+        });
+
+        auto got = waitReadable(s, fds[0]);
+        assert(got.hasValue);
+        assert(got.value & PollEvents.readable);
+        ready = wroteFirst; // the wait must have outlasted the writer's sleep
+    });
+    assert(!r.hasError);
+    assert(ready, "waitReadable resumed only after the write");
 }
 
 @("io.loopback.directStyleEcho")

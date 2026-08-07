@@ -181,6 +181,7 @@ version (EventHorizonLibkqueue) {} else version (linux)
                 OpKind.futexWake: Operation.FUTEX_WAKE,
                 OpKind.msgRing: Operation.MSG_RING,
                 OpKind.waitid: Operation.WAITID,
+                OpKind.pollAdd: Operation.POLL_ADD,
             ];
             foreach (kind, lowered; lowering)
                 if (kind != 0 && probe.isSupported(lowered))
