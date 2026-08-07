@@ -260,7 +260,8 @@ private uint viewCodeGroup(ref Builder b, ref const MdBlock blk,
     MdViewOptions inner = opt;
     inner.fenceLabelInHeader = false;
     const body = viewBlock(b, blk.children[active], src, inner);
-    return b.add(Widget(kind: WidgetKind.column, children: [strip, body]));
+    return b.add(Widget(kind: WidgetKind.column, children: [strip, body],
+        width: SizeSpec.grow()));
 }
 
 /// A fence's tab title: its `[label]` unbracketed, else its language.
@@ -310,7 +311,12 @@ private uint blocksColumn(ref Builder b, in MdBlock[] blocks,
         }
         rows ~= viewBlock(b, blocks[i], src, opt, listDepth, quoteDepth);
     }
-    return b.container(WidgetKind.column, rows, gap: 1);
+    // `grow`: fill the viewport (or the parent's content box) so full-width
+    // chrome — heading bands, fence panels, rules — really is full-width.
+    // Under an unbounded root the natural size still shrink-wraps, so a
+    // hover popup keeps its content-sized measure.
+    return b.add(Widget(kind: WidgetKind.column, children: rows, gap: 1,
+        width: SizeSpec.grow()));
 }
 
 // A folded region's one-row stand-in: `▸ <first source line> ⋯ N lines`,
@@ -755,7 +761,11 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             panel.hasBgOverride = true;
             const hdr = b.add(themedFenceHeader(blk, opt));
             const pnl = b.add(panel);
-            return b.container(WidgetKind.column, [hdr, pnl]);
+            // Width-transparent wrapper: without `grow` this column would
+            // shrink-wrap to the longest code line and the panel's own
+            // `stretch` could never reach the viewport.
+            return b.add(Widget(kind: WidgetKind.column, children: [hdr, pnl],
+                width: SizeSpec.grow()));
         }
 
         case thematicBreak:
