@@ -19,7 +19,8 @@ module diff_view;
 
 import std.conv : text;
 
-import diff_session : DiffSession, FileChange, SessionEntry, statusGlyph;
+import diff_session : DiffSession, FileChange, SessionEntry, SessionHeader,
+    statusGlyph;
 import document : DiffSides;
 import sparkles.diff.model : Degradation, DiffDoc, FileEntry, Hunk, Row,
     RowKind, Span;
@@ -223,6 +224,12 @@ WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOpti
 
     auto b = Builder();
     auto files = new uint[](0);
+    // `DPR2`: a session that has a header renders it above its files — the
+    // description through hue's own markdown view, which is the dogfooding
+    // the spec asks for and the reason a PR body's tables and fences look
+    // like every other document hue draws.
+    if (session.header.present)
+        files ~= sessionHeader(b, session.header, render, opt);
     foreach (fi; 0 .. doc.files.length)
     {
         auto fopt = opt;
@@ -456,6 +463,64 @@ private Slot statusSlot(FileChange c) @safe pure nothrow @nogc
         case removed:  return Slot.diffRemoved;
         case modified:
         case renamed:  return Slot.chromeAccent;
+    }
+}
+
+/**
+`DPR2`: the session header — what this change is, then its description.
+
+Two rows and a document: a title line, a metadata line naming the state,
+author and the branches involved, and the description rendered through
+`viewMarkdownInto`. The fence renderer the diff already carries for `DVM5`
+composition is exactly the shape the markdown view wants for its fences, so a
+code block inside a PR description is highlighted by the same pipeline that
+highlights the diff below it.
+*/
+private uint sessionHeader(ref Builder b, const SessionHeader h,
+    SideRenderer render, in DiffViewOptions opt) @safe
+{
+    import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
+    import sparkles.ui.style : TextStyle;
+
+    auto rows = new uint[](0);
+    if (h.title.length)
+        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: [
+            TextSpan(h.title.idup, Slot.chromeAccent, TextStyle(bold: true)),
+        ]));
+
+    TextSpan[] meta;
+    if (h.state.length)
+        meta ~= TextSpan(h.state.idup, stateSlot(h.state));
+    if (h.author.length)
+        meta ~= TextSpan(text(meta.length ? "  " : "", "by ", h.author),
+            slot: Slot.muted);
+    if (h.headRef.length || h.baseRef.length)
+        meta ~= TextSpan(text(meta.length ? "  " : "", h.headRef, " → ",
+            h.baseRef), slot: Slot.muted);
+    if (meta.length)
+        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: meta));
+
+    if (h.description.root.children.length)
+    {
+        MdViewOptions mopt;
+        if (render !is null)
+            mopt.fenceRenderer = (const(char)[] lang, const(char)[] body_)
+                => render(lang, body_);
+        rows ~= viewMarkdownInto(b, h.description, mopt);
+    }
+    return b.container(WidgetKind.column, rows, gap: 0);
+}
+
+/// The state word's colour: a merged or open PR reads as its diff tint, a
+/// closed one as muted — the same vocabulary the rows below it use.
+private Slot stateSlot(scope const(char)[] state) @safe pure nothrow @nogc
+{
+    switch (state)
+    {
+        case "merged": return Slot.diffEmphAdded;
+        case "open":   return Slot.diffAdded;
+        case "draft":  return Slot.muted;
+        default:       return Slot.diffRemoved;
     }
 }
 
@@ -1356,4 +1421,59 @@ import sparkles.ui.style : Slot;
             if (sp.text == "line 15")
                 leaked = true;
     assert(!leaked, "no side text, no expansion");
+}
+
+@("diff_view.sessionHeader.rendersThePrAboveItsFiles")
+@safe unittest
+{
+    import diff_session : buildDiffSession;
+    import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdDoc, MdInline,
+        MdInlineKind, Span;
+
+    auto doc = diffText("a\n", "b\n", "f.txt", "f.txt");
+    auto session = buildDiffSession(doc);
+
+    enum body_ = "why this change";
+    MdDoc description = {
+        source: body_,
+        root: MdBlock(kind: MdBlockKind.document, children: [
+            MdBlock(kind: MdBlockKind.paragraph, span: Span(0, body_.length),
+                inlines: [MdInline(kind: MdInlineKind.text,
+                    span: Span(0, body_.length))]),
+        ]),
+    };
+    session.header = SessionHeader(present: true, title: "feat: a thing",
+        state: "open", author: "someone", baseRef: "main", headRef: "topic",
+        description: description);
+
+    auto tree = viewDiffDoc(doc, DiffViewOptions.init, null, null, session);
+
+    const(char)[] all;
+    foreach (ref n; tree.nodes)
+    {
+        all ~= n.text;
+        foreach (sp; n.spans)
+            all ~= sp.text;
+    }
+
+    import std.algorithm.searching : canFind;
+
+    assert(all.canFind("feat: a thing"), "the title leads");
+    assert(all.canFind("open") && all.canFind("someone"));
+    assert(all.canFind("topic") && all.canFind("main"),
+        "which branch is going where is metadata a reviewer needs");
+    // The description goes through the markdown view, not a raw dump.
+    assert(all.canFind("why this change"));
+
+    // A session without a header renders exactly as before.
+    auto plain = viewDiffDoc(doc, DiffViewOptions.init, null, null,
+        buildDiffSession(doc));
+    const(char)[] plainText;
+    foreach (ref n; plain.nodes)
+    {
+        plainText ~= n.text;
+        foreach (sp; n.spans)
+            plainText ~= sp.text;
+    }
+    assert(!plainText.canFind("feat: a thing"));
 }
