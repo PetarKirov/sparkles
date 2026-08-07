@@ -142,6 +142,31 @@
         };
       });
 
+      # The sparkles:ui catalog. It reaches raylib through `sparkles:ui-app`'s
+      # `full` configuration — the gallery itself names no backend — so the
+      # build inputs are the window's, not the application's. `fc-match` is on
+      # the same footing as the terminal's: the font set shells out to it at
+      # runtime, and under `nix run` PATH is the ambient user environment.
+      packages.ui-gallery = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "ui-gallery";
+        version = "0.1.0";
+
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.raylib ];
+
+        env = d-toolchain.env;
+
+        postFixup = ''
+          wrapProgram $out/bin/${finalAttrs.pname} \
+            --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
+        '';
+
+        meta = {
+          description = "A browsable catalog of the sparkles:ui toolkit, in a terminal or a window";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
       apps.ci = {
         type = "app";
         program = lib.getExe config.packages.ci;
@@ -187,6 +212,11 @@
       apps.terminal-benchmark = {
         type = "app";
         program = lib.getExe config.packages.terminal-benchmark;
+      };
+
+      apps.ui-gallery = {
+        type = "app";
+        program = lib.getExe config.packages.ui-gallery;
       };
     };
 }

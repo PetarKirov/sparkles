@@ -24,6 +24,8 @@ import pages.components_page : componentsKeys = keys,
     componentsOnActivate = handleActivate, componentsOnKey = handleKey,
     componentsView = view;
 import pages.decoration_page : decorationView = view;
+import pages.inspector_page : inspectorKeys = keys,
+    inspectorOnKey = handleKey, inspectorView = view;
 import pages.machines_page : machinesAnimating = animating,
     machinesKeys = keys, machinesOnActivate = handleActivate,
     machinesOnKey = handleKey, machinesStep = step, machinesView = view;
@@ -110,6 +112,8 @@ static immutable Page[] pages = [
         machinesKeys, &machinesOnKey, &machinesOnActivate),
     Page("Split", "a divider between two panes", &splitView,
         splitKeys, &splitOnKey),
+    Page("Inspector", "the toolkit looking at itself", &inspectorView,
+        inspectorKeys, &inspectorOnKey),
 ];
 
 /// Advances whatever the showing page animates, and says whether it wants
@@ -214,13 +218,23 @@ size_t pageIndexOf(scope const(char)[] name)
         auto tree = b.finish(p.view(b, s));
         auto frames = layout(tree, Constraints(maxW: pane, maxH: s.contentHeight));
 
-        foreach (i, ref f; frames)
+        // "Nothing crosses the edge unless a `clipX` ancestor put it there."
+        // The clip state is carried down rather than tested per frame, because
+        // content that is deliberately clipped — an unwrapped run, a tree dump
+        // — is *supposed* to extend past its container.
+        void walk(uint n, bool clipped)
         {
-            if (tree.nodes[i].visibility == Visibility.collapsed)
-                continue;
-            assert(f.rect.right <= pane,
-                p.title ~ " overflows the pane horizontally");
+            const node = tree.nodes[n];
+            if (node.visibility == Visibility.collapsed)
+                return;
+            if (!clipped)
+                assert(frames[n].rect.right <= pane,
+                    p.title ~ " overflows the pane horizontally");
+            foreach (c; node.children)
+                walk(c, clipped || node.clipX);
         }
+
+        walk(tree.root, false);
     }
 }
 
