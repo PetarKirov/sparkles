@@ -1,11 +1,11 @@
 /++
 Segmentation of the unreleased backlog into a chain of releases (SPEC §7).
 
-The LLM agent sees the oldest-first commit list (with PR association) and
-proposes contiguous segments — each a boundary SHA, a theme, a bump, and the
-`highlights` its release notes should cover. This module owns the reply
-contract: the tolerant JSON extraction ($(LREF stripJsonFence)), the typed
-decode ($(LREF parseSegmentReply)), and — in the validation half — the
+The LLM agent sees the backlog as PR-atomic units ($(LREF buildUnits)) and
+proposes contiguous segments — each a boundary unit index, a theme, a bump,
+and the `highlights` its release notes should cover. This module owns the
+reply contract: the tolerant JSON extraction ($(LREF stripJsonFence)), the
+typed decode ($(LREF parseSegmentReply)), and — in the validation half — the
 structural checks and bump reconciliation that turn a raw reply into an
 executable plan.
 
@@ -13,6 +13,8 @@ Everything here is process-free and unit-tested on literal strings; the agent
 invocation and git/gh IO stay in `app.d`, `agents.d`, and `pr.d`.
 +/
 module sparkles.release.segment;
+
+import std.json : JSONValue;
 
 import sparkles.versions.schemes.semver : SemVer;
 
@@ -30,10 +32,72 @@ struct SegmentInput
     string subject;  /// the commit subject line
 }
 
+/++
+One PR-atomic unit of the backlog: a merged PR with all of its commits, or a
+single direct commit.
+
+Segment boundaries are chosen between units, never inside one, so "a PR's
+commits must all land in one release" holds by construction rather than by the
+agent's care — and a boundary is a small integer it can order, not a 40-hex
+OID it must copy (SPEC §7.1).
++/
+struct SegmentUnit
+{
+    size_t begin;   /// inclusive index into the oldest-first commit list
+    size_t end;     /// exclusive
+    uint pr;        /// 0 ⇒ a direct commit (no merged PR)
+    string title;   /// the PR title, or the commit subject when `pr == 0`
+}
+
+/++
+Groups `rows` (oldest first) into $(LREF SegmentUnit)s.
+
+A PR whose commits are interleaved with another's yields one unit spanning
+both — units are contiguous slices, so the only way to keep each PR whole is
+to merge the overlapping spans. In practice merges are rare (a repository's
+merged PRs land as contiguous runs).
++/
+SegmentUnit[] buildUnits(const(SegmentInput)[] rows) @safe pure
+{
+    import std.algorithm.comparison : max;
+    import std.algorithm.iteration : cumulativeFold, each, filter, map;
+    import std.array : array;
+    import std.range : chain, dropBackOne, enumerate, iota, only, zip;
+
+    // How far into the list each merged PR reaches.
+    size_t[uint] lastRowOf;
+    rows.enumerate
+        .filter!(r => r[1].prNumber != 0)
+        .each!(r => lastRowOf[r[1].prNumber] = r[0]);
+
+    // The row every PR opened so far reaches — a running maximum. A unit may
+    // end at row `i` exactly where that maximum has caught up with `i`: every
+    // PR seen is complete. (Interleaved PRs simply keep the maximum ahead, so
+    // they land in one wider unit instead of a unit that splits a PR.)
+    auto reach = rows.enumerate
+        .map!(r => r[1].prNumber ? lastRowOf[r[1].prNumber] : r[0])
+        .cumulativeFold!max;
+
+    // Those cut points, as exclusive ends; each unit runs from the previous.
+    const ends = zip(iota(rows.length), reach)
+        .filter!(r => r[0] >= r[1])
+        .map!(r => r[0] + 1)
+        .array;
+
+    return zip(chain(only(size_t(0)), ends.dropBackOne), ends)
+        .map!(span => SegmentUnit(
+            begin: span[0],
+            end: span[1],
+            pr: rows[span[0]].prNumber,
+            title: rows[span[0]].prNumber
+                ? rows[span[0]].prTitle : rows[span[0]].subject))
+        .array;
+}
+
 /// One segment of the agent's reply (SPEC §7.2), pre-validation.
 struct AgentSegment
 {
-    string boundary;                        /// full SHA of the segment's last commit
+    string boundary;                        /// index of the segment's last unit
     string theme;                           /// short theme for `vX.Y.Z — <theme>`
     string bump;                            /// `patch`/`minor`/`major` proposal
     @WireOptional() string[] highlights;    /// completed work to document; absent ⇒ []
@@ -87,16 +151,64 @@ private string trimAscii(string s) @safe pure nothrow @nogc
 }
 
 /// Parses a raw agent reply into its typed form: fence extraction, JSON parse,
-/// wired decode (unknown keys ignored; `highlights`/`remainderNote` optional).
-/// All failures are `Result` errors, never exceptions.
+/// boundary normalization, wired decode (unknown keys ignored;
+/// `highlights`/`remainderNote` optional). All failures are `Result` errors,
+/// never exceptions.
 Result!AgentReply parseSegmentReply(string raw) @system
 {
-    import sparkles.release.json_utils : decodeJson;
+    import sparkles.release.json_utils : decodeJsonValue, parseJsonText;
 
-    auto reply = decodeJson!AgentReply(stripJsonFence(raw));
+    auto dom = parseJsonText(stripJsonFence(raw));
+    if (dom.hasError)
+        return failure!AgentReply("segmentation reply: " ~ dom.error);
+
+    auto reply = decodeJsonValue!AgentReply(withNormalizedBoundaries(dom.value));
     if (reply.hasError)
         return failure!AgentReply("segmentation reply: " ~ reply.error);
     return reply;
+}
+
+/++
+Rewrites each segment's `boundary` to its decimal string.
+
+The contract asks for a number — `"boundary": 19` — and that is what a reply
+carries; the field stays textual in the model so that a reply quoting it
+(`"19"`), or answering with something else entirely (an old-style SHA), still
+decodes and can be rejected by $(LREF resolveBoundaries) with a message about
+unit indices, rather than by the JSON layer with one about types.
++/
+private JSONValue withNormalizedBoundaries(JSONValue dom) @safe
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    import std.json : JSONType;
+
+    if (dom.type != JSONType.object || "segments" !in dom
+        || dom["segments"].type != JSONType.array)
+        return dom;
+
+    dom["segments"] = JSONValue(
+        dom["segments"].arrayNoRef.map!withBoundaryAsText.array);
+    return dom;
+}
+
+/// ditto
+private JSONValue withBoundaryAsText(JSONValue seg) @safe
+{
+    import std.conv : to;
+    import std.json : JSONType;
+
+    if (seg.type != JSONType.object || "boundary" !in seg)
+        return seg;
+
+    const b = seg["boundary"];
+    if (b.type == JSONType.integer)
+        seg["boundary"] = JSONValue(b.integer.to!string);
+    else if (b.type == JSONType.uinteger)
+        seg["boundary"] = JSONValue(b.uinteger.to!string);
+    else if (b.type == JSONType.float_)
+        seg["boundary"] = JSONValue((cast(long) b.floating).to!string);
+    return seg;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,58 +247,65 @@ struct ReleasePlan
     size_t noPrCommits;     /// rows with `prNumber == 0` across the backlog
 }
 
-/// Resolves each proposed boundary to an exclusive end index into `rows`:
-/// a full 40-hex SHA or a unique prefix of ≥ 7 characters, strictly
-/// increasing. The last boundary may fall short of the newest commit (the
-/// suffix becomes the remainder); at least one segment is required.
+/// Resolves each proposed boundary — the index of the segment's last unit,
+/// strictly increasing — to an exclusive end index into the commit list. The
+/// last boundary may fall short of the newest unit (the suffix becomes the
+/// remainder); at least one segment is required.
 Result!(size_t[]) resolveBoundaries(
-    const(AgentSegment)[] segs, const(SegmentInput)[] rows) @safe
+    const(AgentSegment)[] segs, const(SegmentUnit)[] units) @safe
 {
-    if (segs.length == 0)
+    import std.algorithm.iteration : map;
+    import std.algorithm.searching : find, findAdjacent;
+    import std.array : array, empty, front;
+    import std.conv : text;
+
+    if (segs.empty)
         return failure!(size_t[])("the agent proposed no segments");
 
-    size_t[] ends;
-    ends.reserve(segs.length);
-    size_t floor = 0;
-    foreach (ref seg; segs)
-    {
-        auto idx = resolveSha(seg.boundary, rows);
-        if (idx.hasError)
-            return failure!(size_t[])(idx.error);
-        const end = idx.value + 1;
-        if (end <= floor)
-            return failure!(size_t[])(
-                "boundary `" ~ seg.boundary ~ "` is out of order (segments must"
-                ~ " be contiguous, oldest first, without duplicates)");
-        ends ~= end;
-        floor = end;
-    }
-    return success(ends);
+    auto parsed = segs.map!(s => parseUnitIndex(s.boundary, units.length)).array;
+    auto invalid = parsed.find!(p => p.hasError);
+    if (!invalid.empty)
+        return failure!(size_t[])(invalid.front.error);
+
+    auto indices = parsed.map!(p => p.value).array;
+    auto disorder = indices.findAdjacent!"a >= b";
+    if (!disorder.empty)
+        return failure!(size_t[])(text(
+            "boundary ", disorder[1], " is out of order (segments must be"
+            ~ " contiguous, oldest first, without duplicates)"));
+
+    return success(indices.map!(i => cast(size_t) units[i].end).array);
 }
 
-/// Resolves a full SHA or a unique ≥ 7-character prefix to its row index.
-private Result!size_t resolveSha(string boundary, const(SegmentInput)[] rows)
-    @safe
+/// Parses a boundary token as a unit index below `count`, tolerating the
+/// surrounding whitespace and quotes a reply sometimes carries.
+private Result!size_t parseUnitIndex(string boundary, size_t count) @safe
 {
-    if (boundary.length < 7)
-        return failure!size_t("boundary `" ~ boundary
-            ~ "` is too short (full SHA or a prefix of at least 7 characters)");
+    import std.algorithm.searching : all;
+    import std.array : empty;
+    import std.ascii : isDigit;
+    import std.conv : ConvException, text, to;
+    import std.string : chomp, chompPrefix, strip;
 
-    size_t found = size_t.max;
-    foreach (i, ref row; rows)
-    {
-        if (row.sha.length < boundary.length
-            || row.sha[0 .. boundary.length] != boundary)
-            continue;
-        if (found != size_t.max)
-            return failure!size_t(
-                "boundary `" ~ boundary ~ "` is ambiguous in the range");
-        found = i;
-    }
-    if (found == size_t.max)
-        return failure!size_t(
-            "boundary `" ~ boundary ~ "` does not match any commit in the range");
-    return success(found);
+    const s = boundary.strip.chompPrefix(`"`).chomp(`"`).strip;
+    if (s.empty)
+        return failure!size_t("a segment has no boundary");
+    if (!s.all!isDigit)
+        return failure!size_t(text(
+            "boundary `", boundary, "` is not a unit index (expected a number"
+            ~ " between 0 and ", count - 1, ")"));
+
+    // `to` catches the overflow a hand-rolled accumulator would wrap through.
+    size_t value;
+    try
+        value = s.to!size_t;
+    catch (ConvException)
+        value = size_t.max;
+    if (value >= count)
+        return failure!size_t(text(
+            "boundary `", boundary, "` is out of range (the backlog has ",
+            count, " units, 0 to ", count - 1, ")"));
+    return success(value);
 }
 
 /// Checks that no merged PR's commits straddle a segment edge (or the
@@ -242,11 +361,14 @@ Result!ReleasePlan buildPlan(
     const(Commit)[] commits, in SemVer current) @safe
 in (rows.length == commits.length)
 {
-    auto endsR = resolveBoundaries(reply.segments, rows);
+    auto endsR = resolveBoundaries(reply.segments, buildUnits(rows));
     if (endsR.hasError)
         return failure!ReleasePlan(endsR.error);
     const ends = endsR.value;
 
+    // Structurally impossible once boundaries are unit indices — kept as the
+    // invariant's guard, so a regression in `buildUnits` cannot ship a plan
+    // that splits a PR across two releases.
     if (auto msg = checkPrIntegrity(ends, rows))
         return failure!ReleasePlan(msg);
 
@@ -402,8 +524,31 @@ unittest
     assert(parseSegmentReply(`{"segments": `).hasError);
     assert(parseSegmentReply(`{"wrong": []}`).hasError);           // missing key
     assert(parseSegmentReply(
-        `{"segments": [{"boundary": 42, "theme": "t", "bump": "minor"}]}`)
+        `{"segments": [{"boundary": {}, "theme": "t", "bump": "minor"}]}`)
         .hasError);                                                // wrong type
+}
+
+@("segment.parseSegmentReply.boundaryNumberOrString")
+@system unittest
+{
+    // The contract asks for a number, and that is what a reply carries…
+    auto asNumber = parseSegmentReply(
+        `{"segments": [{"boundary": 19, "theme": "t", "bump": "minor"}]}`);
+    assert(asNumber.hasValue);
+    assert(asNumber.value.segments[0].boundary == "19");
+
+    // …but a quoted or float-shaped one means the same thing, and an answer of
+    // another shape entirely survives the decode so the boundary check — not
+    // the JSON layer — gets to explain what a boundary is.
+    assert(parseSegmentReply(
+        `{"segments": [{"boundary": "19", "theme": "t", "bump": "minor"}]}`)
+        .value.segments[0].boundary == "19");
+    assert(parseSegmentReply(
+        `{"segments": [{"boundary": 19.0, "theme": "t", "bump": "minor"}]}`)
+        .value.segments[0].boundary == "19");
+    assert(parseSegmentReply(
+        `{"segments": [{"boundary": "827d238e", "theme": "t", "bump": "minor"}]}`)
+        .value.segments[0].boundary == "827d238e");
 }
 
 version (unittest)
@@ -449,50 +594,94 @@ version (unittest)
     }
 }
 
-@("segment.resolveBoundaries.happyPathAndPrefix")
+@("segment.buildUnits.prRunsAndDirectCommits")
+@safe pure unittest
+{
+    SegmentInput[] rows;
+    Commit[] commits;
+    mkRange(
+        ["feat: a", "fix: b", "chore: direct", "feat: c", "feat: d"],
+        [7, 7, 0, 9, 9],
+        rows, commits);
+
+    const units = buildUnits(rows);
+    assert(units.length == 3);
+    assert(units[0] == SegmentUnit(begin: 0, end: 2, pr: 7, title: ""));
+    assert(units[1] == SegmentUnit(begin: 2, end: 3, pr: 0, title: "chore: direct"));
+    assert(units[2] == SegmentUnit(begin: 3, end: 5, pr: 9, title: ""));
+}
+
+@("segment.buildUnits.interleavedPrsMergeIntoOneUnit")
+@safe pure unittest
+{
+    SegmentInput[] rows;
+    Commit[] commits;
+    // PR #7's commits straddle PR #9's: no contiguous split keeps both whole,
+    // so the span merges rather than producing a unit that splits a PR.
+    mkRange(["feat: a", "feat: b", "fix: c"], [7, 9, 7], rows, commits);
+
+    const units = buildUnits(rows);
+    assert(units.length == 1);
+    assert(units[0].begin == 0 && units[0].end == 3);
+
+    // Whatever the grouping, every unit stays a contiguous cover of the rows.
+    size_t at;
+    foreach (ref u; units)
+    {
+        assert(u.begin == at && u.end > u.begin);
+        at = u.end;
+    }
+    assert(at == rows.length);
+}
+
+@("segment.resolveBoundaries.unitIndices")
 @safe unittest
 {
     SegmentInput[] rows;
     Commit[] commits;
     mkRange(["feat: a", "fix: b", "feat: c"], [1, 1, 2], rows, commits);
+    const units = buildUnits(rows);        // [0,2) pr 1 | [2,3) pr 2
 
-    // Full SHA and a ≥7-char unique prefix both resolve.
-    auto ends = resolveBoundaries(
-        [seg(rows[1].sha, "minor"), seg(rows[2].sha[0 .. 12], "patch")], rows);
+    // A boundary resolves to its unit's exclusive commit end.
+    auto ends = resolveBoundaries([seg("0", "minor"), seg("1", "patch")], units);
     assert(ends.hasValue);
     assert(ends.value == [2, 3]);
+
+    // Quoted and padded numbers are tolerated (replies sometimes carry them).
+    assert(resolveBoundaries([seg(` "1" `, "minor")], units).value == [3]);
 }
 
 @("segment.resolveBoundaries.rejections")
 @safe unittest
 {
+    import std.algorithm.searching : canFind;
+
     SegmentInput[] rows;
     Commit[] commits;
     mkRange(["feat: a", "fix: b"], [0, 0], rows, commits);
+    const units = buildUnits(rows);        // one unit per direct commit
 
-    assert(resolveBoundaries([], rows).hasError);                       // none
-    assert(resolveBoundaries([seg("badbadbadbadbad", "minor")], rows)
-        .hasError);                                                     // unknown
-    assert(resolveBoundaries([seg(rows[0].sha[0 .. 6], "minor")], rows)
-        .hasError);                                                     // too short
-    assert(resolveBoundaries(
-        [seg(rows[1].sha, "minor"), seg(rows[0].sha, "patch")], rows)
+    assert(resolveBoundaries([], units).hasError);                      // none
+    assert(resolveBoundaries([seg("", "minor")], units).hasError);      // empty
+
+    // A SHA — what the contract used to ask for — is named as the wrong shape.
+    const sha = resolveBoundaries([seg(rows[0].sha, "minor")], units);
+    assert(sha.hasError);
+    assert(sha.error.canFind("is not a unit index"));
+
+    // Past the end, rather than a silent clamp onto the last unit.
+    const past = resolveBoundaries([seg("2", "minor")], units);
+    assert(past.hasError);
+    assert(past.error.canFind("out of range"));
+
+    // A huge number must not overflow into a valid index.
+    assert(resolveBoundaries([seg("99999999999999999999999", "minor")], units)
+        .hasError);
+
+    assert(resolveBoundaries([seg("1", "minor"), seg("0", "patch")], units)
         .hasError);                                                     // out of order
-    assert(resolveBoundaries(
-        [seg(rows[0].sha, "minor"), seg(rows[0].sha, "patch")], rows)
+    assert(resolveBoundaries([seg("0", "minor"), seg("0", "patch")], units)
         .hasError);                                                     // duplicate
-}
-
-@("segment.resolveBoundaries.ambiguousPrefix")
-@safe unittest
-{
-    // Two rows sharing a 12-char prefix: the shared prefix is ambiguous.
-    SegmentInput[] rows = [
-        SegmentInput(sha: "aaaaaaaaaaaa1111111111111111111111111111"),
-        SegmentInput(sha: "aaaaaaaaaaaa2222222222222222222222222222"),
-    ];
-    assert(resolveBoundaries([seg("aaaaaaaaaaaa", "minor")], rows).hasError);
-    assert(resolveBoundaries([seg("aaaaaaaaaaaa1", "minor")], rows).hasValue);
 }
 
 @("segment.resolveBoundaries.trailingRemainderAllowed")
@@ -501,10 +690,11 @@ version (unittest)
     SegmentInput[] rows;
     Commit[] commits;
     mkRange(["feat: a", "fix: b", "chore: wip"], [1, 1, 0], rows, commits);
+    const units = buildUnits(rows);        // [0,2) pr 1 | [2,3) direct
 
-    auto ends = resolveBoundaries([seg(rows[1].sha, "minor")], rows);
+    auto ends = resolveBoundaries([seg("0", "minor")], units);
     assert(ends.hasValue);
-    assert(ends.value == [2]);      // row 2 is the remainder
+    assert(ends.value == [2]);      // unit 1 (row 2) is the remainder
 }
 
 @("segment.checkPrIntegrity.splitPrNamed")
@@ -553,8 +743,8 @@ version (unittest)
         rows, commits);
 
     const reply = AgentReply(segments: [
-        seg(rows[1].sha, "minor", "features"),
-        seg(rows[3].sha, "patch", "fixes"),
+        seg("0", "minor", "features"),
+        seg("2", "patch", "fixes"),
     ]);
     auto planR = buildPlan(reply, rows, commits,
         SemVer(major: 0, minor: 4, patch: 0));
@@ -580,20 +770,20 @@ version (unittest)
     mkRange(["feat: a", "fix: b"], [0, 0], rows, commits);
 
     // A feat-bearing pre-1.0 segment floors at minor: "patch" escalates.
-    const escalate = AgentReply(segments: [seg(rows[1].sha, "patch")]);
+    const escalate = AgentReply(segments: [seg("1", "patch")]);
     auto p1 = buildPlan(escalate, rows, commits, SemVer(major: 0, minor: 4, patch: 0));
     assert(p1.hasValue);
     assert(p1.value.segments[0].bump == BumpKind.minor);
     assert(p1.value.segments[0].bumpOrigin == BumpOrigin.escalated);
 
     // An unparsable token falls back to the floor (and is case-tolerant).
-    const garbage = AgentReply(segments: [seg(rows[1].sha, "gigantic")]);
+    const garbage = AgentReply(segments: [seg("1", "gigantic")]);
     auto p2 = buildPlan(garbage, rows, commits, SemVer(major: 0, minor: 4, patch: 0));
     assert(p2.hasValue);
     assert(p2.value.segments[0].bump == BumpKind.minor);
     assert(p2.value.segments[0].bumpOrigin == BumpOrigin.fallback);
 
-    const cased = AgentReply(segments: [seg(rows[1].sha, " Minor\n")]);
+    const cased = AgentReply(segments: [seg("1", " Minor\n")]);
     auto p3 = buildPlan(cased, rows, commits, SemVer(major: 0, minor: 4, patch: 0));
     assert(p3.hasValue);
     assert(p3.value.segments[0].bumpOrigin == BumpOrigin.agent);
@@ -606,7 +796,7 @@ version (unittest)
     Commit[] commits;
     mkRange(["feat!: breaking"], [0], rows, commits);
 
-    const reply = AgentReply(segments: [seg(rows[0].sha, "minor")]);
+    const reply = AgentReply(segments: [seg("0", "minor")]);
     auto plan = buildPlan(reply, rows, commits, SemVer(major: 1, minor: 2, patch: 3));
     assert(plan.hasValue);
     assert(plan.value.segments[0].bump == BumpKind.major);   // escalated
@@ -622,7 +812,7 @@ version (unittest)
     mkRange(["feat: a", "chore: wip", "chore: wip2"], [1, 0, 0], rows, commits);
 
     const reply = AgentReply(
-        segments: [seg(rows[0].sha, "minor")],
+        segments: [seg("0", "minor")],
         remainderNote: "release tool still cooking");
     auto plan = buildPlan(reply, rows, commits, SemVer(major: 0, minor: 4, patch: 0));
     assert(plan.hasValue);
