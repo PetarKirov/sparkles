@@ -375,6 +375,7 @@ union OperandStore
     SockAddr addr;      /// connect / accept peer / datagram address
     KernelTimespec ts;  /// timeout
     MsgOperands msg;    /// sendTo / recvFrom (includes `msg.hdr.msg_name` → `addr`)
+    ubyte[8] wake;      /// the waker's drain target (SPEC §5.6) — slab-stable
 }
 
 /// One in-flight operation's bookkeeping.

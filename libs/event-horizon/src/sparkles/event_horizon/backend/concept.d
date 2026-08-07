@@ -75,3 +75,84 @@ enum bool isCompletionBackend(B) = __traits(compiles, {
 enum bool hasMultishot(B) = __traits(compiles, {
     bool r = lvalueOf!B.supportsMultishot(OpKind.init);
 });
+
+version (Windows)
+{
+    private extern (Windows) int PostQueuedCompletionStatus(
+        void* port, uint bytes, size_t key, void* ov) nothrow @nogc;
+}
+
+/**
+The thread-safe wake handle (SPEC §5.6) — the ONLY loop-associated object
+callable off-thread. Obtained from `EventLoop.waker()`; a copyable value.
+
+On Posix it holds the write side of the loop's wake channel — an `eventfd`
+on Linux, a pipe elsewhere — and `wake()` is a single `write(2)`:
+thread-safe AND async-signal-safe. On Windows it posts a zero-byte packet
+to the completion port (`PostQueuedCompletionStatus` — thread-safe; signal
+handlers are not a Windows concept). Wakes coalesce; a wake before the
+loop waits makes the next wait return immediately.
+
+The handle borrows loop-owned resources: `wake()` after the loop's
+`destroy()` is harmless (an `EBADF` write / a post to a closed port is
+ignored) but delivers nothing.
+*/
+struct Waker
+{
+    version (Windows)
+    {
+        package void* port; /// the completion port
+        package void* ov;   /// the persistent wake op's `OVERLAPPED*`
+    }
+    else
+    {
+        package int fd = -1; /// write side of the wake channel
+    }
+
+    /// `false` for a default (never-armed) handle.
+    bool opCast(T : bool)() const @safe pure nothrow @nogc
+    {
+        version (Windows)
+            return port !is null;
+        else
+            return fd >= 0;
+    }
+
+    /// Wakes the loop's wait. Callable from any thread (and, on Posix, from
+    /// signal handlers). Coalescing; never blocks.
+    void wake() const @trusted nothrow @nogc
+    {
+        version (Windows)
+        {
+            if (port !is null)
+                cast(void) PostQueuedCompletionStatus(port, 0, 0, ov);
+        }
+        else version (linux)
+        {
+            import core.sys.posix.unistd : write;
+
+            if (fd >= 0)
+            {
+                ulong one = 1; // eventfd counter increment (8 bytes, mandated)
+                cast(void) write(fd, &one, one.sizeof);
+            }
+        }
+        else version (Posix)
+        {
+            import core.sys.posix.unistd : write;
+
+            if (fd >= 0)
+            {
+                ubyte one = 1; // pipe byte; EAGAIN when full = wake already pending
+                cast(void) write(fd, &one, 1);
+            }
+        }
+    }
+}
+
+/// Optional native-wake capability: a backend that can deliver a wake
+/// completion with no armed read op (IOCP's completion-port post). The
+/// loop prefers the portable fd path where a read lowering exists.
+enum bool hasNativeWake(B) = __traits(compiles, {
+    Waker w = lvalueOf!B.nativeWaker(OpToken.init);
+});
