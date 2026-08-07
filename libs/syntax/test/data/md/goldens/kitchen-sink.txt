@@ -6,11 +6,12 @@ one paragraph.
 
 󰲣 Tables inside a section
 
-┌───────────────────────────────────────────────────────────────┐
-│Module    Role                                                 │
-│model.d   the structural markdown model (extractMarkdown)      │
-│wrap.d    greedy line wrapping in cells — a sparkles extension │
-└───────────────────────────────────────────────────────────────┘
+╭─────────┬──────────────────────────────────────────────────────╮
+│ Module  │ Role                                                 │
+┝━━━━━━━━━┿━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ model.d │ the structural markdown model (extractMarkdown)      │
+│ wrap.d  │ greedy line wrapping in cells — a sparkles extension │
+╰─────────┴──────────────────────────────────────────────────────╯
 
   󰋽 Note
 
