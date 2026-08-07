@@ -16,7 +16,7 @@ front-ends; a behaviour change belongs in this directory so it lands on both.
 reason: **they are what makes the D toolchain exist.** `nix-install.sh` and
 `nix-configure.sh` run before `nix`, `dub`, or `ldc2` are on `PATH`, so they
 cannot be a program that a devShell provides. The remainder
-(`with-cachix.sh`, `release-pin.sh`, `paths-changed.sh`, …) stay shell to keep
+(`with-cachix.sh`, `release-pin.sh`, `run-batch.sh`, …) stay shell to keep
 the whole layer in one language and one dependency footprint — none of them is
 more than a guarded sequence of calls to `nix`, `cachix`, `git`, or `gh`.
 
@@ -63,6 +63,7 @@ PR — which gets no secrets — still run the pipeline.
 | `notify-dub-registry.sh`     | Pokes code.dlang.org to ingest a new tag                                                 |
 | `deploy-cloudflare-pages.sh` | `wrangler pages deploy`, then upserts the preview-URL comment                            |
 | `pr-comment.sh`              | Marker-keyed comment upsert, so re-runs edit instead of appending                        |
+| `dub-cache-key.sh`           | Digest of every dub manifest, because `{{ checksum }}` takes one literal path            |
 | `run-batch.sh`               | Wall-clock `timeout` + non-interactive stdout for the long steps                         |
 | `install-ldc-windows.sh`     | LDC + bundled dub on a Windows runner (CircleCI has no D orb)                            |
 
@@ -105,9 +106,10 @@ green while both are enabled; to retire one, drop its required check first,
 then disable the project (CircleCI) or the workflow triggers (GitHub).
 
 > [!NOTE]
-> Neither aggregate covers the docs _deploy_ — it lives in a separate workflow
-> on both sides (`docs-deploy` / `deploy`) and posts its own status. That is
-> deliberate and symmetric: a failed preview deploy should not block a merge.
+> Neither aggregate covers the docs _deploy_. On GitHub Actions it lives in a
+> separate workflow (`docs.yml`) and posts its own status; CircleCI does not
+> run it at all (see below). Deliberate either way: a failed preview deploy
+> should not block a merge.
 
 > [!WARNING]
 > On GitHub Actions everything except `lint` is guarded by
