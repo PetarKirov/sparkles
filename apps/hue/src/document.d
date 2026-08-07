@@ -147,6 +147,7 @@ struct DocumentPipeline
             source: patchText, lang: "diff", diffDoc: res.value,
         };
         doc.diffSides = sidesFromWorktree(doc.diffDoc);
+        classifyStructural(doc);
         attachSession(doc);
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
@@ -193,6 +194,7 @@ struct DocumentPipeline
             source: res.output, lang: "diff", diffDoc: parsed.value,
         };
         doc.diffSides = sidesFromGit(doc.diffDoc, revspec, staged);
+        classifyStructural(doc);
         attachSession(doc);
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
@@ -325,6 +327,53 @@ struct DocumentPipeline
     text, without syntax composition — which is why the notice says so rather
     than claiming a failure.
     */
+    /**
+    `DVN3`: ask the grammar whether each file changed at all, and stamp the
+    files it says did not as formatting-only.
+
+    A whole-file verdict, which is the shape the common case takes — someone
+    ran the formatter over a file, or over the repository. The oracle is
+    conservative (`unknown` means "no claim"), so this can only ever DEMOTE a
+    change that the parser proves the language cannot see; it never promotes
+    one, and it never hides rows — `DVN2`'s fold is what renders the verdict,
+    and `zn` still expands it.
+
+    Costs one parse per side of each changed file. Skipped above a size where
+    that stops being cheap, and skipped entirely without a grammar cache.
+    */
+    private void classifyStructural(ref Document doc) @system
+    {
+        import diff_structural : compareTokenStreams, StructuralVerdict;
+
+        // Half a megabyte a side: past this the parse stops being free, and a
+        // file that large is not what a formatter-noise verdict is for.
+        enum size_t maxSideBytes = 512 * 1024;
+
+        if (cache is null)
+            return;
+        foreach (fi; 0 .. doc.diffDoc.files.length)
+        {
+            if (fi >= doc.diffSides.length)
+                continue;
+            const sides = doc.diffSides[fi];
+            if (sides.lang.length == 0
+                || sides.oldText.length == 0 || sides.newText.length == 0
+                || sides.oldText.length > maxSideBytes
+                || sides.newText.length > maxSideBytes)
+                continue;
+            if (compareTokenStreams(*cache, sides.lang, sides.oldText,
+                    sides.newText) != StructuralVerdict.equivalent)
+                continue;
+            const file = doc.diffDoc.files[fi];
+            foreach (hi; file.hunksStart .. file.hunksStart + file.hunksCount)
+            {
+                auto h = doc.diffDoc.hunks[hi];
+                h.formattingOnly = true;
+                doc.diffDoc.hunks[hi] = h;
+            }
+        }
+    }
+
     package static void attachSession(ref Document doc) @safe
     {
         doc.diffSession = buildDiffSession(doc.diffDoc);
@@ -486,6 +535,7 @@ struct DocumentPipeline
             diffDoc: diffText(sides.oldText, sides.newText, oldPath, newPath,
                 diffOptions()),
         };
+        classifyStructural(doc);
         attachSession(doc);
         SmallBuffer!char patchBuf;
         emitPatch(doc.diffDoc, patchBuf);
@@ -739,4 +789,53 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
 
     auto real_ = p.fromSource("y.md", "y.md", "# Title\n\nbody\n", "markdown");
     assert(real_.kind == ContentKind.markdown);
+}
+
+@("document.classifyStructural.reflowedCodeFoldsAsNoise")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    import sparkles.syntax : GrammarRegistry, LabelSet;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    const dir = buildPath(tempDir(), "hue-structural-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+
+    // A signature and an expression reflowed across lines. The LINE STRUCTURE
+    // changed, so `DVN1`'s per-line policy and `DVN2`'s per-row verdict both
+    // see real changes — only the grammar can say the tokens are identical.
+    const oldPath = buildPath(dir, "a.d");
+    const newPath = buildPath(dir, "b.d");
+    write(oldPath, "module s;\n\nint f(int alpha, int beta)\n{\n"
+        ~ "    return alpha + beta;\n}\n");
+    write(newPath, "module s;\n\nint f(\n    int alpha,\n    int beta)\n{\n"
+        ~ "    return alpha\n        + beta;\n}\n");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    auto pipeline = DocumentPipeline(registry: &reg, cache: &cache);
+    auto doc = pipeline.loadDiffPair(oldPath, newPath);
+
+    assert(doc.diffDoc.hunks.length >= 1);
+    foreach (i; 0 .. doc.diffDoc.hunks.length)
+        assert(doc.diffDoc.hunks[i].formattingOnly,
+            "the grammar sees no change, so every hunk is noise");
+
+    // A real edit is never demoted, however it is formatted.
+    write(newPath, "module s;\n\nint f(\n    int alpha,\n    int beta)\n{\n"
+        ~ "    return alpha\n        - beta;\n}\n");
+    auto edited = pipeline.loadDiffPair(oldPath, newPath);
+    bool anyReal;
+    foreach (i; 0 .. edited.diffDoc.hunks.length)
+        if (!edited.diffDoc.hunks[i].formattingOnly)
+            anyReal = true;
+    assert(anyReal, "a changed operator is a change, reflow or not");
 }
