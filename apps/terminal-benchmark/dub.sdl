@@ -15,13 +15,14 @@ configuration "application" {
 }
 
 configuration "unittest" {
-    # Build as a library (not executable) so dub generates silly's
-    # `dub_test_root`, and exclude `src/app.d` so its `main` does not clash with
-    # silly's test-runner main. The testable logic lives in `src/bench.d`.
+    # Both lines are dub mechanics, not runner-specific: an *executable*
+    # configuration named `unittest` is treated as a custom test runner and
+    # never gets a generated `dub_test_root` (whose `main` would then clash
+    # with `src/app.d`'s). The testable logic lives in `src/bench.d`.
     targetType "library"
     excludedSourceFiles "src/app.d"
 
-    dependency "silly" version="~>1.1.1"
+    dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
