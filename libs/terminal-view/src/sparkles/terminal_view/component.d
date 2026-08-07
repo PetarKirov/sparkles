@@ -1,0 +1,604 @@
+/**
+The terminal as a `runApp` component (`TVW2`, `TVW5`, `TVW6`).
+
+$(REF TerminalView, sparkles,terminal_view,component) is the whole emulator as
+a value: `open` spawns the shell on a pty and wires the VT effects, `view`
+drains the pty and makes the dirty/skip decision, `handle` maps
+`sparkles:input` events onto the byte-oracle-pinned encoder seam, and `paint`
+runs the per-cell renderer inside the host's draw phase (`HST13`). `main`
+shrinks to CLI-parse-then-`runApp`.
+
+$(B What stays polled:) the mouse. `handle_mouse` is deeply level-coupled
+(scrollbar drag, selection auto-scroll, hover re-scan) and is called from
+`view` exactly as the polling loop called it — converting it to events is a
+later, separately-measured step (`TVW6`'s discipline, applied to input).
+Clipboard $(B reads) also stay raylib's (`GetClipboardText`): the host has no
+clipboard-read errand yet.
+
+$(B Ordering parity:) the polling loop drained the pty before encoding input,
+so the encoders always saw the current frame's mode changes. Events arrive
+before `view` runs, so the first input event of a frame triggers the drain
+lazily and `view` drains again for the render — the same
+drain → input → render order, event-shaped.
+*/
+module sparkles.terminal_view.component;
+
+import core.sys.posix.fcntl : F_GETFL, F_SETFL, fcntl, O_NONBLOCK;
+import core.sys.posix.sys.ioctl : ioctl, TIOCSWINSZ, winsize;
+import core.sys.posix.sys.types : pid_t;
+import core.sys.posix.unistd : execv, getuid, read, _exit;
+
+import raylib;
+
+import sparkles.ghostty.c;
+import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction,
+    KeyEvent, match, Mods;
+import sparkles.raylib_text : FontSet;
+import sparkles.terminal_view.child_env : sanitizeChildEnv;
+import sparkles.terminal_view.core;
+import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyKeyOf;
+import sparkles.terminal_view.input : ExitBehavior, handle_mouse, pty_write;
+import sparkles.ui.layout : Frame;
+import sparkles.ui.widget : WidgetTree;
+
+extern (C) private int forkpty(int* amaster, char* name, const void* termp,
+    const winsize* winp);
+
+/// What the caller wants of a terminal pane.
+struct TerminalViewOptions
+{
+    /// A command for the shell's `-c`, or null for an interactive shell.
+    const(char)* shellCommand = null;
+    /// Scrollback lines kept (0 disables; the default is unbounded).
+    size_t scrollbackLimit = size_t.max;
+    /// What happens when the shell exits.
+    ExitBehavior exitBehavior = ExitBehavior.holdOnFailure;
+    /// Debug hook: screenshot at frame 120, quit at 130.
+    bool debugScreenshotAndExit = false;
+}
+
+/**
+The emulator as a component. Non-copyable once opened: the VT effects hold a
+pointer into the embedded state, so the instance must stay put (stack-pin it,
+as `main` pins its `CoreState` today).
+*/
+struct TerminalView
+{
+    CoreState s;
+    TerminalViewOptions opts;
+
+    private bool opened;
+    private bool prevFocused = true;
+    private bool prevOverlayActive;
+    private bool prevChildExited;
+    private int forceFirstFrames = 2;
+    private bool forceRedrawEnv;
+    private bool drainedThisFrame;
+    private int frameCount;
+
+    @disable this(this);
+
+    /**
+    Spawns the shell on a pty and wires the terminal — everything the app's
+    `main` did after loading fonts, driven by the `opts` the caller filled in
+    beforehand. `fonts` is borrowed (the window session owns it, `HST14`);
+    `cols`/`rows` size the initial grid.
+
+    Called lazily by the first `view` — the fonts exist only once the host
+    opened its session, which happens inside `runApp`.
+
+    Returns `false` when the pty could not be opened; the terminal is freed
+    and the instance reusable.
+    */
+    bool open(FontSet* fonts, ushort cols, ushort rows) @system
+    {
+        import core.stdc.stdlib : getenv;
+        import core.stdc.string : strrchr;
+
+        s.fonts = fonts;
+        s.fontSize = fonts.size;
+        s.cellWidth = fonts.cellW();
+        s.cellHeight = fonts.cellH();
+        s.cols = cols > 0 ? cols : 1;
+        s.rows = rows > 0 ? rows : 1;
+        s.exitBehavior = opts.exitBehavior;
+        s.debugScreenshotAndExit = opts.debugScreenshotAndExit;
+        forceRedrawEnv = getenv("SPARKLES_BENCH_FORCE_REDRAW") !is null;
+
+        // The PNG decoder for kitty graphics: process-global, before any
+        // terminal exists.
+        ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, cast(const(void)*) &decode_png);
+
+        GhosttyTerminalOptions topts = {
+            cols: s.cols, rows: s.rows, max_scrollback: opts.scrollbackLimit,
+        };
+        ghostty_terminal_new(null, &s.terminal, topts);
+        // The options carry no cell pixel size; set it up front so kitty
+        // placement math and pixel-size reports never see zeros.
+        ghostty_terminal_resize(s.terminal, s.cols, s.rows, s.cellWidth, s.cellHeight);
+
+        // Resolve the shell and build argv BEFORE forkpty, so the child does
+        // only async-signal-safe work (execv + _exit).
+        const(char)* shellZ = getenv("SHELL".ptr);
+        if (shellZ is null || *shellZ == '\0')
+        {
+            import core.sys.posix.pwd : getpwuid, passwd;
+
+            passwd* pw = getpwuid(getuid());
+            if (pw !is null && pw.pw_shell !is null && *pw.pw_shell != '\0')
+                shellZ = pw.pw_shell;
+            else
+                shellZ = "/bin/sh".ptr;
+        }
+        const(char)* shellName = strrchr(shellZ, '/');
+        shellName = shellName ? shellName + 1 : shellZ;
+
+        // Sanitize in the parent; the child inherits (no setenv between fork
+        // and exec).
+        sanitizeChildEnv();
+
+        const(char)*[4] argv;
+        if (opts.shellCommand !is null)
+            argv = [shellName, "-c".ptr, opts.shellCommand, null];
+        else
+            argv = [shellName, null, null, null];
+
+        winsize ws = {
+            ws_row: s.rows,
+            ws_col: s.cols,
+            ws_xpixel: cast(ushort)(s.cols * s.cellWidth),
+            ws_ypixel: cast(ushort)(s.rows * s.cellHeight),
+        };
+        s.child = forkpty(&s.pty_fd, null, null, &ws);
+        if (s.child < 0)
+        {
+            ghostty_terminal_free(s.terminal);
+            s.terminal = null;
+            return false;
+        }
+        if (s.child == 0)
+        {
+            execv(shellZ, cast(char**) argv.ptr);
+            _exit(127);
+        }
+
+        // Non-blocking master: read() must return EAGAIN, never stall a frame.
+        int flags = fcntl(s.pty_fd, F_GETFL);
+        if (flags < 0 || fcntl(s.pty_fd, F_SETFL, flags | O_NONBLOCK) < 0)
+        {
+            import core.sys.posix.signal : kill, SIGHUP;
+            import core.sys.posix.sys.wait : waitpid;
+
+            kill(s.child, SIGHUP);
+            waitpid(s.child, null, 0);
+            ghostty_terminal_free(s.terminal);
+            s.terminal = null;
+            return false;
+        }
+
+        // The VT effects. userdata aims at the embedded effects context, which
+        // is why the instance is non-copyable.
+        s.effects_ctx.pty_fd = s.pty_fd;
+        s.effects_ctx.cellWidth = s.cellWidth;
+        s.effects_ctx.cellHeight = s.cellHeight;
+        s.effects_ctx.cols = s.cols;
+        s.effects_ctx.rows = s.rows;
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*) &s.effects_ctx);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, cast(const(void)*) &effect_write_pty);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_SIZE, cast(const(void)*) &effect_size);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES, cast(const(void)*) &effect_device_attributes);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_XTVERSION, cast(const(void)*) &effect_xtversion);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_ENQUIRY, cast(const(void)*) &effect_enquiry);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, cast(const(void)*) &effect_title_changed);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, cast(const(void)*) &effect_color_scheme);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_BELL, cast(const(void)*) &effect_bell);
+
+        // Kitty graphics: a storage limit is required, plus the file mediums.
+        ulong kittyStorage = 64 * 1024 * 1024;
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &kittyStorage);
+        bool kittyMedium = true;
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE, &kittyMedium);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, &kittyMedium);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &kittyMedium);
+
+        ghostty_render_state_new(null, &s.render_state);
+        ghostty_render_state_row_iterator_new(null, &s.row_iter);
+        ghostty_render_state_row_cells_new(null, &s.cells);
+
+        // Promote the render-state fallback colors to terminal defaults so the
+        // OSC 10/11/12 color-query responder reports what is on screen.
+        {
+            GhosttyRenderStateColors colors;
+            colors.size = GhosttyRenderStateColors.sizeof;
+            ghostty_render_state_update(s.render_state, s.terminal);
+            if (ghostty_render_state_colors_get(s.render_state, &colors) == GHOSTTY_SUCCESS)
+            {
+                ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &colors.foreground);
+                ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &colors.background);
+            }
+        }
+        ghostty_kitty_graphics_placement_iterator_new(null, &s.placement_iter);
+        ghostty_key_event_new(null, &s.key_event);
+        ghostty_key_encoder_new(null, &s.key_encoder);
+        ghostty_mouse_event_new(null, &s.mouse_event);
+        ghostty_mouse_encoder_new(null, &s.mouse_encoder);
+
+        prevFocused = IsWindowFocused();
+        opened = true;
+        return true;
+    }
+
+    /// Reaps the child (SIGHUP to its group first if still alive) and frees
+    /// every handle. The fonts and the window belong to the host.
+    void close() @system
+    {
+        if (!opened)
+            return;
+        if (s.child > 0 && !s.childReaped)
+        {
+            import core.sys.posix.signal : kill, SIGHUP;
+            import core.sys.posix.sys.wait : waitpid;
+            import core.sys.posix.unistd : getpgid;
+
+            if (!s.childExited)
+            {
+                auto pgid = getpgid(s.child);
+                if (pgid <= 0)
+                    pgid = s.child;
+                kill(cast(pid_t)(-pgid), SIGHUP);
+            }
+            waitpid(s.child, null, 0);
+        }
+        ghostty_kitty_graphics_placement_iterator_free(s.placement_iter);
+        ghostty_render_state_row_cells_free(s.cells);
+        ghostty_render_state_row_iterator_free(s.row_iter);
+        ghostty_render_state_free(s.render_state);
+        ghostty_key_event_free(s.key_event);
+        ghostty_key_encoder_free(s.key_encoder);
+        ghostty_mouse_event_free(s.mouse_event);
+        ghostty_mouse_encoder_free(s.mouse_encoder);
+        s.selState.free();
+        ghostty_terminal_free(s.terminal);
+        opened = false;
+    }
+
+    // ── the component contract ──────────────────────────────────────────────
+
+    /// The frame's pre-render half: last frame's deferred cleanup, grid
+    /// follow, pty drain, child reaping, the exit policy, the polled mouse,
+    /// and the dirty/skip decision. The pane is the whole surface, so the
+    /// tree is empty — an embedding application wraps this component and
+    /// keys a pane instead (`TVW7`).
+    WidgetTree view(H)(ref H h)
+    {
+        // First frame: the host's session exists now, so the pty can open
+        // against its fonts and its surface. A failed open ends the run.
+        if (!opened)
+        {
+            auto c = h.canvas;
+            const sz0 = h.size;
+            if (!open(c.fonts, cast(ushort) sz0.width, cast(ushort) sz0.height))
+            {
+                h.quit();
+                h.skipFrame();
+                return WidgetTree.init;
+            }
+        }
+
+        // Last frame's bracket ended after our paint ran (HST13), so its
+        // deferred kitty textures and any atlas growth resolve here — the
+        // same after-the-bracket point the polling loop reached in-line.
+        flush_deferred_textures();
+        if (s.fonts !is null && s.fonts.flushPending() && forceFirstFrames < 1)
+            forceFirstFrames = 1;
+
+        // Grid follow: the host's surface (cells) is authoritative — window
+        // resizes and font-size changes both arrive as a size change.
+        bool gridChanged = false;
+        const sz = h.size;
+        const newFontSize = h.fontSizePx;
+        if (newFontSize > 0 && newFontSize != s.fontSize)
+        {
+            s.fontSize = newFontSize;
+            s.cellWidth = s.fonts.cellW();
+            s.cellHeight = s.fonts.cellH();
+            gridChanged = true;
+        }
+        if (sz.width > 0 && sz.height > 0
+            && (sz.width != s.cols || sz.height != s.rows))
+            gridChanged = true;
+        if (gridChanged)
+            resizeGrid(cast(ushort) (sz.width > 0 ? sz.width : 1),
+                cast(ushort) (sz.height > 0 ? sz.height : 1));
+
+        drainPty();
+        drainedThisFrame = false; // next frame's first event re-drains
+        reapChild();
+
+        // The exit policy's frame-level half (waitForKey closes in `handle`).
+        if (s.childExited)
+        {
+            bool closeNow = false;
+            final switch (s.exitBehavior)
+            {
+                case ExitBehavior.close:
+                    closeNow = true;
+                    break;
+                case ExitBehavior.holdOnFailure:
+                    closeNow = s.childReaped && s.childStatus == 0;
+                    break;
+                case ExitBehavior.hold:
+                case ExitBehavior.waitForKey:
+                    break;
+            }
+            if (closeNow)
+                h.quit();
+        }
+
+        // The mouse, still polled (see the module header): identical routing,
+        // selection, scrollbar and hover behavior to the pre-component loop.
+        if (!s.childExited)
+            handle_mouse(s.pty_fd, s.mouse_encoder, s.mouse_event, s.terminal,
+                s.cellWidth, s.cellHeight, s.selState, s.sbState, s.hoverState);
+
+        import sparkles.base.term_control : PointerShape;
+
+        h.pointerShape(s.hoverState.isHoveringUrl
+            ? PointerShape.pointer : PointerShape.default_);
+
+        // Snapshot, then decide: clean content + no live overlay = skip the
+        // whole draw (the arms keep the last frame up and skip our paint too).
+        ghostty_render_state_update(s.render_state, s.terminal);
+
+        GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
+
+        const overlayActive =
+            s.effects_ctx.bellFlashFrames > 0
+            || s.selState.isSelecting
+            || s.hoverState.isHoveringUrl
+            || s.sbState.isHovered || s.sbState.isDragging
+            || s.sbState.currentWidth != s.sbState.targetWidth;
+
+        const redraw =
+            forceRedrawEnv
+            || dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE
+            || overlayActive || prevOverlayActive
+            || gridChanged
+            || s.childExited != prevChildExited
+            || forceFirstFrames > 0
+            || s.debugScreenshotAndExit;
+
+        prevOverlayActive = overlayActive;
+        prevChildExited = s.childExited;
+        if (forceFirstFrames > 0)
+            forceFirstFrames--;
+
+        if (!redraw)
+            h.skipFrame();
+
+        // The debug screenshot hook (the golden capture): full-rate frames,
+        // shot at 120, gone at 130.
+        if (s.debugScreenshotAndExit)
+        {
+            frameCount++;
+            if (frameCount == 120)
+                TakeScreenshot("test_screenshot.png".ptr);
+            if (frameCount == 130)
+                h.quit();
+        }
+
+        return WidgetTree.init;
+    }
+
+    /// Keys: the hotkeys and clipboard chords first (consuming, exactly as
+    /// the polling loop consumed them), then the byte-oracle-pinned encoder
+    /// seam; focus edges become DECSET 1004 reports.
+    void handle(H)(ref H h, in Event e)
+    {
+        e.match!(
+            (in KeyEvent k) { onKey(h, k); },
+            (in FocusEvent f) { onFocus(f.focused); },
+            (in EndOfInput _) { h.quit(); },
+            (in _) {},
+        );
+    }
+
+    /// The renderer, inside the host's frame bracket (`HST13`): the per-cell
+    /// paint, byte-identical to the polling loop's.
+    void paint(H)(ref H h, in WidgetTree, in Frame[])
+    {
+        paintFrame(s);
+    }
+
+    // ── internals ───────────────────────────────────────────────────────────
+
+    private void onKey(H)(ref H h, in KeyEvent k)
+    {
+        // Mode changes must reach the encoder before this frame's first
+        // encode — the polling loop's drain-before-input order (`view`'s
+        // drain then covers the render).
+        if (!drainedThisFrame)
+        {
+            drainPty();
+            drainedThisFrame = true;
+        }
+
+        // waitForKey: any key press closes.
+        if (s.childExited && s.exitBehavior == ExitBehavior.waitForKey
+            && k.action != KeyAction.release)
+        {
+            h.quit();
+            return;
+        }
+        if (s.childExited)
+            return; // nothing to forward to
+
+        // Ctrl+Shift chords: copy / paste, consuming.
+        if (k.mods == Mods(ctrl: true, shift: true) && k.action == KeyAction.press)
+        {
+            if (k.unshifted == 'c' && copySelection(h))
+                return;
+            if (k.unshifted == 'v')
+            {
+                const(char)* clip = GetClipboardText();
+                if (clip !is null)
+                {
+                    import core.stdc.string : strlen;
+
+                    pty_write(s.pty_fd, clip, strlen(clip));
+                }
+                return;
+            }
+        }
+
+        // Font hotkeys (HST14). Deliberately NOT consuming: the polling loop
+        // also forwarded the (harmless) encoded stroke, and identical
+        // behavior is the gate.
+        if (k.mods.ctrl && k.action == KeyAction.press)
+        {
+            if (k.unshifted == '=')
+                h.fontSize(h.fontSizePx + 2);
+            else if (k.unshifted == '-' && h.fontSizePx > 6)
+                h.fontSize(h.fontSizePx - 2);
+        }
+
+        ghostty_key_encoder_setopt_from_terminal(s.key_encoder, s.terminal);
+        char[128] buf;
+        const bytes = encodeKeyEvent(s.key_encoder, s.key_event, k, buf);
+        if (bytes.length > 0)
+        {
+            pty_write(s.pty_fd, bytes.ptr, bytes.length);
+            return;
+        }
+        // Text with no encodable key (IME/compose), and never on release:
+        // written raw, as the polling loop wrote leftover typed bytes.
+        if (k.action != KeyAction.release
+            && ghosttyKeyOf(k) == GHOSTTY_KEY_UNIDENTIFIED && k.text.length > 0)
+            pty_write(s.pty_fd, k.text.ptr, k.text.length);
+    }
+
+    private void onFocus(bool focused) @system
+    {
+        if (focused == prevFocused)
+            return;
+        prevFocused = focused;
+        bool focusMode = false;
+        if (ghostty_terminal_mode_get(s.terminal, cast(GhosttyMode) 1004, &focusMode) == GHOSTTY_SUCCESS
+            && focusMode)
+        {
+            char[8] fbuf;
+            size_t written = 0;
+            const fev = focused ? GHOSTTY_FOCUS_GAINED : GHOSTTY_FOCUS_LOST;
+            if (ghostty_focus_encode(fev, fbuf.ptr, fbuf.length, &written) == GHOSTTY_SUCCESS
+                && written > 0)
+                pty_write(s.pty_fd, fbuf.ptr, written);
+        }
+    }
+
+    private bool copySelection(H)(ref H h)
+    {
+        if (!s.selState.start || !s.selState.end)
+            return false;
+
+        GhosttyGridRef startSnap, endSnap;
+        if (ghostty_tracked_grid_ref_snapshot(s.selState.start, &startSnap) != GHOSTTY_SUCCESS
+            || ghostty_tracked_grid_ref_snapshot(s.selState.end, &endSnap) != GHOSTTY_SUCCESS)
+            return false;
+
+        GhosttySelection sel;
+        sel.start = startSnap;
+        sel.end = endSnap;
+        sel.rectangle = s.selState.isRectangular;
+
+        GhosttyFormatterTerminalOptions fmtOpts;
+        fmtOpts.size = GhosttyFormatterTerminalOptions.sizeof;
+        fmtOpts.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
+        fmtOpts.unwrap = true;
+        fmtOpts.trim = true;
+        fmtOpts.selection = &sel;
+
+        GhosttyFormatter fmt;
+        if (ghostty_formatter_terminal_new(null, &fmt, s.terminal, fmtOpts) != GHOSTTY_SUCCESS)
+            return false;
+        scope (exit) ghostty_formatter_free(fmt);
+
+        ubyte* outPtr;
+        size_t outLen;
+        if (ghostty_formatter_format_alloc(fmt, null, &outPtr, &outLen) != GHOSTTY_SUCCESS)
+            return false;
+        scope (exit) ghostty_free(null, outPtr, outLen);
+
+        // The host's clipboard errand — recorder-assertable, unlike the raw
+        // SetClipboardText the polling loop made.
+        h.clipboard(cast(const(char)[]) outPtr[0 .. outLen]);
+        return true;
+    }
+
+    private void resizeGrid(ushort cols, ushort rows) @system
+    {
+        s.cols = cols > 0 ? cols : 1;
+        s.rows = rows > 0 ? rows : 1;
+        ghostty_terminal_resize(s.terminal, s.cols, s.rows, s.cellWidth, s.cellHeight);
+        s.effects_ctx.cols = s.cols;
+        s.effects_ctx.rows = s.rows;
+        s.effects_ctx.cellWidth = s.cellWidth;
+        s.effects_ctx.cellHeight = s.cellHeight;
+        winsize ws = {
+            ws_row: s.rows,
+            ws_col: s.cols,
+            ws_xpixel: cast(ushort)(s.cols * s.cellWidth),
+            ws_ypixel: cast(ushort)(s.rows * s.cellHeight),
+        };
+        ioctl(s.pty_fd, TIOCSWINSZ, &ws);
+    }
+
+    private void drainPty() @system
+    {
+        if (s.childExited)
+            return;
+        char[4096] buf = void;
+        while (true)
+        {
+            const n = read(s.pty_fd, buf.ptr, buf.length);
+            if (n > 0)
+            {
+                feedPtyChunk(s, buf[0 .. n]);
+            }
+            else if (n == 0)
+            {
+                s.childExited = true; // EOF: the child closed its end.
+                break;
+            }
+            else
+            {
+                import core.stdc.errno : EAGAIN, EINTR, errno, EWOULDBLOCK;
+
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    break;
+                if (errno == EINTR)
+                    continue;
+                s.childExited = true; // EIO or a real error.
+                break;
+            }
+        }
+    }
+
+    private void reapChild() @system
+    {
+        import core.sys.posix.sys.wait : waitpid, WEXITSTATUS, WIFEXITED,
+            WIFSIGNALED, WNOHANG, WTERMSIG;
+
+        if (!s.childExited || s.childReaped)
+            return;
+        int wstatus;
+        if (waitpid(s.child, &wstatus, WNOHANG) == s.child)
+        {
+            s.childReaped = true;
+            if (WIFEXITED(wstatus))
+                s.childStatus = WEXITSTATUS(wstatus);
+            else if (WIFSIGNALED(wstatus))
+                s.childStatus = 128 + WTERMSIG(wstatus);
+        }
+    }
+}
