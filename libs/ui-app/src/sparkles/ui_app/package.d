@@ -33,3 +33,5 @@ module sparkles.ui_app;
 public import sparkles.ui_app.backend;
 public import sparkles.ui_app.display;
 public import sparkles.ui_app.gui_options;
+public import sparkles.ui_app.host;
+public import sparkles.ui_app.record;
