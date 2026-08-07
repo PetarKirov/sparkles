@@ -142,6 +142,16 @@ struct Window
     /// Closes the frame and presents it.
     void endFrame() @system => EndDrawing();
 
+    /// Polls the platform's input without drawing — what a frame that
+    /// declined to draw still owes the window system (`endFrame` does this
+    /// implicitly; a skipped frame calls this instead).
+    void pumpEvents() @system => PollInputEvents();
+
+    /// Re-targets raylib's own frame pacing. `0` disables it — the setting
+    /// for a caller that paces frames itself (an external frame clock owns
+    /// the cadence; `endFrame` then never sleeps).
+    void targetFps(int fps) @system => SetTargetFPS(fps);
+
     /**
     Drops any clip region still in force.
 

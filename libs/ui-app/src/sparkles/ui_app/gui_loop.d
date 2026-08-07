@@ -11,6 +11,15 @@ whole point of `HST6`: a terminal emulator with nothing to redraw polls input,
 paces to its frame rate and leaves the last frame on screen — swapping an
 identically-redrawn buffer would cost the same as drawing it. Beginning and
 ending a frame unconditionally would erase the property.
+
+$(B Where a ring is available, event-horizon owns the cadence) (its SPEC
+§15.3, the GUI shape): raylib's own pacing is disabled and the loop runs
+in the root fiber over a `Ticker` — absolute frame deadlines, missed
+frames skipped — parking in the $(B ring) between frames, where any
+subprocess, watch, and timer fibers the application spawns run. Raylib is
+thereby demoted to render + window + input sampling. Where loop creation
+fails, raylib keeps its own pacing — the explicit fallback arm, selected
+once and reported on `GuiHost.asyncLoop`.
 */
 module sparkles.ui_app.gui_loop;
 
@@ -35,6 +44,10 @@ struct GuiHost
 
     private GuiSession* session;
     private SmallBuffer!(char, 4096) drawScratch;
+
+    /// `true` when the event-horizon arm paces (raylib never sleeps);
+    /// `false` on the raylib-paced fallback (no ring available).
+    bool asyncLoop;
 
     /// The surface, in cells — pixels divided by the loaded cell metrics, so an
     /// application reasons in the same unit on both targets.
@@ -110,7 +123,8 @@ bool runGui(alias present, alias handle)(in RunConfig cfg, in GuiRequest req)
     RaylibEvents events;
     events.capabilities = host.capabilities;
 
-    while (!session.window.shouldClose && !host.quitRequested)
+    // One frame: sample input, present, swap unless declined (`HST6`).
+    void oneFrame()
     {
         // Input first: the frame an application presents should reflect what
         // just happened, not what happened before it.
@@ -118,15 +132,19 @@ bool runGui(alias present, alias handle)(in RunConfig cfg, in GuiRequest req)
             session.cellW, session.cellH);
 
         if (host.quitRequested)
-            break;
+            return;
 
         host.beginFrameState();
         present(host);
 
-        // `HST6`: no swap, no clear — the last frame stays up and the loop
-        // costs a poll and a pace.
+        // `HST6`: no swap, no clear — the last frame stays up. The window
+        // system still gets its input pump (endFrame does it implicitly on
+        // the drawing path).
         if (host.frameSkipped)
-            continue;
+        {
+            session.window.pumpEvents();
+            return;
+        }
 
         session.window.beginFrame();
         session.window.resetClip();
@@ -135,6 +153,46 @@ bool runGui(alias present, alias handle)(in RunConfig cfg, in GuiRequest req)
         paint(canvas, host.ops()[]);
         session.window.endFrame();
     }
+
+    // The event-horizon arm (its SPEC §15.3, the GUI shape): the Ticker owns
+    // the cadence; between frames the thread parks in the ring, where the
+    // application's async fibers run. UI-sized fiber stacks — frames run
+    // arbitrary paint code, and FrameOps-sized stack temporaries appear in
+    // debug builds.
+    import sparkles.event_horizon.sched : Sched, SchedOptions;
+
+    SchedOptions schedOpts;
+    schedOpts.stackSize = 1024 * 1024;
+    schedOpts.maxFibers = 64;
+
+    Sched sched;
+    if (!Sched.create(sched, schedOpts).hasError)
+    {
+        scope (exit) sched.destroy();
+        host.asyncLoop = true;
+        session.window.targetFps(0); // the frame clock owns the cadence
+
+        import core.time : usecs;
+
+        import sparkles.event_horizon.io : Ticker;
+
+        const fps = cfg.targetFps > 0 ? cfg.targetFps : 60;
+        sched.run(() {
+            auto ticker = Ticker.start(sched, (1_000_000 / fps).usecs);
+            while (!session.window.shouldClose && !host.quitRequested)
+            {
+                // Park in the ring until the frame is due: async work runs
+                // here, costing no frames and dropping no input (HST9).
+                cast(void) ticker.tick(sched);
+                oneFrame();
+            }
+        });
+        return true;
+    }
+
+    // The raylib-paced fallback arm: endFrame sleeps to targetFps.
+    while (!session.window.shouldClose && !host.quitRequested)
+        oneFrame();
     return true;
 }
 
