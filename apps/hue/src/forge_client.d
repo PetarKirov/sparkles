@@ -16,9 +16,9 @@ module forge_client;
 
 import expected : err;
 
-import forge : discoverToken, ForgeError, ForgeErrorKind, ForgeResult,
-    HttpRequest, HttpResponse, parsePrTarget, PrRef, PullRequest,
-    repoFromRemote, RepoId;
+import forge : CommentThread, discoverToken, ForgeError, ForgeErrorKind,
+    ForgeResult, hasCapability, HttpRequest, HttpResponse, parsePrTarget,
+    PrRef, PullRequest, repoFromRemote, RepoId;
 import forge_github : GitHubForge;
 
 version (HueCurl)
@@ -44,7 +44,12 @@ ForgeResult!HttpResponse fetchHttp(in HttpRequest req) @system
         import std.string : indexOf, strip;
 
         auto http = HTTP(req.url);
-        http.method = HTTP.Method.get;
+        // A body makes it a POST — the GraphQL query `DPR3` sends. `setPostData`
+        // sets the method as well as the payload, so the two cannot disagree.
+        if (req.body_.length)
+            http.setPostData(req.body_, "application/json");
+        else
+            http.method = HTTP.Method.get;
         foreach (h; req.headers)
         {
             const colon = h.indexOf(':');
@@ -140,6 +145,13 @@ struct FetchedPr
     PullRequest pr;
     RepoId repo;
     string patch;
+    /// `DPR3`: the review conversations, when the forge has the capability
+    /// and the session is authenticated. Empty is a legitimate answer — no
+    /// threads, or no token — and never a reason to fail the whole fetch.
+    CommentThread[] threads;
+    /// Why there are no threads, when that is worth saying (an anonymous
+    /// session cannot read them at all). Empty when nothing went wrong.
+    string threadsNote;
 }
 
 /**
@@ -171,8 +183,26 @@ ForgeResult!FetchedPr fetchPullRequest(string target) @system
     if (fetched.hasError)
         return err!FetchedPr(fetched.error);
 
-    return ForgeResult!FetchedPr(FetchedPr(fetched.value, pr.repo,
-        assemblePatch(fetched.value.files)));
+    FetchedPr out_ = {
+        pr: fetched.value,
+        repo: pr.repo,
+        patch: assemblePatch(fetched.value.files),
+    };
+
+    // `DPR3`: threads are a CAPABILITY, probed by presence — a forge without
+    // one simply lacks the member and this block compiles away. A failure
+    // here degrades the session to a thread-less review rather than losing
+    // the diff the reviewer came for.
+    static if (hasCapability!(GitHubForge, "reviewThreads"))
+    {
+        auto threads = forge.reviewThreads(pr, (in HttpRequest req)
+            => fetchHttp(req));
+        if (threads.hasError)
+            out_.threadsNote = threads.error.toString();
+        else
+            out_.threads = threads.value;
+    }
+    return ForgeResult!FetchedPr(out_);
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

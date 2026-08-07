@@ -91,11 +91,15 @@ struct ForgeError
 alias ForgeResult(T) = Expected!(T, ForgeError);
 
 /// A request the transport is asked to make. Deliberately minimal: an adapter
-/// composes the URL and the headers, and knows nothing about how they travel.
+/// composes the URL, the headers and any body, and knows nothing about how
+/// they travel.
 struct HttpRequest
 {
     string url;
     string[] headers; /// `"Name: value"`, ready to send
+    /// Empty means GET. A body makes it a POST — which is what a GraphQL
+    /// query is, and the only reason this seam knows about methods at all.
+    string body_;
 }
 
 /// What came back.
@@ -138,6 +142,38 @@ struct PullRequest
     string baseSha;
     string headSha;
     PrFile[] files;
+}
+
+/// One message in a review conversation.
+struct Comment
+{
+    string author;
+    string body_;    /// markdown, as the author wrote it
+    string createdAt;
+}
+
+/// Which side of the diff a thread hangs on. A comment on a removed line
+/// belongs to the old text, and putting it under the new one would attach it
+/// to a line its author never saw.
+enum ThreadSide : ubyte
+{
+    newSide,
+    oldSide,
+}
+
+/// A review conversation anchored to a file and a line (`DPR3`).
+struct CommentThread
+{
+    string path;
+    /// 1-based line on `side`. Zero when the forge could not place it —
+    /// an outdated thread whose line no longer exists.
+    uint line;
+    ThreadSide side;
+    bool resolved;
+    /// The code it was written against has changed since. Still worth
+    /// showing; no longer worth anchoring precisely.
+    bool outdated;
+    Comment[] comments;
 }
 
 // ── The adapter vocabulary ──────────────────────────────────────────────────
