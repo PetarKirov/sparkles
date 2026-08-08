@@ -410,10 +410,29 @@ struct Gallery
             i++;
         }
 
-        // The pane rect the draw phase measured last frame drives the grid.
-        if (s.terms.any && s.terms.paneCols > 0 && s.terms.paneRows > 0)
+        // The active pane: the rect the draw phase measured last frame drives
+        // the grid, and `decideRedraw` SNAPSHOTS the render state — the
+        // painters iterate that snapshot, so a frame that skips it paints an
+        // empty screen (a black pane with a parked cursor, as found live).
+        // The gallery repaints every frame, so the returned answer is unused;
+        // the snapshot is the point.
+        if (s.terms.any)
             if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
-                (() @trusted => tv.resize(s.terms.paneCols, s.terms.paneRows))();
+                () @trusted {
+                    if (s.terms.paneCols > 0 && s.terms.paneRows > 0)
+                        tv.resize(s.terms.paneCols, s.terms.paneRows);
+                    cast(void) tv.decideRedraw();
+                }();
+
+        // Last frame's deferred kitty textures resolve pre-bracket, exactly
+        // where the whole-surface frame flushes them — GPU arm only.
+        static if (__traits(compiles, h.canvas.fonts))
+            if (s.terms.any)
+            {
+                import sparkles.terminal_view.core : flush_deferred_textures;
+
+                (() @trusted => flush_deferred_textures())();
+            }
 
         // Focus edges, to the active tab only — the pane either has the
         // keyboard or it does not; background tabs were never focused.
