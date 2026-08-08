@@ -188,13 +188,14 @@ struct CellGrid
             }
             else if (leftOnly)
             {
-                // The quote / callout accent bar: `│` glyphs down the rect's
-                // left column (the panel's padding keeps content clear of it).
+                // The quote / callout accent bar: glyphs down the rect's
+                // left column (the panel's padding keeps content clear of
+                // it) — heavy `┃` for a border 2+ wide (the callout).
                 foreach (y; r.y .. r.y + r.height)
                     if (inBounds(r.x, y))
                     {
                         auto c = &at(r.x, y);
-                        c.glyph = '│';
+                        c.glyph = bw.left >= 2 ? '┃' : '│';
                         c.fg = v.border.color;
                     }
             }

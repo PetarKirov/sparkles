@@ -1704,11 +1704,22 @@ private uint calloutPanel(ref Builder b, ref const MdBlock blk,
     if (rows.length > 1)
         rows = [b.container(WidgetKind.column, rows[0 .. 2])] ~ rows[2 .. $];
     const body_ = b.container(WidgetKind.column, rows, gap: 1);
-    return b.add(Widget(kind: WidgetKind.panel, children: [body_],
-        padding: Insets(0, 0, 0, 2), hitId: opt.hitId,
-        decoration: Decoration(borderWidth: Insets(0, 0, 0, 1),
+    // The heavy accent bar (`┃` on cells, a thick stroke on the GPU) over an
+    // accent-tinted panel; nesting deepens the tint, so a callout inside a
+    // callout reads as a nested card, not a flat continuation.
+    Widget panel = Widget(kind: WidgetKind.panel, children: [body_],
+        padding: Insets(0, 1, 0, 2), hitId: opt.hitId,
+        slot: Slot.surface, paintBackground: true, stretch: true,
+        decoration: Decoration(borderWidth: Insets(0, 0, 0, 2),
             borderStyle: BorderStyle.solid, borderSlot: Slot.border),
-        borderOverride: co.accent, hasBorderOverride: true));
+        borderOverride: co.accent, hasBorderOverride: true);
+    if (opt.theme.present)
+    {
+        panel.bgOverride = mix(opt.theme.pageBg, co.accent,
+            0.06f + 0.04f * quoteDepth);
+        panel.hasBgOverride = true;
+    }
+    return b.add(panel);
 }
 
 // Drop any inline fully within `[0, cutoff)` (absolute source offset) —

@@ -265,17 +265,19 @@ struct GridCanvas
         }
     }
 
-    /// A left-only border → `│` glyphs down the rect's left column (the quote /
-    /// callout accent bar; the panel's padding keeps content clear of it).
+    /// A left-only border → glyphs down the rect's left column (the quote /
+    /// callout accent bar; the panel's padding keeps content clear of it) —
+    /// heavy `┃` for a border 2+ wide (the callout).
     private void barColumn(in Rect r, in Visual v) scope
     {
+        const g = v.border.width.left >= 2 ? '┃' : '│';
         foreach (y; r.y .. r.y + r.height)
             if (inBounds(r.x, y))
             {
                 auto c = &cell(r.x, y);
                 auto st = c.style;
                 st.fg = Color.fromRgb(v.border.color);
-                c.setCodepoint('│', 1, st);
+                c.setCodepoint(g, 1, st);
             }
     }
 

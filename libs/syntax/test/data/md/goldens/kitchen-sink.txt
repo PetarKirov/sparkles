@@ -13,11 +13,11 @@ one paragraph.
 │ wrap.d  │ greedy line wrapping in cells — a sparkles extension │
 ╰─────────┴──────────────────────────────────────────────────────╯
 
-│ 󰋽 Note
-│ A note directly under a table, holding code, bold, and a nested list:
-│
-│ ● one thing
-│ ● another thing
+┃ 󰋽 Note
+┃ A note directly under a table, holding code, bold, and a nested list:
+┃
+┃ ● one thing
+┃ ● another thing
 
 󰲣 Lists, deeply composed
 
@@ -48,10 +48,10 @@ one paragraph.
 
 󰲥 Trailing callout
 
-│ 󰀪 Warning
-│ The last block is a callout with a trailing fence:
-│
-│ ╭─  ────────────────────────────────────────────────────────────────────────╮
-│ │ 1 echo done                                                                │
-│ │ 2                                                                          │
-│ ╰────────────────────────────────────────────────────────────────────────────╯
+┃ 󰀪 Warning
+┃ The last block is a callout with a trailing fence:
+┃
+┃ ╭─  ────────────────────────────────────────────────────────────────────────╮
+┃ │ 1 echo done                                                                │
+┃ │ 2                                                                          │
+┃ ╰────────────────────────────────────────────────────────────────────────────╯
