@@ -73,6 +73,73 @@ private GhosttyKey ghosttyKeyOfCodepoint(dchar u)
     }
 }
 
+/**
+The fallback fill for a terminal-decoded char event (`TVW7`): a tui decoder
+delivers only `ch` — it has no layout oracle and no separate text channel —
+where the GUI arm's events carry `unshifted` and paired text. The encoder
+addresses a key by its unshifted identity and writes a printable through its
+text, so hand it both when nothing better exists: identity from `ch` always,
+text from `ch` except under ctrl/alt (whose byte spellings — `0x03`, ESC
+prefixes — are the encoder's business) and on release. Events already
+carrying the fields (the GUI arm's, the oracle fixtures) pass through
+untouched.
+*/
+@safe pure nothrow @nogc
+KeyEvent withKeyIdentity(in KeyEvent k)
+{
+    if (k.key != Key.char_)
+        return k;
+    KeyEvent patched = k;
+    if (patched.unshifted == 0)
+        patched.unshifted = k.ch;
+    if (patched.text.length == 0 && k.ch != 0
+        && !k.mods.ctrl && !k.mods.alt && k.action != KeyAction.release)
+    {
+        char[4] ub = void;
+        const n = utf8Of(ub, k.ch);
+        if (n > 0)
+            patched.text(ub[0 .. n]);
+    }
+    return patched;
+}
+
+/// Encodes `c` as UTF-8 into `buf`, returning the byte count — `0` for a
+/// surrogate or out-of-range scalar. `@nogc` by construction, unlike
+/// `std.utf.encode`, which throws.
+@safe pure nothrow @nogc
+size_t utf8Of(ref char[4] buf, dchar c)
+{
+    if (c < 0x80)
+    {
+        buf[0] = cast(char) c;
+        return 1;
+    }
+    if (c < 0x800)
+    {
+        buf[0] = cast(char)(0xC0 | (c >> 6));
+        buf[1] = cast(char)(0x80 | (c & 0x3F));
+        return 2;
+    }
+    if (c >= 0xD800 && c <= 0xDFFF)
+        return 0;
+    if (c < 0x10000)
+    {
+        buf[0] = cast(char)(0xE0 | (c >> 12));
+        buf[1] = cast(char)(0x80 | ((c >> 6) & 0x3F));
+        buf[2] = cast(char)(0x80 | (c & 0x3F));
+        return 3;
+    }
+    if (c <= 0x10FFFF)
+    {
+        buf[0] = cast(char)(0xF0 | (c >> 18));
+        buf[1] = cast(char)(0x80 | ((c >> 12) & 0x3F));
+        buf[2] = cast(char)(0x80 | ((c >> 6) & 0x3F));
+        buf[3] = cast(char)(0x80 | (c & 0x3F));
+        return 4;
+    }
+    return 0;
+}
+
 /// The event's modifiers, in the encoder's vocabulary.
 @safe pure nothrow @nogc
 GhosttyMods ghosttyModsOf(in Mods m)
@@ -207,4 +274,39 @@ unittest
     assert(encodeKeyEvent(f.encoder, f.event, press(Key.escape), buf) == "\x1b[27u");
     assert(encodeKeyEvent(f.encoder, f.event,
         press(Key.char_, Mods(ctrl: true), 'a'), buf) == "\x1b[97;5u");
+}
+
+@("terminal_view.event_map.terminalDecodedCharsEncode")
+@system nothrow @nogc
+unittest
+{
+    import sparkles.terminal_view.input : EncoderFixture;
+
+    // The tui decoder's spellings — `ch` only, no unshifted, no text. The
+    // identity patch routes them through the encoder, mode-aware, so a
+    // kitty-protocol application still sees the escapes it negotiated.
+    auto f = EncoderFixture.open();
+    char[128] buf;
+
+    const plain = withKeyIdentity(KeyEvent(Key.char_, 'e'));
+    assert(encodeKeyEvent(f.encoder, f.event, plain, buf) == "e");
+
+    const ctrl = withKeyIdentity(KeyEvent(Key.char_, 'c', Mods(ctrl: true)));
+    assert(encodeKeyEvent(f.encoder, f.event, ctrl, buf) == "\x03");
+
+    // An event already carrying its identity passes through untouched.
+    const gui = KeyEvent(Key.char_, 'E', Mods(shift: true), KeyAction.press, 'e');
+    assert(withKeyIdentity(gui).unshifted == 'e');
+}
+
+@("terminal_view.event_map.utf8OfCoversThePlanes")
+@safe pure nothrow @nogc
+unittest
+{
+    char[4] b = void;
+    assert(utf8Of(b, 'A') == 1 && b[0] == 'A');
+    assert(utf8Of(b, 'é') == 2 && b[0 .. 2] == "é");
+    assert(utf8Of(b, '│') == 3 && b[0 .. 3] == "│");
+    assert(utf8Of(b, '🙂') == 4 && b[0 .. 4] == "🙂");
+    assert(utf8Of(b, cast(dchar) 0xD800) == 0, "a surrogate is not a scalar");
 }
