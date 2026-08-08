@@ -167,6 +167,9 @@ struct ViewerModel
     size_t srcTotal;                /// source (physical) line count
     size_t[] lineStarts;
     bool showPreview;               /// decorated view vs raw source (Tab)
+    /// The raw view with highlighting OFF — the third Tab stop (`VIW`):
+    /// md cycles preview → highlighted → plain; non-md highlighted ↔ plain.
+    bool plainSyntax;
     int tabWidth = 4;               /// tab stops in the raw view (--tab-width)
     bool listWhitespace;            /// vim `list` (--list-whitespace)
     bool codeLineNumbers = true;    /// in-panel fence numbers ('c' toggles)
@@ -274,6 +277,7 @@ struct ViewerModel
         curMatch = 0;
         copiedFenceSrc = size_t.max;
         copiedTableSrc = size_t.max;
+        plainSyntax = false;
         fenceScrollAt = null;
         fenceSv = ScrollView.init;
         fenceSvOwner = size_t.max;
@@ -386,7 +390,14 @@ struct ViewerModel
             foreach (sp; foldable)
                 if (!folds.isOpen(sp.start))
                     closed ~= sp;
-            tree = viewCodeDocument(source, events, thisCurrent(), pageFg,
+            // Plain view (VIW4): ONE unstyled span over the whole source —
+            // not an empty stream, which yields no runs at all and renders
+            // every line blank. The label-less span resolves to the theme's
+            // default foreground.
+            const(HighlightEvent)[] evs = plainSyntax
+                ? [HighlightEvent.sourceSpan(0, source.length)] : events;
+            tree = viewCodeDocument(source, evs,
+                thisCurrent(), pageFg,
                 CodeViewOptions(foldedRegions: closed,
                     foldHitBase: foldHitBase, tabWidth: tabWidth,
                     listWhitespace: listWhitespace,
@@ -770,6 +781,26 @@ struct ViewerModel
             rebuild();
     }
 
+    /// Tab (`VIW`): a document with a preview cycles preview → highlighted →
+    /// plain (highlighting off); one without cycles highlighted ↔ plain.
+    /// The caller reflows/rebuilds.
+    void cycleView() @safe pure nothrow @nogc
+    {
+        if (showPreview)
+        {
+            showPreview = false;
+            plainSyntax = false;
+        }
+        else if (!plainSyntax)
+            plainSyntax = true;
+        else
+        {
+            plainSyntax = false;
+            showPreview = preview.present || tw.code.length != 0
+                || diff.files.length != 0;
+        }
+    }
+
     void markCopied(size_t bodyStart)
     {
         copiedFenceSrc = bodyStart;
@@ -1125,6 +1156,62 @@ struct ViewerModel
     }
 }
 
+
+@("viewer_model.cycleView.threeModesWithPreviewTwoWithout")
+@safe unittest
+{
+    // A document without a preview: highlighted ↔ plain, never preview.
+    ViewerModel vm;
+    assert(!vm.showPreview && !vm.plainSyntax);
+    vm.cycleView();
+    assert(!vm.showPreview && vm.plainSyntax);
+    vm.cycleView();
+    assert(!vm.showPreview && !vm.plainSyntax);
+
+    // A markdown document: preview → highlighted → plain → preview.
+    vm.preview.present = true;
+    vm.showPreview = true;
+    vm.cycleView();
+    assert(!vm.showPreview && !vm.plainSyntax);
+    vm.cycleView();
+    assert(!vm.showPreview && vm.plainSyntax);
+    vm.cycleView();
+    assert(vm.showPreview && !vm.plainSyntax);
+}
+
+@("viewer_model.plainViewRendersTheSource")
+@system unittest
+{
+    import sparkles.syntax : builtinDark;
+    import sparkles.ui.widget : WidgetKind;
+
+    // VIW4: the plain view is the raw view with highlighting OFF — the
+    // text must still paint. (An EMPTY event stream yields no styled runs
+    // at all, which rendered every line blank; plain is one unstyled span
+    // over the whole source.)
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 60;
+    vm.applyTheme(0);
+
+    enum src = "int answer = 42;\nreturn answer;\n";
+    vm.setDocument("t.d", "", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        TwoslashReturn.init, "d");
+    vm.cycleView(); // highlighted → plain (no preview to cycle through)
+    assert(vm.plainSyntax);
+    vm.rebuild();
+
+    bool sawText;
+    foreach (ref node; vm.tree.nodes)
+        if (node.kind == WidgetKind.rich)
+            foreach (sp; node.spans)
+                if (sp.text == "int answer = 42;")
+                    sawText = true;
+    assert(sawText, "the plain view must render the source text");
+}
 
 @("viewer_model.diffDocumentRendersTheDiffPane")
 @system unittest

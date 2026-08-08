@@ -626,7 +626,8 @@ struct PreviewTui
             textStyle: TextStyle(bold: focused)));
         const mid = b.add(Widget(kind: WidgetKind.text, text: text(
             names[themeIdx], " (", themeIdx + 1, "/", names.length, ")  ·  ",
-            (showPreview && model.present) ? "preview" : "raw")));
+            (showPreview && model.present) ? "preview"
+            : vm.plainSyntax ? "plain" : "raw")));
         const pos = b.add(Widget(kind: WidgetKind.text,
             text: text(top + 1, "/", lineCount), slot: Slot.gutter));
         paintBar(g, 0, [name], [mid], [pos], b, focused);
@@ -1008,11 +1009,8 @@ struct PreviewTui
                 break;
 
             case Command.toggleView:
-                if (model.present)
-                {
-                    showPreview = !showPreview;
-                    relayout();
-                }
+                vm.cycleView();
+                relayout();
                 break;
 
             case Command.toggleHoverRegions:
