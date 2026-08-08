@@ -31,6 +31,18 @@ Plain quotes:
 ┃ A plain block quote with no marker — just prose with inline code, bold,
 ┃ italic, struck, and a link.
 
+┃ Depth one
+┃
+┃ ┃ Depth two
+┃ ┃
+┃ ┃ ┃ Depth three
+┃ ┃ ┃
+┃ ┃ ┃ ┃ Depth four
+┃ ┃ ┃ ┃
+┃ ┃ ┃ ┃ ┃ Depth five
+┃ ┃ ┃ ┃ ┃
+┃ ┃ ┃ ┃ ┃ ┃ Depth six
+
 ┃ Outer quote — depth one, with structure throughout.
 ┃
 ┃ ● unordered at depth one
