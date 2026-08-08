@@ -40,6 +40,7 @@ sharing one would each believe they owned a drag the other started.
 enum size_t capContentBar = 1; /// the shell's content pane
 enum size_t capDemoBar = 2;    /// the Scrolling page's specimen
 enum size_t capSplit = 3;      /// the Split page's divider
+enum size_t capChromeBar = 4;  /// the Components page's live scroll view
 
 /// The columns a vertical bar's gutter reserves. Fixed, so the pane's width
 /// does not change when the bar expands — a page that reflowed on hover would

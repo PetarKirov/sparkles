@@ -70,6 +70,7 @@ enum size_t hitActions = 5000;  /// the components page's action bar
 enum size_t hitTree = 6000;     /// the tree page's rows
 enum size_t hitContentBar = 7000; /// the shell's content-pane scrollbar
 enum size_t hitDemoBar = 7100;    /// the Scrolling page's specimen bar
+enum size_t hitChromeBar = 7200;  /// the Components page's live scroll view
 enum size_t hitSplit = 8000;    /// the split page's divider
 enum size_t hitMachines = 9000; /// the state-machine page's tiles
 enum size_t hitTerminal = 10000; /// the Terminal page's tabs: `hitTerminal + tab.id`
@@ -173,6 +174,9 @@ struct TermsState
     int closeRequested = -1; /// tab index to close, -1 for none
     ushort paneCols;        /// the pane rect at the last paint, in cells —
     ushort paneRows;        /// next frame's grid follow reads it
+    long sbTotal;           /// the active tab's scrollback: history + screen,
+    long sbLen;             /// the viewport's rows,
+    long sbOffset;          /// and its offset — mirrored so the page can draw
 
     /// Whether any tab exists / another one fits.
     bool any() const scope pure nothrow @nogc => count > 0;
@@ -283,6 +287,10 @@ struct GalleryState
     /// The Scrolling page's own viewport — a second `ScrollView` over a
     /// second document, so a reader can grab one without the other moving.
     ScrollView demoView = ScrollView(
+        vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
+    /// The Components page's live `scrollView` specimen — the third one, for
+    /// the same reason the Scrolling page has its own.
+    ScrollView chromeView = ScrollView(
         vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
     int inspectorLines = 40; /// how much of a dump the Inspector builds
     TermsState terms;        /// the Terminal page's tab strip
@@ -496,8 +504,8 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
     // between the two scrollbars, which are a hundred apart because they are
     // one kind of thing and neither will ever mint more than one id.
     static immutable size_t[] bases = [hitNav, hitTheme, hitTabs, hitActions,
-        hitTree, hitContentBar, hitDemoBar, hitSplit, hitMachines,
-        hitTerminal, hitTermActions];
+        hitTree, hitContentBar, hitDemoBar, hitChromeBar, hitSplit,
+        hitMachines, hitTerminal, hitTermActions];
     foreach (i, b; bases)
     {
         assert(b != 0);
