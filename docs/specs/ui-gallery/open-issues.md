@@ -91,6 +91,14 @@ in capture, and a bar drawn from the terminal's own numbers all shipped
 (`scrollViewport`/`scrollback` on the embedded surface). Only _dragging_ that
 bar remains behind the conversion.
 
+Row hover (the tab list's `✕`) needed bare-motion reporting, which the TUI arm
+never requested: `RunConfig.motion` now asks for DEC 1003, at one input event
+per pointer move. The mini list's circled numbers are East-Asian-Ambiguous —
+one cell here and in most terminals, two under `ambiguous-width=wide`; the
+`--term-tab-glyphs` override (or a non-unicode theme) is the out. ㉑–㊿ are
+East-Asian-**Wide** outright, which is why the cap must not pass 20 without
+widening the mini column.
+
 ## `UGL-O8` — the embedded cell renderer's honest losses · open
 
 `cell_paint.d` paints one `dchar` per cell, so a multi-codepoint grapheme

@@ -112,6 +112,12 @@ and were invisible without it.
   reclamation shrinks a text run's allocation without clipping what it paints.
 - **The gallery's own `section` helper drew its caption on top of its body**,
   because `panel` is not a flow.
+- **The tab list truncated labels by bytes, not cells.** The active tab's
+  "▸ " marker spends 4 bytes on 2 cells, so its label lost extra characters —
+  and a multibyte OSC title could be sliced mid code point, poisoning the tree
+  with invalid UTF-8. `sparkles:base` has carried a grapheme-safe
+  `truncateField` all along; the list now uses it, and a test pins valid UTF-8,
+  the cell budget, and the ellipsis.
 - **`grow` inside the shell's scroll viewport collapses to natural width.**
   The viewport lays its child out at the child's own width, so a `grow` pane
   has nothing to expand into and quietly becomes as wide as the longest label
