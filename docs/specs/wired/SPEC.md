@@ -3,7 +3,11 @@
 _Audience: developers and coding agents building against the library. This
 document is normative and self-contained — it states what the library
 provides, not why. For the delivery plan, see [PLAN.md](./PLAN.md); for the
-library overview, see [`sparkles:base`](../../libs/base/index.md)._
+library overview, see [`sparkles:base`](../../libs/base/index.md). The
+**expressiveness upgrade** — the reified schema layer, tagged unions,
+validation, metadata, and the other new policy axes — is specified
+separately in [expressiveness/SPEC.md](./expressiveness/SPEC.md), which
+extends this document without renumbering it._
 
 ## 1. Overview
 

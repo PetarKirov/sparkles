@@ -98,20 +98,14 @@ correctly-rounded parsing plus shortest-round-trip formatting
 (`docs/specs/base/text/float-conv.md`) — `parse(format(x))` is bit-exact
 for every finite `double`.
 
-## O10 — No `deny-unknown-fields` strictness option
+## O10 — No `deny-unknown-fields` strictness option — RESOLVED (spec'd)
 
 **Where:** SPEC §4.5 ("An unknown JSON object key is ignored").
 
-Decoding silently ignores unknown object keys; there is no opt-in to make an
-unexpected key a decode error (the analogue of serde's `deny_unknown_fields`).
-Some callers want strict schemas that reject typos or extra data.
-
-**Options:** (A) add an opt-in strict policy (a type/field UDA or a `fromJSON`
-option) that rejects unknown keys; (B) keep lenient-only and document that unknown
-keys are always ignored.
-
-**Leaning:** defer — a real feature, but only if a use case appears; lenient by
-default is defensible. Flagged so the omission is conscious.
+Resolved by the [expressiveness SPEC §5.3](./expressiveness/SPEC.md#53-unknown-field-policy):
+a three-valued per-aggregate policy — ignore (default, unchanged),
+`@WireStrict` (unknown key → decode error), `@WireExtra` (capture and
+re-emit). Implementation owed by [expressiveness PLAN E4](./expressiveness/PLAN.md).
 
 ## O11 — Built-in temporal and binary coverage
 
@@ -128,3 +122,36 @@ base64 mapping for byte arrays; (B) keep scope minimal (SysTime + converters) bu
 document these gaps with canonical `@WireConvert` recipes.
 
 **Leaning:** (B) for now — document the recipes; revisit (A) if these recur.
+
+## O14 — Static arrays specified but unimplemented — RESOLVED (spec'd)
+
+**Where:** SPEC §4.3 (`T[N]` exact-length decode); PLAN M4 gate.
+
+The codec has no static-array branch at all — `toJSON` on a struct with an
+`int[3]` field does not compile. Probe-documented in the
+[research baseline](../../research/serde/wired-baseline.md#probe-verified-spec-divergences).
+Fixed structurally by the schema-driven walk:
+[expressiveness PLAN E2](./expressiveness/PLAN.md).
+
+## O15 — Slot-targeted / composed-wrapper policies not applied — RESOLVED (spec'd)
+
+**Where:** SPEC §5.2 (the `WireTarget` reach rules); PLAN M4 gate.
+
+The policy layer resolves `WireTarget.key`/`.value` and composed-wrapper
+policies correctly (its unittests pass), but the JSON codec consults them for
+only two shapes — AA keys and wrappers such as `Nullable!(E[])` silently fall
+back to type-level policy, contradicting SPEC §5.2's own example.
+Probe-documented in the
+[research baseline](../../research/serde/wired-baseline.md#probe-verified-spec-divergences).
+Fixed structurally by the schema-driven walk:
+[expressiveness PLAN E2](./expressiveness/PLAN.md).
+
+## O16 — `SumType` `exactlyOne` discards per-variant errors — RESOLVED (spec'd)
+
+**Where:** SPEC §4.7 (error reporting intent).
+
+A failed `exactlyOne` decode reports a bare "no variant matched", dropping
+the per-variant failures the spec promises. Superseded by
+[expressiveness SPEC §3.4](./expressiveness/SPEC.md#34-union-decode-errors)
+(per-variant reasons under every representation); implementation owed by
+[expressiveness PLAN E5](./expressiveness/PLAN.md).

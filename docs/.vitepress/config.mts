@@ -837,6 +837,20 @@ export default withMermaid(
                 { text: 'Specification', link: '/specs/wired/SPEC' },
                 { text: 'Delivery Plan', link: '/specs/wired/PLAN' },
                 {
+                  text: 'Expressiveness Upgrade',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Specification',
+                      link: '/specs/wired/expressiveness/SPEC',
+                    },
+                    {
+                      text: 'Delivery Plan',
+                      link: '/specs/wired/expressiveness/PLAN',
+                    },
+                  ],
+                },
+                {
                   text: 'Runtime JSON benchmark baseline',
                   link: '/specs/wired/bench-baseline',
                 },
