@@ -12,6 +12,7 @@ discover `package.d`).
 */
 module sparkles.terminal_view;
 
+public import sparkles.terminal_view.cell_paint;
 public import sparkles.terminal_view.child_env;
 public import sparkles.terminal_view.component;
 public import sparkles.terminal_view.event_map;
