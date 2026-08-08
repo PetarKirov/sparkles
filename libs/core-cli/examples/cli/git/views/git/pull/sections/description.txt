@@ -1,0 +1,5 @@
+Fetch from and integrate with another repository or a local branch.
+
+This command is a combination of "git fetch" and "git merge". It fetches updates from the remote repository and automatically merges them into the current branch.
+
+The pull command is a convenient shorthand when you want to update your local branch with changes from the remote. By default, it merges the remote tracking branch into your current branch. If there are conflicts between your local changes and the remote changes, Git will stop and ask you to resolve the conflicts.

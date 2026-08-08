@@ -1,0 +1,19 @@
+Common workflows:
+
+Authenticate to github.com:
+    gh auth login
+
+Create a pull request from the current branch:
+    gh pr create --title "Fix auth race condition" --reviewer alice,bob
+
+List open issues you are assigned to:
+    gh issue list --assignee @me
+
+View a pull request in the browser:
+    gh pr view 42 --web
+
+Check out a pull request locally to review:
+    gh pr checkout 42
+
+Fork a public repository and clone it locally:
+    gh repo fork cli/cli --clone --remote

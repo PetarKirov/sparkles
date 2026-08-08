@@ -1,0 +1,3 @@
+View authentication status for each host gh knows about, including the active git protocol and the OAuth scopes the stored token currently has.
+
+Pass `--show-token` to also reveal the token value — useful when feeding the token to another tool, but be careful with shell history.

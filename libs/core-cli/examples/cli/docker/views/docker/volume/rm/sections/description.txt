@@ -1,0 +1,3 @@
+Remove one or more volumes.
+
+A volume must not be in use by any container; stop and remove the consumers first.

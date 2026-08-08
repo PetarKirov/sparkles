@@ -1,0 +1,3 @@
+Show backing files of one or more units, prefixed with a comment indicating which file they were read from. The main unit file and any drop-in overrides are concatenated in load order.
+
+This is the easiest way to see the effective unit definition without manually walking through `/etc/systemd/system/`, `/run/systemd/system/`, and `/usr/lib/systemd/system/`.

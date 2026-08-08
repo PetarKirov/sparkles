@@ -1,0 +1,3 @@
+Remove all volumes that aren't currently used by any container.
+
+By default only anonymous volumes are pruned, since named volumes were created deliberately. Pass `--all` to also prune named volumes with no current consumers.

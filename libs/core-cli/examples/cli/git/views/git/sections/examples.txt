@@ -1,0 +1,27 @@
+Common workflows:
+
+Start a feature branch and publish it:
+    git checkout -b feature/login
+    git commit -am "Add login form"
+    git push -u origin feature/login
+
+Rebase your branch on top of the latest main:
+    git fetch origin
+    git rebase origin/main
+    git push --force-with-lease
+
+Amend the previous commit without changing its message:
+    git commit --amend --no-edit
+
+Temporarily set work aside, switch tasks, then come back:
+    git stash push -m "WIP: refactor auth"
+    git checkout main
+    git stash pop
+
+Undo the last commit but keep the changes staged:
+    git reset --soft HEAD~1
+
+Find the commit that introduced a bug:
+    git bisect start
+    git bisect bad
+    git bisect good v1.2.0

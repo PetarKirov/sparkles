@@ -1,0 +1,1 @@
+List volumes known to the daemon, both anonymous and named.

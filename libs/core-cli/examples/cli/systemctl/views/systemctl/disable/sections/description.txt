@@ -1,0 +1,3 @@
+Disable one or more unit files, removing the symlinks created by `enable` so they are no longer started automatically at boot.
+
+Disabling a unit does not stop a currently running instance; combine with `--now` for the equivalent of "stop and disable".

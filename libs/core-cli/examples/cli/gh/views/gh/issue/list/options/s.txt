@@ -1,0 +1,1 @@
+Filter issues by state. Defaults to `open`; pass `closed` to see resolved work or `all` to retrieve everything.

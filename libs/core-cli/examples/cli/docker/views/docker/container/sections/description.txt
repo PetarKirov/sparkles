@@ -1,0 +1,3 @@
+Manage the full lifecycle of containers — create new ones from images, list running ones, exec into them, view their logs, stop them, and remove them when you're done.
+
+Most container commands accept either a container ID prefix or a container name. Names can be assigned at create-time via `--name`, or generated automatically by Docker as funny adjective+noun combinations like `priceless_hopper`.

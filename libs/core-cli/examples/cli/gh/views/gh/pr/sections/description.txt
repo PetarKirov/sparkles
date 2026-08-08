@@ -1,0 +1,3 @@
+Work with GitHub pull requests.
+
+Most subcommands accept either a PR number, a URL, or a branch name. Run `gh pr create` from a feature branch and gh will infer the base branch from the repository's default branch.

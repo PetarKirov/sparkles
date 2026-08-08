@@ -1,0 +1,5 @@
+Builds the package in the current working directory or the package referenced by `package`.
+
+By default the package is built in `debug` mode. The `--build` option selects a build type, which is roughly equivalent to a compiler optimization preset combined with a set of debug-info and contract-checking flags.
+
+Build artifacts are cached under `.dub/build/` so subsequent invocations only recompile what changed. Pass `--force` to rebuild everything from scratch.

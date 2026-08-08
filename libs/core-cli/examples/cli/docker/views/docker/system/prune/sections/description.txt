@@ -1,0 +1,3 @@
+Remove all unused Docker objects in one shot — stopped containers, networks not used by any container, dangling images, and (with `--all`) every image that no container references.
+
+Pass `--volumes` to also prune anonymous volumes; named volumes are always preserved unless `docker volume prune` is invoked separately.
