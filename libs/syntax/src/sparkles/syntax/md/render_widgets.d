@@ -130,6 +130,14 @@ struct MdViewOptions
     /// ditto, for the vertical track.
     size_t fenceVBarHitBase = 0;
 
+    /// `codeBody.start` of the fence whose horizontal bar is hovered or
+    /// grabbed (`size_t.max` = none): its thumb brightens to the accent —
+    /// the cell-space analog of the pane bars' hover feedback. Like
+    /// `copiedFence`, the state lives in the app; the view stays pure.
+    size_t hotFenceHBar = size_t.max;
+    /// ditto, for the vertical track.
+    size_t hotFenceVBar = size_t.max;
+
     /// The left indentation the ancestor chain has already consumed, in
     /// cells (quote bars, list leaders) — maintained by the block cases so
     /// glyph-composed chrome (the fence box) knows its exact width.
@@ -697,10 +705,12 @@ private uint fenceBottomBorder(ref Builder b, in MdViewOptions opt,
     if (hOver && track > 0)
     {
         const g = scrollbarThumb(widest, innerW, offsetX, track);
+        const hot = opt.hotFenceHBar == blk.codeBody.start;
         spans ~= ruleSpan(opt, repGlyph("─", g.start));
         spans ~= TextSpan(repGlyph("━", g.extent), Slot.chromeAccent,
             opt.baseStyle, noBreak: true,
-            fg: opt.theme.codeFg, hasFg: opt.theme.present);
+            fg: hot ? opt.theme.accentBlue : opt.theme.codeFg,
+            hasFg: opt.theme.present);
         spans ~= ruleSpan(opt,
             repGlyph("─", track - g.start - g.extent));
         if (opt.fenceHBarHitBase != 0)
@@ -730,6 +740,7 @@ private uint fenceVTrack(ref Builder b, in MdViewOptions opt,
     import sparkles.ui.state : scrollbarThumb;
 
     const g = scrollbarThumb(lines, shownRows, offsetY, shownRows);
+    const hot = opt.hotFenceVBar == blk.codeBody.start;
     auto cells = new uint[](0);
     foreach (r; 0 .. shownRows)
     {
@@ -737,7 +748,8 @@ private uint fenceVTrack(ref Builder b, in MdViewOptions opt,
         TextSpan sp = TextSpan(onThumb ? "┃" : "│",
             onThumb ? Slot.chromeAccent : Slot.border, opt.baseStyle,
             noBreak: true,
-            fg: onThumb ? opt.theme.codeFg : opt.theme.ruleFg,
+            fg: onThumb ? (hot ? opt.theme.accentBlue : opt.theme.codeFg)
+                : opt.theme.ruleFg,
             hasFg: opt.theme.present);
         cells ~= b.add(Widget(kind: WidgetKind.rich, spans: [sp],
             slot: Slot.border, textStyle: opt.baseStyle));
@@ -1096,8 +1108,16 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 }
                 parts ~= viewport;
                 if (vOver)
+                {
+                    // The track IS the right border (like the bottom-border
+                    // h bar): a 1-cell gap where the padding was, then the
+                    // `│/┃` column sitting on the panel's right edge — the
+                    // decoration drops its right side to make room.
+                    parts ~= b.add(Widget(kind: WidgetKind.column,
+                        width: SizeSpec.fixed(1)));
                     parts ~= fenceVTrack(b, opt, blk, lines, shownRows,
                         fs.y);
+                }
                 body_ = b.add(Widget(kind: WidgetKind.row, children: parts,
                     width: SizeSpec.grow()));
             }
@@ -1133,9 +1153,12 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             // mode's bottom row doubles as the scrollbar.
             Widget panel = Widget(kind: WidgetKind.panel, children: [body_],
                 slot: Slot.surface, paintBackground: true,
-                padding: Insets(0, 2, 0, 2), hitId: opt.hitId,
+                padding: vOver ? Insets(0, 0, 0, 2) : Insets(0, 2, 0, 2),
+                hitId: opt.hitId,
                 width: SizeSpec.fixed(boxW),
-                decoration: Decoration(borderWidth: Insets(0, 1, 0, 1),
+                decoration: Decoration(
+                    borderWidth: vOver ? Insets(0, 0, 0, 1)
+                        : Insets(0, 1, 0, 1),
                     borderStyle: BorderStyle.solid,
                     borderSlot: Slot.border));
             if (opt.theme.present)

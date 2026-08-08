@@ -446,6 +446,10 @@ struct ViewerModel
             fenceScrolls: fenceScrollList(),
             fenceHBarHitBase: fenceHBarHitBase,
             fenceVBarHitBase: fenceVBarHitBase,
+            hotFenceHBar: (fenceSv.h.hovered || fenceSv.h.dragging)
+                ? fenceSvOwner : size_t.max,
+            hotFenceVBar: (fenceSv.v.hovered || fenceSv.v.dragging)
+                ? fenceSvOwner : size_t.max,
             diffBlocks: preview.decorations, // `DVN6`
         };
         foldable = foldableSpans(preview.doc);
@@ -791,6 +795,23 @@ struct ViewerModel
 
         if (inGroup(preview.doc.root.children))
             rebuild();
+    }
+
+    private bool fenceHotH, fenceHotV;
+
+    /// Rebuilds when the fence-bar hover/grab state changed since the last
+    /// step — the thumbs' accent feedback is part of the widget tree, the
+    /// same way the ✔ copy feedback is. True when a rebuild happened.
+    bool syncFenceHot()
+    {
+        const h = fenceSv.h.hovered || fenceSv.h.dragging;
+        const v = fenceSv.v.hovered || fenceSv.v.dragging;
+        if (h == fenceHotH && v == fenceHotV)
+            return false;
+        fenceHotH = h;
+        fenceHotV = v;
+        rebuild();
+        return true;
     }
 
     /// Tab (`VIW`): a document with a preview cycles preview → highlighted →

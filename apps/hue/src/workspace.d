@@ -455,6 +455,8 @@ struct WorkspaceTui
     {
         if (viewer.vm.scroll.grabbing)
             return viewer.vm.scroll.shape();
+        if (viewer.vm.fenceSv.grabbing)
+            return viewer.vm.fenceSv.shape();
         if (tree.scroll.grabbing)
             return tree.scroll.shape();
         return PointerShape.default_;
@@ -464,7 +466,10 @@ struct WorkspaceTui
     private PointerShape paneHoverShape() @safe pure nothrow @nogc
     {
         const v = viewer.vm.scroll.shape();
-        return v != PointerShape.default_ ? v : tree.scroll.shape();
+        if (v != PointerShape.default_)
+            return v;
+        const f = viewer.vm.fenceSv.shape(); // the fence bars — same machine
+        return f != PointerShape.default_ ? f : tree.scroll.shape();
     }
 
     /// Applies one event; returns false to quit.
