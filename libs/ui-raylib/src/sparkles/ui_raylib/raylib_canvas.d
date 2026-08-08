@@ -286,10 +286,13 @@ struct RaylibCanvas
         // `╭`/`╰` stems are, so the fence chrome's edges meet (the quote bar
         // gains the same parity). Dotted/dashed accents keep the rect edge.
         const inset = b.style == BorderStyle.solid ? cellW / 2.0f : 0;
+        // (len, thick) order: the height is the LENGTH of a vertical edge.
+        // Swapped, each side rendered as a one-pixel-tall sliver hanging off
+        // the top corner — the box read as floating horizontal lines.
         strokeEdge(x + (b.width.left ? inset : 0), y,
-            b.width.left, h, false, b.style, c);                               // left
+            h, b.width.left, false, b.style, c);                               // left
         strokeEdge(x + w - b.width.right - (b.width.right ? inset : 0), y,
-            b.width.right, h, false, b.style, c);                              // right
+            h, b.width.right, false, b.style, c);                              // right
     }
 
     /// Strokes one horizontal/vertical edge of thickness `thick`, dashed for a
