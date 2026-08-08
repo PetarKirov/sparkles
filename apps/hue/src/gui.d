@@ -1993,12 +1993,8 @@ int runGui(
                     vTgt = &t;
             }
 
-            // A pointer another affordance owns (the pane scrollbar's drag
-            // straying over a fence bar) must not read as hover — the same
-            // STM11 courtesy every grab already extends the others.
-            const barsLive = inp.capture.isFree
-                || inp.capture.ownedBy(capFenceSb);
-
+            // (Hover-while-foreign-owned is gated inside the machine now —
+            // STM11 covers hover as well as the press, for every bar.)
             if (hTgt !is null && !vm.fenceSv.v.dragging)
             {
                 const owner = hTgt.hitId - vm.fenceHBarHitBase;
@@ -2009,7 +2005,7 @@ int runGui(
                     FenceScroll(owner, 0, 0));
                 // The track excludes the `╰`/`╯` corners.
                 inp.capture = vm.fenceSv.stepH(inp.capture, capFenceSb,
-                    barsLive,
+                    true,
                     ScrollPointer(over: hTgt.rect.contains(dpf),
                         pressed: clickPressed(),
                         released: inp.fin.leftReleased,
@@ -2030,7 +2026,7 @@ int runGui(
                 const cur = vm.fenceScrollAt.get(owner,
                     FenceScroll(owner, 0, 0));
                 inp.capture = vm.fenceSv.stepV(inp.capture, capFenceSb,
-                    barsLive,
+                    true,
                     ScrollPointer(over: vTgt.rect.contains(dpf),
                         pressed: clickPressed(),
                         released: inp.fin.leftReleased,
