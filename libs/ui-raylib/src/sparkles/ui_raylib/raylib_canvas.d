@@ -279,8 +279,15 @@ struct RaylibCanvas
                 roundnessOf(v.borderRadius, w, h), 8, thick, c);
             return;
         }
-        strokeEdge(x, y, w, b.width.top, true, b.style, c);                    // top
-        strokeEdge(x, y + h - b.width.bottom, w, b.width.bottom, true, b.style, c); // bottom
+        // Border widths are CELL-space weights; stroke thickness scales by
+        // the same unit the procedural box glyphs use for their arms
+        // (`drawBox`'s light stroke), so "1 wide" here matches a `│` and
+        // "2 wide" a `┃` at any cell size.
+        const md = cellW < cellH ? cellW : cellH;
+        const unit = md / 14 < 1 ? 1.0f : cast(float)(md / 14);
+        strokeEdge(x, y, w, b.width.top * unit, true, b.style, c);             // top
+        strokeEdge(x, y + h - b.width.bottom * unit, w, b.width.bottom * unit,
+            true, b.style, c);                                                 // bottom
         // A solid vertical side centers in its border COLUMN, where the cell
         // backends put their `│` — and where a glyph-composed corner row's
         // `╭`/`╰` stems are, so the fence chrome's edges meet (the quote bar
@@ -289,10 +296,12 @@ struct RaylibCanvas
         // (len, thick) order: the height is the LENGTH of a vertical edge.
         // Swapped, each side rendered as a one-pixel-tall sliver hanging off
         // the top corner — the box read as floating horizontal lines.
-        strokeEdge(x + (b.width.left ? inset : 0), y,
-            h, b.width.left, false, b.style, c);                               // left
-        strokeEdge(x + w - b.width.right - (b.width.right ? inset : 0), y,
-            h, b.width.right, false, b.style, c);                              // right
+        strokeEdge(x + (b.width.left
+                ? inset - b.width.left * unit / 2 : 0), y,
+            h, b.width.left * unit, false, b.style, c);                        // left
+        strokeEdge(x + w - (b.width.right
+                ? inset + b.width.right * unit / 2 : b.width.right), y,
+            h, b.width.right * unit, false, b.style, c);                       // right
     }
 
     /// Strokes one horizontal/vertical edge of thickness `thick`, dashed for a
