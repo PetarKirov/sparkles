@@ -23,12 +23,13 @@ and the gallery keeps only the release chord and the scrollback keys
 */
 module pages.terminal_page;
 
-import std.conv : text;
+import std.conv : text, to;
 
+import sparkles.base.text.width : truncateField;
 import sparkles.input : Key, KeyEvent;
 import sparkles.ui.components.chrome : actionBar, scrollbar;
 import sparkles.ui.geometry : SizeSpec;
-import sparkles.ui.style : Decoration, Slot, TextStyle;
+import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
 import kit;
@@ -41,20 +42,40 @@ static immutable string[] keys = [
     "n new", "x close", "h/l tab", "⏎ focus", "⇧PgUp history", "ctrl+] leave",
 ];
 
-/// The pane's own hit id. Tab ids start at 1, so `hitTerminal + 0` can never
-/// name a tab — the list rows and the pane share a base without colliding.
+/// The pane's own hit id. Tab lanes start at `+ 2` (ids start at 1), so the
+/// `+ 0` slot is the pane's alone.
 enum size_t hitPane = hitTerminal;
+
+/// A tab's select lane: pressing it activates the tab. Unbounded upward —
+/// `hitTerminal` is the last base for exactly this reason.
+size_t tabHit(uint id) @safe pure nothrow @nogc => hitTerminal + 2 * id;
+
+/// A tab's close lane — the hover ✕.
+size_t closeHit(uint id) @safe pure nothrow @nogc => tabHit(id) + 1;
+
+/// Whether `id` is this page's own chrome — the shell keeps a focused
+/// terminal's capture across presses on these, and drops it for anything else.
+bool ownsId(size_t id) @safe pure nothrow @nogc
+    => (id >= hitTermActions && id < hitTermActions + 3) || id >= hitTerminal;
 
 /// The chrome rows the page spends beyond the pane: heading, spacer, action
 /// bar, spacer, status line.
 private enum int chromeRows = 6;
 
-/// The terminal list's width — label room for "▸ shell 8 ✕ 127".
+/// The full tab table's width, borders included.
 private enum int listWidth = 18;
 
-/// Below this content width the list yields (the tabs stay reachable with
-/// `h`/`l`), exactly as the shell's own sidebar yields the surface.
+/// The label cells inside the table: width less the border pair, the padding
+/// pair, and the always-reserved ✕ column with its gap — reserved so a label
+/// does not reflow the moment the pointer reveals the close button.
+private enum int labelCells = listWidth - 2 - 2 - 2;
+
+/// Content width thresholds: the full table above, the one-cell numeric mini
+/// list below — the list only vanishes when even one cell would starve the
+/// pane (the defect this replaces: it vanished with cells to spare).
 private enum int listMinContent = 48;
+/// ditto
+private enum int miniMinContent = 24;
 
 /// ditto
 uint view(ref Builder b, in GalleryState s)
@@ -81,8 +102,8 @@ uint view(ref Builder b, in GalleryState s)
         // like the shell's own gutter: content that reflowed sideways the
         // moment history crossed the viewport would be worse than one
         // blank column.
-        const listOn = w >= listMinContent;
-        const listW = listOn ? listWidth : 0;
+        const listW = w >= listMinContent ? listWidth
+            : w >= miniMinContent ? 1 : 0;
         const paneW = w - 1 - listW;
 
         uint[] across;
@@ -96,8 +117,10 @@ uint view(ref Builder b, in GalleryState s)
                 borderSlot: s.terms.focused ? Slot.chromeFocused : Slot.border),
         ));
         across ~= scrollbackBar(b, s, paneRows);
-        if (listOn)
-            across ~= termList(b, s, paneRows);
+        if (listW == listWidth)
+            across ~= termTable(b, s, paneRows);
+        else if (listW == 1)
+            across ~= termMini(b, s, paneRows);
 
         body_ ~= b.add(Widget(
             kind: WidgetKind.row,
@@ -144,35 +167,165 @@ private uint scrollbackBar(ref Builder b, in GalleryState s, int paneRows)
         width: SizeSpec.fixed(1), height: SizeSpec.fixed(paneRows)));
 }
 
-/// The vertical terminal list, VSCode-panel style: one row per tab, the
-/// active one marked, an exited one carrying its status. Rows mint the same
-/// `hitTerminal + id` the old strip did, so activation is unchanged.
-private uint termList(ref Builder b, in GalleryState s, int paneRows)
+/**
+The tab table, full mode: an outer border, an inner rule between rows, and a
+row background distinct from the page (the `chip`/`selection`/`chromeFocused`
+washes composite over the theme's own background, so every theme keeps its
+cast — `surface` would not). Selection is background + bold, not a marker
+glyph: the nav sidebar's "▸" survives a colourless terminal, but this list
+trades that for the row reading as one object, by explicit request.
+
+Whether a row is hot considers $(B both) of its lanes — the ✕ sits inside the
+row, and hovering it must not un-hover the row it closes.
+*/
+private uint termTable(ref Builder b, in GalleryState s, int paneRows)
+{
+    uint[] rows;
+    foreach (i; 0 .. s.terms.count)
+    {
+        if (i > 0)
+            rows ~= hrule(b); // the inner border
+        rows ~= termRow(b, s, i);
+    }
+    const inner = b.add(Widget(
+        kind: WidgetKind.column,
+        children: rows,
+        width: SizeSpec.grow(),
+    ));
+    return b.add(Widget(
+        kind: WidgetKind.column,
+        children: [inner],
+        width: SizeSpec.fixed(listWidth),
+        height: SizeSpec.fixed(paneRows),
+        clipX: true,
+        clipY: true,
+        padding: intoSymmetric(1, 1),
+        decoration: Decoration(borderWidth: intoAll(1),
+            borderStyle: BorderStyle.solid, borderSlot: Slot.border),
+    ));
+}
+
+/// One tab row: a grapheme-safe truncated label, a filler so the background
+/// spans the table, and the ✕ column — reserved always, revealed on hover.
+private uint termRow(ref Builder b, in GalleryState s, size_t i)
+{
+    const t = s.terms.tabs[i];
+    const active = i == s.terms.active;
+    const hot = s.pointerAffordances
+        && (s.hover.isHot(tabHit(t.id)) || s.hover.isHot(closeHit(t.id)));
+
+    const caption = truncateField(
+        t.labelText.idup ~ (t.exited ? text(" (", t.exitStatus, ")") : ""),
+        labelCells);
+    uint[] children;
+    children ~= b.add(Widget(
+        kind: WidgetKind.text,
+        text: caption,
+        slot: active ? Slot.chromeAccent : t.exited ? Slot.muted : Slot.chrome,
+        textStyle: TextStyle(bold: active),
+    ));
+    children ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+    if (hot)
+        children ~= b.add(Widget(
+            kind: WidgetKind.text,
+            text: "✕",
+            hitId: closeHit(t.id),
+            slot: Slot.error,
+        ));
+    else
+        children ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+
+    return b.add(Widget(
+        kind: WidgetKind.row,
+        children: children,
+        width: SizeSpec.grow(),
+        hitId: tabHit(t.id),
+        paintBackground: true,
+        slot: active ? Slot.chromeFocused : hot ? Slot.selection : Slot.chip,
+        gap: 1,
+    ));
+}
+
+/**
+The one-cell mini list: each tab is a position glyph whose cell $(B becomes)
+the close button on hover — the node's hit id follows its face, so a click
+does exactly what the glyph shows. Selection here is keyboard-only (`h`/`l`),
+by explicit request.
+*/
+private uint termMini(ref Builder b, in GalleryState s, int paneRows)
 {
     uint[] rows;
     foreach (i; 0 .. s.terms.count)
     {
         const t = s.terms.tabs[i];
         const active = i == s.terms.active;
-        auto caption = text(active ? "▸ " : "  ", t.labelText,
-            t.exited ? text(" ✕ ", t.exitStatus) : "");
-        if (caption.length > listWidth)
-            caption = caption[0 .. listWidth];
+        const hot = s.pointerAffordances
+            && (s.hover.isHot(tabHit(t.id)) || s.hover.isHot(closeHit(t.id)));
         rows ~= b.add(Widget(
             kind: WidgetKind.text,
-            text: caption,
-            hitId: hitTerminal + t.id,
-            slot: active ? Slot.chromeAccent
-                : t.exited ? Slot.muted : Slot.chrome,
+            text: hot ? "✕" : positionGlyph(s, i + 1),
+            hitId: hot ? closeHit(t.id) : tabHit(t.id),
+            paintBackground: true,
+            slot: active ? Slot.chromeFocused : hot ? Slot.selection : Slot.chip,
             textStyle: TextStyle(bold: active),
         ));
     }
     return b.add(Widget(
         kind: WidgetKind.column,
         children: rows,
-        width: SizeSpec.fixed(listWidth),
+        width: SizeSpec.fixed(1),
         height: SizeSpec.fixed(paneRows),
+        clipY: true,
     ));
+}
+
+/**
+Position `n`'s mini-list glyph: the `--term-tab-glyphs` override's n-th code
+point when one exists, else the circled-number series, else ASCII digits when
+the theme forgoes unicode.
+*/
+string positionGlyph(in GalleryState s, size_t n)
+{
+    if (s.termTabGlyphs.length)
+    {
+        import std.utf : stride;
+
+        size_t i = 0, pos = 1;
+        while (i < s.termTabGlyphs.length)
+        {
+            const len = stride(s.termTabGlyphs, i);
+            if (pos == n)
+                return s.termTabGlyphs[i .. i + len].idup; // dip1000: `s` is scope
+            i += len;
+            pos++;
+        }
+        // An override shorter than the tab count falls through to the default.
+    }
+    if (!s.theme.glyphs.unicode)
+        return n <= 9 ? [cast(char)('0' + n)].idup : "#";
+    return circledNumber(n).to!string;
+}
+
+/**
+The circled-number series: ⓪, ①–⑳, ㉑–㉟, ㊱–㊿ — three Unicode runs that
+LOOK contiguous and are not.
+
+Width caveat, stated once: ⓪–⑳ are East-Asian-$(B Ambiguous) — one cell under
+this repository's rule (and most terminals') — but ㉑–㊿ are East-Asian-$(B
+Wide), two cells. Positions past 20 are unreachable while `maxTerms` is 8; a
+cap past 20 must widen the mini column or fall back to ASCII there.
+*/
+dchar circledNumber(size_t n) @safe pure nothrow @nogc
+{
+    if (n == 0)
+        return '⓪';
+    if (n <= 20)
+        return cast(dchar)(0x2460 + n - 1);
+    if (n <= 35)
+        return cast(dchar)(0x3251 + n - 21);
+    if (n <= 50)
+        return cast(dchar)(0x32B1 + n - 36);
+    return '#';
 }
 
 private int clampInt(long v) pure nothrow @nogc
@@ -191,6 +344,13 @@ private auto intoAll(int n) pure nothrow @nogc
     import sparkles.ui.geometry : Insets;
 
     return Insets.all(n);
+}
+
+private auto intoSymmetric(int v, int h) pure nothrow @nogc
+{
+    import sparkles.ui.geometry : Insets;
+
+    return Insets.symmetric(v, h);
 }
 
 /// ditto — offered keys only while the keyboard is in the content region and
@@ -241,13 +401,21 @@ bool handleActivate(ref GalleryState s, size_t id)
             s.terms.focused = true;
         return true;
     }
-    if (id > hitTerminal && id < hitTermActions)
+    if (id > hitTerminal)
     {
-        // A tab, by identity — find its current slot.
+        // A tab lane, by identity: even offset selects, odd closes. The find
+        // is by minted id, so a press resolved against last frame's tree
+        // lands on the same tab after a neighbour closed.
+        const offset = id - hitTerminal;
+        const tabId = offset / 2;
+        const isClose = (offset & 1) == 1;
         foreach (i; 0 .. s.terms.count)
-            if (hitTerminal + s.terms.tabs[i].id == id)
+            if (s.terms.tabs[i].id == tabId)
             {
-                s.terms.active = i;
+                if (isClose)
+                    s.terms.closeRequested = cast(int) i;
+                else
+                    s.terms.active = i;
                 return true;
             }
         return true; // one of ours, even if the tab just closed under it
@@ -300,7 +468,7 @@ bool handleActivate(ref GalleryState s, size_t id)
     assert(!handleKey(s, KeyEvent(Key.char_, 'z')), "unclaimed keys fall through");
 }
 
-@("ui_gallery.pages.terminalActivationMapsIdsByIdentity")
+@("ui_gallery.pages.terminalActivationMapsLanesByIdentity")
 @safe unittest
 {
     GalleryState s;
@@ -311,8 +479,13 @@ bool handleActivate(ref GalleryState s, size_t id)
     // Closing the first tab must not redirect a press aimed at the second:
     // the hit id carries the identity, not the slot.
     s.terms.close(0);
-    assert(handleActivate(s, hitTerminal + id2));
+    assert(handleActivate(s, tabHit(id2)));
     assert(s.terms.tabs[s.terms.active].id == id2);
+
+    // The close lane aims at the same tab's slot.
+    assert(handleActivate(s, closeHit(id2)));
+    assert(s.terms.closeRequested == cast(int) s.terms.active);
+    s.terms.closeRequested = -1;
 
     // The action bar: spawn, close, and the hold toggle.
     assert(handleActivate(s, hitTermActions + 0));
@@ -326,6 +499,109 @@ bool handleActivate(ref GalleryState s, size_t id)
     assert(handleActivate(s, hitPane));
     assert(s.terms.focused);
     assert(!handleActivate(s, 1));
+}
+
+@("ui_gallery.pages.terminalHitLanesNeverCollide")
+@safe pure nothrow @nogc unittest
+{
+    // Two unbounded id streams from one base: they must interleave without
+    // touching each other, the pane, or the action bar — for ANY minted id,
+    // not just the first eight (ids are never reused, so they grow forever;
+    // the old single-lane layout collided with the actions at id 100).
+    foreach (id; 1 .. 201)
+    {
+        const t = tabHit(cast(uint) id);
+        const c = closeHit(cast(uint) id);
+        assert(t != c);
+        assert(t > hitPane && c > hitPane);
+        assert(t >= hitTermActions + 3 && c >= hitTermActions + 3);
+        assert(ownsId(t) && ownsId(c));
+    }
+    assert(ownsId(hitPane) && ownsId(hitTermActions));
+    assert(!ownsId(0) && !ownsId(1));
+}
+
+@("ui_gallery.pages.terminalLabelsTruncateByCellsNotBytes")
+@safe unittest
+{
+    import std.utf : validate;
+    import sparkles.base.text.grapheme : visibleWidth;
+    import sparkles.ui.geometry : Constraints, Size;
+    import sparkles.ui.layout : layout;
+
+    // The defect this pins: the old list sliced the caption at a BYTE count,
+    // so a multibyte title lost extra characters — and could be cut mid
+    // code point, poisoning the tree with invalid UTF-8.
+    GalleryState s;
+    s.surface = Size(100, 30);
+    cast(void) s.terms.spawn();
+    s.terms.tabs[0].setLabel("héllo wörld ünïcodé täb");
+
+    auto b = Builder();
+    auto tree = b.finish(view(b, s));
+    cast(void) layout(tree, Constraints(maxW: s.contentWidth));
+
+    bool found;
+    foreach (ref n; tree.nodes)
+        if (n.kind == WidgetKind.text && n.text.length > 4
+            && n.text[$ - 3 .. $] == "…")
+        {
+            validate(n.text);
+            assert(visibleWidth(n.text) <= labelCells,
+                "a caption wider than its column");
+            found = true;
+        }
+    assert(found, "the long label must render truncated with an ellipsis");
+}
+
+@("ui_gallery.pages.terminalMiniModeAppearsBelowTheBreakpoint")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints, Size;
+    import sparkles.ui.layout : layout;
+
+    static bool hasText(in GalleryState s, string wanted)
+    {
+        auto b = Builder();
+        // The sweep's shape: build + layout, then walk the nodes.
+        auto sCopy = s;
+        auto tree = b.finish(view(b, sCopy));
+        cast(void) layout(tree, Constraints(maxW: sCopy.contentWidth));
+        foreach (ref n; tree.nodes)
+            if (n.kind == WidgetKind.text && n.text == wanted)
+                return true;
+        return false;
+    }
+
+    GalleryState s;
+    cast(void) s.terms.spawn();
+    cast(void) s.terms.spawn();
+
+    // Wide: the full table shows labels, no numeric cells.
+    s.surface = Size(100, 30);
+    assert(!hasText(s, "①"));
+
+    // Narrow: the mini list replaces it — position glyphs, not labels.
+    s.surface = Size(45, 24);
+    assert(hasText(s, "①") && hasText(s, "②"));
+
+    // The override wins, one code point per position.
+    s.termTabGlyphs = "ab";
+    assert(hasText(s, "a") && hasText(s, "b"));
+}
+
+@("ui_gallery.pages.terminalCircledNumberRangeSeams")
+@safe pure nothrow @nogc unittest
+{
+    // Three Unicode runs that look contiguous and are not — each seam pinned.
+    assert(circledNumber(0) == '⓪');
+    assert(circledNumber(1) == '①');
+    assert(circledNumber(20) == '⑳');
+    assert(circledNumber(21) == '㉑');
+    assert(circledNumber(35) == '㉟');
+    assert(circledNumber(36) == '㊱');
+    assert(circledNumber(50) == '㊿');
+    assert(circledNumber(51) == '#');
 }
 
 @("ui_gallery.pages.terminalPaneFollowsTheSurfaceWidth")

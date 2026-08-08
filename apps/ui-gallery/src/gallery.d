@@ -30,7 +30,7 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_app.run_app : AppTheme;
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
-import pages.terminal_page : hitPane, paneHeight;
+import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
 import registry : pages, stepPage, terminalPageIndex;
 import scrollbars;
 import state;
@@ -651,7 +651,7 @@ struct Gallery
         // keyboard back from a focused terminal — clicking the catalog means
         // using it. Its tabs and buttons keep the capture (VSCode's shape:
         // switching tabs moves the focus, it does not drop it).
-        if (s.terms.focused && (id < hitTerminal || id >= hitTermActions + 3))
+        if (s.terms.focused && !terminalOwns(id))
             s.terms.focused = false;
 
         if (id >= hitNav && id < hitNav + pages.length)
@@ -1304,6 +1304,58 @@ version (unittest)
     assert(!isCaptureRelease(KeyEvent(Key.char_, ']')), "a bare ] is text");
     assert(!isCaptureRelease(KeyEvent(Key.char_, 'c', Mods(ctrl: true))),
         "Ctrl+C is the shell's interrupt, never the gallery's");
+}
+
+@("ui_gallery.gallery.terminalTabHoverRevealsTheClose")
+@safe unittest
+{
+    import pages.terminal_page : closeHit, tabHit;
+    import registry : terminalPageIndex;
+    import sparkles.input : PointerAction, PointerEvent;
+    import sparkles.ui.state : hoverTargets;
+
+    // The ✕ is hover-revealed: absent from a cold tree, present (with the
+    // close lane's hit id) once the pointer rests on the tab's row — driven
+    // through the real event path, not by poking the hover state.
+    Gallery g;
+    g.s.page = terminalPageIndex;
+    g.s.surface = sizeOf(100, 30);
+    const id = g.s.terms.spawn();
+
+    // Find the tab row's painted rect the way the shell does.
+    RecordingHost h;
+    h.size = sizeOf(100, 30);
+    auto tree = g.view(h);
+    auto frames = layout(tree,
+        Constraints(maxW: g.s.surface.width, maxH: g.s.surface.height));
+    const targets = hoverTargets(tree, frames);
+    Point at;
+    bool found;
+    foreach (t; targets)
+        if (t.hitId == tabHit(id))
+        {
+            at = Point(t.rect.x + 1, t.rect.y);
+            found = true;
+        }
+    assert(found, "the tab row must be hit-testable");
+
+    bool hasClose()
+    {
+        auto b2 = Builder();
+        auto t2 = b2.finish(pages[g.s.page].view(b2, g.s));
+        foreach (ref n; b2.nodes)
+            if (n.kind == WidgetKind.text && n.text == "✕"
+                && n.hitId == closeHit(id))
+                return true;
+        cast(void) t2;
+        return false;
+    }
+
+    assert(!hasClose, "no pointer, no close button");
+    drive(g, [Event(PointerEvent(action: PointerAction.move, pos: at))],
+        100, 30);
+    assert(g.s.hover.isHot(tabHit(id)));
+    assert(hasClose, "a hovered row reveals its ✕");
 }
 
 @("ui_gallery.gallery.tabIsNeverThePagesToTake")
