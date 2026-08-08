@@ -95,7 +95,7 @@ module app;
 
 // std.* modules
 import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
-import std.array : array, join;
+import std.array : array, join, split;
 import std.conv : text, to;
 import core.time : Duration, msecs, seconds;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
@@ -301,6 +301,14 @@ enum StandaloneExampleMode
 {
     run,
     buildOnly,
+}
+
+/// What a `// ci:` directive asked for: how to execute the example, and — for
+/// `run` — the arguments to hand the program.
+struct StandaloneExampleSpec
+{
+    StandaloneExampleMode mode;
+    string[] runArgs;
 }
 
 struct FailureReplay
@@ -1711,12 +1719,12 @@ private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
             continue;
         }
 
-        const mode = detectStandaloneExampleMode(exampleFile);
-        const action = standaloneExampleAction(mode);
-        const verb = standaloneExampleVerb(mode);
+        auto spec = detectStandaloneExampleSpec(exampleFile);
+        const action = standaloneExampleAction(spec.mode);
+        const verb = standaloneExampleVerb(spec.mode);
         const progress = i"[$(i + 1)/$(exampleFiles.length)]".text;
-        const header = formatExampleFileHeader(exampleFile, progress, action);
-        auto result = executeStandaloneExampleFile(exampleFile, repoRoot, mode);
+        const header = formatExampleFileHeader(exampleFile, progress, action, spec.runArgs);
+        auto result = executeStandaloneExampleFile(exampleFile, repoRoot, spec);
 
         if (result.success)
         {
@@ -1760,12 +1768,16 @@ private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
 private ExecutionResult executeStandaloneExampleFile(
     string exampleFile,
     string repoRoot,
-    StandaloneExampleMode mode,
+    StandaloneExampleSpec spec,
 )
 {
+    const action = standaloneExampleAction(spec.mode);
+    // A `build-only` example is never executed, so its directive's arguments —
+    // if it somehow carries any — have nowhere to go.
+    auto runArgs = spec.mode == StandaloneExampleMode.run ? spec.runArgs : null;
     auto result = executeLogged(
-        dubSingleFileCommand(standaloneExampleAction(mode), exampleFile, repoRoot),
-        standaloneExampleAction(mode) ~ " " ~ exampleFile.baseName,
+        dubSingleFileCommand(action, exampleFile, repoRoot, runArgs),
+        action ~ " " ~ exampleFile.baseName,
         exampleTimeout());
     auto cleaned = result.output.unstyle
         .lineSplitter
@@ -2986,7 +2998,13 @@ private string detectRepoRoot()
         : null;
 }
 
-private string[] dubSingleFileCommand(string action, string filePath, string repoRoot)
+@safe pure
+private string[] dubSingleFileCommand(
+    string action,
+    string filePath,
+    string repoRoot,
+    string[] runArgs = null,
+)
 in (action == "run" || action == "build", "action must be dub run or dub build")
 {
     // `--color=always` forces dub *and* the compiler to emit ANSI diagnostics
@@ -3008,16 +3026,21 @@ in (action == "run" || action == "build", "action must be dub run or dub build")
         command ~= ["--root", repoRoot];
 
     command ~= ["--single", filePath];
+
+    // Everything after `--` is the program's, not dub's.
+    if (runArgs.length > 0)
+        command ~= ["--"] ~ runArgs;
+
     return command;
 }
 
-private StandaloneExampleMode detectStandaloneExampleMode(string filePath)
+private StandaloneExampleSpec detectStandaloneExampleSpec(string filePath)
 {
-    return parseStandaloneExampleMode(filePath.readText.lineSplitter.array);
+    return parseStandaloneExampleSpec(filePath.readText.lineSplitter.array);
 }
 
 @safe pure
-private StandaloneExampleMode parseStandaloneExampleMode(const(char[])[] lines)
+private StandaloneExampleSpec parseStandaloneExampleSpec(const(char[])[] lines)
 {
     enum metadataPrefixes = ["// ci:", "// run_md_examples:"];
 
@@ -3046,24 +3069,124 @@ private StandaloneExampleMode parseStandaloneExampleMode(const(char[])[] lines)
             continue;
         }
 
+        // A `module …;` declaration may sit between the recipe and the
+        // directive. It is not a comment, so without this the scan would stop
+        // at it (see the loop tail) and the directive below would be ignored —
+        // the example would silently run when it asked to be built only.
+        if (stripped.startsWith("module ") && stripped.endsWith(";"))
+            continue;
+
         foreach (metadataPrefix; metadataPrefixes)
         {
             if (!stripped.startsWith(metadataPrefix))
                 continue;
 
-            const value = stripped[metadataPrefix.length .. $].strip.toLower;
-            if (value == "build-only")
-                return StandaloneExampleMode.buildOnly;
-            if (value == "run")
-                return StandaloneExampleMode.run;
-            return StandaloneExampleMode.run;
+            // `<mode>` or `<mode> <args…>` — the first word selects the mode,
+            // the rest are the program's arguments. Only the mode word is
+            // lowercased; arguments are the author's, case included.
+            const value = stripped[metadataPrefix.length .. $].strip;
+            const spaceIdx = value.indexOf(' ');
+            const modeWord = (spaceIdx < 0 ? value : value[0 .. spaceIdx]).toLower;
+            const argsPart = spaceIdx < 0 ? "" : value[spaceIdx + 1 .. $].strip;
+
+            if (modeWord == "build-only")
+                return StandaloneExampleSpec(StandaloneExampleMode.buildOnly, null);
+
+            string[] runArgs;
+            if (argsPart.length > 0)
+                runArgs = argsPart.split.map!(a => a.idup).array;
+            return StandaloneExampleSpec(StandaloneExampleMode.run, runArgs);
         }
 
         if (!stripped.startsWith("//"))
             break;
     }
 
-    return StandaloneExampleMode.run;
+    return StandaloneExampleSpec(StandaloneExampleMode.run, null);
+}
+
+@("ci.parseStandaloneExampleSpec.directives")
+@safe pure unittest
+{
+    static StandaloneExampleSpec parse(string directive)
+    {
+        return parseStandaloneExampleSpec([
+            "#!/usr/bin/env dub",
+            "/+ dub.sdl:",
+            `    name "demo"`,
+            "+/",
+            directive,
+        ]);
+    }
+
+    // No arguments: the mode word alone.
+    assert(parse("// ci: run") == StandaloneExampleSpec(StandaloneExampleMode.run, null));
+    assert(parse("// ci: build-only")
+        == StandaloneExampleSpec(StandaloneExampleMode.buildOnly, null));
+
+    // Arguments after the mode word are the program's.
+    assert(parse("// ci: run --help")
+        == StandaloneExampleSpec(StandaloneExampleMode.run, ["--help"]));
+    assert(parse("// ci: run --colour never --width 80")
+        == StandaloneExampleSpec(StandaloneExampleMode.run, ["--colour", "never", "--width", "80"]));
+
+    // The mode word is matched case-insensitively; arguments are not touched.
+    assert(parse("// ci: RUN --Tag Value")
+        == StandaloneExampleSpec(StandaloneExampleMode.run, ["--Tag", "Value"]));
+
+    // `build-only` never runs, so it carries no arguments even if given some.
+    assert(parse("// ci: build-only --help")
+        == StandaloneExampleSpec(StandaloneExampleMode.buildOnly, null));
+
+    // The legacy prefix still works.
+    assert(parse("// run_md_examples: run --help")
+        == StandaloneExampleSpec(StandaloneExampleMode.run, ["--help"]));
+}
+
+@("ci.parseStandaloneExampleSpec.defaultsToRun")
+@safe pure unittest
+{
+    // No directive at all.
+    assert(parseStandaloneExampleSpec(["module demo;", "import std.stdio;"])
+        == StandaloneExampleSpec(StandaloneExampleMode.run, null));
+
+    // The scan stops at the first line that is neither a comment nor part of
+    // the header, so a `// ci:` below the code is not a directive.
+    assert(parseStandaloneExampleSpec(["import std.stdio;", "// ci: build-only"])
+        == StandaloneExampleSpec(StandaloneExampleMode.run, null));
+}
+
+// A `module …;` declaration is not a comment, so it would end the header scan
+// and take any directive below it with it — the example would run when it
+// asked to be built only.
+@("ci.parseStandaloneExampleSpec.moduleDeclarationDoesNotEndTheHeader")
+@safe pure unittest
+{
+    assert(parseStandaloneExampleSpec([
+        "#!/usr/bin/env dub",
+        "/+ dub.sdl:",
+        `    name "demo"`,
+        "+/",
+        "module demo;",
+        "// ci: build-only",
+    ]) == StandaloneExampleSpec(StandaloneExampleMode.buildOnly, null));
+
+    assert(parseStandaloneExampleSpec(["module demo;", "// ci: run --help"])
+        == StandaloneExampleSpec(StandaloneExampleMode.run, ["--help"]));
+}
+
+@("ci.dubSingleFileCommand.runArgsAfterDoubleDash")
+@safe unittest
+{
+    // No arguments: the command ends at the file, with no stray `--`.
+    assert(dubSingleFileCommand("run", "e.d", null)[$ - 2 .. $] == ["--single", "e.d"]);
+
+    // With arguments, `--` separates them — everything after it is the
+    // program's, not dub's.
+    assert(dubSingleFileCommand("run", "e.d", null, ["--help"])[$ - 4 .. $]
+        == ["--single", "e.d", "--", "--help"]);
+    assert(dubSingleFileCommand("run", "e.d", null, ["--width", "80"])[$ - 4 .. $]
+        == ["e.d", "--", "--width", "80"]);
 }
 
 private string standaloneExampleAction(StandaloneExampleMode mode)
@@ -3082,9 +3205,15 @@ private string formatExampleHeader(in Example example, string progress)
     return styledText(i"{dim $(progress)} {cyan $(example.name)} {dim › dub run --single $(example.name).d}");
 }
 
-private string formatExampleFileHeader(string exampleFile, string progress, string action)
+private string formatExampleFileHeader(
+    string exampleFile,
+    string progress,
+    string action,
+    string[] runArgs = null,
+)
 {
-    return styledText(i"{dim $(progress)} {cyan $(exampleFile.baseName)} {dim › dub $(action) --single $(exampleFile)}");
+    const argsSuffix = runArgs.length > 0 ? " -- " ~ runArgs.join(" ") : "";
+    return styledText(i"{dim $(progress)} {cyan $(exampleFile.baseName)} {dim › dub $(action) --single $(exampleFile)$(argsSuffix)}");
 }
 
 /**
