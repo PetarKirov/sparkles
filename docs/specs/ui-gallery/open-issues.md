@@ -86,10 +86,13 @@ already routes keys. The clipboard chords (`Ctrl+Shift+C/V`) sit behind the
 same conversion: copy needs a selection, and paste needs a clipboard **read**,
 which is not a host errand yet.
 
-Scrollback no longer waits on it: the wheel over the pane, `Shift+PgUp`/`PgDn`
-in capture, and a bar drawn from the terminal's own numbers all shipped
-(`scrollViewport`/`scrollback` on the embedded surface). Only _dragging_ that
-bar remains behind the conversion.
+Scrollback no longer waits on it at all: the wheel over the pane,
+`Shift+PgUp`/`PgDn` in capture, and the bar — the catalog's living
+`ScrollView` bar, grabbable and hover-eased — all shipped. The bar's machine
+holds no truth: ghostty owns the offset, so each frame the shell applies the
+machine's movement as a viewport delta and mirrors the real offset back
+(intent measured against last frame's mirror, so a move ghostty made itself
+never reads as a drag).
 
 Row hover (the tab list's `✕`) needed bare-motion reporting, which the TUI arm
 never requested: `RunConfig.motion` now asks for DEC 1003, at one input event

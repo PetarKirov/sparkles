@@ -190,7 +190,8 @@ struct Gallery
         if ((s.toast.visible || pageAnimating
                 || easing(s.contentView, s.caps)
                 || easing(s.demoView, s.caps)
-                || easing(s.chromeView, s.caps)) && s.hasFrameClock)
+                || easing(s.chromeView, s.caps)
+                || easing(s.termView, s.caps)) && s.hasFrameClock)
             h.requestFrame();
 
         return b.finish(root);
@@ -430,13 +431,23 @@ struct Gallery
                 () @trusted {
                     if (s.terms.paneCols > 0 && s.terms.paneRows > 0)
                         tv.resize(s.terms.paneCols, s.terms.paneRows);
+                    // The scrollback bar drives a ScrollView machine, but
+                    // ghostty owns the real offset — apply the machine's
+                    // intent as a viewport delta, then mirror the truth back
+                    // into the machine and the page's numbers. Intent is
+                    // measured against LAST frame's mirror, so a move ghostty
+                    // made itself (wheel, new output re-pinning the bottom)
+                    // never reads as a drag. Applied BEFORE the render-state
+                    // snapshot below, so the jump paints this frame.
+                    if (s.termView.v.offset != s.terms.sbOffset)
+                        tv.scrollViewport(cast(int)
+                            (s.termView.v.offset - s.terms.sbOffset));
                     cast(void) tv.decideRedraw();
-                    // The page draws the scrollback bar from these — a pure
-                    // view cannot ask the instance.
                     const sb = tv.scrollback();
                     s.terms.sbTotal = sb.total;
                     s.terms.sbLen = sb.len;
                     s.terms.sbOffset = sb.offset;
+                    s.termView.v = s.termView.v.scrolledTo(cast(int) sb.offset);
                 }();
 
         // Last frame's deferred kitty textures resolve pre-bracket, exactly

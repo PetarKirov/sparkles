@@ -26,14 +26,17 @@ module pages.terminal_page;
 import std.conv : text, to;
 
 import sparkles.base.text.width : truncateField;
-import sparkles.input : Key, KeyEvent;
-import sparkles.ui.components.chrome : actionBar, scrollbar;
+import sparkles.input : Key, KeyEvent, PointerEvent;
+import sparkles.ui.components.chrome : actionBar;
 import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.layout : Frame;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
-import sparkles.ui.widget : Builder, Widget, WidgetKind;
+import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import kit;
-import state : GalleryState, hitTerminal, hitTermActions, keyTermPane, maxTerms;
+import scrollbars;
+import state : GalleryState, hitTerminal, hitTermActions, hitTermBar,
+    keyTermPane, maxTerms;
 
 @safe:
 
@@ -56,7 +59,8 @@ size_t closeHit(uint id) @safe pure nothrow @nogc => tabHit(id) + 1;
 /// Whether `id` is this page's own chrome — the shell keeps a focused
 /// terminal's capture across presses on these, and drops it for anything else.
 bool ownsId(size_t id) @safe pure nothrow @nogc
-    => (id >= hitTermActions && id < hitTermActions + 3) || id >= hitTerminal;
+    => (id >= hitTermActions && id < hitTermActions + 3)
+    || id == hitTermBar || id >= hitTerminal;
 
 /// The chrome rows the page spends beyond the pane: heading, spacer, action
 /// bar, spacer, status line.
@@ -104,7 +108,7 @@ uint view(ref Builder b, in GalleryState s)
         // blank column.
         const listW = w >= listMinContent ? listWidth
             : w >= miniMinContent ? 1 : 0;
-        const paneW = w - 1 - listW;
+        const paneW = w - gutterCells - listW;
 
         uint[] across;
         across ~= b.add(Widget(
@@ -116,7 +120,11 @@ uint view(ref Builder b, in GalleryState s)
             decoration: Decoration(borderWidth: intoAll(1),
                 borderSlot: s.terms.focused ? Slot.chromeFocused : Slot.border),
         ));
-        across ~= scrollbackBar(b, s, paneRows);
+        // The scrollback bar: the same living bar as every other in the
+        // catalog — grabbable, capture-arbitrated, hover-expanding — over
+        // the terminal's own numbers. The machine's offset is reconciled
+        // with ghostty's each frame by the shell.
+        across ~= verticalBar(b, s.termView, termBarGeometry(s), hitTermBar);
         if (listW == listWidth)
             across ~= termTable(b, s, paneRows);
         else if (listW == 1)
@@ -155,16 +163,31 @@ uint view(ref Builder b, in GalleryState s)
     return column(b, body_);
 }
 
-/// The scrollback bar: the terminal's own numbers (mirrored into state by the
-/// frame glue), through the same thumb formula as every bar in the catalog.
-/// One column, always reserved; the thumb appears once there is history.
-private uint scrollbackBar(ref Builder b, in GalleryState s, int paneRows)
+/// What the scrollback bar scrolls over: the terminal's own numbers, mirrored
+/// into state by the frame glue (a pure page cannot ask the instance), the
+/// track being the pane's height.
+BarGeometry termBarGeometry(in GalleryState s)
+    => BarGeometry(
+        content: s.terms.sbTotal,
+        viewport: s.terms.sbLen,
+        track: paneHeight(s),
+    );
+
+/**
+The scrollback bar's pointer handling — grab, track jump, drag — through the
+same machine as every bar in the catalog. The machine moves `s.termView`; the
+shell's frame glue turns that intent into a ghostty viewport delta, because
+the terminal owns the real offset.
+*/
+bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
+    in Frame[] frames)
+    => driveVertical(s.termView, s.capture, capTermBar, p,
+        rectOf(tree, frames, hitTermBar), termBarGeometry(s));
+
+/// Eases the bar's hover-expand width. The shell owns the clock.
+void step(ref GalleryState s, int dtMs)
 {
-    if (s.terms.sbTotal > s.terms.sbLen && s.terms.sbLen > 0)
-        return scrollbar(b, clampInt(s.terms.sbTotal), clampInt(s.terms.sbLen),
-            clampInt(s.terms.sbOffset), paneRows);
-    return b.add(Widget(kind: WidgetKind.box,
-        width: SizeSpec.fixed(1), height: SizeSpec.fixed(paneRows)));
+    easeVertical(s.termView, s.caps, dtMs / 1000.0f);
 }
 
 /**
@@ -327,9 +350,6 @@ dchar circledNumber(size_t n) @safe pure nothrow @nogc
         return cast(dchar)(0x32B1 + n - 36);
     return '#';
 }
-
-private int clampInt(long v) pure nothrow @nogc
-    => v > int.max ? int.max : (v < 0 ? 0 : cast(int) v);
 
 /// The pane's height: whatever the content pane has, less this page's own
 /// chrome — clamped so a hostile surface still lays out.
@@ -588,6 +608,37 @@ bool handleActivate(ref GalleryState s, size_t id)
     // The override wins, one code point per position.
     s.termTabGlyphs = "ab";
     assert(hasText(s, "a") && hasText(s, "b"));
+}
+
+@("ui_gallery.pages.terminalScrollbackBarIsGrabbable")
+@safe unittest
+{
+    import sparkles.input : PointerAction, PointerButton;
+    import sparkles.ui.geometry : Constraints, Point, Size;
+    import sparkles.ui.layout : layout;
+
+    // The bar is the same living machine as every other in the catalog: a
+    // press on its track jumps the offset. Ghostty's numbers arrive via the
+    // frame glue's mirror; the test sets them as the mirror would.
+    GalleryState s;
+    s.surface = Size(100, 30);
+    cast(void) s.terms.spawn();
+    s.terms.sbTotal = 200;
+    s.terms.sbLen = 15;
+    s.terms.sbOffset = 185; // pinned at the bottom, as a live shell is
+    s.termView.v = s.termView.v.scrolledTo(185);
+
+    auto b = Builder();
+    auto tree = b.finish(view(b, s));
+    auto frames = layout(tree, Constraints(maxW: s.contentWidth));
+    const bar = rectOf(tree, frames, hitTermBar);
+    assert(bar.width > 0, "the bar must be laid out and hit-testable");
+
+    // Press near the top of the track: the thumb's leading edge jumps there.
+    const p = PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(bar.x + bar.width / 2, bar.y));
+    assert(handlePointer(s, p, tree, frames));
+    assert(s.termView.v.offset < 185, "the grab moved the machine");
 }
 
 @("ui_gallery.pages.terminalCircledNumberRangeSeams")
