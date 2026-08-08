@@ -72,10 +72,13 @@ enum size_t hitContentBar = 7000; /// the shell's content-pane scrollbar
 enum size_t hitDemoBar = 7100;    /// the Scrolling page's specimen bar
 enum size_t hitSplit = 8000;    /// the split page's divider
 enum size_t hitMachines = 9000; /// the state-machine page's tiles
+enum size_t hitTerminal = 10000; /// the Terminal page's tabs: `hitTerminal + tab.id`
+enum size_t hitTermActions = 10100; /// …and its action bar (new / close / hold)
 
 /// Element keys (`Widget.key`) for state that must survive a rebuild.
 enum size_t keyContentScroll = 101; ///
 enum size_t keyNavScroll = 102;     ///
+enum size_t keyTermPane = 103;      /// the Terminal page's pane rect, for `paint`
 
 /// The Layout page's live knobs.
 struct LayoutDemo
@@ -118,6 +121,117 @@ struct MachinesDemo
     Timeline pulse;             ///
     CaptureState capture;       ///
     DisclosureState!size_t folds; ///
+}
+
+/// The most terminal tabs the page will hold at once.
+enum size_t maxTerms = 8;
+
+/**
+One terminal tab, as the $(B page) sees it: identity, liveness, label. The
+`TerminalView` instance itself lives outside this value — it is non-copyable
+and pointer-pinned — keyed by `id`, which is minted once and never reused, so
+a tab's hit id (`hitTerminal + id`) survives its neighbours closing.
+*/
+struct TermTab
+{
+    uint id;             /// stable identity; 0 = empty slot
+    bool exited;         /// the shell ended (held per the exit policy)
+    int exitStatus = -1; /// meaningful once `exited`
+    char[24] label = ' '; /// OSC title, truncated — else "shell N"
+    ubyte labelLen;      ///
+
+    /// The label as text.
+    const(char)[] labelText() const scope return pure nothrow @nogc
+        => label[0 .. labelLen];
+
+    /// Overwrites the label, truncating at the buffer.
+    void setLabel(scope const(char)[] text) scope pure nothrow @nogc
+    {
+        const n = text.length < label.length ? text.length : label.length;
+        label[0 .. n] = text[0 .. n];
+        labelLen = cast(ubyte) n;
+    }
+}
+
+/**
+The Terminal page's tab strip, VSCode-shaped: spawn appends and activates,
+close compacts $(B without renumbering identities), and the keyboard-capture
+flag decides whether the shell or the pty owns the keys. Spawning itself —
+a pty, a process — cannot happen here (pages are pure views over state), so
+the page raises `spawnRequested`/`closeRequested` and the component's frame
+glue consumes them.
+*/
+struct TermsState
+{
+    TermTab[maxTerms] tabs; ///
+    size_t count;           /// `tabs[0 .. count]` are present
+    size_t active;          /// index into the live prefix
+    bool focused;           /// exclusive keyboard capture is on
+    bool keepExited;        /// the exit-policy toggle: hold clean exits too
+    uint nextId = 1;        /// monotonic — ids are never reused
+    bool spawnRequested;    /// the page asked for a new terminal
+    int closeRequested = -1; /// tab index to close, -1 for none
+    ushort paneCols;        /// the pane rect at the last paint, in cells —
+    ushort paneRows;        /// next frame's grid follow reads it
+
+    /// Whether any tab exists / another one fits.
+    bool any() const scope pure nothrow @nogc => count > 0;
+    /// ditto
+    bool full() const scope pure nothrow @nogc => count >= maxTerms;
+
+    /// Appends and activates a tab, minting its identity. Returns the new
+    /// tab's id, or 0 when the strip is full.
+    uint spawn() scope pure nothrow @nogc
+    {
+        if (full)
+            return 0;
+        auto t = TermTab(id: nextId++);
+        char[16] buf = void;
+        const n = labelOf(buf, "shell ", t.id);
+        t.setLabel(buf[0 .. n]);
+        tabs[count] = t;
+        active = count;
+        count++;
+        return t.id;
+    }
+
+    /// Removes the tab at `i`, compacting the prefix — every surviving tab
+    /// keeps its id (and so its hit id). The active tab follows its slot;
+    /// closing the last tab drops keyboard capture with it.
+    void close(size_t i) scope pure nothrow @nogc
+    {
+        if (i >= count)
+            return;
+        foreach (j; i .. count - 1)
+            tabs[j] = tabs[j + 1];
+        count--;
+        tabs[count] = TermTab.init;
+        if (active > i || active >= count)
+            active = active > 0 ? active - 1 : 0;
+        if (count == 0)
+            focused = false;
+    }
+
+    /// Moves the active tab by `dir` (±1), wrapping.
+    void cycle(int dir) scope pure nothrow @nogc
+    {
+        if (count < 2)
+            return;
+        active = (active + count + (dir < 0 ? count - 1 : 1)) % count;
+    }
+}
+
+private size_t labelOf(scope char[] buf, string prefix, uint n) @safe pure nothrow @nogc
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeInteger;
+
+    SmallBuffer!(char, 24) w;
+    w ~= prefix;
+    writeInteger(w, n);
+    const len = w[].length < buf.length ? w[].length : buf.length;
+    buf[0 .. len] = w[][0 .. len];
+    return len;
 }
 
 /// The whole application, as one value.
@@ -171,6 +285,7 @@ struct GalleryState
     ScrollView demoView = ScrollView(
         vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
     int inspectorLines = 40; /// how much of a dump the Inspector builds
+    TermsState terms;        /// the Terminal page's tab strip
 
     // ── what the host told us ───────────────────────────────────────────────
     Size surface = Size(80, 24); ///
@@ -299,6 +414,78 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
     assert(s.contentWidth == 120 - navWidth - 1 - scrollGutter);
 }
 
+@("ui_gallery.state.terms.idsAreMonotonicAndNeverReused")
+@safe pure nothrow @nogc unittest
+{
+    // Closing a tab must not renumber the rest — hit ids are hitTerminal +
+    // id, and a press resolved against last frame's tree must land on the
+    // same tab this frame.
+    TermsState t;
+    assert(t.spawn() == 1 && t.spawn() == 2 && t.spawn() == 3);
+    assert(t.count == 3 && t.active == 2);
+
+    t.close(0);
+    assert(t.count == 2);
+    assert(t.tabs[0].id == 2 && t.tabs[1].id == 3, "surviving ids unchanged");
+
+    // A fresh spawn continues the sequence — id 1 is spent forever.
+    assert(t.spawn() == 4);
+}
+
+@("ui_gallery.state.terms.activeFollowsItsTabAcrossCloses")
+@safe pure nothrow @nogc unittest
+{
+    TermsState t;
+    cast(void) t.spawn();
+    cast(void) t.spawn();
+    cast(void) t.spawn();
+
+    // Closing before the active slot shifts it left with its tab…
+    t.active = 1;
+    t.close(0);
+    assert(t.active == 0 && t.tabs[t.active].id == 2);
+
+    // …and closing the last tab clamps rather than dangles.
+    t.active = 1;
+    t.close(1);
+    assert(t.active == 0 && t.count == 1);
+
+    // The last close drops keyboard capture with the tab it was aimed at.
+    t.focused = true;
+    t.close(0);
+    assert(t.count == 0 && !t.focused);
+}
+
+@("ui_gallery.state.terms.spawnFillsAndStopsAtTheCap")
+@safe pure nothrow @nogc unittest
+{
+    TermsState t;
+    foreach (i; 0 .. maxTerms)
+        assert(t.spawn() != 0);
+    assert(t.full);
+    assert(t.spawn() == 0, "a full strip refuses, not overwrites");
+    assert(t.tabs[0].labelText == "shell 1");
+    assert(t.tabs[maxTerms - 1].labelText[0 .. 6] == "shell ");
+}
+
+@("ui_gallery.state.terms.cycleWraps")
+@safe pure nothrow @nogc unittest
+{
+    TermsState t;
+    cast(void) t.spawn();
+    cast(void) t.spawn();
+    cast(void) t.spawn();
+    t.active = 2;
+    t.cycle(1);
+    assert(t.active == 0, "forward wraps");
+    t.cycle(-1);
+    assert(t.active == 2, "backward wraps");
+    t.close(1);
+    t.close(1);
+    t.cycle(1);
+    assert(t.active == 0, "a single tab does not move");
+}
+
 @("ui_gallery.state.hitBasesDoNotCollide")
 @safe pure nothrow @nogc unittest
 {
@@ -309,7 +496,8 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
     // between the two scrollbars, which are a hundred apart because they are
     // one kind of thing and neither will ever mint more than one id.
     static immutable size_t[] bases = [hitNav, hitTheme, hitTabs, hitActions,
-        hitTree, hitContentBar, hitDemoBar, hitSplit, hitMachines];
+        hitTree, hitContentBar, hitDemoBar, hitSplit, hitMachines,
+        hitTerminal, hitTermActions];
     foreach (i, b; bases)
     {
         assert(b != 0);
