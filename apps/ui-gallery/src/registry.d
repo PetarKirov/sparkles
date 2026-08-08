@@ -46,6 +46,7 @@ import pages.themes_page : themesKeys = keys, themesOnActivate = handleActivate,
     themesView = view;
 import pages.terminal_page : terminalKeys = keys,
     terminalOnActivate = handleActivate, terminalOnKey = handleKey,
+    terminalOnPointer = handlePointer, terminalStep = step,
     terminalView = view;
 import pages.text_page : textKeys = keys, textOnKey = handleKey,
     textView = view;
@@ -133,7 +134,8 @@ static immutable Page[] pages = [
     Page("Split", "a divider between two panes", &splitView,
         splitKeys, &splitOnKey),
     Page("Terminal", "a shell as a widget", &terminalView,
-        terminalKeys, &terminalOnKey, &terminalOnActivate),
+        terminalKeys, &terminalOnKey, &terminalOnActivate,
+        &terminalOnPointer),
     Page("Inspector", "the toolkit looking at itself", &inspectorView,
         inspectorKeys, &inspectorOnKey),
 ];
@@ -154,6 +156,7 @@ bool stepPage(ref GalleryState s, int dtMs)
     machinesStep(s, dtMs);
     scrollingStep(s, dtMs);
     componentsStep(s, dtMs);
+    terminalStep(s, dtMs);
     return machinesAnimating(s);
 }
 

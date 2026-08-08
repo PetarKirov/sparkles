@@ -74,6 +74,7 @@ enum size_t hitChromeBar = 7200;  /// the Components page's live scroll view
 enum size_t hitSplit = 8000;    /// the split page's divider
 enum size_t hitMachines = 9000; /// the state-machine page's tiles
 enum size_t hitTermActions = 10000; /// the Terminal page's action bar (3 ids)
+enum size_t hitTermBar = 10050;     /// the terminal pane's scrollback bar
 /**
 The Terminal page's pane (`+ 0`) and its per-tab $(B lanes): select is
 `hitTerminal + 2·id`, close is `hitTerminal + 2·id + 1`. Tab ids mint
@@ -299,6 +300,14 @@ struct GalleryState
     /// the same reason the Scrolling page has its own.
     ScrollView chromeView = ScrollView(
         vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
+    /**
+    The terminal pane's scrollback bar. The machine gives the bar its grab,
+    capture arbitration and hover-expand easing — but ghostty owns the real
+    offset, so each frame the shell applies this machine's intent as a
+    viewport delta and mirrors the truth back (`syncTerminals`).
+    */
+    ScrollView termView = ScrollView(
+        vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
     int inspectorLines = 40; /// how much of a dump the Inspector builds
     TermsState terms;        /// the Terminal page's tab strip
     /// `--term-tab-glyphs`: the mini tab list's position glyphs, one grapheme
@@ -516,7 +525,7 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
     // one kind of thing and neither will ever mint more than one id.
     static immutable size_t[] bases = [hitNav, hitTheme, hitTabs, hitActions,
         hitTree, hitContentBar, hitDemoBar, hitChromeBar, hitSplit,
-        hitMachines, hitTermActions, hitTerminal];
+        hitMachines, hitTermActions, hitTermBar, hitTerminal];
     foreach (i, b; bases)
     {
         assert(b != 0);

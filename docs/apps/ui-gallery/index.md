@@ -75,9 +75,10 @@ per-cell renderer in a window and through the cell renderer in a terminal — a
 terminal in a terminal —
 and applies a VSCode-shaped exit policy: a clean `exit` closes its own tab, a
 failure holds the tab with the code in its label, and `e` (`hold: all`) keeps
-everything. The wheel over the pane walks the scrollback, whose bar draws from
-the terminal's own numbers. Mouse _inside_ the pane (selection, links) is not
-wired yet; it lands with the mouse-event conversion.
+everything. The wheel over the pane walks the scrollback, and its bar is the
+catalog's living scrollbar — grab the thumb, jump on the track, watch it widen
+under the pointer — over the terminal's own numbers. Mouse _inside_ the pane
+(selection, links) is not wired yet; it lands with the mouse-event conversion.
 
 Mouse, where the target has one: click a page or a theme, press a tab or an
 action segment, drag the split divider, and **grab a scrollbar** — a press on
