@@ -824,23 +824,25 @@ struct ViewerModel
         return true;
     }
 
-    /// Tab (`VIW`): a document with a preview cycles preview → highlighted →
-    /// plain (highlighting off); one without cycles highlighted ↔ plain.
-    /// The caller reflows/rebuilds.
+    /// Tab (`VIW`): the cycle runs plain → highlighted → preview — so a
+    /// document with a preview goes preview → plain → highlighted →
+    /// preview; one without toggles highlighted ↔ plain. The caller
+    /// reflows/rebuilds.
     void cycleView() @safe pure nothrow @nogc
     {
         if (showPreview)
         {
             showPreview = false;
-            plainSyntax = false;
-        }
-        else if (!plainSyntax)
             plainSyntax = true;
+        }
+        else if (plainSyntax)
+            plainSyntax = false;
         else
         {
-            plainSyntax = false;
-            showPreview = preview.present || tw.code.length != 0
+            const canPreview = preview.present || tw.code.length != 0
                 || diff.files.length != 0;
+            showPreview = canPreview;
+            plainSyntax = !canPreview;
         }
     }
 
@@ -1212,13 +1214,14 @@ struct ViewerModel
     vm.cycleView();
     assert(!vm.showPreview && !vm.plainSyntax);
 
-    // A markdown document: preview → highlighted → plain → preview.
+    // A markdown document: preview → plain → highlighted → preview
+    // (the plain → syntax → preview cycle, entered at the preview).
     vm.preview.present = true;
     vm.showPreview = true;
     vm.cycleView();
-    assert(!vm.showPreview && !vm.plainSyntax);
-    vm.cycleView();
     assert(!vm.showPreview && vm.plainSyntax);
+    vm.cycleView();
+    assert(!vm.showPreview && !vm.plainSyntax);
     vm.cycleView();
     assert(vm.showPreview && !vm.plainSyntax);
 }

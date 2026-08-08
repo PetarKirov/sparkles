@@ -543,7 +543,7 @@ immutable Binding[] hueBindings = [
     bind(Scope_.shared_, chord(Key.pageUp), Command.viewPageUp, "page up"),
     bind(Scope_.shared_, chord(Key.right), Command.themeNext, "next theme"),
     bind(Scope_.shared_, chord(Key.left), Command.themePrev, "prev theme"),
-    bind(Scope_.shared_, chord(Key.tab), Command.toggleView, "preview / raw / plain"),
+    bind(Scope_.shared_, chord(Key.tab), Command.toggleView, "plain / syntax / preview"),
     bind(Scope_.shared_, chord('e'), Command.toggleExplorer, "toggle explorer"),
     bind(Scope_.shared_, chord('y'), Command.copySelection, "copy selection"),
     bind(Scope_.shared_, chord('q'), Command.quit, "quit"),
@@ -568,7 +568,7 @@ immutable Binding[] hueBindings = [
 
     group(Scope_.shared_, chord(leader), chord('v'), "view"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('r'),
-        Command.toggleView, "preview / raw / plain"),
+        Command.toggleView, "plain / syntax / preview"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('n'),
         Command.toggleLineNumbers, "line numbers"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('c'),
