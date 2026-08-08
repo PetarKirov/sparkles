@@ -294,7 +294,7 @@ struct ResolvedCell
 // cell rather than caching across passes; the queries are cheap relative to the
 // per-cell draw calls, and redraws only happen on dirty frames.
 @system nothrow @nogc
-private ResolvedCell resolveCell(
+package(sparkles.terminal_view) ResolvedCell resolveCell(
     GhosttyRenderStateRowCells cells,
     in GhosttyRenderStateColors colors,
     int cellX, int cellY,
