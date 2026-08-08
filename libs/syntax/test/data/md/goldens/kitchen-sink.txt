@@ -22,7 +22,7 @@ one paragraph.
 󰲣 Lists, deeply composed
 
 1. An ordered item with a nested fence:
-     d
+    
    ╭───────────────╮
    │ 1 auto x = 1; │
    │ 2             │
@@ -39,8 +39,7 @@ one paragraph.
 
 󰲣 Code, grouped and labelled
 
- main.d  run
-  d
+  main.d   run
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ 1 void main()                                                                │
 │ 2 {                                                                          │
@@ -54,7 +53,7 @@ one paragraph.
 │ 󰀪 Warning
 │ The last block is a callout with a trailing fence:
 │
-│   sh
+│  
 │ ╭─────────────────────────────────────────────────╮
 │ │ 1 echo done                                     │
 │ │ 2                                               │

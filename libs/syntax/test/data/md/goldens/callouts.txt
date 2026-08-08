@@ -21,7 +21,7 @@
 │ ● a list inside
 │ ● another item
 │
-│   d
+│  
 │ ╭───────────────────────────────────────────╮
 │ │ 1 auto x = 1; // a fence inside a callout │
 │ │ 2                                         │

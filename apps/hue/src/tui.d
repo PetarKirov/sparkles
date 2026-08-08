@@ -848,7 +848,22 @@ struct PreviewTui
             return handleSearch(e);
         return e.match!(
             (in PointerEvent p) => handlePointer(p),
-            (in WheelEvent w) { top += w.dy; clampTop(); return true; },
+            (in WheelEvent w) {
+                // A sideways notch — a horizontal axis or Shift+wheel —
+                // over a fence body scrolls that fence's viewport (`COD`).
+                const dx = w.dx + (w.mods.shift ? w.dy : 0);
+                if (dx != 0)
+                {
+                    const fb = vm.fenceBodyAtRow(top + (w.pos.y - 1));
+                    if (fb != size_t.max && vm.scrollFence(fb, dx))
+                        return true;
+                }
+                if (w.mods.shift)
+                    return true; // a shifted notch never scrolls vertically
+                top += w.dy;
+                clampTop();
+                return true;
+            },
             (in KeyEvent k) => handleKey(k),
             (in EndOfInput _) => false,
             _ => true,
@@ -1268,17 +1283,23 @@ unittest
     import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
         MdInline, MdInlineKind, Span, LabelSet;
 
-    // A fence whose one code line is 120 cells wide in a 40-column pane:
-    // fence lines never wrap, so the laid-out frames extend past the pane
-    // and the model reports horizontal overflow (IXB2).
+    // A table whose one cell is 120 cells wide in a 40-column pane: table
+    // cells never wrap, so the laid-out frames extend past the pane and the
+    // model reports horizontal overflow (IXB2). (A wide FENCE no longer
+    // qualifies — its body scrolls inside its own panel viewport, `COD`.)
     string src = "wide\n";
     foreach (i; 0 .. 120)
         src ~= "x";
     auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
         MdBlock(kind: MdBlockKind.paragraph, inlines: [
             MdInline(kind: MdInlineKind.text, span: Span(0, 4))]),
-        MdBlock(kind: MdBlockKind.codeFence, infoLang: "",
-            codeBody: Span(5, src.length)),
+        MdBlock(kind: MdBlockKind.table, children: [
+            MdBlock(kind: MdBlockKind.tableRow, children: [
+                MdBlock(kind: MdBlockKind.tableCell, span: Span(5, src.length),
+                    inlines: [MdInline(kind: MdInlineKind.text,
+                        span: Span(5, src.length))]),
+            ]),
+        ]),
     ]), src);
 
     static immutable(Theme)[1] themes = [builtinDark];

@@ -18,6 +18,7 @@ import core.time : msecs;
 import std.path : dirName;
 
 import sparkles.base.term_control : PointerShape;
+import sparkles.syntax.md.render_widgets : CodeOverflow;
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
     Theme, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -631,7 +632,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     string[] includeGlobs = null, string[] excludeGlobs = null,
     int treeWidth = 32, int tabWidth = 4, bool listWhitespace = false,
     bool liveTypes = true,
-    DiffLayout diffLayout = DiffLayout.unified) @system
+    DiffLayout diffLayout = DiffLayout.unified,
+    CodeOverflow codeOverflow = CodeOverflow.scroll) @system
 {
     WorkspaceTui w;
     w.loadDoc = loadDoc;
@@ -639,6 +641,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     // `DVL3`: the layout the reviewer asked for on the command line; `s`
     // toggles it, and a narrow pane degrades it at render time.
     w.viewer.vm.diffLayout = diffLayout;
+    w.viewer.vm.codeOverflow = codeOverflow;
     w.buildLayout(treeWidth);
     w.viewer.tabWidth = tabWidth < 1 ? 1 : tabWidth;
     w.viewer.listWhitespace = listWhitespace;

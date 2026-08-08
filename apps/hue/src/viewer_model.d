@@ -20,8 +20,9 @@ import sparkles.base.term_style : UnderlineStyle;
 import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
     RgbColor, Theme, toRgb;
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
-import sparkles.syntax.md.render_widgets : foldableSpans,
-    highlightedFenceRenderer, MdViewOptions, MdViewTheme, viewMarkdown;
+import sparkles.syntax.md.render_widgets : CodeOverflow, FenceScroll,
+    foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
+    viewMarkdown;
 import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
@@ -154,6 +155,11 @@ struct ViewerModel
     int tabWidth = 4;               /// tab stops in the raw view (--tab-width)
     bool listWhitespace;            /// vim `list` (--list-whitespace)
     bool codeLineNumbers = true;    /// in-panel fence numbers ('c' toggles)
+    /// `--code-overflow`: long fence lines scroll behind a per-fence
+    /// viewport (default) or wrap in-panel.
+    CodeOverflow codeOverflow = CodeOverflow.scroll;
+    /// Per-fence horizontal scroll, keyed by `codeBody.start` (scroll mode).
+    int[size_t] fenceScrollX;
     /// Fold placeholders keep their inline `▸ ` prefix — the TUI's one fold
     /// affordance; the GUI leaves this false (its gutter column carries it).
     bool inlineFoldMarker;
@@ -244,6 +250,7 @@ struct ViewerModel
         curMatch = 0;
         copiedFenceSrc = size_t.max;
         copiedTableSrc = size_t.max;
+        fenceScrollX = null;
         folds = DisclosureState!size_t(true);
         rebuild();
     }
@@ -382,6 +389,8 @@ struct ViewerModel
             foldHitBase: foldHitBase,
             inlineFoldMarker: inlineFoldMarker,
             codeLineNumbers: codeLineNumbers,
+            codeOverflow: codeOverflow,
+            fenceScrolls: fenceScrollList(),
             diffBlocks: preview.decorations, // `DVN6`
         };
         foldable = foldableSpans(preview.doc);
@@ -397,15 +406,37 @@ struct ViewerModel
     private void derive(bool withTargets)
     {
         // The widest painted right edge: TEXT ops carry their natural
-        // extent even where the pane clips them (a fence line, a table row
-        // — emitSpanRow advances past the clamp and the scissor crops), so
-        // the display list, not the frames, knows what the horizontal bar
-        // must reach (IXB2).
+        // extent even where the pane clips them (a table row — emitSpanRow
+        // advances past the clamp and the scissor crops), so the display
+        // list, not the frames, knows what the horizontal bar must reach
+        // (IXB2). Ops inside a widget's own clip (a fence body's viewport)
+        // clamp to it — content the panel scrolls internally must not
+        // engage the document-wide bar.
         contentCols = 0;
+        int[] clipStack;
+        int clipRight = int.max;
         foreach (ref const op; ops)
-            if ((op.kind == OpKind.textRun || op.kind == OpKind.glyph)
-                && op.rect.x + op.rect.width > contentCols)
-                contentCols = op.rect.x + op.rect.width;
+        {
+            if (op.kind == OpKind.pushClip)
+            {
+                clipStack ~= clipRight;
+                clipRight = op.rect.x + op.rect.width; // effective, pre-intersected
+            }
+            else if (op.kind == OpKind.popClip)
+            {
+                clipRight = clipStack.length ? clipStack[$ - 1] : int.max;
+                if (clipStack.length)
+                    clipStack = clipStack[0 .. $ - 1];
+            }
+            else if (op.kind == OpKind.textRun || op.kind == OpKind.glyph)
+            {
+                int right = op.rect.x + op.rect.width;
+                if (right > clipRight)
+                    right = clipRight;
+                if (right > contentCols)
+                    contentCols = right;
+            }
+        }
         if (cast(long) contentCols <= widthCols)
             hsb = hsb.scrolledTo(0);
         rows = documentRows(tree, frames);
@@ -727,6 +758,88 @@ struct ViewerModel
         copiedFenceSrc = size_t.max;
         copiedTableSrc = size_t.max;
         rebuild();
+    }
+
+    /// The armed per-fence scrolls, as the view consumes them.
+    private FenceScroll[] fenceScrollList() const
+    {
+        FenceScroll[] list;
+        foreach (k, v; fenceScrollX)
+            if (v != 0)
+                list ~= FenceScroll(k, v);
+        return list;
+    }
+
+    /// The fence whose body contains visual row `row`'s source identity
+    /// (the sideways-wheel target), else `size_t.max`.
+    size_t fenceBodyAtRow(long row) const @safe pure nothrow @nogc
+    {
+        if (row < 0 || row >= cast(long) rows.length)
+            return size_t.max;
+        const s = rows[cast(size_t) row].srcStart;
+        if (s == size_t.max)
+            return size_t.max;
+        foreach (ref const f; fences)
+            if (s >= f.body.start && s < f.body.end)
+                return f.body.start;
+        return size_t.max;
+    }
+
+    /// Scrolls a fence sideways by `delta` cells (scroll mode), clamped to
+    /// its widest line's overflow past the panel; true when it moved.
+    bool scrollFence(size_t bodyStart, int delta)
+    {
+        import sparkles.ui.geometry : cellsOf;
+
+        if (codeOverflow != CodeOverflow.scroll || delta == 0)
+            return false;
+        foreach (ref const f; fences)
+        {
+            if (f.body.start != bodyStart || f.body.end > source.length)
+                continue;
+            int widest;
+            size_t lines = 1;
+            size_t at = f.body.start;
+            void measure(size_t end)
+            {
+                const w = cast(int) cellsOf(source[at .. end]);
+                if (w > widest)
+                    widest = w;
+            }
+
+            foreach (i; f.body.start .. f.body.end)
+                if (source[i] == '\n')
+                {
+                    measure(i);
+                    ++lines;
+                    at = i + 1;
+                }
+            measure(f.body.end);
+            int numW;
+            for (auto n = lines; n; n /= 10)
+                ++numW;
+            // The panel's interior: borders (2) + padding (4) + the pinned
+            // number gutter. Indented fences are slightly narrower still —
+            // the clamp is a ceiling, not a promise of reachable content.
+            const inner = widthCols - 6
+                - (codeLineNumbers ? numW + 1 : 0);
+            const maxOff = widest > inner && inner > 0 ? widest - inner : 0;
+            const cur = fenceScrollX.get(bodyStart, 0);
+            int next = cur + delta;
+            if (next < 0)
+                next = 0;
+            if (next > maxOff)
+                next = maxOff;
+            if (next == cur)
+                return false;
+            if (next == 0)
+                fenceScrollX.remove(bodyStart);
+            else
+                fenceScrollX[bodyStart] = next;
+            rebuild();
+            return true;
+        }
+        return false;
     }
 
     /// The table index of the table starting at `spanStart`, else -1.
