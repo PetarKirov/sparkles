@@ -370,6 +370,11 @@ struct TerminalView
 
         pump();
 
+        // A captured OSC title becomes the window's — the whole surface IS
+        // the window here; an embedder consumes takeTitleChanged for its tab.
+        if (takeTitleChanged())
+            SetWindowTitle(s.effects_ctx.titleBuf.ptr);
+
         // The exit policy's frame-level half (waitForKey closes in `handle`).
         if (s.childExited)
         {
@@ -566,6 +571,20 @@ struct TerminalView
             return true;
         }
         return false;
+    }
+
+    /// The last OSC 0/2 title the shell set (empty until one arrives) — an
+    /// embedding application's tab label.
+    const(char)[] title() const scope return @safe pure nothrow @nogc
+        => s.effects_ctx.titleBuf[0 .. s.effects_ctx.titleLen];
+
+    /// True once per title change — the whole-surface `frame` turns it into
+    /// `SetWindowTitle`; an embedder refreshes its tab label instead.
+    bool takeTitleChanged() @safe pure nothrow @nogc
+    {
+        const was = s.effects_ctx.titleDirty;
+        s.effects_ctx.titleDirty = false;
+        return was;
     }
 
     /**

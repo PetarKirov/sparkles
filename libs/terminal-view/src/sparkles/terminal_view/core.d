@@ -29,6 +29,15 @@ struct EffectsContext
     ushort cols;
     ushort rows;
     int bellFlashFrames; // > 0 flashes the screen for a visual bell.
+
+    // OSC 0/2 title, captured rather than applied: the effect fires inside
+    // vt_write, where the owner (a window title? an embedder's tab label?)
+    // is not this layer's to know. NUL-terminated for SetWindowTitle;
+    // truncating at the buffer. Multiple changes in one chunk coalesce to
+    // the last — whoever consumes titleDirty sees only the newest.
+    char[256] titleBuf = '\0';
+    size_t titleLen;
+    bool titleDirty;
 }
 
 // Device-attribute constants from <ghostty/vt/device.h>. They are C #defines,
@@ -96,7 +105,8 @@ GhosttyString effect_enquiry(GhosttyTerminal terminal, void* userdata)
     return GhosttyString(null, 0);
 }
 
-// title_changed: updates the window title on OSC 0 / OSC 2.
+// title_changed: captures the OSC 0 / OSC 2 title into the context; the
+// component applies it (window title, tab label) at frame time.
 extern(C) nothrow @nogc
 void effect_title_changed(GhosttyTerminal terminal, void* userdata)
 {
@@ -105,11 +115,12 @@ void effect_title_changed(GhosttyTerminal terminal, void* userdata)
         return;
 
     import core.stdc.string : memcpy;
-    char[256] buf;
-    size_t n = title.len < buf.length - 1 ? title.len : buf.length - 1;
-    if (n > 0) memcpy(buf.ptr, title.ptr, n);
-    buf[n] = '\0';
-    SetWindowTitle(buf.ptr);
+    auto ctx = cast(EffectsContext*) userdata;
+    size_t n = title.len < ctx.titleBuf.length - 1 ? title.len : ctx.titleBuf.length - 1;
+    if (n > 0) memcpy(ctx.titleBuf.ptr, title.ptr, n);
+    ctx.titleBuf[n] = '\0';
+    ctx.titleLen = n;
+    ctx.titleDirty = true;
 }
 
 // color_scheme: raylib can't query the OS scheme, so ignore the query.
@@ -771,4 +782,35 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
         // Reset global dirty state so the next update reports changes accurately.
         GhosttyRenderStateDirty clean_state = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
         ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean_state);
+}
+
+@("terminal_view.core.titleCapture.oscTitleLandsInTheContext")
+@system nothrow @nogc
+unittest
+{
+    // No window, no pty: a bare terminal with the title effect wired at the
+    // captured context, fed OSC 2 through vt_write — exactly `open`'s wiring.
+    EffectsContext ctx;
+    GhosttyTerminal term;
+    GhosttyTerminalOptions topts = { cols: 20, rows: 5 };
+    ghostty_terminal_new(null, &term, topts);
+    assert(term !is null);
+    scope (exit) ghostty_terminal_free(term);
+    ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*) &ctx);
+    ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED,
+        cast(const(void)*) &effect_title_changed);
+
+    static immutable seq = "\x1b]2;hello\x07";
+    ghostty_terminal_vt_write(term, cast(const(ubyte)*) seq.ptr, cast(uint) seq.length);
+    assert(ctx.titleDirty);
+    assert(ctx.titleBuf[0 .. ctx.titleLen] == "hello");
+    assert(ctx.titleBuf[ctx.titleLen] == '\0');
+
+    // A later change overwrites — the consumer only ever sees the newest —
+    // and an overlong title truncates at the buffer, still NUL-terminated.
+    static immutable char[300] aaa = 'a';
+    static immutable longSeq = "\x1b]2;" ~ aaa ~ "\x07";
+    ghostty_terminal_vt_write(term, cast(const(ubyte)*) longSeq.ptr, cast(uint) longSeq.length);
+    assert(ctx.titleLen == ctx.titleBuf.length - 1);
+    assert(ctx.titleBuf[0] == 'a' && ctx.titleBuf[ctx.titleLen] == '\0');
 }
