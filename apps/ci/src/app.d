@@ -108,7 +108,7 @@ import std.stdio : stderr, writeln;
 import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight, toLower;
 
 // sparkles packages
-import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
+import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
 import sparkles.base.logger : error, info, initLogger, LogLevel, trace, warning;
 import sparkles.core_cli.process_utils :
     ChildStdin, executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes,
@@ -157,106 +157,111 @@ private BoxProps resultBox(string footer)
 
 struct CliParams
 {
-    @CliOption(`V|verify`, "Compare example output against expected output blocks in the markdown.")
+    @(Option(`V|verify`, description: "Compare example output against expected output blocks in the markdown."))
     bool verify;
 
-    @CliOption(`u|update`, "Rewrite the markdown file with actual example output.")
+    @(Option(`u|update`, description: "Rewrite the markdown file with actual example output."))
     bool update;
 
-    @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, and docs/research/manim/examples/*.d.")
+    @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, and docs/research/manim/examples/*.d."))
     bool exampleFiles;
 
-    @CliOption(`t|test`, "Run dub test for each sub-package defined in the root dub.sdl.")
+    @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
     bool test;
 
-    @CliOption(`test-extracted`, "Run the test runner's --better-c and --wasm modes for each sub-package that uses the matching marker attribute. Fails if a mode's toolchain is missing rather than skipping.")
+    @(Option(`test-extracted`, description: "Run the test runner's --better-c and --wasm modes for each sub-package that uses the matching marker attribute. Fails if a mode's toolchain is missing rather than skipping."))
     bool testExtracted;
 
-    @CliOption(`F|fail-fast`, "Stop on the first failing example and replay its output at the end.")
+    @(Option(`F|fail-fast`, description: "Stop on the first failing example and replay its output at the end."))
     bool failFast;
 
-    @CliOption(`files`, "Explicit file paths or git-style globs to include. Pass one or more selectors immediately after --files.")
+    @(Option(`files`, description: "Explicit file paths or git-style globs to include. Pass one or more selectors immediately after --files."))
     string[] files;
 
-    @CliOption(`d|dedup-reference-links`, "Report duplicate markdown reference definitions that point to the same URL.")
+    /// The one mode that takes a positional: `--check-commit-scope <path>`.
+    /// Everything else selects its inputs with `--files`.
+    @(Argument("arg", optional: true))
+    string[] positionals;
+
+    @(Option(`d|dedup-reference-links`, description: "Report duplicate markdown reference definitions that point to the same URL."))
     bool dedupReferenceLinks;
 
-    @CliOption(`f|fix-reference-links`, "Rewrite duplicate markdown references to one canonical label per URL.")
+    @(Option(`f|fix-reference-links`, description: "Rewrite duplicate markdown references to one canonical label per URL."))
     bool fixReferenceLinks;
 
-    @CliOption(`L|log-level`, "Set the log level (trace, info, warning, error). Default: info.")
+    @(Option(`L|log-level`, description: "Set the log level (trace, info, warning, error). Default: info."))
     LogLevel logLevel = LogLevel.info;
 
-    @CliOption(`check-commit-scope`, "Check a commit message for a detailed scope (used by pre-commit commit-msg hook). If no file is given or the argument is '-', reads the message from stdin instead of a file.")
+    @(Option(`check-commit-scope`, description: "Check a commit message for a detailed scope (used by pre-commit commit-msg hook). If no file is given or the argument is '-', reads the message from stdin instead of a file."))
     bool checkCommitScope;
 
-    @CliOption(`check-vcs-urls`, "Check tracked markdown files (or specified files) for github.com and raw.githubusercontent.com URLs, ensuring they reference a specific git commit.")
+    @(Option(`check-vcs-urls`, description: "Check tracked markdown files (or specified files) for github.com and raw.githubusercontent.com URLs, ensuring they reference a specific git commit."))
     bool checkVcsUrls;
 
-    @CliOption(`check-docs-sidebar`,
-        "Verify the VitePress sidebar (docs/.vitepress/config.mts) is consistent "
+    @(Option(`check-docs-sidebar`,
+        description: "Verify the VitePress sidebar (docs/.vitepress/config.mts) is consistent "
         ~ "with published docs/**/*.md pages: every page is linked, and every "
         ~ "sidebar link resolves to a page. Respects srcExclude; the home page "
-        ~ "(docs/index.md) is always considered linked.")
+        ~ "(docs/index.md) is always considered linked."))
     bool checkDocsSidebar;
 
-    @CliOption(`coverage`,
-        "Measure line coverage: run each sub-package's tests under -cov and "
+    @(Option(`coverage`,
+        description: "Measure line coverage: run each sub-package's tests under -cov and "
         ~ "report covered/coverable lines per package, worst first. Reports "
-        ~ "only; nothing fails on a low number.")
+        ~ "only; nothing fails on a low number."))
     bool coverage;
 
-    @CliOption(`C|ci-stats`,
-        "Compute GitHub Actions CI job timing statistics and runner-type aggregates. "
-        ~ "See docs/specs/ci/stats/ for the full specification.")
+    @(Option(`C|ci-stats`,
+        description: "Compute GitHub Actions CI job timing statistics and runner-type aggregates. "
+        ~ "See docs/specs/ci/stats/ for the full specification."))
     bool ciStats;
 
-    @CliOption(`g|github-token`,
-        "GitHub token for API access (Bearer auth). Falls back to $GITHUB_TOKEN.")
+    @(Option(`g|github-token`,
+        description: "GitHub token for API access (Bearer auth). Falls back to $GITHUB_TOKEN."))
     string githubToken;
 
-    @CliOption(`r|repo`,
-        "Target repository as owner/repo (e.g. PetarKirov/sparkles).")
+    @(Option(`r|repo`,
+        description: "Target repository as owner/repo (e.g. PetarKirov/sparkles)."))
     string repo;
 
-    @CliOption(`l|limit`,
-        "Maximum number of recent workflow runs to analyze (default 100).")
+    @(Option(`l|limit`,
+        description: "Maximum number of recent workflow runs to analyze (default 100)."))
     int limit = 100;
 
-    @CliOption(`S|since`,
-        "Only include runs created on/after this date (YYYY-MM-DD or ISO).")
+    @(Option(`S|since`,
+        description: "Only include runs created on/after this date (YYYY-MM-DD or ISO)."))
     string since;
 
-    @CliOption(`w|workflow`,
-        "Filter to runs/jobs matching this workflow name or path substring.")
+    @(Option(`w|workflow`,
+        description: "Filter to runs/jobs matching this workflow name or path substring."))
     string workflow;
 
-    @CliOption(`c|conclusion`,
-        "Only jobs with this conclusion (e.g. success, failure).")
+    @(Option(`c|conclusion`,
+        description: "Only jobs with this conclusion (e.g. success, failure)."))
     string conclusion;
 
-    @CliOption(`b|branch`,
-        "Only runs on this branch (head_branch, exact match).")
+    @(Option(`b|branch`,
+        description: "Only runs on this branch (head_branch, exact match)."))
     string branch;
 
-    @CliOption(`B|baseline`,
-        "Compare --branch against this branch per job name, showing the median delta. "
-        ~ "Both refs are taken from the same run window.")
+    @(Option(`B|baseline`,
+        description: "Compare --branch against this branch per job name, showing the median delta. "
+        ~ "Both refs are taken from the same run window."))
     string baseline;
 
-    @CliOption(`s|split`,
-        "Split the fetched jobs at this instant (YYYY-MM-DD or ISO-8601) and compare "
+    @(Option(`s|split`,
+        description: "Split the fetched jobs at this instant (YYYY-MM-DD or ISO-8601) and compare "
         ~ "the halves per job name. The axis to use when a workflow only triggers on "
-        ~ "pull_request and so never runs on the default branch.")
+        ~ "pull_request and so never runs on the default branch."))
     string split;
 
-    @CliOption(`steps`,
-        "Break the slowest job names down by step, so a regression is attributed "
-        ~ "to the step that owns it rather than to the job total.")
+    @(Option(`steps`,
+        description: "Break the slowest job names down by step, so a regression is attributed "
+        ~ "to the step that owns it rather than to the job total."))
     bool steps;
 
-    @CliOption(`step-jobs`,
-        "How many job names --steps expands (default 3).")
+    @(Option(`step-jobs`,
+        description: "How many job names --steps expands (default 3)."))
     int stepJobs = 3;
 }
 
@@ -318,12 +323,6 @@ struct FailureReplay
     string footer;
 }
 
-struct FileSelection
-{
-    bool specified;
-    string[] selectors;
-}
-
 struct ReferenceDef
 {
     size_t lineIndex;
@@ -356,21 +355,20 @@ private __gshared immutable refDefRegex = ctRegex!(r"^\[([^\]]+)\]:\s+(https?://
 
 int ciMain(string[] args)
 {
-    auto parseArgs = args.dup;
-    const fileSelection = extractFilesOption(parseArgs);
-    auto cli = parseArgs.parseCliArgs!CliParams(
+    auto parsed = parseCli!CliParams(
+        args,
         HelpInfo(
             "ci",
             "Run repository CI helpers for markdown examples, standalone example files, and markdown reference maintenance",
         ),
     );
-    cli.files = fileSelection.selectors.dup;
+    if (!parsed)
+        return reportCliError(parsed.error);
+    auto cli = parsed.value;
     initLogger(cli.logLevel);
 
-    const positionalArgs = parseArgs[1 .. $]
-        .map!(arg => arg.idup)
-        .array;
-    const modeError = validateCliMode(cli, positionalArgs, fileSelection);
+    const positionalArgs = cli.positionals.idup;
+    const modeError = validateCliMode(cli, positionalArgs);
     if (modeError !is null)
     {
         error(i"$(modeError)");
@@ -443,7 +441,6 @@ int ciMain(string[] args)
 private string validateCliMode(
     in CliParams cli,
     in string[] positionalArgs,
-    in FileSelection fileSelection,
 )
 {
     if (cli.verify && cli.update)
@@ -514,9 +511,6 @@ private string validateCliMode(
 
     if (positionalArgs.length > 0 && !cli.checkCommitScope)
         return "Positional file arguments are no longer supported; use --files";
-
-    if (fileSelection.specified && cli.files.length == 0)
-        return "--files requires at least one file path or git-style glob";
 
     return null;
 }
@@ -797,53 +791,6 @@ private string[] trackedStandaloneExampleFiles()
         .filter!(line => line.length != 0)
         .map!(line => line.idup)
         .array;
-}
-
-private FileSelection extractFilesOption(ref string[] argv)
-{
-    FileSelection selection;
-    string[] filteredArgs;
-
-    if (argv.length == 0)
-        return selection;
-
-    filteredArgs ~= argv[0];
-
-    size_t idx = 1;
-    while (idx < argv.length)
-    {
-        const arg = argv[idx];
-
-        if (arg == "--files")
-        {
-            selection.specified = true;
-            idx++;
-
-            while (idx < argv.length && !argv[idx].startsWith("-"))
-            {
-                selection.selectors ~= argv[idx].idup;
-                idx++;
-            }
-
-            continue;
-        }
-
-        if (arg.startsWith("--files="))
-        {
-            selection.specified = true;
-            const selector = arg["--files=".length .. $].strip;
-            if (selector.length > 0)
-                selection.selectors ~= selector.idup;
-            idx++;
-            continue;
-        }
-
-        filteredArgs ~= arg;
-        idx++;
-    }
-
-    argv = filteredArgs;
-    return selection;
 }
 
 @safe pure nothrow @nogc

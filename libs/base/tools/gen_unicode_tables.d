@@ -44,7 +44,7 @@ import std.string : strip, startsWith, lineSplitter, outdent;
 import std.uni : CodepointSet, isWhite;
 
 import sparkles.base.styled_template : styledWriteln, styledWritelnErr;
-import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 
 /// Unicode version this generator targets by default. Keep matched to the
 /// toolchain's std.uni grapheme tables; bump when you upgrade the compiler.
@@ -61,24 +61,28 @@ enum defaultOutFile = __FILE_FULL_PATH__
 
 struct CliParams
 {
-    @CliOption(`u|ucd-dir`, "Directory with EastAsianWidth.txt and emoji-variation-sequences.txt. If omitted, they are downloaded from unicode.org for --unicode-version.")
+    @(Option(`u|ucd-dir`, description: "Directory with EastAsianWidth.txt and emoji-variation-sequences.txt. If omitted, they are downloaded from unicode.org for --unicode-version."))
     string ucdDir;
 
-    @CliOption(`o|out-file`, "Path to write the generated module (default: the in-tree unicode_tables.d).")
+    @(Option(`o|out-file`, description: "Path to write the generated module (default: the in-tree unicode_tables.d)."))
     string outFile = defaultOutFile;
 
-    @CliOption(`V|unicode-version`, "Unicode version to generate for. Keep matched to the toolchain's std.uni grapheme tables.")
+    @(Option(`V|unicode-version`, description: "Unicode version to generate for. Keep matched to the toolchain's std.uni grapheme tables."))
     string unicodeVersion = pinnedUnicodeVersion;
 }
 
 int main(string[] args)
 {
-    const cli = args.parseCliArgs!CliParams(
+    auto parsed = parseCli!CliParams(
+        args,
         HelpInfo(
             "gen_unicode_tables",
             "Generate sparkles.base.text.unicode_tables from the Unicode Character Database",
         ),
     );
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const cli = parsed.value;
 
     const ver = cli.unicodeVersion;
     const outFile = buildNormalizedPath(cli.outFile);

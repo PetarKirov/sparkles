@@ -40,24 +40,23 @@ import std.path : baseName, buildPath;
 import std.stdio : stderr, writefln, writeln;
 import std.string : endsWith;
 
-import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.syntax;
 import sparkles.twoslash;
 
-/// CLI surface. Descriptions carry no double quotes — `parseCliArgs` splices
-/// them into generated code verbatim.
+/// CLI surface.
 struct Params
 {
-    @CliOption("out|o", "Output directory for the goldens")
+    @(Option("out|o", description: "Output directory for the goldens"))
     string outDir = "golden-out";
 
-    @CliOption("fixtures|f", "Directory of *.twoslash.json fixtures")
+    @(Option("fixtures|f", description: "Directory of *.twoslash.json fixtures"))
     string fixturesDir = "libs/twoslash/examples/fixtures";
 
-    @CliOption("theme|t", "Theme name from builtinThemes")
+    @(Option("theme|t", description: "Theme name from builtinThemes"))
     string theme = "catppuccin-mocha";
 }
 
@@ -68,9 +67,12 @@ private enum pageBg = RgbColor(0x1e, 0x1e, 0x2e);
 
 int main(string[] args) @system
 {
-    auto p = args.parseCliArgs!Params(HelpInfo("capture-goldens",
+    auto parsed = parseCli!Params(args, HelpInfo("capture-goldens",
         "Record text goldens for the cross-backend twoslash renderers — " ~
         "deterministic and byte-comparable, unlike the PNG harness.", null));
+    if (!parsed)
+        return reportCliError(parsed.error);
+    auto p = parsed.value;
 
     if (!p.fixturesDir.exists)
     {

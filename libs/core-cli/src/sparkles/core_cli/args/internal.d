@@ -119,24 +119,38 @@ CliExpected!(ParsedCommand!Cli) parseKnownCli(Cli)(
 // dispatcher itself can't claim `@safe` — its safety follows from the
 // leaves it eventually calls. The pure parsing path (`parseCli`,
 // `parseKnownCli`) is `@safe` because it never crosses that boundary.
+/**
+ * Reports a failed parse and returns the exit code the program should use.
+ *
+ * A help request is a failure in the `Expected` sense but a success to the
+ * user, and carries `exitCode == 0` to say so — returning this value is what
+ * keeps `--help` from looking like an error to a shell.
+ *
+ * For a program whose commands have `run` methods, prefer $(LREF runCli),
+ * which calls this. This is the entry point for a program that parses into a
+ * struct and then does its own work.
+ */
+int reportCliError(in CliError e)
+{
+    import std.stdio : stderr, writeln;
+
+    // Pure help requests carry no error message; everything else surfaces the
+    // diagnostic before any accompanying help text, so the cause stays visible
+    // even when the help is verbose.
+    if (e.message.length && !e.isHelp)
+        stderr.writeln("Error: ", e.message);
+    if (e.help.length)
+        writeln(e.help);
+    return e.exitCode;
+}
+
 int runCli(Cli)(
     string[] argv,
 )
 {
     auto parsed = parseCli!Cli(argv);
     if (!parsed)
-    {
-        import std.stdio : stderr, writeln;
-
-        // Pure help requests carry no error message; everything else
-        // surfaces the diagnostic before any accompanying help text so
-        // the cause stays visible even when help is verbose.
-        if (parsed.error.message.length && !parsed.error.isHelp)
-            stderr.writeln("Error: ", parsed.error.message);
-        if (parsed.error.help.length)
-            writeln(parsed.error.help);
-        return parsed.error.exitCode;
-    }
+        return reportCliError(parsed.error);
 
     auto value = parsed.value;
     return runParsedCli(value);

@@ -16,7 +16,7 @@ are flat stays flat.
 */
 module sparkles.ui_app.gui_options;
 
-import sparkles.core_cli.args : CliOption;
+import sparkles.core_cli.args : Option;
 import sparkles.ui.theme : Theme;
 
 /**
@@ -91,72 +91,73 @@ enum int defaultWindowRows = 30;
 The window/font flags, as fields.
 
 Mixed into an application's own parameter struct, or into $(LREF GuiOptions) for
-one that keeps them separate. Every field carries its `@CliOption` here, so the
-help text is written once and two applications cannot describe the same flag
+one that keeps them separate. Every field carries its `@(Option(...))` here, so
+the help text is written once and two applications cannot describe the same flag
 differently.
 */
 mixin template GuiCliFields()
 {
-    import sparkles.core_cli.args : CliOption;
+    import sparkles.core_cli.args : Option;
     import sparkles.ui_app.gui_options : defaultFontSizePoints, defaultGuiFont,
         defaultGuiFontFamily, defaultTheme, defaultWindowCols, defaultWindowRows;
 
-    @CliOption("font|f",
+    @(Option("font|f", description:
         "Font for the window: a path, a family name, or a fontconfig "
-        ~ "preference list (comma-separated; the first installed family wins).")
+        ~ "preference list (comma-separated; the first installed family wins)."))
     string font = defaultGuiFont;
 
-    @CliOption("font-size|s",
+    @(Option("font-size|s", description:
         "Font size in points. Resolved against the display's real density, so "
-        ~ "the same value is the same physical size on a HiDPI panel.")
+        ~ "the same value is the same physical size on a HiDPI panel."))
     int fontSize = defaultFontSizePoints;
 
-    @CliOption("font-bold",
+    @(Option("font-bold", description:
         "Bold face: a family, a fontconfig pattern, or a font file. Empty "
         ~ "falls back to whatever styled sibling the primary family's own "
-        ~ "directory offers.")
+        ~ "directory offers."))
     string fontBold = defaultGuiFontFamily;
 
-    @CliOption("font-italic",
+    @(Option("font-italic", description:
         "Italic face. Where no italic resolves, italic text renders upright — "
-        ~ "a synthetic slant is never faked, because it breaks the cell grid.")
+        ~ "a synthetic slant is never faked, because it breaks the cell grid."))
     string fontItalic = defaultGuiFontFamily;
 
-    @CliOption("font-bold-italic", "Bold-italic face.")
+    @(Option("font-bold-italic", description: "Bold-italic face."))
     string fontBoldItalic = defaultGuiFontFamily;
 
-    @CliOption("font-codepoint-map",
+    @(Option("font-codepoint-map", description:
         "Render a codepoint range from a specific family (repeatable): "
-        ~ "'U+XXXX-U+YYYY,U+ZZZZ=Family'.")
+        ~ "'U+XXXX-U+YYYY,U+ZZZZ=Family'."))
     string[] fontCodepointMap;
 
-    @CliOption("font-dir",
+    @(Option("font-dir", description:
         "Resolve fonts by scanning this directory instead of fontconfig "
         ~ "(repeatable). Makes a build's font selection deterministic: no "
         ~ "fc-match subprocess, and no dependence on the host's fontconfig "
-        ~ "configuration.")
+        ~ "configuration."))
     string[] fontDir;
 
-    @CliOption("theme",
+    @(Option("theme", description:
         "Colour theme, by name (see sparkles.ui.themes for the built-in set). "
-        ~ "Applies to every target, not only the window.")
+        ~ "Applies to every target, not only the window."))
     string theme = defaultTheme;
 
-    @CliOption("window-width", "Initial window width in cells.")
+    @(Option("window-width", description: "Initial window width in cells."))
     int windowWidth = defaultWindowCols;
 
-    @CliOption("window-height", "Initial window height in cells.")
+    @(Option("window-height", description: "Initial window height in cells."))
     int windowHeight = defaultWindowRows;
 
-    @CliOption("gui",
+    @(Option("gui", description:
         "Force the window. With neither --gui nor --no-gui, a window opens "
-        ~ "when one is available and the terminal is used otherwise.")
+        ~ "when one is available and the terminal is used otherwise."))
     bool gui;
 
-    @CliOption("no-gui", "Force terminal output even when a display is available.")
+    @(Option("no-gui", description:
+        "Force terminal output even when a display is available."))
     bool noGui;
 
-    @CliOption("tui", "Alias for --no-gui.")
+    @(Option("tui", description: "Alias for --no-gui."))
     bool tui;
 }
 
@@ -240,8 +241,11 @@ WindowCells windowCellsOf(O)(in O o) @safe pure nothrow @nogc
 // Tests
 // ---------------------------------------------------------------------------
 
+// Not `pure nothrow`: mixing the fields in evaluates their `@(Option(...))`
+// UDAs in this function's context, and `Option`'s constructor claims only
+// `@safe`.
 @("ui_app.gui_options.oneDeclaration")
-@safe pure nothrow
+@safe
 unittest
 {
     // The struct IS the mixin, so a field can only be declared once. If these
@@ -303,8 +307,9 @@ unittest
     assert(!o.gui && !o.noGui && !o.tui);
 }
 
+// Not `pure nothrow`, for the same reason as `oneDeclaration` above.
 @("ui_app.gui_options.fontRequest")
-@safe pure nothrow
+@safe
 unittest
 {
     // A mixed-in parameter struct projects to the same request as the standalone

@@ -25,7 +25,7 @@ import std.stdio : writeln, stderr;
 import std.string : strip;
 
 import sparkles.base.styled_template : styledText;
-import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 
 import sparkles.text_conformance.allowlist : Allowlist, loadAllowlist, renderAllowlist;
 import sparkles.text_conformance.config : Config, pinnedUnicodeVersion,
@@ -51,39 +51,43 @@ enum string defaultAllowlistPath = __FILE_FULL_PATH__
 
 struct CliParams
 {
-    @CliOption(`l|layers`, "Comma-separated layers to run: any of 0..10, or 'all' (default).")
+    @(Option(`l|layers`, description: "Comma-separated layers to run: any of 0..10, or 'all' (default)."))
     string layers = "all";
 
-    @CliOption(`u|ucd-dir`, "Read Unicode data from this directory instead of downloading (offline).")
+    @(Option(`u|ucd-dir`, description: "Read Unicode data from this directory instead of downloading (offline)."))
     string ucdDir;
 
-    @CliOption(`V|unicode-version`, "Set both --width-unicode-version and --segmentation-unicode-version.")
+    @(Option(`V|unicode-version`, description: "Set both --width-unicode-version and --segmentation-unicode-version."))
     string unicodeVersion;
 
-    @CliOption(`width-unicode-version`, "Unicode version for the Layer-1 width oracle's UCD files (matches the pinned width tables).")
+    @(Option(`width-unicode-version`, description: "Unicode version for the Layer-1 width oracle's UCD files (matches the pinned width tables)."))
     string widthVersion = pinnedUnicodeVersion;
 
-    @CliOption(`segmentation-unicode-version`, "Unicode version for the Layer-0/2 grapheme corpora (should match Phobos's std.uni tables).")
+    @(Option(`segmentation-unicode-version`, description: "Unicode version for the Layer-0/2 grapheme corpora (should match Phobos's std.uni tables)."))
     string segVersion = phobosGraphemeUnicodeVersion;
 
-    @CliOption(`require-kitty`, "Fail (instead of skip) Layer 3 when the kitty width oracle is unavailable.")
+    @(Option(`require-kitty`, description: "Fail (instead of skip) Layer 3 when the kitty width oracle is unavailable."))
     bool requireKitty;
 
-    @CliOption(`n|no-network`, "Never download; fail on a cache miss.")
+    @(Option(`n|no-network`, description: "Never download; fail on a cache miss."))
     bool noNetwork;
 
-    @CliOption(`update-allowlist`, "Rewrite known-divergences.md from the current run's divergences (operator-only).")
+    @(Option(`update-allowlist`, description: "Rewrite known-divergences.md from the current run's divergences (operator-only)."))
     bool updateAllowlist;
 }
 
 int main(string[] args)
 {
-    const cli = args.parseCliArgs!CliParams(
+    auto parsed = parseCli!CliParams(
+        args,
         HelpInfo(
             "text-conformance",
             "Differentially test sparkles.base.text width & segmentation against independent Unicode oracles",
         ),
     );
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const cli = parsed.value;
 
     Config cfg;
     cfg.layers = parseLayers(cli.layers);

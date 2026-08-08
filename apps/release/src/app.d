@@ -26,7 +26,7 @@ import std.typecons : Nullable;
 
 import sparkles.base.logger : initLogger, LogLevel, info, warning, error;
 import sparkles.base.term_style : Style, stylize;
-import sparkles.core_cli.args : parseCliArgs, CliOption, HelpInfo;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.core_cli.process_utils : isInPath, runCaptured;
 import sparkles.base.term_caps : detectTermCaps;
 import sparkles.ui.components.box : drawBox, BoxProps;
@@ -55,47 +55,49 @@ import sparkles.release.stats : tallyCommits, typeCounts, ReleaseStats, Commit, 
 /// only `--log-level` is a real enum, which getopt binds directly).
 struct CliParams
 {
-    @CliOption(`s|stage`,
+    @(Option(`s|stage`, description:
         "Cumulative stage: create-tag (default), push-tag, "
-        ~ "create-gh-release-draft, publish-gh-release. Each implies the earlier ones.")
+        ~ "create-gh-release-draft, publish-gh-release. Each implies the earlier ones."))
     string stage = "create-tag";
 
-    @CliOption(`a|auto`,
+    @(Option(`a|auto`, description:
         "Non-interactive: take the suggested bump and run the agent for notes "
-        ~ "without opening $EDITOR.")
+        ~ "without opening $EDITOR."))
     bool auto_;
 
-    @CliOption(`g|agent`,
+    @(Option(`g|agent`, description:
         "CLI LLM agent key for agent notes (claude-code, codex, gemini, ...). "
-        ~ "Only agents found on PATH are offered.")
+        ~ "Only agents found on PATH are offered."))
     string agent;
 
-    @CliOption(`b|bump`, "Override the suggested bump: major, minor, or patch.")
+    @(Option(`b|bump`, description: "Override the suggested bump: major, minor, or patch."))
     string bump;
 
-    @CliOption(`n|notes`,
-        "Release-notes mode: manual (open $EDITOR) or agent (LLM summary).")
+    @(Option(`n|notes`, description:
+        "Release-notes mode: manual (open $EDITOR) or agent (LLM summary)."))
     string notes;
 
-    @CliOption(`S|split`,
+    @(Option(`S|split`, description:
         "Segment the unreleased backlog into multiple chained releases "
-        ~ "(associates commits with PRs via gh; an LLM agent proposes the split).")
+        ~ "(associates commits with PRs via gh; an LLM agent proposes the split)."))
     bool split;
 
-    @CliOption(`N|no-verify`, "Skip the pre-flight checks (clean tree, on main, ci tests).")
+    @(Option(`N|no-verify`, description: "Skip the pre-flight checks (clean tree, on main, ci tests)."))
     bool noVerify;
 
-    @CliOption(`L|log-level`, "trace, info, warning, error (default info).")
+    @(Option(`L|log-level`, description: "trace, info, warning, error (default info)."))
     LogLevel logLevel = LogLevel.info;
 }
 
 int main(string[] args)
 {
-    auto parseArgs = args.dup;
-    auto cli = parseArgs.parseCliArgs!CliParams(HelpInfo(
+    auto parsed = parseCli!CliParams(args, HelpInfo(
         "release",
         "Scan tags, summarize commits, suggest a bump, write notes, tag and publish.",
     ));
+    if (!parsed)
+        return reportCliError(parsed.error);
+    auto cli = parsed.value;
     initLogger(cli.logLevel);
 
     try

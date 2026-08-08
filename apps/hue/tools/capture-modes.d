@@ -38,43 +38,48 @@ import std.process : Config, environment, execute, executeShell, spawnProcess, w
 import std.stdio : stderr, writeln;
 import std.string : split, strip;
 
-import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
+import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.syntax;
 import sparkles.twoslash;
 
-/// CLI surface (parsed by `sparkles:core-cli`). Descriptions carry no double
-/// quotes — `parseCliArgs` splices them into generated code verbatim.
+/// CLI surface (parsed by `sparkles:core-cli`).
 struct Params
 {
-    @CliOption("out|o", "Output directory for the PNGs")
+    @(Option("out|o", description: "Output directory for the PNGs"))
     string outDir = "capture-out";
 
-    @CliOption("fixtures|f", "Directory of *.twoslash.json fixtures")
+    @(Option("fixtures|f", description: "Directory of *.twoslash.json fixtures"))
     string fixturesDir = "libs/twoslash/examples/fixtures";
 
-    @CliOption("hue", "Path to the built hue binary (GUI + TUI modes)")
+    @(Option("hue", description: "Path to the built hue binary (GUI + TUI modes)"))
     string hueBin = "apps/hue/build/hue";
 
-    @CliOption("modes|m", "Comma list of modes to render: gui, tui, html, widgets-html")
+    @(Option("modes|m", description: "Comma list of modes to render: gui, tui, html, widgets-html"))
     string modes = "gui,tui,html,widgets-html";
 
-    @CliOption("size|s", "TUI capture grid as cols x rows")
+    @(Option("size|s", description: "TUI capture grid as cols x rows"))
     string size = "100x30";
 
-    @CliOption("theme", "Syntax theme name (matches the hue default)")
+    @(Option("theme", description: "Syntax theme name (matches the hue default)"))
     string theme = "catppuccin-mocha";
 
-    @CliOption("hover", "Open the Nth hover popup in every mode (-1 = resting)")
+    @(Option("hover", description: "Open the Nth hover popup in every mode (-1 = resting)"))
     int hover = -1;
+
+    @(Argument("stem", description: "Fixture stems to render (e.g. 08-jsdoc); default is all", optional: true))
+    string[] stems;
 }
 
 int main(string[] args)
 {
-    auto p = args.parseCliArgs!Params(HelpInfo("capture-modes",
+    auto parsed = parseCli!Params(args, HelpInfo("capture-modes",
         "Render twoslash fixtures in GUI, TUI and HTML to PNGs for parity QA. " ~
         "Positional args pick fixtures by stem (e.g. 08-jsdoc); default is all.", null));
+    if (!parsed)
+        return reportCliError(parsed.error);
+    auto p = parsed.value;
 
     const wantModes = p.modes.split(",").map!strip.array;
     const needBinary = wantModes.canFind("gui") || wantModes.canFind("tui");
@@ -98,7 +103,7 @@ int main(string[] args)
     const outAbs = p.outDir.absolutePath;
     const hueAbs = p.hueBin.exists ? p.hueBin.absolutePath : p.hueBin;
 
-    string[] stems = args[1 .. $];
+    string[] stems = p.stems;
     if (stems.length == 0)
         stems = dirEntries(p.fixturesDir, "*.twoslash.json", SpanMode.shallow)
             .map!(e => e.name.baseName.replace(".twoslash.json", "")).array;
