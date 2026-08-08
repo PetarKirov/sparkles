@@ -807,16 +807,22 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
 
             const body_ = blocksColumn(b, blk.children, src, inner,
                 listDepth, quoteDepth + 1);
-            // The quote bar: a left border on a padded panel, its color cycling
-            // by nesting depth when a theme is present.
+            // The same card treatment as a callout: a heavy bar (its color
+            // cycling by nesting depth) over a bar-tinted panel, the tint
+            // deepening with each level so nesting reads at a glance.
             Widget w = Widget(kind: WidgetKind.panel, children: [body_],
-                padding: Insets(0, 0, 0, 2), hitId: opt.hitId,
-                decoration: Decoration(borderWidth: Insets(0, 0, 0, 1),
+                padding: Insets(0, 1, 0, 2), hitId: opt.hitId,
+                slot: Slot.surface, paintBackground: true, stretch: true,
+                decoration: Decoration(borderWidth: Insets(0, 0, 0, 2),
                     borderStyle: BorderStyle.solid, borderSlot: Slot.border));
             if (opt.theme.present)
             {
-                w.borderOverride = opt.theme.quoteBars[quoteDepth % 4];
+                const bar = opt.theme.quoteBars[quoteDepth % 4];
+                w.borderOverride = bar;
                 w.hasBorderOverride = true;
+                w.bgOverride = mix(opt.theme.pageBg, bar,
+                    0.06f + 0.04f * quoteDepth);
+                w.hasBgOverride = true;
             }
             return b.add(w);
         }
@@ -1873,7 +1879,7 @@ version (unittest)
             && (op.visual.styleBits & TextAttr.bold.bits))
             sawBold = true;
         if (op.kind == OpKind.fillRect && op.visual.border.any
-            && op.visual.border.width == Insets(0, 0, 0, 1))
+            && op.visual.border.width == Insets(0, 0, 0, 2)) // the heavy bar
             sawQuoteBar = true;
         if (op.kind == OpKind.textRun && op.text == "quoted")
             sawQuoted = true;

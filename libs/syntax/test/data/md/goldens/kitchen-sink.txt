@@ -27,7 +27,7 @@ one paragraph.
    │ 2                                                                         │
    ╰───────────────────────────────────────────────────────────────────────────╯
 2. An item with a nested table? No — but a nested quote:
-   │ quoted inside an ordered item
+   ┃ quoted inside an ordered item
 3. An item with nested mixed lists:
    ○ bullet child
      1. ordinal grandchild

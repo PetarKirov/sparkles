@@ -28,10 +28,10 @@
 
 Plain quotes:
 
-│ A plain block quote with no marker.
+┃ A plain block quote with no marker.
 
-│ Outer quote
-│
-│ │ Nested quote, depth two
-│ │
-│ │ │ Depth three
+┃ Outer quote
+┃
+┃ ┃ Nested quote, depth two
+┃ ┃
+┃ ┃ ┃ Depth three
