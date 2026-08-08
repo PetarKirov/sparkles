@@ -66,9 +66,13 @@ The one inversion is a **focused terminal** (the Terminal page, `⏎` or a click
 on the pane): then every key — `q`, `Tab`, arrows, `Ctrl+C`, releases included —
 belongs to the shell inside it, and the gallery reserves only the release chord
 and the scrollback keys (`Shift+PgUp`/`PgDn`). The Terminal page spawns real
-shells (`n` or the `+ new` button, up to eight tabs in a VSCode-style vertical
-list beside the pane), renders them through the GPU per-cell renderer in a
-window and through the cell renderer in a terminal — a terminal in a terminal —
+shells (`n` or the `+ new` button, up to eight tabs in a bordered table beside
+the pane — selection by background and bold, a close `✕` revealed on hover; on
+a narrow surface the table becomes a one-cell column of circled numbers whose
+hovered cell _is_ the close button, selection there being `h`/`l`'s job, and
+`--term-tab-glyphs` restyles the numbers), renders them through the GPU
+per-cell renderer in a window and through the cell renderer in a terminal — a
+terminal in a terminal —
 and applies a VSCode-shaped exit policy: a clean `exit` closes its own tab, a
 failure holds the tab with the code in its label, and `e` (`hold: all`) keeps
 everything. The wheel over the pane walks the scrollback, whose bar draws from
