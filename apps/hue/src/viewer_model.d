@@ -19,7 +19,7 @@ import sparkles.base.term_color : mix;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
     RgbColor, Theme, toRgb;
-import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
+import sparkles.syntax.md.model : fenceBody, MdBlock, MdBlockKind, Span;
 import sparkles.syntax.md.render_widgets : CodeOverflow, FenceScroll,
     foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
     viewMarkdown;
@@ -46,12 +46,15 @@ enum RgbColor hardFallbackFg = RgbColor(0xcd, 0xd6, 0xf4);
 /// ditto
 enum RgbColor hardFallbackBg = RgbColor(0x1e, 0x1e, 0x2e);
 
-/// A fenced code block's identity artifacts: its body span and whether it is
-/// a pre-styled ` ```ansi ` fence (copy honors the ansi-copy mode for those).
+/// A fenced code block's identity artifacts: its body span, whether it is
+/// a pre-styled ` ```ansi ` fence (copy honors the ansi-copy mode for those),
+/// and its body as CODE (a quoted fence's `> ` continuation prefixes
+/// dropped — what the copy button copies and the scroll clamp measures).
 struct MdFence
 {
     Span body;
     bool isAnsi;
+    const(char)[] text;
 }
 
 /// One table cell in document order: its table index, grid position, and
@@ -541,7 +544,8 @@ struct ViewerModel
         void collect(in MdBlock blk)
         {
             if (blk.kind == MdBlockKind.codeFence)
-                fences ~= MdFence(blk.codeBody, blk.infoLang == "ansi");
+                fences ~= MdFence(blk.codeBody, blk.infoLang == "ansi",
+                    fenceBody(blk, preview.doc.source).text);
             if (blk.kind == MdBlockKind.table)
             {
                 ++tableIdx;
@@ -824,25 +828,25 @@ struct ViewerModel
         FenceExtent e;
         foreach (ref const f; fences)
         {
-            if (f.body.start != bodyStart || f.body.end > source.length)
+            if (f.body.start != bodyStart)
                 continue;
-            size_t at = f.body.start;
+            size_t at = 0;
             e.lines = 1;
             void measure(size_t end)
             {
-                const w = cast(int) cellsOf(source[at .. end]);
+                const w = cast(int) cellsOf(f.text[at .. end]);
                 if (w > e.widest)
                     e.widest = w;
             }
 
-            foreach (i; f.body.start .. f.body.end)
-                if (source[i] == '\n')
+            foreach (i, char c; f.text)
+                if (c == '\n')
                 {
                     measure(i);
                     ++e.lines;
                     at = i + 1;
                 }
-            measure(f.body.end);
+            measure(f.text.length);
             int numW;
             for (auto n = e.lines; n; n /= 10)
                 ++numW;

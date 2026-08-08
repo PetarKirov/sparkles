@@ -19,8 +19,8 @@ module sparkles.syntax.md.render_widgets;
 import sparkles.base.term_color : mix, RgbColor, toRgb;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
-import sparkles.syntax.md.model : ColAlign, MdBlock, MdBlockKind, MdDecoration,
-    MdDiffStatus, MdDoc, MdInline, MdInlineKind, Span;
+import sparkles.syntax.md.model : ColAlign, fenceBody, MdBlock, MdBlockKind,
+    MdDecoration, MdDiffStatus, MdDoc, MdInline, MdInlineKind, Span;
 import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -340,7 +340,7 @@ private uint viewCodeGroup(ref Builder b, ref const MdBlock blk,
     {
         // Same convention as the row builders (plain and styled alike): a
         // trailing newline closes the last line, it does not open one.
-        const body = sliceOf(src, f.codeBody);
+        const body = fenceBody(f, src).text;
         int n;
         foreach (char c; body)
             if (c == '\n')
@@ -913,7 +913,10 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             // pipeline when a fenceRenderer is supplied (syntax highlighting,
             // a twoslash sub-view); plain pre-formatted code otherwise.
             auto rows = new uint[](0);
-            const code = sliceOf(src, blk.codeBody);
+            // The body as CODE: a quoted fence's `> ` continuation prefixes
+            // dropped, `fb.srcAt` keeping the identity channel exact.
+            const fb = fenceBody(blk, src);
+            const code = fb.text;
 
             TextSpan[][] styled;
             if (opt.fenceRenderer !is null)
@@ -940,13 +943,11 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     if (c != '\n')
                         continue;
                     if (n++ == li)
-                        return lineTouched(opt, blk.codeBody.start + at,
-                            blk.codeBody.start + i);
+                        return lineTouched(opt, fb.srcAt(at), fb.srcAt(i));
                     at = i + 1;
                 }
                 return n == li
-                    ? lineTouched(opt, blk.codeBody.start + at,
-                        blk.codeBody.start + code.length)
+                    ? lineTouched(opt, fb.srcAt(at), fb.srcAt(code.length))
                     : Slot.code;
             }
             int numW;
@@ -983,8 +984,8 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     foreach (ref s; line)
                         if (s.srcStart != size_t.max)
                         {
-                            s.srcStart += blk.codeBody.start;
-                            s.srcEnd += blk.codeBody.start;
+                            s.srcStart = fb.srcAt(s.srcStart);
+                            s.srcEnd = fb.srcAt(s.srcEnd);
                         }
                     lineSpans ~= line.length ? line
                         : [TextSpan(" ", Slot.code, codeStyle(opt))];
@@ -998,10 +999,10 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 {
                     lineSpans ~= [
                         TextSpan(t.length ? t : " ", Slot.code, codeStyle(opt),
-                            srcStart: blk.codeBody.start + at,
-                            srcEnd: blk.codeBody.start + at + t.length)];
-                    lineSlots ~= lineTouched(opt, blk.codeBody.start + at,
-                        blk.codeBody.start + at + t.length);
+                            srcStart: fb.srcAt(at),
+                            srcEnd: fb.srcAt(at + t.length))];
+                    lineSlots ~= lineTouched(opt, fb.srcAt(at),
+                        fb.srcAt(at + t.length));
                 }
 
                 foreach (i, char c; code)

@@ -23,7 +23,8 @@
 ┃
 ┃ ╭─  ────────────────────────────────────────────────────────────────────────╮
 ┃ │ 1 auto x = 1; // a fence inside a callout                                  │
-┃ │ 2                                                                          │
+┃ │ 2 auto y = 2; // continuation lines carry no prefix indentation            │
+┃ │ 3 auto z = 3;                                                              │
 ┃ ╰────────────────────────────────────────────────────────────────────────────╯
 
 Plain quotes:
@@ -66,8 +67,7 @@ Plain quotes:
 ┃ ┃
 ┃ ┃ ╭─  ──────────────────────────────────────────────────────────────────────╮
 ┃ ┃ │ 1 // fence at quote depth two                                            │
-┃ ┃ │ 2     auto nested = true;                                                │
-┃ ┃ │ 3                                                                        │
+┃ ┃ │ 2 auto nested = true;                                                    │
 ┃ ┃ ╰──────────────────────────────────────────────────────────────────────────╯
 ┃ ┃
 ┃ ┃ ┃ Depth three — more structure still:
@@ -88,11 +88,10 @@ Plain quotes:
 ┃ ┃ ┃ ┃
 ┃ ┃ ┃ ┃ ╭─   quote.d   run  ─────────────────────────────────────────────────╮
 ┃ ┃ ┃ ┃ │ 1 void deep()                                                        │
-┃ ┃ ┃ ┃ │ 2         {                                                          │
-┃ ┃ ┃ ┃ │ 3             import std.stdio : writeln;                            │
-┃ ┃ ┃ ┃ │ 4             writeln("quoted");                                     │
-┃ ┃ ┃ ┃ │ 5         }                                                          │
-┃ ┃ ┃ ┃ │ 6                                                                    │
+┃ ┃ ┃ ┃ │ 2 {                                                                  │
+┃ ┃ ┃ ┃ │ 3     import std.stdio : writeln;                                    │
+┃ ┃ ┃ ┃ │ 4     writeln("quoted");                                             │
+┃ ┃ ┃ ┃ │ 5 }                                                                  │
 ┃ ┃ ┃ ┃ ╰──────────────────────────────────────────────────────────────────────╯
 ┃
 ┃ Closing paragraph back at depth one after the nest.

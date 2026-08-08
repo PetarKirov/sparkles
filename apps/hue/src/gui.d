@@ -2071,14 +2071,12 @@ int runGui(
                     {
                         const bodyStart = tgt.hitId - vm.fenceHitBase;
                         foreach (ref const f; vm.fences)
-                            if (f.body.start == bodyStart
-                                && f.body.end <= vm.source.length)
+                            if (f.body.start == bodyStart)
                             {
-                                // vm.source, not the launch-time `source`
-                                // parameter: the fence offsets belong to the
-                                // DISPLAYED document (explorer/set navigation
-                                // rebinds it).
-                                auto fbody = vm.source[f.body.start .. f.body.end];
+                                // The body as CODE (a quoted fence's `> `
+                                // prefixes dropped), from the DISPLAYED
+                                // document's model.
+                                auto fbody = f.text;
                                 // Match the selection copy mode (SEL7).
                                 const txt = (cm.ansiStrip && f.isAnsi)
                                     ? stripSgr(fbody) : fbody;
