@@ -45,6 +45,42 @@ import sparkles.ui.widget : WidgetTree;
 extern (C) private int forkpty(int* amaster, char* name, const void* termp,
     const winsize* winp);
 
+/// Everything the frame's dirty/skip decision reads (`TVW5`), as one plain
+/// value — the decision itself is $(LREF redrawDecision), a pure function
+/// over it.
+struct RedrawInputs
+{
+    bool contentDirty;      /// libghostty reported dirt since the last snapshot
+    bool overlayActive;     /// selection / URL hover / scrollbar / bell live now
+    bool overlayWasActive;  /// last frame's overlay — its trailing edge repaints
+    bool gridChanged;       /// a resize landed this frame
+    bool exitEdge;          /// `childExited` flipped since last frame
+    bool warmup;            /// first frames / a pending atlas flush
+    bool forced;            /// bench force-redraw or the debug screenshot hook
+}
+
+/// The frame's repaint answer: any reason at all says paint.
+bool redrawDecision(in RedrawInputs i) @safe pure nothrow @nogc
+    => i.forced || i.contentDirty || i.overlayActive || i.overlayWasActive
+    || i.gridChanged || i.exitEdge || i.warmup;
+
+@("terminal_view.component.redrawDecision.anyReasonPaints")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(!redrawDecision(RedrawInputs()));
+
+    // Each input alone is sufficient — no reason may be masked by another's
+    // absence (the bug class: a clean-content frame eating a resize).
+    assert(redrawDecision(RedrawInputs(contentDirty: true)));
+    assert(redrawDecision(RedrawInputs(overlayActive: true)));
+    assert(redrawDecision(RedrawInputs(overlayWasActive: true)));
+    assert(redrawDecision(RedrawInputs(gridChanged: true)));
+    assert(redrawDecision(RedrawInputs(exitEdge: true)));
+    assert(redrawDecision(RedrawInputs(warmup: true)));
+    assert(redrawDecision(RedrawInputs(forced: true)));
+}
+
 /// What the caller wants of a terminal pane.
 struct TerminalViewOptions
 {
@@ -61,7 +97,13 @@ struct TerminalViewOptions
 /**
 The emulator as a component. Non-copyable once opened: the VT effects hold a
 pointer into the embedded state, so the instance must stay put (stack-pin it,
-as `main` pins its `CoreState` today).
+as `main` pins its `CoreState` today, or heap-pin it as an embedder's tabs
+do).
+
+Multiple instances may coexist on one thread (`TVW7` — an embedder's tabs):
+per-instance state is fully embedded, and the only process-global pieces are
+safe there — the deferred-texture list's flushes all run pre-bracket, and
+re-registering the same PNG decoder is idempotent. Not thread-safe.
 */
 struct TerminalView
 {
@@ -75,6 +117,7 @@ struct TerminalView
     private int forceFirstFrames = 2;
     private bool forceRedrawEnv;
     private bool drainedThisFrame;
+    private bool pendingForce;
     private int frameCount;
 
     @disable this(this);
@@ -325,9 +368,7 @@ struct TerminalView
             resizeGrid(cast(ushort) (paneCols > 0 ? paneCols : 1),
                 cast(ushort) (paneRows > 0 ? paneRows : 1));
 
-        drainPty();
-        drainedThisFrame = false; // next frame's first event re-drains
-        reapChild();
+        pump();
 
         // The exit policy's frame-level half (waitForKey closes in `handle`).
         if (s.childExited)
@@ -362,33 +403,9 @@ struct TerminalView
 
         // Snapshot, then decide: clean content + no live overlay = skip the
         // whole draw (the arms keep the last frame up and skip our paint too).
-        ghostty_render_state_update(s.render_state, s.terminal);
-
-        GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
-        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
-
-        const overlayActive =
-            s.effects_ctx.bellFlashFrames > 0
-            || s.selState.isSelecting
-            || s.hoverState.isHoveringUrl
-            || s.sbState.isHovered || s.sbState.isDragging
-            || s.sbState.currentWidth != s.sbState.targetWidth;
-
-        const redraw =
-            forceRedrawEnv
-            || dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE
-            || overlayActive || prevOverlayActive
-            || gridChanged
-            || s.childExited != prevChildExited
-            || forceFirstFrames > 0
-            || s.debugScreenshotAndExit;
-
-        prevOverlayActive = overlayActive;
-        prevChildExited = s.childExited;
-        if (forceFirstFrames > 0)
-            forceFirstFrames--;
-
-        if (!redraw)
+        // The pane owning the surface, a "no" becomes the frame's skip; an
+        // embedding application folds `decideRedraw` into its own frame.
+        if (!decideRedraw())
             h.skipFrame();
 
         // The debug screenshot hook (the golden capture): full-rate frames,
@@ -410,7 +427,7 @@ struct TerminalView
     {
         e.match!(
             (in KeyEvent k) { onKey(h, k); },
-            (in FocusEvent f) { onFocus(f.focused); },
+            (in FocusEvent f) { notifyFocus(f.focused); },
             (in EndOfInput _) { h.quit(); },
             (in _) {},
         );
@@ -450,6 +467,131 @@ struct TerminalView
         paintFrame(s, pw, ph);
         rlPopMatrix();
         EndScissorMode();
+    }
+
+    // ── the embedded surface (TVW7) ─────────────────────────────────────────
+    // Host-free pieces the whole-surface members above recompose. An embedding
+    // application drives them itself, because the host calls are its to make:
+    // a clean pane must not skip the frame its chrome needs, a dead shell must
+    // not quit the application, and a failed spawn is its error to report
+    // (pre-open with `open`, so `frame`'s open-failure quit never runs).
+
+    /**
+    Drains the pty and reaps the child — the per-frame half every terminal
+    needs whether or not it paints. An embedding application pumps $(B every)
+    live pane each frame, not just the visible one, or a background child
+    blocks on a full pty buffer.
+    */
+    void pump() @system nothrow @nogc
+    {
+        drainPty();
+        drainedThisFrame = false; // next frame's first event re-drains
+        reapChild();
+    }
+
+    /**
+    Snapshots the render state and answers whether this frame must repaint —
+    dirty content, a live/trailing overlay, a resize's force bit, an exit
+    edge, or warmup. Advances the edge/warmup bookkeeping, so call it exactly
+    once per frame. The whole-surface `frame` turns a `false` into
+    `h.skipFrame()`; an embedder folds it into its own frame decision.
+    */
+    bool decideRedraw() @system nothrow @nogc
+    {
+        ghostty_render_state_update(s.render_state, s.terminal);
+
+        GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
+
+        const overlayActive =
+            s.effects_ctx.bellFlashFrames > 0
+            || s.selState.isSelecting
+            || s.hoverState.isHoveringUrl
+            || s.sbState.isHovered || s.sbState.isDragging
+            || s.sbState.currentWidth != s.sbState.targetWidth;
+
+        const redraw = redrawDecision(RedrawInputs(
+            contentDirty: dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE,
+            overlayActive: overlayActive,
+            overlayWasActive: prevOverlayActive,
+            gridChanged: pendingForce,
+            exitEdge: s.childExited != prevChildExited,
+            warmup: forceFirstFrames > 0,
+            forced: forceRedrawEnv || s.debugScreenshotAndExit,
+        ));
+
+        pendingForce = false;
+        prevOverlayActive = overlayActive;
+        prevChildExited = s.childExited;
+        if (forceFirstFrames > 0)
+            forceFirstFrames--;
+        return redraw;
+    }
+
+    /**
+    Encodes one key event and writes it to the pty — the byte-oracle-pinned
+    encoder seam alone (`TVW4`), for an embedding application's own key
+    routing. The application-level layers (clipboard chords, font hotkeys,
+    the exit-policy key) stay with the caller — the whole-surface `handle`
+    stacks them on top of this. Returns `false` when nothing was written
+    (child gone, or an unencodable event with no text).
+    */
+    bool sendKey(in KeyEvent k) @system nothrow @nogc
+    {
+        // Mode changes must reach the encoder before this frame's first
+        // encode — the polling loop's drain-before-input order (the frame's
+        // own drain then covers the render).
+        if (!drainedThisFrame)
+        {
+            drainPty();
+            drainedThisFrame = true;
+        }
+        if (s.childExited)
+            return false;
+
+        ghostty_key_encoder_setopt_from_terminal(s.key_encoder, s.terminal);
+        char[128] buf;
+        const bytes = encodeKeyEvent(s.key_encoder, s.key_event, k, buf);
+        if (bytes.length > 0)
+        {
+            pty_write(s.pty_fd, bytes.ptr, bytes.length);
+            return true;
+        }
+        // Text with no encodable key (IME/compose), and never on release:
+        // written raw, as the polling loop wrote leftover typed bytes.
+        if (k.action != KeyAction.release
+            && ghosttyKeyOf(k) == GHOSTTY_KEY_UNIDENTIFIED && k.text.length > 0)
+        {
+            pty_write(s.pty_fd, k.text.ptr, k.text.length);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+    Resizes the pty and the VT grid to `cols`×`rows` cells — the embedder's
+    grid follow, driven by the pane rect its layout produced (one frame
+    behind, by design). Refreshes the cell pixel metrics from the fonts when
+    present, no-ops when nothing changed, and leaves a force-redraw for the
+    next `decideRedraw`.
+    */
+    void resize(ushort cols, ushort rows) @system nothrow @nogc
+    {
+        if (!opened || cols == 0 || rows == 0)
+            return;
+        int cw = s.cellWidth, ch = s.cellHeight;
+        if (s.fonts !is null)
+        {
+            s.fontSize = s.fonts.size;
+            cw = s.fonts.cellW();
+            ch = s.fonts.cellH();
+        }
+        if (cols == s.cols && rows == s.rows
+            && cw == s.cellWidth && ch == s.cellHeight)
+            return;
+        s.cellWidth = cw;
+        s.cellHeight = ch;
+        resizeGrid(cols, rows);
     }
 
     // ── internals ───────────────────────────────────────────────────────────
@@ -504,22 +646,14 @@ struct TerminalView
                 h.fontSize(h.fontSizePx - 2);
         }
 
-        ghostty_key_encoder_setopt_from_terminal(s.key_encoder, s.terminal);
-        char[128] buf;
-        const bytes = encodeKeyEvent(s.key_encoder, s.key_event, k, buf);
-        if (bytes.length > 0)
-        {
-            pty_write(s.pty_fd, bytes.ptr, bytes.length);
-            return;
-        }
-        // Text with no encodable key (IME/compose), and never on release:
-        // written raw, as the polling loop wrote leftover typed bytes.
-        if (k.action != KeyAction.release
-            && ghosttyKeyOf(k) == GHOSTTY_KEY_UNIDENTIFIED && k.text.length > 0)
-            pty_write(s.pty_fd, k.text.ptr, k.text.length);
+        // The encoder seam (its drain-once no-ops — this method drained above).
+        sendKey(k);
     }
 
-    private void onFocus(bool focused) @system
+    /// Reports a focus edge to the pty when DECSET 1004 is on — the
+    /// whole-surface `handle` feeds it window focus; an embedding
+    /// application feeds it its own pane-focus edges.
+    void notifyFocus(bool focused) @system nothrow @nogc
     {
         if (focused == prevFocused)
             return;
@@ -576,8 +710,9 @@ struct TerminalView
         return true;
     }
 
-    private void resizeGrid(ushort cols, ushort rows) @system
+    private void resizeGrid(ushort cols, ushort rows) @system nothrow @nogc
     {
+        pendingForce = true; // the next decideRedraw must repaint
         s.cols = cols > 0 ? cols : 1;
         s.rows = rows > 0 ? rows : 1;
         ghostty_terminal_resize(s.terminal, s.cols, s.rows, s.cellWidth, s.cellHeight);
@@ -594,7 +729,7 @@ struct TerminalView
         ioctl(s.pty_fd, TIOCSWINSZ, &ws);
     }
 
-    private void drainPty() @system
+    private void drainPty() @system nothrow @nogc
     {
         if (s.childExited)
             return;
@@ -625,7 +760,7 @@ struct TerminalView
         }
     }
 
-    private void reapChild() @system
+    private void reapChild() @system nothrow @nogc
     {
         import core.sys.posix.sys.wait : waitpid, WEXITSTATUS, WIFEXITED,
             WIFSIGNALED, WNOHANG, WTERMSIG;
