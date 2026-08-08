@@ -30,6 +30,7 @@ import core.sys.posix.unistd : execv, getuid, read, _exit;
 
 import raylib;
 
+import sparkles.base.term_color : RgbColor;
 import sparkles.ghostty.c;
 import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction,
     KeyEvent, match, Mods;
@@ -618,6 +619,20 @@ struct TerminalView
         sv.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
         sv.value.delta = deltaLines;
         ghostty_terminal_scroll_viewport(s.terminal, sv);
+    }
+
+    /// The terminal's resolved default background — what an embedder paints
+    /// the padding around the pane in, exactly as terminal emulators treat
+    /// their own window padding.
+    RgbColor background() @system nothrow @nogc
+    {
+        if (!opened)
+            return RgbColor(0, 0, 0);
+        GhosttyRenderStateColors colors;
+        colors.size = GhosttyRenderStateColors.sizeof;
+        ghostty_render_state_colors_get(s.render_state, &colors);
+        return RgbColor(colors.background.r, colors.background.g,
+            colors.background.b);
     }
 
     /// The scrollback geometry an embedder's own bar draws from: total rows
