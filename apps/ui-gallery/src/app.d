@@ -124,12 +124,22 @@ int main(string[] args)
         title: "sparkles ui gallery",
         gui: gui,
         targetFps: 60,
+        // The Terminal page: Ctrl+letter never reaches the pty encoder
+        // without the terminal-grade keyboard, and a shell's output must
+        // appear without a keypress — the timeout is the TUI arm's only
+        // wake-without-input lever, fixed at startup by design.
+        keyRelease: true,
+        idleTimeoutMs: 50,
     };
 
     auto app = Gallery(GalleryState(
         page: pageIndexOf(cli.page),
         themeIndex: themeIndexOf(cli.theme),
     ));
+    // A real run may fork shells; the recorded tests and --render, which
+    // construct their own Gallery, leave this off and the request flags inert.
+    app.spawnEnabled = true;
+    scope (exit) closeTerminals(app);
 
     final switch (runApp(app, cfg))
     {
@@ -145,6 +155,14 @@ int main(string[] args)
             stderr.writeln("ui-gallery: the backend would not open");
             return 1;
     }
+}
+
+/// End of run: every spawned shell reaped, every terminal handle freed. The
+/// store's close sends SIGHUP to a still-live child's process group first —
+/// leaving orphaned shells behind a catalog would be a poor demonstration.
+private void closeTerminals(ref Gallery app) @trusted
+{
+    app.store.closeAll();
 }
 
 /// Where `name` sits in the catalog's own theme order. Falls back to the

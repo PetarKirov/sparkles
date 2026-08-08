@@ -17,20 +17,24 @@ import std.conv : text;
 
 import sparkles.input : Event, isDismiss, Key, KeyAction, KeyEvent, match,
     PointerAction, PointerEvent, ResizeEvent, WheelEvent;
+import sparkles.terminal_view.cell_paint : paintCells;
 import sparkles.ui.components.chrome : headerBar, scrollView;
-import sparkles.ui.geometry : Constraints, Insets, Point, SizeSpec;
-import sparkles.ui.layout : layout;
+import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
+import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.scroll_view : ScrollExtents, ScrollView;
-import sparkles.ui.state : hoverTargets, ScrollState, wantedPointerShape;
+import sparkles.ui.state : hoverTargets, keyedRects, ScrollState,
+    wantedPointerShape;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import sparkles.ui_app.run_app : AppTheme;
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
-import registry : pages, stepPage;
+import pages.terminal_page : paneHeight;
+import registry : pages, stepPage, terminalPageIndex;
 import scrollbars;
 import state;
+import term_store : TerminalStore;
 
 // No module-level `@safe:` here, deliberately. `view` and `handle` are member
 // templates instantiated against every host, and the GPU host's `size` and
@@ -42,11 +46,37 @@ import state;
 // The theme accessor is `@safe` because `runApp` probes for it from a context
 // that may be either.
 
+/**
+The capture-release chord: `Ctrl+]` (GS, 0x1d — a byte legacy terminal input
+delivers unambiguously) or VSCode's `` Ctrl+` `` (which some terminals cannot
+send at all — the reason there are two). The one binding a focused terminal
+never receives.
+*/
+bool isCaptureRelease(in KeyEvent k) @safe pure nothrow @nogc
+{
+    if (k.mods.ctrl && (k.ch == '`' || k.ch == ']'
+        || k.unshifted == '`' || k.unshifted == ']'))
+        return true;
+    // The raw GS control byte, however the input layer spelled it.
+    return k.ch == '\x1d' || k.text == "\x1d";
+}
+
 /// ditto
 struct Gallery
 {
     /// Everything the gallery knows.
     GalleryState s;
+
+    /// The Terminal page's live instances — non-copyable, pointer-pinned, so
+    /// they cannot live inside the state value. Keyed by tab id.
+    TerminalStore store;
+
+    /// Set by `main` for a real run. The recorded tests and `--render` leave
+    /// it off, so a scripted `n` raises the request flag without forking a
+    /// shell into the test harness.
+    bool spawnEnabled;
+
+    private bool prevTermFocus;
 
     /**
     The theme this frame paints in.
@@ -85,6 +115,11 @@ struct Gallery
         // The shell owns the clock, so a page cannot read one: it is handed the
         // delta and says whether it wants another frame.
         const pageAnimating = stepPage(s, dtMs);
+
+        // The Terminal page's side effects — spawn/close requests, the
+        // per-tab pty pump, title and exit mirroring — before the page view
+        // reads the state they update. A pure page cannot do any of this.
+        syncTerminals(h);
 
         auto b = Builder();
 
@@ -172,10 +207,69 @@ struct Gallery
         );
     }
 
+    /**
+    The draw phase (`HST13`): the Terminal page's live pane, painted into the
+    rect this same frame's layout gave its keyed box — `TVW7`'s whole point.
+    Every other page paints nothing here and costs nothing.
+    */
+    void paint(H)(ref H h, in WidgetTree tree, in Frame[] frames)
+    {
+        if (s.page != terminalPageIndex || !s.terms.any)
+            return;
+        auto tv = store.byId(s.terms.tabs[s.terms.active].id);
+        if (tv is null)
+            return;
+        foreach (kr; keyedRects(tree, frames))
+            if (kr.key == keyTermPane)
+            {
+                // Inside the box's border, which paints on its perimeter cells.
+                const inner = Rect(kr.rect.x + 1, kr.rect.y + 1,
+                    kr.rect.width - 2, kr.rect.height - 2);
+                if (inner.width <= 0 || inner.height <= 0)
+                    return;
+                // Next frame's grid follow reads this: layout's rect exists
+                // only now, at paint time — the one-frame lag is the design.
+                s.terms.paneCols = cast(ushort) inner.width;
+                s.terms.paneRows = cast(ushort) inner.height;
+                static if (__traits(compiles, h.canvas.fonts))
+                    tv.paintPane(h, inner); // the GPU per-cell renderer
+                else static if (__traits(compiles, paintCells(tv.s, h.canvas, inner)))
+                    // An lvalue canvas (the recorder). The paint is C FFI over
+                    // this instance's own live handles, hence the trust.
+                    (() @trusted => paintCells(tv.s, h.canvas, inner))();
+                else
+                {
+                    // The canvas is minted per call (the terminal host); it
+                    // is a view over the grid, so a copy paints the same cells.
+                    auto c = h.canvas;
+                    (() @trusted => paintCells(tv.s, c, inner))();
+                }
+                return;
+            }
+    }
+
     // ── keyboard ────────────────────────────────────────────────────────────
 
     private void onKey(H)(ref H h, in KeyEvent k)
     {
+        // With a terminal focused, the shell inside the pane owns the
+        // keyboard — `q`, `Tab`, arrows, `Ctrl+C` are $(I its) keys, not the
+        // gallery's, and releases forward too (the terminal-grade keyboard
+        // encodes them). The release chord is the one thing the gallery
+        // keeps; everything else goes to the pty. Checked before the
+        // release-drop below for exactly that reason.
+        if (terminalCaptures)
+        {
+            if (k.action != KeyAction.release && isCaptureRelease(k))
+            {
+                s.terms.focused = false;
+                return;
+            }
+            if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+                cast(void) (() @trusted => tv.sendKey(k))();
+            return;
+        }
+
         // A release is not a second press. Terminals never send one; a window
         // does, and an app that switched on the key alone would act twice.
         if (k.action == KeyAction.release)
@@ -251,6 +345,127 @@ struct Gallery
             return setPage(k.ch - '1');
         if (k.ch == '0')
             return setPage(9);
+    }
+
+    /// Whether the keyboard belongs to the shell inside the pane.
+    private bool terminalCaptures() const @safe
+        => s.page == terminalPageIndex && s.terms.focused && s.terms.any;
+
+    // ── the Terminal page's frame glue ──────────────────────────────────────
+
+    /**
+    Everything the Terminal page's pure view cannot do, once per frame:
+    consume the spawn/close requests, pump $(B every) live pty (a background
+    child otherwise blocks on a full buffer), mirror titles and exits into
+    the tab model, apply the exit policy, follow the pane rect, and report
+    focus edges (DECSET 1004).
+    */
+    private void syncTerminals(H)(ref H h)
+    {
+        if (s.terms.spawnRequested)
+        {
+            s.terms.spawnRequested = false;
+            if (spawnEnabled && !s.terms.full)
+                spawnOne(h);
+        }
+        if (s.terms.closeRequested >= 0)
+        {
+            const idx = s.terms.closeRequested;
+            s.terms.closeRequested = -1;
+            if (idx < s.terms.count)
+            {
+                (() @trusted => store.closeFor(s.terms.tabs[idx].id))();
+                s.terms.close(idx);
+            }
+        }
+
+        for (size_t i = 0; i < s.terms.count;)
+        {
+            auto tv = store.byId(s.terms.tabs[i].id);
+            if (tv is null)
+            {
+                i++;
+                continue;
+            }
+            () @trusted {
+                tv.pump();
+                if (tv.takeTitleChanged())
+                    s.terms.tabs[i].setLabel(tv.title);
+            }();
+            if (tv.s.childExited && tv.s.childReaped && !s.terms.tabs[i].exited)
+            {
+                s.terms.tabs[i].exited = true;
+                s.terms.tabs[i].exitStatus = tv.s.childStatus;
+                if (i == s.terms.active)
+                    s.terms.focused = false; // a dead shell types nowhere
+                // VSCode-shaped unless held: a clean exit closes its own tab,
+                // a failure stays with the code in the label.
+                if (!s.terms.keepExited && tv.s.childStatus == 0)
+                {
+                    (() @trusted => store.closeFor(s.terms.tabs[i].id))();
+                    s.terms.close(i);
+                    continue;
+                }
+            }
+            i++;
+        }
+
+        // The pane rect the draw phase measured last frame drives the grid.
+        if (s.terms.any && s.terms.paneCols > 0 && s.terms.paneRows > 0)
+            if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+                (() @trusted => tv.resize(s.terms.paneCols, s.terms.paneRows))();
+
+        // Focus edges, to the active tab only — the pane either has the
+        // keyboard or it does not; background tabs were never focused.
+        const focusNow = terminalCaptures;
+        if (focusNow != prevTermFocus)
+        {
+            prevTermFocus = focusNow;
+            if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+                (() @trusted => tv.notifyFocus(focusNow))();
+        }
+    }
+
+    /// One spawn: pre-opened here, where the host's metrics are — so the
+    /// component's own open-failure path (which quits the application) can
+    /// never run for a gallery tab. A failed pty reports and removes its tab.
+    private void spawnOne(H)(ref H h)
+    {
+        const id = s.terms.spawn();
+        if (id == 0)
+            return;
+        auto tv = store.create(id);
+        if (tv is null)
+        {
+            s.terms.close(s.terms.active);
+            return;
+        }
+
+        // The pane's cell size: last paint's rect, or a first-frame estimate
+        // from the same numbers the layout will use (the grid follows the
+        // real rect one frame later either way).
+        ushort cols = s.terms.paneCols;
+        ushort rows = s.terms.paneRows;
+        if (cols == 0 || rows == 0)
+        {
+            const w = s.contentWidth - 2;
+            const ph = paneHeight(s) - 2;
+            cols = cast(ushort) (w > 1 ? w : 1);
+            rows = cast(ushort) (ph > 1 ? ph : 1);
+        }
+
+        bool ok;
+        static if (__traits(compiles, h.canvas.fonts))
+            ok = (() @trusted => tv.open(h.canvas.fonts, cols, rows))();
+        else
+            ok = (() @trusted => tv.openCore(cols, rows, 1, 1))();
+        if (!ok)
+        {
+            (() @trusted => store.closeFor(id))();
+            s.terms.close(s.terms.active);
+            s.toastText = "terminal · could not open a pty";
+            s.toast = typeof(s.toast).triggered(toastConfigFor(s.hasFrameClock));
+        }
     }
 
     /// Down/up inside whichever half has the keyboard: the page list moves the
@@ -397,6 +612,13 @@ struct Gallery
     {
         if (id == 0)
             return;
+
+        // A completed press outside the Terminal page's own chrome takes the
+        // keyboard back from a focused terminal — clicking the catalog means
+        // using it. Its tabs and buttons keep the capture (VSCode's shape:
+        // switching tabs moves the focus, it does not drop it).
+        if (s.terms.focused && (id < hitTerminal || id >= hitTermActions + 3))
+            s.terms.focused = false;
 
         if (id >= hitNav && id < hitNav + pages.length)
         {
@@ -602,6 +824,7 @@ struct Gallery
             ["\\", "show the page list on a narrow terminal"],
             ["?", "this overlay"],
             ["q / Esc", "quit"],
+            ["ctrl+] / ctrl+`", "give the keyboard back to the gallery"],
         ];
         foreach (ref bind; binds)
             lines ~= keyHint(b, bind[0], bind[1]);
@@ -972,6 +1195,66 @@ version (unittest)
     drive(g, [keyEvent(Key.tab), charEvent('w')]);
     assert(g.s.region == Region.content);
     assert(g.s.layoutDemo.widthMode == 1, "…and now it does");
+}
+
+@("ui_gallery.gallery.aFocusedTerminalOwnsTheKeyboard")
+@safe unittest
+{
+    import registry : terminalPageIndex;
+
+    // With a terminal focused, `q` must not quit, `Tab` must not move the
+    // region, and `[` must not change the theme — they are the shell's keys
+    // now. The run itself proves the first: a quit would end the script
+    // early and record fewer frames.
+    Gallery g;
+    g.s.page = terminalPageIndex;
+    g.s.region = Region.content;
+    cast(void) g.s.terms.spawn(); // the model only — no pty in a test
+    g.s.terms.focused = true;
+    const theme = g.s.themeIndex;
+
+    auto rec = drive(g, [charEvent('q'), keyEvent(Key.tab), charEvent('[')]);
+    assert(!rec.quitRequested, "no key reached the shell's quit");
+    assert(g.s.region == Region.content, "Tab went to the pty, not the shell");
+    assert(g.s.themeIndex == theme);
+    assert(g.s.terms.focused, "only the chord releases the capture");
+}
+
+@("ui_gallery.gallery.theChordAlwaysReturnsTheKeyboard")
+@safe unittest
+{
+    import registry : terminalPageIndex;
+    import sparkles.input : Mods;
+
+    Gallery g;
+    g.s.page = terminalPageIndex;
+    g.s.region = Region.content;
+    cast(void) g.s.terms.spawn();
+    g.s.terms.focused = true;
+
+    drive(g, [charEvent(']', Mods(ctrl: true))]);
+    assert(!g.s.terms.focused, "Ctrl+] is never the shell's to keep");
+
+    // And the shell is really back: the next `q` ends the run first thing.
+    g.s.terms.focused = true;
+    auto rec = drive(g, [charEvent('`', Mods(ctrl: true)), charEvent('q')]);
+    assert(!g.s.terms.focused);
+    assert(rec.quitRequested, "the q after the chord reached the shell");
+}
+
+@("ui_gallery.gallery.captureReleaseChordSpellings")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.input : Mods;
+
+    // Every spelling an input layer might deliver: the two chords by ch or
+    // by unshifted codepoint, and the raw GS byte legacy input decodes to.
+    assert(isCaptureRelease(KeyEvent(Key.char_, ']', Mods(ctrl: true))));
+    assert(isCaptureRelease(KeyEvent(Key.char_, '`', Mods(ctrl: true))));
+    assert(isCaptureRelease(KeyEvent(Key.char_, '\x1d')));
+    assert(!isCaptureRelease(KeyEvent(Key.char_, ']')), "a bare ] is text");
+    assert(!isCaptureRelease(KeyEvent(Key.char_, 'c', Mods(ctrl: true))),
+        "Ctrl+C is the shell's interrupt, never the gallery's");
 }
 
 @("ui_gallery.gallery.tabIsNeverThePagesToTake")

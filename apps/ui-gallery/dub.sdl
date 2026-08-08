@@ -19,6 +19,11 @@ dependency "sparkles:ui-app" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:core-cli" path="../.."
 
+// The Terminal page embeds real shells — the TVW7 proof. A sourceLibrary: its
+// modules compile into this executable (an intermediate static library would
+// break the ImportC pkg-config seam).
+dependency "sparkles:terminal-view" path="../.."
+
 // `--render` paints through the terminal's OWN canvas, not a lookalike: a
 // headless render of a different painter than the one that runs is worse than
 // no render at all. `src/render.d` is the one module in this application that
