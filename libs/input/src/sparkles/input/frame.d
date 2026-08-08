@@ -58,6 +58,10 @@ struct InputFrame
     ButtonState[PointerButton.max + 1] buttons;
     /// Rows to scroll — already in cells (`INP12`), accumulated over the frame.
     int wheelCells;
+    /// Columns to scroll — a horizontal wheel/trackpad axis, plus a
+    /// Shift-modified vertical notch (the universal "scroll sideways"
+    /// spelling), accumulated the same way.
+    int wheelCellsX;
 
     // Resolved touch gestures. A tap arrives as press+release in the button
     // fields above; these are the two that have no other spelling.
@@ -177,7 +181,13 @@ InputFrame foldFrame(R)(R events, in InputFrame prior = InputFrame.init,
             },
             (in WheelEvent w) {
                 // Already cells (INP12) — accumulate, never re-multiply.
-                f.wheelCells += w.dy;
+                // Shift turns a vertical notch sideways (the universal
+                // spelling on mice without a horizontal axis).
+                if (w.mods.shift)
+                    f.wheelCellsX += w.dy;
+                else
+                    f.wheelCells += w.dy;
+                f.wheelCellsX += w.dx;
                 f.pos = PointF(w.pos.x, w.pos.y);
                 f.mods = w.mods;
             },
@@ -322,6 +332,15 @@ unittest
         Event(WheelEvent(dy: 3, pos: Point(1, 1))),
     ]);
     assert(w.wheelCells == 6);
+
+    // The horizontal channel: a dx axis accumulates directly; Shift turns
+    // a vertical notch sideways instead of scrolling.
+    auto hw = foldFrame([
+        Event(WheelEvent(dx: 2, dy: 0)),
+        Event(WheelEvent(dy: 3, mods: Mods(shift: true))),
+    ]);
+    assert(hw.wheelCells == 0);
+    assert(hw.wheelCellsX == 5);
 
     // Opposite directions cancel rather than fighting.
     const z = foldFrame([Event(WheelEvent(dy: 3)), Event(WheelEvent(dy: -3))]);
