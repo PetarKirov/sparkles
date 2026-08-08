@@ -1,7 +1,9 @@
 # `sparkles:wired` — Delivery plan
 
 _Companion to [SPEC.md](./SPEC.md): the milestones that build the library to the
-specification. Each milestone is independently green (builds + tests + lints)._
+specification. Each milestone is independently green (builds + tests + lints).
+The expressiveness upgrade has its own plan —
+[expressiveness/PLAN.md](./expressiveness/PLAN.md) (E-milestones)._
 
 ## M1 — Specification
 
