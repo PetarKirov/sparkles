@@ -108,23 +108,37 @@ uint view(ref Builder b, in GalleryState s)
         // blank column.
         const listW = w >= listMinContent ? listWidth
             : w >= miniMinContent ? 1 : 0;
-        const paneW = w - gutterCells - listW;
+        const groupW = w - listW;
+        const paneW = groupW - 2 - gutterCells;
 
+        // The terminal and its scrollback bar are ONE instrument, so one
+        // border wraps the pair — which also aligns the bar's track with the
+        // cell grid it scrolls (a bar beside a self-bordered pane overhung it
+        // by the border row at each end). The keyed pane box is borderless:
+        // its rect IS the cell grid, no inset.
         uint[] across;
-        across ~= b.add(Widget(
+        const paneBox = b.add(Widget(
             kind: WidgetKind.box,
             key: keyTermPane,
             hitId: hitPane,
             width: SizeSpec.fixed(paneW),
-            height: SizeSpec.fixed(paneRows),
-            decoration: Decoration(borderWidth: intoAll(1),
-                borderSlot: s.terms.focused ? Slot.chromeFocused : Slot.border),
+            height: SizeSpec.fixed(paneRows - 2),
         ));
         // The scrollback bar: the same living bar as every other in the
         // catalog — grabbable, capture-arbitrated, hover-expanding — over
         // the terminal's own numbers. The machine's offset is reconciled
         // with ghostty's each frame by the shell.
-        across ~= verticalBar(b, s.termView, termBarGeometry(s), hitTermBar);
+        const bar = verticalBar(b, s.termView, termBarGeometry(s), hitTermBar);
+        across ~= b.add(Widget(
+            kind: WidgetKind.row,
+            children: [paneBox, bar],
+            width: SizeSpec.fixed(groupW),
+            height: SizeSpec.fixed(paneRows),
+            padding: intoAll(1),
+            decoration: Decoration(borderWidth: intoAll(1),
+                borderStyle: BorderStyle.solid,
+                borderSlot: s.terms.focused ? Slot.chromeFocused : Slot.border),
+        ));
         if (listW == listWidth)
             across ~= termTable(b, s, paneRows);
         else if (listW == 1)
@@ -170,7 +184,7 @@ BarGeometry termBarGeometry(in GalleryState s)
     => BarGeometry(
         content: s.terms.sbTotal,
         viewport: s.terms.sbLen,
-        track: paneHeight(s),
+        track: paneHeight(s) - 2, // inside the group's border
     );
 
 /**
