@@ -30,7 +30,7 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_app.run_app : AppTheme;
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
-import pages.terminal_page : paneHeight;
+import pages.terminal_page : hitPane, paneHeight;
 import registry : pages, stepPage, terminalPageIndex;
 import scrollbars;
 import state;
@@ -189,7 +189,8 @@ struct Gallery
         // the ease needs.
         if ((s.toast.visible || pageAnimating
                 || easing(s.contentView, s.caps)
-                || easing(s.demoView, s.caps)) && s.hasFrameClock)
+                || easing(s.demoView, s.caps)
+                || easing(s.chromeView, s.caps)) && s.hasFrameClock)
             h.requestFrame();
 
         return b.finish(root);
@@ -264,6 +265,14 @@ struct Gallery
             {
                 s.terms.focused = false;
                 return;
+            }
+            // The emulator convention's scrollback keys — the second and last
+            // thing the gallery keeps from a focused terminal.
+            if (k.action != KeyAction.release && k.mods.shift
+                && (k.key == Key.pageUp || k.key == Key.pageDown))
+            {
+                const page = s.terms.paneRows > 2 ? s.terms.paneRows - 1 : 1;
+                return scrollTerminal(k.key == Key.pageUp ? -page : page);
             }
             if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
                 cast(void) (() @trusted => tv.sendKey(k))();
@@ -422,6 +431,12 @@ struct Gallery
                     if (s.terms.paneCols > 0 && s.terms.paneRows > 0)
                         tv.resize(s.terms.paneCols, s.terms.paneRows);
                     cast(void) tv.decideRedraw();
+                    // The page draws the scrollback bar from these — a pure
+                    // view cannot ask the instance.
+                    const sb = tv.scrollback();
+                    s.terms.sbTotal = sb.total;
+                    s.terms.sbLen = sb.len;
+                    s.terms.sbOffset = sb.offset;
                 }();
 
         // Last frame's deferred kitty textures resolve pre-bracket, exactly
@@ -653,9 +668,23 @@ struct Gallery
 
     private void onWheel(in WheelEvent w) @safe
     {
+        // Over the terminal pane, the wheel walks the shell's scrollback —
+        // the one target whose document is not the gallery's to scroll.
+        if (s.page == terminalPageIndex && s.terms.any && s.hover.isHot(hitPane))
+            return scrollTerminal(w.dy);
+
         // The producer already multiplied by `linesPerNotch`; multiplying again
         // here is the bug `INP12` names.
         scrollContent(w.dy);
+    }
+
+    /// Scrolls the active terminal's viewport — negative into history.
+    private void scrollTerminal(int deltaLines) @safe
+    {
+        if (!s.terms.any)
+            return;
+        if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+            (() @trusted => tv.scrollViewport(deltaLines))();
     }
 
     /**
@@ -844,6 +873,7 @@ struct Gallery
             ["?", "this overlay"],
             ["q / Esc", "quit"],
             ["ctrl+] / ctrl+`", "give the keyboard back to the gallery"],
+            ["shift+PgUp / PgDn", "a focused terminal's scrollback"],
         ];
         foreach (ref bind; binds)
             lines ~= keyHint(b, bind[0], bind[1]);

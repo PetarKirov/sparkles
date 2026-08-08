@@ -2,22 +2,31 @@
 The Terminal page: real shells inside the catalog — the `TVW7` embedding
 proof, VSCode-shaped.
 
-A tab strip of live terminals, a button (and `n`) to spawn more, and a pane
-that is $(B laid out like any other widget) — the actual cells arrive in the
-component's draw phase, which finds the pane's rect by its key and hands it
-to `sparkles:terminal-view`. The page itself stays a pure view over state:
-spawning a pty is a side effect no page is allowed, so the page raises
-request flags and the shell's frame glue performs them.
+A pane beside a $(B vertical) list of terminals (a horizontal strip overflows
+by the third tab; VSCode's panel lists them on the right for the same
+reason), a button (and `n`) to spawn more, and the pane itself $(B laid out
+like any other widget) — the actual cells arrive in the component's draw
+phase, which finds the pane's rect by its key. The page stays a pure view
+over state: spawning a pty is a side effect no page is allowed, so the page
+raises request flags and the shell's frame glue performs them.
 
-Keyboard capture is the page's one novelty: with a terminal $(B focused),
+Widths are state-computed `fixed` values, like every page's: inside the
+shell's scroll viewport a child lays out at its $(B natural) width, so a
+`grow` pane collapses to the widest label beside it — the catalog found
+that one live, as a terminal that refused to widen with its window.
+
+Keyboard capture is the page's one inversion: with a terminal $(B focused),
 every key belongs to the shell inside it — `q`, `Tab`, arrows, `Ctrl+C` —
-and the gallery keeps only the release chord. That inversion lives in
-`gallery.d`, before the shell's own bindings; here it is only displayed.
+and the gallery keeps only the release chord and the scrollback keys
+(`Shift+PgUp`/`Shift+PgDn`, the emulator convention). That routing lives in
+`gallery.d`; here it is only displayed.
 */
 module pages.terminal_page;
 
+import std.conv : text;
+
 import sparkles.input : Key, KeyEvent;
-import sparkles.ui.components.chrome : actionBar, tabStrip;
+import sparkles.ui.components.chrome : actionBar, scrollbar;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
@@ -29,16 +38,23 @@ import state : GalleryState, hitTerminal, hitTermActions, keyTermPane, maxTerms;
 
 /// ditto
 static immutable string[] keys = [
-    "n new", "x close", "h/l tab", "e hold", "⏎ focus", "ctrl+] leave",
+    "n new", "x close", "h/l tab", "⏎ focus", "⇧PgUp history", "ctrl+] leave",
 ];
 
 /// The pane's own hit id. Tab ids start at 1, so `hitTerminal + 0` can never
-/// name a tab — the strip and the pane share a base without colliding.
-private enum size_t hitPane = hitTerminal;
+/// name a tab — the list rows and the pane share a base without colliding.
+enum size_t hitPane = hitTerminal;
 
-/// The chrome rows the page spends above the pane: heading, spacer, tab
-/// strip, action bar, spacer, status line.
+/// The chrome rows the page spends beyond the pane: heading, spacer, action
+/// bar, spacer, status line.
 private enum int chromeRows = 6;
+
+/// The terminal list's width — label room for "▸ shell 8 ✕ 127".
+private enum int listWidth = 18;
+
+/// Below this content width the list yields (the tabs stay reachable with
+/// `h`/`l`), exactly as the shell's own sidebar yields the surface.
+private enum int listMinContent = 48;
 
 /// ditto
 uint view(ref Builder b, in GalleryState s)
@@ -49,48 +65,51 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= heading(b, "Terminal · a shell as a widget");
     body_ ~= spacer(b);
 
-    // The strip: stable ids (hitTerminal + tab.id), exited tabs annotated
-    // with their status so the hold policy has something to show.
-    string[] labels;
-    size_t[] ids;
-    foreach (i; 0 .. s.terms.count)
-    {
-        const t = s.terms.tabs[i];
-        labels ~= t.exited
-            ? tabLabelExited(t.labelText, t.exitStatus)
-            : t.labelText.idup;
-        ids ~= hitTerminal + t.id;
-    }
-
-    uint[] strip;
-    if (s.terms.any)
-        strip ~= tabStrip(b, labels, s.terms.active, hitTerminal, s.press,
-            fitLabels: true, ids: ids);
-    strip ~= actionBar(b, [
+    body_ ~= actionBar(b, [
         "+ new",
         "✕ close",
         s.terms.keepExited ? "hold: all" : "hold: fail",
     ], hitTermActions, s.press);
-    body_ ~= column(b, strip);
     body_ ~= spacer(b);
 
-    // The pane: an empty keyed box the layout sizes — the draw phase paints
-    // the cells into exactly this rect. Focused, its border says so.
     const paneRows = paneHeight(s);
     if (s.terms.any)
     {
-        body_ ~= b.add(Widget(
+        // The pane, its scrollback bar, and the terminal list — explicit
+        // widths that sum to the pane's (see the module header for why
+        // `grow` cannot do this here). The bar column is always reserved,
+        // like the shell's own gutter: content that reflowed sideways the
+        // moment history crossed the viewport would be worse than one
+        // blank column.
+        const listOn = w >= listMinContent;
+        const listW = listOn ? listWidth : 0;
+        const paneW = w - 1 - listW;
+
+        uint[] across;
+        across ~= b.add(Widget(
             kind: WidgetKind.box,
             key: keyTermPane,
             hitId: hitPane,
-            width: SizeSpec.grow(1),
+            width: SizeSpec.fixed(paneW),
             height: SizeSpec.fixed(paneRows),
             decoration: Decoration(borderWidth: intoAll(1),
                 borderSlot: s.terms.focused ? Slot.chromeFocused : Slot.border),
         ));
-        body_ ~= label(b, s.terms.focused
+        across ~= scrollbackBar(b, s, paneRows);
+        if (listOn)
+            across ~= termList(b, s, paneRows);
+
+        body_ ~= b.add(Widget(
+            kind: WidgetKind.row,
+            children: across,
+            width: SizeSpec.fixed(w),
+            height: SizeSpec.fixed(paneRows),
+        ));
+        // The grid size leads the status line, as emulators do on resize.
+        body_ ~= label(b, text(s.terms.paneCols, "×", s.terms.paneRows, " · ",
+            s.terms.focused
             ? "the shell has the keyboard — ctrl+] (or ctrl+`) gives it back"
-            : "⏎ or click the pane to type into the shell", Slot.muted);
+            : "⏎ or click the pane to type into the shell"), Slot.muted);
     }
     else
     {
@@ -103,14 +122,61 @@ uint view(ref Builder b, in GalleryState s)
                 ~ "layout, painted through the host's draw phase, keyed like "
                 ~ "any other widget.", inner),
             spacer(b),
-            para(b, "Mouse inside the pane is not wired yet (selection, "
-                ~ "scrollback): the mouse-event conversion lands separately. "
-                ~ "The keyboard is complete, including Ctrl chords.", inner),
+            para(b, "The keyboard is complete, including Ctrl chords; the "
+                ~ "wheel and Shift+PgUp/PgDn walk the scrollback. Mouse "
+                ~ "inside the pane (selection, links) waits on the "
+                ~ "mouse-event conversion.", inner),
         ]);
     }
 
     return column(b, body_);
 }
+
+/// The scrollback bar: the terminal's own numbers (mirrored into state by the
+/// frame glue), through the same thumb formula as every bar in the catalog.
+/// One column, always reserved; the thumb appears once there is history.
+private uint scrollbackBar(ref Builder b, in GalleryState s, int paneRows)
+{
+    if (s.terms.sbTotal > s.terms.sbLen && s.terms.sbLen > 0)
+        return scrollbar(b, clampInt(s.terms.sbTotal), clampInt(s.terms.sbLen),
+            clampInt(s.terms.sbOffset), paneRows);
+    return b.add(Widget(kind: WidgetKind.box,
+        width: SizeSpec.fixed(1), height: SizeSpec.fixed(paneRows)));
+}
+
+/// The vertical terminal list, VSCode-panel style: one row per tab, the
+/// active one marked, an exited one carrying its status. Rows mint the same
+/// `hitTerminal + id` the old strip did, so activation is unchanged.
+private uint termList(ref Builder b, in GalleryState s, int paneRows)
+{
+    uint[] rows;
+    foreach (i; 0 .. s.terms.count)
+    {
+        const t = s.terms.tabs[i];
+        const active = i == s.terms.active;
+        auto caption = text(active ? "▸ " : "  ", t.labelText,
+            t.exited ? text(" ✕ ", t.exitStatus) : "");
+        if (caption.length > listWidth)
+            caption = caption[0 .. listWidth];
+        rows ~= b.add(Widget(
+            kind: WidgetKind.text,
+            text: caption,
+            hitId: hitTerminal + t.id,
+            slot: active ? Slot.chromeAccent
+                : t.exited ? Slot.muted : Slot.chrome,
+            textStyle: TextStyle(bold: active),
+        ));
+    }
+    return b.add(Widget(
+        kind: WidgetKind.column,
+        children: rows,
+        width: SizeSpec.fixed(listWidth),
+        height: SizeSpec.fixed(paneRows),
+    ));
+}
+
+private int clampInt(long v) pure nothrow @nogc
+    => v > int.max ? int.max : (v < 0 ? 0 : cast(int) v);
 
 /// The pane's height: whatever the content pane has, less this page's own
 /// chrome — clamped so a hostile surface still lays out.
@@ -118,13 +184,6 @@ int paneHeight(in GalleryState s)
 {
     const h = s.contentHeight - chromeRows;
     return h > 2 ? h : 2;
-}
-
-private string tabLabelExited(scope const(char)[] name, int status)
-{
-    import std.conv : text;
-
-    return text(name, " ✕ ", status);
 }
 
 private auto intoAll(int n) pure nothrow @nogc
@@ -267,4 +326,38 @@ bool handleActivate(ref GalleryState s, size_t id)
     assert(handleActivate(s, hitPane));
     assert(s.terms.focused);
     assert(!handleActivate(s, 1));
+}
+
+@("ui_gallery.pages.terminalPaneFollowsTheSurfaceWidth")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints, Size;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : keyedRects;
+    import state : keyTermPane;
+
+    // The live defect this pins: inside the shell's scroll viewport a child
+    // lays out at its NATURAL width, so a `grow` pane collapsed to the
+    // widest label beside it and a widened window left the terminal at its
+    // spawn width. The pane's width is a state-computed fixed value now,
+    // and it must track the surface.
+    int paneWidthAt(int surface)
+    {
+        GalleryState s;
+        s.surface = Size(surface, 30);
+        cast(void) s.terms.spawn();
+        auto b = Builder();
+        auto tree = b.finish(view(b, s));
+        // The page subtree alone, at its natural width — the scroll
+        // viewport's situation, which is where the collapse happened.
+        auto frames = layout(tree, Constraints(maxW: s.contentWidth));
+        foreach (kr; keyedRects(tree, frames))
+            if (kr.key == keyTermPane)
+                return kr.rect.width;
+        assert(0, "the pane lost its key");
+    }
+
+    const at90 = paneWidthAt(90);
+    const at130 = paneWidthAt(130);
+    assert(at130 > at90 + 30, "the pane must widen with the surface");
 }
