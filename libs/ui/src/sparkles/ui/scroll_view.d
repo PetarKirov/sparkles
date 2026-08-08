@@ -154,8 +154,12 @@ pure nothrow @nogc:
     {
         if (!live)
             return bar.hoveredNow(false).released();
+        // Hover is capture-gated like the press (STM11): while another
+        // affordance owns the pointer — a different bar's drag straying
+        // over this one — the crossing is not a hover, so no bar lights
+        // its expand feedback mid-drag but the one being dragged.
         bar = bar.scrolledTo(clampOffset(offset, e.content, e.viewport))
-            .hoveredNow(p.over || bar.dragging);
+            .hoveredNow((p.over && capture.available(capId)) || bar.dragging);
         if (p.over && p.pressed && capture.available(capId))
         {
             bar = bar.pressed(p.trackPos, e.content, e.viewport, e.track,
@@ -247,6 +251,59 @@ unittest
     cap = sv.stepV(cap, 7, true,
         ScrollPointer(over: true, pressed: true, trackPos: 200), 0, e);
     assert(!sv.v.dragging && sv.v.offset == 0);
+    // Nor is the crossing a HOVER: a foreign drag straying over the bar
+    // must not light its expand feedback.
+    assert(!sv.v.hovered);
+    // With the pointer free again, the same crossing hovers normally.
+    cap = CaptureState();
+    cap = sv.stepV(cap, 7, true, ScrollPointer(over: true), 0, e);
+    assert(sv.v.hovered);
+}
+
+@("ui.scrollView.foreignDragCrossesQuietly")
+@safe pure nothrow @nogc
+unittest
+{
+    // The reported pairing, both directions: a DOCUMENT bar and a FENCE
+    // bar share one pointer. Dragging either must leave the other inert —
+    // no hover feedback, no grab, no movement — until release frees the
+    // pointer again.
+    const e = ScrollExtents(content: 400, viewport: 100, track: 400);
+    ScrollView doc, fence;
+    CaptureState cap;
+    enum docId = 1, fenceId = 2;
+
+    // The fence bar grabs.
+    cap = fence.stepV(cap, fenceId, true,
+        ScrollPointer(over: true, pressed: true, trackPos: 100), 0, e);
+    assert(fence.v.dragging);
+
+    // The drag strays over the document bar (hosts step every bar each
+    // frame): the doc bar sees `over`, but the crossing is not a hover,
+    // not a press, not a move.
+    cap = doc.stepV(cap, docId, true,
+        ScrollPointer(over: true, pressed: false, trackPos: 300), 0, e);
+    assert(!doc.v.hovered && !doc.v.dragging && doc.v.offset == 0);
+
+    // Even a press mid-stray does nothing (a well-formed stream cannot
+    // press without a release, but the machine must not care).
+    cap = doc.stepV(cap, docId, true,
+        ScrollPointer(over: true, pressed: true, trackPos: 300), 0, e);
+    assert(!doc.v.hovered && !doc.v.dragging && doc.v.offset == 0);
+
+    // Meanwhile the fence drag keeps tracking.
+    cap = fence.stepV(cap, fenceId, true,
+        ScrollPointer(over: false, trackPos: 260), fence.v.offset, e);
+    assert(fence.v.dragging && fence.v.offset > 0);
+
+    // Release frees the pointer; the same crossing now hovers.
+    cap = fence.stepV(cap, fenceId, true,
+        ScrollPointer(released: true), fence.v.offset, e);
+    cap = cap.released();
+    assert(!fence.v.dragging);
+    cap = doc.stepV(cap, docId, true, ScrollPointer(over: true),
+        0, e);
+    assert(doc.v.hovered);
 }
 
 @("ui.scrollView.pointerShapePriority")
