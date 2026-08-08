@@ -24,7 +24,7 @@ import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.scroll_view : ScrollExtents, ScrollView;
 import sparkles.ui.state : hoverTargets, keyedRects, ScrollState,
     wantedPointerShape;
-import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
+import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle, Visual;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import sparkles.ui_app.run_app : AppTheme;
@@ -224,9 +224,9 @@ struct Gallery
         foreach (kr; keyedRects(tree, frames))
             if (kr.key == keyTermPane)
             {
-                // Inside the box's border, which paints on its perimeter cells.
-                const inner = Rect(kr.rect.x + 1, kr.rect.y + 1,
-                    kr.rect.width - 2, kr.rect.height - 2);
+                // The pane box is borderless — the group's border wraps it
+                // and the bar together — so the keyed rect IS the cell grid.
+                const inner = kr.rect;
                 if (inner.width <= 0 || inner.height <= 0)
                     return;
                 // Next frame's grid follow reads this: layout's rect exists
@@ -234,7 +234,10 @@ struct Gallery
                 s.terms.paneCols = cast(ushort) inner.width;
                 s.terms.paneRows = cast(ushort) inner.height;
                 static if (__traits(compiles, h.canvas.fonts))
+                {
                     tv.paintPane(h, inner); // the GPU per-cell renderer
+                    paintTermRail(h, inner); // hue's sub-cell bar over the gutter
+                }
                 else static if (__traits(compiles, paintCells(tv.s, h.canvas, inner)))
                     // An lvalue canvas (the recorder). The paint is C FFI over
                     // this instance's own live handles, hence the trust.
@@ -360,6 +363,40 @@ struct Gallery
     /// Whether the keyboard belongs to the shell inside the pane.
     private bool terminalCaptures() const @safe
         => s.page == terminalPageIndex && s.terms.focused && s.terms.any;
+
+    /**
+    hue's scrollbar, over the widget bar's gutter on the GPU arm: a sub-cell
+    rail (⅓ cell idle, 1.5 cells under the pointer) eased by the $(B same)
+    machine whose width the cell bar can only quantize — this page's answer
+    to `UGL-O6`, honest here because the draw phase is already the page's.
+    The gutter is repainted in the page color first, so the widget bar's
+    cell thumb never shows through beneath the rail.
+    */
+    private void paintTermRail(H)(ref H h, in Rect pane)
+    {
+        import sparkles.ui.scroll_view : ScrollbarAnim;
+        import sparkles.ui_raylib : drawScrollbar, scrollbarLayout;
+
+        auto c = h.canvas;
+        const gutter = Rect(pane.x + pane.width, pane.y,
+            gutterCells, pane.height);
+        const frame = theme();
+        c.fillRect(gutter, Visual(bg: frame.pageBg, hasBg: true));
+
+        const cw = c.fonts.cellW();
+        const ch = c.fonts.cellH();
+        // The eased 1..2 cell width, mapped onto hue's ⅓ → 1.5 cells.
+        const t = s.termView.vAnim.width - 1.0f;
+        const px = cast(int)(cw * (1.0f / 3 + t * (1.5f - 1.0f / 3)));
+        const l = scrollbarLayout(s.termView.v,
+            ScrollbarAnim(px < 2 ? 2 : px),
+            s.terms.sbTotal, s.terms.sbLen,
+            Rect(gutter.x * cw, gutter.y * ch, gutter.width * cw,
+                gutter.height * ch));
+        drawScrollbar(l, s.termView.v,
+            mixRgb(frame.pageBg, frame.pageFg, 0.22f),
+            mixRgb(frame.pageBg, frame.pageFg, 0.5f));
+    }
 
     // ── the Terminal page's frame glue ──────────────────────────────────────
 
@@ -931,6 +968,13 @@ private auto rgbOr(C)(in C c, ubyte r, ubyte g, ubyte bl) @safe
 
     return c.kind == Color.Kind.rgb ? c.rgb : RgbColor(r, g, bl);
 }
+
+/// `a` blended toward `b` by `t` — hue's scrollbar color recipe, over the
+/// page colors so the rail follows the theme.
+private auto mixRgb(C)(in C a, in C b, float t) @safe
+    => C(cast(ubyte)(a.r + (b.r - a.r) * t),
+        cast(ubyte)(a.g + (b.g - a.g) * t),
+        cast(ubyte)(a.b + (b.b - a.b) * t));
 
 // ---------------------------------------------------------------------------
 // Tests — the whole shell, headless, through the recording host.

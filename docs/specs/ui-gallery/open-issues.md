@@ -69,6 +69,12 @@ this is strictly better than hue, which does not expand at all.
 Closes if the widget level grows a sub-cell width hint, or stays open as the
 honest price of never naming a canvas.
 
+One page is the exception that proves the rule: the **Terminal** page's draw
+phase is already its own (that is what embedding a terminal means), so on the
+GPU arm it paints hue's sub-cell rail — ⅓ cell easing to 1.5 under the pointer
+— over its bar's gutter, driven by the same machine the cell bar quantizes.
+Every other page stays at whole columns.
+
 ## `UGL-O5` — the wheel always scrolls the shell's pane · open
 
 The gallery routes wheel events to the content pane regardless of what is under
