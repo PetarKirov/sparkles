@@ -19,6 +19,13 @@ dependency "sparkles:ui-app" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:core-cli" path="../.."
 
+// `--render` paints through the terminal's OWN canvas, not a lookalike: a
+// headless render of a different painter than the one that runs is worse than
+// no render at all. `src/render.d` is the one module in this application that
+// names a canvas, and it is a development tool rather than the frame path.
+dependency "sparkles:ui-tui" path="../.."
+dependency "sparkles:tui" path="../.."
+
 // Both arms. The gallery's whole claim is that one `view` serves a terminal and
 // a window, so a configuration carrying only one of them would make the claim
 // unfalsifiable rather than true.

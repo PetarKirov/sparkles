@@ -3,22 +3,33 @@ Rendering one frame with no terminal session and no window (`--render`).
 
 The catalog is a visual artifact, and the slowest way to look at one is to open
 it. This drives the $(B same) `view` the real loop calls — through the recording
-host, so nothing is special-cased — paints the resulting display list into a
-cell grid, and hands back either ANSI or bare glyphs.
+host, so nothing is special-cased — paints the resulting display list, and hands
+back either ANSI or bare glyphs.
 
-Two consumers, and the second is why it lives in a module of its own rather than
-inside `app.d`: a person developing a page (`--render --page themes --keys ']]'`)
-and the golden snapshots the catalog sweep compares against, which need the
-glyph form and must run under `dub test`.
+$(B It paints through the terminal's own canvas.) An earlier version used
+$(REF CellGrid, sparkles,ui,interp,cells), which is a second cell canvas with
+its own copy of the glyph decisions — and the two disagreed. `--render` showed
+dashed borders and accent bars that the live `--tui` did not, so a render that
+was supposed to make a defect visible was hiding one instead. A headless render
+of a different painter than the one that runs is worse than no render at all.
+
+So this module, alone in the application, names a canvas. `gallery.d` — the
+component, the thing that actually runs — still names none; this is a
+development tool and a golden-snapshot source, and it is only useful if it is
+byte-for-byte the terminal.
 */
 module render;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import std.array : appender;
+import std.conv : to;
+
+import sparkles.base.term_color : Color;
 import sparkles.input : charEvent, Event;
+import sparkles.tui.cell : CellStyle, Grid;
+import sparkles.tui.render : paintFull;
 import sparkles.ui.geometry : Size;
-import sparkles.ui.interp.cells : CellGrid;
-import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_app.host : RunConfig;
+import sparkles.ui_tui.grid_canvas : paintGrid;
 
 import compat : RecordingHost, runAppRecorded;
 import gallery : Gallery;
@@ -35,12 +46,18 @@ struct RenderRequest
     int height = 32;     /// surface height in cells
 }
 
-/// The frame `req` describes, as ANSI (colours and all).
+/// The frame `req` describes, as ANSI — the same bytes the terminal backend
+/// would emit for a full repaint.
 string renderAnsi(in RenderRequest req)
 {
+    // A `SmallBuffer!char`, not an `appender!string`: the terminal writers put
+    // `const(char)[]` control sequences, which an immutable-element appender
+    // refuses. This is the buffer the real render loop uses too.
+    import sparkles.base.smallbuffer : SmallBuffer;
+
     auto grid = renderGrid(req);
     SmallBuffer!(char, 1 << 16) buf;
-    grid.writeAnsi(buf);
+    paintFull(buf, grid);
     return buf[].idup;
 }
 
@@ -53,19 +70,27 @@ directly, whereas a diff over SGR runs mostly reports colour changes nobody
 asked about.
 */
 string renderPlain(in RenderRequest req)
-{
-    import std.array : appender;
-    import std.conv : to;
+    => gridText(renderGrid(req));
 
-    auto grid = renderGrid(req);
+/// A painted grid as bare glyphs. Separate from $(LREF renderPlain) so the
+/// wide-glyph rule below can be checked against a grid built by hand, rather
+/// than only wherever a page happens to put one.
+string gridText(in Grid grid)
+{
     auto out_ = appender!string;
-    foreach (y; 0 .. req.height)
+
+    foreach (ushort y; 0 .. grid.rows)
     {
         char[] line;
-        foreach (x; 0 .. req.width)
+        foreach (ushort x; 0 .. grid.cols)
         {
-            const g = grid.cells[y * req.width + x].glyph;
-            line ~= g == dchar.init || g == '\0' ? " " : g.to!string;
+            const c = grid[x, y];
+            // A wide glyph's continuation cell carries no bytes of its own;
+            // emitting its empty grapheme would silently narrow the row and
+            // make every column after it disagree with the terminal.
+            if (c.width == 0)
+                continue;
+            line ~= c.grapheme.length ? c.grapheme : " ";
         }
         // Trailing blanks carry no information and make a golden sensitive to
         // the surface width in a way the content is not.
@@ -78,8 +103,9 @@ string renderPlain(in RenderRequest req)
     return out_[];
 }
 
-/// The painted cell grid — the step both forms share.
-CellGrid renderGrid(in RenderRequest req)
+/// The painted grid — the step both forms share, and the one that must be the
+/// terminal's own painter rather than a lookalike.
+Grid renderGrid(in RenderRequest req)
 {
     auto app = Gallery(GalleryState(page: req.page));
 
@@ -97,8 +123,11 @@ CellGrid renderGrid(in RenderRequest req)
         });
 
     const th = app.theme;
-    auto grid = CellGrid(req.width, req.height, th.pageFg, th.pageBg);
-    paint(grid, rec.lastOps);
+    Grid grid;
+    grid.resize(cast(ushort) req.width, cast(ushort) req.height);
+    grid.clearTo(CellStyle(fg: Color.fromRgb(th.pageFg),
+        bg: Color.fromRgb(th.pageBg)));
+    paintGrid(grid, th.pageBg, rec.lastOps);
     return grid;
 }
 
@@ -141,4 +170,43 @@ CellGrid renderGrid(in RenderRequest req)
     const themed = RenderRequest(page: 0, keys: "]", width: 80, height: 24);
     assert(renderPlain(plain).canFind("tokyo-night"));
     assert(renderPlain(themed).canFind("solarized-dark"));
+}
+
+@("ui_gallery.render.paintsThroughTheTerminalsOwnCanvas")
+@safe unittest
+{
+    import std.algorithm : canFind;
+    import registry : pageIndexOf;
+
+    // The reason this module names a canvas at all. `--render` used a second
+    // cell canvas whose border glyphs had drifted from the terminal's, so it
+    // showed dashed borders and an accent bar the live `--tui` did not — the
+    // render agreeing with itself while disagreeing with the program.
+    //
+    // These glyphs come from the Decoration page's specimens. If `--render`
+    // ever goes back to a lookalike canvas that renders them differently, this
+    // fails rather than quietly making the goldens fiction.
+    const text = renderPlain(RenderRequest(page: pageIndexOf("decoration"),
+        width: 76, height: 44));
+
+    assert(text.canFind('┈'), "a dotted border draws quadruple dashes");
+    assert(text.canFind('╌'), "a dashed border draws double dashes");
+    assert(text.canFind('┃'), "a wide left accent draws the heavy quote bar");
+    assert(text.canFind('╭'), "a rounded border keeps its corners");
+}
+
+@("ui_gallery.render.wideGlyphsSurviveTheRoundTrip")
+@safe unittest
+{
+    // A wide glyph occupies two cells and the second carries no bytes. Emitting
+    // that empty continuation would shorten the row, so every column after it
+    // would disagree with the terminal — which is the whole property this file
+    // exists to preserve. Checked on a grid built here rather than wherever a
+    // page happens to put one, which is also below the fold on its own page.
+    Grid g;
+    g.resize(10, 1);
+    g.putText(0, 0, "日本語ab", CellStyle.init);
+
+    const text = gridText(g);
+    assert(text == "日本語ab\n", "the row is neither padded nor truncated");
 }

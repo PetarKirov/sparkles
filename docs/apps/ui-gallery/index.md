@@ -79,6 +79,12 @@ writes it to stdout as ANSI; `--render-plain` writes the glyphs alone, which is
 the form a layout regression is legible in. Both need no terminal and no
 display, which is also how the catalog's own tests look at it.
 
+It paints through the **terminal's own canvas**, not a lookalike. An earlier
+version used a second cell canvas that had drifted from it, so `--render` showed
+dashed borders and accent bars the live `--tui` did not — a headless render of a
+different painter than the one that runs is worse than no render at all. A
+parity test in `sparkles:ui-tui` now holds the two canvases to the same picture.
+
 ## Specification
 
 The traceable requirement inventory is the

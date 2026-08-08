@@ -77,6 +77,13 @@ undisplayed.
 The strongest argument for the app is the list of defects that existed before it
 and were invisible without it.
 
+- **There were two cell canvases, and they disagreed.** `CellGrid` and
+  `sparkles:ui-tui`'s `GridCanvas` each hand-rolled the same glyph decisions, so
+  fixing one left the other alone — and `--render`, which used the first, showed
+  a picture the live terminal did not produce. The decisions now live in one
+  place, `--render` paints through the terminal's actual canvas, and a parity
+  test holds the two to the same output. This one was found by the fix for the
+  next item appearing to work and not working.
 - **The cell grid drew `solid`, `dashed` and `dotted` borders identically.** Box
   drawing carries dash runs in both axes (`╌ ┈` and `╎ ┊`); the interpreter used
   `─`/`│` for all three, so two thirds of the vocabulary was invisible in a

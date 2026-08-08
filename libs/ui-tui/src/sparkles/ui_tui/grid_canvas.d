@@ -27,7 +27,11 @@ import sparkles.base.text.width : codepointWidth;
 import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind,
     ruleEndpoints;
 import sparkles.ui.geometry : Point, Rect, Size;
-import sparkles.ui.interp.cells : blend;
+// The glyph decisions are the cell grid's, not this adapter's: two cell
+// canvases each choosing their own box-drawing runs is how they came to
+// disagree, with `--render` showing dashes the live terminal did not.
+import sparkles.ui.interp.cells : accentGlyph, blend, dashedHorizontal,
+    dashedVertical;
 import sparkles.ui.style : BorderStyle, Visual;
 
 import sparkles.base.term_color : Color, RgbColor, toRgb;
@@ -199,6 +203,7 @@ struct GridCanvas
             const bw = v.border.width;
             const bottomOnly = bw.bottom > 0 && bw.top == 0 && bw.left == 0 && bw.right == 0;
             const leftOnly = bw.left > 0 && bw.top == 0 && bw.bottom == 0 && bw.right == 0;
+            const rightOnly = bw.right > 0 && bw.top == 0 && bw.bottom == 0 && bw.left == 0;
             const fullBox = bw.top > 0 && bw.bottom > 0 && bw.left > 0 && bw.right > 0;
             const sidesOnly = bw.left > 0 && bw.right > 0 && bw.top == 0 && bw.bottom == 0;
             const openTop = bw.left > 0 && bw.right > 0 && bw.bottom > 0 && bw.top == 0;
@@ -210,11 +215,13 @@ struct GridCanvas
                 ruleRow(r, v); // a thematic break: `─` glyphs, not an underline
             else if (bottomOnly)
                 underlineRow(r, v);
+            else if (rightOnly)
+                accentColumn(r, v, left: false);
             else if (fullBox)
                 drawBoxBorder(r, v);
-            // else: a single-side sub-cell accent (the docs top divider) has
-            // no cell analog and is dropped — the block's background tint
-            // (if any) still conveys it.
+            // else: a TOP-only accent, which a cell genuinely cannot express —
+            // there is an underline attribute and no overline. The block's
+            // background tint (if any) still conveys it.
         }
     }
 
@@ -281,6 +288,25 @@ struct GridCanvas
             }
     }
 
+    /// A single vertical accent → an eighth-block in that column, weighted by
+    /// the px width a pixel target would stroke — from the cell grid's own
+    /// table (`accentGlyph`), not a second copy here. The right-side
+    /// counterpart of `barColumn`, which owns the left (the goldens' form).
+    private void accentColumn(in Rect r, in Visual v, bool left) scope
+    {
+        const bw = v.border.width;
+        const x = left ? r.x : r.x + r.width - 1;
+        const g = accentGlyph(left ? bw.left : bw.right, left);
+        foreach (y; r.y .. r.y + r.height)
+            if (inBounds(x, y))
+            {
+                auto c = &cell(x, y);
+                auto st = c.style;
+                st.fg = Color.fromRgb(v.border.color);
+                c.setCodepoint(g, 1, st);
+            }
+    }
+
     /// A bottom-only border → a cell underline on the rect's last row (dotted /
     /// dashed / single, matching the border style; the fade alpha has no cell
     /// analog so the underline is drawn at full strength).
@@ -320,16 +346,24 @@ struct GridCanvas
             c.setCodepoint(g, 1, st);
         }
 
+        // The style's own dash run, from the cell grid's table rather than a
+        // second copy here. Drawing all three styles with `─`/`│` made them
+        // indistinguishable in a terminal, which is two thirds of the
+        // vocabulary invisible.
+        const hg = dashedHorizontal(v.border.style);
+        const vg = dashedVertical(v.border.style);
         foreach (x; x0 + 1 .. x1)
         {
-            setc(x, y0, '─');
-            setc(x, y1, '─');
+            setc(x, y0, hg);
+            setc(x, y1, hg);
         }
         foreach (y; y0 + 1 .. y1)
         {
-            setc(x0, y, '│');
-            setc(x1, y, '│');
+            setc(x0, y, vg);
+            setc(x1, y, vg);
         }
+        // Corners stay solid whatever the style: box-drawing has no dashed
+        // corner, and a gap where two runs meet reads as a broken box.
         setc(x0, y0, rounded ? '╭' : '┌');
         setc(x1, y0, rounded ? '╮' : '┐');
         setc(x0, y1, rounded ? '╰' : '└');
@@ -616,4 +650,73 @@ static assert(isCanvas!GridCanvas);
     // that the factor is nowhere near 20.
     assert(large < small * 6,
         "off-screen rows must not cost what visible ones do");
+}
+
+@("tui_canvas.borderStylesAndAccentsMatchTheCellGrid")
+@safe unittest
+{
+    import sparkles.ui.geometry : Insets;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.style : BorderStyle, BoxBorder;
+
+    // Two cell canvases, one op stream, one picture — for BOX CHROME. They
+    // drifted once: this adapter kept drawing `─`/`│` for every border style
+    // and dropping every single-side accent long after the other had learnt
+    // both, so a headless render showed dashes and accent bars the live
+    // terminal did not.
+    //
+    // Scoped to `fillRect` deliberately. The two do NOT agree on text: this
+    // one advances by `codepointWidth` and the other by one column per
+    // codepoint, which is the open `LAY5`/`MIG5` measurement gap and not
+    // something to freeze in a test. The glyph decisions box chrome makes now
+    // live in one place; this is what keeps them there.
+    const white = RgbColor(255, 255, 255);
+    const black = RgbColor(0, 0, 0);
+
+    void agreeOn(in Visual v, int w, int h)
+    {
+        Grid grid;
+        grid.resize(cast(ushort) w, cast(ushort) h);
+        auto canvas = GridCanvas(&grid, black);
+        canvas.fillRect(Rect(0, 0, w, h), v);
+
+        auto reference = CellGrid(w, h, white, black);
+        reference.fillRect(Rect(0, 0, w, h), v);
+
+        foreach (ushort y; 0 .. cast(ushort) h)
+            foreach (ushort x; 0 .. cast(ushort) w)
+            {
+                const mine = grid[x, y].grapheme;
+                const theirs = reference.cells[y * w + x].glyph;
+                char[4] buf;
+                import std.utf : encode;
+
+                const n = encode(buf, theirs);
+                assert(mine == buf[0 .. n],
+                    "the two cell canvases disagree at a cell");
+            }
+    }
+
+    // Every border style, as a full box.
+    static foreach (style; [BorderStyle.solid, BorderStyle.dashed,
+            BorderStyle.dotted])
+        agreeOn(Visual(border: BoxBorder(width: Insets.all(1), style: style,
+            color: white)), 6, 4);
+
+    // A rounded box, whose corners differ from the square one's.
+    agreeOn(Visual(borderRadius: 4, border: BoxBorder(width: Insets.all(1),
+        style: BorderStyle.solid, color: white)), 6, 4);
+
+    // Single-side accents, at each weight the eighth-blocks offer.
+    static foreach (px; [1, 2, 3])
+    {
+        agreeOn(Visual(border: BoxBorder(width: Insets(0, 0, 0, px),
+            style: BorderStyle.solid, color: white)), 6, 3);
+        agreeOn(Visual(border: BoxBorder(width: Insets(0, px, 0, 0),
+            style: BorderStyle.solid, color: white)), 6, 3);
+    }
+
+    // And the one-row thematic break, which is a rule rather than an underline.
+    agreeOn(Visual(border: BoxBorder(width: Insets(0, 0, 1, 0),
+        style: BorderStyle.solid, color: white)), 6, 1);
 }
