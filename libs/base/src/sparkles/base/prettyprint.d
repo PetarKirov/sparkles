@@ -56,11 +56,16 @@ private void prettyPrintImpl(T, Writer, Hook)(
     if (depth > opt.maxDepth)
         return writeStylized(w, "...", opt.colored ? Style.red : Style.none);
 
-    enum isNullable = __traits(compiles, T.init is null) && !is(T == U[], U);
+    enum isNullable = __traits(compiles, T.init is null);
 
-    // 1. Null
+    // 1. Null — class references, pointers, and slices
     static if (isNullable)
     {
+        // For a slice, `is null` tests `ptr is null && length == 0`. A null-ptr
+        // slice with a nonzero length is unreachable in `@safe` code, so this
+        // says exactly `ptr is null` — which is what distinguishes a null slice
+        // from an empty one. A non-null empty slice falls through to branch 3
+        // (strings, `""`) or branch 8 (other slices, `[]`).
         if (value is null)
             return writeStylized(w, "null", opt.colored ? Style.yellow : Style.none);
     }
@@ -637,6 +642,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    string nullStr;
+    check(nullStr, "null");
+    check("", `""`);
     check("hello", `"hello"`);
     check("line1\nline2", `"line1\nline2"`);
     check("tab\there", `"tab\there"`);
@@ -657,8 +665,12 @@ unittest
     int[] arr = [1, 2, 3];
     check(arr, "[\n  1,\n  2,\n  3\n]", opts);
 
-    int[] empty;
-    check(empty, "[]", opts);
+    int[] nullSlice;
+    check(nullSlice, "null", opts);
+
+    int[1] backing;
+    int[] emptyNonNull = backing[0 .. 0]; // non-null ptr, zero length
+    check(emptyNonNull, "[]", opts);
 }
 
 @("prettyPrint.staticArray")
