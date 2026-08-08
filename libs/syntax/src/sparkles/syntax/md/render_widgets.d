@@ -19,8 +19,9 @@ module sparkles.syntax.md.render_widgets;
 import sparkles.base.term_color : mix, RgbColor, toRgb;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
-import sparkles.syntax.md.model : ColAlign, fenceBody, MdBlock, MdBlockKind,
-    MdDecoration, MdDiffStatus, MdDoc, MdInline, MdInlineKind, Span;
+import sparkles.syntax.md.model : codeLineCount, ColAlign, fenceBody, MdBlock,
+    MdBlockKind, MdDecoration, MdDiffStatus, MdDoc, MdInline, MdInlineKind,
+    Span;
 import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -338,15 +339,7 @@ private uint viewCodeGroup(ref Builder b, ref const MdBlock blk,
     // so activating a tab never reflows the document below the group.
     foreach (ref const f; blk.children)
     {
-        // Same convention as the row builders (plain and styled alike): a
-        // trailing newline closes the last line, it does not open one.
-        const body = fenceBody(f, src).text;
-        int n;
-        foreach (char c; body)
-            if (c == '\n')
-                ++n;
-        if (body.length && body[$ - 1] != '\n')
-            ++n;
+        const n = codeLineCount(fenceBody(f, src).text);
         if (n > inner.groupMinLines)
             inner.groupMinLines = n;
     }
