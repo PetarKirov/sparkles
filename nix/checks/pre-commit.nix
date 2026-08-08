@@ -217,6 +217,11 @@ in
               verify-md-examples = {
                 enable = true;
                 files = "\\.md$";
+                # The markdown RENDERING fixtures are inputs to the golden
+                # suite, not runnable examples — a fixture may hold any code
+                # (a deliberately huge dub script, a fence with fake paths)
+                # purely for how it renders.
+                excludes = [ "^libs/syntax/test/data/" ];
                 language = "system";
                 name = "verify-md-examples";
                 # Hand every matched *.md to ONE `ci` invocation instead of letting
