@@ -870,14 +870,43 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                             spans: spans, slot: lineSlots[li],
                             hitId: opt.hitId, paintBackground: true,
                             textStyle: codeStyle(opt)));
+                    const scrollX = fenceScrollOf(opt, blk.codeBody.start);
                     const viewport = b.add(Widget(kind: WidgetKind.column,
                         children: rows, clipX: true,
-                        childOffset: Point(
-                            fenceScrollOf(opt, blk.codeBody.start), 0),
+                        childOffset: Point(scrollX, 0),
                         width: SizeSpec.grow()));
+
+                    // The overflow indicator: a track+thumb row under the
+                    // body, sized against the panel interior the width bound
+                    // implies. Widget-level on purpose — every backend gets
+                    // the affordance, and it moves in the goldens.
+                    uint[] stack = [viewport];
+                    if (opt.maxWidth > 0)
+                    {
+                        import sparkles.ui.geometry : cellsOf;
+
+                        int widest;
+                        foreach (spans; lineSpans)
+                        {
+                            int w;
+                            foreach (ref const s; spans)
+                                w += cast(int) cellsOf(s.text);
+                            if (w > widest)
+                                widest = w;
+                        }
+                        const gutterW = opt.codeLineNumbers ? numW + 1 : 0;
+                        const inner = opt.maxWidth - 6 - gutterW;
+                        if (inner > 0 && widest > inner)
+                            stack ~= fenceScrollbar(b, opt, widest, inner,
+                                scrollX);
+                    }
+                    const stacked = stack.length == 1 ? viewport
+                        : b.add(Widget(kind: WidgetKind.column,
+                            children: stack, width: SizeSpec.grow()));
+
                     if (!opt.codeLineNumbers)
                     {
-                        body_ = viewport;
+                        body_ = stacked;
                         break;
                     }
                     auto nums = new uint[](0);
@@ -891,7 +920,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     const numCol = b.add(Widget(kind: WidgetKind.column,
                         children: nums, width: SizeSpec.fixed(numW + 1)));
                     body_ = b.add(Widget(kind: WidgetKind.row,
-                        children: [numCol, viewport],
+                        children: [numCol, stacked],
                         width: SizeSpec.grow()));
                     break;
                 }
@@ -1114,6 +1143,50 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             return proseRow(b, [TextSpan(sliceOf(src, blk.span), Slot.muted,
                 opt.baseStyle)], opt);
     }
+}
+
+// The per-fence horizontal scrollbar (`COD6`): a `─` track with a `━`
+// thumb whose extent and position mirror the viewport fraction and the
+// armed offset. Clipped to the panel like the body, so an indented
+// fence's slightly-wide estimate never pokes past the border.
+private uint fenceScrollbar(ref Builder b, in MdViewOptions opt, int widest,
+    int inner, int scrollX) @safe
+{
+    int thumbW = inner * inner / widest;
+    if (thumbW < 1)
+        thumbW = 1;
+    if (thumbW > inner)
+        thumbW = inner;
+    const maxOff = widest - inner;
+    int pos = maxOff > 0 ? (inner - thumbW) * scrollX / maxOff : 0;
+    if (pos > inner - thumbW)
+        pos = inner - thumbW;
+
+    static string rep(string g, int n) @safe
+    {
+        string s;
+        foreach (_; 0 .. n)
+            s ~= g;
+        return s;
+    }
+
+    TextSpan[] spans;
+    void seg(int n, string glyph, Slot slot, RgbColor fg) @safe
+    {
+        if (n <= 0)
+            return;
+        spans ~= TextSpan(rep(glyph, n), slot, opt.baseStyle, noBreak: true,
+            fg: fg, hasFg: opt.theme.present);
+    }
+
+    seg(pos, "─", Slot.border, opt.theme.ruleFg);
+    seg(thumbW, "━", Slot.chromeAccent, opt.theme.codeFg);
+    seg(inner - pos - thumbW, "─", Slot.border, opt.theme.ruleFg);
+    const bar = b.add(Widget(kind: WidgetKind.rich, spans: spans,
+        wrap: TextWrap.none, slot: Slot.border, hitId: opt.hitId,
+        textStyle: opt.baseStyle));
+    return b.add(Widget(kind: WidgetKind.column, children: [bar],
+        clipX: true, width: SizeSpec.grow()));
 }
 
 /// The horizontal scroll armed for the fence whose body starts at

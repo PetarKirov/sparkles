@@ -71,6 +71,7 @@ private string renderGridText(ref GrammarRegistry registry,
     MdViewOptions opt = {
         theme: MdViewTheme.derive(theme, pageFg, pageBg),
         codeLineNumbers: true,
+        maxWidth: goldenWidth, // arms the per-fence overflow scrollbar
         fenceHitBase: interactive ? size_t.max / 2 + 1 : 0,
         tableCopyHitBase: interactive ? size_t.max / 8 + 1 : 0,
     };
