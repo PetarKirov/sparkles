@@ -446,9 +446,11 @@ struct ViewerModel
             fenceScrolls: fenceScrollList(),
             fenceHBarHitBase: fenceHBarHitBase,
             fenceVBarHitBase: fenceVBarHitBase,
-            hotFenceHBar: (fenceSv.h.hovered || fenceSv.h.dragging)
+            hotFenceHBar: fenceHotGlyphs
+                && (fenceSv.h.hovered || fenceSv.h.dragging)
                 ? fenceSvOwner : size_t.max,
-            hotFenceVBar: (fenceSv.v.hovered || fenceSv.v.dragging)
+            hotFenceVBar: fenceHotGlyphs
+                && (fenceSv.v.hovered || fenceSv.v.dragging)
                 ? fenceSvOwner : size_t.max,
             diffBlocks: preview.decorations, // `DVN6`
         };
@@ -799,11 +801,19 @@ struct ViewerModel
 
     private bool fenceHotH, fenceHotV;
 
+    /// Whether hover/grab feedback renders as GLYPH accents in the widget
+    /// tree (the cell hosts). The GUI disables it — its feedback is the px
+    /// hover-expand overlay (`ScrollbarAnim`), painted per frame with no
+    /// rebuild, exactly like the pane bars.
+    bool fenceHotGlyphs = true;
+
     /// Rebuilds when the fence-bar hover/grab state changed since the last
     /// step — the thumbs' accent feedback is part of the widget tree, the
     /// same way the ✔ copy feedback is. True when a rebuild happened.
     bool syncFenceHot()
     {
+        if (!fenceHotGlyphs)
+            return false;
         const h = fenceSv.h.hovered || fenceSv.h.dragging;
         const v = fenceSv.v.hovered || fenceSv.v.dragging;
         if (h == fenceHotH && v == fenceHotV)
