@@ -19,7 +19,8 @@ import sparkles.base.term_color : mix;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
     RgbColor, Theme, toRgb;
-import sparkles.syntax.md.model : fenceBody, MdBlock, MdBlockKind, Span;
+import sparkles.syntax.md.model : codeLineCount, fenceBody, MdBlock,
+    MdBlockKind, Span;
 import sparkles.syntax.md.render_widgets : CodeOverflow, FenceScroll,
     foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
     viewMarkdown;
@@ -830,8 +831,11 @@ struct ViewerModel
         {
             if (f.body.start != bodyStart)
                 continue;
+            // The shared line-count convention (a trailing newline closes
+            // the last line): counted any other way, the vertical clamp
+            // reaches one blank row past the content.
+            e.lines = codeLineCount(f.text);
             size_t at = 0;
-            e.lines = 1;
             void measure(size_t end)
             {
                 const w = cast(int) cellsOf(f.text[at .. end]);
@@ -843,7 +847,6 @@ struct ViewerModel
                 if (c == '\n')
                 {
                     measure(i);
-                    ++e.lines;
                     at = i + 1;
                 }
             measure(f.text.length);

@@ -317,6 +317,32 @@ FenceBody fenceBody(ref const MdBlock fence, const(char)[] source)
     return FenceBody(t, fence.codeOmit, lo);
 }
 
+/// The line count of a fence body under $(B the) convention every consumer
+/// shares (the row builders, plain and styled alike): a trailing newline
+/// closes the last line, it does not open one. Counting it as a line makes
+/// heights, group padding, and vertical-scroll clamps disagree by one.
+int codeLineCount(scope const(char)[] text) @safe pure nothrow @nogc
+{
+    int n;
+    foreach (char c; text)
+        if (c == '\n')
+            ++n;
+    if (text.length && text[$ - 1] != '\n')
+        ++n;
+    return n;
+}
+
+@("md.model.codeLineCount")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(codeLineCount("") == 0);
+    assert(codeLineCount("a") == 1);
+    assert(codeLineCount("a\n") == 1);
+    assert(codeLineCount("a\nb") == 2);
+    assert(codeLineCount("a\nb\n") == 2);
+}
+
 private void blankContinuations(TSNode n, char[] buf) @trusted nothrow
 {
     if (nodeType(n) == "block_continuation")
