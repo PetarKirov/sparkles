@@ -65,6 +65,51 @@ RgbColor blend(in RgbColor base, in RgbColor over, ubyte a) pure nothrow @nogc
 }
 
 /**
+The box-drawing run a border style asks for, along each axis.
+
+Box-drawing carries dash runs in both axes — double dash for `dashed`, the
+finer quadruple dash for `dotted` — so all three styles are distinguishable in
+a terminal. They were not, before: every style drew `─`/`│`, which made a
+catalog of the three one picture repeated, and made a dotted hover underline
+look like a solid one.
+*/
+dchar dashedHorizontal(BorderStyle s) pure nothrow @nogc
+{
+    final switch (s) with (BorderStyle)
+    {
+        case none: case solid: return '─'; // ─
+        case dashed: return '╌';           // ╌ two long strokes
+        case dotted: return '┈';           // ┈ four short ones
+    }
+}
+
+/// ditto
+dchar dashedVertical(BorderStyle s) pure nothrow @nogc
+{
+    final switch (s) with (BorderStyle)
+    {
+        case none: case solid: return '│'; // │
+        case dashed: return '╎';           // ╎
+        case dotted: return '┊';           // ┊
+    }
+}
+
+/**
+The block glyph a single-side vertical accent of `px` device pixels renders as.
+
+The eighth-blocks give three weights, so the px width a pixel target strokes
+maps onto the nearest one instead of the accent disappearing. `left` picks the
+left-aligned blocks and its absence the right-aligned ones — an accent has to
+sit against the edge it names, or it reads as content.
+*/
+dchar accentGlyph(int px, bool left) pure nothrow @nogc
+{
+    if (left)
+        return px <= 1 ? '▏' : px <= 2 ? '▎' : '▌'; // ▏ ▎ ▌
+    return px <= 2 ? '▕' : '▐';                          // ▕ ▐
+}
+
+/**
 A retained grid of $(LREF Cell)s (`width × height`, row-major) that paints the
 `sparkles:ui` primitives. Construct with the page fore/background (the cleared
 cell's colors and the blend base for translucent fills), paint a display list
@@ -124,13 +169,31 @@ struct CellGrid
 
     // --- isCanvas primitives ---
 
-    /// Composites `v.bg` (respecting its alpha) over the cells of `r`, then
-    /// draws the box chrome the cell grid can express: a full border becomes
-    /// box-drawing glyphs on the perimeter, a solid bottom-only border on a
-    /// one-row box becomes a `─` rule, any other bottom-only border a cell
-    /// underline, and a left-only border a `│` bar column (the quote /
-    /// callout accent bar). Other single-side accents have no cell analog
-    /// and drop.
+    /**
+    Composites `v.bg` (respecting its alpha) over the cells of `r`, then draws
+    the box chrome the cell grid can express:
+
+    $(LIST
+        $(LI a $(B full border) becomes box-drawing glyphs on the perimeter,
+            carrying the style — solid, double-dash or quadruple-dash — on the
+            sides, with solid corners, and rounded corners when a radius is set;)
+        $(LI the $(B open-top shapes) a glyph-composed top border row relies on
+            (the markdown fence chrome): both sides as `│` columns, optionally
+            closed by a rounded `╰──╯` bottom;)
+        $(LI a $(B solid bottom-only) border on a one-row box becomes a `─`
+            rule (a thematic break), and any other bottom-only border a cell
+            underline on the last row;)
+        $(LI a $(B left-only) border becomes the quote / callout bar down its
+            column — `│`, heavy `┃` at 2+ wide — the vocabulary the markdown
+            goldens pin;)
+        $(LI a $(B right-only) accent becomes an eighth-block in that column,
+            weighted by the px width the pixel target would stroke.)
+    )
+
+    What genuinely has no cell analog: the drop shadow, the radius $(I value)
+    (only its presence survives, as rounded corners), and a top-only border —
+    a cell has an underline attribute and no overline.
+    */
     void fillRect(in Rect r, in Visual v)
     {
         if (v.hasBg)
@@ -150,6 +213,8 @@ struct CellGrid
                 && bw.right == 0;
             const leftOnly = bw.left > 0 && bw.top == 0 && bw.bottom == 0
                 && bw.right == 0;
+            const rightOnly = bw.right > 0 && bw.top == 0 && bw.bottom == 0
+                && bw.left == 0;
             const fullBox = bw.top > 0 && bw.bottom > 0 && bw.left > 0
                 && bw.right > 0;
             // The open-top shapes a glyph-composed top border row relies on
@@ -222,9 +287,34 @@ struct CellGrid
                         c.underColor = v.border.color;
                     }
             }
+            else if (rightOnly)
+            {
+                // A single vertical accent — the counterpart of the left bar
+                // above. Previously dropped as having "no cell analog", which
+                // is not so: the eighth-blocks give three usable weights, so a
+                // px width maps to one of them and the accent survives into
+                // the terminal instead of vanishing. (The LEFT accent is the
+                // quote-bar branch above — `│`/`┃`, the form the markdown
+                // goldens pin.)
+                const x = r.x + r.width - 1;
+                const g = accentGlyph(bw.right, left: false);
+                foreach (y; r.y .. r.y + r.height)
+                    if (inBounds(x, y))
+                    {
+                        auto c = &at(x, y);
+                        c.glyph = g;
+                        c.fg = v.border.color;
+                    }
+            }
             else if (fullBox && r.width >= 2 && r.height >= 2)
             {
                 const rounded = v.borderRadius > 0;
+                // Dashed and dotted borders are expressible here: box-drawing
+                // carries double- and quadruple-dash runs in both axes. Drawing
+                // all three styles with `─`/`│` made them indistinguishable, so
+                // a catalog of the three showed one picture three times.
+                const hg = dashedHorizontal(v.border.style);
+                const vg = dashedVertical(v.border.style);
                 const x0 = r.x, y0 = r.y;
                 const x1 = r.x + r.width - 1, y1 = r.y + r.height - 1;
                 void setc(int x, int y, dchar g)
@@ -238,14 +328,17 @@ struct CellGrid
 
                 foreach (x; x0 + 1 .. x1)
                 {
-                    setc(x, y0, '─');
-                    setc(x, y1, '─');
+                    setc(x, y0, hg);
+                    setc(x, y1, hg);
                 }
                 foreach (y; y0 + 1 .. y1)
                 {
-                    setc(x0, y, '│');
-                    setc(x1, y, '│');
+                    setc(x0, y, vg);
+                    setc(x1, y, vg);
                 }
+                // The corners stay solid whatever the style: box-drawing has no
+                // dashed corner, and a gap where two dashed runs meet reads as
+                // a broken box rather than a dashed one.
                 setc(x0, y0, rounded ? '╭' : '┌');
                 setc(x1, y0, rounded ? '╮' : '┐');
                 setc(x0, y1, rounded ? '╰' : '└');
@@ -503,4 +596,100 @@ static assert(isCanvas!CellGrid);
     assert(s.canFind("X"));
     // The unchanged cols 1 and 3 are not addressed.
     assert(!s.canFind("\x1b[1;1H") && !s.canFind("\x1b[1;3H"));
+}
+
+@("ui.cells.borderStylesAreDistinguishable")
+@safe unittest
+{
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.style : BorderStyle, BoxBorder, Visual;
+    import sparkles.ui.geometry : Insets;
+
+    // Three styles, three pictures. They all drew `─`/`│` before, so a catalog
+    // of them was one box repeated and a dotted hover underline was a solid
+    // one — a degradation the cell grid never actually needed to make.
+    dchar topEdgeOf(BorderStyle style)
+    {
+        auto g = CellGrid(4, 3, RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0, 0, 0));
+        g.fillRect(Rect(0, 0, 4, 3), Visual(
+            border: BoxBorder(width: Insets.all(1), style: style,
+                color: RgbColor(255, 255, 255))));
+        return g.at(1, 0).glyph;
+    }
+
+    assert(topEdgeOf(BorderStyle.solid) == '─');
+    assert(topEdgeOf(BorderStyle.dashed) == '╌');
+    assert(topEdgeOf(BorderStyle.dotted) == '┈');
+
+    // …and the two dashed styles differ from each other, not merely from solid.
+    assert(topEdgeOf(BorderStyle.dashed) != topEdgeOf(BorderStyle.dotted));
+
+    // Corners stay solid whatever the style: there is no dashed corner glyph,
+    // and a gap where two runs meet reads as a broken box, not a dashed one.
+    auto g = CellGrid(4, 3, RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0, 0, 0));
+    g.fillRect(Rect(0, 0, 4, 3), Visual(
+        border: BoxBorder(width: Insets.all(1), style: BorderStyle.dotted,
+            color: RgbColor(255, 255, 255))));
+    assert(g.at(0, 0).glyph == '┌' && g.at(3, 2).glyph == '┘');
+    assert(g.at(0, 1).glyph == '┊', "the sides carry the style");
+}
+
+@("ui.cells.aSingleSideAccentSurvivesIntoTheTerminal")
+@safe unittest
+{
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.style : BorderStyle, BoxBorder, Visual;
+    import sparkles.ui.geometry : Insets;
+
+    // The left accent bar an error line wears. It used to drop entirely — the
+    // window drew it and the terminal showed nothing, which is a divergence a
+    // reader can only interpret as a bug. A left accent renders in the
+    // quote-bar vocabulary the markdown goldens pin: `│`, heavy `┃` at 2+.
+    const red = RgbColor(0xd4, 0x56, 0x56);
+    auto g = CellGrid(6, 2, RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0, 0, 0));
+    g.fillRect(Rect(0, 0, 6, 2), Visual(
+        border: BoxBorder(width: Insets(0, 0, 0, 3), style: BorderStyle.solid,
+            color: red)));
+
+    foreach (y; 0 .. 2)
+    {
+        assert(g.at(0, y).glyph == '┃', "a wide left accent is the heavy bar");
+        assert(g.at(0, y).fg == red);
+    }
+    // It stays in its own column: an accent that bled into the content would
+    // be worse than one that dropped.
+    assert(g.at(1, 0).glyph == ' ');
+
+    // A one-px left accent is the light bar.
+    auto thin = CellGrid(6, 1, RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0, 0, 0));
+    thin.fillRect(Rect(0, 0, 6, 1), Visual(
+        border: BoxBorder(width: Insets(0, 0, 0, 1), style: BorderStyle.solid,
+            color: red)));
+    assert(thin.at(0, 0).glyph == '│');
+
+    // A right accent hugs the right edge as a weighted eighth-block.
+    auto right = CellGrid(6, 1, RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0, 0, 0));
+    right.fillRect(Rect(0, 0, 6, 1), Visual(
+        border: BoxBorder(width: Insets(0, 3, 0, 0), style: BorderStyle.solid,
+            color: red)));
+    assert(right.at(5, 0).glyph == '▐' && right.at(0, 0).glyph == ' ');
+}
+
+@("ui.cells.accentGlyphWeightsAreOrdered")
+@safe pure nothrow @nogc unittest
+{
+    // Wider is heavier, monotonically — a 3 px accent must not render lighter
+    // than a 1 px one, which is the kind of thing a lookup table gets wrong.
+    assert(accentGlyph(1, true) == '▏');
+    assert(accentGlyph(2, true) == '▎');
+    assert(accentGlyph(3, true) == '▌');
+    assert(accentGlyph(99, true) == '▌', "the heaviest weight saturates");
+
+    assert(accentGlyph(1, false) == '▕');
+    assert(accentGlyph(9, false) == '▐');
+
+    // A left accent is never a right-aligned block, whatever its width: the
+    // bar has to sit against the edge it names.
+    foreach (px; 0 .. 8)
+        assert(accentGlyph(px, true) != accentGlyph(px, false));
 }
