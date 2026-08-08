@@ -136,6 +136,15 @@ static immutable Page[] pages = [
         inspectorKeys, &inspectorOnKey),
 ];
 
+/// The Terminal page's index — the shell needs it by name: keyboard capture
+/// applies only while that page shows, and no other page is special.
+enum size_t terminalPageIndex = () {
+    foreach (i, ref p; pages)
+        if (p.title == "Terminal")
+            return i;
+    assert(0, "the Terminal page left the catalog");
+}();
+
 /// Advances whatever the showing page animates, and says whether it wants
 /// another frame. The shell owns the clock, so a page cannot read one.
 bool stepPage(ref GalleryState s, int dtMs)

@@ -144,15 +144,21 @@
 
       # The sparkles:ui catalog. It reaches raylib through `sparkles:ui-app`'s
       # `full` configuration — the gallery itself names no backend — so the
-      # build inputs are the window's, not the application's. `fc-match` is on
-      # the same footing as the terminal's: the font set shells out to it at
-      # runtime, and under `nix run` PATH is the ambient user environment.
+      # build inputs are the window's, not the application's. libghostty-vt is
+      # the Terminal page's: it embeds `sparkles:terminal-view` (TVW7).
+      # `fc-match` is on the same footing as the terminal's: the font set
+      # shells out to it at runtime, and under `nix run` PATH is the ambient
+      # user environment.
       packages.ui-gallery = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "ui-gallery";
         version = "0.1.0";
 
         nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [ pkgs.raylib ];
+        buildInputs = [
+          pkgs.raylib
+          inputs'.ghostty.packages.libghostty-vt
+          inputs'.ghostty.packages.libghostty-vt.dev
+        ];
 
         env = d-toolchain.env;
 
