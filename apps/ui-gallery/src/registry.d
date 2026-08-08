@@ -43,6 +43,9 @@ import pages.primitives : primitivesView = view;
 import pages.slots_page : slotsView = view;
 import pages.themes_page : themesKeys = keys, themesOnActivate = handleActivate,
     themesView = view;
+import pages.terminal_page : terminalKeys = keys,
+    terminalOnActivate = handleActivate, terminalOnKey = handleKey,
+    terminalView = view;
 import pages.text_page : textKeys = keys, textOnKey = handleKey,
     textView = view;
 import pages.tracks_page : tracksKeys = keys, tracksOnKey = handleKey,
@@ -127,6 +130,8 @@ static immutable Page[] pages = [
         machinesKeys, &machinesOnKey, &machinesOnActivate),
     Page("Split", "a divider between two panes", &splitView,
         splitKeys, &splitOnKey),
+    Page("Terminal", "a shell as a widget", &terminalView,
+        terminalKeys, &terminalOnKey, &terminalOnActivate),
     Page("Inspector", "the toolkit looking at itself", &inspectorView,
         inspectorKeys, &inspectorOnKey),
 ];
