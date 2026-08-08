@@ -95,11 +95,12 @@ Fonts are owned by `sparkles:raylib-text` (`FontSet`); hue configures and drives
 
 ## Views & toggle (`VIW`)
 
-| ID   | Requirement                                                                                                                 | Status            | Traces to                |
-| ---- | --------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------ |
-| VIW1 | A **raw** highlighted-source view must render the file's styled runs (wrapped); it is the only view for non-markdown files. | full (`b55be7aa`) | `viewCodeDocument`       |
-| VIW2 | A markdown file must open in a rendered **preview** by default; Tab must toggle preview ↔ raw.                              | full (`9ec7f847`) | `showPreview`; `KEY_TAB` |
-| VIW3 | The preview model must be built once at load from the markdown structural model + per-fence highlight/ANSI decode.          | full (`9b0a4b50`) | `buildPreviewModel`      |
+| ID   | Requirement                                                                                                                                                                                                                                                                                 | Status            | Traces to                                                   |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------- |
+| VIW1 | A **raw** highlighted-source view must render the file's styled runs (wrapped).                                                                                                                                                                                                             | full (`b55be7aa`) | `viewCodeDocument`                                          |
+| VIW2 | Tab must **cycle** the view modes: a markdown file opens in the rendered **preview** and cycles preview → **highlighted** raw → **plain** raw (highlighting off) → preview; a non-markdown file cycles highlighted ↔ plain. The status chrome names the mode (`preview` / `raw` / `plain`). | full              | `ViewerModel.cycleView`/`plainSyntax`; `Command.toggleView` |
+| VIW4 | The **plain** view is the raw view with an empty event stream — same wrapping, folding, gutter, and selection; only the styling is absent.                                                                                                                                                  | full              | `viewCodeDocument(source, null, …)`                         |
+| VIW3 | The preview model must be built once at load from the markdown structural model + per-fence highlight/ANSI decode.                                                                                                                                                                          | full (`9b0a4b50`) | `buildPreviewModel`                                         |
 
 ## Wrapping & visual-line model (`WRP`)
 

@@ -616,12 +616,11 @@ int runGui(
         relayout();
     }
 
-    // Tab / the toolbar: preview ↔ raw view (when the document has a preview).
+    // Tab / the toolbar: the view cycle (VIW) — preview → highlighted →
+    // plain where a preview exists, highlighted ↔ plain where not.
     void toggleView()
     {
-        if (!vm.preview.present && vm.tw.code.length == 0)
-            return;
-        vm.showPreview = !vm.showPreview;
+        vm.cycleView();
         vm.widthCols = -1; // force a reflow on next frame
         relayout();
     }
@@ -2359,7 +2358,8 @@ int runGui(
             drawChromeBar(treePx(), hdrY, (screenW - treePx()) / cellW,
                 vm.title,
                 text(names[vm.themeIdx], " · ",
-                    vm.showPreview ? "preview" : "raw"),
+                    vm.showPreview ? "preview"
+                    : vm.plainSyntax ? "plain" : "raw"),
                 text(vm.top + 1, "/", total),
                 focused: !pn.treeFocused || !pn.treeVisible);
         }
