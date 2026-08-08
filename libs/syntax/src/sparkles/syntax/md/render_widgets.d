@@ -174,6 +174,10 @@ struct MdViewOptions
     /// (2-D table selection, per-cell copy) via the cells' frames.
     size_t tableKeyBase = 0;
 
+    /// Tables draw inner ROW separators (`├─┼─┤` between body rows) by
+    /// default; the header keeps its heavy rule either way.
+    bool tableRowRules = true;
+
     /// Non-zero punches the whole-table copy button into a cutout of the
     /// table's top border, just before the corner (`╭──   ╮` — `TBL6`):
     /// `hitId = tableCopyHitBase + table.span.start`, source-anchored like
@@ -1341,6 +1345,12 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 rows ~= b.container(WidgetKind.row, cells);
                 if (ri == 0)
                     rows ~= ruleRun(borderRow("┝", "━", "┿", "┥"));
+                else if (opt.tableRowRules
+                    && ri + 1 < blk.children.length)
+                    // Inner row separators, on by default (MDP10): a light
+                    // `├─┼─┤` rule between body rows (the header keeps its
+                    // heavy one; the bottom border closes the last row).
+                    rows ~= ruleRun(borderRow("├", "─", "┼", "┤"));
             }
             rows ~= ruleRun(borderRow("╰", "─", "┴", "╯"));
             return b.container(WidgetKind.column, rows);

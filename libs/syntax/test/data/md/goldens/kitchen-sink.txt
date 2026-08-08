@@ -10,6 +10,7 @@ one paragraph.
 │ Module  │ Role                                                 │
 ┝━━━━━━━━━┿━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
 │ model.d │ the structural markdown model (extractMarkdown)      │
+├─────────┼──────────────────────────────────────────────────────┤
 │ wrap.d  │ greedy line wrapping in cells — a sparkles extension │
 ╰─────────┴──────────────────────────────────────────────────────╯
 
