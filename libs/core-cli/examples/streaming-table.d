@@ -58,7 +58,7 @@ import core.time : dur;
 import std.range.primitives : ElementType, empty, front, popFront;
 import std.stdio : stderr, stdout, write;
 
-import sparkles.core_cli.args;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui.components.table :
     builtinPresetNames, Cell, drawTable, drawTableChunks, presetGlyphs, TableProps;
 import sparkles.base.styled_template : styledText;
@@ -70,33 +70,31 @@ enum int fleetDefaultRows = 8;
 
 struct CliParams
 {
-    // Note: descriptions must avoid double quotes — parseCliArgs pastes them
-    // into generated mixin code verbatim.
-    @CliOption("m|mode", "Chunk granularity: cell (one chunk per cell field), line, or race (line vs cell panes in a live region)")
+    @(Option("m|mode", description: "Chunk granularity: cell (one chunk per cell field), line, or race (line vs cell panes in a live region)"))
     string mode = "cell";
 
-    @CliOption("d|delay", "Animation delay per streamed chunk, in milliseconds")
+    @(Option("d|delay", description: "Animation delay per streamed chunk, in milliseconds"))
     int delayMs = 45;
 
-    @CliOption("pace", "Chunk pacing: fixed (delay ms per chunk) or width (delay ms per 10 visible columns)")
+    @(Option("pace", description: "Chunk pacing: fixed (delay ms per chunk) or width (delay ms per 10 visible columns)"))
     string pace = "fixed";
 
-    @CliOption("p|preset", "Glyph preset: rounded, square, ascii, double, heavy")
+    @(Option("p|preset", description: "Glyph preset: rounded, square, ascii, double, heavy"))
     string preset = "rounded";
 
-    @CliOption("w|max-width", "Cap the table width in columns, 0 = expand to fit")
+    @(Option("w|max-width", description: "Cap the table width in columns, 0 = expand to fit"))
     int maxWidth = 0;
 
-    @CliOption("r|rows", "Number of generated data rows (generated source only)")
+    @(Option("r|rows", description: "Number of generated data rows (generated source only)"))
     int rows = fleetDefaultRows;
 
-    @CliOption("command", "Run this shell command; its stdout lines become the rows")
+    @(Option("command", description: "Run this shell command; its stdout lines become the rows"))
     string command;
 
-    @CliOption("c|columns", "Fold command output into at most this many columns, 0 = one per whitespace run")
+    @(Option("c|columns", description: "Fold command output into at most this many columns, 0 = one per whitespace run"))
     int columns = 0;
 
-    @CliOption("tee", "Also write the table to this file via the writer drawTable overload and check byte parity with the streamed output")
+    @(Option("tee", description: "Also write the table to this file via the writer drawTable overload and check byte parity with the streamed output"))
     string tee;
 }
 
@@ -132,33 +130,35 @@ struct DemoTable
     TableProps props;
 }
 
-void main(string[] args)
+int main(string[] args)
 {
-    import core.stdc.stdlib : exit;
     import std.algorithm.searching : canFind;
     import std.array : join;
 
-    const cli = args.parseCliArgs!CliParams(HelpInfo(
+    auto parsed = parseCli!CliParams(args, HelpInfo(
         "streaming-table",
         "Animated streaming drawTable demo (eager layout, lazy chunk emission)"));
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const cli = parsed.value;
 
     if (!["cell", "line", "race"].canFind(cli.mode))
     {
         stderr.writeln(`streaming-table: --mode must be "cell", "line", or "race", not "`,
             cli.mode, `"`);
-        exit(2);
+        return 2;
     }
     if (!builtinPresetNames.canFind(cli.preset))
     {
         stderr.writeln("streaming-table: unknown --preset '", cli.preset,
             "' (available: ", builtinPresetNames.join(", "), ")");
-        exit(2);
+        return 2;
     }
     if (!["fixed", "width"].canFind(cli.pace))
     {
         stderr.writeln(`streaming-table: --pace must be "fixed" or "width", not "`,
             cli.pace, `"`);
-        exit(2);
+        return 2;
     }
 
     // The pause before a chunk appears: constant, or proportional to the visible
@@ -178,7 +178,7 @@ void main(string[] args)
     if (cli.mode == "race")
     {
         runRace(table, cli.delayMs);
-        return;
+        return 0;
     }
 
     const streamed = cli.mode == "line"
@@ -187,6 +187,8 @@ void main(string[] args)
 
     if (cli.tee.length)
         teeAndCheck(cli.tee, table, streamed);
+
+    return 0;
 }
 
 /// The dual-granularity race (`--mode race`): the same table streams twice in

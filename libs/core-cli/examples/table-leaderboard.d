@@ -33,7 +33,7 @@ import core.time : dur;
 import std.conv : text;
 import std.stdio : writeln;
 
-import sparkles.core_cli.args;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui.components.live : stdoutLiveRegion;
 import sparkles.ui.components.table : drawTableLines, TableProps;
 import sparkles.base.styled_template : styledText;
@@ -41,16 +41,16 @@ import sparkles.base.text.width : Align;
 
 struct CliParams
 {
-    @CliOption("n|teams", "Number of competing teams")
+    @(Option("n|teams", description: "Number of competing teams"))
     int teams = 6;
 
-    @CliOption("t|ticks", "Number of score updates before the race ends")
+    @(Option("t|ticks", description: "Number of score updates before the race ends"))
     int ticks = 40;
 
-    @CliOption("i|interval", "Milliseconds between frames")
+    @(Option("i|interval", description: "Milliseconds between frames"))
     int intervalMs = 80;
 
-    @CliOption("s|seed", "Random seed for the score walk (a fixed seed replays the same race)")
+    @(Option("s|seed", description: "Random seed for the score walk (a fixed seed replays the same race)"))
     uint seed = 42;
 }
 
@@ -61,15 +61,18 @@ struct Team
     int score;
 }
 
-void main(string[] args)
+int main(string[] args)
 {
     import std.algorithm.sorting : sort;
     import std.array : array;
     import std.random : Mt19937, uniform;
 
-    const cli = args.parseCliArgs!CliParams(HelpInfo(
+    auto parsed = parseCli!CliParams(args, HelpInfo(
         "table-leaderboard",
         "Live re-sorting leaderboard (drawTableLines + LiveRegion)"));
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const cli = parsed.value;
 
     auto rng = Mt19937(cli.seed);
     auto teams = makeTeams(cli.teams);
@@ -116,6 +119,8 @@ void main(string[] args)
     if (!region.interactive)
         foreach (line; lastFrame)
             writeln(line);
+
+    return 0;
 }
 
 /// The first `n` team names (i18n + emoji so the table proves cell-width

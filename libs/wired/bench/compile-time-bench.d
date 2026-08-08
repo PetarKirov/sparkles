@@ -63,7 +63,7 @@ import std.stdio : File, stderr, write, writefln, writeln;
 import sparkles.base.logger : info, initLogger;
 import sparkles.base.term_style : Style, stylize;
 
-import sparkles.core_cli.args : CliOption, parseCliArgs;
+import sparkles.core_cli.args : Option, parseCli, reportCliError;
 import sparkles.core_cli.help_formatting : HelpInfo;
 import sparkles.core_cli.process_utils : enforceExitStatus, executeMonitored;
 import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
@@ -74,25 +74,30 @@ import sparkles.wired.json : toJSON;
 /// Command-line configuration, parsed by `sparkles:core-cli`.
 struct BenchOptions
 {
-    @CliOption("s|sizes", "Comma-separated workload sizes (default 8,32,128)")
+    @(Option("s|sizes", description:
+        "Comma-separated workload sizes (default 8,32,128)"))
     string sizes = "8,32,128";
 
-    @CliOption("w|workloads", "Comma-separated workload names (default all)")
+    @(Option("w|workloads", description:
+        "Comma-separated workload names (default all)"))
     string workloads = "wide,deep,enums,mixed";
 
-    @CliOption("i|iters", "Compile runs per data point; wall time is the minimum")
+    @(Option("i|iters", description:
+        "Compile runs per data point; wall time is the minimum"))
     uint iters = 3;
 
-    @CliOption("t|top", "How many top templates to show per data point")
+    @(Option("t|top", description:
+        "How many top templates to show per data point"))
     uint top = 8;
 
-    @CliOption("j|json", "Dump metrics as JSON to this file")
+    @(Option("j|json", description: "Dump metrics as JSON to this file"))
     string json;
 
-    @CliOption("c|compiler", "D compiler to benchmark (must support -ftime-trace)")
+    @(Option("c|compiler", description:
+        "D compiler to benchmark (must support -ftime-trace)"))
     string compiler = "ldc2";
 
-    @CliOption("k|keep", "Keep the generated workload modules")
+    @(Option("k|keep", description: "Keep the generated workload modules"))
     bool keep;
 }
 
@@ -100,8 +105,11 @@ int main(string[] args)
 {
     initLogger(LogLevel.info);
 
-    const opts = args.parseCliArgs!BenchOptions(
+    auto parsed = parseCli!BenchOptions(args,
         HelpInfo("compile-time-bench", "Compile-time benchmark for sparkles:wired."));
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const opts = parsed.value;
 
     const sizes = opts.sizes.split(',').map!(to!uint).array;
     const workloads = opts.workloads.split(',');

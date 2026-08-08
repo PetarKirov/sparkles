@@ -28,7 +28,7 @@ import std.stdio : writeln;
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 import sparkles.build_primitives.dir_walk : repositoryGitIgnoreStack, walkDir;
 import sparkles.build_primitives.gitignore : GitIgnore, GitIgnoreStack;
-import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui.components.tree : renderTree, TreeNode;
 
 enum ListingMode
@@ -39,10 +39,11 @@ enum ListingMode
 
 struct CliParams
 {
-    @CliOption("m|mode", "Listing mode: ignored or notIgnored (default: notIgnored)")
+    @(Option("m|mode", description:
+        "Listing mode: ignored or notIgnored (default: notIgnored)"))
     ListingMode mode = ListingMode.notIgnored;
 
-    @CliOption("r|root", "Directory root to scan (default: .)")
+    @(Option("r|root", description: "Directory root to scan (default: .)"))
     string root = ".";
 }
 
@@ -105,9 +106,9 @@ private:
     }
 }
 
-void main(string[] args)
+int main(string[] args)
 {
-    const cli = args.parseCliArgs!CliParams(HelpInfo(
+    auto parsed = parseCli!CliParams(args, HelpInfo(
         "gitignore-listing",
         "List ignored or non-ignored files from a directory",
         [
@@ -118,6 +119,9 @@ void main(string[] args)
             ],
         ],
     ));
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const cli = parsed.value;
 
     enforce(cli.root.exists, "Directory does not exist: " ~ cli.root);
     enforce(cli.root.isDir, "Path is not a directory: " ~ cli.root);
@@ -142,11 +146,13 @@ void main(string[] args)
     if (hook.matches.length == 0)
     {
         writeln("(no files)");
-        return;
+        return 0;
     }
 
     foreach (line; renderTree(toTreeNodes(hook.matches)))
         writeln(line);
+
+    return 0;
 }
 
 /// Converts walk-ordered relative paths into the flat pre-ordered

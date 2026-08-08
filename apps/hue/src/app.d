@@ -45,119 +45,133 @@ import table_select : TableCopyFormat;
 
 struct CliParams
 {
-    @CliOption("html", "Output formatted HTML instead of ANSI terminal escapes.")
+    @(Option("html", description: "Output formatted HTML instead of ANSI terminal escapes."))
     bool html;
 
-    @CliOption("theme", "Syntax highlighting theme name.")
+    @(Option("theme", description: "Syntax highlighting theme name."))
     string theme = "catppuccin-mocha";
 
-    @CliOption("include", "Explorer glob(s) to always show (overrides hidden, git-ignored, and --exclude); matched against the entry name and its root-relative path. Repeatable.")
+    @(Option("include", description: "Explorer glob(s) to always show (overrides hidden, git-ignored, and --exclude); matched against the entry name and its root-relative path. Repeatable."))
     string[] include;
 
-    @CliOption("exclude", "Explorer glob(s) to hide. Repeatable; --include wins.")
+    @(Option("exclude", description: "Explorer glob(s) to hide. Repeatable; --include wins."))
     string[] exclude;
 
-    @CliOption("tree-width", "Explorer pane width in cells (default 32).")
+    @(Option("tree-width", description: "Explorer pane width in cells (default 32)."))
     int treeWidth = 32;
 
-    @CliOption("tab-width", "Tab stops in the raw source view: a tab advances to the next multiple of this many columns.")
+    @(Option("tab-width", description: "Tab stops in the raw source view: a tab advances to the next multiple of this many columns."))
     int tabWidth = 4;
 
-    @CliOption("list-whitespace", "Render whitespace visibly in the raw view, vim's 'list' style: tabs as '→', spaces and trailing runs as '·', no-break spaces as '␣'.")
+    @(Option("list-whitespace", description: "Render whitespace visibly in the raw view, vim's 'list' style: tabs as '→', spaces and trailing runs as '·', no-break spaces as '␣'."))
     bool listWhitespace;
 
-    @CliOption("gui", "Force the raylib GPU window (requires the 'gui' build configuration). With neither --gui nor --no-gui, hue opens the window automatically when a display is available and falls back to the terminal otherwise.")
-    bool gui;
-
-    @CliOption("no-gui", "Force terminal output (previewer / ANSI / HTML) even when a display is available.")
+    // `--no-gui` is a distinct flag, not the negation of `--gui`: the two say
+    // different things (force the window / force the terminal) and neither
+    // being given is a third answer — autodetect. The parser resolves a
+    // `--no-<name>` token against the FIRST field it matches, so `noGui` must
+    // be declared before `gui`, or `--no-gui` would land on `gui` as a
+    // negation (setting it false) and leave `noGui` unset.
+    @(Option("no-gui", description: "Force terminal output (previewer / ANSI / HTML) even when a display is available."))
     bool noGui;
 
-    @CliOption("tui", "Alias for --no-gui.")
+    @(Option("tui", description: "Alias for --no-gui."))
     bool tui;
 
-    @CliOption("twoslash", "Render a TypeScript twoslash JSON payload (its `code` + nodes) as a type-annotated overlay. Compatibility spelling of --overlay twoslash=<path>; a *.twoslash.json target needs no flag.")
+    @(Option("gui", description: "Force the raylib GPU window (requires the 'gui' build configuration). With neither --gui nor --no-gui, hue opens the window automatically when a display is available and falls back to the terminal otherwise."))
+    bool gui;
+
+    @(Option("twoslash", description: "Render a TypeScript twoslash JSON payload (its `code` + nodes) as a type-annotated overlay. Compatibility spelling of --overlay twoslash=<path>; a *.twoslash.json target needs no flag."))
     string twoslash;
 
-    @CliOption("overlay", "Attach an overlay to the document: <kind>[=<artifact>] (see --list-overlays). E.g. --overlay twoslash=nodes.json.")
+    @(Option("overlay", description: "Attach an overlay to the document: <kind>[=<artifact>] (see --list-overlays). E.g. --overlay twoslash=nodes.json."))
     string overlay;
 
-    @CliOption("list-overlays", "List the registered overlay kinds and exit.")
+    @(Option("list-overlays", description: "List the registered overlay kinds and exit."))
     bool listOverlays;
 
-    @CliOption("markdown", "Treat the input as Markdown and render the decorated preview (the default for .md files) in the active sink; forces the preview for a non-.md extension or stdin.")
+    @(Option("markdown", description: "Treat the input as Markdown and render the decorated preview (the default for .md files) in the active sink; forces the preview for a non-.md extension or stdin."))
     bool markdown;
 
-    @CliOption("raw", "Render highlighted source instead of the markdown preview, in every sink (the preview is the default for .md files).")
+    @(Option("raw", description: "Render highlighted source instead of the markdown preview, in every sink (the preview is the default for .md files)."))
     bool raw;
 
-    @CliOption("diff", "Diff the two positional file arguments in-process and render the result in the active sink.")
+    @(Option("diff", description: "Diff the two positional file arguments in-process and render the result in the active sink."))
     bool diff;
 
-    @CliOption("patch", "Treat the input (a file target or piped stdin) as a unified diff; piped stdin is also sniffed without the flag.")
+    @(Option("patch", description: "Treat the input (a file target or piped stdin) as a unified diff; piped stdin is also sniffed without the flag."))
     bool patch;
 
-    @CliOption("pr", "Open a pull request as a diff session: a number (in this repository), owner/repo#number, or a forge URL. Fetched natively over the forge API; the token comes from $GITHUB_TOKEN, $GH_TOKEN, or gh's config — never a prompt.")
+    @(Option("pr", description: "Open a pull request as a diff session: a number (in this repository), owner/repo#number, or a forge URL. Fetched natively over the forge API; the token comes from $GITHUB_TOKEN, $GH_TOKEN, or gh's config — never a prompt."))
     string pr;
 
-    @CliOption("staged", "Diff the index (staged changes) against HEAD or the given revision; implies --diff.")
+    @(Option("staged", description: "Diff the index (staged changes) against HEAD or the given revision; implies --diff."))
     bool staged;
 
-    @CliOption("diff-ignore-whitespace", "How much whitespace difference counts as the same line: exact (default), trailing (git --ignore-space-at-eol), change (git -b), all (git -w). An ignored difference is never a change, not a change that is hidden.")
+    @(Option("diff-ignore-whitespace", description: "How much whitespace difference counts as the same line: exact (default), trailing (git --ignore-space-at-eol), change (git -b), all (git -w). An ignored difference is never a change, not a change that is hidden."))
     string diffIgnoreWhitespace = "exact";
 
-    @CliOption("diff-preview", "With --diff over two markdown files: diff the rendered DOCUMENTS instead of their source — the new document as it now stands, with removed blocks struck through in place and changed words marked. Rewrapping and table re-alignment become invisible, because neither changes a block's content.")
+    @(Option("diff-preview", description: "With --diff over two markdown files: diff the rendered DOCUMENTS instead of their source — the new document as it now stands, with removed blocks struck through in place and changed words marked. Rewrapping and table re-alignment become invisible, because neither changes a block's content."))
     bool diffPreview;
 
-    @CliOption("diff-structural", "Whether the grammar gets asked if a change is real: auto (default, when a grammar exists and the file is under the size ceiling), on (ignore the ceiling), off. Token-stream-identical hunks fold as formatting-only; the parser can only demote a change, never hide one.")
+    @(Option("diff-structural", description: "Whether the grammar gets asked if a change is real: auto (default, when a grammar exists and the file is under the size ceiling), on (ignore the ceiling), off. Token-stream-identical hunks fold as formatting-only; the parser can only demote a change, never hide one."))
     string diffStructural = "auto";
 
-    @CliOption("diff-commutative", "Containers whose child order carries no meaning, as language:node pairs added to the defaults (D imports, markdown reference definitions); off claims no permutation at all. A hunk that only permutes such a container folds as 'reordered'.")
+    @(Option("diff-commutative", description: "Containers whose child order carries no meaning, as language:node pairs added to the defaults (D imports, markdown reference definitions); off claims no permutation at all. A hunk that only permutes such a container folds as 'reordered'."))
     string diffCommutative = "default";
 
-    @CliOption("diff-layout","Diff layout: unified (default, one column) or split (two aligned panes). A split narrower than 80 columns degrades to unified, where the same diff reads better.")
+    @(Option("diff-layout", description: "Diff layout: unified (default, one column) or split (two aligned panes). A split narrower than 80 columns degrades to unified, where the same diff reads better."))
     string diffLayout = "unified";
 
-    @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
+    @(Option("font", description: "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins)."))
     string font = defaultGuiFont;
 
-    @CliOption("font-bold", "--gui bold face: a family, fontconfig pattern, or font file (default: the --font family's bold variant).")
+    @(Option("font-bold", description: "--gui bold face: a family, fontconfig pattern, or font file (default: the --font family's bold variant)."))
     string fontBold;
 
-    @CliOption("font-italic", "--gui italic face: a family, fontconfig pattern, or font file (default: the --font family's italic variant; absent, italic text renders upright — hue never fakes a slant).")
+    @(Option("font-italic", description: "--gui italic face: a family, fontconfig pattern, or font file (default: the --font family's italic variant; absent, italic text renders upright — hue never fakes a slant)."))
     string fontItalic;
 
-    @CliOption("font-bold-italic", "--gui bold-italic face (default: the --font family's bold-italic variant).")
+    @(Option("font-bold-italic", description: "--gui bold-italic face (default: the --font family's bold-italic variant)."))
     string fontBoldItalic;
 
-    @CliOption("font-size", "--gui font size in points (like the terminal).")
+    @(Option("font-size", description: "--gui font size in points (like the terminal)."))
     int fontSize = 14;
 
-    @CliOption("window-width", "--gui initial window width in cells (like the terminal).")
+    @(Option("window-width", description: "--gui initial window width in cells (like the terminal)."))
     int windowWidth = 100;
 
-    @CliOption("window-height", "--gui initial window height in cells.")
+    @(Option("window-height", description: "--gui initial window height in cells."))
     int windowHeight = 30;
 
-    @CliOption("line-numbers", "--gui: show the file line-number gutter (default on; disable with =false; toggle at runtime with 'l').")
+    @(Option("line-numbers", description: "--gui: show the file line-number gutter (default on; disable with =false; toggle at runtime with 'l')."))
     bool lineNumbers = true;
 
-    @CliOption("code-line-numbers", "--gui: number the lines inside each code block (default on; disable with =false; toggle at runtime with 'c').")
+    @(Option("code-line-numbers", description: "--gui: number the lines inside each code block (default on; disable with =false; toggle at runtime with 'c')."))
     bool codeLineNumbers = true;
 
-    @CliOption("background", "Terminal background mode: no-background (foreground only), spans (only where the theme sets one), or full (fill every line edge-to-edge; the default).")
+    @(Option("background", description: "Terminal background mode: no-background (foreground only), spans (only where the theme sets one), or full (fill every line edge-to-edge; the default)."))
     string background = "full";
 
-    @CliOption("ansi-copy", "--gui: how a selection over a ```ansi block copies — 'raw' (escape codes) or 'strip' (SGR removed). Default raw; toggle at runtime with 'y'.")
+    @(Option("ansi-copy", description: "--gui: how a selection over a ```ansi block copies — 'raw' (escape codes) or 'strip' (SGR removed). Default raw; toggle at runtime with 'y'."))
     string ansiCopy = "raw";
 
-    @CliOption("table-copy", "--gui: how a table grid selection copies — 'tsv' (tab-separated) or 'markdown'. Default tsv; toggle at runtime with 't'.")
+    @(Option("table-copy", description: "--gui: how a table grid selection copies — 'tsv' (tab-separated) or 'markdown'. Default tsv; toggle at runtime with 't'."))
     string tableCopy = "tsv";
 
-    @CliOption("out", "Output directory for the static HTML gallery a directory target renders into (with --html); defaults to <target>/html.")
+    @(Option("out", description: "Output directory for the static HTML gallery a directory target renders into (with --html); defaults to <target>/html."))
     string outDir;
 
-    @CliOption("no-live-types", "Disable live D types in the interactive views: opening a .d file normally starts a twoslash-extract oracle beside it, underlines every hover span, and resolves a token's type when you point at it. Needs twoslash-extract on PATH (or $SPARKLES_TWOSLASH_EXTRACT); without it the viewer says so once and carries on.")
+    @(Option("no-live-types", description: "Disable live D types in the interactive views: opening a .d file normally starts a twoslash-extract oracle beside it, underlines every hover span, and resolves a token's type when you point at it. Needs twoslash-extract on PATH (or $SPARKLES_TWOSLASH_EXTRACT); without it the viewer says so once and carries on."))
     bool noLiveTypes;
+
+    /// Everything that is not an option: the target to view (a file, a
+    /// directory, or nothing — hue then views its own source). `--diff` reads
+    /// two of them as the old/new file, and `--diff`/`--staged` over git
+    /// revisions read the first non-file as the revspec and the rest as path
+    /// filters.
+    @(Argument("path", description: "File or directory to view (default: hue's own source).", optional: true))
+    string[] paths;
 }
 
 /// Parses `--table-copy` (`CLI11`) into a `TableCopyFormat`; unknown → `tsv`.
@@ -528,13 +542,17 @@ private Backend pickBackend(in CliParams cli)
 
 int main(string[] args)
 {
-    const cli = args.parseCliArgs!CliParams(
+    auto parsed = parseCli!CliParams(
+        args,
         HelpInfo(
             "hue",
             "Highlight a source file in the terminal or as HTML, or browse syntax themes live.",
             null
         )
     );
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const cli = parsed.value;
 
     initLogger(LogLevel.warning); // hue only emits degradation warnings
 
@@ -587,7 +605,8 @@ int main(string[] args)
     // spelling of `--overlay twoslash=<path>`. Either only names the target
     // and forces the kind — a `*.twoslash.json` path needs no flag at all.
     bool forceTwoslash = cli.twoslash.length != 0;
-    string target = forceTwoslash ? cli.twoslash : (args.length > 1 ? args[1] : "");
+    string target = forceTwoslash ? cli.twoslash
+        : (cli.paths.length ? cli.paths[0] : "");
     if (cli.overlay.length)
     {
         import std.string : indexOf;
@@ -709,15 +728,15 @@ int main(string[] args)
                     return false;
             }
 
-            if (!cli.staged && args.length > 2 && isFilePath(args[1])
-                && isFilePath(args[2]))
+            if (!cli.staged && cli.paths.length > 1 && isFilePath(cli.paths[0])
+                && isFilePath(cli.paths[1]))
                 // `hue --diff <old> <new>`: two positional files, diffed
                 // in-process (`DVS1`) — or, for markdown under
                 // `--diff-preview`, diffed as documents (`DVN6`).
-                doc = cli.diffPreview && isMarkdownPath(args[1])
-                    && isMarkdownPath(args[2])
-                    ? pipeline.loadDiffPreview(args[1], args[2])
-                    : pipeline.loadDiffPair(args[1], args[2]);
+                doc = cli.diffPreview && isMarkdownPath(cli.paths[0])
+                    && isMarkdownPath(cli.paths[1])
+                    ? pipeline.loadDiffPreview(cli.paths[0], cli.paths[1])
+                    : pipeline.loadDiffPair(cli.paths[0], cli.paths[1]);
             else
             {
                 // Git revisions (`DVS3`): `hue --diff [<rev>[..<rev>]]
@@ -725,7 +744,7 @@ int main(string[] args)
                 // path filter, the first non-file is the revspec.
                 string revspec;
                 string[] filters;
-                foreach (a; args[1 .. $])
+                foreach (a; cli.paths)
                     if (revspec.length == 0 && !isFilePath(a))
                         revspec = a;
                     else
