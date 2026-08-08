@@ -377,6 +377,9 @@ struct ViewerModel
         }
         MdViewOptions opt = {
             theme: MdViewTheme.derive(current, pageFg, pageBg),
+            // The width bound sizes the per-fence scrollbar's track/thumb
+            // (the layout constraint below is the same number).
+            maxWidth: widthCols > 0 ? widthCols : 0,
             fenceHitBase: fenceHitBase,
             codeTabHitBase: codeTabHitBase,
             activeCodeTabs: activeCodeTabs,
