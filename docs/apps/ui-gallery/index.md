@@ -64,14 +64,16 @@ the showing page has claimed.
 
 The one inversion is a **focused terminal** (the Terminal page, `⏎` or a click
 on the pane): then every key — `q`, `Tab`, arrows, `Ctrl+C`, releases included —
-belongs to the shell inside it, and the release chord is the gallery's only
-reserved binding. The Terminal page spawns real shells (`n` or the `+ new`
-button, up to eight tabs), renders them through the GPU per-cell renderer in a
+belongs to the shell inside it, and the gallery reserves only the release chord
+and the scrollback keys (`Shift+PgUp`/`PgDn`). The Terminal page spawns real
+shells (`n` or the `+ new` button, up to eight tabs in a VSCode-style vertical
+list beside the pane), renders them through the GPU per-cell renderer in a
 window and through the cell renderer in a terminal — a terminal in a terminal —
 and applies a VSCode-shaped exit policy: a clean `exit` closes its own tab, a
 failure holds the tab with the code in its label, and `e` (`hold: all`) keeps
-everything. Mouse inside the pane is not wired yet; it lands with the
-mouse-event conversion.
+everything. The wheel over the pane walks the scrollback, whose bar draws from
+the terminal's own numbers. Mouse _inside_ the pane (selection, links) is not
+wired yet; it lands with the mouse-event conversion.
 
 Mouse, where the target has one: click a page or a theme, press a tab or an
 action segment, drag the split divider, and **grab a scrollbar** — a press on
