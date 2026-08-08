@@ -177,8 +177,20 @@ struct ViewerModel
     /// viewport (default) or wrap in-panel.
     CodeOverflow codeOverflow = CodeOverflow.scroll;
     /// `--code-max-lines`: a taller fence shows a vertical viewport of
-    /// exactly this height plus an inner right track (0 = never).
-    int codeMaxLines = 100;
+    /// exactly this height plus an inner right track. 0 = never; -1 (the
+    /// default) = auto — fit the whole box, borders included, in the pane.
+    int codeMaxLines = -1;
+    /// The document pane's height in cells, chrome excluded (the hosts keep
+    /// it current) — what `auto` resolves against.
+    int viewRows;
+
+    /// `codeMaxLines` resolved: an explicit value wins; `auto` fits the
+    /// whole box — the body plus its two border rows — in the pane, so a
+    /// document holding one long fence never needs a scroll to reach the
+    /// bottom border. An unknown pane height (a static sink) never clips.
+    int resolvedCodeMaxLines() const @safe pure nothrow @nogc
+        => codeMaxLines >= 0 ? codeMaxLines
+            : (viewRows > 6 ? viewRows - 2 : 0);
     /// Per-fence scroll offsets, keyed by `codeBody.start` (scroll mode).
     FenceScroll[size_t] fenceScrollAt;
     /// The fence-bar drag machine (one pointer, one grab) + its owner.
@@ -430,7 +442,7 @@ struct ViewerModel
             inlineFoldMarker: inlineFoldMarker,
             codeLineNumbers: codeLineNumbers,
             codeOverflow: codeOverflow,
-            codeMaxLines: codeMaxLines,
+            codeMaxLines: resolvedCodeMaxLines(),
             fenceScrolls: fenceScrollList(),
             fenceHBarHitBase: fenceHBarHitBase,
             fenceVBarHitBase: fenceVBarHitBase,
@@ -885,8 +897,9 @@ struct ViewerModel
             for (auto n = e.lines; n; n /= 10)
                 ++numW;
             e.innerW = widthCols - 4 - (codeLineNumbers ? numW + 1 : 0);
-            e.shownRows = codeMaxLines > 0 && e.lines > codeMaxLines
-                ? codeMaxLines : e.lines;
+            const maxLines = resolvedCodeMaxLines();
+            e.shownRows = maxLines > 0 && e.lines > maxLines
+                ? maxLines : e.lines;
             return e;
         }
         return e;

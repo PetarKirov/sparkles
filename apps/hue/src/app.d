@@ -154,8 +154,8 @@ struct CliParams
     @(Option("code-overflow", description: "How a code-block line longer than its panel behaves: 'scroll' (per-block horizontal scrolling — a sideways wheel or Shift+wheel over the block; the default) or 'wrap' (in-panel wrapping past the number gutter)."))
     string codeOverflow = "scroll";
 
-    @(Option("code-max-lines", description: "A code block taller than this many lines shows a fixed-height vertical viewport with its own scrollbar (scroll mode; default 100; 0 disables)."))
-    int codeMaxLines = 100;
+    @(Option("code-max-lines", description: "A code block taller than this many lines shows a fixed-height vertical viewport with its own scrollbar (scroll mode). Default -1 = auto: fit the whole block, borders included, in the document pane, so its bottom border stays in view; 0 disables."))
+    int codeMaxLines = -1;
 
     @(Option("background", description: "Terminal background mode: no-background (foreground only), spans (only where the theme sets one), or full (fill every line edge-to-edge; the default)."))
     string background = "full";
@@ -866,7 +866,8 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
                 fenceRenderer: hueFenceRenderer(&cache, &theme, pageFg),
                 diffBlocks: doc.preview.decorations, // `DVN6`
                 codeOverflow: parseCodeOverflow(cli.codeOverflow),
-                codeMaxLines: cli.codeMaxLines,
+                // A static sink has no pane to fit: `auto` never clips.
+                codeMaxLines: cli.codeMaxLines < 0 ? 0 : cli.codeMaxLines,
             };
             auto tree = viewMarkdown(doc.preview.doc, opt);
             auto frames = layout(tree, Constraints(maxW: previewWidth()));

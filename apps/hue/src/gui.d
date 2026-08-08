@@ -328,7 +328,7 @@ int runGui(
     bool ansiCopyStrip = false,          // --ansi-copy=strip (SEL7/CLI10); default raw
     TableCopyFormat tableCopy = TableCopyFormat.tsv, // --table-copy (TBL2/CLI11)
     CodeOverflow codeOverflow = CodeOverflow.scroll, // --code-overflow
-    int codeMaxLines = 100,              // --code-max-lines (COD6)
+    int codeMaxLines = -1,               // --code-max-lines (COD6; -1 = auto)
     SourceSet* set = null,               // the document set to navigate (GNV1)
     DocLoader loadDoc = null,            // loads a set entry (supplied by app.d)
     TsConfigCache* tsCache = null,       // fence highlighting for the widget view
@@ -1191,6 +1191,14 @@ int runGui(
         // at every site that needed them (DCK10/DCK11).
         const docCells = paneContent(docPane);
         const docRows = docCells.height;
+        // Auto `--code-max-lines` follows the pane height (COD6): a tall
+        // fence's fixed viewport re-fits when the pane's row count changes.
+        if (vm.viewRows != docRows)
+        {
+            vm.viewRows = docRows;
+            if (vm.codeMaxLines < 0 && vm.widthCols > 0)
+                vm.rebuild();
+        }
         const docY0 = docCells.y * cellH;
         const hdrY = (docCells.y - 1) * cellH;
 
