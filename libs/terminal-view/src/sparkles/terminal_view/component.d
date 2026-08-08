@@ -46,6 +46,14 @@ import sparkles.ui.widget : WidgetTree;
 extern (C) private int forkpty(int* amaster, char* name, const void* termp,
     const winsize* winp);
 
+/// A pane's scrollback geometry (see `TerminalView.scrollback`).
+struct Scrollback
+{
+    long total;  /// history + screen rows
+    long len;    /// the viewport's rows
+    long offset; /// the viewport's first row, from the top of history
+}
+
 /// Everything the frame's dirty/skip decision reads (`TVW5`), as one plain
 /// value — the decision itself is $(LREF redrawDecision), a pure function
 /// over it.
@@ -598,6 +606,31 @@ struct TerminalView
             return true;
         }
         return false;
+    }
+
+    /// Scrolls the viewport by `deltaLines` — negative into history. New
+    /// output re-pins the viewport to the bottom, as the emulator always has.
+    void scrollViewport(int deltaLines) @system nothrow @nogc
+    {
+        if (!opened || deltaLines == 0)
+            return;
+        GhosttyTerminalScrollViewport sv;
+        sv.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
+        sv.value.delta = deltaLines;
+        ghostty_terminal_scroll_viewport(s.terminal, sv);
+    }
+
+    /// The scrollback geometry an embedder's own bar draws from: total rows
+    /// (history + screen), the viewport's extent, and its offset from the top.
+    Scrollback scrollback() @system nothrow @nogc
+    {
+        if (!opened)
+            return Scrollback();
+        GhosttyTerminalScrollbar sb;
+        ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR,
+            cast(void*) &sb);
+        return Scrollback(total: cast(long) sb.total, len: cast(long) sb.len,
+            offset: cast(long) sb.offset);
     }
 
     /// The last OSC 0/2 title the shell set (empty until one arrives) — an
