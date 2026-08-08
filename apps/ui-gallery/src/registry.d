@@ -23,6 +23,7 @@ import state : GalleryState;
 // shadowing surprise.
 import pages.components_page : componentsKeys = keys,
     componentsOnActivate = handleActivate, componentsOnKey = handleKey,
+    componentsOnPointer = handlePointer, componentsStep = step,
     componentsView = view;
 import pages.decoration_page : decorationView = view;
 import pages.inspector_page : inspectorKeys = keys,
@@ -121,7 +122,8 @@ static immutable Page[] pages = [
     Page("Slots", "the semantic colour vocabulary", &slotsView),
     Page("Decoration", "box and text chrome", &decorationView),
     Page("Components", "the application chrome", &componentsView,
-        componentsKeys, &componentsOnKey, &componentsOnActivate),
+        componentsKeys, &componentsOnKey, &componentsOnActivate,
+        &componentsOnPointer),
     Page("Tree", "data, interaction, view", &treeView_,
         treeKeys, &treeOnKey, &treeOnActivate),
     Page("Scrolling", "one thumb formula", &scrollingView,
@@ -151,6 +153,7 @@ bool stepPage(ref GalleryState s, int dtMs)
 {
     machinesStep(s, dtMs);
     scrollingStep(s, dtMs);
+    componentsStep(s, dtMs);
     return machinesAnimating(s);
 }
 

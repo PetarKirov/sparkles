@@ -13,21 +13,35 @@ module pages.components_page;
 
 import std.conv : text;
 
-import sparkles.input : Key, KeyEvent;
+import sparkles.input : Key, KeyEvent, PointerEvent;
 import sparkles.ui.components.chrome : actionBar, gutter, headerBar, scrollbar,
     ScrollbarGlyphs, scrollView, tabStrip;
 import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.layout : Frame;
+import sparkles.ui.scroll_view : ScrollExtents;
 import sparkles.ui.state : ScrollState;
 import sparkles.ui.style : Slot, TextStyle;
-import sparkles.ui.widget : Builder, Widget, WidgetKind;
+import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import kit;
-import state : GalleryState, hitActions, hitTabs;
+import scrollbars;
+import state : GalleryState, hitActions, hitChromeBar, hitTabs;
 
 @safe:
 
 /// ditto
-static immutable string[] keys = ["← → tab", "1-4 action", "click anything"];
+static immutable string[] keys =
+    ["← → tab", "1-4 action", "n/p scroll", "click anything"];
+
+/// The live scroll view's document and viewport.
+private enum int chromeDocRows = 10;
+/// ditto
+private enum int chromeViewRows = 4;
+
+/// What its bar scrolls over — stated once, read by the viewport, the clamp,
+/// the thumb and the grab.
+private enum BarGeometry chromeGeom = BarGeometry(
+    content: chromeDocRows, viewport: chromeViewRows, track: chromeViewRows);
 
 /// The tab strip's labels — deliberately of different widths, and one with a
 /// multi-byte character, so `fitLabels` is measured in cells and not bytes.
@@ -129,15 +143,25 @@ uint view(ref Builder b, in GalleryState s)
     ]);
     body_ ~= spacer(b);
 
-    body_ ~= section(b, "scrollView — a clipped, offset viewport", [
-        scrollView(b, longColumn(b), 4, ScrollState(2)),
+    body_ ~= section(b, "scrollView — a clipped, offset viewport, live", [
+        b.add(Widget(
+            kind: WidgetKind.row,
+            children: [
+                scrollView(b, longColumn(b), chromeViewRows,
+                    ScrollState(s.chromeView.v.offset)),
+                // Grabbable, hover-expanding, eased — the page's own pointer
+                // handler drives it by its painted rect, like every live bar
+                // in the catalog.
+                verticalBar(b, s.chromeView, chromeGeom, hitChromeBar),
+            ],
+        )),
     ]);
     body_ ~= spacer(b);
     body_ ~= para(b,
         "A scroll view is the layout engine's viewport primitive with the "
         ~ "scroll machine plugged in: a clipping container plus a child offset. "
         ~ "Rows above the viewport get negative frames and the display list "
-        ~ "culls them.", w);
+        ~ "culls them. Drive this one: n/p, or grab the bar.", w);
 
     return column(b, body_);
 }
@@ -145,7 +169,7 @@ uint view(ref Builder b, in GalleryState s)
 private uint longColumn(ref Builder b)
 {
     uint[] rows;
-    foreach (i; 0 .. 10)
+    foreach (i; 0 .. chromeDocRows)
         rows ~= label(b, text("row ", i), i % 2 == 0 ? Slot.code : Slot.muted);
     return b.add(Widget(kind: WidgetKind.column, children: rows));
 }
@@ -169,7 +193,28 @@ bool handleKey(ref GalleryState s, in KeyEvent k)
         s.componentsAction = k.ch - '1';
         return true;
     }
+    if (k.ch == 'n' || k.ch == 'p')
+    {
+        // Through the machine, so the printed thumb and the drawn one move
+        // together — the same rule the Scrolling page states.
+        s.chromeView.wheeledV(k.ch == 'n' ? 1 : -1, ScrollExtents(
+            chromeGeom.content, chromeGeom.viewport, chromeGeom.track));
+        return true;
+    }
     return false;
+}
+
+/// The live bar's pointer handling — its grab zone is its painted rect,
+/// which only the page can look up in the frames the painter used.
+bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
+    in Frame[] frames)
+    => driveVertical(s.chromeView, s.capture, capChromeBar, p,
+        rectOf(tree, frames, hitChromeBar), chromeGeom);
+
+/// Eases the live bar's width. The shell owns the clock.
+void step(ref GalleryState s, int dtMs)
+{
+    easeVertical(s.chromeView, s.caps, dtMs / 1000.0f);
 }
 
 /// ditto
