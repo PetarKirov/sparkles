@@ -35,6 +35,7 @@ disagree about anything, the gallery is where you find out.
 | **Scrolling**  | the one thumb formula, at three offsets, beside the numbers it produced            |
 | **State**      | a tile per interaction machine, each printing its own current value                |
 | **Split**      | a draggable divider whose grab is relative, and the pointer shape that follows it  |
+| **Terminal**   | real shells in VSCode-style tabs — `sparkles:terminal-view` embedded as a widget   |
 | **Inspector**  | `dumpTree` of the page you were last looking at                                    |
 
 ## Driving it
@@ -42,23 +43,35 @@ disagree about anything, the gallery is where you find out.
 Everything is reachable from the keyboard, because a terminal without mouse
 reporting must still be fully navigable.
 
-| Key               | Does                                            |
-| ----------------- | ----------------------------------------------- |
-| `↑` `↓` / `j` `k` | move within the focused region                  |
-| `←` `→`           | previous / next page                            |
-| `Tab`             | switch between the page list and the page       |
-| `Enter` / `Space` | move to the page                                |
-| `1`…`9`, `0`      | jump to a page                                  |
-| `PgUp` / `PgDn`   | scroll the page; `Home` / `End` for its ends    |
-| `[` / `]`         | previous / next theme                           |
-| `\`               | show the page list on a narrow terminal         |
-| `?`               | every binding, including the showing page's own |
-| `q` / `Esc`       | quit                                            |
+| Key                     | Does                                                           |
+| ----------------------- | -------------------------------------------------------------- |
+| `↑` `↓` / `j` `k`       | move within the focused region                                 |
+| `←` `→`                 | previous / next page                                           |
+| `Tab`                   | switch between the page list and the page                      |
+| `Enter` / `Space`       | move to the page                                               |
+| `1`…`9`, `0`            | jump to a page                                                 |
+| `PgUp` / `PgDn`         | scroll the page; `Home` / `End` for its ends                   |
+| `[` / `]`               | previous / next theme                                          |
+| `\`                     | show the page list on a narrow terminal                        |
+| `?`                     | every binding, including the showing page's own                |
+| `q` / `Esc`             | quit                                                           |
+| `Ctrl+]` / `` Ctrl+` `` | give the keyboard back to the gallery, from a focused terminal |
 
 With the keyboard in the page (`Tab`), the page gets first refusal on each key —
 which is how the Tree page owns the arrows without the page list losing them.
 `Tab`, `q` and `Esc` are never a page's to take. The status bar lists whatever
 the showing page has claimed.
+
+The one inversion is a **focused terminal** (the Terminal page, `⏎` or a click
+on the pane): then every key — `q`, `Tab`, arrows, `Ctrl+C`, releases included —
+belongs to the shell inside it, and the release chord is the gallery's only
+reserved binding. The Terminal page spawns real shells (`n` or the `+ new`
+button, up to eight tabs), renders them through the GPU per-cell renderer in a
+window and through the cell renderer in a terminal — a terminal in a terminal —
+and applies a VSCode-shaped exit policy: a clean `exit` closes its own tab, a
+failure holds the tab with the code in its label, and `e` (`hold: all`) keeps
+everything. Mouse inside the pane is not wired yet; it lands with the
+mouse-event conversion.
 
 Mouse, where the target has one: click a page or a theme, press a tab or an
 action segment, drag the split divider, and **grab a scrollbar** — a press on

@@ -22,24 +22,28 @@ real consumer.
 
 ## Requirements
 
-| Id      | Requirement                                                                                                                                                   | Status |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `UGL1`  | The application names no canvas, window or terminal; it is a component run by `runApp`.                                                                       | full   |
-| `UGL2`  | One `view` serves the terminal, the window and the recording host — no per-backend branch in a page.                                                          | full   |
-| `UGL3`  | A page is a pure view over one state value: `uint view(ref Builder, in GalleryState)`.                                                                        | full   |
-| `UGL4`  | The catalog is a flat table, so the test sweep iterates every page without naming one.                                                                        | full   |
-| `UGL5`  | Every page builds and lays out at 80×24, 120×40 and 40×10.                                                                                                    | full   |
-| `UGL6`  | Nothing crosses the surface edge unless a `clipX` ancestor put it there.                                                                                      | full   |
-| `UGL7`  | The shell's three bands tile the surface vertically at every size.                                                                                            | full   |
-| `UGL8`  | Every affordance is reachable from the keyboard; the pointer is an addition, never a requirement.                                                             | full   |
-| `UGL9`  | A page owns keys only in the content region, and never `Tab`, `q` or `Esc`.                                                                                   | full   |
-| `UGL10` | Hit rects come from the frames the painter used (`IXR27`), asserted on the shell's chrome and on a page's.                                                    | full   |
-| `UGL11` | The theme is per frame, so selecting one repaints the whole application rather than a preview pane.                                                           | full   |
-| `UGL12` | Coverage is asserted against the enums: every `WidgetKind`, `Slot`, `BorderStyle`, `UnderlineStyle`, `TrackSpec.Kind`, `TextWrap` and `Guide` has a specimen. | full   |
-| `UGL13` | A frame can be rendered with no terminal and no display (`--render` / `--render-plain`).                                                                      | full   |
-| `UGL14` | An animation asks for one frame at a time and stops asking; a target with no frame clock is never woken by one.                                               | full   |
-| `UGL15` | The sidebar yields its width below a 60-column surface and is restorable with a key.                                                                          | full   |
-| `UGL16` | Every scrollbar is a `ScrollView`: grabbable, capture-arbitrated, hover-expanding, and eased — never a drawn thumb over a bare offset.                        | full   |
+| Id      | Requirement                                                                                                                                                                                                                                 | Status |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `UGL1`  | The application names no canvas, window or terminal; it is a component run by `runApp`.                                                                                                                                                     | full   |
+| `UGL2`  | One `view` serves the terminal, the window and the recording host — no per-backend branch in a page.                                                                                                                                        | full   |
+| `UGL3`  | A page is a pure view over one state value: `uint view(ref Builder, in GalleryState)`.                                                                                                                                                      | full   |
+| `UGL4`  | The catalog is a flat table, so the test sweep iterates every page without naming one.                                                                                                                                                      | full   |
+| `UGL5`  | Every page builds and lays out at 80×24, 120×40 and 40×10.                                                                                                                                                                                  | full   |
+| `UGL6`  | Nothing crosses the surface edge unless a `clipX` ancestor put it there.                                                                                                                                                                    | full   |
+| `UGL7`  | The shell's three bands tile the surface vertically at every size.                                                                                                                                                                          | full   |
+| `UGL8`  | Every affordance is reachable from the keyboard; the pointer is an addition, never a requirement.                                                                                                                                           | full   |
+| `UGL9`  | A page owns keys only in the content region, and never `Tab`, `q` or `Esc`.                                                                                                                                                                 | full   |
+| `UGL10` | Hit rects come from the frames the painter used (`IXR27`), asserted on the shell's chrome and on a page's.                                                                                                                                  | full   |
+| `UGL11` | The theme is per frame, so selecting one repaints the whole application rather than a preview pane.                                                                                                                                         | full   |
+| `UGL12` | Coverage is asserted against the enums: every `WidgetKind`, `Slot`, `BorderStyle`, `UnderlineStyle`, `TrackSpec.Kind`, `TextWrap` and `Guide` has a specimen.                                                                               | full   |
+| `UGL13` | A frame can be rendered with no terminal and no display (`--render` / `--render-plain`).                                                                                                                                                    | full   |
+| `UGL14` | An animation asks for one frame at a time and stops asking; a target with no frame clock is never woken by one.                                                                                                                             | full   |
+| `UGL15` | The sidebar yields its width below a 60-column surface and is restorable with a key.                                                                                                                                                        | full   |
+| `UGL16` | Every scrollbar is a `ScrollView`: grabbable, capture-arbitrated, hover-expanding, and eased — never a drawn thumb over a bare offset.                                                                                                      | full   |
+| `UGL17` | The Terminal page embeds `sparkles:terminal-view` (`TVW7`): tabs of real shells, the pane a keyed box sized by layout and painted in the draw phase — `paintPane` on the GPU arm, the cell renderer through `isCanvas` on the terminal arm. | full   |
+| `UGL18` | With a terminal focused, every key — releases included — forwards to the pty; the release chord (`Ctrl+]` / `` Ctrl+` ``) is the one reserved binding, and a completed press outside the page's chrome also returns the keyboard.           | full   |
+| `UGL19` | Tab identity is minted once: closing a tab never renumbers another's hit id. The exit policy is a toggle — clean exits auto-close, failures hold with the code in the label, `hold: all` keeps everything.                                  | full   |
+| `UGL20` | No automated test forks a shell: spawning is main-enabled only, so recorded scripts assert on the request flags and the model, and the pty path is verified live.                                                                           | full   |
 
 ## Shape
 
@@ -51,6 +55,7 @@ apps/ui-gallery/src/
 ├── registry.d   # the Page table, and the catalog sweep
 ├── kit.d        # the small view vocabulary the pages are written in
 ├── scrollbars.d # driving a ScrollView: grab, capture, ease, and the widget
+├── term_store.d # the Terminal page's heap-pinned TerminalView instances
 ├── render.d     # one frame to ANSI or glyphs, no backend
 └── pages/       # one module per catalog entry
 ```
