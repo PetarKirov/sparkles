@@ -24,6 +24,8 @@
 >
 > ```d
 > auto x = 1; // a fence inside a callout
+> auto y = 2; // continuation lines carry no prefix indentation
+> auto z = 3;
 > ```
 
 Plain quotes:

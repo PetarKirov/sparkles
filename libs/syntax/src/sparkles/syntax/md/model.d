@@ -79,6 +79,11 @@ struct MdBlock
     const(char)[] infoLang; /// codeFence: the info-string language tag (raw), else ""
     const(char)[] label;    /// codeFence: info-string remainder (e.g. "[file.d]"), else ""
     Span codeBody;          /// codeFence: the `code_fence_content` byte extent
+    /// codeFence: `block_continuation` ranges inside `codeBody`, ascending —
+    /// the `> ` prefixes a quoted fence's body lines carry (blanked to
+    /// spaces in `MdDoc.source`). $(LREF fenceBody) drops them, so the body
+    /// renders and copies as CODE, not as prefix-indented lines.
+    Span[] codeOmit;
     ColAlign[] aligns;      /// table: per-column alignment (from the delimiter row), else null
     MdInline[] inlines;     /// heading / paragraph / tableCell: resolved inline spans
     MdBlock[] children;     /// nested blocks (see the per-kind notes above)
@@ -257,6 +262,61 @@ private MdBlock[] foldCodeGroups(MdBlock[] blocks, scope const(char)[] src)
     return outv;
 }
 
+/**
+A fence's body as $(B code): the `codeOmit` continuation prefixes dropped.
+`text` borrows the source when nothing is omitted (the common, unquoted
+fence); `srcAt` maps a text offset back to its absolute source offset, so
+the identity channel stays exact even across dropped ranges.
+*/
+struct FenceBody
+{
+    const(char)[] text;
+    private const(Span)[] omit;
+    private size_t bodyStart;
+
+    /// The absolute source offset of `text[textOff]`.
+    size_t srcAt(size_t textOff) const @safe pure nothrow @nogc
+    {
+        size_t src = bodyStart;
+        size_t rem = textOff;
+        foreach (o; omit)
+        {
+            const seg = o.start - src;
+            if (rem < seg)
+                return src + rem;
+            rem -= seg;
+            src = o.end;
+        }
+        return src + rem;
+    }
+}
+
+/// ditto
+/// (`ref const`, not `in`: the result borrows `codeOmit`, which `-preview=in`'s
+/// `scope` would reject.)
+FenceBody fenceBody(ref const MdBlock fence, const(char)[] source)
+    @safe pure nothrow
+{
+    const lo = fence.codeBody.start;
+    const hi = fence.codeBody.end <= source.length
+        ? fence.codeBody.end : source.length;
+    if (lo >= hi)
+        return FenceBody(null, null, lo);
+    if (!fence.codeOmit.length)
+        return FenceBody(source[lo .. hi], null, lo);
+    char[] t;
+    size_t at = lo;
+    foreach (o; fence.codeOmit)
+    {
+        if (o.start > at && o.start <= hi)
+            t ~= source[at .. o.start];
+        at = o.end;
+    }
+    if (at < hi)
+        t ~= source[at .. hi];
+    return FenceBody(t, fence.codeOmit, lo);
+}
+
 private void blankContinuations(TSNode n, char[] buf) @trusted nothrow
 {
     if (nodeType(n) == "block_continuation")
@@ -411,6 +471,23 @@ private struct Extractor
             // A zero-length span at the block keeps a stable, unique anchor
             // (copy hit ids, code-group tabs key on `codeBody.start`).
             b.codeBody = Span(b.span.start, b.span.start);
+
+        // A QUOTED fence's body lines carry `block_continuation` prefixes
+        // (`> `, blanked to spaces in the working copy); record their exact
+        // ranges so `fenceBody` can drop them.
+        void continuations(TSNode m) @trusted nothrow
+        {
+            if (nodeType(m) == "block_continuation")
+            {
+                const s = nodeStartByte(m), e = nodeEndByte(m);
+                if (s >= b.codeBody.start && e <= b.codeBody.end)
+                    b.codeOmit ~= Span(s, e);
+            }
+            foreach (i; 0 .. nodeNamedChildCount(m))
+                continuations(nodeNamedChild(m, i));
+        }
+
+        continuations(n);
         return b;
     }
 

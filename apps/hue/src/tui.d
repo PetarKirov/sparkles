@@ -672,9 +672,10 @@ struct PreviewTui
     private void copyFenceAt(size_t bodyStart) @system
     {
         foreach (ref const f; vm.fences)
-            if (f.body.start == bodyStart && f.body.end <= source.length)
+            if (f.body.start == bodyStart)
             {
-                writeClipboard(source[f.body.start .. f.body.end]);
+                // The body as CODE — a quoted fence's `> ` prefixes dropped.
+                writeClipboard(f.text);
                 vm.markCopied(bodyStart);
                 return;
             }
