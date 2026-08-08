@@ -157,6 +157,9 @@ struct CliParams
     @(Option("code-max-lines", description: "A code block taller than this many lines shows a fixed-height vertical viewport with its own scrollbar (scroll mode). Default -1 = auto: fit the whole block, borders included, in the document pane, so its bottom border stays in view; 0 disables."))
     int codeMaxLines = -1;
 
+    @(Option("group-themes", description: "Group the theme cycle by light/dark (default on; disable with =false): each brightness forms one contiguous run, so rapidly cycling dark themes never flashes a light background."))
+    bool groupThemes = true;
+
     @(Option("background", description: "Terminal background mode: no-background (foreground only), spans (only where the theme sets one), or full (fill every line edge-to-edge; the default)."))
     string background = "full";
 
@@ -681,7 +684,7 @@ int main(string[] args)
             {
                 import workspace : runWorkspace, WorkspaceDoc;
 
-                auto themeSet = sortedThemes(cli.theme);
+                auto themeSet = sortedThemes(cli.theme, cli.groupThemes);
                 auto pl = &pipeline;
                 return runWorkspace(target, isDir: true, WorkspaceDoc.init,
                     delegate WorkspaceDoc(string path) @system
@@ -977,7 +980,7 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
     if (doc.kind == ContentKind.twoslash && tryTwoslashCapture(doc, theme, cache))
         return 0;
 
-    auto themeSet = sortedThemes(cli.theme);
+    auto themeSet = sortedThemes(cli.theme, cli.groupThemes);
 
     version (Android)
     {
@@ -1057,7 +1060,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         LoadedDoc loadDoc(string path) @system
             => pipeline.load(path);
 
-        auto themeSet = sortedThemes(cli.theme);
+        auto themeSet = sortedThemes(cli.theme, cli.groupThemes);
         // Font selection: Android has no CLI, so the bundled defaults stand
         // in for the desktop flags — the Maple family for the primary and
         // all three styled faces (the fontconfig-free override resolution
@@ -1101,12 +1104,29 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
 }
 
 /// Sorted theme names + the parallel theme values the previewer/GUI index per
+/// Whether a theme reads as LIGHT (its document background's relative
+/// luminance above the midpoint) — the `--group-themes` partition key.
+private bool isLightTheme(in Theme t) @safe pure nothrow @nogc
+{
+    import sparkles.base.term_color : toRgb;
+
+    const bg = toRgb(t.defaultBg, RgbColor(0x1e, 0x1e, 0x1e));
+    return 2126 * cast(int) bg.r + 7152 * cast(int) bg.g
+        + 722 * cast(int) bg.b > 10_000 * 128;
+}
+
 /// frame (avoids per-frame GC AA lookups), plus the start index for `name`.
-private auto sortedThemes(string name)
+/// With `grouped` (`--group-themes`, the default), the alphabetical order is
+/// stably partitioned dark-first: ←/→ walks each brightness group as one
+/// contiguous run, so rapidly cycling dark themes never flashes a light
+/// background (and vice versa) until the boundary is crossed deliberately.
+private auto sortedThemes(string name, bool grouped = true)
 {
     import std.algorithm.iteration : map;
+    import std.algorithm.mutation : SwapStrategy;
     import std.algorithm.sorting : sort;
     import std.array : array;
+    import std.range : iota;
 
     static struct ThemeSet
     {
@@ -1119,6 +1139,15 @@ private auto sortedThemes(string name)
     s.names = builtinThemes.keys;
     sort(s.names);
     s.themes = s.names.map!(n => *(n in builtinThemes)).array;
+    if (grouped)
+    {
+        auto order = iota(s.names.length).array;
+        sort!((a, b) => cast(int) isLightTheme(s.themes[a])
+            < cast(int) isLightTheme(s.themes[b]),
+            SwapStrategy.stable)(order);
+        s.names = order.map!(i => s.names[i]).array;
+        s.themes = order.map!(i => s.themes[i]).array;
+    }
     foreach (i, n; s.names)
         if (n == name)
         {
@@ -1126,6 +1155,27 @@ private auto sortedThemes(string name)
             break;
         }
     return s;
+}
+
+@("app.sortedThemes.groupsByBrightness")
+@system unittest
+{
+    // Grouped (the default): each brightness forms ONE contiguous run —
+    // cycling inside a group can never flash the other's background.
+    const g = sortedThemes("catppuccin-mocha");
+    int transitions;
+    foreach (i; 1 .. g.themes.length)
+        if (isLightTheme(g.themes[i]) != isLightTheme(g.themes[i - 1]))
+            ++transitions;
+    assert(transitions <= 1, "brightness groups must be contiguous");
+    assert(g.names[g.idx] == "catppuccin-mocha", "selection survives");
+
+    // Ungrouped keeps the plain alphabetical order.
+    import std.algorithm.sorting : isSorted;
+
+    const u = sortedThemes("catppuccin-mocha", false);
+    assert(u.names.isSorted);
+    assert(u.names[u.idx] == "catppuccin-mocha");
 }
 
 /**
