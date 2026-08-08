@@ -875,6 +875,93 @@ export default withMermaid(
           collapsed: true,
           items: [
             {
+              text: 'Serde Expressiveness',
+              link: '/research/serde/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts & Vocabulary',
+                  link: '/research/serde/concepts',
+                },
+                {
+                  text: 'Baseline',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'sparkles:wired',
+                      link: '/research/serde/wired-baseline',
+                    },
+                  ],
+                },
+                {
+                  text: 'TypeScript',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Effect Schema',
+                      link: '/research/serde/effect-schema',
+                    },
+                  ],
+                },
+                {
+                  text: 'Rust',
+                  collapsed: true,
+                  items: [
+                    { text: 'serde', link: '/research/serde/serde' },
+                    { text: 'facet', link: '/research/serde/facet' },
+                  ],
+                },
+                {
+                  text: 'Python',
+                  collapsed: true,
+                  items: [
+                    { text: 'Pydantic v2', link: '/research/serde/pydantic' },
+                    {
+                      text: 'msgspec & cattrs',
+                      link: '/research/serde/msgspec-cattrs',
+                    },
+                  ],
+                },
+                {
+                  text: 'Functional Lineage',
+                  collapsed: true,
+                  items: [
+                    { text: 'zio-schema', link: '/research/serde/zio-schema' },
+                    {
+                      text: 'autodocodec, tomland & unjson',
+                      link: '/research/serde/haskell-codecs',
+                    },
+                    {
+                      text: 'circe & aeson',
+                      link: '/research/serde/circe-aeson',
+                    },
+                    {
+                      text: 'Invertible Syntax',
+                      link: '/research/serde/invertible-syntax',
+                    },
+                    {
+                      text: 'OCaml ppx & ATD',
+                      link: '/research/serde/ocaml-atd',
+                    },
+                  ],
+                },
+                {
+                  text: 'Cross-Cutting',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'argv as a Codec',
+                      link: '/research/serde/argv-codecs',
+                    },
+                  ],
+                },
+                {
+                  text: 'Comparison & Synthesis',
+                  link: '/research/serde/comparison',
+                },
+              ],
+            },
+            {
               text: 'Parsing',
               link: '/research/parsing/',
               collapsed: true,
