@@ -1,0 +1,3 @@
+Adds one or more dependencies to the current package's recipe file.
+
+The package(s) are appended to the `dependencies` block of `dub.sdl` / `dub.json` and immediately fetched into the local cache. Versions can be pinned with the `package@version-spec` syntax (for example `dub add vibe-d@~>0.9`); without an explicit specifier, dub picks the highest stable version available on the registry.

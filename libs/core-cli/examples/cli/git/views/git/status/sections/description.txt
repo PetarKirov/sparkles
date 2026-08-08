@@ -1,0 +1,11 @@
+Show the working tree status.
+
+This command displays the status of your working tree and the index. It shows which files have been modified, which are staged for commit, and which are untracked by Git.
+
+The output typically shows:
+- Modified files that have not been staged
+- Staged files that are ready to be committed
+- Untracked files that are not yet known to Git
+- Files that are deleted or renamed
+
+Use this command frequently to understand what changes you have made and what is ready to be committed.

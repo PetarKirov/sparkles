@@ -1,0 +1,1 @@
+Strategy gh asks GitHub to use when merging the PR. `merge` (default) creates a merge commit, `squash` squashes the PR into a single commit on the base branch, and `rebase` replays the PR's commits one by one.

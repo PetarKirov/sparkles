@@ -1,0 +1,3 @@
+Builds and runs the selected package, equivalent to `dub build` followed by executing the produced binary.
+
+Any arguments after a `--` separator are forwarded verbatim to the program. Without `--`, dub still tries to disambiguate options it doesn't recognize, so the explicit separator is recommended whenever the program shares flag names with dub itself.

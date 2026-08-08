@@ -1,0 +1,25 @@
+Environment variables that influence git's behavior:
+
+GIT_DIR
+    Location of the repository. Defaults to ".git" in the current directory.
+
+GIT_WORK_TREE
+    Path to the working tree. Useful when GIT_DIR points outside it.
+
+GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL
+    Override the recorded author of new commits.
+
+GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL
+    Override the recorded committer (distinct from the author after a rebase or cherry-pick).
+
+GIT_EDITOR
+    Editor used for commit messages and interactive rebases. Falls back to VISUAL, then EDITOR.
+
+GIT_PAGER
+    Pager used to display long output. Set to "cat" to disable paging entirely.
+
+GIT_SSH_COMMAND
+    Custom SSH invocation, e.g. "ssh -i ~/.ssh/work_key -o StrictHostKeyChecking=yes".
+
+GIT_TRACE
+    Set to 1 to print trace messages to stderr; very useful when debugging hooks.

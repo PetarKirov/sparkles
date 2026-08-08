@@ -1,0 +1,1 @@
+Create a new branch named <branch> and check it out in the new working tree.

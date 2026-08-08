@@ -1,0 +1,3 @@
+Remove one or more stopped containers from the daemon.
+
+By default `rm` refuses to remove a running container; pass `--force` to send `SIGKILL` first. Use `--volumes` to also remove anonymous (unnamed) volumes attached to the container — named volumes are always preserved and must be removed separately with `docker volume rm`.

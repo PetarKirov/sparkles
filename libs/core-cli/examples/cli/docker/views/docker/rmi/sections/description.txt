@@ -1,0 +1,3 @@
+Remove one or more images from the local daemon.
+
+This is the top-level shortcut for `docker image rm`; both forms behave identically. The `i` in `rmi` stands for "image", distinguishing it from the `docker rm` container-removal shortcut.

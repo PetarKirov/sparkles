@@ -1,0 +1,3 @@
+Authenticate gh and git with GitHub.
+
+`gh` and `git` share a credential store: once you've signed in with `gh auth login`, both tools can push, pull, and call API endpoints against the configured host without needing a separate personal access token. Manage multiple hosts (e.g. `github.com` plus a self-hosted GHES instance) by passing `--hostname` on the relevant subcommand.

@@ -1,0 +1,1 @@
+Overrides the configured registry list with a single ad-hoc URL.

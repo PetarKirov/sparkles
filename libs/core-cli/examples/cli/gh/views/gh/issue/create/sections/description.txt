@@ -1,0 +1,3 @@
+Create a new issue in the current repository.
+
+A title is required; if no `--body` is given, gh opens your `$EDITOR` so you can compose one interactively. Issues can be assigned to one or more users, tagged with labels, and added to milestones and projects directly from the command line.

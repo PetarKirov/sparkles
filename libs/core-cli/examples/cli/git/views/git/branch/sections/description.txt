@@ -1,0 +1,5 @@
+List, create, or delete branches.
+
+A branch is a reference to a specific commit. This command allows you to create new branches, list existing branches, or delete branches you no longer need.
+
+The branch command is used to manage branches within your Git repository. You can use it to list all branches (both local and remote), create new branches for feature development, and delete branches that are no longer needed.

@@ -1,0 +1,1 @@
+Display detailed information about one or more volumes — driver, mountpoint on the daemon host, labels, and any driver-specific options.

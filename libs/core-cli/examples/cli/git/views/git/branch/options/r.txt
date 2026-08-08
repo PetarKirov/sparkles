@@ -1,0 +1,1 @@
+List or delete (if used with -d) the remote-tracking branches.
