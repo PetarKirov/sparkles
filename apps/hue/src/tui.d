@@ -263,6 +263,7 @@ struct PreviewTui
     {
         vm.inlineFoldMarker = true; // the placeholder ▸ is the TUI affordance
         vm.widthCols = width < 9 ? 8 : width - 1;
+        vm.viewRows = bodyRows();
         vm.applyTheme(themeIdx);
         // Selection tint: toward the theme link color, like the scrollbars.
         const linkC = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
@@ -395,6 +396,7 @@ struct PreviewTui
         qlen = 0;
         vm.inlineFoldMarker = true;
         vm.widthCols = width < 9 ? 8 : width - 1;
+        vm.viewRows = bodyRows();
         if (vm.current.labels.length == 0 && themes.length)
             vm.applyTheme(themeIdx); // first document: resolve the theme once
         vm.setDocument(title_, null, source_, events_, model_, tw_, lang_,

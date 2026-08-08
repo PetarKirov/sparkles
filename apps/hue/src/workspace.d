@@ -634,7 +634,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     bool liveTypes = true,
     DiffLayout diffLayout = DiffLayout.unified,
     CodeOverflow codeOverflow = CodeOverflow.scroll,
-    int codeMaxLines = 100) @system
+    int codeMaxLines = -1) @system
 {
     WorkspaceTui w;
     w.loadDoc = loadDoc;
