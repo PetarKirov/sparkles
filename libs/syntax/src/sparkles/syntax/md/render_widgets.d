@@ -793,13 +793,19 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             auto cellSpans = new TextSpan[][](blk.children.length * cols);
             auto content = new int[](cols);
             foreach (ri, ref const row; blk.children)
+            {
+                // `DVN6` twice, because a table has two levels a verdict can
+                // land on and neither reaches `viewBlock`: a whole ROW added
+                // or removed, and a CELL edited inside a row that survived.
+                // Resolving only the cell loses the added row entirely — the
+                // exact case a re-wrapped table with one new row produces.
+                MdViewOptions rowOpt = decorated(opt, row.span.start);
                 foreach (ci, ref const cell; row.children)
                 {
                     TextSpan[] spans;
-                    // A cell is rendered here rather than through `viewBlock`,
-                    // so its `DVN6` verdict has to be resolved here too — this
-                    // is the level a re-aligned table's one real edit lands on.
-                    const cellOpt = decorated(opt, cell.span.start);
+                    // The row's verdict flows into its cells, so an added row
+                    // tints across; a cell's own verdict refines within it.
+                    const cellOpt = decorated(rowOpt, cell.span.start);
                     TextStyle style = cellOpt.baseStyle;
                     style.bold = ri == 0; // the header row
                     inlinesToSpans(cell.inlines, src, style, cellOpt.proseSlot,
@@ -813,6 +819,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     if (w > content[ci])
                         content[ci] = w;
                 }
+            }
 
             auto tracks = new TrackSpec[](cols);
             tracks[] = TrackSpec.auto_;
@@ -1995,4 +2002,53 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
     assert(marked == "beta", "exactly the changed word is marked");
     assert(plain == "alpha  gamma" || plain == "alpha gamma",
         "the rest of the paragraph is untouched");
+}
+
+@("render_widgets.diff.anAddedTableRowIsVisible")
+@safe unittest
+{
+    // `DVN6`: a table has TWO levels a verdict can land on, and neither
+    // reaches `viewBlock` — a whole row added or removed, and a cell edited
+    // inside a surviving row. Resolving only the cell loses the added row
+    // entirely, which is exactly what a re-wrapped table with one new row
+    // produces: the pass reports one decoration and nothing renders.
+    enum src = "| a | b |\n| - | - |\n| old | one |\n| new | two |\n";
+    static MdBlock cell(size_t s, size_t e)
+        => MdBlock(kind: MdBlockKind.tableCell, span: Span(s, e),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(s, e))]);
+
+    // Rows: header, then a surviving row, then an ADDED one.
+    auto header = MdBlock(kind: MdBlockKind.tableRow, span: Span(0, 9),
+        children: [cell(2, 3), cell(6, 7)]);
+    auto kept = MdBlock(kind: MdBlockKind.tableRow, span: Span(20, 33),
+        children: [cell(22, 25), cell(28, 31)]);
+    auto added = MdBlock(kind: MdBlockKind.tableRow, span: Span(34, 47),
+        children: [cell(36, 39), cell(42, 45)]);
+
+    MdDoc doc = {
+        source: src,
+        root: MdBlock(kind: MdBlockKind.document, children: [
+            MdBlock(kind: MdBlockKind.table, span: Span(0, src.length),
+                aligns: [ColAlign.none, ColAlign.none],
+                children: [header, kept, added]),
+        ]),
+    };
+
+    MdViewOptions opt;
+    opt.diffBlocks = [MdDecoration(34, MdDiffStatus.added)];
+    auto tree = viewMarkdown(doc, opt);
+
+    const(char)[] tinted, plain;
+    foreach (ref n; tree.nodes)
+        foreach (sp; n.spans)
+            if (sp.slot == Slot.diffAdded)
+                tinted ~= sp.text;
+            else
+                plain ~= sp.text;
+
+    import std.algorithm.searching : canFind;
+
+    assert(tinted.canFind("new") && tinted.canFind("two"),
+        "the added row's cells carry the row's verdict");
+    assert(!tinted.canFind("old"), "the row that survived is untouched");
 }
