@@ -686,6 +686,64 @@ struct DocumentPipeline
         return doc;
     }
 
+    /**
+    `DVN6` over a git revision — `hue --diff --diff-preview <rev>[..<rev>]
+    [-- <file.md>]`.
+
+    The two sides come from the same `git show` reads the ordinary revision
+    diff already does (`DVS3`), so this adds a rendering, not a second way of
+    talking to git.
+
+    A rendered preview is ONE document, which is where a multi-file diff has
+    to narrow. When it cannot, this says which markdown files it found and
+    asks for a path filter: previewing the wrong file — or silently the first
+    of five — is worse than refusing, because the reviewer would have no way
+    to tell.
+    */
+    Document loadGitDiffPreview(string revspec, bool staged, string[] paths)
+    {
+        import gui_preview : previewOf;
+        import md_diff : diffMarkdown;
+        import sparkles.syntax.md.model : extractMarkdown;
+
+        auto git = loadGitDiff(revspec, staged, paths);
+
+        size_t[] candidates;
+        foreach (fi; 0 .. git.diffSides.length)
+            if (git.diffSides[fi].lang == "markdown")
+                candidates ~= fi;
+
+        if (candidates.length == 0)
+            throw new Exception("--diff-preview renders markdown, and this "
+                ~ "diff changes no markdown file");
+        if (candidates.length > 1)
+        {
+            string names;
+            foreach (fi; candidates)
+                names ~= "\n  " ~ git.diffDoc
+                    .pathText(git.diffDoc.files[fi].newPath).idup;
+            throw new Exception(text("--diff-preview renders one document, "
+                ~ "but this diff changes ", candidates.length,
+                " markdown files — name one with a path filter:", names));
+        }
+
+        const fi = candidates[0];
+        const sides = git.diffSides[fi];
+        const path = git.diffDoc.pathText(git.diffDoc.files[fi].newPath).idup;
+        auto merged = diffMarkdown(extractMarkdown(*registry, sides.oldText),
+            extractMarkdown(*registry, sides.newText));
+
+        Document doc = {
+            path: path, title: text(baseName(path), " — ", git.title),
+            kind: ContentKind.markdown, lang: "markdown",
+            source: merged.doc.source.idup,
+        };
+        doc.preview = previewOf(*cache, merged.doc);
+        doc.preview.decorations = merged.decorations;
+        doc.events = highlight(doc.lang, doc.source, quietFallback: true);
+        return doc;
+    }
+
     /// A document from in-memory source (the embedded self-view). Detection
     /// runs on the language, not a path.
     Document fromSource(string path, string title, string source, string lang)
