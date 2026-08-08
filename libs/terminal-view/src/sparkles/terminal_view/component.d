@@ -36,7 +36,8 @@ import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction,
 import sparkles.raylib_text : FontSet;
 import sparkles.terminal_view.child_env : sanitizeChildEnv;
 import sparkles.terminal_view.core;
-import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyKeyOf;
+import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyKeyOf,
+    withKeyIdentity;
 import sparkles.terminal_view.input : ExitBehavior, handle_mouse, pty_write;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
@@ -574,20 +575,26 @@ struct TerminalView
         if (s.childExited)
             return false;
 
+        // A terminal-decoded char event carries only `ch`; give the encoder
+        // the key identity and the text channel it works through. The GUI
+        // arm's events already carry both, so the oracle path is untouched.
+        const ke = withKeyIdentity(k);
+
         ghostty_key_encoder_setopt_from_terminal(s.key_encoder, s.terminal);
         char[128] buf;
-        const bytes = encodeKeyEvent(s.key_encoder, s.key_event, k, buf);
+        const bytes = encodeKeyEvent(s.key_encoder, s.key_event, ke, buf);
         if (bytes.length > 0)
         {
             pty_write(s.pty_fd, bytes.ptr, bytes.length);
             return true;
         }
-        // Text with no encodable key (IME/compose), and never on release:
+        // Text with no encodable key (IME/compose, or a typed code point the
+        // key map has no name for — 'A', '!', 'é'), and never on release:
         // written raw, as the polling loop wrote leftover typed bytes.
-        if (k.action != KeyAction.release
-            && ghosttyKeyOf(k) == GHOSTTY_KEY_UNIDENTIFIED && k.text.length > 0)
+        if (ke.action != KeyAction.release
+            && ghosttyKeyOf(ke) == GHOSTTY_KEY_UNIDENTIFIED && ke.text.length > 0)
         {
-            pty_write(s.pty_fd, k.text.ptr, k.text.length);
+            pty_write(s.pty_fd, ke.text.ptr, ke.text.length);
             return true;
         }
         return false;
