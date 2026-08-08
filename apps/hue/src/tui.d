@@ -16,6 +16,7 @@ import sparkles.base.term_color : mix;
 import sparkles.diff.model : DiffDoc;
 import diff_session : DiffSession, SessionEntry;
 import diff_view : TypeOverlay;
+import sparkles.syntax.md.render_widgets : FenceScroll;
 import table_select : serializeTable, TableCopyFormat, TableRegion;
 import core.time : Duration;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
@@ -201,6 +202,8 @@ struct PreviewTui
     private enum size_t codeTabHitBase = ViewerModel.codeTabHitBase;
     private enum size_t foldHitBase = ViewerModel.foldHitBase;
     private enum size_t tableCopyHitBase = ViewerModel.tableCopyHitBase;
+    private enum size_t fenceHBarHitBase = ViewerModel.fenceHBarHitBase;
+    private enum size_t fenceVBarHitBase = ViewerModel.fenceVBarHitBase;
 
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
 
@@ -705,6 +708,60 @@ struct PreviewTui
         vm.markTableCopied(spanStart);
     }
 
+    // Press on a fence scrollbar (`COD6`): the same ScrollbarState math the
+    // pane bars use, keyed to the fence via `vm.fenceSvOwner`. The h track
+    // excludes the `╰`/`╯` corners.
+    private void fenceBarPress(in HoverTarget t, Point p) @system
+    {
+        const isH = t.hitId >= fenceHBarHitBase;
+        const owner = t.hitId - (isH ? fenceHBarHitBase : fenceVBarHitBase);
+        vm.fenceSvOwner = owner;
+        const ex = vm.fenceExtent(owner);
+        const cur = vm.fenceScrollAt.get(owner, FenceScroll(owner, 0, 0));
+        if (isH)
+        {
+            vm.fenceSv.h = vm.fenceSv.h.pressed(p.x - (t.rect.x + 1),
+                ex.widest, ex.innerW, t.rect.width - 2);
+            vm.setFenceScroll(owner, vm.fenceSv.h.offset, cur.y);
+        }
+        else
+        {
+            vm.fenceSv.v = vm.fenceSv.v.pressed(p.y - t.rect.y,
+                ex.lines, ex.shownRows, t.rect.height);
+            vm.setFenceScroll(owner, cur.x, vm.fenceSv.v.offset);
+        }
+    }
+
+    /// ditto — the drag tracks wherever the pointer strays until release.
+    private void fenceBarDrag(Point p) @system
+    {
+        const owner = vm.fenceSvOwner;
+        if (owner == size_t.max)
+            return;
+        const isH = vm.fenceSv.h.dragging;
+        const wantId = (isH ? fenceHBarHitBase : fenceVBarHitBase) + owner;
+        foreach (ref const t; mdTargets)
+        {
+            if (t.hitId != wantId)
+                continue;
+            const ex = vm.fenceExtent(owner);
+            const cur = vm.fenceScrollAt.get(owner, FenceScroll(owner, 0, 0));
+            if (isH)
+            {
+                vm.fenceSv.h = vm.fenceSv.h.dragged(p.x - (t.rect.x + 1),
+                    ex.widest, ex.innerW, t.rect.width - 2);
+                vm.setFenceScroll(owner, vm.fenceSv.h.offset, cur.y);
+            }
+            else
+            {
+                vm.fenceSv.v = vm.fenceSv.v.dragged(p.y - t.rect.y,
+                    ex.lines, ex.shownRows, t.rect.height);
+                vm.setFenceScroll(owner, cur.x, vm.fenceSv.v.offset);
+            }
+            return;
+        }
+    }
+
     // Applies `op` at the selection (else the top row), over the row's
     // source identity — the model owns the innermost-region policy (FLD5).
     /// `DVG1`/`DVG3`: whether the diff session is the thing the fold and
@@ -860,6 +917,11 @@ struct PreviewTui
                 }
                 if (w.mods.shift)
                     return true; // a shifted notch never scrolls vertically
+                // A vertical notch over a TALL fence scrolls the fence
+                // until its edge; only then does it reach the document.
+                const fbV = vm.fenceBodyAtRow(top + (w.pos.y - 1));
+                if (fbV != size_t.max && vm.scrollFenceV(fbV, w.dy))
+                    return true;
                 top += w.dy;
                 clampTop();
                 return true;
@@ -1032,6 +1094,19 @@ struct PreviewTui
         {
             sb = sb.released();
             vm.hsb = vm.hsb.released();
+            vm.fenceSv.h = vm.fenceSv.h.released();
+            vm.fenceSv.v = vm.fenceSv.v.released();
+            return true;
+        }
+        // The fence scrollbars (`COD6`): a grab owns the pointer; the drag
+        // tracks wherever it strays, like every scrollbar grab.
+        if (e.button == PointerButton.left
+            && e.action == PointerAction.drag
+            && (vm.fenceSv.h.dragging || vm.fenceSv.v.dragging))
+        {
+            fenceBarDrag(Point(e.pos.x + (vm.hOverflows()
+                ? cast(int) vm.hsb.offset : 0),
+                cast(int)(top + (e.pos.y - 1))));
             return true;
         }
         // The horizontal bar (IXB2): its row is the last body row; the
@@ -1133,6 +1208,14 @@ struct PreviewTui
                         && t.hitId < codeTabHitBase && t.rect.contains(p))
                     {
                         copyTableAt(t.hitId - tableCopyHitBase);
+                        return true;
+                    }
+                    // The fence scrollbars (COD6): press grabs, the border
+                    // line is the track (track-click jumps included).
+                    if (t.hitId >= fenceVBarHitBase
+                        && t.hitId < tableCopyHitBase && t.rect.contains(p))
+                    {
+                        fenceBarPress(t, p);
                         return true;
                     }
                 }
@@ -1398,10 +1481,20 @@ unittest
     t.qlen = 0;
     t.height = 12;
 
-    // A click on the header band copies the fence body (OSC 52) and flips the
-    // affordance to the ✔ glyph until the next event.
+    // A click on the top-border copy cutout (` ⧉ ` before the corner)
+    // copies the fence body (OSC 52) and flips the affordance to the ✔
+    // glyph until the next event. The click lands on the hit target's own
+    // rect — the affordance is the cutout, not the whole border row.
+    int ix = -1, iy = -1;
+    foreach (ref const tg; t.vm.targets)
+        if (tg.hitId == ViewerModel.fenceHitBase + 12)
+        {
+            ix = tg.rect.x + 1;           // the icon cell inside the cutout
+            iy = cast(int) tg.rect.y + 1; // content starts on pane row 1
+        }
+    assert(ix > 0, "no copy target on the top border");
     const clicked = t.handle(Event(PointerEvent(action: PointerAction.press,
-        button: PointerButton.left, pos: Point(2, hdrY))));
+        button: PointerButton.left, pos: Point(ix, iy))));
     assert(clicked && t.clipReady);
     import std.base64 : Base64;
     assert((cast(string) t.clip[]).canFind(

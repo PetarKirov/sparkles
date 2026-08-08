@@ -154,6 +154,9 @@ struct CliParams
     @(Option("code-overflow", description: "How a code-block line longer than its panel behaves: 'scroll' (per-block horizontal scrolling — a sideways wheel or Shift+wheel over the block; the default) or 'wrap' (in-panel wrapping past the number gutter)."))
     string codeOverflow = "scroll";
 
+    @(Option("code-max-lines", description: "A code block taller than this many lines shows a fixed-height vertical viewport with its own scrollbar (scroll mode; default 100; 0 disables)."))
+    int codeMaxLines = 100;
+
     @(Option("background", description: "Terminal background mode: no-background (foreground only), spans (only where the theme sets one), or full (fill every line edge-to-edge; the default)."))
     string background = "full";
 
@@ -686,7 +689,8 @@ int main(string[] args)
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
                     &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
                     cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes,
-                    codeOverflow: parseCodeOverflow(cli.codeOverflow));
+                    codeOverflow: parseCodeOverflow(cli.codeOverflow),
+                    codeMaxLines: cli.codeMaxLines);
             }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
@@ -856,9 +860,13 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
             MdViewOptions opt = {
                 theme: MdViewTheme.derive(theme, pageFg, pageBg),
+                // The width bound sizes the fence chrome (the layout
+                // constraint below is the same number).
+                maxWidth: previewWidth(),
                 fenceRenderer: hueFenceRenderer(&cache, &theme, pageFg),
                 diffBlocks: doc.preview.decorations, // `DVN6`
                 codeOverflow: parseCodeOverflow(cli.codeOverflow),
+                codeMaxLines: cli.codeMaxLines,
             };
             auto tree = viewMarkdown(doc.preview.doc, opt);
             auto frames = layout(tree, Constraints(maxW: previewWidth()));
@@ -995,7 +1003,8 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
             cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes,
             diffLayout: parseDiffLayout(cli.diffLayout),
-            codeOverflow: parseCodeOverflow(cli.codeOverflow));
+            codeOverflow: parseCodeOverflow(cli.codeOverflow),
+                    codeMaxLines: cli.codeMaxLines);
     }
     else
     {
@@ -1072,7 +1081,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             themeSet.themes, themeSet.idx, doc.preview, fontName, cli.fontSize,
             cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
             cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
-            parseCodeOverflow(cli.codeOverflow),
+            parseCodeOverflow(cli.codeOverflow), cli.codeMaxLines,
             docSet, &loadDoc, &cache, doc.twoslash,
             doc.path, startInTree: startInTree, treeRoot,
             faceOv, doc.lang,

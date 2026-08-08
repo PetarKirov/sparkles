@@ -63,6 +63,17 @@ struct MdCell
     Span span;
 }
 
+/// One fence's scroll geometry, in content units. (Module scope on purpose:
+/// inside the model it would sit under the `@system:` label, which stamps
+/// FIELDS too — and `@safe` code touching a `@system` field is deprecated.)
+struct FenceExtent
+{
+    int widest;    /// widest body line, in cells
+    int lines;     /// body line count
+    int innerW;    /// the panel's code viewport width (top-level fence)
+    int shownRows; /// rows the vertical viewport shows
+}
+
 /// A table's grid dimensions.
 struct Dims
 {
@@ -158,8 +169,15 @@ struct ViewerModel
     /// `--code-overflow`: long fence lines scroll behind a per-fence
     /// viewport (default) or wrap in-panel.
     CodeOverflow codeOverflow = CodeOverflow.scroll;
-    /// Per-fence horizontal scroll, keyed by `codeBody.start` (scroll mode).
-    int[size_t] fenceScrollX;
+    /// `--code-max-lines`: a taller fence shows a vertical viewport of
+    /// exactly this height plus an inner right track (0 = never).
+    int codeMaxLines = 100;
+    /// Per-fence scroll offsets, keyed by `codeBody.start` (scroll mode).
+    FenceScroll[size_t] fenceScrollAt;
+    /// The fence-bar drag machine (one pointer, one grab) + its owner.
+    ScrollView fenceSv;
+    /// ditto
+    size_t fenceSvOwner = size_t.max;
     /// Fold placeholders keep their inline `▸ ` prefix — the TUI's one fold
     /// affordance; the GUI leaves this false (its gutter column carries it).
     bool inlineFoldMarker;
@@ -206,6 +224,8 @@ struct ViewerModel
     int widthCols = -1;             /// the width the pipeline is laid out for
 
     // Source-anchored identity bases (disjoint id spaces — see the md view).
+    enum size_t fenceVBarHitBase = size_t.max / 32 + 1;
+    enum size_t fenceHBarHitBase = size_t.max / 16 + 1;
     enum size_t tableCopyHitBase = size_t.max / 8 + 1;
     enum size_t codeTabHitBase = size_t.max / 4 + 1;
     enum size_t fenceHitBase = size_t.max / 2 + 1;
@@ -250,7 +270,9 @@ struct ViewerModel
         curMatch = 0;
         copiedFenceSrc = size_t.max;
         copiedTableSrc = size_t.max;
-        fenceScrollX = null;
+        fenceScrollAt = null;
+        fenceSv = ScrollView.init;
+        fenceSvOwner = size_t.max;
         folds = DisclosureState!size_t(true);
         rebuild();
     }
@@ -393,7 +415,10 @@ struct ViewerModel
             inlineFoldMarker: inlineFoldMarker,
             codeLineNumbers: codeLineNumbers,
             codeOverflow: codeOverflow,
+            codeMaxLines: codeMaxLines,
             fenceScrolls: fenceScrollList(),
+            fenceHBarHitBase: fenceHBarHitBase,
+            fenceVBarHitBase: fenceVBarHitBase,
             diffBlocks: preview.decorations, // `DVN6`
         };
         foldable = foldableSpans(preview.doc);
@@ -767,9 +792,9 @@ struct ViewerModel
     private FenceScroll[] fenceScrollList() const
     {
         FenceScroll[] list;
-        foreach (k, v; fenceScrollX)
-            if (v != 0)
-                list ~= FenceScroll(k, v);
+        foreach (v; fenceScrollAt)
+            if (v.x != 0 || v.y != 0)
+                list ~= v;
         return list;
     }
 
@@ -788,61 +813,88 @@ struct ViewerModel
         return size_t.max;
     }
 
-    /// Scrolls a fence sideways by `delta` cells (scroll mode), clamped to
-    /// its widest line's overflow past the panel; true when it moved.
-    bool scrollFence(size_t bodyStart, int delta)
+    /// Measures the fence whose body starts at `bodyStart` (zeros when
+    /// absent). `innerW` assumes a top-level fence; an indented one is
+    /// slightly narrower, so the x clamp is a ceiling, not a promise of
+    /// reachable content.
+    FenceExtent fenceExtent(size_t bodyStart) const @safe
     {
         import sparkles.ui.geometry : cellsOf;
 
-        if (codeOverflow != CodeOverflow.scroll || delta == 0)
-            return false;
+        FenceExtent e;
         foreach (ref const f; fences)
         {
             if (f.body.start != bodyStart || f.body.end > source.length)
                 continue;
-            int widest;
-            size_t lines = 1;
             size_t at = f.body.start;
+            e.lines = 1;
             void measure(size_t end)
             {
                 const w = cast(int) cellsOf(source[at .. end]);
-                if (w > widest)
-                    widest = w;
+                if (w > e.widest)
+                    e.widest = w;
             }
 
             foreach (i; f.body.start .. f.body.end)
                 if (source[i] == '\n')
                 {
                     measure(i);
-                    ++lines;
+                    ++e.lines;
                     at = i + 1;
                 }
             measure(f.body.end);
             int numW;
-            for (auto n = lines; n; n /= 10)
+            for (auto n = e.lines; n; n /= 10)
                 ++numW;
-            // The panel's interior: borders (2) + padding (4) + the pinned
-            // number gutter. Indented fences are slightly narrower still —
-            // the clamp is a ceiling, not a promise of reachable content.
-            const inner = widthCols - 6
-                - (codeLineNumbers ? numW + 1 : 0);
-            const maxOff = widest > inner && inner > 0 ? widest - inner : 0;
-            const cur = fenceScrollX.get(bodyStart, 0);
-            int next = cur + delta;
-            if (next < 0)
-                next = 0;
-            if (next > maxOff)
-                next = maxOff;
-            if (next == cur)
-                return false;
-            if (next == 0)
-                fenceScrollX.remove(bodyStart);
-            else
-                fenceScrollX[bodyStart] = next;
-            rebuild();
-            return true;
+            e.innerW = widthCols - 4 - (codeLineNumbers ? numW + 1 : 0);
+            e.shownRows = codeMaxLines > 0 && e.lines > codeMaxLines
+                ? codeMaxLines : e.lines;
+            return e;
         }
-        return false;
+        return e;
+    }
+
+    /// Sets a fence's absolute scroll (either axis), clamped to its
+    /// overflow; true when it moved (and the pipeline rebuilt).
+    bool setFenceScroll(size_t bodyStart, long x, long y)
+    {
+        if (codeOverflow != CodeOverflow.scroll)
+            return false;
+        const e = fenceExtent(bodyStart);
+        if (e.lines == 0)
+            return false;
+        const maxX = e.widest > e.innerW && e.innerW > 0
+            ? e.widest - e.innerW : 0;
+        const maxY = e.lines - e.shownRows;
+        auto next = FenceScroll(bodyStart,
+            cast(int)(x < 0 ? 0 : (x > maxX ? maxX : x)),
+            cast(int)(y < 0 ? 0 : (y > maxY ? maxY : y)));
+        const cur = fenceScrollAt.get(bodyStart,
+            FenceScroll(bodyStart, 0, 0));
+        if (next == cur)
+            return false;
+        if (next.x == 0 && next.y == 0)
+            fenceScrollAt.remove(bodyStart);
+        else
+            fenceScrollAt[bodyStart] = next;
+        rebuild();
+        return true;
+    }
+
+    /// Scrolls a fence sideways by `delta` cells; true when it moved.
+    bool scrollFence(size_t bodyStart, int delta)
+    {
+        const cur = fenceScrollAt.get(bodyStart, FenceScroll(bodyStart, 0, 0));
+        return delta != 0
+            && setFenceScroll(bodyStart, cur.x + delta, cur.y);
+    }
+
+    /// Scrolls a fence vertically by `delta` lines; true when it moved.
+    bool scrollFenceV(size_t bodyStart, int delta)
+    {
+        const cur = fenceScrollAt.get(bodyStart, FenceScroll(bodyStart, 0, 0));
+        return delta != 0
+            && setFenceScroll(bodyStart, cur.x, cur.y + delta);
     }
 
     /// The table index of the table starting at `spanStart`, else -1.

@@ -200,7 +200,11 @@ struct GridCanvas
             const bottomOnly = bw.bottom > 0 && bw.top == 0 && bw.left == 0 && bw.right == 0;
             const leftOnly = bw.left > 0 && bw.top == 0 && bw.bottom == 0 && bw.right == 0;
             const fullBox = bw.top > 0 && bw.bottom > 0 && bw.left > 0 && bw.right > 0;
-            if (leftOnly)
+            const sidesOnly = bw.left > 0 && bw.right > 0 && bw.top == 0 && bw.bottom == 0;
+            const openTop = bw.left > 0 && bw.right > 0 && bw.bottom > 0 && bw.top == 0;
+            if (sidesOnly || openTop)
+                openTopBox(r, v, openTop); // the fence chrome's side walls
+            else if (leftOnly)
                 barColumn(r, v); // the quote / callout accent bar
             else if (bottomOnly && v.border.style == BorderStyle.solid && r.height == 1)
                 ruleRow(r, v); // a thematic break: `─` glyphs, not an underline
@@ -226,6 +230,39 @@ struct GridCanvas
                 st.fg = Color.fromRgb(v.border.color);
                 c.setCodepoint('─', 1, st);
             }
+    }
+
+    /// Sides-only / open-top borders → `│` down both side columns, plus a
+    /// rounded `╰──╯` bottom when `closeBottom` (the markdown fence chrome:
+    /// its glyph-composed top/scrollbar rows supply the other edges).
+    private void openTopBox(in Rect r, in Visual v, bool closeBottom) scope
+    {
+        const fg = Color.fromRgb(v.border.color);
+        void setc(int x, int y, dchar g) scope
+        {
+            if (!inBounds(x, y))
+                return;
+            auto c = &cell(x, y);
+            auto st = c.style;
+            st.fg = fg;
+            c.setCodepoint(g, 1, st);
+        }
+
+        const x1 = r.x + r.width - 1;
+        const yEnd = r.y + r.height - (closeBottom ? 1 : 0);
+        foreach (y; r.y .. yEnd)
+        {
+            setc(r.x, y, '│');
+            setc(x1, y, '│');
+        }
+        if (closeBottom && r.height >= 1)
+        {
+            const y1 = r.y + r.height - 1;
+            foreach (x; r.x + 1 .. x1)
+                setc(x, y1, '─');
+            setc(r.x, y1, '╰');
+            setc(x1, y1, '╯');
+        }
     }
 
     /// A left-only border → `│` glyphs down the rect's left column (the quote /

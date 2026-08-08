@@ -633,7 +633,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     int treeWidth = 32, int tabWidth = 4, bool listWhitespace = false,
     bool liveTypes = true,
     DiffLayout diffLayout = DiffLayout.unified,
-    CodeOverflow codeOverflow = CodeOverflow.scroll) @system
+    CodeOverflow codeOverflow = CodeOverflow.scroll,
+    int codeMaxLines = 100) @system
 {
     WorkspaceTui w;
     w.loadDoc = loadDoc;
@@ -642,6 +643,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     // toggles it, and a narrow pane degrades it at render time.
     w.viewer.vm.diffLayout = diffLayout;
     w.viewer.vm.codeOverflow = codeOverflow;
+    w.viewer.vm.codeMaxLines = codeMaxLines;
     w.buildLayout(treeWidth);
     w.viewer.tabWidth = tabWidth < 1 ? 1 : tabWidth;
     w.viewer.listWhitespace = listWhitespace;

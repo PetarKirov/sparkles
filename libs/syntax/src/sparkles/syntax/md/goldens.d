@@ -44,8 +44,8 @@ import sparkles.ui.style : defaultTwoslashPalette;
 
 /// The fixture corpus: individual features first, then the composition.
 private static immutable fixtureNames = [
-    "headings", "inline", "lists", "tables", "code", "callouts", "misc",
-    "kitchen-sink",
+    "headings", "inline", "lists", "tables", "code", "code-tall", "callouts",
+    "misc", "kitchen-sink",
 ];
 
 private enum goldenWidth = 80;
@@ -72,6 +72,7 @@ private string renderGridText(ref GrammarRegistry registry,
         theme: MdViewTheme.derive(theme, pageFg, pageBg),
         codeLineNumbers: true,
         maxWidth: goldenWidth, // arms the per-fence overflow scrollbar
+        codeMaxLines: 8, // low enough for code-tall.md to grow its v track
         fenceHitBase: interactive ? size_t.max / 2 + 1 : 0,
         tableCopyHitBase: interactive ? size_t.max / 8 + 1 : 0,
     };
