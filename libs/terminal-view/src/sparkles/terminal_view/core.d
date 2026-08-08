@@ -528,7 +528,7 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
 // bracket and the deferred-texture flush (textures freed only after the
 // bracket's commands reach the GPU).
 @system nothrow @nogc
-void paintFrame(ref CoreState s)
+void paintFrame(ref CoreState s, int viewW, int viewH)
 {
         // Resolved default colors (used for the background fill, default cell
         // colors, and the cursor) instead of hardcoded white-on-black.
@@ -539,7 +539,7 @@ void paintFrame(ref CoreState s)
         // The page: a full-surface fill rather than ClearBackground, because
         // inside a host's bracket the clear already happened (to the host's
         // page) and clearing is not a draw call the hook may make.
-        drawSolid(s.fonts.whiteFace, 0, 0, GetScreenWidth(), GetScreenHeight(),
+        drawSolid(s.fonts.whiteFace, 0, 0, viewW, viewH,
             Color(colors.background.r, colors.background.g, colors.background.b, 255));
 
         // Kitty graphics storage (borrowed; valid until the next mutating
@@ -686,7 +686,7 @@ void paintFrame(ref CoreState s)
 
         if (sb.total > sb.len)
         {
-            float track_height = cast(float)GetScreenHeight();
+            float track_height = cast(float)viewH;
             float thumb_height = track_height * (cast(float)sb.len / cast(float)sb.total);
             if (thumb_height < 20.0f) thumb_height = 20.0f;
 
@@ -698,7 +698,7 @@ void paintFrame(ref CoreState s)
                 thumb_y = movable_pixels * (cast(float)sb.offset / cast(float)total_movable_rows);
 
             float w = s.sbState.currentWidth;
-            float x = GetScreenWidth() - w;
+            float x = viewW - w;
 
             if (s.sbState.isHovered || s.sbState.isDragging)
                 DrawRectangle(cast(int)x, 0, cast(int)w, cast(int)track_height, Color(255, 255, 255, 30));
@@ -754,8 +754,8 @@ void paintFrame(ref CoreState s)
                 snprintf(msg.ptr, msg.length, "[process exited]");
 
             Vector2 msgSize = MeasureTextEx(s.fonts.primaryFont(), msg.ptr, s.fontSize, 0);
-            int screenW = GetScreenWidth();
-            int screenH = GetScreenHeight();
+            int screenW = viewW;
+            int screenH = viewH;
             int bannerH = cast(int) msgSize.y + 8;
             DrawRectangle(0, screenH - bannerH, screenW, bannerH, Color(0, 0, 0, 180));
             DrawTextEx(s.fonts.primaryFont(), msg.ptr, Vector2((screenW - msgSize.x) / 2, screenH - bannerH + 4), s.fontSize, 0, Color(255, 255, 255, 255));
@@ -764,7 +764,7 @@ void paintFrame(ref CoreState s)
         // Visual bell: a brief translucent flash over the whole window.
         if (s.effects_ctx.bellFlashFrames > 0)
         {
-            DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color(255, 255, 255, 40));
+            DrawRectangle(0, 0, viewW, viewH, Color(255, 255, 255, 40));
             s.effects_ctx.bellFlashFrames--;
         }
 
