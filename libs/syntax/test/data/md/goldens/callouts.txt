@@ -7,7 +7,7 @@
 ┃ A tip callout.
 
 ┃ 󰅾 Important
-┃ An important callout spanning two source lines.
+┃ An important callout
 
 ┃ 󰀪 Warning
 ┃ A warning callout.

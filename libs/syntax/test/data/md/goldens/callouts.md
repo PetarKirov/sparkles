@@ -7,8 +7,7 @@
 > A tip callout.
 
 > [!IMPORTANT]
-> An important callout spanning
-> two source lines.
+> An important callout
 
 > [!WARNING]
 > A warning callout.
@@ -30,8 +29,7 @@
 
 Plain quotes:
 
-> A plain block quote with no marker — just prose with `inline code`,
-> **bold**, *italic*, ~~struck~~, and a [link](https://example.com).
+> A plain block quote with no marker — just prose with `inline code`, **bold**, *italic*, ~~struck~~, and a [link](https://example.com).
 
 > Depth one
 >
