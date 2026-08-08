@@ -734,6 +734,7 @@ struct PreviewTui
                 ex.lines, ex.shownRows, t.rect.height);
             vm.setFenceScroll(owner, cur.x, vm.fenceSv.v.offset);
         }
+        vm.syncFenceHot(); // grab feedback even when the offset didn't move
     }
 
     /// ditto — the drag tracks wherever the pointer strays until release.
@@ -1097,6 +1098,7 @@ struct PreviewTui
             vm.hsb = vm.hsb.released();
             vm.fenceSv.h = vm.fenceSv.h.released();
             vm.fenceSv.v = vm.fenceSv.v.released();
+            vm.syncFenceHot(); // the thumb's accent feedback follows
             return true;
         }
         // The fence scrollbars (`COD6`): a grab owns the pointer; the drag

@@ -1903,6 +1903,8 @@ int runGui(
         {
             if (vm.scroll.grabbing)
                 return vm.scroll.shape();
+            if (vm.fenceSv.grabbing)
+                return vm.fenceSv.shape();
             if (pn.tree.scroll.grabbing)
                 return pn.tree.scroll.shape();
             return PointerShape.default_;
@@ -1911,7 +1913,10 @@ int runGui(
         PointerShape paneHover()
         {
             const v = vm.scroll.shape();
-            return v != PointerShape.default_ ? v : pn.tree.scroll.shape();
+            if (v != PointerShape.default_)
+                return v;
+            const f = vm.fenceSv.shape(); // the fence bars — same machine
+            return f != PointerShape.default_ ? f : pn.tree.scroll.shape();
         }
 
         window.pointerShape(pn.dock.shape(paneGrab(), paneHover()));
@@ -2028,6 +2033,16 @@ int runGui(
                 if (vm.fenceSv.v.offset != cur.y)
                     vm.setFenceScroll(owner, cur.x, vm.fenceSv.v.offset);
             }
+            // The pointer left a bar: a dead step drops its hover (a grab
+            // never lands here — the grabbed bar stays the target above).
+            if (hTgt is null && vm.fenceSv.h.hovered)
+                inp.capture = vm.fenceSv.stepH(inp.capture, capFenceSb,
+                    false, ScrollPointer(), 0, ScrollExtents(1, 1, 1));
+            if (vTgt is null && vm.fenceSv.v.hovered)
+                inp.capture = vm.fenceSv.stepV(inp.capture, capFenceSb,
+                    false, ScrollPointer(), 0, ScrollExtents(1, 1, 1));
+            // Hover/grab transitions repaint the thumbs' accent feedback.
+            vm.syncFenceHot();
         }
 
 

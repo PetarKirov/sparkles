@@ -4,14 +4,14 @@ A fence taller than the golden threshold shows a fixed-height vertical viewport
 with its own track:
 
 ╭─  ──────────────────────────────────────────────────────────────────────────╮
-│   1 #!/usr/bin/env dub                                                     ┃ │
-│   2 /+ dub.sdl:                                                            │ │
-│   3     name "dub"                                                         │ │
-│   4     dependency "sparkles:core-cli" path="../../../../.."               │ │
-│   5     targetPath "build"                                                 │ │
-│   6     // Optimised, assertions live, `debug {}` blocks out — the build ev│ │
-│   7     // artifact uses. Neither `debug` (which compiles those blocks in) │ │
-│   8     // `release` (which deletes assert *expressions*, side effects incl│ │
+│   1 #!/usr/bin/env dub                                                       ┃
+│   2 /+ dub.sdl:                                                              │
+│   3     name "dub"                                                           │
+│   4     dependency "sparkles:core-cli" path="../../../../.."                 │
+│   5     targetPath "build"                                                   │
+│   6     // Optimised, assertions live, `debug {}` blocks out — the build eve │
+│   7     // artifact uses. Neither `debug` (which compiles those blocks in) n │
+│   8     // `release` (which deletes assert *expressions*, side effects inclu │
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━─────────────────────────────────────────────╯
 
 Prose after the tall fence.
