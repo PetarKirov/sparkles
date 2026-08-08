@@ -154,6 +154,14 @@ enum Command : ubyte
     diffToggleStructural,              /// `S` — word ⇄ grammar-token emphasis
     diffToggleContext,                 /// `zx` — every hidden unchanged region
     diffToggleGap,                     /// `+` — just the one in view
+
+    // Horizontal scrolling (`IXB2`'s missing half): content wider than the
+    // pane had a bar to drag and nothing else, which over SSH on a phone is
+    // not a scrollbar but a dare.
+    viewScrollLeft,                    /// `zh` / `Shift-←`
+    viewScrollRight,                   /// `zl` / `Shift-→`
+    viewScrollHome,                    /// `Shift-Home` — back to the left edge
+    viewScrollEnd,                     /// `Shift-End` — out to the right edge
 }
 
 /// A resolved command plus its argument (only `foldLevel` uses one: the
@@ -449,8 +457,8 @@ immutable Binding[] hueBindings = [
     // ── viewer ───────────────────────────────────────────────────────────
     bind(Scope_.viewer, chord(Key.down), Command.viewDown, "down"),
     bind(Scope_.viewer, chord(Key.up), Command.viewUp, "up"),
-    bind(Scope_.viewer, chord(Key.home), Command.viewHome, "top"),
-    bind(Scope_.viewer, chord(Key.end), Command.viewEnd, "bottom"),
+    bind(Scope_.viewer, chord(Key.home, ShiftReq.no), Command.viewHome, "top"),
+    bind(Scope_.viewer, chord(Key.end, ShiftReq.no), Command.viewEnd, "bottom"),
     bind(Scope_.viewer, chord('j'), Command.viewDown, "down"),
     bind(Scope_.viewer, chord('k'), Command.viewUp, "up"),
     bind(Scope_.viewer, chord('l'), Command.toggleLineNumbers, "line numbers"),
@@ -537,6 +545,24 @@ immutable Binding[] hueBindings = [
         "word / token emphasis", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('+'), Command.diffToggleGap,
         "expand this gap", require: CtxFlag.hasDiffSession),
+
+    // Horizontal scrolling, in vim's own spelling — `zh`/`zl` mean exactly
+    // this there, and they sit in the `z` family without colliding with the
+    // fold letters or the diff ones. The shifted arrows are the same thing
+    // for a reader who has not learned the prefix: plain `←`/`→` cycle
+    // themes, so the modifier is what distinguishes them.
+    bind(Scope_.viewer, chord('z'), chord('h'), Command.viewScrollLeft,
+        "scroll left"),
+    bind(Scope_.viewer, chord('z'), chord('l'), Command.viewScrollRight,
+        "scroll right"),
+    bind(Scope_.viewer, chord(Key.left, ShiftReq.yes), Command.viewScrollLeft,
+        "scroll left"),
+    bind(Scope_.viewer, chord(Key.right, ShiftReq.yes), Command.viewScrollRight,
+        "scroll right"),
+    bind(Scope_.viewer, chord(Key.home, ShiftReq.yes), Command.viewScrollHome,
+        "back to the left edge"),
+    bind(Scope_.viewer, chord(Key.end, ShiftReq.yes), Command.viewScrollEnd,
+        "out to the right edge"),
 
     // ── shared ───────────────────────────────────────────────────────────
     bind(Scope_.shared_, chord(Key.pageDown), Command.viewPageDown, "page down"),
@@ -1250,4 +1276,39 @@ unittest
     assert(nk(Key.f5).cmd == Command.none);
     assert(nk(Key.none).cmd == Command.none);
     assert(commandFor(KeyEvent.init, KeyContext.init).cmd == Command.none);
+}
+
+@("keymap.horizontalScrollHasKeysNotJustAScrollbar")
+@safe pure nothrow @nogc
+unittest
+{
+    auto view = KeyContext.init;
+    auto diff = KeyContext(hasDiffSession: true);
+
+    // vim's own spelling, and it must survive the `z` family's two shapes:
+    // the fold letters without a session, the file letters with one.
+    static immutable Chord[1] zPrefix = [chord('z')];
+    const z = zPrefix[];
+    assert(resolve(z, KeyEvent(Key.char_, 'h'), view).cmd
+        == Command.viewScrollLeft);
+    assert(resolve(z, KeyEvent(Key.char_, 'l'), view).cmd
+        == Command.viewScrollRight);
+    assert(resolve(z, KeyEvent(Key.char_, 'h'), diff).cmd
+        == Command.viewScrollLeft, "a diff scrolls sideways too — its tables "
+        ~ "are the widest content hue renders");
+
+    // The shifted arrows, for a reader who has not learned the prefix. Plain
+    // arrows still cycle themes, which is what the modifier distinguishes.
+    const shift = Mods(shift: true);
+    assert(nk(Key.left, view, shift).cmd == Command.viewScrollLeft);
+    assert(nk(Key.right, view, shift).cmd == Command.viewScrollRight);
+    assert(nk(Key.left, view).cmd == Command.themePrev);
+    assert(nk(Key.right, view).cmd == Command.themeNext);
+
+    // `Home` was matching with or without Shift, so the shifted spelling had
+    // to be taken off it before it could mean anything else.
+    assert(nk(Key.home, view).cmd == Command.viewHome);
+    assert(nk(Key.home, view, shift).cmd == Command.viewScrollHome);
+    assert(nk(Key.end, view).cmd == Command.viewEnd);
+    assert(nk(Key.end, view, shift).cmd == Command.viewScrollEnd);
 }

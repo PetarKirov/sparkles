@@ -1687,6 +1687,18 @@ int runGui(
                 case Command.diffToggleGap:
                     vm.diffToggleGapNearCursor();
                     break;
+                case Command.viewScrollLeft:
+                    vm.scrollHorizontal(-ViewerModel.hScrollStep);
+                    break;
+                case Command.viewScrollRight:
+                    vm.scrollHorizontal(ViewerModel.hScrollStep);
+                    break;
+                case Command.viewScrollHome:
+                    vm.scrollHomeHorizontal();
+                    break;
+                case Command.viewScrollEnd:
+                    vm.scrollEndHorizontal();
+                    break;
                 case Command.toggleView:
                     toggleView();
                     break;
