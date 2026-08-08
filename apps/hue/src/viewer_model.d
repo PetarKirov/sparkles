@@ -301,6 +301,65 @@ struct ViewerModel
     bool hOverflows() const @safe pure nothrow @nogc
         => contentCols > widthCols && widthCols > 2;
 
+    /**
+    Scrolls the view sideways by `delta` cells, clamped to the content.
+
+    `IXB2` gave the view a horizontal offset and a bar to drag, and that is
+    all it gave: content wider than the pane — a box-drawn table, a long code
+    line — could only be reached with a pointer, on a scrollbar one cell tall.
+    Over SSH on a phone that is not a scrollbar, it is a dare. So the offset
+    is a model operation now, and the keys and the wheel both drive it.
+
+    Returns `false` when there is nothing to scroll (the content fits, or the
+    offset is already at that end), so a caller can leave the key unhandled
+    rather than redrawing for nothing.
+    */
+    bool scrollHorizontal(long delta) @safe pure nothrow @nogc
+    {
+        if (delta == 0 || !hOverflows)
+            return false;
+        const limit = contentCols - widthCols;
+        auto next = cast(long) hsb.offset + delta;
+        if (next < 0)
+            next = 0;
+        if (next > limit)
+            next = limit;
+        if (next == hsb.offset)
+            return false;
+        hsb = hsb.scrolledTo(next);
+        return true;
+    }
+
+    /// Cells a keystroke scrolls sideways. Bigger than one: a table column is
+    /// wider than a character, and a reviewer stepping past one wants to
+    /// arrive somewhere, not to hold the key down.
+    enum long hScrollStep = 8;
+
+    /// Out to the right edge. The pair to $(LREF scrollHomeHorizontal), and
+    /// not just for symmetry: a wide table's last columns are usually the
+    /// point of scrolling at all, and stepping there eight cells at a time is
+    /// the thing this whole change exists to stop asking of a reader.
+    bool scrollEndHorizontal() @safe pure nothrow @nogc
+    {
+        if (!hOverflows)
+            return false;
+        const limit = contentCols - widthCols;
+        if (hsb.offset == limit)
+            return false;
+        hsb = hsb.scrolledTo(limit);
+        return true;
+    }
+
+    /// Back to the left edge — the cheap way out of a wide table, and the
+    /// reason the offset is not sticky state a reviewer has to undo by hand.
+    bool scrollHomeHorizontal() @safe pure nothrow @nogc
+    {
+        if (hsb.offset == 0)
+            return false;
+        hsb = hsb.scrolledTo(0);
+        return true;
+    }
+
     /// Resolves theme `i` (colors + quote bars + scrollbar tint) and rebuilds
     /// the pipeline so the view follows.
     void applyTheme(size_t i)
@@ -1679,4 +1738,68 @@ struct ViewerModel
     // An offset belonging to no group is ignored rather than rebuilding.
     vm.activateCodeTab(size_t.max - 1);
     assert(vm.activeCodeTabs.length == 1 && shows(vm, "AAA"));
+}
+
+@("viewer_model.scrollHorizontal.movesAndClamps")
+@system unittest
+{
+    import sparkles.syntax : builtinDark, ColAlign, MdDoc, MdInline,
+        MdInlineKind;
+
+    ViewerModel vm;
+    vm.themes = [builtinDark];
+    vm.names = ["dark"];
+    vm.widthCols = 40;
+    vm.applyTheme(0);
+
+    // A table far wider than the pane. NOT a fence: a fence body has its own
+    // viewport now (`COD`), so it clips instead of widening the document —
+    // a table is what still overflows, and it is the shape a reviewer hits.
+    string src;
+    foreach (_; 0 .. 60)
+        src ~= "a";
+    foreach (_; 0 .. 60)
+        src ~= "b";
+    static MdBlock tcell(size_t s, size_t e)
+        => MdBlock(kind: MdBlockKind.tableCell, span: Span(s, e),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(s, e))]);
+    auto trow = MdBlock(kind: MdBlockKind.tableRow, span: Span(0, 120),
+        children: [tcell(0, 60), tcell(60, 120)]);
+    auto md = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.table, span: Span(0, 120),
+            aligns: [ColAlign.none, ColAlign.none], children: [trow, trow]),
+    ]), src);
+    vm.setDocument("wide.md", "", src, null,
+        PreviewModel(present: true, doc: md), TwoslashReturn.init, "markdown");
+    assert(vm.hOverflows, "precondition: the content overflows the pane");
+
+    assert(vm.scrollHorizontal(8));
+    assert(vm.hsb.offset == 8);
+
+    // Clamped at both ends rather than running off: the limit is the content
+    // minus the pane, and going further is a no-op the caller can see.
+    assert(vm.scrollHorizontal(-99));
+    assert(vm.hsb.offset == 0);
+    assert(!vm.scrollHorizontal(-1), "already at the left edge");
+
+    assert(vm.scrollHorizontal(10_000));
+    assert(vm.hsb.offset == vm.contentCols - vm.widthCols);
+    assert(!vm.scrollHorizontal(1), "already at the right edge");
+
+    assert(vm.scrollHomeHorizontal() && vm.hsb.offset == 0);
+    assert(!vm.scrollHomeHorizontal(), "nothing to do twice");
+
+    // And out to the far edge in one keystroke, which is usually where the
+    // point of a wide table is.
+    assert(vm.scrollEndHorizontal());
+    assert(vm.hsb.offset == vm.contentCols - vm.widthCols);
+    assert(!vm.scrollEndHorizontal(), "nothing to do twice");
+
+    // Content that fits scrolls nowhere, so the key stays unhandled instead
+    // of redrawing for nothing.
+    vm.setDocument("narrow.txt", "", "short", null, PreviewModel.init,
+        TwoslashReturn.init, "text");
+    assert(!vm.hOverflows && !vm.scrollHorizontal(8));
+    assert(!vm.scrollEndHorizontal(), "nowhere to go in content that fits");
+    assert(!vm.scrollHomeHorizontal(), "and the same at the other edge");
 }

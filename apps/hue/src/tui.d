@@ -292,6 +292,44 @@ struct PreviewTui
         return over > 0 ? over : 0;
     }
 
+    /**
+    A wheel notch, in whichever axis it names.
+
+    Sideways is a horizontal axis (`WheelEvent.dx` — the terminal has decoded
+    SGR buttons 66/67 into it since mouse input went in) or Shift plus a
+    vertical notch, the convention every browser answers to and the one a
+    phone can actually produce: a touch translation layer emits vertical
+    notches, and the modifier is a key the soft keyboard has.
+
+    $(B The innermost thing under the pointer wins.) A fence body scrolls its
+    own viewport (`COD`); only when there is no fence there, or it is already
+    at that edge, does the notch reach the document's own offset (`IXB2`).
+    That is the same rule the vertical axis already follows, and it is what
+    makes a wide table inside a fence and a wide document behave alike.
+    */
+    private bool handleWheel(in WheelEvent w) @system
+    {
+        const dx = w.dx + (w.mods.shift ? w.dy : 0);
+        if (dx != 0)
+        {
+            const fb = vm.fenceBodyAtRow(top + (w.pos.y - 1));
+            if (fb != size_t.max && vm.scrollFence(fb, dx))
+                return true;
+            vm.scrollHorizontal(dx);
+            return true;
+        }
+        if (w.mods.shift)
+            return true; // a shifted notch never scrolls vertically
+        // A vertical notch over a TALL fence scrolls the fence until its
+        // edge; only then does it reach the document.
+        const fbV = vm.fenceBodyAtRow(top + (w.pos.y - 1));
+        if (fbV != size_t.max && vm.scrollFenceV(fbV, w.dy))
+            return true;
+        top += w.dy;
+        clampTop();
+        return true;
+    }
+
     private void clampTop() @safe pure nothrow @nogc
     {
         if (top > maxTop) top = maxTop;
@@ -910,27 +948,7 @@ struct PreviewTui
             return handleSearch(e);
         return e.match!(
             (in PointerEvent p) => handlePointer(p),
-            (in WheelEvent w) {
-                // A sideways notch — a horizontal axis or Shift+wheel —
-                // over a fence body scrolls that fence's viewport (`COD`).
-                const dx = w.dx + (w.mods.shift ? w.dy : 0);
-                if (dx != 0)
-                {
-                    const fb = vm.fenceBodyAtRow(top + (w.pos.y - 1));
-                    if (fb != size_t.max && vm.scrollFence(fb, dx))
-                        return true;
-                }
-                if (w.mods.shift)
-                    return true; // a shifted notch never scrolls vertically
-                // A vertical notch over a TALL fence scrolls the fence
-                // until its edge; only then does it reach the document.
-                const fbV = vm.fenceBodyAtRow(top + (w.pos.y - 1));
-                if (fbV != size_t.max && vm.scrollFenceV(fbV, w.dy))
-                    return true;
-                top += w.dy;
-                clampTop();
-                return true;
-            },
+            (in WheelEvent w) => handleWheel(w),
             (in KeyEvent k) => handleKey(k),
             (in EndOfInput _) => false,
             _ => true,
@@ -1062,6 +1080,10 @@ struct PreviewTui
             case Command.diffToggleContext:    toggleDiffContext(); break;
             case Command.diffToggleFormatting: toggleFormattingHunks(); break;
             case Command.diffToggleStructural: vm.diffToggleStructural(); break;
+            case Command.viewScrollLeft:  vm.scrollHorizontal(-ViewerModel.hScrollStep); break;
+            case Command.viewScrollRight: vm.scrollHorizontal(ViewerModel.hScrollStep); break;
+            case Command.viewScrollHome:  vm.scrollHomeHorizontal(); break;
+            case Command.viewScrollEnd:   vm.scrollEndHorizontal(); break;
             case Command.diffPrevFile: moveDiffFile(-1); break;
             case Command.diffNextFile: moveDiffFile(+1); break;
             case Command.diffPrevHunk: moveDiffHunk(-1); break;
@@ -1801,4 +1823,64 @@ unittest
         if (row(cast(ushort) y).canFind("const b: any"))
             sawSig = true;
     assert(!sawSig, "popup dismissed");
+}
+
+@("tui.wheel.horizontalNotchesAndShiftScrollSideways")
+@system unittest
+{
+    import sparkles.syntax : builtinDark, ColAlign, LabelSet, MdBlock,
+        MdBlockKind, MdDoc, MdInline, MdInlineKind, Span;
+    import sparkles.input.events : Mods, WheelEvent;
+
+    // The terminal has decoded horizontal wheel since SGR-1006 went in
+    // (buttons 66/67 → `dx`); the viewer's handler dropped it on the floor.
+    // A wide TABLE, repeated until it is also tall, so the two axes can be
+    // told apart. Not a fence: a fence body scrolls its own viewport now
+    // (`COD`) and never widens the document.
+    string src;
+    foreach (_; 0 .. 60)
+        src ~= "a";
+    foreach (_; 0 .. 60)
+        src ~= "b";
+    static MdBlock tcell(size_t s, size_t e)
+        => MdBlock(kind: MdBlockKind.tableCell, span: Span(s, e),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(s, e))]);
+    auto trow = MdBlock(kind: MdBlockKind.tableRow, span: Span(0, 120),
+        children: [tcell(0, 60), tcell(60, 120)]);
+    MdBlock[] rows;
+    foreach (_; 0 .. 20)
+        rows ~= trow;
+    auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.table, span: Span(0, 120),
+            aligns: [ColAlign.none, ColAlign.none], children: rows),
+    ]), src);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 8;
+    t.relayout();
+    t.setDocument("wide.md", src, null, PreviewModel(present: true, doc: doc),
+        startPreview: true);
+    assert(t.vm.hOverflows(), "precondition: the content overflows");
+
+    assert(t.handle(Event(WheelEvent(dx: 6))));
+    assert(t.vm.hsb.offset == 6, "a sideways notch scrolls sideways");
+    assert(t.handle(Event(WheelEvent(dx: -6))));
+    assert(t.vm.hsb.offset == 0);
+
+    // Shift + a vertical notch does the same — the convention every browser
+    // answers to, and the one a phone can actually produce.
+    const before = t.vm.top;
+    assert(t.handle(Event(WheelEvent(dy: 4, mods: Mods(shift: true)))));
+    assert(t.vm.hsb.offset == 4, "shift redirects the wheel sideways");
+    assert(t.vm.top == before, "and must not also scroll down");
+
+    // Without the modifier it still scrolls vertically, as it always did.
+    assert(t.handle(Event(WheelEvent(dy: 2))));
+    assert(t.vm.hsb.offset == 4 && t.vm.top != before);
 }
