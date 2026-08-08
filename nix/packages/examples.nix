@@ -26,24 +26,46 @@
         ;
 
       # Enumerate every standalone `.d` example across all libs as a flat list
-      # of absolute paths — `libs/*/examples/*.d`, the $(I direct) children
-      # only. A nested tree under `examples/` is input data, not a program to
-      # build: `libs/twoslash-d/examples/src/*.d` are analyzer samples the
-      # extractor reads (with their `fixtures/` payloads beside them), and
-      # globbing recursively had `.#all` trying to `dub --single` all 36 of
-      # them — each failing, since they are not single-file dub scripts.
+      # of absolute paths.
+      #
+      # Every `.d` directly under `libs/*/examples/` is an example. Deeper down,
+      # one is an example only when it is named after the directory holding it —
+      # `examples/cli/git/git.d`. That is the shape of an example too big for
+      # one file: the program plus the `views/` tree it reads its help from,
+      # in a directory of their own.
+      #
+      # The name test is what keeps the rest of a nested tree out. Anything else
+      # under `examples/` is input data rather than a program to build:
+      # `libs/twoslash-d/examples/src/*.d` are analyzer samples the extractor
+      # reads (with their `fixtures/` payloads beside them), and globbing
+      # recursively had `.#all` trying to `dub --single` all 36 of them — each
+      # failing, since they are not single-file dub scripts.
       exampleFilesIn =
         libName:
         let
-          dir = fromRoot "libs/${libName}/examples";
+          top = fromRoot "libs/${libName}/examples";
+          # `nested` is false only at the `examples/` root, where a `.d` child
+          # needs no directory to match.
+          walk =
+            dir: nested:
+            lib.pipe (builtins.readDir dir) [
+              (lib.mapAttrsToList (
+                entry: type:
+                if type == "directory" then
+                  walk (dir + "/${entry}") true
+                else if
+                  type == "regular"
+                  && lib.hasSuffix ".d" entry
+                  && (!nested || lib.removeSuffix ".d" entry == baseNameOf dir)
+                then
+                  [ (dir + "/${entry}") ]
+                else
+                  [ ]
+              ))
+              lib.concatLists
+            ];
         in
-        if !builtins.pathExists dir then
-          [ ]
-        else
-          lib.pipe (builtins.readDir dir) [
-            (lib.filterAttrs (file: type: type == "regular" && lib.hasSuffix ".d" file))
-            (lib.mapAttrsToList (file: _: dir + "/${file}"))
-          ];
+        if !builtins.pathExists top then [ ] else walk top false;
 
       allExampleFiles = lib.pipe (builtins.readDir (fromRoot "libs")) [
         (lib.filterAttrs (_: type: type == "directory"))
@@ -94,11 +116,12 @@
           fileBase = lib.removeSuffix ".d" (lib.last parts);
 
           # The example's inline `dub.sdl` `name` determines the built binary
-          # (`build/<name>`), which can differ from the file's basename: a
-          # single-file D script's module name comes from the filename, so it
-          # must be a valid identifier (`git_clean.d`), while the dub package
-          # name may be kebab-case (`name "git-clean"`). Parse it, falling back
-          # to the basename when no `name` line is present.
+          # (`build/<name>`), which can differ from the file's basename — the
+          # two answer to different conventions. Filenames are kebab-case, while
+          # a dub name is often qualified and identifier-safe to keep it unique
+          # across the workspace: `pty-drain.d` declares
+          # `name "event_horizon_pty_drain"`. Parse it, falling back to the
+          # basename when no `name` line is present.
           nameRe = "[[:space:]]*name[[:space:]]+\"([^\"]+)\".*";
           nameMatches = builtins.filter (l: builtins.match nameRe l != null) (
             lib.splitString "\n" (builtins.readFile examplePath)
@@ -136,6 +159,12 @@
             platforms
             ;
           examplesRel = "libs/${libName}/examples";
+          # Where the example's own dub package rooted: the directory holding
+          # the `.d` file. For a direct child of `examples/` that is
+          # `examplesRel`; for a nested example it is its own directory, which
+          # is what makes `views/` resolve next to the script.
+          parentDirRel = lib.concatStringsSep "/" (lib.init parts);
+          examplePathRel = lib.concatStringsSep "/" parts;
         };
 
       # Does this example's manifest allow the system we are building for?
@@ -215,7 +244,7 @@
             pname = "${libName}-example-deps";
             src = srcForLib libName;
             dubPrimers = map (path: {
-              subdir = (exampleInfo path).examplesRel;
+              subdir = (exampleInfo path).parentDirRel;
               single = "${(exampleInfo path).fileBase}.d";
             }) paths;
           }
@@ -236,7 +265,7 @@
             # Where to build inside the normalised source tree (the vendored
             # builder's replacement for `sourceRoot`, which cannot vary: the
             # tree root is pinned so artifacts hash identically).
-            dubSubdir = info.examplesRel;
+            dubSubdir = info.parentDirRel;
 
             # Phobos bakes store paths into every binary that must not leak into
             # the runtime closure: assert/`__FILE__` strings referencing ldc's
@@ -283,7 +312,7 @@
             '';
 
             meta = {
-              description = "Standalone example: ${info.libName}/examples/${info.fileBase}.d";
+              description = "Standalone example: ${info.examplePathRel}";
               mainProgram = info.dubName;
             };
           }
@@ -309,11 +338,16 @@
         ))
       ];
 
-      # Faithful port of ci's `parseStandaloneExampleMode` (apps/ci/src/app.d):
+      # Faithful port of ci's `parseStandaloneExampleSpec` (apps/ci/src/app.d):
       # skip the shebang and the inline `/+ dub.sdl: … +/` block, then scan the
       # header comment — the first `// ci:` / `// run_md_examples:` directive
       # decides the mode, and the header ends at the first non-comment line.
-      exampleMode =
+      #
+      # The directive's first word is the mode; anything after it is the
+      # program's arguments (`// ci: run --help`). Keep both in step with ci's
+      # reader — an example that needs arguments to exit zero fails here
+      # otherwise.
+      exampleSpec =
         examplePath:
         let
           step =
@@ -322,14 +356,24 @@
               line = lib.trim rawLine;
               directive =
                 prefix:
+                let
+                  value = lib.trim (lib.removePrefix prefix line);
+                  words = builtins.filter (w: builtins.isString w && w != "") (builtins.split "[[:space:]]+" value);
+                  modeWord = if words == [ ] then "run" else lib.toLower (builtins.head words);
+                in
                 acc
-                // {
-                  mode =
-                    if lib.toLower (lib.trim (lib.removePrefix prefix line)) == "build-only" then
-                      "build-only"
-                    else
-                      "run";
-                };
+                // (
+                  if modeWord == "build-only" then
+                    {
+                      mode = "build-only";
+                      runArgs = [ ];
+                    }
+                  else
+                    {
+                      mode = "run";
+                      runArgs = if words == [ ] then [ ] else builtins.tail words;
+                    }
+                );
             in
             if acc.mode != null || line == "" || lib.hasPrefix "#!" line then
               acc
@@ -337,6 +381,12 @@
               acc // { insideDubSdl = !lib.hasPrefix "+/" line; }
             else if lib.hasPrefix "/+ dub.sdl:" line then
               acc // { insideDubSdl = true; }
+            # A `module …;` declaration may sit between the recipe and the
+            # directive. It is not a comment, so without this the scan would
+            # stop at it (the `!hasPrefix "//"` branch below) and ignore the
+            # directive — the example would run when it asked to be built only.
+            else if lib.hasPrefix "module " line && lib.hasSuffix ";" line then
+              acc
             else if lib.hasPrefix "// ci:" line then
               directive "// ci:"
             else if lib.hasPrefix "// run_md_examples:" line then
@@ -347,10 +397,14 @@
               acc;
           result = lib.foldl' step {
             mode = null;
+            runArgs = [ ];
             insideDubSdl = false;
           } (lib.splitString "\n" (builtins.readFile examplePath));
         in
-        if result.mode == null then "run" else result.mode;
+        {
+          mode = if result.mode == null then "run" else result.mode;
+          inherit (result) runArgs;
+        };
 
       # Every example paired with its derivation and ci-equivalent mode.
       # Filtered exactly like `examplesByLib`: a manifest that restricts its
@@ -365,7 +419,7 @@
         in
         {
           label = "${info.libName}/${info.fileBase}";
-          mode = exampleMode path;
+          inherit (exampleSpec path) mode runArgs;
           drv = examplesByLib.${info.libName}.${info.fileBase};
         }
       ) (builtins.filter buildableHere allExampleFiles);
@@ -391,7 +445,7 @@
             else
               ''
                 echo "━━━ ${ex.label} ━━━"
-                if ! ${lib.getExe ex.drv}; then
+                if ! ${lib.getExe ex.drv} ${lib.escapeShellArgs ex.runArgs}; then
                   echo "✗ ${ex.label} failed"
                   failures=$((failures + 1))
                 fi
