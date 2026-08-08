@@ -100,7 +100,7 @@ import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
 import sparkles.ui.widget : Builder;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : drawScrollbar, namedKey, RaylibCanvas, RaylibEvents,
-    ScrollbarAnim,
+    ScrollbarAnim, ScrollbarLayout,
     traceLevelTag, traceLogTo, Window, WindowRequest,
     scrollbarLayout, toRaylibCursor;
 
@@ -506,6 +506,7 @@ int runGui(
     vm.codeLineNumbers = codeLineNumbers;
     vm.codeOverflow = codeOverflow;
     vm.codeMaxLines = codeMaxLines;
+    vm.fenceHotGlyphs = false; // the GUI's feedback is the px overlay
 
     ResizeDebounce rd;
 
@@ -1992,6 +1993,12 @@ int runGui(
                     vTgt = &t;
             }
 
+            // A pointer another affordance owns (the pane scrollbar's drag
+            // straying over a fence bar) must not read as hover — the same
+            // STM11 courtesy every grab already extends the others.
+            const barsLive = inp.capture.isFree
+                || inp.capture.ownedBy(capFenceSb);
+
             if (hTgt !is null && !vm.fenceSv.v.dragging)
             {
                 const owner = hTgt.hitId - vm.fenceHBarHitBase;
@@ -2001,7 +2008,8 @@ int runGui(
                 const cur = vm.fenceScrollAt.get(owner,
                     FenceScroll(owner, 0, 0));
                 // The track excludes the `╰`/`╯` corners.
-                inp.capture = vm.fenceSv.stepH(inp.capture, capFenceSb, true,
+                inp.capture = vm.fenceSv.stepH(inp.capture, capFenceSb,
+                    barsLive,
                     ScrollPointer(over: hTgt.rect.contains(dpf),
                         pressed: clickPressed(),
                         released: inp.fin.leftReleased,
@@ -2021,7 +2029,8 @@ int runGui(
                 const e = vm.fenceExtent(owner);
                 const cur = vm.fenceScrollAt.get(owner,
                     FenceScroll(owner, 0, 0));
-                inp.capture = vm.fenceSv.stepV(inp.capture, capFenceSb, true,
+                inp.capture = vm.fenceSv.stepV(inp.capture, capFenceSb,
+                    barsLive,
                     ScrollPointer(over: vTgt.rect.contains(dpf),
                         pressed: clickPressed(),
                         released: inp.fin.leftReleased,
@@ -2229,6 +2238,10 @@ int runGui(
                     vm.hsb.offset,
                     ScrollExtents(vm.contentCols, vm.widthCols, vm.widthCols));
                 vm.scroll.easeH(hHoverH2, hIdleH2, caps, window.frameSeconds);
+                // The fence bars ease with the SAME constants and rate —
+                // their overlay (painted below) reads these widths.
+                vm.fenceSv.easeH(hHoverH2, hIdleH2, caps, window.frameSeconds);
+                vm.fenceSv.easeV(hHoverH2, hIdleH2, caps, window.frameSeconds);
             }
 
             // The tree's horizontal bar (IXB2): the pane's bottom edge,
@@ -2408,6 +2421,95 @@ int runGui(
                 paint(canvas, (&op)[0 .. 1]);
             }
             canvas.popClip();
+
+            // The fence bars' hover-expand overlay (COD6): the SAME px
+            // renderer, easing, and colors the pane bars use, anchored so
+            // the eased thumb thickens around the glyph border line (its
+            // center = the anchor rect's bottom/right edge minus half the
+            // bar). Pure paint — no rebuild per animation frame; it fades
+            // back to the glyph line after the pointer leaves. The pane
+            // clip scissors it (raylib scissor state clips raw draws too),
+            // so a partially scrolled-off box animates its VISIBLE part
+            // instead of the overlay vanishing wholesale.
+            if (vm.fenceSvOwner != size_t.max)
+            {
+                canvas.pushClip(Rect(dhx, cast(int) vm.top,
+                    (screenW - rightPad - gutterPx) / cellW, docRows));
+                scope (exit)
+                    canvas.popClip();
+                const idleW = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
+                Rect ownerRect(size_t base)
+                {
+                    foreach (ref const t; vm.targets)
+                        if (t.hitId == base + vm.fenceSvOwner)
+                            return t.rect;
+                    return Rect.init;
+                }
+
+                const ext = vm.fenceExtent(vm.fenceSvOwner);
+                const cur = vm.fenceScrollAt.get(vm.fenceSvOwner,
+                    FenceScroll(vm.fenceSvOwner, 0, 0));
+
+                // The rendered interior, derived from the box rect itself
+                // (the extent's `innerW` assumes a top-level fence; an
+                // indented box is narrower and its glyph thumb knows it).
+                int digits(int n)
+                {
+                    int d;
+                    for (auto v = n < 1 ? 1 : n; v; v /= 10)
+                        ++d;
+                    return d;
+                }
+
+                const hr = ownerRect(vm.fenceHBarHitBase);
+                const innerRect = hr.width - 4
+                    - (vm.codeLineNumbers ? digits(ext.lines) + 1 : 0);
+                if (hr.width > 2 && innerRect > 0 && ext.widest > innerRect
+                    && hr.y >= vm.top && hr.y < vm.top + docRows
+                    && (vm.fenceSv.h.hovered || vm.fenceSv.h.dragging
+                        || vm.fenceSv.hAnim.width > idleW + 0.5f))
+                {
+                    const w = cast(int) vm.fenceSv.hAnim.width;
+                    // Cell-quantized like the vertical bar: the px thumb is
+                    // the glyph thumb's cells, so the two never drift.
+                    const g = scrollbarThumb(ext.widest, innerRect, cur.x,
+                        hr.width - 2);
+                    const bx = gutterPx + (hr.x + 1 - dhx) * cellW;
+                    const by = docY0 + cast(int)(hr.y - vm.top) * cellH
+                        + cellH / 2 - w / 2;
+                    const ScrollbarLayout l = {live: true,
+                        track: Rect(bx, by, (hr.width - 2) * cellW, w),
+                        thumb: Rect(bx + g.start * cellW, by,
+                            g.extent * cellW, w)};
+                    drawScrollbar(l, vm.fenceSv.h, vm.sbTrack, vm.sbThumb);
+                }
+
+                const vr = ownerRect(vm.fenceVBarHitBase);
+                if (vr.height > 0 && ext.lines > vr.height
+                    && vr.y + vr.height > vm.top
+                    && vr.y < vm.top + docRows
+                    && (vm.fenceSv.v.hovered || vm.fenceSv.v.dragging
+                        || vm.fenceSv.vAnim.width > idleW + 0.5f))
+                {
+                    const w = cast(int) vm.fenceSv.vAnim.width;
+                    // The px thumb is the GLYPH thumb's rows by
+                    // construction — the same formula over the same track
+                    // (the RENDERED viewport height, `vr.height`), cell-
+                    // quantized then scaled to px — so the overlay can
+                    // never drift from the border line's own thumb; only
+                    // the thickness animates.
+                    const g = scrollbarThumb(ext.lines, vr.height, cur.y,
+                        vr.height);
+                    const bx = gutterPx + (vr.x - dhx) * cellW
+                        + cellW / 2 - w / 2;
+                    const by = docY0 + cast(int)(vr.y - vm.top) * cellH;
+                    const ScrollbarLayout l = {live: true,
+                        track: Rect(bx, by, w, vr.height * cellH),
+                        thumb: Rect(bx, by + g.start * cellH, w,
+                            g.extent * cellH)};
+                    drawScrollbar(l, vm.fenceSv.v, vm.sbTrack, vm.sbThumb);
+                }
+            }
 
             // Fold markers in the gutter's fold column (FLD5): ▾ on an
             // open region's first row, ▸ on a folded one's placeholder;
