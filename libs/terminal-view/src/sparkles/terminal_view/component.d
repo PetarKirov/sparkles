@@ -136,13 +136,28 @@ struct TerminalView
     */
     bool open(FontSet* fonts, ushort cols, ushort rows) @system
     {
+        s.fonts = fonts;
+        s.fontSize = fonts.size;
+        if (!openCore(cols, rows, fonts.cellW(), fonts.cellH()))
+            return false;
+        prevFocused = IsWindowFocused();
+        return true;
+    }
+
+    /**
+    The pty/VT half of `open`, with the cell metrics as plain values — no
+    fonts and no window, so a fontless embedder (a cell-grid pane on the
+    terminal arm, `TVW7`) can spawn too. Fontless, the pty reports no pixel
+    size (`ws_xpixel`/`ws_ypixel` 0, the standard answer of pixel-less
+    terminals) and kitty graphics stay unwired — nothing could paint them.
+    */
+    bool openCore(ushort cols, ushort rows, int cellWidthPx, int cellHeightPx) @system
+    {
         import core.stdc.stdlib : getenv;
         import core.stdc.string : strrchr;
 
-        s.fonts = fonts;
-        s.fontSize = fonts.size;
-        s.cellWidth = fonts.cellW();
-        s.cellHeight = fonts.cellH();
+        s.cellWidth = cellWidthPx > 0 ? cellWidthPx : 1;
+        s.cellHeight = cellHeightPx > 0 ? cellHeightPx : 1;
         s.cols = cols > 0 ? cols : 1;
         s.rows = rows > 0 ? rows : 1;
         s.exitBehavior = opts.exitBehavior;
@@ -150,8 +165,10 @@ struct TerminalView
         forceRedrawEnv = getenv("SPARKLES_BENCH_FORCE_REDRAW") !is null;
 
         // The PNG decoder for kitty graphics: process-global, before any
-        // terminal exists.
-        ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, cast(const(void)*) &decode_png);
+        // terminal exists. Fontless there is no way to paint an image, so
+        // the raylib-backed decoder stays out of the picture entirely.
+        if (s.fonts !is null)
+            ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, cast(const(void)*) &decode_png);
 
         GhosttyTerminalOptions topts = {
             cols: s.cols, rows: s.rows, max_scrollback: opts.scrollbackLimit,
@@ -190,8 +207,8 @@ struct TerminalView
         winsize ws = {
             ws_row: s.rows,
             ws_col: s.cols,
-            ws_xpixel: cast(ushort)(s.cols * s.cellWidth),
-            ws_ypixel: cast(ushort)(s.rows * s.cellHeight),
+            ws_xpixel: s.fonts is null ? 0 : cast(ushort)(s.cols * s.cellWidth),
+            ws_ypixel: s.fonts is null ? 0 : cast(ushort)(s.rows * s.cellHeight),
         };
         s.child = forkpty(&s.pty_fd, null, null, &ws);
         if (s.child < 0)
@@ -238,12 +255,16 @@ struct TerminalView
         ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_BELL, cast(const(void)*) &effect_bell);
 
         // Kitty graphics: a storage limit is required, plus the file mediums.
-        ulong kittyStorage = 64 * 1024 * 1024;
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &kittyStorage);
-        bool kittyMedium = true;
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE, &kittyMedium);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, &kittyMedium);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &kittyMedium);
+        // Fontless (no renderer for them), the protocol stays disabled.
+        if (s.fonts !is null)
+        {
+            ulong kittyStorage = 64 * 1024 * 1024;
+            ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &kittyStorage);
+            bool kittyMedium = true;
+            ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE, &kittyMedium);
+            ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, &kittyMedium);
+            ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &kittyMedium);
+        }
 
         ghostty_render_state_new(null, &s.render_state);
         ghostty_render_state_row_iterator_new(null, &s.row_iter);
@@ -267,7 +288,6 @@ struct TerminalView
         ghostty_mouse_event_new(null, &s.mouse_event);
         ghostty_mouse_encoder_new(null, &s.mouse_encoder);
 
-        prevFocused = IsWindowFocused();
         opened = true;
         return true;
     }
@@ -742,8 +762,8 @@ struct TerminalView
         winsize ws = {
             ws_row: s.rows,
             ws_col: s.cols,
-            ws_xpixel: cast(ushort)(s.cols * s.cellWidth),
-            ws_ypixel: cast(ushort)(s.rows * s.cellHeight),
+            ws_xpixel: s.fonts is null ? 0 : cast(ushort)(s.cols * s.cellWidth),
+            ws_ypixel: s.fonts is null ? 0 : cast(ushort)(s.rows * s.cellHeight),
         };
         ioctl(s.pty_fd, TIOCSWINSZ, &ws);
     }
