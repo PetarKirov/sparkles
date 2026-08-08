@@ -774,7 +774,10 @@ int main(string[] args)
                         revspec = a;
                     else
                         filters ~= a;
-                doc = pipeline.loadGitDiff(revspec, cli.staged, filters);
+                // `DVN6`: the same revision diff, rendered as a document.
+                doc = cli.diffPreview
+                    ? pipeline.loadGitDiffPreview(revspec, cli.staged, filters)
+                    : pipeline.loadGitDiff(revspec, cli.staged, filters);
             }
         }
         else if (target.length == 0 && !isTerminal(StdStream.stdin))
