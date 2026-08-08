@@ -6,9 +6,8 @@ Each $(LREF AgentSpec) names a tool, the binary to look for on `$PATH`, and how
 to invoke it once for a single prompt. Only agents actually present on `$PATH`
 are offered to the user ($(LREF availableAgents)).
 
-NOTE: the one-shot invocation flags below are best-effort and drift between tool
-versions. `runAgent` surfaces the child's stderr so a wrong flag is diagnosable;
-fix the offending `AgentSpec` here.
+A prompt always travels as a file — see $(LREF agentRegistry) for the three
+ways an agent is handed one, and why none of them is an argv element.
 +/
 module sparkles.release.agents;
 
@@ -20,39 +19,68 @@ import sparkles.release.segment : SegmentInput;
 
 @safe:
 
-/// How an agent receives its prompt.
-enum PromptDelivery
-{
-    arg,     /// appended as the final argv element
-    stdin_,  /// piped to the child's standard input
-}
+/++
+The marker a $(LREF AgentSpec) flag uses to name the prompt file: every
+occurrence is replaced with that run's prompt path ($(LREF buildArgv)).
 
-/// One CLI agent: its menu `key`, the `binary` to find on `$PATH`, the `flags`
-/// that precede the prompt, and how the prompt is delivered.
+A spec with no occurrence anywhere gets the prompt on standard input instead —
+the same file, redirected rather than named.
++/
+enum promptPathPlaceholder = "{}";
+
+/// The flag text for an agent that takes neither a prompt file nor standard
+/// input, only a prompt string: the string is a one-line pointer at the file.
+private enum followPromptFile =
+    "Read the file " ~ promptPathPlaceholder
+    ~ " and follow the instructions in it exactly.";
+
+/// One CLI agent: its menu `key`, the `binary` to find on `$PATH`, and the
+/// `flags` invoking it once, non-interactively, on a prompt file.
 struct AgentSpec
 {
     string key;
     string binary;
     immutable(string)[] flags;
-    PromptDelivery delivery;
     /// Alternative binary names to try on `$PATH` when `binary` is absent (e.g.
     /// a tool distributed under more than one command name).
     immutable(string)[] aliases;
 }
 
-/// The curated agent menu. Edit/extend freely — it is just data.
+/++
+The curated agent menu. Edit/extend freely — it is just data.
+
+The prompt is never an argv element (Linux caps one at `MAX_ARG_STRLEN`, 32
+pages — a `--split` segmentation prompt over a long backlog is several times
+that, and the spawn fails outright with `E2BIG`). It is written to a file, and
+each entry says how its agent consumes one:
+
+$(LIST
+    * no $(LREF promptPathPlaceholder) — the file arrives on standard input
+        (`claude -p`, `codex exec` and `amp -x` were verified to read it
+        there; `codex exec --help` documents it);
+    * a placeholder in a path flag — the tool reads the file itself
+        (`aider --message-file`, `goose run -i`);
+    * a placeholder inside `followPromptFile` — for a tool that accepts only
+        a prompt string (`agy --print` ignores stdin), the string points at
+        the file and the agent reads it with its own tools.
+)
+
+NOTE: the invocations below are best-effort and drift between tool versions.
+`runAgent` surfaces the child's stderr so a wrong flag is diagnosable; fix the
+offending entry here.
++/
 immutable AgentSpec[] agentRegistry = [
-    AgentSpec(key: "claude-code", binary: "claude",   flags: ["-p"],        delivery: PromptDelivery.arg),
-    AgentSpec(key: "codex",       binary: "codex",    flags: ["exec"],      delivery: PromptDelivery.arg),
-    AgentSpec(key: "gemini",      binary: "gemini",   flags: ["-p"],        delivery: PromptDelivery.arg),
-    AgentSpec(key: "copilot",     binary: "copilot",  flags: ["-p"],        delivery: PromptDelivery.arg),
-    AgentSpec(key: "opencode",    binary: "opencode", flags: ["run"],       delivery: PromptDelivery.arg),
-    AgentSpec(key: "aider",       binary: "aider",    flags: ["--message"], delivery: PromptDelivery.arg),
-    AgentSpec(key: "q",           binary: "q",        flags: ["chat"],      delivery: PromptDelivery.arg),
-    AgentSpec(key: "crush",       binary: "crush",    flags: ["run"],       delivery: PromptDelivery.arg),
-    AgentSpec(key: "goose",       binary: "goose",    flags: ["run", "-t"], delivery: PromptDelivery.arg),
-    AgentSpec(key: "amp",         binary: "amp",      flags: ["-x"],        delivery: PromptDelivery.arg),
-    AgentSpec(key: "agy",         binary: "agy",      flags: ["-p"],        delivery: PromptDelivery.arg, aliases: ["antigravity-cli"]),
+    AgentSpec(key: "claude-code", binary: "claude",   flags: ["-p"]),
+    AgentSpec(key: "codex",       binary: "codex",    flags: ["exec"]),
+    AgentSpec(key: "amp",         binary: "amp",      flags: ["-x"]),
+    AgentSpec(key: "aider",       binary: "aider",    flags: ["--message-file", promptPathPlaceholder]),
+    AgentSpec(key: "goose",       binary: "goose",    flags: ["run", "-i", promptPathPlaceholder]),
+    AgentSpec(key: "gemini",      binary: "gemini",   flags: ["-p", followPromptFile]),
+    AgentSpec(key: "copilot",     binary: "copilot",  flags: ["-p", followPromptFile]),
+    AgentSpec(key: "opencode",    binary: "opencode", flags: ["run", followPromptFile]),
+    AgentSpec(key: "q",           binary: "q",        flags: ["chat", followPromptFile]),
+    AgentSpec(key: "crush",       binary: "crush",    flags: ["run", followPromptFile]),
+    AgentSpec(key: "agy",         binary: "agy",      flags: ["--print", followPromptFile], aliases: ["antigravity-cli"]),
 ];
 
 /// The registry entries resolvable to a `binary` on `$PATH`.
@@ -95,26 +123,81 @@ const(AgentSpec)* findAgent(string key) @safe pure nothrow @nogc
     return found.empty ? null : &found[0];
 }
 
-/// The argv used to invoke `a` for `prompt` (prompt appended only for
-/// `PromptDelivery.arg`).
-string[] buildArgv(const AgentSpec a, string prompt) @safe pure nothrow
+/// Deletes `path`, ignoring a failure to do so (a leftover prompt file in the
+/// temp directory is not worth failing a release over).
+private void removeQuietly(string path) @safe nothrow
 {
-    string[] argv = (a.binary ~ a.flags).dup;
-    if (a.delivery == PromptDelivery.arg)
-        argv ~= prompt;
-    return argv;
+    import std.file : remove;
+
+    try
+        remove(path);
+    catch (Exception)
+    {
+    }
 }
 
-/// Runs `a` once with `prompt`, returning its trimmed stdout as the notes, or a
-/// failure (non-zero exit, or empty output).
+/// The argv invoking `a` on the prompt file at `promptPath`: its flags with
+/// every $(LREF promptPathPlaceholder) replaced by that path.
+string[] buildArgv(const AgentSpec a, string promptPath) @safe pure
+{
+    import std.algorithm.iteration : map;
+    import std.array : array, replace;
+
+    return a.binary ~ a.flags.map!(f => f.replace(promptPathPlaceholder, promptPath)).array;
+}
+
+/// True when `a` names the prompt file in its argv (rather than reading it
+/// from standard input).
+bool namesPromptFile(const AgentSpec a) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    return a.flags.canFind!(f => f.canFind(promptPathPlaceholder));
+}
+
+/++
+Runs `a` once on `prompt`, returning its trimmed stdout as the notes, or a
+failure (non-zero exit, or empty output).
+
+The prompt is written to a file under the system temp directory and removed
+afterwards; the agent either has its path spliced into the argv or receives
+the file on standard input (see $(LREF agentRegistry)). Nothing about the
+prompt's size can make the spawn fail.
++/
 Result!string runAgent(const AgentSpec a, string prompt)
 {
-    import std.conv : to;
+    import std.conv : text, to;
+    import std.file : FileException, tempDir, write;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
     import std.string : strip;
+    import core.atomic : atomicOp;
 
-    const argv = buildArgv(a, prompt);
-    const stdinText = a.delivery == PromptDelivery.stdin_ ? prompt : null;
-    auto r = runCaptured(argv, stdinText);
+    static shared size_t counter;
+    const usesFile = namesPromptFile(a);
+    const promptPath = usesFile
+        ? buildPath(tempDir, text("sparkles-release-prompt-", thisProcessID,
+            "-", atomicOp!"+="(counter, 1), ".md"))
+        : null;
+
+    if (usesFile)
+    {
+        try
+            write(promptPath, prompt);
+        catch (FileException e)
+            return failure!string(
+                "could not write the prompt file for agent `" ~ a.key ~ "`: " ~ e.msg);
+    }
+    scope (exit)
+        if (usesFile)
+            removeQuietly(promptPath);
+
+    // A file-naming agent reads the prompt itself; the rest get the same bytes
+    // on stdin. `runCaptured` reads a *null* text as "inherit this process's
+    // stdin" — an empty literal is non-null, so a file-naming agent still gets
+    // a redirect (an immediate EOF) and cannot fall back to the terminal.
+    static assert("" !is null);
+    auto r = runCaptured(buildArgv(a, promptPath), usesFile ? "" : prompt);
 
     if (r.status != 0)
         return failure!string(
@@ -138,7 +221,7 @@ struct SegmentationPrompt
 
 /// The reply contract shown to the agent, in both densities.
 private enum compactReplySchema =
-    `{"segments": [{"boundary": "<full sha>", "theme": "<short theme>",`
+    `{"segments": [{"boundary": <last unit's i>, "theme": "<short theme>",`
     ~ ` "bump": "patch|minor|major", "highlights": ["<completed work>"]}],`
     ~ ` "remainderNote": "<optional>"}`;
 
@@ -146,7 +229,7 @@ private enum prettyReplySchema =
 `{
     "segments": [
         {
-            "boundary": "<full sha>",
+            "boundary": <last unit's i>,
             "theme": "<short theme>",
             "bump": "patch|minor|major",
             "highlights": ["<completed work>"]
@@ -155,54 +238,68 @@ private enum prettyReplySchema =
     "remainderNote": "<optional>"
 }`;
 
-/// Builds the segmentation prompt (SPEC §7.1–§7.2): the bump-policy context
-/// for `current`, the reply contract, and the oldest-first commit list with
-/// its PR association embedded as JSON — compact toward the agent, pretty in
-/// the artifact rendering.
+/++
+Builds the segmentation prompt (SPEC §7.1–§7.2): the bump-policy context for
+`current`, the reply contract, and the oldest-first backlog embedded as JSON —
+compact toward the agent, pretty in the artifact rendering.
+
+The backlog is presented as $(REF SegmentUnit, sparkles,release,segment)s
+rather than raw commits: an agent picking a unit index cannot split a PR or
+mistype an OID, and dropping the per-commit SHA and the PR title repeated on
+every commit shrinks the prompt several-fold.
++/
 Result!SegmentationPrompt buildSegmentationPrompt(
     const(SegmentInput)[] rows, in SemVer current) @system
 {
     import sparkles.release.json_utils : encodeJson;
+    import sparkles.release.segment : buildUnits;
 
-    static struct PromptCommit
+    static struct PromptUnit
     {
         size_t i;
-        string sha;
         uint pr;
-        string prTitle;
-        string subject;
+        string title;
+        string[] commits;
     }
 
     static struct PromptInput
     {
-        PromptCommit[] commits;
+        PromptUnit[] units;
     }
 
-    PromptCommit[] commits;
-    commits.reserve(rows.length);
-    foreach (i, ref row; rows)
-        commits ~= PromptCommit(i: i, sha: row.sha, pr: row.prNumber,
-            prTitle: row.prTitle, subject: row.subject);
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    import std.range : enumerate;
 
-    auto compact = encodeJson(PromptInput(commits));
+    const units = buildUnits(rows);
+    auto promptUnits = units.enumerate
+        .map!(u => PromptUnit(
+            i: u[0],
+            pr: u[1].pr,
+            title: u[1].title,
+            commits: rows[u[1].begin .. u[1].end].map!(r => r.subject[]).array))
+        .array;
+
+    auto compact = encodeJson(PromptInput(promptUnits));
     if (compact.hasError)
         return failure!SegmentationPrompt("segmentation prompt: " ~ compact.error);
-    auto pretty = encodeJson(PromptInput(commits), pretty: true);
+    auto pretty = encodeJson(PromptInput(promptUnits), pretty: true);
     if (pretty.hasError)
         return failure!SegmentationPrompt("segmentation prompt: " ~ pretty.error);
 
     return success(SegmentationPrompt(
         forAgent: segmentationPromptText(
-            rows.length, current, compactReplySchema, compact.value),
+            units.length, rows.length, current, compactReplySchema, compact.value),
         forArtifact: segmentationPromptText(
-            rows.length, current, prettyReplySchema, pretty.value)));
+            units.length, rows.length, current, prettyReplySchema, pretty.value)));
 }
 
-/// The shared prompt skeleton — valid markdown (JSON rides in ```json
-/// fences), so the artifact rendering needs no post-processing.
+/// The shared prompt skeleton — valid markdown, with each JSON block fenced
+/// long enough to survive a commit subject that contains a fence of its own,
+/// so the artifact rendering needs no post-processing.
 private string segmentationPromptText(
-    size_t commitCount, in SemVer current, string replySchema, string inputJson)
-    @safe pure
+    size_t unitCount, size_t commitCount, in SemVer current,
+    string replySchema, string inputJson) @safe pure
 {
     import std.conv : text;
 
@@ -218,14 +315,18 @@ private string segmentationPromptText(
     return text(
         "You are planning retroactive releases for the D monorepo `sparkles`.\n",
         "The last released version is v", verString(current), ". Below are the ",
-        commitCount, " unreleased commits, OLDEST FIRST, as JSON; `pr` is the",
-        " number of the merged PR that introduced each commit (0 = none).\n",
+        unitCount, " units of unreleased work (", commitCount, " commits),",
+        " OLDEST FIRST, as JSON. A unit is one merged pull request with its",
+        " commit subjects, or a single direct commit (`pr: 0`); `i` is its",
+        " index.\n",
         "Split them into a chain of releases.\n\n",
         "Rules:\n\n",
-        "- Segments are contiguous slices of the list, in order; each segment",
-        " becomes one release tag.\n",
-        "- `boundary` is the FULL SHA of the LAST commit of its segment.\n",
-        "- Commits sharing a `pr` number MUST all land in the same segment.\n",
+        "- Segments are contiguous slices of the unit list, in order; each",
+        " segment becomes one release tag.\n",
+        "- `boundary` is the `i` of the LAST unit of its segment: a number,",
+        " strictly increasing across segments.\n",
+        "- A unit is atomic — it is never split between two releases, which is",
+        " why you choose units and not commits.\n",
         "- You MAY leave a trailing remainder of genuinely unreleasable",
         " work-in-progress out of all segments; explain why in `remainderNote`.",
         " Do not leave releasable work unassigned.\n",
@@ -236,15 +337,39 @@ private string segmentationPromptText(
         " an earlier segment (its notes will then summarize the whole arc).",
         " Everything not highlighted is deferred to the release where it",
         " completes.\n",
-        "- Prefer coherent themes, with boundaries at PR edges and natural",
-        " feature completions.\n",
+        "- Prefer coherent themes, with boundaries at natural feature",
+        " completions.\n",
         "- `theme` is short; it becomes the tag subject `vX.Y.Z — <theme>`.\n",
         policy,
         "\nReply with ONLY a JSON object of this exact shape — no prose around",
         " it:\n\n",
-        "```json\n", replySchema, "\n```\n",
+        jsonFence(replySchema),
         "\nInput:\n\n",
-        "```json\n", inputJson, "\n```\n");
+        jsonFence(inputJson));
+}
+
+/++
+Wraps `json` in a ```` ```json ```` fence long enough to survive the content:
+a commit subject may itself contain a fence (this repository has a
+`feat(ci): require ` ```` ```[Output] ```` ` for runnable-example output blocks`),
+which would otherwise close the block early — leaving the agent, and the
+artifact's reader, with a prompt that ends mid-input.
++/
+private string jsonFence(string json) @safe pure
+{
+    import std.algorithm.comparison : max;
+    import std.algorithm.iteration : filter, group, map;
+    import std.algorithm.searching : maxElement;
+    import std.array : replicate;
+
+    // The longest backtick run in the content, so the fence can outrun it.
+    const longest = json.group
+        .filter!(run => run[0] == '`')
+        .map!(run => run[1])
+        .maxElement(0);
+
+    const fence = "`".replicate(max(3, longest + 1));
+    return fence ~ "json\n" ~ json ~ "\n" ~ fence ~ "\n";
 }
 
 /// The corrective coda appended (with the original prompt) when the agent's
@@ -290,9 +415,10 @@ string buildSegmentNotesSection(
     return app[];
 }
 
-/// Linux caps a single argv element at 128 KiB (`MAX_ARG_STRLEN`); prompts are
-/// delivered as one element, so the embedded `git log --stat` is capped well
-/// under it, leaving room for the fixed prompt parts.
+/// The `git log --stat` budget inside a notes prompt. Nothing about delivery
+/// forces a limit any more — this one is about the model: the full log of a
+/// hundreds-of-commits range is mostly diffstat noise, and summarizing it
+/// costs context the notes themselves need.
 enum promptLogStatCap = 96 * 1024;
 
 /// Truncates `logStat` at a line boundary under `cap`, marking the elision.
@@ -365,30 +491,77 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
     enum absent = "sparkles-nonexistent-binary-xyzzy-123";
 
     // `binary` present → resolves to it directly.
-    const direct = AgentSpec(
-        key: "mock", binary: "sh", flags: [], delivery: PromptDelivery.arg);
+    const direct = AgentSpec(key: "mock", binary: "sh");
     assert(resolveBinary(direct).value.binary == "sh");
 
     // `binary` absent but an alias is present → resolves to the alias.
     const viaAlias = AgentSpec(
-        key: "mock2", binary: absent, flags: [], delivery: PromptDelivery.arg,
-        aliases: [absent, "sh"]);
+        key: "mock2", binary: absent, aliases: [absent, "sh"]);
     assert(resolveBinary(viaAlias).value.binary == "sh");
 
     // No candidate on `$PATH` → a failure, not a null binary.
-    const missing = AgentSpec(
-        key: "mock3", binary: absent, flags: [], delivery: PromptDelivery.arg);
+    const missing = AgentSpec(key: "mock3", binary: absent);
     assert(resolveBinary(missing).hasError);
 }
 
 @("agents.buildArgv")
 @safe unittest
 {
+    // No placeholder: the prompt file is not named, it arrives on stdin.
     const claude = *findAgent("claude-code");
-    assert(buildArgv(claude, "hello") == ["claude", "-p", "hello"]);
+    assert(!namesPromptFile(claude));
+    assert(buildArgv(claude, "/tmp/p.md") == ["claude", "-p"]);
 
+    // A path flag takes the file's path…
     const goose = *findAgent("goose");
-    assert(buildArgv(goose, "hi") == ["goose", "run", "-t", "hi"]);
+    assert(namesPromptFile(goose));
+    assert(buildArgv(goose, "/tmp/p.md") == ["goose", "run", "-i", "/tmp/p.md"]);
+
+    // …and a prompt-string-only agent takes a pointer at the same file.
+    const agy = *findAgent("agy");
+    assert(namesPromptFile(agy));
+    assert(buildArgv(agy, "/tmp/p.md")
+        == ["agy", "--print", "Read the file /tmp/p.md and follow the instructions in it exactly."]);
+}
+
+@("agents.runAgent.hugePromptTravelsAsAFile")
+@safe unittest
+{
+    import std.array : replicate;
+
+    // Over `MAX_ARG_STRLEN` (32 pages), the cap that used to E2BIG the spawn
+    // with "Argument list too long" — both forms must carry it intact.
+    const big = "y".replicate(32 * 4096 + 1);
+
+    // Named in the argv: `cat <path>` prints the prompt file back.
+    const named = AgentSpec(key: "mock-file", binary: "cat",
+        flags: [promptPathPlaceholder]);
+    auto viaFile = runAgent(named, big);
+    assert(viaFile.hasValue);
+    assert(viaFile.value == big);
+
+    // On stdin: `cat` with no operand prints what it is fed.
+    const piped = AgentSpec(key: "mock-stdin", binary: "cat");
+    auto viaStdin = runAgent(piped, big);
+    assert(viaStdin.hasValue);
+    assert(viaStdin.value == big);
+}
+
+@("agents.runAgent.promptFileIsRemoved")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : exists;
+    import std.string : strip;
+
+    // `readlink` on the path prints it back, so the test learns the path the
+    // agent was handed — and can check it is gone once the run returns.
+    const spec = AgentSpec(key: "mock-file", binary: "readlink",
+        flags: ["-m", promptPathPlaceholder]);
+    auto r = runAgent(spec, "prompt body");
+    assert(r.hasValue);
+    assert(r.value.canFind("sparkles-release-prompt-"));
+    assert(!r.value.strip.exists);
 }
 
 @("agents.buildSegmentationPrompt.policyAndInput")
@@ -411,16 +584,19 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
     assert(agent.canFind("OLDEST FIRST"));
     assert(agent.canFind(`"pr":47`));
     assert(agent.canFind(`"remainderNote"`));
-    assert(agent.canFind("2 unreleased commits"));
+    // Two PR-atomic units (PR #47's commit, then the direct one), not 2 rows
+    // of commits — and no SHA anywhere, since boundaries are unit indices.
+    assert(agent.canFind("2 units of unreleased work (2 commits)"));
+    assert(!agent.canFind("aaaaaaaaaaaa"));
+    assert(agent.canFind(`"i":1,"pr":0`));
+
     // Toward the agent the JSON stays compact (token-efficient)…
-    assert(agent.canFind(`"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`));
     assert(agent.canFind("```json\n{\"segments\":"));
-    assert(agent.canFind("```json\n{\"commits\":"));
+    assert(agent.canFind("```json\n{\"units\":"));
 
     // …while the artifact rendering pretty-prints it for human review.
     const artifact = pre.value.forArtifact;
     assert(artifact.canFind("\"pr\": 47"));
-    assert(artifact.canFind("\"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\""));
     assert(artifact.canFind("```json\n{\n"));
 
     // Both are valid markdown: two closed ```json fences each.
@@ -432,6 +608,32 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
     assert(post.hasValue);
     assert(!post.value.forAgent.canFind("pre-1.0"));
     assert(post.value.forAgent.canFind(`a breaking change means "major"`));
+}
+
+@("agents.buildSegmentationPrompt.subjectFenceCannotCloseTheBlock")
+@system unittest
+{
+    import std.algorithm.searching : canFind, count;
+
+    // A real subject from this repository's history: an unguarded ```json
+    // fence would end at the subject, truncating the input the agent sees.
+    const rows = [
+        SegmentInput(sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", prNumber: 0,
+            subject: "feat(ci): require ```[Output] for example output blocks"),
+    ];
+
+    auto pre = buildSegmentationPrompt(rows, SemVer(major: 0, minor: 4, patch: 0));
+    assert(pre.hasValue);
+    foreach (rendering; [pre.value.forAgent, pre.value.forArtifact])
+    {
+        // The input block is fenced with more backticks than the subject has…
+        assert(rendering.canFind("````json\n"));
+        // …and the whole subject survives inside it.
+        assert(rendering.canFind("```[Output]"));
+        // Four fence markers: two ``` around the schema, two ```` around the
+        // input — the subject's own run is not one of them.
+        assert(rendering.count("````") == 2);
+    }
 }
 
 @("agents.capLogStat.truncatesAtLineBoundary")
