@@ -46,6 +46,8 @@ void main() {}
 
 ```sh [build]
 dub build
+dub test
+dub run -- --help
 ```
 
 :::
