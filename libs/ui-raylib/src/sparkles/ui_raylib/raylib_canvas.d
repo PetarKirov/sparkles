@@ -281,8 +281,15 @@ struct RaylibCanvas
         }
         strokeEdge(x, y, w, b.width.top, true, b.style, c);                    // top
         strokeEdge(x, y + h - b.width.bottom, w, b.width.bottom, true, b.style, c); // bottom
-        strokeEdge(x, y, b.width.left, h, false, b.style, c);                  // left
-        strokeEdge(x + w - b.width.right, y, b.width.right, h, false, b.style, c);  // right
+        // A solid vertical side centers in its border COLUMN, where the cell
+        // backends put their `│` — and where a glyph-composed corner row's
+        // `╭`/`╰` stems are, so the fence chrome's edges meet (the quote bar
+        // gains the same parity). Dotted/dashed accents keep the rect edge.
+        const inset = b.style == BorderStyle.solid ? cellW / 2.0f : 0;
+        strokeEdge(x + (b.width.left ? inset : 0), y,
+            b.width.left, h, false, b.style, c);                               // left
+        strokeEdge(x + w - b.width.right - (b.width.right ? inset : 0), y,
+            b.width.right, h, false, b.style, c);                              // right
     }
 
     /// Strokes one horizontal/vertical edge of thickness `thick`, dashed for a

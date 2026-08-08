@@ -1,0 +1,17 @@
+󰲡 Tall code block
+
+A fence taller than the golden threshold shows a fixed-height vertical viewport
+with its own track:
+
+╭─  ──────────────────────────────────────────────────────────────────────────╮
+│  1 int line01;                                                             ┃ │
+│  2 int line02;                                                             ┃ │
+│  3 int line03;                                                             ┃ │
+│  4 int line04;                                                             ┃ │
+│  5 int line05;                                                             ┃ │
+│  6 int line06;                                                             │ │
+│  7 int line07;                                                             │ │
+│  8 int line08;                                                             │ │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+Prose after the tall fence.

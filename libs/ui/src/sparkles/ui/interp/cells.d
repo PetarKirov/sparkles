@@ -152,7 +152,41 @@ struct CellGrid
                 && bw.right == 0;
             const fullBox = bw.top > 0 && bw.bottom > 0 && bw.left > 0
                 && bw.right > 0;
-            if (leftOnly)
+            // The open-top shapes a glyph-composed top border row relies on
+            // (the markdown fence chrome): both sides, optionally closed by
+            // a rounded bottom.
+            const sidesOnly = bw.left > 0 && bw.right > 0 && bw.top == 0
+                && bw.bottom == 0;
+            const openTop = bw.left > 0 && bw.right > 0 && bw.bottom > 0
+                && bw.top == 0;
+            if (sidesOnly || openTop)
+            {
+                const x1 = r.x + r.width - 1;
+                const yEnd = r.y + r.height - (openTop ? 1 : 0);
+                void setc(int x, int y, dchar g)
+                {
+                    if (!inBounds(x, y))
+                        return;
+                    auto c = &at(x, y);
+                    c.glyph = g;
+                    c.fg = v.border.color;
+                }
+
+                foreach (y; r.y .. yEnd)
+                {
+                    setc(r.x, y, '│');
+                    setc(x1, y, '│');
+                }
+                if (openTop && r.height >= 1)
+                {
+                    const y1 = r.y + r.height - 1;
+                    foreach (x; r.x + 1 .. x1)
+                        setc(x, y1, '─');
+                    setc(r.x, y1, '╰');
+                    setc(x1, y1, '╯');
+                }
+            }
+            else if (leftOnly)
             {
                 // The quote / callout accent bar: `│` glyphs down the rect's
                 // left column (the panel's padding keeps content clear of it).

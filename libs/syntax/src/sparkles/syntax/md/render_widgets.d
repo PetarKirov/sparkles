@@ -113,10 +113,26 @@ struct MdViewOptions
     /// number gutter.
     CodeOverflow codeOverflow = CodeOverflow.scroll;
 
-    /// Per-fence horizontal scroll offsets (scroll mode), keyed by the
-    /// fence's `codeBody.start` — source-anchored like `activeCodeTabs`,
-    /// so a rebuild keeps the reader's place.
+    /// Per-fence scroll offsets (scroll mode), keyed by the fence's
+    /// `codeBody.start` — source-anchored like `activeCodeTabs`, so a
+    /// rebuild keeps the reader's place.
     const(FenceScroll)[] fenceScrolls;
+
+    /// Scroll mode: a fence taller than this many lines shows a vertical
+    /// viewport of exactly this height plus an inner right track
+    /// (`--code-max-lines`; 0 = never).
+    int codeMaxLines = 100;
+
+    /// Non-zero makes the bottom-border scrollbar a drag target:
+    /// `hitId = fenceHBarHitBase + codeBody.start`.
+    size_t fenceHBarHitBase = 0;
+    /// ditto, for the vertical track.
+    size_t fenceVBarHitBase = 0;
+
+    /// The left indentation the ancestor chain has already consumed, in
+    /// cells (quote bars, list leaders) — maintained by the block cases so
+    /// glyph-composed chrome (the fence box) knows its exact width.
+    private int indentCols;
 
     /// The enclosing `::: code-group`'s tab strip, when this fence is its
     /// showing one (set by `viewCodeGroup`; not a caller field) — the strip
@@ -171,12 +187,15 @@ enum CodeOverflow : ubyte
     wrap,   /// greedy in-panel wrapping with a hang past the number gutter
 }
 
-/// One fence's horizontal scroll position: `cols` cells of the body
-/// scrolled off to the left, keyed by the fence's `codeBody.start`.
+/// One fence's scroll position: `x` cells of the body scrolled off to the
+/// left, `y` lines scrolled off the top (only fences past
+/// `MdViewOptions.codeMaxLines` scroll vertically), keyed by the fence's
+/// `codeBody.start`.
 struct FenceScroll
 {
     size_t bodyStart;
-    int cols;
+    int x;
+    int y;
 }
 
 /// A code group's tab strip, as the showing fence's header sees it.
@@ -527,85 +546,191 @@ private string foldChip(const(char)[] src, size_t start, size_t end) @safe
     return "\u22EF " ~ n[].idup ~ " lines";
 }
 
-// The themed fence header band: devicon + language label, carrying the
-// fence's opening line as identity — shared by the open panel (which
-// composes the copy affordance beside it, `fenceHeaderRow`) and the
-// collapsed face (which re-shapes this widget alone).
-private Widget themedFenceHeader(ref const MdBlock blk, MdViewOptions opt)
+// A rule-glyph text span in the fence chrome's colors.
+private TextSpan ruleSpan(in MdViewOptions opt, string text_) @safe
+    => TextSpan(text_, Slot.border, opt.baseStyle, noBreak: true,
+        fg: opt.theme.ruleFg, hasFg: opt.theme.present);
+
+/// ditto — `n` repetitions of `glyph`.
+private string repGlyph(string glyph, int n) @safe pure nothrow
 {
-    // A specific devicon IS the language — repeating the name after the
-    // glyph is noise; the generic glyph keeps the name beside it.
-    const(char)[] lbl = langTitle(blk.infoLang);
-    // Inside a code group the tab already says the label, so repeating it
-    // in the header is noise; the language and copy affordance stay.
-    if (blk.label.length && opt.fenceLabelInHeader)
-        lbl = lbl ~ " " ~ blk.label;
-    // With a fence hit base the whole band is a copy target, its identity
-    // anchored at the body's source position.
-    const headerHit = opt.fenceHitBase != 0
-        ? opt.fenceHitBase + blk.codeBody.start : opt.hitId;
-    return Widget(kind: WidgetKind.rich, spans: [
-            TextSpan(lbl, Slot.code, codeStyle(opt),
-                srcStart: blk.span.start,
-                srcEnd: blk.codeBody.start)],
-        slot: Slot.code, hitId: headerHit, stretch: true,
-        paintBackground: true, padding: Insets.symmetric(0, 1),
-        textStyle: codeStyle(opt),
-        bgOverride: opt.theme.codeHeaderBg, hasBgOverride: true,
-        fgOverride: opt.theme.codeFg, hasFgOverride: true);
+    string s;
+    foreach (_; 0 .. n)
+        s ~= glyph;
+    return s;
 }
 
-// The open fence's header: the label band with the copy affordance at its
-// right edge — the top-right corner the old top-border cutout put it in
-// (`COD3`). Without a fence hit base there is nothing to click, so the
-// band renders alone.
-private uint fenceHeaderRow(ref Builder b, ref const MdBlock blk,
-    MdViewOptions opt)
+// The fence header as the collapsed fold face sees it: one rich widget in
+// the top-border style (`╭─ <title> ─`), carrying the opening line's
+// identity — `collapsedFace` appends its chip and re-anchors it.
+private Widget themedFenceHeader(ref const MdBlock blk, MdViewOptions opt)
+{
+    const(char)[] lbl = langTitle(blk.infoLang);
+    if (blk.label.length && opt.fenceLabelInHeader)
+        lbl = lbl ~ " " ~ blk.label;
+    Widget w = Widget(kind: WidgetKind.rich, spans: [
+            ruleSpan(opt, "╭─ "),
+            TextSpan(lbl, Slot.code, codeStyle(opt),
+                fg: opt.theme.codeFg, hasFg: opt.theme.present,
+                srcStart: blk.span.start,
+                srcEnd: blk.codeBody.start),
+            ruleSpan(opt, " ─")],
+        slot: Slot.code, hitId: opt.hitId,
+        paintBackground: true, textStyle: codeStyle(opt));
+    if (opt.theme.present)
+    {
+        w.bgOverride = opt.theme.codePanelBg;
+        w.hasBgOverride = true;
+    }
+    return w;
+}
+
+// The fence's TOP border row (`COD1`/`COD2`): the language — or the code
+// group's tab strip (`MDP22`) — embedded in the border line, the copy
+// affordance in a cutout before the corner (`COD3`):
+// `╭─ 󰌠 python ────── ⧉ ─╮`. Glyph-composed, so every backend renders it
+// identically; widths are exact because the box width is.
+private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
+    MdViewOptions opt, int boxW)
 {
     import sparkles.ui.components.chrome : tabStrip;
+    import sparkles.ui.geometry : cellsOf;
     import sparkles.ui.state : PressState;
 
     const hit = opt.fenceHitBase != 0
         ? opt.fenceHitBase + blk.codeBody.start : opt.hitId;
 
-    uint copyGlyph()
+    uint rich(TextSpan[] spans, size_t hitId = 0)
     {
-        Widget iconW = Widget(kind: WidgetKind.rich, spans: [
-                TextSpan(opt.copiedFence == blk.codeBody.start
-                    ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon,
-                    Slot.code, codeStyle(opt), noBreak: true)],
-            slot: Slot.code, hitId: hit, paintBackground: true,
-            padding: Insets.symmetric(0, 1), textStyle: codeStyle(opt),
-            bgOverride: opt.theme.codeHeaderBg, hasBgOverride: true,
-            fgOverride: opt.theme.codeFg, hasFgOverride: true);
-        return b.add(iconW);
+        Widget w = Widget(kind: WidgetKind.rich, spans: spans,
+            slot: Slot.border, wrap: TextWrap.none,
+            hitId: hitId ? hitId : opt.hitId,
+            paintBackground: true, textStyle: codeStyle(opt));
+        if (opt.theme.present)
+        {
+            w.bgOverride = opt.theme.codePanelBg;
+            w.hasBgOverride = true;
+        }
+        return b.add(w);
     }
 
-    // A grouped fence: the code group's tab strip IS the header line, the
-    // copy affordance at its right edge (the strip's grow filler pushes it
-    // there). Each tab already carries its language icon.
+    uint[] kids;
+    int used;
+
     if (opt.groupTabs.titles.length)
     {
+        // Tabs sit ON the border line, browser-style.
+        kids ~= rich([ruleSpan(opt, "╭─ ")]);
         const strip = tabStrip(b, opt.groupTabs.titles, opt.groupTabs.active,
             0, PressState.init, fitLabels: true, ids: opt.groupTabs.ids);
-        // In this row the strip must claim the leftover itself (`stretch`
-        // is a cross-axis notion); its grow filler then pads out the band.
-        b.nodes[strip].width = SizeSpec.grow();
-        uint[] kids = [strip];
-        if (opt.fenceHitBase != 0)
-            kids ~= copyGlyph();
-        return b.add(Widget(kind: WidgetKind.row, children: kids,
-            width: SizeSpec.grow()));
+        kids ~= strip;
+        used = 3;
+        foreach (t; opt.groupTabs.titles)
+            used += cast(int) cellsOf(t) + 2;
+        kids ~= rich([ruleSpan(opt, " ")]);
+        ++used;
+    }
+    else
+    {
+        const(char)[] lbl = langTitle(blk.infoLang);
+        if (blk.label.length && opt.fenceLabelInHeader)
+            lbl = lbl ~ " " ~ blk.label;
+        kids ~= rich([
+            ruleSpan(opt, "╭─ "),
+            TextSpan(lbl, Slot.code, codeStyle(opt),
+                fg: opt.theme.codeFg, hasFg: opt.theme.present,
+                srcStart: blk.span.start, srcEnd: blk.codeBody.start),
+            ruleSpan(opt, " ")]);
+        used = 4 + cast(int) cellsOf(lbl);
     }
 
-    if (opt.fenceHitBase == 0)
-        return b.add(themedFenceHeader(blk, opt));
+    const hasCopy = opt.fenceHitBase != 0;
+    const tailW = hasCopy ? 5 : 1; // " ⧉ " in the cutout + "─╮", or "╮"
+    int fill = boxW - used - tailW;
+    if (fill < 0)
+        fill = 0;
+    kids ~= rich([ruleSpan(opt, repGlyph("─", fill))]);
+    if (hasCopy)
+    {
+        TextSpan icon = TextSpan(" " ~ (opt.copiedFence == blk.codeBody.start
+            ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon) ~ " ",
+            Slot.code, codeStyle(opt), noBreak: true,
+            fg: opt.theme.codeFg, hasFg: opt.theme.present);
+        kids ~= rich([icon], hit);
+        kids ~= rich([ruleSpan(opt, "─╮")]);
+    }
+    else
+        kids ~= rich([ruleSpan(opt, "╮")]);
 
-    Widget lblW = themedFenceHeader(blk, opt);
-    lblW.width = SizeSpec.grow();
-    return b.add(Widget(kind: WidgetKind.row,
-        children: [b.add(lblW), copyGlyph()],
-        width: SizeSpec.grow(), hitId: hit));
+    return b.add(Widget(kind: WidgetKind.row, children: kids,
+        width: SizeSpec.fixed(boxW)));
+}
+
+// The fence's BOTTOM border row: `╰──╯` — and, when the body overflows
+// horizontally, the horizontal SCROLLBAR (`COD6`): the border line is the
+// track, the `━` thumb rides it (`╰──━━━━────╯`), and the whole row is the
+// drag target.
+private uint fenceBottomBorder(ref Builder b, in MdViewOptions opt,
+    ref const MdBlock blk, int boxW, int widest, int innerW, int offsetX,
+    bool hOver)
+{
+    import sparkles.ui.state : scrollbarThumb;
+
+    const track = boxW - 2;
+    TextSpan[] spans = [ruleSpan(opt, "╰")];
+    size_t hit = opt.hitId;
+    if (hOver && track > 0)
+    {
+        const g = scrollbarThumb(widest, innerW, offsetX, track);
+        spans ~= ruleSpan(opt, repGlyph("─", g.start));
+        spans ~= TextSpan(repGlyph("━", g.extent), Slot.chromeAccent,
+            opt.baseStyle, noBreak: true,
+            fg: opt.theme.codeFg, hasFg: opt.theme.present);
+        spans ~= ruleSpan(opt,
+            repGlyph("─", track - g.start - g.extent));
+        if (opt.fenceHBarHitBase != 0)
+            hit = opt.fenceHBarHitBase + blk.codeBody.start;
+    }
+    else
+        spans ~= ruleSpan(opt, repGlyph("─", track));
+    spans ~= ruleSpan(opt, "╯");
+
+    Widget w = Widget(kind: WidgetKind.rich, spans: spans, slot: Slot.border,
+        wrap: TextWrap.none, hitId: hit, paintBackground: true,
+        textStyle: opt.baseStyle, width: SizeSpec.fixed(boxW));
+    if (opt.theme.present)
+    {
+        w.bgOverride = opt.theme.codePanelBg;
+        w.hasBgOverride = true;
+    }
+    return b.add(w);
+}
+
+// The vertical track of a tall fence (`COD6`): an inner right column of
+// `│` track cells with a `┃` thumb, one cell per shown row — the drag
+// target for the y axis.
+private uint fenceVTrack(ref Builder b, in MdViewOptions opt,
+    ref const MdBlock blk, int lines, int shownRows, int offsetY)
+{
+    import sparkles.ui.state : scrollbarThumb;
+
+    const g = scrollbarThumb(lines, shownRows, offsetY, shownRows);
+    auto cells = new uint[](0);
+    foreach (r; 0 .. shownRows)
+    {
+        const onThumb = r >= g.start && r < g.start + g.extent;
+        TextSpan sp = TextSpan(onThumb ? "┃" : "│",
+            onThumb ? Slot.chromeAccent : Slot.border, opt.baseStyle,
+            noBreak: true,
+            fg: onThumb ? opt.theme.codeFg : opt.theme.ruleFg,
+            hasFg: opt.theme.present);
+        cells ~= b.add(Widget(kind: WidgetKind.rich, spans: [sp],
+            slot: Slot.border, textStyle: opt.baseStyle));
+    }
+    return b.add(Widget(kind: WidgetKind.column, children: cells,
+        width: SizeSpec.fixed(1),
+        hitId: opt.fenceVBarHitBase != 0
+            ? opt.fenceVBarHitBase + blk.codeBody.start : opt.hitId));
 }
 
 private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
@@ -674,6 +799,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
         {
             MdViewOptions inner = opt;
             inner.depthBudget = opt.depthBudget - 1;
+            inner.indentCols = opt.indentCols + 2; // the bar panel's padding
 
             Callout co;
             if (opt.theme.present && detectCallout(blk, src, opt, co))
@@ -742,7 +868,9 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         first = false;
                         continue;
                     }
-                    const child = viewBlock(b, c, src, opt, listDepth + 1,
+                    MdViewOptions childOpt = opt;
+                    childOpt.indentCols = opt.indentCols + lead;
+                    const child = viewBlock(b, c, src, childOpt, listDepth + 1,
                         quoteDepth);
                     rows ~= b.add(Widget(kind: WidgetKind.panel,
                         children: [child], padding: Insets(0, 0, 0, lead)));
@@ -855,114 +983,134 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     line(code[start .. $], start);
             }
 
-            uint body_;
-            final switch (opt.codeOverflow) with (CodeOverflow)
+            import sparkles.ui.geometry : cellsOf;
+
+            // ── The integrated-border chrome (COD1/COD2/COD6) ─────────────
+            // Geometry first: the box is glyph-composed, so its width must
+            // be exact — which it is, because `opt.indentCols` tracked every
+            // ancestor's left padding. Unbounded (a popup's docs): the box
+            // shrink-wraps to its content.
+            const gutterW = opt.codeLineNumbers ? numW + 1 : 0;
+            int widest;
+            foreach (spans; lineSpans)
             {
-                case scroll:
+                int w;
+                foreach (ref const s; spans)
+                    w += cast(int) cellsOf(s.text);
+                if (w > widest)
+                    widest = w;
+            }
+            const bounded = opt.maxWidth > 0;
+            const boxW = bounded ? opt.maxWidth - opt.indentCols
+                : widest + gutterW + 4;
+            const innerW = boxW - 4 - gutterW; // border + pad each side
+            const lines = cast(int) lineSpans.length;
+            const scrolling = opt.codeOverflow == CodeOverflow.scroll;
+            const shownRows = scrolling && opt.codeMaxLines > 0
+                && lines > opt.codeMaxLines ? opt.codeMaxLines : lines;
+            const vOver = shownRows < lines;
+            const hOver = scrolling && bounded && innerW > 0
+                && widest > innerW;
+            const fs = fenceScrollOf(opt, blk.codeBody.start);
+
+            uint body_;
+            if (scrolling)
+            {
+                // The body is a horizontal — and, past `codeMaxLines`, a
+                // vertical — VIEWPORT (`LAY7`): lines keep their natural
+                // extent; `clipX`/`clipY` scissor them, `childOffset` is
+                // this fence's scroll. The number gutter is a twin viewport
+                // scrolling y only, pinned in x — like every code view
+                // worth reading.
+                foreach (li, spans; lineSpans)
+                    rows ~= b.add(Widget(kind: WidgetKind.rich,
+                        spans: spans, slot: lineSlots[li],
+                        hitId: opt.hitId, paintBackground: true,
+                        textStyle: codeStyle(opt)));
+                Widget vp = Widget(kind: WidgetKind.column, children: rows,
+                    clipX: true, clipY: vOver,
+                    childOffset: Point(fs.x, vOver ? fs.y : 0),
+                    width: SizeSpec.grow());
+                if (vOver)
+                    vp.height = SizeSpec.fixed(shownRows);
+                const viewport = b.add(vp);
+
+                uint[] parts;
+                if (opt.codeLineNumbers)
                 {
-                    // The body is a horizontal VIEWPORT (`LAY7`): lines keep
-                    // their natural width; `clipX` scissors them at the
-                    // panel, `childOffset.x` is this fence's scroll. The
-                    // number gutter is a separate pinned column, so only the
-                    // code scrolls — like every code view worth reading.
-                    foreach (li, spans; lineSpans)
-                        rows ~= b.add(Widget(kind: WidgetKind.rich,
-                            spans: spans, slot: lineSlots[li],
-                            hitId: opt.hitId, paintBackground: true,
-                            textStyle: codeStyle(opt)));
-                    const scrollX = fenceScrollOf(opt, blk.codeBody.start);
-                    const viewport = b.add(Widget(kind: WidgetKind.column,
-                        children: rows, clipX: true,
-                        childOffset: Point(scrollX, 0),
-                        width: SizeSpec.grow()));
-
-                    // The overflow indicator: a track+thumb row under the
-                    // body, sized against the panel interior the width bound
-                    // implies. Widget-level on purpose — every backend gets
-                    // the affordance, and it moves in the goldens.
-                    uint[] stack = [viewport];
-                    if (opt.maxWidth > 0)
-                    {
-                        import sparkles.ui.geometry : cellsOf;
-
-                        int widest;
-                        foreach (spans; lineSpans)
-                        {
-                            int w;
-                            foreach (ref const s; spans)
-                                w += cast(int) cellsOf(s.text);
-                            if (w > widest)
-                                widest = w;
-                        }
-                        const gutterW = opt.codeLineNumbers ? numW + 1 : 0;
-                        const inner = opt.maxWidth - 6 - gutterW;
-                        if (inner > 0 && widest > inner)
-                            stack ~= fenceScrollbar(b, opt, widest, inner,
-                                scrollX);
-                    }
-                    const stacked = stack.length == 1 ? viewport
-                        : b.add(Widget(kind: WidgetKind.column,
-                            children: stack, width: SizeSpec.grow()));
-
-                    if (!opt.codeLineNumbers)
-                    {
-                        body_ = stacked;
-                        break;
-                    }
                     auto nums = new uint[](0);
                     foreach (li; 0 .. lineSpans.length)
                         nums ~= b.add(Widget(kind: WidgetKind.rich,
                             spans: [numberSpan(li + 1)], slot: Slot.gutter,
                             textStyle: codeStyle(opt)));
                     // Fixed, not fit: the viewport's natural width is its
-                    // widest (overflowing) line, and the row's deficit would
-                    // otherwise squeeze the gutter's trailing space away.
-                    const numCol = b.add(Widget(kind: WidgetKind.column,
-                        children: nums, width: SizeSpec.fixed(numW + 1)));
-                    body_ = b.add(Widget(kind: WidgetKind.row,
-                        children: [numCol, stacked],
-                        width: SizeSpec.grow()));
-                    break;
+                    // widest (overflowing) line, and the row's deficit
+                    // would otherwise squeeze the gutter's trailing space.
+                    Widget nc = Widget(kind: WidgetKind.column,
+                        children: nums, width: SizeSpec.fixed(numW + 1),
+                        clipY: vOver,
+                        childOffset: Point(0, vOver ? fs.y : 0));
+                    if (vOver)
+                        nc.height = SizeSpec.fixed(shownRows);
+                    parts ~= b.add(nc);
                 }
-                case wrap:
-                    // In-panel greedy wrapping; continuations hang past the
-                    // number gutter (which therefore blanks on them, like
-                    // the old preview's wrapped code rows).
-                    foreach (li, spans; lineSpans)
-                    {
-                        if (opt.codeLineNumbers)
-                            spans = numberSpan(li + 1) ~ spans;
-                        rows ~= b.add(Widget(kind: WidgetKind.rich,
-                            spans: spans, slot: lineSlots[li],
-                            hitId: opt.hitId, paintBackground: true,
-                            wrap: TextWrap.greedy,
-                            hangIndent: opt.codeLineNumbers ? numW + 1 : 0,
-                            textStyle: codeStyle(opt)));
-                    }
-                    body_ = b.container(WidgetKind.column, rows);
-                    break;
+                parts ~= viewport;
+                if (vOver)
+                    parts ~= fenceVTrack(b, opt, blk, lines, shownRows,
+                        fs.y);
+                body_ = b.add(Widget(kind: WidgetKind.row, children: parts,
+                    width: SizeSpec.grow()));
             }
-            // Padded on every side so a cell backend's box-glyph perimeter
-            // never overwrites content; rounded corners (╭…╯ on cells).
-            Widget panel = Widget(kind: WidgetKind.panel, children: [body_],
-                slot: Slot.surface, paintBackground: true, stretch: true,
-                padding: Insets(1, 2, 1, 2), hitId: opt.hitId,
-                decoration: Decoration(borderWidth: Insets.all(1),
-                    borderStyle: BorderStyle.solid, borderSlot: Slot.border,
-                    borderRadius: 4));
-            if (!opt.theme.present)
-                return b.add(panel);
+            else
+            {
+                // In-panel greedy wrapping; continuations hang past the
+                // number gutter (which therefore blanks on them, like the
+                // old preview's wrapped code rows). The rows carry the
+                // interior as their width MAXIMUM — the measure pass sizes
+                // wrapped heights against it; without the bound it measures
+                // the unwrapped line (one row) and the continuations would
+                // overflow the panel onto the bottom border.
+                foreach (li, spans; lineSpans)
+                {
+                    if (opt.codeLineNumbers)
+                        spans = numberSpan(li + 1) ~ spans;
+                    Widget w = Widget(kind: WidgetKind.rich,
+                        spans: spans, slot: lineSlots[li],
+                        hitId: opt.hitId, paintBackground: true,
+                        wrap: TextWrap.greedy,
+                        hangIndent: opt.codeLineNumbers ? numW + 1 : 0,
+                        textStyle: codeStyle(opt));
+                    w.width.max = innerW + gutterW;
+                    rows ~= b.add(w);
+                }
+                body_ = b.container(WidgetKind.column, rows);
+            }
 
-            // Themed: a language-label header band over the tinted panel.
-            panel.bgOverride = opt.theme.codePanelBg;
-            panel.hasBgOverride = true;
-            const hdr = fenceHeaderRow(b, blk, opt);
-            const pnl = b.add(panel);
-            // Width-transparent wrapper: without `grow` this column would
-            // shrink-wrap to the longest code line and the panel's own
-            // `stretch` could never reach the viewport.
-            return b.add(Widget(kind: WidgetKind.column, children: [hdr, pnl],
-                width: SizeSpec.grow()));
+            // The sides are paint-time decoration, so a wrap-mode body of
+            // any wrapped height still gets them; the top and bottom borders
+            // are glyph rows in BOTH modes — corners, row-center alignment,
+            // and an empty body's closing line come for free, and scroll
+            // mode's bottom row doubles as the scrollbar.
+            Widget panel = Widget(kind: WidgetKind.panel, children: [body_],
+                slot: Slot.surface, paintBackground: true,
+                padding: Insets(0, 2, 0, 2), hitId: opt.hitId,
+                width: SizeSpec.fixed(boxW),
+                decoration: Decoration(borderWidth: Insets(0, 1, 0, 1),
+                    borderStyle: BorderStyle.solid,
+                    borderSlot: Slot.border));
+            if (opt.theme.present)
+            {
+                panel.bgOverride = opt.theme.codePanelBg;
+                panel.hasBgOverride = true;
+                panel.borderOverride = opt.theme.ruleFg;
+                panel.hasBorderOverride = true;
+            }
+
+            return b.add(Widget(kind: WidgetKind.column, children: [
+                    fenceTopBorder(b, blk, opt, boxW), b.add(panel),
+                    fenceBottomBorder(b, opt, blk, boxW, widest, innerW,
+                        fs.x, hOver)],
+                width: SizeSpec.fixed(boxW)));
         }
 
         case thematicBreak:
@@ -1145,59 +1293,15 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
     }
 }
 
-// The per-fence horizontal scrollbar (`COD6`): a `─` track with a `━`
-// thumb whose extent and position mirror the viewport fraction and the
-// armed offset. Clipped to the panel like the body, so an indented
-// fence's slightly-wide estimate never pokes past the border.
-private uint fenceScrollbar(ref Builder b, in MdViewOptions opt, int widest,
-    int inner, int scrollX) @safe
-{
-    int thumbW = inner * inner / widest;
-    if (thumbW < 1)
-        thumbW = 1;
-    if (thumbW > inner)
-        thumbW = inner;
-    const maxOff = widest - inner;
-    int pos = maxOff > 0 ? (inner - thumbW) * scrollX / maxOff : 0;
-    if (pos > inner - thumbW)
-        pos = inner - thumbW;
-
-    static string rep(string g, int n) @safe
-    {
-        string s;
-        foreach (_; 0 .. n)
-            s ~= g;
-        return s;
-    }
-
-    TextSpan[] spans;
-    void seg(int n, string glyph, Slot slot, RgbColor fg) @safe
-    {
-        if (n <= 0)
-            return;
-        spans ~= TextSpan(rep(glyph, n), slot, opt.baseStyle, noBreak: true,
-            fg: fg, hasFg: opt.theme.present);
-    }
-
-    seg(pos, "─", Slot.border, opt.theme.ruleFg);
-    seg(thumbW, "━", Slot.chromeAccent, opt.theme.codeFg);
-    seg(inner - pos - thumbW, "─", Slot.border, opt.theme.ruleFg);
-    const bar = b.add(Widget(kind: WidgetKind.rich, spans: spans,
-        wrap: TextWrap.none, slot: Slot.border, hitId: opt.hitId,
-        textStyle: opt.baseStyle));
-    return b.add(Widget(kind: WidgetKind.column, children: [bar],
-        clipX: true, width: SizeSpec.grow()));
-}
-
-/// The horizontal scroll armed for the fence whose body starts at
-/// `bodyStart` (scroll mode), else 0.
-private int fenceScrollOf(in MdViewOptions opt, size_t bodyStart)
+/// The scroll armed for the fence whose body starts at `bodyStart`
+/// (scroll mode), else zero offsets.
+private FenceScroll fenceScrollOf(in MdViewOptions opt, size_t bodyStart)
     @safe pure nothrow @nogc
 {
     foreach (ref const fs; opt.fenceScrolls)
         if (fs.bodyStart == bodyStart)
-            return fs.cols;
-    return 0;
+            return fs;
+    return FenceScroll(bodyStart, 0, 0);
 }
 
 // A table cell's text, edge-trimmed: `| cell |` sources collapse to one
@@ -1975,12 +2079,12 @@ version (unittest)
         if (op.kind == OpKind.textRun && op.text == glyphs.checkedBox
             && op.visual.fg == vt.accentGreen)
             sawCheck = true;
-        // The header is a rich run now (it carries the fence's opening-line
-        // identity); its band is the widget's own fill in codeHeaderBg. The
-        // devicon replaces the language name — the glyph IS the label.
+        // The header is the fence's TOP BORDER row (COD1/COD2): the devicon
+        // replaces the language name on the border line, and the whole
+        // chrome fills in the panel tint (there is no separate header band).
         if (op.kind == OpKind.textRun && op.text == langIcon("d"))
             sawHeader = true;
-        if (op.kind == OpKind.fillRect && op.visual.bg == vt.codeHeaderBg)
+        if (op.kind == OpKind.fillRect && op.visual.bg == vt.codePanelBg)
             sawHeaderBand = true;
     }
     assert(sawIcon && sawBand && sawCheck && sawHeader && sawHeaderBand);

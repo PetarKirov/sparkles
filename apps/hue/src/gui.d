@@ -74,7 +74,7 @@ import sparkles.syntax : HighlightEvent, LabelId, LabelSet, Theme, StyleSpec, Te
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : mix;
 
-import sparkles.syntax.md.render_widgets : CodeOverflow;
+import sparkles.syntax.md.render_widgets : CodeOverflow, FenceScroll;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
@@ -92,8 +92,8 @@ import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind, RuleEdge;
 import sparkles.ui.layout : layout;
 import sparkles.ui.scroll_view : ScrollExtents, ScrollPointer;
-import sparkles.ui.state : CaptureState, hoverTargets, HoverState, keyAt,
-    keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
+import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
+    keyAt, keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
     scrollbarThumb, selectionRects, sourceOffsetAt, wantedPointerShape,
     SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
@@ -328,6 +328,7 @@ int runGui(
     bool ansiCopyStrip = false,          // --ansi-copy=strip (SEL7/CLI10); default raw
     TableCopyFormat tableCopy = TableCopyFormat.tsv, // --table-copy (TBL2/CLI11)
     CodeOverflow codeOverflow = CodeOverflow.scroll, // --code-overflow
+    int codeMaxLines = 100,              // --code-max-lines (COD6)
     SourceSet* set = null,               // the document set to navigate (GNV1)
     DocLoader loadDoc = null,            // loads a set entry (supplied by app.d)
     TsConfigCache* tsCache = null,       // fence highlighting for the widget view
@@ -504,6 +505,7 @@ int runGui(
     vm.listWhitespace = listWhitespace;
     vm.codeLineNumbers = codeLineNumbers;
     vm.codeOverflow = codeOverflow;
+    vm.codeMaxLines = codeMaxLines;
 
     ResizeDebounce rd;
 
@@ -882,7 +884,7 @@ int runGui(
     // is the container's own capture — the same two levels the terminal
     // host has, where a pane's grabs live inside its `handle`.
     enum size_t capContainer = 1, capDocSb = 2, capTreeSb = 3,
-        capDocHSb = 4, capTreeHSb = 5, capSelection = 6;
+        capDocHSb = 4, capTreeHSb = 5, capSelection = 6, capFenceSb = 7;
 
     Flashes flash;
     HoverPopup pop;
@@ -1770,7 +1772,19 @@ int runGui(
                     if (wheelRoute.pane == treePane)
                         pn.tree.scrollBy(inp.fin.wheelCells);
                     else
-                        vm.top += inp.fin.wheelCells;
+                    {
+                        // A vertical notch over a TALL fence scrolls the
+                        // fence until its edge (`COD6`); only then does it
+                        // fall through to the document.
+                        const mpw = inp.fin.pos;
+                        const rowW = vm.top
+                            + cast(long)((mpw.y - docY0) / cellH);
+                        const fb = mpw.y >= docY0
+                            ? vm.fenceBodyAtRow(rowW) : size_t.max;
+                        if (fb == size_t.max
+                            || !vm.scrollFenceV(fb, inp.fin.wheelCells))
+                            vm.top += inp.fin.wheelCells;
+                    }
                 }
             }
 
@@ -1921,7 +1935,7 @@ int runGui(
 
         bool copyClicked; // a click landing on a copy button is not a selection
 
-        // Per-fence horizontal scroll (`COD`): a sideways wheel notch —
+        // Per-fence horizontal scroll (`COD6`): a sideways wheel notch —
         // a horizontal axis or Shift+wheel, folded into `wheelCellsX` —
         // over a fence body scrolls THAT fence's viewport.
         if (inp.fin.wheelCellsX != 0)
@@ -1935,6 +1949,80 @@ int runGui(
                     vm.scrollFence(fb, inp.fin.wheelCellsX);
             }
         }
+
+        // The fence scrollbars (`COD6`): press/drag/track-click through the
+        // shared STM9 machine, exactly like the pane bars — the bar rows are
+        // hit targets, so their rects come from the same list every other
+        // affordance uses. One machine: a single pointer drags one bar.
+        {
+            import sparkles.ui.scroll_view : ScrollExtents, ScrollPointer;
+
+            const mpf = inp.fin.pos;
+            const dpf = Point(cast(int)((mpf.x - gutterPx) / cellW) + dhx,
+                cast(int)(vm.top + cast(long)((mpf.y - docY0) / cellH)));
+
+            // The bar this frame concerns: the grabbed owner's, else the
+            // one under the pointer (h and v live in disjoint id ranges).
+            const(HoverTarget)* hTgt, vTgt;
+            foreach (ref const t; vm.targets)
+            {
+                if (t.hitId >= vm.fenceHBarHitBase
+                    && t.hitId < vm.tableCopyHitBase
+                    && (vm.fenceSv.h.dragging
+                        ? t.hitId - vm.fenceHBarHitBase == vm.fenceSvOwner
+                        : t.rect.contains(dpf)))
+                    hTgt = &t;
+                if (t.hitId >= vm.fenceVBarHitBase
+                    && t.hitId < vm.fenceHBarHitBase
+                    && (vm.fenceSv.v.dragging
+                        ? t.hitId - vm.fenceVBarHitBase == vm.fenceSvOwner
+                        : t.rect.contains(dpf)))
+                    vTgt = &t;
+            }
+
+            if (hTgt !is null && !vm.fenceSv.v.dragging)
+            {
+                const owner = hTgt.hitId - vm.fenceHBarHitBase;
+                if (!vm.fenceSv.h.dragging)
+                    vm.fenceSvOwner = owner;
+                const e = vm.fenceExtent(owner);
+                const cur = vm.fenceScrollAt.get(owner,
+                    FenceScroll(owner, 0, 0));
+                // The track excludes the `╰`/`╯` corners.
+                inp.capture = vm.fenceSv.stepH(inp.capture, capFenceSb, true,
+                    ScrollPointer(over: hTgt.rect.contains(dpf),
+                        pressed: clickPressed(),
+                        released: inp.fin.leftReleased,
+                        trackPos: dpf.x - (hTgt.rect.x + 1)),
+                    cur.x, ScrollExtents(e.widest, e.innerW,
+                        hTgt.rect.width - 2));
+                if (vm.fenceSv.h.dragging && clickPressed())
+                    copyClicked = true; // a bar press is not a selection
+                if (vm.fenceSv.h.offset != cur.x)
+                    vm.setFenceScroll(owner, vm.fenceSv.h.offset, cur.y);
+            }
+            else if (vTgt !is null)
+            {
+                const owner = vTgt.hitId - vm.fenceVBarHitBase;
+                if (!vm.fenceSv.v.dragging)
+                    vm.fenceSvOwner = owner;
+                const e = vm.fenceExtent(owner);
+                const cur = vm.fenceScrollAt.get(owner,
+                    FenceScroll(owner, 0, 0));
+                inp.capture = vm.fenceSv.stepV(inp.capture, capFenceSb, true,
+                    ScrollPointer(over: vTgt.rect.contains(dpf),
+                        pressed: clickPressed(),
+                        released: inp.fin.leftReleased,
+                        trackPos: dpf.y - vTgt.rect.y),
+                    cur.y, ScrollExtents(e.lines, e.shownRows,
+                        vTgt.rect.height));
+                if (vm.fenceSv.v.dragging && clickPressed())
+                    copyClicked = true;
+                if (vm.fenceSv.v.offset != cur.y)
+                    vm.setFenceScroll(owner, cur.x, vm.fenceSv.v.offset);
+            }
+        }
+
 
         // The fence copy affordance: the header band is the hit target (its
         // source-anchored id resolves the fence body); a click copies and the
