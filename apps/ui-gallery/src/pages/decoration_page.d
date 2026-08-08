@@ -66,6 +66,24 @@ uint view(ref Builder b, in GalleryState s)
         borderRadius: 4,
         shadow: true,
     )), 14);
+    // A one-row box with a solid bottom border is a special case, not a
+    // smaller version of the one above it: the cell grid renders it as a rule
+    // of `─` rather than as an underline, because that is how a thematic break
+    // is spelled. Shown as its own specimen, since the first draft of this
+    // page reached the case by accident — it gave the bottom-only box no
+    // vertical padding, and its content came out struck through by its own
+    // border.
+    boxes ~= specimen(b, "rule (1 row)", b.add(Widget(
+        kind: WidgetKind.box,
+        slot: Slot.border,
+        width: SizeSpec.fixed(13),
+        height: SizeSpec.fixed(1),
+        decoration: Decoration(
+            borderWidth: Insets(0, 0, 1, 0),
+            borderStyle: BorderStyle.solid,
+            borderSlot: Slot.border,
+        ),
+    )), 14);
 
     uint[] runs;
     runs ~= specimen(b, "plain", label(b, "The quick brown fox", Slot.code), 14);
@@ -101,24 +119,43 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= section(b, "text style", runs);
     body_ ~= spacer(b);
     body_ ~= section(b, "what a cell grid can express", [
-        kv(b, "border", "any non-zero width → box-drawing glyphs", 14, Slot.docs),
-        kv(b, "radius", "rounded corners only; the value is ignored", 14, Slot.docs),
-        kv(b, "shadow", "not expressible — dropped", 14, Slot.docs),
-        kv(b, "underline", "SGR 4:x, including the curly variant", 14, Slot.docs),
-        kv(b, "bold/italic", "SGR 1 / 3, or a real styled face in a window", 14, Slot.docs),
+        kv(b, "border sides", "box-drawing glyphs on the perimeter", 15, Slot.docs),
+        kv(b, "solid/dashed/dotted", "─ ╌ ┈ and │ ╎ ┊ — all three differ", 15, Slot.docs),
+        kv(b, "corners", "always solid; rounded when a radius is set", 15, Slot.docs),
+        kv(b, "left accent", "the quote bar — │, heavy ┃ at 2+ wide", 15, Slot.docs),
+        kv(b, "right accent", "an eighth-block, weighted by the px width", 15, Slot.docs),
+        kv(b, "bottom only", "an underline; a rule on a one-row box", 15, Slot.docs),
+        kv(b, "underline", "SGR 4:x, including the curly variant", 15, Slot.docs),
+        kv(b, "bold/italic", "SGR 1 / 3, or a real styled face in a window", 15, Slot.docs),
+    ]);
+    body_ ~= spacer(b);
+    body_ ~= section(b, "what it cannot", [
+        kv(b, "radius value", "only its presence survives, as round corners", 15, Slot.docs),
+        kv(b, "shadow", "no cell analog — dropped, so the box above looks "
+            ~ "exactly like the rounded one here", 15, Slot.docs),
+        kv(b, "top only", "a cell has an underline attribute and no overline", 15, Slot.docs),
     ]);
     body_ ~= spacer(b);
     body_ ~= para(b,
-        "A single bottom border on a one-row box becomes a rule; on anything "
-        ~ "taller it becomes the cells' underline attribute. Other single-side "
-        ~ "accents — the three-pixel error bar above — have no cell analog and "
-        ~ "drop, which is why the terminal shows that specimen unadorned while "
-        ~ "the window draws the bar.", w);
+        "Two of those lines used to be four. Dashed and dotted borders drew "
+        ~ "with the solid glyphs, and a single-side accent dropped entirely — "
+        ~ "both of which this page made obvious by putting the specimens side "
+        ~ "by side, and neither of which the cell grid actually needed to give "
+        ~ "up. Box-drawing carries dash runs in both axes; a left accent is "
+        ~ "the quote bar the markdown goldens pin, and the eighth-blocks "
+        ~ "weight a right one.", w);
 
     return column(b, body_);
 }
 
 /// A small labelled box carrying `d`.
+///
+/// Every specimen is the same three rows, whatever sides its border has. The
+/// first draft varied the vertical padding with the border, which made the
+/// bottom-only box one row tall — and a one-row box with a solid bottom border
+/// is a $(I thematic break) to the cell grid, so the specimen came out as a
+/// rule drawn straight through the word "content". One shape for all of them
+/// keeps the comparison about the border and nothing else.
 private uint box(ref Builder b, Decoration d)
     => b.add(Widget(
         kind: WidgetKind.panel,
@@ -127,7 +164,7 @@ private uint box(ref Builder b, Decoration d)
             children: [label(b, "content", Slot.code)],
         ))],
         slot: Slot.surface,
-        padding: Insets.symmetric(d.borderWidth.top > 0 ? 1 : 0, 2),
+        padding: Insets.symmetric(1, 2),
         width: SizeSpec.fixed(13),
         decoration: d,
     ));

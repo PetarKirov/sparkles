@@ -77,6 +77,16 @@ undisplayed.
 The strongest argument for the app is the list of defects that existed before it
 and were invisible without it.
 
+- **The cell grid drew `solid`, `dashed` and `dotted` borders identically.** Box
+  drawing carries dash runs in both axes (`╌ ┈` and `╎ ┊`); the interpreter used
+  `─`/`│` for all three, so two thirds of the vocabulary was invisible in a
+  terminal — and a dotted hover underline looked solid. The page shows the three
+  side by side, which is one picture repeated if they do not differ.
+- **A single-side accent dropped entirely in the terminal.** The left bar an
+  error line wears was documented as having "no cell analog", but the
+  eighth-blocks give it three weights. It now survives, which also gives hue's
+  terminal markdown preview the blockquote bars and its twoslash overlay the
+  severity accents it previously only had in a window.
 - **`ui-raylib` drew every square-cornered border wrong.** The two vertical
   edges were computed with the horizontal axis' argument order, so a box's left
   border drew as a bar _across_ the box and its right border as a bar poking out
