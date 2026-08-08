@@ -592,6 +592,10 @@ export default withMermaid(
               text: 'Core-CLI',
               collapsed: false,
               items: [
+                {
+                  text: 'args subcommands spec',
+                  link: '/specs/core-cli/SPEC',
+                },
                 { text: 'drawTable spec', link: '/specs/core-cli/table' },
                 {
                   text: 'TUI component suite',
