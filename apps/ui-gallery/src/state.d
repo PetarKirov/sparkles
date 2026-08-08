@@ -73,8 +73,15 @@ enum size_t hitDemoBar = 7100;    /// the Scrolling page's specimen bar
 enum size_t hitChromeBar = 7200;  /// the Components page's live scroll view
 enum size_t hitSplit = 8000;    /// the split page's divider
 enum size_t hitMachines = 9000; /// the state-machine page's tiles
-enum size_t hitTerminal = 10000; /// the Terminal page's tabs: `hitTerminal + tab.id`
-enum size_t hitTermActions = 10100; /// …and its action bar (new / close / hold)
+enum size_t hitTermActions = 10000; /// the Terminal page's action bar (3 ids)
+/**
+The Terminal page's pane (`+ 0`) and its per-tab $(B lanes): select is
+`hitTerminal + 2·id`, close is `hitTerminal + 2·id + 1`. Tab ids mint
+monotonically forever, so this base is the $(B last) one and owns everything
+above it — with the old layout the 101st spawn would have collided with the
+action bar. Ids start at 1, so the `+ 0` slot can never name a tab.
+*/
+enum size_t hitTerminal = 10100;
 
 /// Element keys (`Widget.key`) for state that must survive a rebuild.
 enum size_t keyContentScroll = 101; ///
@@ -294,6 +301,10 @@ struct GalleryState
         vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
     int inspectorLines = 40; /// how much of a dump the Inspector builds
     TermsState terms;        /// the Terminal page's tab strip
+    /// `--term-tab-glyphs`: the mini tab list's position glyphs, one grapheme
+    /// per position. Empty = the circled-number series (or ASCII digits when
+    /// the theme says no unicode).
+    string termTabGlyphs;
 
     // ── what the host told us ───────────────────────────────────────────────
     Size surface = Size(80, 24); ///
@@ -505,7 +516,7 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
     // one kind of thing and neither will ever mint more than one id.
     static immutable size_t[] bases = [hitNav, hitTheme, hitTabs, hitActions,
         hitTree, hitContentBar, hitDemoBar, hitChromeBar, hitSplit,
-        hitMachines, hitTerminal, hitTermActions];
+        hitMachines, hitTermActions, hitTerminal];
     foreach (i, b; bases)
     {
         assert(b != 0);

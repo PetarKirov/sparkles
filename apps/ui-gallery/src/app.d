@@ -57,6 +57,11 @@ struct Params
         "With --render: keystrokes to deliver before the frame is taken, "
         ~ "e.g. ']]j'."))
     string keys;
+
+    @(Option("term-tab-glyphs", description:
+        "The Terminal page's narrow tab list, one glyph per position — "
+        ~ "overrides the default circled-number series."))
+    string termTabGlyphs;
 }
 
 int main(string[] args)
@@ -130,11 +135,17 @@ int main(string[] args)
         // wake-without-input lever, fixed at startup by design.
         keyRelease: true,
         idleTimeoutMs: 50,
+        // Bare-motion reporting (DEC 1003): without it the terminal arm sees
+        // no motion events, so hover-revealed affordances — the tab list's
+        // close button — would be drawn as if hover worked and never light
+        // up. Costs one input event per pointer move.
+        motion: true,
     };
 
     auto app = Gallery(GalleryState(
         page: pageIndexOf(cli.page),
         themeIndex: themeIndexOf(cli.theme),
+        termTabGlyphs: cli.termTabGlyphs,
     ));
     // A real run may fork shells; the recorded tests and --render, which
     // construct their own Gallery, leave this off and the request flags inert.
