@@ -76,15 +76,20 @@ the pointer, so the Scrolling page's own viewport is driven by keys only. Doing
 better needs the wheel routed by hit target, which is a `Page` hook the catalog
 does not yet have. Small, and worth doing when a second page wants it.
 
-## `UGL-O7` — mouse inside a terminal pane · open
+## `UGL-O7` — mouse inside a terminal pane · open (narrowed)
 
 `handle_mouse` polls raylib in absolute window coordinates, so an embedded pane
-gets no selection, no OSC 8 hover, no scrollback wheel and no in-pane scrollbar
-— on either arm. The page says so. Lands with the mouse-event conversion
-(`TVW4`'s "when its source swaps"), at which point the gallery routes
-`PointerEvent`s inside the pane rect the way it already routes keys. The
-clipboard chords (`Ctrl+Shift+C/V`) sit behind the same conversion: copy needs a
-selection, and paste needs a clipboard **read**, which is not a host errand yet.
+gets no selection and no OSC 8 hover — on either arm. The page says so. Lands
+with the mouse-event conversion (`TVW4`'s "when its source swaps"), at which
+point the gallery routes `PointerEvent`s inside the pane rect the way it
+already routes keys. The clipboard chords (`Ctrl+Shift+C/V`) sit behind the
+same conversion: copy needs a selection, and paste needs a clipboard **read**,
+which is not a host errand yet.
+
+Scrollback no longer waits on it: the wheel over the pane, `Shift+PgUp`/`PgDn`
+in capture, and a bar drawn from the terminal's own numbers all shipped
+(`scrollViewport`/`scrollback` on the embedded surface). Only _dragging_ that
+bar remains behind the conversion.
 
 ## `UGL-O8` — the embedded cell renderer's honest losses · open
 

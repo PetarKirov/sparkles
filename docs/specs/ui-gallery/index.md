@@ -112,6 +112,12 @@ and were invisible without it.
   reclamation shrinks a text run's allocation without clipping what it paints.
 - **The gallery's own `section` helper drew its caption on top of its body**,
   because `panel` is not a flow.
+- **`grow` inside the shell's scroll viewport collapses to natural width.**
+  The viewport lays its child out at the child's own width, so a `grow` pane
+  has nothing to expand into and quietly becomes as wide as the longest label
+  beside it — found live as a terminal that refused to widen with its window,
+  at exactly the width of its own hint line. Pages size widths from state
+  (`fixed`), as their heights always did.
 
 Each of the last three is now an assertion; the first is a unit test in the
 backend that owns the arithmetic.
