@@ -68,14 +68,38 @@ enum bool isAppFor(A, Host) = __traits(compiles, (ref A a, ref Host h) {
 /**
 A theme, resolved to what one frame needs: the slot palette and the page colors.
 
-Computed once per run by $(LREF appThemeOf) — not per frame, and not by the
-application.
+Resolved once per run from `--theme` by $(LREF appThemeOf). A component that
+needs to $(I change) it declares a `theme` member and $(LREF frameTheme) prefers
+that — see below; the run's value is then the fallback rather than the answer.
 */
 struct AppTheme
 {
     Palette palette; /// the slot channel every widget resolves against
     RgbColor pageFg; /// unlabeled-text foreground
     RgbColor pageBg; /// the page fill behind everything
+}
+
+/**
+The theme this frame paints in: the component's own when it has one, else the
+run's.
+
+$(B A theme resolved once per run cannot be swapped.) That is fine for an
+application whose theme is a startup flag and wrong for two real cases: a theme
+$(I browser), where choosing one has to repaint the whole window rather than a
+preview pane, and a viewer painting its preview in the theme being edited while
+its own chrome stays in the UI theme. Both need the value per frame, and neither
+can get it by mutating `RunConfig` — the arms take it `in`.
+
+So it is a member a component $(I may) declare, probed the way
+$(REF isCanvas, sparkles,ui,canvas) probes for `pushClip` and `rule`: a
+component without one pays nothing and reads exactly as before.
+*/
+AppTheme frameTheme(A)(ref A app, in AppTheme fallback)
+{
+    static if (__traits(compiles, { AppTheme t = app.theme; }))
+        return app.theme;
+    else
+        return fallback;
 }
 
 /// A `Color` that may be unset, as a concrete `RgbColor`. (The twin of
@@ -140,20 +164,25 @@ void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th, ref FrameSnapsho
     if (h.frameSkipped)
         return;
 
+    // Asked AFTER `view`: a component that changes theme in response to a key
+    // has already handled it, and asking first would paint this frame in the
+    // theme it just left.
+    const frame = frameTheme(app, th);
+
     // The page first, so the theme's background shows wherever the tree does
     // not cover — the backend-neutral answer to the arms' black clear.
     const sz = h.size;
     h.ops() ~= DrawOp(kind: OpKind.fillRect,
         rect: Rect(0, 0, sz.width, sz.height),
-        visual: Visual(fg: th.pageFg, bg: th.pageBg, hasBg: true));
+        visual: Visual(fg: frame.pageFg, bg: frame.pageBg, hasBg: true));
 
     // An empty tree is a bare page, not a crash — layout indexes its root.
     if (snap.tree.nodes.length == 0)
         return;
 
     snap.frames = layout(snap.tree, Constraints(sz.width, sz.height));
-    buildDisplayListInto(snap.tree, snap.frames, th.palette, th.pageFg, th.pageBg,
-        h.ops());
+    buildDisplayListInto(snap.tree, snap.frames, frame.palette, frame.pageFg,
+        frame.pageBg, h.ops());
 }
 
 /**
@@ -241,7 +270,7 @@ RecordingHost runAppRecorded(A)(ref A app, in RunConfig cfg, in Event[] script,
 
 version (unittest)
 {
-    import sparkles.input : isDismiss, Key, KeyEvent, keyEvent, match;
+    import sparkles.input : charEvent, isDismiss, Key, KeyEvent, keyEvent, match;
     import sparkles.ui.style : Slot;
     import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
@@ -494,4 +523,65 @@ unittest
         BackendPolicy policy;
         cast(void) runApp(app, cfg, policy);
     }), "a draw-phase component must compile against every arm too");
+}
+
+@("ui_app.run_app.aComponentMaySupplyTheFramesTheme")
+@safe unittest
+{
+    import sparkles.ui.style : defaultTwoslashPalette, ColorScheme;
+
+    // The case a once-per-run theme cannot serve: a browser where choosing a
+    // theme repaints the whole application, not a preview pane. The component
+    // declares `theme`, and the page fill — op 0 of every frame — follows it.
+    static struct Themed
+    {
+        AppTheme theme;
+
+        WidgetTree view(H)(ref H h)
+        {
+            auto b = Builder();
+            return b.finish(b.add(Widget(kind: WidgetKind.text, text: "x")));
+        }
+
+        void handle(H)(ref H h, in Event e)
+        {
+            // Any key flips the theme, so the very next frame paints in it.
+            theme = AppTheme(palette: defaultTwoslashPalette(ColorScheme.light),
+                pageFg: RgbColor(0, 0, 0), pageBg: RgbColor(255, 255, 255));
+        }
+    }
+
+    auto app = Themed(AppTheme(palette: defaultTwoslashPalette(ColorScheme.dark),
+        pageFg: RgbColor(0xd0, 0xd0, 0xd0), pageBg: RgbColor(0, 0, 0)));
+    auto rec = runAppRecorded(app, RunConfig.init, [charEvent('t')]);
+
+    assert(rec.frames.length == 2);
+    assert(rec.frames[0].ops[0].visual.bg == RgbColor(0, 0, 0));
+    assert(rec.frames[1].ops[0].visual.bg == RgbColor(255, 255, 255),
+        "the component's theme, not the run's");
+}
+
+@("ui_app.run_app.aComponentWithoutTheThemeMemberIsUnaffected")
+@safe unittest
+{
+    // The probe costs nothing and changes nothing for everyone else: without
+    // the member, the run's `--theme` value is what every frame paints in.
+    static struct Plain
+    {
+        WidgetTree view(H)(ref H h)
+        {
+            auto b = Builder();
+            return b.finish(b.add(Widget(kind: WidgetKind.text, text: "x")));
+        }
+
+        void handle(H)(ref H h, in Event e) {}
+    }
+
+    const configured = appThemeOf(GuiOptions.init);
+    Plain app;
+    assert(frameTheme(app, configured) == configured);
+
+    auto rec = runAppRecorded(app, RunConfig.init, [charEvent('t')]);
+    foreach (ref f; rec.frames)
+        assert(f.ops[0].visual.bg == configured.pageBg);
 }

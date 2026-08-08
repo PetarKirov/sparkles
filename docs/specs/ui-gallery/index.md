@@ -46,7 +46,6 @@ real consumer.
 ```
 apps/ui-gallery/src/
 ├── app.d        # main(): CLI, RunConfig, runApp
-├── compat.d     # TEMPORARY: local stand-in for sparkles.ui_app.run_app
 ├── gallery.d    # the component — view/handle member templates, shell chrome
 ├── state.d      # GalleryState: every machine the shell owns
 ├── registry.d   # the Page table, and the catalog sweep

@@ -14,7 +14,8 @@ import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui_app.gui_options : GuiCliFields, GuiOptions, resolveTheme;
 import sparkles.ui_app.host : RunConfig;
 
-import compat : runApp, RunOutcome;
+import sparkles.ui_app.run : RunOutcome;
+import sparkles.ui_app.run_app : runApp;
 import gallery : Gallery;
 import registry : pageIndexOf, pages;
 import render : renderAnsi, renderPlain, RenderRequest;

@@ -4,30 +4,18 @@ Gaps the catalog exposed. Each is a finding about the toolkit or the host, not a
 defect in a page — the gallery's job is to make them visible rather than to work
 around them.
 
-## `UGL-O1` — the theme is a component member, not a library hook · open
+## `UGL-O1` — a component may supply the frame's theme · closed
 
-`runApp` resolves the theme once, from `--theme`, and hands `presentApp` an
-`AppTheme`. A live theme browser cannot work under that: every slot on every
-page would resolve against the startup theme forever.
+`runApp` resolved the theme once, from `--theme`, so a live theme browser was
+inexpressible: every slot on every page would resolve against the startup theme
+forever, and `RunConfig` is taken `in` by every arm so there was nothing to
+mutate.
 
-The gallery's local stand-in for `sparkles.ui_app.run_app` therefore probes the
-component for a `theme` member and prefers it, in the DbI shape the toolkit
-already uses for `isCanvas`'s optional `pushClip`/`rule`:
-
-```d
-AppTheme frameTheme(A)(ref A app, in AppTheme fallback)
-{
-    static if (__traits(compiles, { AppTheme t = app.theme; }))
-        return app.theme;
-    else
-        return fallback;
-}
-```
-
-It costs nothing for a component that does not declare one, and it is what a
-viewer would need to paint a preview pane in the theme being edited while its
-own chrome stays in the UI theme. **Proposed for the library**; until it lands
-there, `apps/ui-gallery/src/compat.d` carries it.
+`sparkles.ui_app.run_app.frameTheme` now probes the component for a `theme`
+member and prefers it, in the DbI shape the toolkit already uses for
+`isCanvas`'s optional `pushClip`/`rule`. A component without one pays nothing.
+Asked after `view`, so a component that changes theme in response to a key
+paints the same frame in the theme it just chose.
 
 ## `UGL-O2` — the two backends measure text differently · open
 
