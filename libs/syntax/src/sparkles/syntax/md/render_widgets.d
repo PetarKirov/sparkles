@@ -25,7 +25,7 @@ import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.syntax.ts.registry : canonicalLanguage;
-import sparkles.ui.geometry : Insets, SizeSpec;
+import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
@@ -106,6 +106,23 @@ struct MdViewOptions
     /// a muted 1-based number gutter inside the panel.
     bool codeLineNumbers;
 
+    /// How a fence body line longer than its panel behaves (`COD`):
+    /// `scroll` — lines keep their natural width behind a per-fence
+    /// horizontal viewport (`fenceScrolls`), clipped at the panel;
+    /// `wrap` — greedy in-panel wrapping, continuations hanging past the
+    /// number gutter.
+    CodeOverflow codeOverflow = CodeOverflow.scroll;
+
+    /// Per-fence horizontal scroll offsets (scroll mode), keyed by the
+    /// fence's `codeBody.start` — source-anchored like `activeCodeTabs`,
+    /// so a rebuild keeps the reader's place.
+    const(FenceScroll)[] fenceScrolls;
+
+    /// The enclosing `::: code-group`'s tab strip, when this fence is its
+    /// showing one (set by `viewCodeGroup`; not a caller field) — the strip
+    /// renders inside the fence's header band.
+    private GroupTabs groupTabs;
+
     /// `DVN6`: per-block diff verdicts, sorted by `spanStart`. A block whose
     /// `span.start` appears here renders decorated — added/removed tint the
     /// whole subtree through `proseSlot`, changed marks its `emphasis` ranges
@@ -144,6 +161,30 @@ struct MdEmphasis
 {
     const(Span)[] spans;
     Slot slot = Slot.inherit;
+}
+
+/// How a fence body line longer than its panel behaves — see
+/// $(LREF MdViewOptions.codeOverflow).
+enum CodeOverflow : ubyte
+{
+    scroll, /// per-fence horizontal viewport, clipped at the panel
+    wrap,   /// greedy in-panel wrapping with a hang past the number gutter
+}
+
+/// One fence's horizontal scroll position: `cols` cells of the body
+/// scrolled off to the left, keyed by the fence's `codeBody.start`.
+struct FenceScroll
+{
+    size_t bodyStart;
+    int cols;
+}
+
+/// A code group's tab strip, as the showing fence's header sees it.
+private struct GroupTabs
+{
+    string[] titles;
+    size_t[] ids;
+    size_t active;
 }
 
 /**
@@ -266,24 +307,34 @@ private uint viewCodeGroup(ref Builder b, ref const MdBlock blk,
             ? opt.codeTabHitBase + f.codeBody.start : 0;
     }
 
-    const strip = tabStrip(b, titles, active, 0, PressState.init,
-        fitLabels: true, ids: ids);
     MdViewOptions inner = opt;
     inner.fenceLabelInHeader = false;
+    // Themed, the strip renders INSIDE the showing fence's header band —
+    // tabs, language icons, and the copy affordance share the one line.
+    if (opt.theme.present)
+    {
+        inner.groupTabs = GroupTabs(titles, ids, active);
+        return viewBlock(b, blk.children[active], src, inner);
+    }
+    const strip = tabStrip(b, titles, active, 0, PressState.init,
+        fitLabels: true, ids: ids);
     const body = viewBlock(b, blk.children[active], src, inner);
     return b.add(Widget(kind: WidgetKind.column, children: [strip, body],
         width: SizeSpec.grow()));
 }
 
-/// A fence's tab title: its `[label]` unbracketed, else its language.
+/// A fence's tab title: its `[label]` unbracketed (with the language icon in
+/// front when one exists), else its language — which the icon replaces
+/// outright, the glyph being the recognizable form.
 private string tabTitle(ref const MdBlock fence) @safe pure nothrow
 {
     const(char)[] l = fence.label;
     if (l.length >= 2 && l[0] == '[' && l[$ - 1] == ']')
         l = l[1 .. $ - 1];
     if (!l.length)
-        l = fence.infoLang;
-    return l.idup;
+        return langTitle(fence.infoLang);
+    const icon = langIcon(fence.infoLang);
+    return icon.length ? icon ~ " " ~ l.idup : l.idup;
 }
 
 private uint blocksColumn(ref Builder b, in MdBlock[] blocks,
@@ -482,9 +533,9 @@ private string foldChip(const(char)[] src, size_t start, size_t end) @safe
 // collapsed face (which re-shapes this widget alone).
 private Widget themedFenceHeader(ref const MdBlock blk, MdViewOptions opt)
 {
-    const icon = langIcon(blk.infoLang);
-    const(char)[] lbl = (icon.length ? icon ~ " " : "")
-        ~ (blk.infoLang.length ? blk.infoLang : "code");
+    // A specific devicon IS the language — repeating the name after the
+    // glyph is noise; the generic glyph keeps the name beside it.
+    const(char)[] lbl = langTitle(blk.infoLang);
     // Inside a code group the tab already says the label, so repeating it
     // in the header is noise; the language and copy affordance stay.
     if (blk.label.length && opt.fenceLabelInHeader)
@@ -511,22 +562,49 @@ private Widget themedFenceHeader(ref const MdBlock blk, MdViewOptions opt)
 private uint fenceHeaderRow(ref Builder b, ref const MdBlock blk,
     MdViewOptions opt)
 {
+    import sparkles.ui.components.chrome : tabStrip;
+    import sparkles.ui.state : PressState;
+
+    const hit = opt.fenceHitBase != 0
+        ? opt.fenceHitBase + blk.codeBody.start : opt.hitId;
+
+    uint copyGlyph()
+    {
+        Widget iconW = Widget(kind: WidgetKind.rich, spans: [
+                TextSpan(opt.copiedFence == blk.codeBody.start
+                    ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon,
+                    Slot.code, codeStyle(opt), noBreak: true)],
+            slot: Slot.code, hitId: hit, paintBackground: true,
+            padding: Insets.symmetric(0, 1), textStyle: codeStyle(opt),
+            bgOverride: opt.theme.codeHeaderBg, hasBgOverride: true,
+            fgOverride: opt.theme.codeFg, hasFgOverride: true);
+        return b.add(iconW);
+    }
+
+    // A grouped fence: the code group's tab strip IS the header line, the
+    // copy affordance at its right edge (the strip's grow filler pushes it
+    // there). Each tab already carries its language icon.
+    if (opt.groupTabs.titles.length)
+    {
+        const strip = tabStrip(b, opt.groupTabs.titles, opt.groupTabs.active,
+            0, PressState.init, fitLabels: true, ids: opt.groupTabs.ids);
+        // In this row the strip must claim the leftover itself (`stretch`
+        // is a cross-axis notion); its grow filler then pads out the band.
+        b.nodes[strip].width = SizeSpec.grow();
+        uint[] kids = [strip];
+        if (opt.fenceHitBase != 0)
+            kids ~= copyGlyph();
+        return b.add(Widget(kind: WidgetKind.row, children: kids,
+            width: SizeSpec.grow()));
+    }
+
     if (opt.fenceHitBase == 0)
         return b.add(themedFenceHeader(blk, opt));
 
-    const hit = opt.fenceHitBase + blk.codeBody.start;
     Widget lblW = themedFenceHeader(blk, opt);
     lblW.width = SizeSpec.grow();
-    Widget iconW = Widget(kind: WidgetKind.rich, spans: [
-            TextSpan(opt.copiedFence == blk.codeBody.start
-                ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon,
-                Slot.code, codeStyle(opt), noBreak: true)],
-        slot: Slot.code, hitId: hit, paintBackground: true,
-        padding: Insets.symmetric(0, 1), textStyle: codeStyle(opt),
-        bgOverride: opt.theme.codeHeaderBg, hasBgOverride: true,
-        fgOverride: opt.theme.codeFg, hasFgOverride: true);
     return b.add(Widget(kind: WidgetKind.row,
-        children: [b.add(lblW), b.add(iconW)],
+        children: [b.add(lblW), copyGlyph()],
         width: SizeSpec.grow(), hitId: hit));
 }
 
@@ -734,6 +812,9 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     noBreak: true);
             }
 
+            // Per-line span lists + their (diff-tinted) slots, mode-agnostic.
+            TextSpan[][] lineSpans;
+            Slot[] lineSlots;
             if (styled.length)
             {
                 foreach (li, line; styled)
@@ -746,32 +827,22 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                             s.srcStart += blk.codeBody.start;
                             s.srcEnd += blk.codeBody.start;
                         }
-                    auto spans = line.length ? line
+                    lineSpans ~= line.length ? line
                         : [TextSpan(" ", Slot.code, codeStyle(opt))];
-                    if (opt.codeLineNumbers)
-                        spans = numberSpan(li + 1) ~ spans;
-                    rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
-                        slot: rowSlot(li), hitId: opt.hitId,
-                        paintBackground: true, textStyle: codeStyle(opt)));
+                    lineSlots ~= rowSlot(li);
                 }
             }
             else
             {
                 size_t start = 0;
-                size_t lineNo = 0;
                 void line(const(char)[] t, size_t at) @safe
                 {
-                    auto spans = [
+                    lineSpans ~= [
                         TextSpan(t.length ? t : " ", Slot.code, codeStyle(opt),
                             srcStart: blk.codeBody.start + at,
                             srcEnd: blk.codeBody.start + at + t.length)];
-                    if (opt.codeLineNumbers)
-                        spans = numberSpan(++lineNo) ~ spans;
-                    rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
-                        slot: lineTouched(opt, blk.codeBody.start + at,
-                            blk.codeBody.start + at + t.length),
-                        hitId: opt.hitId, paintBackground: true,
-                        textStyle: codeStyle(opt)));
+                    lineSlots ~= lineTouched(opt, blk.codeBody.start + at,
+                        blk.codeBody.start + at + t.length);
                 }
 
                 foreach (i, char c; code)
@@ -783,7 +854,65 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 if (start < code.length)
                     line(code[start .. $], start);
             }
-            const body_ = b.container(WidgetKind.column, rows);
+
+            uint body_;
+            final switch (opt.codeOverflow) with (CodeOverflow)
+            {
+                case scroll:
+                {
+                    // The body is a horizontal VIEWPORT (`LAY7`): lines keep
+                    // their natural width; `clipX` scissors them at the
+                    // panel, `childOffset.x` is this fence's scroll. The
+                    // number gutter is a separate pinned column, so only the
+                    // code scrolls — like every code view worth reading.
+                    foreach (li, spans; lineSpans)
+                        rows ~= b.add(Widget(kind: WidgetKind.rich,
+                            spans: spans, slot: lineSlots[li],
+                            hitId: opt.hitId, paintBackground: true,
+                            textStyle: codeStyle(opt)));
+                    const viewport = b.add(Widget(kind: WidgetKind.column,
+                        children: rows, clipX: true,
+                        childOffset: Point(
+                            fenceScrollOf(opt, blk.codeBody.start), 0),
+                        width: SizeSpec.grow()));
+                    if (!opt.codeLineNumbers)
+                    {
+                        body_ = viewport;
+                        break;
+                    }
+                    auto nums = new uint[](0);
+                    foreach (li; 0 .. lineSpans.length)
+                        nums ~= b.add(Widget(kind: WidgetKind.rich,
+                            spans: [numberSpan(li + 1)], slot: Slot.gutter,
+                            textStyle: codeStyle(opt)));
+                    // Fixed, not fit: the viewport's natural width is its
+                    // widest (overflowing) line, and the row's deficit would
+                    // otherwise squeeze the gutter's trailing space away.
+                    const numCol = b.add(Widget(kind: WidgetKind.column,
+                        children: nums, width: SizeSpec.fixed(numW + 1)));
+                    body_ = b.add(Widget(kind: WidgetKind.row,
+                        children: [numCol, viewport],
+                        width: SizeSpec.grow()));
+                    break;
+                }
+                case wrap:
+                    // In-panel greedy wrapping; continuations hang past the
+                    // number gutter (which therefore blanks on them, like
+                    // the old preview's wrapped code rows).
+                    foreach (li, spans; lineSpans)
+                    {
+                        if (opt.codeLineNumbers)
+                            spans = numberSpan(li + 1) ~ spans;
+                        rows ~= b.add(Widget(kind: WidgetKind.rich,
+                            spans: spans, slot: lineSlots[li],
+                            hitId: opt.hitId, paintBackground: true,
+                            wrap: TextWrap.greedy,
+                            hangIndent: opt.codeLineNumbers ? numW + 1 : 0,
+                            textStyle: codeStyle(opt)));
+                    }
+                    body_ = b.container(WidgetKind.column, rows);
+                    break;
+            }
             // Padded on every side so a cell backend's box-glyph perimeter
             // never overwrites content; rounded corners (╭…╯ on cells).
             Widget panel = Widget(kind: WidgetKind.panel, children: [body_],
@@ -985,6 +1114,17 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             return proseRow(b, [TextSpan(sliceOf(src, blk.span), Slot.muted,
                 opt.baseStyle)], opt);
     }
+}
+
+/// The horizontal scroll armed for the fence whose body starts at
+/// `bodyStart` (scroll mode), else 0.
+private int fenceScrollOf(in MdViewOptions opt, size_t bodyStart)
+    @safe pure nothrow @nogc
+{
+    foreach (ref const fs; opt.fenceScrolls)
+        if (fs.bodyStart == bodyStart)
+            return fs.cols;
+    return 0;
 }
 
 // A table cell's text, edge-trimmed: `| cell |` sources collapse to one
@@ -1432,8 +1572,26 @@ string langIcon(const(char)[] lang) @safe pure nothrow @nogc
         case "go": return "\U0000E627";
         case "d": return "\U0000E7AF";
         case "": return "";
-        default: return "\U0000F121"; // generic code
+        default: return genericCodeIcon;
     }
+}
+
+/// The fallback glyph for a language without its own devicon. A $(B specific)
+/// icon replaces the language name outright (the glyph is the recognizable
+/// form); this one carries no information, so the name stays beside it.
+enum genericCodeIcon = "\U0000F121"; //
+
+/// The header/tab text for a fence language: the devicon alone when it is
+/// specific, `icon name` when only the generic glyph exists, `code` when the
+/// fence has no language at all.
+private string langTitle(const(char)[] lang) @safe pure nothrow
+{
+    const icon = langIcon(lang);
+    if (icon.length && icon != genericCodeIcon)
+        return icon;
+    if (!lang.length)
+        return "code";
+    return icon.length ? icon ~ " " ~ lang.idup : lang.idup;
 }
 
 private const(char)[] sliceOf(const(char)[] src, Span s) pure nothrow @nogc
@@ -1533,6 +1691,45 @@ version (unittest)
             sawQuoted = true;
     }
     assert(sawTitle && sawBold && sawQuoteBar && sawQuoted);
+}
+
+@("md.render_widgets.codeOverflow.scrollViewportAndWrap")
+@safe unittest
+{
+    import sparkles.ui.wrap : TextWrap;
+
+    // One fence line, wider than any panel this test lays out.
+    const src = "0123456789 0123456789 0123456789";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.codeFence, infoLang: "d",
+            span: Span(0, src.length), codeBody: Span(0, src.length)),
+    ]), src);
+
+    // Scroll mode (the default): the body is a `clipX` viewport carrying
+    // this fence's armed offset — the LAY7 scroll container — beside a
+    // pinned number gutter.
+    MdViewOptions opt = {codeLineNumbers: true,
+        fenceScrolls: [FenceScroll(0, 7)]};
+    auto tree = viewMarkdown(doc, opt);
+    bool sawViewport;
+    foreach (ref const n; tree.nodes)
+        if (n.clipX && n.childOffset.x == 7)
+            sawViewport = true;
+    assert(sawViewport);
+
+    // Wrap mode: no viewport anywhere; the body row wraps greedily, its
+    // continuations hanging past the number gutter (numW 1 + a space).
+    MdViewOptions wrapOpt = {codeLineNumbers: true,
+        codeOverflow: CodeOverflow.wrap};
+    auto wt = viewMarkdown(doc, wrapOpt);
+    bool sawWrap;
+    foreach (ref const n; wt.nodes)
+    {
+        assert(!n.clipX);
+        if (n.wrap == TextWrap.greedy && n.hangIndent == 2)
+            sawWrap = true;
+    }
+    assert(sawWrap);
 }
 
 @("md.render_widgets.fencePanelAndWrapWidth")
@@ -1706,8 +1903,9 @@ version (unittest)
             && op.visual.fg == vt.accentGreen)
             sawCheck = true;
         // The header is a rich run now (it carries the fence's opening-line
-        // identity); its band is the widget's own fill in codeHeaderBg.
-        if (op.kind == OpKind.textRun && op.text == langIcon("d") ~ " d")
+        // identity); its band is the widget's own fill in codeHeaderBg. The
+        // devicon replaces the language name — the glyph IS the label.
+        if (op.kind == OpKind.textRun && op.text == langIcon("d"))
             sawHeader = true;
         if (op.kind == OpKind.fillRect && op.visual.bg == vt.codeHeaderBg)
             sawHeaderBand = true;
@@ -2044,7 +2242,11 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
         }
     }
     import std.algorithm.searching : canFind;
-    assert(titles.canFind("config.js") && titles.canFind("ansi"));
+    // A labelled tab carries its language icon before the label; a
+    // language-only tab with no specific devicon ("ansi") keeps the
+    // language text beside the generic glyph.
+    assert(titles.canFind(langIcon("js") ~ " config.js")
+        && titles.canFind(genericCodeIcon ~ " ansi"));
     assert(sawA && !sawB, "only the active fence's body renders");
 
     // Tab ids are source-anchored to each fence's body, so two groups on a

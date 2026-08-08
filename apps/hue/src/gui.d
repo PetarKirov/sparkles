@@ -74,6 +74,7 @@ import sparkles.syntax : HighlightEvent, LabelId, LabelSet, Theme, StyleSpec, Te
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : mix;
 
+import sparkles.syntax.md.render_widgets : CodeOverflow;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
@@ -326,6 +327,7 @@ int runGui(
     bool codeLineNumbers = true,
     bool ansiCopyStrip = false,          // --ansi-copy=strip (SEL7/CLI10); default raw
     TableCopyFormat tableCopy = TableCopyFormat.tsv, // --table-copy (TBL2/CLI11)
+    CodeOverflow codeOverflow = CodeOverflow.scroll, // --code-overflow
     SourceSet* set = null,               // the document set to navigate (GNV1)
     DocLoader loadDoc = null,            // loads a set entry (supplied by app.d)
     TsConfigCache* tsCache = null,       // fence highlighting for the widget view
@@ -501,6 +503,7 @@ int runGui(
     vm.tabWidth = tabWidth < 1 ? 1 : tabWidth;
     vm.listWhitespace = listWhitespace;
     vm.codeLineNumbers = codeLineNumbers;
+    vm.codeOverflow = codeOverflow;
 
     ResizeDebounce rd;
 
@@ -1917,6 +1920,21 @@ int runGui(
         }
 
         bool copyClicked; // a click landing on a copy button is not a selection
+
+        // Per-fence horizontal scroll (`COD`): a sideways wheel notch —
+        // a horizontal axis or Shift+wheel, folded into `wheelCellsX` —
+        // over a fence body scrolls THAT fence's viewport.
+        if (inp.fin.wheelCellsX != 0)
+        {
+            const mpw = inp.fin.pos;
+            if (mpw.x >= gutterPx && mpw.y >= docY0)
+            {
+                const row = vm.top + cast(long)((mpw.y - docY0) / cellH);
+                const fb = vm.fenceBodyAtRow(row);
+                if (fb != size_t.max)
+                    vm.scrollFence(fb, inp.fin.wheelCellsX);
+            }
+        }
 
         // The fence copy affordance: the header band is the hit target (its
         // source-anchored id resolves the fence body); a click copies and the

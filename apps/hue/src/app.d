@@ -25,6 +25,7 @@ import std.string : chompPrefix;
 
 import sparkles.syntax;
 import sparkles.syntax.md.model : MdDoc;
+import sparkles.syntax.md.render_widgets : CodeOverflow;
 import sparkles.twoslash;
 import sparkles.core_cli.args;
 
@@ -150,6 +151,9 @@ struct CliParams
     @(Option("code-line-numbers", description: "--gui: number the lines inside each code block (default on; disable with =false; toggle at runtime with 'c')."))
     bool codeLineNumbers = true;
 
+    @(Option("code-overflow", description: "How a code-block line longer than its panel behaves: 'scroll' (per-block horizontal scrolling — a sideways wheel or Shift+wheel over the block; the default) or 'wrap' (in-panel wrapping past the number gutter)."))
+    string codeOverflow = "scroll";
+
     @(Option("background", description: "Terminal background mode: no-background (foreground only), spans (only where the theme sets one), or full (fill every line edge-to-edge; the default)."))
     string background = "full";
 
@@ -172,6 +176,19 @@ struct CliParams
     /// filters.
     @(Argument("path", description: "File or directory to view (default: hue's own source).", optional: true))
     string[] paths;
+}
+
+/// Parses `--code-overflow` into a `CodeOverflow`; unknown → `scroll`.
+private CodeOverflow parseCodeOverflow(string name)
+{
+    switch (name)
+    {
+        case "wrap":   return CodeOverflow.wrap;
+        case "scroll": return CodeOverflow.scroll;
+        default:
+            warning(i"unknown --code-overflow '$(name)'; using 'scroll'");
+            return CodeOverflow.scroll;
+    }
 }
 
 /// Parses `--table-copy` (`CLI11`) into a `TableCopyFormat`; unknown → `tsv`.
@@ -668,7 +685,8 @@ int main(string[] args)
                         => pl.load(path),
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
                     &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
-                    cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes);
+                    cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes,
+                    codeOverflow: parseCodeOverflow(cli.codeOverflow));
             }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
@@ -840,6 +858,7 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
                 theme: MdViewTheme.derive(theme, pageFg, pageBg),
                 fenceRenderer: hueFenceRenderer(&cache, &theme, pageFg),
                 diffBlocks: doc.preview.decorations, // `DVN6`
+                codeOverflow: parseCodeOverflow(cli.codeOverflow),
             };
             auto tree = viewMarkdown(doc.preview.doc, opt);
             auto frames = layout(tree, Constraints(maxW: previewWidth()));
@@ -975,7 +994,8 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
             cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes,
-            diffLayout: parseDiffLayout(cli.diffLayout));
+            diffLayout: parseDiffLayout(cli.diffLayout),
+            codeOverflow: parseCodeOverflow(cli.codeOverflow));
     }
     else
     {
@@ -1052,6 +1072,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             themeSet.themes, themeSet.idx, doc.preview, fontName, cli.fontSize,
             cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
             cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
+            parseCodeOverflow(cli.codeOverflow),
             docSet, &loadDoc, &cache, doc.twoslash,
             doc.path, startInTree: startInTree, treeRoot,
             faceOv, doc.lang,
