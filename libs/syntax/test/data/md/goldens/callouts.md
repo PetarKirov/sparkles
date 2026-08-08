@@ -79,8 +79,7 @@ Plain quotes:
 > > >
 > > > > Depth four — styles, a task list, and a code group:
 > > > >
-> > > > Prose at the deepest level: **bold**, *italic*, `code`,
-> > > > ~~struck~~, and a [link](https://example.com/deep).
+> > > > Prose at the deepest level: **bold**, *italic*, `code`, ~~struck~~, and a [link](https://example.com/deep).
 > > > >
 > > > > - [ ] unchecked task at depth four
 > > > > - [x] checked task at depth four

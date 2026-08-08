@@ -139,6 +139,12 @@ struct MdViewOptions
     /// renders inside the fence's header band.
     private GroupTabs groupTabs;
 
+    /// The tallest sibling's line count in the enclosing code group (also
+    /// set by `viewCodeGroup`): the showing fence pads its body to it —
+    /// blank, UNNUMBERED rows — so switching tabs never reflows the
+    /// document below the group.
+    private int groupMinLines;
+
     /// `DVN6`: per-block diff verdicts, sorted by `spanStart`. A block whose
     /// `span.start` appears here renders decorated — added/removed tint the
     /// whole subtree through `proseSlot`, changed marks its `emphasis` ranges
@@ -328,6 +334,22 @@ private uint viewCodeGroup(ref Builder b, ref const MdBlock blk,
 
     MdViewOptions inner = opt;
     inner.fenceLabelInHeader = false;
+    // Height stability: the group renders as tall as its TALLEST member,
+    // so activating a tab never reflows the document below the group.
+    foreach (ref const f; blk.children)
+    {
+        // Same convention as the row builders (plain and styled alike): a
+        // trailing newline closes the last line, it does not open one.
+        const body = sliceOf(src, f.codeBody);
+        int n;
+        foreach (char c; body)
+            if (c == '\n')
+                ++n;
+        if (body.length && body[$ - 1] != '\n')
+            ++n;
+        if (n > inner.groupMinLines)
+            inner.groupMinLines = n;
+    }
     // Themed, the strip renders INSIDE the showing fence's header band —
     // tabs, language icons, and the copy affordance share the one line.
     if (opt.theme.present)
@@ -928,7 +950,10 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     : Slot.code;
             }
             int numW;
-            for (auto n = bodyLines; n; n /= 10)
+            // The gutter width follows the tallest GROUP sibling too, so a
+            // tab switch cannot shift the code column sideways.
+            for (auto n = bodyLines > opt.groupMinLines ? bodyLines
+                    : opt.groupMinLines; n; n /= 10)
                 ++numW;
             TextSpan numberSpan(size_t lineNo) @safe
             {
@@ -991,6 +1016,17 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
 
             import sparkles.ui.geometry : cellsOf;
 
+            // Group height stability (`MDP22`): the showing fence pads its
+            // body to the tallest sibling with blank rows — the number
+            // gutter finishes at the REAL line count, never numbering the
+            // padding — so a tab switch cannot reflow the document below.
+            const realLines = cast(int) lineSpans.length;
+            while (cast(int) lineSpans.length < opt.groupMinLines)
+            {
+                lineSpans ~= [TextSpan(" ", Slot.code, codeStyle(opt))];
+                lineSlots ~= Slot.code;
+            }
+
             // ── The integrated-border chrome (COD1/COD2/COD6) ─────────────
             // Geometry first: the box is glyph-composed, so its width must
             // be exact — which it is, because `opt.indentCols` tracked every
@@ -1047,8 +1083,12 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     auto nums = new uint[](0);
                     foreach (li; 0 .. lineSpans.length)
                         nums ~= b.add(Widget(kind: WidgetKind.rich,
-                            spans: [numberSpan(li + 1)], slot: Slot.gutter,
-                            textStyle: codeStyle(opt)));
+                            spans: [cast(int) li < realLines
+                                ? numberSpan(li + 1)
+                                : TextSpan(repGlyph(" ", numW + 1),
+                                    Slot.gutter, codeStyle(opt),
+                                    noBreak: true)],
+                            slot: Slot.gutter, textStyle: codeStyle(opt)));
                     // Fixed, not fit: the viewport's natural width is its
                     // widest (overflowing) line, and the row's deficit
                     // would otherwise squeeze the gutter's trailing space.
@@ -1078,7 +1118,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 // overflow the panel onto the bottom border.
                 foreach (li, spans; lineSpans)
                 {
-                    if (opt.codeLineNumbers)
+                    if (opt.codeLineNumbers && cast(int) li < realLines)
                         spans = numberSpan(li + 1) ~ spans;
                     Widget w = Widget(kind: WidgetKind.rich,
                         spans: spans, slot: lineSlots[li],
@@ -1885,6 +1925,52 @@ version (unittest)
             sawQuoted = true;
     }
     assert(sawTitle && sawBold && sawQuoteBar && sawQuoted);
+}
+
+@("md.render_widgets.codeGroup.tabSwitchKeepsHeight")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+
+    // A 1-line and a 3-line fence in one group.
+    const src = "```d\nA\n```\n```d\nB1\nB2\nB3\n```";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.codeGroup, span: Span(0, src.length),
+            children: [
+                MdBlock(kind: MdBlockKind.codeFence, infoLang: "d",
+                    span: Span(0, 10), codeBody: Span(5, 7)),
+                MdBlock(kind: MdBlockKind.codeFence, infoLang: "d",
+                    span: Span(11, 28), codeBody: Span(16, 25)),
+            ]),
+    ]), src);
+
+    int heightFor(size_t active) @safe
+    {
+        MdViewOptions opt = {codeLineNumbers: true,
+            activeCodeTabs: [active]};
+        auto tree = viewMarkdown(doc, opt);
+        auto frames = layout(tree, Constraints(maxW: 40));
+        return frames[tree.root].rect.height;
+    }
+    // MDP22 height stability: the group is as tall as its tallest member,
+    // whichever tab shows.
+    assert(heightFor(5) == heightFor(16), "tab switch reflowed the group");
+
+    // The short fence's gutter finishes at its REAL line count: exactly
+    // one numbered row; the padding rows are blank and unnumbered.
+    MdViewOptions opt = {codeLineNumbers: true, activeCodeTabs: [5UL]};
+    auto tree = viewMarkdown(doc, opt);
+    int ones, others;
+    foreach (ref const n; tree.nodes)
+        foreach (ref const s; n.spans)
+        {
+            if (s.text == "1 ")
+                ++ones;
+            if (s.text == "2 " || s.text == "3 ")
+                ++others;
+        }
+    assert(ones == 1 && others == 0);
 }
 
 @("md.render_widgets.codeOverflow.scrollViewportAndWrap")
