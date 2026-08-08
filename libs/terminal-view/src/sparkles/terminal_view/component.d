@@ -38,6 +38,7 @@ import sparkles.terminal_view.child_env : sanitizeChildEnv;
 import sparkles.terminal_view.core;
 import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyKeyOf;
 import sparkles.terminal_view.input : ExitBehavior, handle_mouse, pty_write;
+import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
@@ -271,17 +272,31 @@ struct TerminalView
     /// keys a pane instead (`TVW7`).
     WidgetTree view(H)(ref H h)
     {
+        frame(h, h.size.width, h.size.height);
+        // The pane is the whole surface for the standalone app, so the tree
+        // is empty; an embedding application calls `frame`/`paintPane` itself
+        // and lays the pane out in its own tree (`TVW7`).
+        return WidgetTree.init;
+    }
+
+    /**
+    The frame's pre-render half at an explicit pane size (in cells) — what an
+    embedding application calls from its own `view`, with the cell size its
+    layout gave the pane last frame. The standalone `view` above passes the
+    whole surface.
+    */
+    void frame(H)(ref H h, int paneCols, int paneRows)
+    {
         // First frame: the host's session exists now, so the pty can open
-        // against its fonts and its surface. A failed open ends the run.
+        // against its fonts and the pane's size. A failed open ends the run.
         if (!opened)
         {
             auto c = h.canvas;
-            const sz0 = h.size;
-            if (!open(c.fonts, cast(ushort) sz0.width, cast(ushort) sz0.height))
+            if (!open(c.fonts, cast(ushort) paneCols, cast(ushort) paneRows))
             {
                 h.quit();
                 h.skipFrame();
-                return WidgetTree.init;
+                return;
             }
         }
 
@@ -292,10 +307,9 @@ struct TerminalView
         if (s.fonts !is null && s.fonts.flushPending() && forceFirstFrames < 1)
             forceFirstFrames = 1;
 
-        // Grid follow: the host's surface (cells) is authoritative — window
+        // Grid follow: the pane's size (cells) is authoritative — window
         // resizes and font-size changes both arrive as a size change.
         bool gridChanged = false;
-        const sz = h.size;
         const newFontSize = h.fontSizePx;
         if (newFontSize > 0 && newFontSize != s.fontSize)
         {
@@ -304,12 +318,12 @@ struct TerminalView
             s.cellHeight = s.fonts.cellH();
             gridChanged = true;
         }
-        if (sz.width > 0 && sz.height > 0
-            && (sz.width != s.cols || sz.height != s.rows))
+        if (paneCols > 0 && paneRows > 0
+            && (paneCols != s.cols || paneRows != s.rows))
             gridChanged = true;
         if (gridChanged)
-            resizeGrid(cast(ushort) (sz.width > 0 ? sz.width : 1),
-                cast(ushort) (sz.height > 0 ? sz.height : 1));
+            resizeGrid(cast(ushort) (paneCols > 0 ? paneCols : 1),
+                cast(ushort) (paneRows > 0 ? paneRows : 1));
 
         drainPty();
         drainedThisFrame = false; // next frame's first event re-drains
@@ -387,8 +401,6 @@ struct TerminalView
             if (frameCount == 130)
                 h.quit();
         }
-
-        return WidgetTree.init;
     }
 
     /// Keys: the hotkeys and clipboard chords first (consuming, exactly as
@@ -405,10 +417,39 @@ struct TerminalView
     }
 
     /// The renderer, inside the host's frame bracket (`HST13`): the per-cell
-    /// paint, byte-identical to the polling loop's.
+    /// paint, byte-identical to the polling loop's, over the whole surface.
     void paint(H)(ref H h, in WidgetTree, in Frame[])
     {
-        paintFrame(s);
+        paintFrame(s, GetScreenWidth(), GetScreenHeight());
+    }
+
+    /**
+    The renderer at a laid-out pane (`TVW7`): translate + scissor to the
+    pane's pixel rect, then the same per-cell paint. What an embedding
+    application calls from its own `paint`, with the rect `keyedRects`
+    reported for the pane it keyed. `rect` is in cells.
+
+    Mouse routing inside an embedded pane is NOT wired yet — `handle_mouse`
+    reads absolute window coordinates; it lands with the mouse-event
+    conversion.
+    */
+    void paintPane(H)(ref H h, in Rect rect)
+    {
+        import raylib.rlgl : rlPopMatrix, rlPushMatrix, rlTranslatef;
+
+        const px = rect.x * s.cellWidth;
+        const py = rect.y * s.cellHeight;
+        const pw = rect.width * s.cellWidth;
+        const ph = rect.height * s.cellHeight;
+        if (pw <= 0 || ph <= 0)
+            return;
+
+        BeginScissorMode(px, py, pw, ph);
+        rlPushMatrix();
+        rlTranslatef(px, py, 0);
+        paintFrame(s, pw, ph);
+        rlPopMatrix();
+        EndScissorMode();
     }
 
     // ── internals ───────────────────────────────────────────────────────────
