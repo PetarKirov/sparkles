@@ -221,7 +221,18 @@ private uint termTable(ref Builder b, in GalleryState s, int paneRows)
     foreach (i; 0 .. s.terms.count)
     {
         if (i > 0)
-            rows ~= hrule(b); // the inner border
+            // The inner border: a REAL drawn rule. `kit.hrule` fills with
+            // `Slot.border`'s background, which the palette leaves unset —
+            // so it painted nothing and the rows read as gapped, not ruled.
+            rows ~= b.add(Widget(
+                kind: WidgetKind.box,
+                width: SizeSpec.grow(),
+                height: SizeSpec.fixed(1),
+                decoration: Decoration(
+                    borderWidth: intoTop(1),
+                    borderStyle: BorderStyle.solid,
+                    borderSlot: Slot.border),
+            ));
         rows ~= termRow(b, s, i);
     }
     const inner = b.add(Widget(
@@ -385,6 +396,13 @@ private auto intoSymmetric(int v, int h) pure nothrow @nogc
     import sparkles.ui.geometry : Insets;
 
     return Insets.symmetric(v, h);
+}
+
+private auto intoTop(int n) pure nothrow @nogc
+{
+    import sparkles.ui.geometry : Insets;
+
+    return Insets(n, 0, 0, 0);
 }
 
 /// ditto — offered keys only while the keyboard is in the content region and

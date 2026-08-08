@@ -234,10 +234,7 @@ struct Gallery
                 s.terms.paneCols = cast(ushort) inner.width;
                 s.terms.paneRows = cast(ushort) inner.height;
                 static if (__traits(compiles, h.canvas.fonts))
-                {
-                    tv.paintPane(h, inner); // the GPU per-cell renderer
-                    paintTermRail(h, inner); // hue's sub-cell bar over the gutter
-                }
+                    paintTermChrome(h, tv, inner); // padding fill + pane + rail
                 else static if (__traits(compiles, paintCells(tv.s, h.canvas, inner)))
                     // An lvalue canvas (the recorder). The paint is C FFI over
                     // this instance's own live handles, hence the trust.
@@ -365,37 +362,62 @@ struct Gallery
         => s.page == terminalPageIndex && s.terms.focused && s.terms.any;
 
     /**
-    hue's scrollbar, over the widget bar's gutter on the GPU arm: a sub-cell
-    rail (⅓ cell idle, 1.5 cells under the pointer) eased by the $(B same)
-    machine whose width the cell bar can only quantize — this page's answer
-    to `UGL-O6`, honest here because the draw phase is already the page's.
-    The gutter is repainted in the page color first, so the widget bar's
-    cell thumb never shows through beneath the rail.
+    The GPU arm's terminal chrome, in the one place that may paint pixels —
+    the draw phase (`UGL-O6`'s exception):
+
+    $(LIST
+        * The group's interior — the layout's border-cell padding included —
+            filled in the $(B terminal's own background), inset a couple of
+            px so the hairline border stays visible. On this arm the border
+            is a stroke, not a cell, so the padding would otherwise read as
+            a dead page-colored frame; painted in the terminal's background
+            it is window padding, as terminal emulators treat their own.
+        * The pane's cells.
+        * hue's rail: sub-cell width (⅓ cell idle, 1.5 under the pointer),
+            eased by the same machine the cell bar quantizes — but the
+            thumb's $(B geometry) from the same cell formula the grab uses,
+            because pointer events arrive in cells: the pixel formula's
+            24 px minimum drew a thumb a cell longer than the grabbable
+            one, and pressing that extra cell jumped the view.
+    )
     */
-    private void paintTermRail(H)(ref H h, in Rect pane)
+    private void paintTermChrome(H, TV)(ref H h, TV tv, in Rect pane)
     {
-        import sparkles.ui.scroll_view : ScrollbarAnim;
-        import sparkles.ui_raylib : drawScrollbar, scrollbarLayout;
+        import raylib : Color, DrawRectangle;
+        import sparkles.ui.state : scrollbarThumb;
+        import sparkles.ui_raylib : drawScrollbar, ScrollbarLayout;
 
         auto c = h.canvas;
-        const gutter = Rect(pane.x + pane.width, pane.y,
-            gutterCells, pane.height);
-        const frame = theme();
-        c.fillRect(gutter, Visual(bg: frame.pageBg, hasBg: true));
-
         const cw = c.fonts.cellW();
         const ch = c.fonts.cellH();
-        // The eased 1..2 cell width, mapped onto hue's ⅓ → 1.5 cells.
+
+        const bg = tv.background();
+        enum strokePx = 2;
+        (() @trusted => DrawRectangle(
+            (pane.x - 1) * cw + strokePx,
+            (pane.y - 1) * ch + strokePx,
+            (pane.width + gutterCells + 2) * cw - 2 * strokePx,
+            (pane.height + 2) * ch - 2 * strokePx,
+            Color(bg.r, bg.g, bg.b, 255)))();
+
+        tv.paintPane(h, pane);
+
+        if (s.terms.sbTotal <= s.terms.sbLen || s.terms.sbLen <= 0)
+            return;
+        const thumb = scrollbarThumb(s.terms.sbTotal, s.terms.sbLen,
+            s.termView.v.offset, pane.height);
         const t = s.termView.vAnim.width - 1.0f;
         const px = cast(int)(cw * (1.0f / 3 + t * (1.5f - 1.0f / 3)));
-        const l = scrollbarLayout(s.termView.v,
-            ScrollbarAnim(px < 2 ? 2 : px),
-            s.terms.sbTotal, s.terms.sbLen,
-            Rect(gutter.x * cw, gutter.y * ch, gutter.width * cw,
-                gutter.height * ch));
+        const w = px < 2 ? 2 : px;
+        const right = (pane.x + pane.width + gutterCells) * cw;
+        ScrollbarLayout l;
+        l.live = true;
+        l.track = Rect(right - w, pane.y * ch, w, pane.height * ch);
+        l.thumb = Rect(right - w, (pane.y + thumb.start) * ch, w,
+            thumb.extent * ch);
         drawScrollbar(l, s.termView.v,
-            mixRgb(frame.pageBg, frame.pageFg, 0.22f),
-            mixRgb(frame.pageBg, frame.pageFg, 0.5f));
+            mixRgb(bg, theme().pageFg, 0.25f),
+            mixRgb(bg, theme().pageFg, 0.55f));
     }
 
     // ── the Terminal page's frame glue ──────────────────────────────────────
