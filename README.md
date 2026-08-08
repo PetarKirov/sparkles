@@ -665,6 +665,50 @@ void main()
 
 The colored output uses `writeStyled` IES for ANSI styling -- log levels are color-coded (green for info, yellow for warnings, red for errors, bold+red for critical/fatal), durations are highlighted, and file locations are dimmed.
 
+### Args Parsing
+
+Declare a CLI with `@Command` / `@Option` UDAs and call `parseCli`. Options backed by enums (or carrying `allowedValues`) support `--option=help`, `--option=?`, and the suffix shorthand `--option?`: the parser short-circuits and emits a per-option help screen listing the valid values.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_args_option_help"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import std.stdio : writeln;
+import sparkles.core_cli.args;
+import sparkles.core_cli.term_unstyle : unstyle;
+
+enum Color { red, green, blue }
+
+@(Command("paint"))
+struct Cli
+{
+    @(Option("c|color", description: "Pick a color."))
+    Color color;
+}
+
+void main()
+{
+    auto parsed = parseCli!Cli(["paint", "--color=help"]);
+    if (!parsed && parsed.error.isHelp)
+        writeln(parsed.error.help.unstyle);
+}
+```
+
+```[Output]
+-c, --color COLOR
+  Pick a color.
+
+Valid values:
+  red
+  green
+  blue
+```
+
+The same screen comes from `--color=?`, `--color?`, `-c=help`, and `-c?`. For free-form options (strings, integers, paths) it describes the accepted shape instead of enumerating values; for `bool` options it lists the `true / false / yes / no` tokens.
+
 ### SmallBuffer
 
 A `@nogc` dynamic array with small buffer optimization. Stores data inline up to a configurable threshold, then falls back to the heap via `pureMalloc`.
