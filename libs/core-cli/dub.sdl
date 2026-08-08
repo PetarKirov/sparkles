@@ -26,12 +26,9 @@ importPaths "src" "../test-runner/src" "../math/src"
 
 configuration "library" {
     targetType "library"
-    excludedSourceFiles "src/app.d"
 }
 
 configuration "unittest" {
-    excludedSourceFiles "src/app.d"
-
     // `core-cli` is imported by the impl (UI niceties), so it cannot depend on
     // the impl library — it source-includes the shim and the impl instead.
     sourcePaths "../test-runner/src" "../test-runner-impl/src"
