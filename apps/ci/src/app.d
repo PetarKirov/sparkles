@@ -95,7 +95,7 @@ module app;
 
 // std.* modules
 import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
-import std.array : array, join;
+import std.array : array, join, split;
 import std.conv : text, to;
 import core.time : Duration, msecs, seconds;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
@@ -108,7 +108,7 @@ import std.stdio : stderr, writeln;
 import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight, toLower;
 
 // sparkles packages
-import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
+import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
 import sparkles.base.logger : error, info, initLogger, LogLevel, trace, warning;
 import sparkles.core_cli.process_utils :
     ChildStdin, executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes,
@@ -157,106 +157,111 @@ private BoxProps resultBox(string footer)
 
 struct CliParams
 {
-    @CliOption(`V|verify`, "Compare example output against expected output blocks in the markdown.")
+    @(Option(`V|verify`, description: "Compare example output against expected output blocks in the markdown."))
     bool verify;
 
-    @CliOption(`u|update`, "Rewrite the markdown file with actual example output.")
+    @(Option(`u|update`, description: "Rewrite the markdown file with actual example output."))
     bool update;
 
-    @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, and docs/research/manim/examples/*.d.")
+    @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, and docs/research/manim/examples/*.d."))
     bool exampleFiles;
 
-    @CliOption(`t|test`, "Run dub test for each sub-package defined in the root dub.sdl.")
+    @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
     bool test;
 
-    @CliOption(`test-extracted`, "Run the test runner's --better-c and --wasm modes for each sub-package that uses the matching marker attribute. Fails if a mode's toolchain is missing rather than skipping.")
+    @(Option(`test-extracted`, description: "Run the test runner's --better-c and --wasm modes for each sub-package that uses the matching marker attribute. Fails if a mode's toolchain is missing rather than skipping."))
     bool testExtracted;
 
-    @CliOption(`F|fail-fast`, "Stop on the first failing example and replay its output at the end.")
+    @(Option(`F|fail-fast`, description: "Stop on the first failing example and replay its output at the end."))
     bool failFast;
 
-    @CliOption(`files`, "Explicit file paths or git-style globs to include. Pass one or more selectors immediately after --files.")
+    @(Option(`files`, description: "Explicit file paths or git-style globs to include. Pass one or more selectors immediately after --files."))
     string[] files;
 
-    @CliOption(`d|dedup-reference-links`, "Report duplicate markdown reference definitions that point to the same URL.")
+    /// The one mode that takes a positional: `--check-commit-scope <path>`.
+    /// Everything else selects its inputs with `--files`.
+    @(Argument("arg", optional: true))
+    string[] positionals;
+
+    @(Option(`d|dedup-reference-links`, description: "Report duplicate markdown reference definitions that point to the same URL."))
     bool dedupReferenceLinks;
 
-    @CliOption(`f|fix-reference-links`, "Rewrite duplicate markdown references to one canonical label per URL.")
+    @(Option(`f|fix-reference-links`, description: "Rewrite duplicate markdown references to one canonical label per URL."))
     bool fixReferenceLinks;
 
-    @CliOption(`L|log-level`, "Set the log level (trace, info, warning, error). Default: info.")
+    @(Option(`L|log-level`, description: "Set the log level (trace, info, warning, error). Default: info."))
     LogLevel logLevel = LogLevel.info;
 
-    @CliOption(`check-commit-scope`, "Check a commit message for a detailed scope (used by pre-commit commit-msg hook). If no file is given or the argument is '-', reads the message from stdin instead of a file.")
+    @(Option(`check-commit-scope`, description: "Check a commit message for a detailed scope (used by pre-commit commit-msg hook). If no file is given or the argument is '-', reads the message from stdin instead of a file."))
     bool checkCommitScope;
 
-    @CliOption(`check-vcs-urls`, "Check tracked markdown files (or specified files) for github.com and raw.githubusercontent.com URLs, ensuring they reference a specific git commit.")
+    @(Option(`check-vcs-urls`, description: "Check tracked markdown files (or specified files) for github.com and raw.githubusercontent.com URLs, ensuring they reference a specific git commit."))
     bool checkVcsUrls;
 
-    @CliOption(`check-docs-sidebar`,
-        "Verify the VitePress sidebar (docs/.vitepress/config.mts) is consistent "
+    @(Option(`check-docs-sidebar`,
+        description: "Verify the VitePress sidebar (docs/.vitepress/config.mts) is consistent "
         ~ "with published docs/**/*.md pages: every page is linked, and every "
         ~ "sidebar link resolves to a page. Respects srcExclude; the home page "
-        ~ "(docs/index.md) is always considered linked.")
+        ~ "(docs/index.md) is always considered linked."))
     bool checkDocsSidebar;
 
-    @CliOption(`coverage`,
-        "Measure line coverage: run each sub-package's tests under -cov and "
+    @(Option(`coverage`,
+        description: "Measure line coverage: run each sub-package's tests under -cov and "
         ~ "report covered/coverable lines per package, worst first. Reports "
-        ~ "only; nothing fails on a low number.")
+        ~ "only; nothing fails on a low number."))
     bool coverage;
 
-    @CliOption(`C|ci-stats`,
-        "Compute GitHub Actions CI job timing statistics and runner-type aggregates. "
-        ~ "See docs/specs/ci/stats/ for the full specification.")
+    @(Option(`C|ci-stats`,
+        description: "Compute GitHub Actions CI job timing statistics and runner-type aggregates. "
+        ~ "See docs/specs/ci/stats/ for the full specification."))
     bool ciStats;
 
-    @CliOption(`g|github-token`,
-        "GitHub token for API access (Bearer auth). Falls back to $GITHUB_TOKEN.")
+    @(Option(`g|github-token`,
+        description: "GitHub token for API access (Bearer auth). Falls back to $GITHUB_TOKEN."))
     string githubToken;
 
-    @CliOption(`r|repo`,
-        "Target repository as owner/repo (e.g. PetarKirov/sparkles).")
+    @(Option(`r|repo`,
+        description: "Target repository as owner/repo (e.g. PetarKirov/sparkles)."))
     string repo;
 
-    @CliOption(`l|limit`,
-        "Maximum number of recent workflow runs to analyze (default 100).")
+    @(Option(`l|limit`,
+        description: "Maximum number of recent workflow runs to analyze (default 100)."))
     int limit = 100;
 
-    @CliOption(`S|since`,
-        "Only include runs created on/after this date (YYYY-MM-DD or ISO).")
+    @(Option(`S|since`,
+        description: "Only include runs created on/after this date (YYYY-MM-DD or ISO)."))
     string since;
 
-    @CliOption(`w|workflow`,
-        "Filter to runs/jobs matching this workflow name or path substring.")
+    @(Option(`w|workflow`,
+        description: "Filter to runs/jobs matching this workflow name or path substring."))
     string workflow;
 
-    @CliOption(`c|conclusion`,
-        "Only jobs with this conclusion (e.g. success, failure).")
+    @(Option(`c|conclusion`,
+        description: "Only jobs with this conclusion (e.g. success, failure)."))
     string conclusion;
 
-    @CliOption(`b|branch`,
-        "Only runs on this branch (head_branch, exact match).")
+    @(Option(`b|branch`,
+        description: "Only runs on this branch (head_branch, exact match)."))
     string branch;
 
-    @CliOption(`B|baseline`,
-        "Compare --branch against this branch per job name, showing the median delta. "
-        ~ "Both refs are taken from the same run window.")
+    @(Option(`B|baseline`,
+        description: "Compare --branch against this branch per job name, showing the median delta. "
+        ~ "Both refs are taken from the same run window."))
     string baseline;
 
-    @CliOption(`s|split`,
-        "Split the fetched jobs at this instant (YYYY-MM-DD or ISO-8601) and compare "
+    @(Option(`s|split`,
+        description: "Split the fetched jobs at this instant (YYYY-MM-DD or ISO-8601) and compare "
         ~ "the halves per job name. The axis to use when a workflow only triggers on "
-        ~ "pull_request and so never runs on the default branch.")
+        ~ "pull_request and so never runs on the default branch."))
     string split;
 
-    @CliOption(`steps`,
-        "Break the slowest job names down by step, so a regression is attributed "
-        ~ "to the step that owns it rather than to the job total.")
+    @(Option(`steps`,
+        description: "Break the slowest job names down by step, so a regression is attributed "
+        ~ "to the step that owns it rather than to the job total."))
     bool steps;
 
-    @CliOption(`step-jobs`,
-        "How many job names --steps expands (default 3).")
+    @(Option(`step-jobs`,
+        description: "How many job names --steps expands (default 3)."))
     int stepJobs = 3;
 }
 
@@ -303,17 +308,19 @@ enum StandaloneExampleMode
     buildOnly,
 }
 
+/// What a `// ci:` directive asked for: how to execute the example, and — for
+/// `run` — the arguments to hand the program.
+struct StandaloneExampleSpec
+{
+    StandaloneExampleMode mode;
+    string[] runArgs;
+}
+
 struct FailureReplay
 {
     string header;
     string[] outputLines;
     string footer;
-}
-
-struct FileSelection
-{
-    bool specified;
-    string[] selectors;
 }
 
 struct ReferenceDef
@@ -348,21 +355,20 @@ private __gshared immutable refDefRegex = ctRegex!(r"^\[([^\]]+)\]:\s+(https?://
 
 int ciMain(string[] args)
 {
-    auto parseArgs = args.dup;
-    const fileSelection = extractFilesOption(parseArgs);
-    auto cli = parseArgs.parseCliArgs!CliParams(
+    auto parsed = parseCli!CliParams(
+        args,
         HelpInfo(
             "ci",
             "Run repository CI helpers for markdown examples, standalone example files, and markdown reference maintenance",
         ),
     );
-    cli.files = fileSelection.selectors.dup;
+    if (!parsed)
+        return reportCliError(parsed.error);
+    auto cli = parsed.value;
     initLogger(cli.logLevel);
 
-    const positionalArgs = parseArgs[1 .. $]
-        .map!(arg => arg.idup)
-        .array;
-    const modeError = validateCliMode(cli, positionalArgs, fileSelection);
+    const positionalArgs = cli.positionals.idup;
+    const modeError = validateCliMode(cli, positionalArgs);
     if (modeError !is null)
     {
         error(i"$(modeError)");
@@ -435,7 +441,6 @@ int ciMain(string[] args)
 private string validateCliMode(
     in CliParams cli,
     in string[] positionalArgs,
-    in FileSelection fileSelection,
 )
 {
     if (cli.verify && cli.update)
@@ -506,9 +511,6 @@ private string validateCliMode(
 
     if (positionalArgs.length > 0 && !cli.checkCommitScope)
         return "Positional file arguments are no longer supported; use --files";
-
-    if (fileSelection.specified && cli.files.length == 0)
-        return "--files requires at least one file path or git-style glob";
 
     return null;
 }
@@ -789,53 +791,6 @@ private string[] trackedStandaloneExampleFiles()
         .filter!(line => line.length != 0)
         .map!(line => line.idup)
         .array;
-}
-
-private FileSelection extractFilesOption(ref string[] argv)
-{
-    FileSelection selection;
-    string[] filteredArgs;
-
-    if (argv.length == 0)
-        return selection;
-
-    filteredArgs ~= argv[0];
-
-    size_t idx = 1;
-    while (idx < argv.length)
-    {
-        const arg = argv[idx];
-
-        if (arg == "--files")
-        {
-            selection.specified = true;
-            idx++;
-
-            while (idx < argv.length && !argv[idx].startsWith("-"))
-            {
-                selection.selectors ~= argv[idx].idup;
-                idx++;
-            }
-
-            continue;
-        }
-
-        if (arg.startsWith("--files="))
-        {
-            selection.specified = true;
-            const selector = arg["--files=".length .. $].strip;
-            if (selector.length > 0)
-                selection.selectors ~= selector.idup;
-            idx++;
-            continue;
-        }
-
-        filteredArgs ~= arg;
-        idx++;
-    }
-
-    argv = filteredArgs;
-    return selection;
 }
 
 @safe pure nothrow @nogc
@@ -1711,12 +1666,12 @@ private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
             continue;
         }
 
-        const mode = detectStandaloneExampleMode(exampleFile);
-        const action = standaloneExampleAction(mode);
-        const verb = standaloneExampleVerb(mode);
+        auto spec = detectStandaloneExampleSpec(exampleFile);
+        const action = standaloneExampleAction(spec.mode);
+        const verb = standaloneExampleVerb(spec.mode);
         const progress = i"[$(i + 1)/$(exampleFiles.length)]".text;
-        const header = formatExampleFileHeader(exampleFile, progress, action);
-        auto result = executeStandaloneExampleFile(exampleFile, repoRoot, mode);
+        const header = formatExampleFileHeader(exampleFile, progress, action, spec.runArgs);
+        auto result = executeStandaloneExampleFile(exampleFile, repoRoot, spec);
 
         if (result.success)
         {
@@ -1760,12 +1715,16 @@ private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
 private ExecutionResult executeStandaloneExampleFile(
     string exampleFile,
     string repoRoot,
-    StandaloneExampleMode mode,
+    StandaloneExampleSpec spec,
 )
 {
+    const action = standaloneExampleAction(spec.mode);
+    // A `build-only` example is never executed, so its directive's arguments —
+    // if it somehow carries any — have nowhere to go.
+    auto runArgs = spec.mode == StandaloneExampleMode.run ? spec.runArgs : null;
     auto result = executeLogged(
-        dubSingleFileCommand(standaloneExampleAction(mode), exampleFile, repoRoot),
-        standaloneExampleAction(mode) ~ " " ~ exampleFile.baseName,
+        dubSingleFileCommand(action, exampleFile, repoRoot, runArgs),
+        action ~ " " ~ exampleFile.baseName,
         exampleTimeout());
     auto cleaned = result.output.unstyle
         .lineSplitter
@@ -2986,7 +2945,13 @@ private string detectRepoRoot()
         : null;
 }
 
-private string[] dubSingleFileCommand(string action, string filePath, string repoRoot)
+@safe pure
+private string[] dubSingleFileCommand(
+    string action,
+    string filePath,
+    string repoRoot,
+    string[] runArgs = null,
+)
 in (action == "run" || action == "build", "action must be dub run or dub build")
 {
     // `--color=always` forces dub *and* the compiler to emit ANSI diagnostics
@@ -3008,16 +2973,21 @@ in (action == "run" || action == "build", "action must be dub run or dub build")
         command ~= ["--root", repoRoot];
 
     command ~= ["--single", filePath];
+
+    // Everything after `--` is the program's, not dub's.
+    if (runArgs.length > 0)
+        command ~= ["--"] ~ runArgs;
+
     return command;
 }
 
-private StandaloneExampleMode detectStandaloneExampleMode(string filePath)
+private StandaloneExampleSpec detectStandaloneExampleSpec(string filePath)
 {
-    return parseStandaloneExampleMode(filePath.readText.lineSplitter.array);
+    return parseStandaloneExampleSpec(filePath.readText.lineSplitter.array);
 }
 
 @safe pure
-private StandaloneExampleMode parseStandaloneExampleMode(const(char[])[] lines)
+private StandaloneExampleSpec parseStandaloneExampleSpec(const(char[])[] lines)
 {
     enum metadataPrefixes = ["// ci:", "// run_md_examples:"];
 
@@ -3046,24 +3016,124 @@ private StandaloneExampleMode parseStandaloneExampleMode(const(char[])[] lines)
             continue;
         }
 
+        // A `module …;` declaration may sit between the recipe and the
+        // directive. It is not a comment, so without this the scan would stop
+        // at it (see the loop tail) and the directive below would be ignored —
+        // the example would silently run when it asked to be built only.
+        if (stripped.startsWith("module ") && stripped.endsWith(";"))
+            continue;
+
         foreach (metadataPrefix; metadataPrefixes)
         {
             if (!stripped.startsWith(metadataPrefix))
                 continue;
 
-            const value = stripped[metadataPrefix.length .. $].strip.toLower;
-            if (value == "build-only")
-                return StandaloneExampleMode.buildOnly;
-            if (value == "run")
-                return StandaloneExampleMode.run;
-            return StandaloneExampleMode.run;
+            // `<mode>` or `<mode> <args…>` — the first word selects the mode,
+            // the rest are the program's arguments. Only the mode word is
+            // lowercased; arguments are the author's, case included.
+            const value = stripped[metadataPrefix.length .. $].strip;
+            const spaceIdx = value.indexOf(' ');
+            const modeWord = (spaceIdx < 0 ? value : value[0 .. spaceIdx]).toLower;
+            const argsPart = spaceIdx < 0 ? "" : value[spaceIdx + 1 .. $].strip;
+
+            if (modeWord == "build-only")
+                return StandaloneExampleSpec(StandaloneExampleMode.buildOnly, null);
+
+            string[] runArgs;
+            if (argsPart.length > 0)
+                runArgs = argsPart.split.map!(a => a.idup).array;
+            return StandaloneExampleSpec(StandaloneExampleMode.run, runArgs);
         }
 
         if (!stripped.startsWith("//"))
             break;
     }
 
-    return StandaloneExampleMode.run;
+    return StandaloneExampleSpec(StandaloneExampleMode.run, null);
+}
+
+@("ci.parseStandaloneExampleSpec.directives")
+@safe pure unittest
+{
+    static StandaloneExampleSpec parse(string directive)
+    {
+        return parseStandaloneExampleSpec([
+            "#!/usr/bin/env dub",
+            "/+ dub.sdl:",
+            `    name "demo"`,
+            "+/",
+            directive,
+        ]);
+    }
+
+    // No arguments: the mode word alone.
+    assert(parse("// ci: run") == StandaloneExampleSpec(StandaloneExampleMode.run, null));
+    assert(parse("// ci: build-only")
+        == StandaloneExampleSpec(StandaloneExampleMode.buildOnly, null));
+
+    // Arguments after the mode word are the program's.
+    assert(parse("// ci: run --help")
+        == StandaloneExampleSpec(StandaloneExampleMode.run, ["--help"]));
+    assert(parse("// ci: run --colour never --width 80")
+        == StandaloneExampleSpec(StandaloneExampleMode.run, ["--colour", "never", "--width", "80"]));
+
+    // The mode word is matched case-insensitively; arguments are not touched.
+    assert(parse("// ci: RUN --Tag Value")
+        == StandaloneExampleSpec(StandaloneExampleMode.run, ["--Tag", "Value"]));
+
+    // `build-only` never runs, so it carries no arguments even if given some.
+    assert(parse("// ci: build-only --help")
+        == StandaloneExampleSpec(StandaloneExampleMode.buildOnly, null));
+
+    // The legacy prefix still works.
+    assert(parse("// run_md_examples: run --help")
+        == StandaloneExampleSpec(StandaloneExampleMode.run, ["--help"]));
+}
+
+@("ci.parseStandaloneExampleSpec.defaultsToRun")
+@safe pure unittest
+{
+    // No directive at all.
+    assert(parseStandaloneExampleSpec(["module demo;", "import std.stdio;"])
+        == StandaloneExampleSpec(StandaloneExampleMode.run, null));
+
+    // The scan stops at the first line that is neither a comment nor part of
+    // the header, so a `// ci:` below the code is not a directive.
+    assert(parseStandaloneExampleSpec(["import std.stdio;", "// ci: build-only"])
+        == StandaloneExampleSpec(StandaloneExampleMode.run, null));
+}
+
+// A `module …;` declaration is not a comment, so it would end the header scan
+// and take any directive below it with it — the example would run when it
+// asked to be built only.
+@("ci.parseStandaloneExampleSpec.moduleDeclarationDoesNotEndTheHeader")
+@safe pure unittest
+{
+    assert(parseStandaloneExampleSpec([
+        "#!/usr/bin/env dub",
+        "/+ dub.sdl:",
+        `    name "demo"`,
+        "+/",
+        "module demo;",
+        "// ci: build-only",
+    ]) == StandaloneExampleSpec(StandaloneExampleMode.buildOnly, null));
+
+    assert(parseStandaloneExampleSpec(["module demo;", "// ci: run --help"])
+        == StandaloneExampleSpec(StandaloneExampleMode.run, ["--help"]));
+}
+
+@("ci.dubSingleFileCommand.runArgsAfterDoubleDash")
+@safe unittest
+{
+    // No arguments: the command ends at the file, with no stray `--`.
+    assert(dubSingleFileCommand("run", "e.d", null)[$ - 2 .. $] == ["--single", "e.d"]);
+
+    // With arguments, `--` separates them — everything after it is the
+    // program's, not dub's.
+    assert(dubSingleFileCommand("run", "e.d", null, ["--help"])[$ - 4 .. $]
+        == ["--single", "e.d", "--", "--help"]);
+    assert(dubSingleFileCommand("run", "e.d", null, ["--width", "80"])[$ - 4 .. $]
+        == ["e.d", "--", "--width", "80"]);
 }
 
 private string standaloneExampleAction(StandaloneExampleMode mode)
@@ -3082,9 +3152,15 @@ private string formatExampleHeader(in Example example, string progress)
     return styledText(i"{dim $(progress)} {cyan $(example.name)} {dim › dub run --single $(example.name).d}");
 }
 
-private string formatExampleFileHeader(string exampleFile, string progress, string action)
+private string formatExampleFileHeader(
+    string exampleFile,
+    string progress,
+    string action,
+    string[] runArgs = null,
+)
 {
-    return styledText(i"{dim $(progress)} {cyan $(exampleFile.baseName)} {dim › dub $(action) --single $(exampleFile)}");
+    const argsSuffix = runArgs.length > 0 ? " -- " ~ runArgs.join(" ") : "";
+    return styledText(i"{dim $(progress)} {cyan $(exampleFile.baseName)} {dim › dub $(action) --single $(exampleFile)$(argsSuffix)}");
 }
 
 /**

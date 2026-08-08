@@ -1,0 +1,3 @@
+Stop one or more running containers gracefully.
+
+Docker first sends `SIGTERM` to the main process and waits up to `--time` seconds (default: 10) for it to exit cleanly. If the process is still running after the timeout, `SIGKILL` is sent.

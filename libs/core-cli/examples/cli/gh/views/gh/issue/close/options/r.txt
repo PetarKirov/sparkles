@@ -1,0 +1,1 @@
+Reason for closing the issue. `completed` (default) records that the work is done; `not planned` records that the issue was rejected (won't fix, out of scope, etc.).

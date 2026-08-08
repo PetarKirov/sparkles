@@ -1,0 +1,3 @@
+Reload one or more units.
+
+Reload asks the running unit to re-read its configuration, typically by sending it `SIGHUP` or invoking the `ExecReload=` command declared in the unit file. Units that don't support reload will fail; use `restart` for those instead.

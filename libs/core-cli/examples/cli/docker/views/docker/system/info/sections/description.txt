@@ -1,0 +1,1 @@
+Display system-wide information about the Docker daemon — version, kernel, storage driver, root directory, registry credentials, plugins, and overall resource usage. Useful as the first thing to attach to a bug report.

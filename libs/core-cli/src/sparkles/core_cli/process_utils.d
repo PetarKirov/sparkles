@@ -29,40 +29,98 @@ string executeShell(in string command)
 // ---------------------------------------------------------------------------
 
 /**
-True when an executable named `name` is found on `$PATH`. Mirrors a shell's
-command lookup: each `$PATH` entry is joined with `name` and the candidate must
-exist, be a regular file, and (on POSIX) be executable by the current user.
+The path `$PATH` resolves `name` to, or `null` when nothing runnable is found.
+
+Mirrors a shell's command lookup: each `$PATH` entry is joined with `name` and
+the candidate must exist, be a regular file, and (on POSIX) be executable by the
+current user.
+
+The regular-file test is the load-bearing one. A directory carries the execute
+bit too — it means "searchable" — so a lookup that only tests for executability
+matches a same-named *directory* and hands `execve` something it can only fail
+on, with `EACCES`. This repo has `nix/`, `ci/`, `apps/` and `docs/` at its root
+and the dev shells put `.` on `$PATH`, so the mistake is reachable by simply
+running a tool from the repo root.
 */
-bool isInPath(string name) @safe
+string resolveInPath(string name) @safe
+{
+    import std.process : environment;
+
+    return resolveInPathList(name, environment.get("PATH", ""));
+}
+
+/**
+As $(LREF resolveInPath), but searching an explicitly supplied `$PATH` value
+rather than the process environment.
+
+Separated out so the search can be exercised against a crafted `$PATH` without
+mutating the environment — which, with a parallel test runner, every other test
+in the process would see.
+*/
+string resolveInPathList(string name, string pathVar) @safe
 {
     import std.algorithm.iteration : splitter;
     import std.file : exists, isFile;
     import std.path : buildPath, pathSeparator;
-    import std.process : environment;
 
-    // `isFile` guards against a searchable directory of the same name;
-    // `isExecutable` ensures the file can actually be run.
     static bool runnable(scope const(char)[] candidate) @safe
         => candidate.exists && candidate.isFile && isExecutable(candidate);
 
-    const pathVar = environment.get("PATH", "");
     foreach (dir; pathVar.splitter(pathSeparator))
     {
         if (dir.length == 0)
             continue;
-        if (runnable(dir.buildPath(name)))
-            return true;
+        const candidate = dir.buildPath(name);
+        if (runnable(candidate))
+            return candidate.idup;
         version (Windows)
         {
             // On Windows the runnable file is usually `name.exe`/`.cmd`/…, not
             // the bare `name`; try each PATHEXT extension in turn.
+            import std.process : environment;
+
             const pathExt = environment.get("PATHEXT", ".COM;.EXE;.BAT;.CMD");
             foreach (ext; pathExt.splitter(';'))
-                if (ext.length && runnable(dir.buildPath(name ~ ext)))
-                    return true;
+            {
+                if (!ext.length)
+                    continue;
+                const withExt = dir.buildPath(name ~ ext);
+                if (runnable(withExt))
+                    return withExt.idup;
+            }
         }
     }
-    return false;
+    return null;
+}
+
+/// True when $(LREF resolveInPath) finds an executable named `name`.
+bool isInPath(string name) @safe => resolveInPath(name) !is null;
+
+/**
+`args` with a bare command name replaced by the path `$PATH` resolves it to.
+
+Every spawn in this module goes through here rather than leaving the lookup to
+`std.process`, whose candidate test accepts anything with the execute bit — a
+same-named directory included. See $(LREF resolveInPath).
+
+A name that already carries a directory separator is used as given, and an
+unresolvable one is passed through unchanged so the failure stays
+`spawnProcess`' to report.
+*/
+private T[] resolvedArgv(T)(scope T[] args) @safe
+if (is(T : const(char)[]))
+{
+    import std.algorithm.searching : canFind;
+    import std.path : dirSeparator;
+
+    auto argv = args.dup;
+    if (argv.length == 0 || argv[0].canFind(dirSeparator))
+        return argv;
+
+    const resolved = resolveInPath(argv[0].idup);
+    if (resolved !is null)
+        argv[0] = resolved;
+    return argv;
 }
 
 /// `access(path, X_OK)` wrapped so the single unsafe call is the only trusted
@@ -127,6 +185,8 @@ CapturedResult runCaptured(
     const inPath = base ~ ".in";
     const haveStdin = stdinText !is null;
 
+    auto argv = resolvedArgv(args);
+
     CapturedResult result;
     try
     {
@@ -141,7 +201,7 @@ CapturedResult runCaptured(
         result.status = () @trusted {
             auto inFile = haveStdin ? File(inPath, "r") : stdin;
             auto pid = spawnProcess(
-                args, inFile, outFile, errFile, null, Config.none, workDir);
+                argv, inFile, outFile, errFile, null, Config.none, workDir);
             return wait(pid);
         }();
 
@@ -178,6 +238,39 @@ CapturedResult runCaptured(
     // A POSIX system always has a shell on PATH; the bogus name never resolves.
     assert(isInPath("sh"));
     assert(!isInPath("sparkles-nonexistent-binary-xyzzy-123"));
+
+    // `resolveInPath` answers the same question with the path it found.
+    assert(resolveInPath("sh") !is null);
+    assert(resolveInPath("sparkles-nonexistent-binary-xyzzy-123") is null);
+}
+
+// A directory has the execute bit too — it means "searchable" — so a `$PATH`
+// lookup that tests only for executability matches one and hands `execve`
+// something that can only fail, with EACCES. The dev shells put `.` on `$PATH`
+// and this repo has `nix/`, `ci/` and `docs/` at its root, so the shadowing is
+// reachable by running a tool from the repo root.
+@("process_utils.resolveInPath.directoryDoesNotShadow")
+@safe unittest
+{
+    import std.conv : text;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir;
+    import std.path : buildPath, pathSeparator;
+    import std.process : environment, thisProcessID;
+
+    const sandbox = buildPath(tempDir, text("sparkles-path-shadow-", thisProcessID));
+    // A *directory* named after a real command, ahead of the real one.
+    mkdirRecurse(buildPath(sandbox, "sh"));
+    scope (exit) rmdirRecurse(sandbox);
+
+    const realPath = environment.get("PATH", "");
+    const shadowed = sandbox ~ pathSeparator ~ realPath;
+
+    const resolved = resolveInPathList("sh", shadowed);
+    assert(resolved !is null, "the real `sh` should still be found");
+    assert(resolved != buildPath(sandbox, "sh"), "a directory must not resolve");
+
+    // A sandbox holding nothing runnable resolves nothing.
+    assert(resolveInPathList("sh", sandbox) is null);
 }
 
 @("process_utils.runCaptured.exitCodes")
@@ -317,7 +410,7 @@ MonitoredResult executeMonitored(
 
     auto sink = File(logPath, "w");
     auto childIn = childStdin == ChildStdin.empty ? File(nullDevice, "r") : stdin;
-    auto pid = spawnProcess(args, childIn, sink, sink);
+    auto pid = spawnProcess(resolvedArgv(args), childIn, sink, sink);
 
     version (linux)
         result.usage.sampled = true;
@@ -766,7 +859,7 @@ CapturedResult runStreaming(Sink)(
     try
     {
         auto pipes = (() @trusted => pipeProcess(
-            args, Redirect.stdout | Redirect.stderrToStdout,
+            resolvedArgv(args), Redirect.stdout | Redirect.stderrToStdout,
             null, Config.none, workDir))();
         foreach (line; (() @trusted => pipes.stdout.byLine)())
         {
@@ -855,7 +948,7 @@ version (Posix)
             import std.process : Config, pipeProcess, Redirect;
 
             ResidentProcess p;
-            p._pipes = pipeProcess(argv, Redirect.stdin | Redirect.stdout,
+            p._pipes = pipeProcess(resolvedArgv(argv), Redirect.stdin | Redirect.stdout,
                 null, Config.none, workDir);
             const fd = p._pipes.stdout.fileno;
             const flags = fcntl(fd, F_GETFL);

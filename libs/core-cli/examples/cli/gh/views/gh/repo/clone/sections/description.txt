@@ -1,0 +1,3 @@
+Clone a repository locally.
+
+If the repository is a fork, gh additionally adds an `upstream` git remote pointing at the parent repository so commands like `git fetch upstream` work without further configuration.

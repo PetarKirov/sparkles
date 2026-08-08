@@ -1,0 +1,3 @@
+Enable one or more unit files, creating the symlinks specified by their `[Install]` section so they are started automatically at boot.
+
+Enabling a unit does not start it; combine with `--now` for the equivalent of "enable and start". Use `--runtime` to make the change only for the current boot session.

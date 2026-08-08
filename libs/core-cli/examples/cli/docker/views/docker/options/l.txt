@@ -1,0 +1,1 @@
+Set the logging level of the docker CLI itself. Defaults to `info`. The daemon has its own independent log level configured via `dockerd --log-level`.

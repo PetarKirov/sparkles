@@ -206,6 +206,44 @@ dub --root /path/to/worktree test :core-cli
 dub build :twoslash-extract -b checked
 ```
 
+### Dev shells: `default`, `full`, `ci`
+
+Three shells, built from the same `mkSparklesShell` in `nix/shells/default.nix`
+and differing only in their entry banner and package tier:
+
+| Shell     | Use                                                                                                                        |
+| --------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `default` | **Quiet — no banner.** Non-interactive contexts: agents, scripts, CI. Stray `figlet` output would pollute captured stdout. |
+| `full`    | Adds `figlet` and prints a `sparkles : *` greeting on entry. For interactive use.                                          |
+| `ci`      | The CI floor: no browser, no profilers, no benchmark corpora, no oracle libraries, no pre-commit tooling.                  |
+
+`nix develop -c <cmd>` enters `default`, so agents get clean output without
+asking for it:
+
+```bash
+nix develop -c dub build :core-cli
+nix develop -c ci --test
+```
+
+`.envrc` picks the shell for `direnv` from an optional `DEV_SHELL`, defaulting
+to the quiet one:
+
+```
+use flake ".#${DEV_SHELL:-default}"
+```
+
+To switch without editing `.envrc`, set it in a git-ignored `.env` at the repo
+root — `.envrc` loads it via `dotenv_if_exists`:
+
+```bash
+# .env
+DEV_SHELL=full   # opt into the greeting for direnv
+```
+
+**Adding a dependency** means choosing a tier. `ciPackages` is what CI gets;
+`devPackages` adds the rest on top. Put a tool in `ciPackages` only if a CI job
+actually runs it — everything there is built on every CI run.
+
 ### Build types: `debug` to test, `checked` to ship, never `release`
 
 Every in-repo `dub.sdl` — and every single-file example's inline recipe —

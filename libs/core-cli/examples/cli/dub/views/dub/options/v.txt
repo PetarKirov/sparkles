@@ -1,0 +1,1 @@
+Print diagnostic output. Pass repeatedly (e.g. `-vv`) to increase verbosity.

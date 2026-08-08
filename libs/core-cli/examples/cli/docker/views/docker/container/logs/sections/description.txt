@@ -1,0 +1,3 @@
+Fetch the stdout/stderr output of a container.
+
+By default, all logs since the container was created are dumped at once. Pass `--follow` to stream new lines as they arrive, `--tail N` to show only the last N lines, and `--since`/`--until` to bracket a time range.

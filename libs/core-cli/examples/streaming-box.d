@@ -37,7 +37,7 @@ import core.time : dur;
 import std.range.primitives : ElementType, empty, front, popFront;
 import std.stdio : stderr, stdout, write, writeln;
 
-import sparkles.core_cli.args;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui.components.box : BoxProps, drawBoxChunks, TitleOverflow;
 import sparkles.base.term_style : Style, stylize;
 
@@ -47,28 +47,39 @@ enum int contentDefaultLen = 600;
 
 struct CliParams
 {
-    @CliOption("w|max-width", "Box width in columns")
+    @(Option("w|max-width", description: "Box width in columns"))
     int maxWidth = 80;
 
-    @CliOption("d|delay", "Animation delay per streamed chunk, in milliseconds")
+    @(Option("d|delay", description: "Animation delay per streamed chunk, in milliseconds"))
     int delayMs = 12;
 
-    @CliOption("title", "Use this literal string as the title")
+    @(Option("title", description: "Use this literal string as the title"))
     string title;
 
-    @CliOption("title-command", "Run this shell command; its stdout becomes the title")
+    @(Option("title-command", description: "Run this shell command; its stdout becomes the title"))
     string titleCommand;
 
-    @CliOption("content", "Use this literal string (split on newlines) as the content")
+    @(Option("content", description: "Use this literal string (split on newlines) as the content"))
     string content;
 
-    @CliOption("content-command", "Run this shell command; its stdout lines become the content")
+    @(Option("content-command", description: "Run this shell command; its stdout lines become the content"))
     string contentCommand;
 
     // `--title-generate [maxLen]` and `--content-generate [maxLen]` take an *optional*
-    // value, which std.getopt cannot express, so they are extracted from argv by hand
-    // (see takeOptionalIntFlag) before parseCliArgs runs.
+    // value — the shape `counter: true` gives an integral option: a bare `--flag`
+    // increments the field, while `--flag N` / `--flag=N` assign N. So 0 means "not
+    // given", 1 means "given, no length" (the sentinel a bare flag leaves behind), and
+    // anything larger is the requested length; see `generateLen`.
+    @(Option("title-generate", counter: true, description: "Generate the title; the optional value is its target visible width in columns"))
+    int titleGenerate;
+
+    @(Option("content-generate", counter: true, description: "Generate the content; the optional value is its target visible width in columns"))
+    int contentGenerate;
 }
+
+/// Decode a `[maxLen]` counter flag: 0 = the flag was absent, 1 = it was given bare
+/// (use `dflt`), anything else is the length the user asked for.
+int generateLen(int flag, int dflt) => flag > 1 ? flag : dflt;
 
 /// A forward range that sleeps on each `popFront`, so consuming it animates output.
 /// Granularity-agnostic: it paces whatever range it wraps — title words, or the box's
@@ -90,57 +101,53 @@ struct DelayedRange(R)
 
 auto delayedRange(R)(R src, int delayMs) => DelayedRange!R(src, delayMs);
 
-void main(string[] args)
+int main(string[] args)
 {
-    import core.stdc.stdlib : exit;
+    import std.conv : to;
     import std.string : splitLines;
 
-    // Pull the optional-value generate flags out of argv first (getopt can't parse an
-    // option whose value is optional), leaving the rest for the struct parser.
-    int titleGenerateLen = titleDefaultLen;
-    int contentGenerateLen = contentDefaultLen;
-    const titleGenerate = takeOptionalIntFlag(args, "title-generate", titleGenerateLen);
-    const contentGenerate = takeOptionalIntFlag(args, "content-generate", contentGenerateLen);
-
-    import std.conv : to;
-
-    const cli = args.parseCliArgs!CliParams(HelpInfo(
+    auto parsed = parseCli!CliParams(args, HelpInfo(
         "streaming-box",
         "Animated streaming drawBox demo",
         [
-            // --title-generate / --content-generate take an optional value, which
-            // std.getopt cannot model, so they are documented here rather than in the
-            // auto-generated OPTIONS section.
+            // The per-option help above says what each flag does; this says how the
+            // three sources of a group relate to each other.
             "generated sources": [
                 "--title-generate [maxLen], --content-generate [maxLen]",
                 "Generate the title / content instead of taking it from a literal or a"
-                    ~ " command. The optional maxLen is the target visible width in columns"
-                    ~ " (default " ~ titleDefaultLen.to!string ~ " for the title, "
-                    ~ contentDefaultLen.to!string ~ " for the content). At most one source"
+                    ~ " command. The value is optional; omitted, the target visible width"
+                    ~ " is " ~ titleDefaultLen.to!string ~ " columns for the title and "
+                    ~ contentDefaultLen.to!string ~ " for the content. At most one source"
                     ~ " — literal, --*-command, or --*-generate — may be given per group;"
                     ~ " with none, that group is generated.",
             ],
         ],
     ));
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const cli = parsed.value;
+
+    const titleGenerateLen = generateLen(cli.titleGenerate, titleDefaultLen);
+    const contentGenerateLen = generateLen(cli.contentGenerate, contentDefaultLen);
 
     // Within each group at most one source may be chosen; the groups are independent.
     if (auto bad = conflictingSources("title", [
             tuple("--title", cli.title.length > 0),
             tuple("--title-command", cli.titleCommand.length > 0),
-            tuple("--title-generate", cast(bool) titleGenerate),
+            tuple("--title-generate", cli.titleGenerate > 0),
         ]))
     {
         stderr.writeln(bad);
-        exit(2);
+        return 2;
     }
     if (auto bad = conflictingSources("content", [
             tuple("--content", cli.content.length > 0),
             tuple("--content-command", cli.contentCommand.length > 0),
-            tuple("--content-generate", cast(bool) contentGenerate),
+            tuple("--content-generate", cli.contentGenerate > 0),
         ]))
     {
         stderr.writeln(bad);
-        exit(2);
+        return 2;
     }
 
     // Resolve each group: literal → command → generated (the default when none chosen).
@@ -178,6 +185,8 @@ void main(string[] args)
         stdout.flush(); // show each chunk as it is produced, not at program exit
     }
     writeln();
+
+    return 0;
 }
 
 import std.typecons : tuple, Tuple;
@@ -194,45 +203,6 @@ string conflictingSources(string group, Tuple!(string, bool)[] sources)
         return null;
     return "streaming-box: " ~ chosen.join(", ") ~ " are mutually exclusive ("
         ~ group ~ " has only one source)";
-}
-
-/// Extract a `--<name> [N]` optional-value flag from `args` in place. Recognises
-/// `--name`, `--name=N`, and `--name N` (the bare token is consumed as the length only
-/// when it is all digits, so `--name --other` leaves `--other` untouched). Returns
-/// whether the flag appeared; writes the parsed length to `length` when one is given.
-bool takeOptionalIntFlag(ref string[] args, string name, ref int length)
-{
-    import std.algorithm : all;
-    import std.ascii : isDigit;
-    import std.conv : to, ConvException;
-
-    const longName = "--" ~ name;
-    const eqPrefix = longName ~ "=";
-    bool found;
-    string[] kept;
-    for (size_t i = 0; i < args.length; ++i)
-    {
-        const a = args[i];
-        if (a == longName)
-        {
-            found = true;
-            if (i + 1 < args.length && args[i + 1].length && args[i + 1].all!isDigit)
-                length = args[++i].to!int; // consume the optional length token
-            continue;
-        }
-        if (a.length > eqPrefix.length && a[0 .. eqPrefix.length] == eqPrefix)
-        {
-            found = true;
-            try
-                length = a[eqPrefix.length .. $].to!int;
-            catch (ConvException)
-            { /* malformed --name=xx: keep the default length */ }
-            continue;
-        }
-        kept ~= a;
-    }
-    args = kept;
-    return found;
 }
 
 /// Run `cmd` in a shell and use its stdout (joined to one line) as the title. Falls

@@ -17,6 +17,10 @@ result-*
 
 # build artifact dir
 build/
+# …but not a `views/**/build/` subtree: those are an example's help text for a
+# `build` subcommand, not artifacts.
+!**/views/**/build/
+!**/views/**/build/**
 
 # Compiled Object files
 *.o

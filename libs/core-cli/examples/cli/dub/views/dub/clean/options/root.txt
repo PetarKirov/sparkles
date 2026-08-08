@@ -1,0 +1,1 @@
+Path to the package root that should be cleaned. Defaults to the current working directory.

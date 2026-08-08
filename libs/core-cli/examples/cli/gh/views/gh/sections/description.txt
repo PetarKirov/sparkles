@@ -1,0 +1,5 @@
+gh is GitHub's official command-line tool. It brings pull requests, issues, releases, GitHub Actions, and other GitHub features to your terminal so you can do all your work in one place.
+
+The tool is structured as a collection of topic groups (auth, repo, pr, issue, …) each holding a handful of focused subcommands. Run `gh <topic> --help` to see what each topic can do.
+
+Most commands operate against the repository in the current working directory by inspecting its `origin` git remote. Pass an explicit `OWNER/REPO` argument or `-R OWNER/REPO` flag to target a different repository.

@@ -1,0 +1,3 @@
+List networks known to the daemon.
+
+The output includes the built-in `bridge`, `host`, and `none` networks alongside any user-defined ones. Use `--filter` to narrow the listing.

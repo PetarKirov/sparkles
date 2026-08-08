@@ -44,7 +44,7 @@ import std.datetime.stopwatch : AutoStart, StopWatch;
 import std.format : format;
 import std.stdio : write;
 
-import sparkles.core_cli.args;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui.components.live : stdoutLiveRegion;
 import sparkles.ui.components.table : drawTable, drawTableLines, TableProps;
 import sparkles.base.styled_template : styledText;
@@ -52,10 +52,10 @@ import sparkles.base.text.width : Align;
 
 struct CliParams
 {
-    @CliOption("b|budget-ms", "Measurement budget per benchmark, in milliseconds")
+    @(Option("b|budget-ms", description: "Measurement budget per benchmark, in milliseconds"))
     int budgetMs = 150;
 
-    @CliOption("i|interval", "Milliseconds of measuring between repaints")
+    @(Option("i|interval", description: "Milliseconds of measuring between repaints"))
     int intervalMs = 80;
 }
 
@@ -78,11 +78,14 @@ struct BenchResult
     double nsPerIter;
 }
 
-void main(string[] args)
+int main(string[] args)
 {
-    const cli = args.parseCliArgs!CliParams(HelpInfo(
+    auto parsed = parseCli!CliParams(args, HelpInfo(
         "table-bench-ticker",
         "Benchmark results ticking into a live table as they complete"));
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const cli = parsed.value;
 
     auto region = stdoutLiveRegion();
     scope (exit) region.finish();
@@ -133,6 +136,7 @@ void main(string[] args)
         write("(sink: 0)\n"); // practically never; keeps `sink` live
 
     region.finish();
+    return 0;
 }
 
 /// One frame: the results so far plus a spinner row for the in-flight

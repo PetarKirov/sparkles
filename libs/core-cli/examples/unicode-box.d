@@ -40,7 +40,7 @@ import core.time : dur;
 import std.range.primitives : ElementType, empty, front, popFront;
 import std.stdio : stdout, write, writeln;
 
-import sparkles.core_cli.args;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui.components.box : BoxProps, drawBoxChunks, TitleOverflow;
 import sparkles.ui.components.osc_link : oscLink;
 import sparkles.base.term_style : Style, stylize;
@@ -48,13 +48,13 @@ import sparkles.base.text.grapheme : visibleWidth;
 
 struct CliParams
 {
-    @CliOption("d|delay", "Animation delay per streamed chunk, in milliseconds")
+    @(Option("d|delay", description: "Animation delay per streamed chunk, in milliseconds"))
     int delayMs = 14;
 
-    @CliOption("w|width", "Override every vignette's box width (0 = per-vignette default)")
+    @(Option("w|width", description: "Override every vignette's box width (0 = per-vignette default)"))
     int width = 0;
 
-    @CliOption("only", "Play only the Nth vignette (1-based; 0 = all)")
+    @(Option("only", description: "Play only the Nth vignette (1-based; 0 = all)"))
     int only = 0;
 }
 
@@ -88,12 +88,15 @@ struct Vignette
     BoxProps props;
 }
 
-void main(string[] args)
+int main(string[] args)
 {
-    const cli = args.parseCliArgs!CliParams(HelpInfo(
+    auto parsed = parseCli!CliParams(args, HelpInfo(
         "unicode-box",
         "Unicode & ANSI feature tour for drawBox",
     ));
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const cli = parsed.value;
 
     auto vignettes = buildVignettes(cli.width);
     foreach (i, v; vignettes)
@@ -118,6 +121,8 @@ void main(string[] args)
         if (cli.only == 0)
             Thread.sleep(dur!"msecs"(650)); // a beat between vignettes
     }
+
+    return 0;
 }
 
 // Emoji built from explicit code points so the (otherwise invisible) joiners and

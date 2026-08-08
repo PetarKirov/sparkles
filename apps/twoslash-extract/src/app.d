@@ -9,46 +9,52 @@ module app;
 
 import std.stdio : stderr, writeln;
 
-import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
+import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
 
 import sparkles.dmd_lsp.api : AnalyzerConfig;
 
 struct CliParams
 {
-    @CliOption("out", "Output path for a file target, or output directory for a directory target; defaults to `<input-minus-.d>.twoslash.json` beside each input.")
+    // The target: a `.d` sample or a directory of them. Declared variadic and
+    // optional so the "no input given" and "extra inputs are ignored" behaviors
+    // stay exactly as they were under the old leftover-argv handling.
+    @(Argument("input", description: "A .d sample, or a directory of samples.", optional: true))
+    string[] inputs;
+
+    @(Option("out", description: "Output path for a file target, or output directory for a directory target; defaults to `<input-minus-.d>.twoslash.json` beside each input."))
     string outPath;
 
-    @CliOption("import", "Source import path for the analysis (repeatable); prepended to `$SPARKLES_DMD_IMPORT_PATH` and the sample's own `// @import:` directives.")
+    @(Option("import", description: "Source import path for the analysis (repeatable); prepended to `$SPARKLES_DMD_IMPORT_PATH` and the sample's own `// @import:` directives."))
     string[] importPaths;
 
-    @CliOption("dflags", "Extra compiler flags (space-separated), merged with the sample's `// @dflags:` directives.")
+    @(Option("dflags", description: "Extra compiler flags (space-separated), merged with the sample's `// @dflags:` directives."))
     string dflags;
 
-    @CliOption("dub", "Analyze the input in the context of its enclosing dub project: `dub describe` supplies the import paths, string-import paths, version identifiers and dflags of the nearest dub.sdl/dub.json. Off by default, so a standalone sample is never influenced by a project that happens to contain it.")
+    @(Option("dub", description: "Analyze the input in the context of its enclosing dub project: `dub describe` supplies the import paths, string-import paths, version identifiers and dflags of the nearest dub.sdl/dub.json. Off by default, so a standalone sample is never influenced by a project that happens to contain it."))
     bool dub;
 
-    @CliOption("dub-config", "With --dub: the dub configuration to describe (default: dub's own default configuration).")
+    @(Option("dub-config", description: "With --dub: the dub configuration to describe (default: dub's own default configuration)."))
     string dubConfig;
 
-    @CliOption("dub-build", "With --dub: the dub build type to describe, e.g. unittest (default: dub's own default, debug).")
+    @(Option("dub-build", description: "With --dub: the dub build type to describe, e.g. unittest (default: dub's own default, debug)."))
     string dubBuild;
 
-    @CliOption("verify", "Re-extract and diff against the existing payload instead of writing; exit 1 on drift (the golden-fixture guard).")
+    @(Option("verify", description: "Re-extract and diff against the existing payload instead of writing; exit 1 on drift (the golden-fixture guard)."))
     bool verify;
 
-    @CliOption("unittest", "Analyze `unittest` bodies too (implies the `unittest` version identifier), so a viewer explains test code as well as the code under test. Off by default: the golden corpus is analyzed exactly as written.")
+    @(Option("unittest", description: "Analyze `unittest` bodies too (implies the `unittest` version identifier), so a viewer explains test code as well as the code under test. Off by default: the golden corpus is analyzed exactly as written."))
     bool unittests;
 
-    @CliOption("quiet", "Suppress per-file progress output.")
+    @(Option("quiet", description: "Suppress per-file progress output."))
     bool quiet;
 
-    @CliOption("lazy", "Emit hover nodes as bare spans without type/doc content (the lazy convention: underlines render, content resolves elsewhere). Queries/errors/completions stay eager.")
+    @(Option("lazy", description: "Emit hover nodes as bare spans without type/doc content (the lazy convention: underlines render, content resolves elsewhere). Queries/errors/completions stay eager."))
     bool lazyHovers;
 
-    @CliOption("stdout", "Write the payload as one compact JSON line on stdout instead of a file.")
+    @(Option("stdout", description: "Write the payload as one compact JSON line on stdout instead of a file."))
     bool toStdout;
 
-    @CliOption("serve", "Oracle mode: analyze once, print the lazy payload as line 1 on stdout, then answer `{tip: <nodeIndex>}` JSON-line requests on stdin with the node's resolved content until EOF (spec EXT7).")
+    @(Option("serve", description: "Oracle mode: analyze once, print the lazy payload as line 1 on stdout, then answer `{tip: <nodeIndex>}` JSON-line requests on stdin with the node's resolved content until EOF (spec EXT7)."))
     bool serve;
 }
 
@@ -58,8 +64,8 @@ struct CliParams
 version (unittest) {} else
 int main(string[] args)
 {
-    auto argv = args;
-    const cli = argv.parseCliArgs!CliParams(
+    auto parsed = parseCli!CliParams(
+        args,
         HelpInfo(
             "twoslash-extract",
             "Extract a twoslash node payload (types, queries, diagnostics, docs) " ~
@@ -67,13 +73,16 @@ int main(string[] args)
             null
         )
     );
+    if (!parsed)
+        return reportCliError(parsed.error);
+    const cli = parsed.value;
 
-    if (argv.length < 2)
+    if (cli.inputs.length == 0)
     {
         stderr.writeln("error: no input given (a .d sample or a directory); see --help");
         return 2;
     }
-    const target = argv[1];
+    const target = cli.inputs[0];
 
     import std.file : exists, isDir;
 
@@ -208,8 +217,10 @@ private int runDirectory(in CliParams cli, string dir)
                 sample.name.baseName.setExtension("twoslash.json"))];
         foreach (p; cli.importPaths)
             child ~= ["--import", p];
+        // Inline `=` form: a dflags value starts with `-`, which the
+        // space-separated form would read as the next option.
         if (cli.dflags.length)
-            child ~= ["--dflags", cli.dflags];
+            child ~= "--dflags=" ~ cli.dflags;
         if (cli.dub)
             child ~= "--dub";
         if (cli.dubConfig.length)
