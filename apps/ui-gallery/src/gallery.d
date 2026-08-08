@@ -25,7 +25,7 @@ import sparkles.ui.state : hoverTargets, ScrollState, wantedPointerShape;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
-import compat : AppTheme;
+import sparkles.ui_app.run_app : AppTheme;
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
 import registry : pages, stepPage;
@@ -471,8 +471,12 @@ struct Gallery
         // shrinking allocations, and a shrunk text run still paints its whole
         // string — so three segments that no longer fit overprint. The title
         // always survives; the blurb goes first, the theme name next.
+        //
+        // The toast counts as one of them. It takes the centre and is the more
+        // urgent thing to read, so it displaces the blurb rather than being
+        // added beside it — which is what it did at first, overprinting both.
         uint[] leading = [title];
-        if (s.surface.width >= 56)
+        if (s.surface.width >= 56 && !s.toast.visible)
             leading ~= blurb;
         uint[] trailing;
         if (s.surface.width >= 40)
@@ -652,7 +656,8 @@ private auto rgbOr(C)(in C c, ubyte r, ubyte g, ubyte bl) @safe
 version (unittest)
 {
     import pages.themes_page : themeAt;
-    import compat : RecordingHost, runAppRecorded;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : runAppRecorded;
     import sparkles.input : charEvent, keyEvent, Mods, PointerButton;
     import sparkles.ui_app.host : RunConfig;
 
@@ -678,7 +683,8 @@ version (unittest)
 @("ui_gallery.gallery.isAComponent")
 @safe unittest
 {
-    import compat : isAppFor, RecordingHost;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : isAppFor;
 
     // The concept, checked against the host every test drives it on. A member
     // template that failed to instantiate would otherwise surface as a

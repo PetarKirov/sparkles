@@ -31,7 +31,8 @@ import sparkles.ui.geometry : Size;
 import sparkles.ui_app.host : RunConfig;
 import sparkles.ui_tui.grid_canvas : paintGrid;
 
-import compat : RecordingHost, runAppRecorded;
+import sparkles.ui_app.record : RecordingHost;
+import sparkles.ui_app.run_app : runAppRecorded;
 import gallery : Gallery;
 import state : GalleryState;
 
