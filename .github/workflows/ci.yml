@@ -343,11 +343,15 @@ jobs:
       # includes `lychee-offline`, a ~0.4 s pass that catches the thing a diff
       # cannot see: a renamed heading or a deleted page breaking a relative link
       # in a file this change never touched.
+      #
+      # `no-commit-to-branch` is a local developer guard (don't commit on main);
+      # on push-to-main the checkout is that branch, so the hook would fail the
+      # job that exists precisely to seed caches and re-check links after merge.
       - name: Lint (and check local links)
         run: prek run --all-files --show-diff-on-failure --color always
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          SKIP: verify-md-examples,lychee
+          SKIP: verify-md-examples,lychee,no-commit-to-branch
 
       # The networked half, over the DIFF only. A pull request can only
       # introduce a dead URL in a file it touched, and re-checking the other
