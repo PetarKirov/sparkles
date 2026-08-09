@@ -258,6 +258,16 @@ bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
 
                 while (!host.quitRequested)
                 {
+                    // The park deadline: the application's per-frame ask
+                    // (`HST16`) against the caller's fixed idle interval —
+                    // whichever is sooner; `Duration.max` blocks on input
+                    // alone.
+                    import core.time : Duration;
+
+                    Duration deadline = host.wakeAsk;
+                    if (idleTimeoutMs >= 0 && idleTimeoutMs.msecs < deadline)
+                        deadline = idleTimeoutMs.msecs;
+
                     Event e;
                     bool haveEvent = true;
                     if (host.frameRequested)
@@ -266,7 +276,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
                         // if one is already queued.
                         haveEvent = events.tryTake(e);
                     }
-                    else if (idleTimeoutMs >= 0)
+                    else if (deadline != Duration.max)
                     {
                         // Out-variable shape: the deadline body must not
                         // return an Expected (the scope would double-wrap).
@@ -279,7 +289,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
                                 taken = t.value;
                                 gotOne = true;
                             }
-                        })(sched, idleTimeoutMs.msecs);
+                        })(sched, deadline);
                         if (o.hasError)
                         {
                             if (!o.error.isTimeout)
@@ -320,9 +330,21 @@ bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
     while (!host.quitRequested)
     {
         // Block unless the application asked for another frame, or the caller
-        // wants a turn on an interval — a terminal has no clock of its own, so
+        // wants a turn on an interval, or the application asked for a timed
+        // wake this frame (`HST16`) — a terminal has no clock of its own, so
         // "wait for something to happen" is the whole scheduling policy.
-        const timeout = host.frameRequested ? 0 : cfg.idleTimeoutMs;
+        import core.time : Duration;
+
+        int timeout = cfg.idleTimeoutMs;
+        const ask = host.wakeAsk;
+        if (ask != Duration.max)
+        {
+            const askMs = cast(int) ask.total!"msecs";
+            if (timeout < 0 || askMs < timeout)
+                timeout = askMs;
+        }
+        if (host.frameRequested)
+            timeout = 0;
         auto e = session.next(timeout);
 
         if (e.isEndOfInput)

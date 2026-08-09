@@ -29,6 +29,8 @@ $(LREF HostState.skipFrame) is something every target must honour.
 */
 module sparkles.ui_app.host;
 
+import core.time : Duration;
+
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, InputCapabilities;
@@ -107,6 +109,10 @@ mixin template HostState(size_t opCapacity = frameOpCapacity)
     /// The per-frame buffer's type at this host's inline capacity.
     private alias HostOps = sparkles.ui_app.host.FrameOpsOf!opCapacity;
 
+    // A mixin template resolves names at its instantiation site, so the
+    // import must travel with it rather than rely on this module's.
+    private import core.time : Duration;
+
     private bool _quit;
     private bool _frameRequested;
     private bool _skipFrame;
@@ -141,6 +147,29 @@ mixin template HostState(size_t opCapacity = frameOpCapacity)
     /// ditto
     bool frameSkipped() const @safe pure nothrow @nogc => _skipFrame;
 
+    /**
+    Ask to be woken within `d` even if no input arrives (`HST16`).
+
+    `RunConfig.idleTimeoutMs` is fixed at startup, but an application's next
+    self-imposed deadline moves every frame — a panel due to open, a poll
+    whose cap survives on some backend. Like `requestFrame` this is an ask,
+    re-armed each frame it is still wanted (the frame bracket clears it);
+    repeated asks keep the soonest. The expiry is observable as the same
+    idle wake `idleTimeoutMs` produces: a frame pass with no event. The
+    terminal arm's park deadline becomes the minimum of the two; a GPU arm
+    at a fixed cadence subsumes it; the recorder records it per frame.
+    */
+    void wakeIn(Duration d) @safe pure nothrow @nogc
+    {
+        if (d < _wakeIn)
+            _wakeIn = d;
+    }
+
+    /// The soonest ask this frame, `Duration.max` when none was made.
+    Duration wakeAsk() const @safe pure nothrow @nogc => _wakeIn;
+
+    private Duration _wakeIn = Duration.max;
+
     /// The per-frame display list, owned and reused by the host (`HST4`). An
     /// application appends; it never sizes or clears one.
     ref HostOps ops() return @safe pure nothrow @nogc => _ops;
@@ -150,6 +179,7 @@ mixin template HostState(size_t opCapacity = frameOpCapacity)
     {
         _frameRequested = false;
         _skipFrame = false;
+        _wakeIn = Duration.max;
         _ops.length = 0;
     }
 }
@@ -245,6 +275,34 @@ unittest
     h.newFrame();
     assert(!h.frameRequested && !h.frameSkipped);
     assert(h.quitRequested, "quit outlives the frame it was asked in");
+}
+
+@("ui_app.host.wakeInKeepsTheSoonestAskPerFrame")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.time : msecs;
+
+    static struct Fake
+    {
+        mixin HostState;
+        void newFrame() { beginFrameState(); }
+    }
+
+    Fake h;
+    assert(h.wakeAsk == Duration.max, "no ask until the application makes one");
+
+    // Repeated asks keep the soonest — a later, longer one must not push the
+    // wake back past a deadline already promised.
+    h.wakeIn(150.msecs);
+    h.wakeIn(33.msecs);
+    h.wakeIn(500.msecs);
+    assert(h.wakeAsk == 33.msecs);
+
+    // An ask is per-frame, like requestFrame: re-armed each frame it is
+    // still wanted, so a lapsed deadline stops costing wakeups by itself.
+    h.newFrame();
+    assert(h.wakeAsk == Duration.max);
 }
 
 @("ui_app.host.opsBufferIsReused")
