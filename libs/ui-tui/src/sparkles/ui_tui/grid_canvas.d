@@ -378,6 +378,13 @@ struct GridCanvas
         // packed `TextAttr` bits — dropping them here silently un-bolds
         // every widget-pipeline text run in the TUI.
         st.attrs = TextAttr(cast(ubyte) v.styleBits);
+        // A text-decoration underline rides the run's own visual (the tab
+        // strip's bottom border); one another op composited stays.
+        if (v.underline != UnderlineStyle.none)
+        {
+            st.underline = v.underline;
+            st.underlineColor = st.fg;
+        }
         if (v.hasBg)
             st.bg = Color.fromRgb(blend(cellBg(st), v.bg, v.bgAlpha));
         c.setCodepoint(cp, w, st);

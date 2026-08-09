@@ -268,6 +268,7 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
     bool fitLabels = true, scope const(size_t)[] ids = null,
     TabCaps caps = TabCaps.init)
 {
+    const capped = caps.left.length != 0;
     uint capGlyph(string g)
         => b.add(Widget(kind: WidgetKind.text, text: g, slot: Slot.border));
 
@@ -306,7 +307,7 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
             // A CAPPED strip is line-drawn: solid bands under hairline
             // walls read as floating blocks (the GUI especially), so only
             // the active tab keeps a subtle fill inside its walls.
-            paintBackground: !caps.left.length || isActive,
+            paintBackground: !capped || isActive,
         ));
         if (caps.left.length)
         {

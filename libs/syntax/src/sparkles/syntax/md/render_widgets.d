@@ -627,13 +627,15 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
     const hit = opt.fenceHitBase != 0
         ? opt.fenceHitBase + blk.codeBody.start : opt.hitId;
 
-    uint rich(TextSpan[] spans, size_t hitId = 0)
+    // `banded: false` for the grouped header: its strip is line-drawn, and
+    // a band starting mid-row (after the strip) reads as a seam.
+    uint rich(TextSpan[] spans, size_t hitId = 0, bool banded = true)
     {
         Widget w = Widget(kind: WidgetKind.rich, spans: spans,
             slot: Slot.border, wrap: TextWrap.none,
             hitId: hitId ? hitId : opt.hitId,
-            paintBackground: true, textStyle: codeStyle(opt));
-        if (opt.theme.present)
+            paintBackground: banded, textStyle: codeStyle(opt));
+        if (banded && opt.theme.present)
         {
             w.bgOverride = opt.theme.codePanelBg;
             w.hasBgOverride = true;
@@ -657,7 +659,7 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
 
         const strip = tabStrip(b, opt.groupTabs.titles, opt.groupTabs.active,
             0, PressState.init, fitLabels: true, ids: opt.groupTabs.ids,
-            caps: TabCaps("│", "│", "├"));
+            caps: TabCaps("│", "│", "└"));
         kids ~= strip;
         used = 2 + cast(int) opt.groupTabs.titles.length - 1; // walls
         foreach (t; opt.groupTabs.titles)
@@ -667,7 +669,7 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
         int fill0 = boxW - used - tailW0;
         if (fill0 < 0)
             fill0 = 0;
-        kids ~= rich([ruleSpan(opt, repGlyph("─", fill0))]);
+        kids ~= rich([ruleSpan(opt, repGlyph("─", fill0))], 0, false);
         if (hasCopy0)
         {
             TextSpan icon0 = TextSpan(" "
@@ -675,11 +677,11 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
                     ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon) ~ " ",
                 Slot.code, codeStyle(opt), noBreak: true,
                 fg: opt.theme.codeFg, hasFg: opt.theme.present);
-            kids ~= rich([icon0], hit);
-            kids ~= rich([ruleSpan(opt, "─╮")]);
+            kids ~= rich([icon0], hit, false);
+            kids ~= rich([ruleSpan(opt, "─╮")], 0, false);
         }
         else
-            kids ~= rich([ruleSpan(opt, "╮")]);
+            kids ~= rich([ruleSpan(opt, "╮")], 0, false);
         const tabsRow = b.add(Widget(kind: WidgetKind.row, children: kids,
             width: SizeSpec.fixed(boxW)));
         return b.add(Widget(kind: WidgetKind.column, children: [
