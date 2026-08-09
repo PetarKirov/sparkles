@@ -133,11 +133,14 @@ struct Theme
         set(Slot.gutter, rgb(mix(fg, bg, 0.5)), Color.init);
         set(Slot.border, rgb(mix(bg, fg, 0.4)), Color.init);        // rules
         set(Slot.muted, rgb(mix(fg, bg, 0.35)), Color.init);
-        // Emphasized chrome text (the active tab's caption, key hints):
-        // the theme's own accent where its rules pin one.
+        // Emphasized chrome (the active tab, key hints): the theme's own
+        // accent where its rules pin one — its bg an accent TINT, so an
+        // accented selection is unmistakably not the panel surface.
         const accent = ruleFgFor("function", ruleFgFor("markup.link"));
         if (accent.kind == Color.Kind.rgb)
-            set(Slot.chromeAccent, accent, Color.init);
+            set(Slot.chromeAccent, accent, rgb(mix(bg, accent.rgb, 0.20)));
+        else
+            set(Slot.chromeAccent, Color.init, rgb(mix(bg, fg, 0.30)));
         return p;
     }
 
@@ -193,6 +196,12 @@ private RgbColor toRgbOr(in Color c, RgbColor fallback) pure nothrow @nogc
         rules: [ThemeRule("function", StyleSpec(fg: Color.fromRgb(accent)))]);
     assert(ruled.effectivePalette().fg[Slot.chromeAccent]
         == Color.fromRgb(accent));
+    // …and its bg is the accent TINT — an accented selection (the active
+    // tab) is never the panel surface.
+    assert(ruled.effectivePalette().bg[Slot.chromeAccent]
+        == Color.fromRgb(mix(bgA, accent, 0.20)));
+    assert(ruled.effectivePalette().bg[Slot.chromeAccent]
+        != ruled.effectivePalette().bg[Slot.surface]);
 
     // No pinned background: the scheme default, untouched.
     assert(Theme(name: "n").effectivePalette()

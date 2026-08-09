@@ -303,10 +303,12 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
             alignX: Alignment.center,
             // The whole tab is the target, not just the glyphs.
             hitId: id,
-            slot: isActive ? Slot.chromeFocused : Slot.chrome,
             // A CAPPED strip is line-drawn: solid bands under hairline
             // walls read as floating blocks (the GUI especially), so only
-            // the active tab keeps a subtle fill inside its walls.
+            // the active tab keeps a fill inside its walls — the ACCENT
+            // tint, distinct from the panel surface below it.
+            slot: isActive ? (capped ? Slot.chromeAccent : Slot.chromeFocused)
+                : Slot.chrome,
             paintBackground: !capped || isActive,
         ));
         if (caps.left.length)
