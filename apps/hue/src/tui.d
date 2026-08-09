@@ -1415,6 +1415,52 @@ unittest
     assert(!t.vm.hsb.dragging);
 }
 
+@("tui.pointer.nestedFenceScrollsToTheEnd")
+@system
+unittest
+{
+    import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
+        MdInline, MdInlineKind, Span, LabelSet;
+
+    // A 120-cell code line, once top-level and once inside a BLOCK QUOTE,
+    // in a 40-column pane. The quote card narrows the fence's box (2 left
+    // + 1 right), and the x clamp must know that REAL interior — computed
+    // against the top-level width it stops 3 columns short of the end.
+    string src;
+    foreach (i; 0 .. 120)
+        src ~= "x";
+    src ~= "\n";
+    MdBlock fence() => MdBlock(kind: MdBlockKind.codeFence,
+        span: Span(0, src.length), codeBody: Span(0, src.length));
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 10;
+    t.relayout();
+
+    t.setDocument("top.md", src, null, PreviewModel(present: true,
+        doc: MdDoc(MdBlock(kind: MdBlockKind.document,
+            children: [fence()]), src)), startPreview: true);
+    const top = t.vm.fenceExtent(0);
+    assert(top.widest == 120 && top.innerW > 0);
+
+    t.setDocument("quoted.md", src, null, PreviewModel(present: true,
+        doc: MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+            MdBlock(kind: MdBlockKind.blockQuote, children: [fence()]),
+        ]), src)), startPreview: true);
+    const quoted = t.vm.fenceExtent(0);
+    assert(quoted.innerW == top.innerW - 3,
+        "the clamp reflects the card's 2-left + 1-right insets");
+    assert(t.vm.setFenceScroll(0, long.max, 0));
+    assert(t.vm.fenceScrollAt[0].x == quoted.widest - quoted.innerW,
+        "the quoted fence scrolls all the way to its last column");
+}
+
 @("tui.paint.markdownWidgets.fenceCopy")
 @system
 unittest
