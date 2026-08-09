@@ -51,7 +51,8 @@ ProcessExpected!T procErr(T)(ProcessErrorCode code, int errnoValue)
 /// `argv` must be NUL-terminated C strings with a trailing `null` sentinel
 /// (`argv[$-1] is null`); `argv[0]` is resolved through `PATH` (`execvp`). The
 /// caller owns the backing memory; it only needs to outlive this call. Used for
-/// "open this URL" (`xdg-open`) from the core loop.
+/// "open this URL" from the core loop — `xdg-open`, or `open` on macOS, with
+/// the URL as `argv[1]`.
 ///
 /// Both forked children touch only async-signal-safe calls (`fork`/`execvp`/
 /// `_exit`), which matters because every fork in this app happens after raylib

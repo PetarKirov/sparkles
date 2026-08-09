@@ -151,7 +151,15 @@ struct TerminalView
     private bool prevFocused = true;
     private bool prevOverlayActive;
     private bool prevChildExited;
-    private int forceFirstFrames = 2;
+    // Frames painted unconditionally at startup, before dirty-tracking is
+    // allowed to skip any. AppKit needs a longer runway than X11/Wayland: it
+    // does not present the first swaps until the NSWindow has finished being
+    // ordered in, so a two-frame burst is spent on frames nobody sees and the
+    // window then stays blank until something else dirties the screen.
+    version (OSX)
+        private int forceFirstFrames = 30;
+    else
+        private int forceFirstFrames = 2;
     private bool forceRedrawEnv;
     private bool drainedThisFrame;
     private bool pendingForce;
@@ -270,11 +278,14 @@ struct TerminalView
         int flags = fcntl(s.pty_fd, F_GETFL);
         if (flags < 0 || fcntl(s.pty_fd, F_SETFL, flags | O_NONBLOCK) < 0)
         {
-            import core.sys.posix.signal : kill, SIGHUP;
-            import core.sys.posix.sys.wait : waitpid;
+            import core.sys.posix.unistd : close;
 
-            kill(s.child, SIGHUP);
-            waitpid(s.child, null, 0);
+            // Master first, then the reap — the same ordering `close` documents:
+            // the child's hangup does not arrive while a master fd is open.
+            close(s.pty_fd);
+            s.pty_fd = -1;
+            hangUpAndReap();
+            s.childReaped = true;
             ghostty_terminal_free(s.terminal);
             s.terminal = null;
             return false;
@@ -335,26 +346,31 @@ struct TerminalView
         return true;
     }
 
-    /// Reaps the child (SIGHUP to its group first if still alive) and frees
-    /// every handle. The fonts and the window belong to the host.
+    /**
+    Reaps the child (hanging up its group first if still alive) and frees every
+    handle. The fonts and the window belong to the host.
+
+    $(B The master is closed before the child is signalled.) A well-behaved
+    shell exits on the EOF/EIO its side reports once the master is gone, and
+    macOS will not deliver that hangup while any master fd is still open — so
+    on that platform signalling first and closing later meant the child never
+    noticed and shutdown blocked in `waitpid` forever.
+    */
     void close() @system
     {
         if (!opened)
             return;
+        if (s.pty_fd >= 0)
+        {
+            import core.sys.posix.unistd : close;
+
+            close(s.pty_fd);
+            s.pty_fd = -1;
+        }
         if (s.child > 0 && !s.childReaped)
         {
-            import core.sys.posix.signal : kill, SIGHUP;
-            import core.sys.posix.sys.wait : waitpid;
-            import core.sys.posix.unistd : getpgid;
-
-            if (!s.childExited)
-            {
-                auto pgid = getpgid(s.child);
-                if (pgid <= 0)
-                    pgid = s.child;
-                kill(cast(pid_t)(-pgid), SIGHUP);
-            }
-            waitpid(s.child, null, 0);
+            hangUpAndReap();
+            s.childReaped = true;
         }
         ghostty_kitty_graphics_placement_iterator_free(s.placement_iter);
         ghostty_render_state_row_cells_free(s.cells);
@@ -367,6 +383,42 @@ struct TerminalView
         s.selState.free();
         ghostty_terminal_free(s.terminal);
         opened = false;
+    }
+
+    /**
+    Hangs up the child's process group and reaps it, escalating rather than
+    blocking.
+
+    A plain `waitpid(child, null, 0)` is a shutdown that never finishes if the
+    child ignores `SIGHUP` — a shell with a trap, a foreground process that
+    detached from the group. Polling with `WNOHANG` for ~50 ms and then sending
+    `SIGKILL` bounds it: a cooperative child still exits on its own terms, and
+    an uncooperative one cannot hold the window open.
+    */
+    private void hangUpAndReap() @system
+    {
+        import core.sys.posix.signal : kill, SIGHUP, SIGKILL;
+        import core.sys.posix.sys.wait : waitpid, WNOHANG;
+        import core.sys.posix.unistd : getpgid, usleep;
+
+        if (!s.childExited)
+        {
+            auto pgid = getpgid(s.child);
+            if (pgid <= 0)
+                pgid = s.child;
+            kill(cast(pid_t)(-pgid), SIGHUP); // the whole foreground group
+        }
+
+        // A non-zero `waitpid` means there is nothing left to reap: either it
+        // exited (the pid) or it was never ours (-1/ECHILD).
+        foreach (_; 0 .. 10)
+        {
+            if (waitpid(s.child, null, WNOHANG) != 0)
+                return;
+            usleep(5_000);
+        }
+        kill(s.child, SIGKILL);
+        waitpid(s.child, null, 0);
     }
 
     // ── the component contract ──────────────────────────────────────────────
