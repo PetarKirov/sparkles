@@ -28,6 +28,7 @@ import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle, Visual;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import sparkles.ui_app.run_app : AppTheme;
+import inspector : inspectorBody, inspectorInnerWidth;
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
 import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
@@ -181,6 +182,22 @@ struct Gallery
 
         const header = shellHeader(b);
         const content = contentPane(b, pageRoot, viewport, geom);
+
+        // The inspector panel, the same shape one band over: build the body,
+        // measure it, clamp the machine against the measurement, ease. Built
+        // AFTER the page so its dump describes this frame's subject at this
+        // frame's width.
+        uint inspRoot;
+        if (s.inspectorVisible)
+        {
+            inspRoot = inspectorBody(b, s);
+            s.inspectorRows = measureHeight(b, inspRoot, inspectorInnerWidth);
+            const ig = inspectorBarGeometry();
+            s.inspView.v = s.inspView.v.scrolledTo(
+                ScrollView.clampOffset(s.inspView.v.offset, ig.content,
+                    ig.viewport));
+            easeVertical(s.inspView, s.caps, dtMs / 1000.0f);
+        }
         // The bands are pinned to one row each rather than left to fit. On a
         // short terminal the sidebar's natural height exceeds the surface, and
         // a column that has to reclaim the difference takes it from whichever
@@ -195,11 +212,13 @@ struct Gallery
         if (s.navVisible)
             bodyChildren ~= navPane(b);
         bodyChildren ~= content;
+        if (s.inspectorVisible)
+            bodyChildren ~= inspectorPane(b, inspRoot, viewport);
 
         const body_ = b.add(Widget(
             kind: WidgetKind.row,
             children: bodyChildren,
-            gap: s.navVisible ? 1 : 0,
+            gap: s.navVisible || s.inspectorVisible ? 1 : 0,
             height: SizeSpec.grow(),
         ));
         const footer = statusBar(b);
@@ -229,7 +248,8 @@ struct Gallery
                 || easing(s.contentView, s.caps)
                 || easing(s.demoView, s.caps)
                 || easing(s.chromeView, s.caps)
-                || easing(s.termView, s.caps)) && s.hasFrameClock)
+                || easing(s.termView, s.caps)
+                || easing(s.inspView, s.caps)) && s.hasFrameClock)
             h.requestFrame();
 
         return b.finish(root);
@@ -386,6 +406,8 @@ struct Gallery
             // content region, and every plausible letter is spoken for by one
             // of them (`n`/`p` scroll, `d` discloses, `t` cycles a template).
             case '\\': s.navPinned = !s.navPinned; return;
+            // The sidebar's shifted sibling, for the other side panel.
+            case '|': s.inspectorOpen = !s.inspectorOpen; return;
             default: break;
         }
 
@@ -639,6 +661,21 @@ struct Gallery
             track: s.contentHeight,
         );
 
+    /// ditto, for the inspector panel — its own document, its own numbers.
+    private BarGeometry inspectorBarGeometry() @safe
+        => BarGeometry(
+            content: s.inspectorRows,
+            viewport: s.contentHeight,
+            track: s.contentHeight,
+        );
+
+    private void scrollInspector(int delta) @safe
+    {
+        const g = inspectorBarGeometry();
+        s.inspView.wheeledV(delta,
+            ScrollExtents(g.content, g.viewport, g.track));
+    }
+
     private void scrollContent(int delta) @safe
     {
         // Through the machine, not around it: an offset moved behind the bar's
@@ -652,12 +689,13 @@ struct Gallery
     {
         if (to >= pages.length || to == s.page)
             return;
-        s.lastPage = s.page;
         s.page = to;
         // A new page starts at its top. Carrying the previous page's offset
         // would land a short page scrolled past its own end. The bar's own
         // state — hover, animation width — is kept: the pointer has not moved.
         s.contentView.v = s.contentView.v.scrolledTo(0);
+        // The inspector's dump is a new document too.
+        s.inspView.v = s.inspView.v.scrolledTo(0);
     }
 
     private void cycleTheme(int delta) @safe
@@ -694,6 +732,17 @@ struct Gallery
         {
             // Consumed: a live grab is not also a press on whatever it passes
             // over. Hover still updates, so the bar stays lit while held.
+            s.hover.update(p, targets);
+            reportPointerShape(h);
+            return;
+        }
+
+        // The inspector panel's bar, under the same rule. When the panel is
+        // not showing, `rectOf` finds nothing and the geometry is not live,
+        // so the call is inert rather than guarded.
+        if (driveVertical(s.inspView, s.capture, capInspBar, p,
+                rectOf(tree, frames, hitInspBar), inspectorBarGeometry()))
+        {
             s.hover.update(p, targets);
             reportPointerShape(h);
             return;
@@ -808,6 +857,14 @@ struct Gallery
 
     private void onWheel(in WheelEvent w) @safe
     {
+        // Over the inspector panel the wheel scrolls the dump, not the page
+        // it describes. The panel is the body row's rightmost child, so its
+        // columns are the surface's last `inspectorWidth` — a geometric test,
+        // because the wheel handler has no frames in hand (`UGL-O5`'s shape,
+        // answered here for the second consumer that wanted it).
+        if (s.inspectorVisible && w.pos.x >= s.surface.width - inspectorWidth)
+            return scrollInspector(w.dy);
+
         // Over the terminal pane the wheel belongs to the application when
         // it tracks the mouse (the scroll buttons); otherwise it walks the
         // shell's scrollback — either way, not the gallery's document.
@@ -956,6 +1013,37 @@ struct Gallery
         ));
     }
 
+    /**
+    The inspector panel: the pre-built, pre-measured body in a scroll viewport
+    with its own bar, in a fixed-width column bordered on the left — the
+    sidebar's mirror image, down to the padding.
+    */
+    private uint inspectorPane(ref Builder b, uint bodyRoot, int viewport) @safe
+    {
+        const view_ = scrollView(b, bodyRoot, viewport,
+            ScrollState(s.inspView.v.offset), keyInspScroll);
+        const bar = verticalBar(b, s.inspView, inspectorBarGeometry(),
+            hitInspBar);
+        const inner = b.add(Widget(
+            kind: WidgetKind.row,
+            children: [view_, bar],
+        ));
+        return b.add(Widget(
+            kind: WidgetKind.column,
+            children: [inner],
+            width: SizeSpec.fixed(inspectorWidth),
+            height: SizeSpec.grow(),
+            padding: Insets.symmetric(0, 1),
+            clipX: true,
+            clipY: true,
+            decoration: Decoration(
+                borderWidth: Insets(0, 0, 0, 1),
+                borderStyle: BorderStyle.solid,
+                borderSlot: Slot.border,
+            ),
+        ));
+    }
+
     private uint contentPane(ref Builder b, uint pageRoot, int viewport,
         in BarGeometry geom) @safe
     {
@@ -1017,6 +1105,7 @@ struct Gallery
             ["Home / End", "top / bottom"],
             ["[ / ]", "previous / next theme"],
             ["\\", "show the page list on a narrow terminal"],
+            ["|", "the inspector panel — dumpTree of the showing page"],
             ["?", "this overlay"],
             ["q / Esc", "quit"],
             ["ctrl+] / ctrl+`", "give the keyboard back to the gallery"],
@@ -1209,6 +1298,99 @@ version (unittest)
     auto rec = drive(g, [charEvent('?'), keyEvent(Key.escape)]);
     assert(!g.s.helpOpen);
     assert(!rec.quitRequested, "the overlay consumed the dismissal");
+}
+
+@("ui_gallery.gallery.theInspectorPanelSitsBesideThePageItDumps")
+@safe unittest
+{
+    // The reason the inspector stopped being a page: its subject was never on
+    // screen while its dump was. As a panel the two share the frame — the
+    // tree carries the page AND a dump that names it.
+    Gallery g;
+    g.s.page = 1; // Primitives
+    drive(g, [charEvent('|')], 120, 40);
+    assert(g.s.inspectorOpen && g.s.inspectorVisible);
+
+    RecordingHost h;
+    h.size = sizeOf(120, 40);
+    auto tree = g.view(h);
+    bool title, subject;
+    foreach (ref n; tree.nodes)
+    {
+        title |= n.text == "inspector · dumpTree";
+        subject |= n.text == "Primitives";
+    }
+    assert(title, "the panel is in the frame");
+    assert(subject, "…and names the page beside it");
+
+    // The page narrowed to make room, and the second press closes it again.
+    assert(g.s.contentWidth
+        == 120 - (navWidth + 1) - (inspectorWidth + 1) - scrollGutter);
+    drive(g, [charEvent('|')], 120, 40);
+    assert(!g.s.inspectorOpen);
+}
+
+@("ui_gallery.gallery.theInspectorFollowsThePage")
+@safe unittest
+{
+    import registry : pageIndexOf;
+
+    // Moving pages re-aims the dump at the new subject and rewinds it — the
+    // dump is a new document, not the old one scrolled somewhere.
+    Gallery g;
+    g.s.inspectorOpen = true;
+    g.s.page = pageIndexOf("primitives");
+    g.s.inspView.v = g.s.inspView.v.scrolledTo(12);
+    drive(g, [keyEvent(Key.right)], 120, 40);
+
+    RecordingHost h;
+    h.size = sizeOf(120, 40);
+    auto tree = g.view(h);
+    bool subject;
+    foreach (ref n; tree.nodes)
+        subject |= n.text == pages[g.s.page].title;
+    assert(subject, "the dump names the page now showing");
+    assert(g.s.inspView.v.offset == 0, "a new subject starts at its top");
+}
+
+@("ui_gallery.gallery.theWheelOverTheInspectorScrollsTheDumpNotThePage")
+@safe unittest
+{
+    // The panel's columns are the surface's rightmost `inspectorWidth`; a
+    // wheel there moves the dump and leaves the page alone — and vice versa.
+    Gallery g;
+    g.s.inspectorOpen = true;
+    drive(g, [Event(WheelEvent(dy: 3, pos: Point(119, 10)))], 120, 40);
+    assert(g.s.inspView.v.offset > 0, "the dump scrolled");
+    assert(g.s.contentView.v.offset == 0, "the page did not");
+
+    const dumpAt = g.s.inspView.v.offset;
+    drive(g, [Event(WheelEvent(dy: 3, pos: Point(40, 10)))], 120, 40);
+    assert(g.s.inspView.v.offset == dumpAt, "a wheel over the page leaves the dump");
+}
+
+@("ui_gallery.gallery.theInspectorBarIsGrabbable")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints;
+
+    // `UGL16`, on the panel's own bar: a press on its track jumps the dump.
+    Gallery g;
+    g.s.inspectorOpen = true;
+    g.s.surface = sizeOf(120, 40);
+    RecordingHost h;
+    h.size = sizeOf(120, 40);
+    auto tree = g.view(h);
+    auto frames = layout(tree, Constraints(maxW: 120, maxH: 40));
+    const bar = rectOf(tree, frames, hitInspBar);
+    assert(bar.width > 0, "the panel's bar is in the frame");
+
+    const press = Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left,
+        pos: Point(bar.x + bar.width - 1, bar.y + bar.height / 2)));
+    drive(g, [press], 120, 40);
+    assert(g.s.inspView.v.dragging, "the press grabbed the bar");
+    assert(g.s.inspView.v.offset > 0, "…and jumped the dump");
 }
 
 @("ui_gallery.gallery.navRowsTileTheSidebarAndHitWhereTheyPaint")

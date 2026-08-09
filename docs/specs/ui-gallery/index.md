@@ -44,6 +44,7 @@ real consumer.
 | `UGL18` | With a terminal focused, every key — releases included — forwards to the pty; the release chord (`Ctrl+]` / `` Ctrl+` ``) is the one reserved binding, and a completed press outside the page's chrome also returns the keyboard.           | full   |
 | `UGL19` | Tab identity is minted once: closing a tab never renumbers another's hit id. The exit policy is a toggle — clean exits auto-close, failures hold with the code in the label, `hold: all` keeps everything.                                  | full   |
 | `UGL20` | No automated test forks a shell: spawning is main-enabled only, so recorded scripts assert on the request flags and the model, and the pty path is verified live.                                                                           | full   |
+| `UGL21` | The inspector is a shell panel, not a page: toggled with `\|` beside any page, it dumps the **showing** page at the width it is actually laid out at, scrolls independently, and yields below the width that can carry it.                  | full   |
 
 ## Shape
 
@@ -54,6 +55,7 @@ apps/ui-gallery/src/
 ├── state.d      # GalleryState: every machine the shell owns
 ├── registry.d   # the Page table, and the catalog sweep
 ├── kit.d        # the small view vocabulary the pages are written in
+├── inspector.d  # the dumpTree side panel (`|`), a shell region not a page
 ├── scrollbars.d # driving a ScrollView: grab, capture, ease, and the widget
 ├── term_store.d # the Terminal page's heap-pinned TerminalView instances
 ├── render.d     # one frame to ANSI or glyphs, no backend

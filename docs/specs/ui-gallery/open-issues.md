@@ -75,12 +75,17 @@ GPU arm it paints hue's sub-cell rail — ⅓ cell easing to 1.5 under the point
 — over its bar's gutter, driven by the same machine the cell bar quantizes.
 Every other page stays at whole columns.
 
-## `UGL-O5` — the wheel always scrolls the shell's pane · open
+## `UGL-O5` — the wheel always scrolls the shell's pane · open (narrowed)
 
 The gallery routes wheel events to the content pane regardless of what is under
 the pointer, so the Scrolling page's own viewport is driven by keys only. Doing
 better needs the wheel routed by hit target, which is a `Page` hook the catalog
 does not yet have. Small, and worth doing when a second page wants it.
+
+Two shell-owned regions have since claimed their own wheel by geometry rather
+than by hit target — the terminal pane (via the mirrored pane rect) and the
+inspector panel (the surface's rightmost columns). What remains open is the
+page-level routing: a page's _own_ viewport still cannot ask for the wheel.
 
 ## `UGL-O7` — mouse inside a terminal pane · open (narrowed twice)
 

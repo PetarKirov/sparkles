@@ -26,8 +26,6 @@ import pages.components_page : componentsKeys = keys,
     componentsOnPointer = handlePointer, componentsStep = step,
     componentsView = view;
 import pages.decoration_page : decorationView = view;
-import pages.inspector_page : inspectorKeys = keys,
-    inspectorOnKey = handleKey, inspectorView = view;
 import pages.machines_page : machinesAnimating = animating,
     machinesKeys = keys, machinesOnActivate = handleActivate,
     machinesOnKey = handleKey, machinesStep = step, machinesView = view;
@@ -136,8 +134,6 @@ static immutable Page[] pages = [
     Page("Terminal", "a shell as a widget", &terminalView,
         terminalKeys, &terminalOnKey, &terminalOnActivate,
         &terminalOnPointer),
-    Page("Inspector", "the toolkit looking at itself", &inspectorView,
-        inspectorKeys, &inspectorOnKey),
 ];
 
 /// The Terminal page's index — the shell needs it by name: keyboard capture

@@ -71,6 +71,7 @@ enum size_t hitTree = 6000;     /// the tree page's rows
 enum size_t hitContentBar = 7000; /// the shell's content-pane scrollbar
 enum size_t hitDemoBar = 7100;    /// the Scrolling page's specimen bar
 enum size_t hitChromeBar = 7200;  /// the Components page's live scroll view
+enum size_t hitInspBar = 7300;    /// the inspector panel's scrollbar
 enum size_t hitSplit = 8000;    /// the split page's divider
 enum size_t hitMachines = 9000; /// the state-machine page's tiles
 enum size_t hitTermActions = 10000; /// the Terminal page's action bar (3 ids)
@@ -88,6 +89,7 @@ enum size_t hitTerminal = 10100;
 enum size_t keyContentScroll = 101; ///
 enum size_t keyNavScroll = 102;     ///
 enum size_t keyTermPane = 103;      /// the Terminal page's pane rect, for `paint`
+enum size_t keyInspScroll = 104;    /// the inspector panel's viewport
 
 /// The Layout page's live knobs.
 struct LayoutDemo
@@ -253,9 +255,9 @@ struct GalleryState
 {
     // ── navigation ──────────────────────────────────────────────────────────
     size_t page;      /// index into `registry.pages`
-    size_t lastPage;  /// the page the Inspector dumps (the previously viewed one)
     Region region = Region.nav; /// which half the keyboard drives
     bool helpOpen;    /// the `?` overlay
+    bool inspectorOpen; /// the `|` side panel — `dumpTree` of the showing page
 
     // ── theming ─────────────────────────────────────────────────────────────
     size_t themeIndex = 7; /// `tokyo-night` — the shared default (`CLI3`)
@@ -310,7 +312,13 @@ struct GalleryState
     */
     ScrollView termView = ScrollView(
         vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
-    int inspectorLines = 40; /// how much of a dump the Inspector builds
+    /// The inspector panel's own viewport — a dump outruns any surface, and
+    /// scrolling it must not move the page it describes.
+    ScrollView inspView = ScrollView(
+        vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
+    /// The panel body's height at the last measurement — `contentRows`'s twin,
+    /// for the same reason: the clamp and the thumb must share one number.
+    int inspectorRows;
     TermsState terms;        /// the Terminal page's tab strip
     /// `--term-tab-glyphs`: the mini tab list's position glyphs, one grapheme
     /// per position. Empty = the circled-number series (or ASCII digits when
@@ -349,16 +357,33 @@ struct GalleryState
     catalog becomes unreadable, so it yields — the pages are still reachable by
     `←`/`→` and by number, which is why hiding it costs nothing. A reader who
     wants it back on a narrow terminal presses `n`.
+
+    The inspector panel counts against the width: on a surface that cannot
+    carry both, the sidebar yields first — the panel was asked for explicitly
+    just now, the sidebar merely defaults on. A pin still outranks the panel.
     */
     bool navVisible() const scope
-        => navPinned || surface.width >= navMinSurface;
+        => navPinned || surface.width
+            - (inspectorVisible ? inspectorWidth + 1 : 0) >= navMinSurface;
 
     /// ditto — `n` forces the sidebar on regardless of width.
     bool navPinned;
 
     /**
-    The content pane's width: the surface less the sidebar, the gap between
-    them, and the scroll gutter.
+    Whether the inspector panel is showing: toggled open $(B and) wide enough.
+
+    The same yield-below-a-threshold shape as the sidebar, and the two resolve
+    without circularity because the panel defers to the $(I pin), not to
+    `navVisible`: an explicitly pinned sidebar keeps its cells and the panel
+    waits for a wider surface.
+    */
+    bool inspectorVisible() const scope
+        => inspectorOpen && surface.width
+            - (navPinned ? navWidth + 1 : 0) >= inspectorMinSurface;
+
+    /**
+    The content pane's width: the surface less the sidebar, the inspector
+    panel, the gaps beside them, and the scroll gutter.
 
     The gutter is subtracted $(B whether or not) a scrollbar is showing. A pane
     that widened when its content happened to fit would reflow every paragraph
@@ -367,7 +392,8 @@ struct GalleryState
     */
     int contentWidth() const scope
     {
-        const w = surface.width - (navVisible ? navWidth + 1 : 0) - scrollGutter;
+        const w = surface.width - (navVisible ? navWidth + 1 : 0)
+            - (inspectorVisible ? inspectorWidth + 1 : 0) - scrollGutter;
         return w > 8 ? w : 8;
     }
 }
@@ -386,6 +412,15 @@ enum int scrollGutter = 2;
 /// The narrowest surface that still carries the sidebar. Below it the list
 /// yields the width — see `GalleryState.navVisible`.
 enum int navMinSurface = 60;
+
+/// The inspector panel's width in cells — `navWidth`'s opposite number, sized
+/// for a dump line rather than a page title.
+enum int inspectorWidth = 42;
+
+/// The narrowest surface (after a pinned sidebar's cells) that still carries
+/// the inspector panel — see `GalleryState.inspectorVisible`. At exactly this
+/// width the content pane keeps 15 cells, which is cramped but legible.
+enum int inspectorMinSurface = 60;
 
 /**
 How long a toast holds — which depends on whether the target has a frame clock.
@@ -442,6 +477,38 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
     s.surface = Size(120, 40);
     assert(s.contentHeight == 40 - shellChromeRows);
     assert(s.contentWidth == 120 - navWidth - 1 - scrollGutter);
+}
+
+@("ui_gallery.state.inspectorAndSidebarShareTheWidthWithoutOverflow")
+@safe unittest
+{
+    // The two side panels resolve against each other without circularity, and
+    // in every combination the content pane keeps a positive width — the
+    // overflow this rules out: pin + panel on a narrow surface pushing the
+    // body row past the right edge.
+    GalleryState s;
+    s.inspectorOpen = true;
+
+    // Wide: both show.
+    s.surface = Size(120, 40);
+    assert(s.navVisible && s.inspectorVisible);
+    assert(s.contentWidth == 120 - (navWidth + 1) - (inspectorWidth + 1)
+        - scrollGutter);
+
+    // The conventional terminal: the panel shows and the sidebar yields to it.
+    s.surface = Size(80, 24);
+    assert(s.inspectorVisible && !s.navVisible);
+    assert(s.contentWidth == 80 - (inspectorWidth + 1) - scrollGutter);
+
+    // A pinned sidebar outranks the panel.
+    s.navPinned = true;
+    assert(s.navVisible && !s.inspectorVisible);
+    s.navPinned = false;
+
+    // Below the threshold the panel yields entirely; toggled "open" is kept,
+    // so widening the surface brings it back without another keypress.
+    s.surface = Size(50, 24);
+    assert(!s.inspectorVisible && s.inspectorOpen);
 }
 
 @("ui_gallery.state.terms.idsAreMonotonicAndNeverReused")
@@ -526,7 +593,7 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
     // between the two scrollbars, which are a hundred apart because they are
     // one kind of thing and neither will ever mint more than one id.
     static immutable size_t[] bases = [hitNav, hitTheme, hitTabs, hitActions,
-        hitTree, hitContentBar, hitDemoBar, hitChromeBar, hitSplit,
+        hitTree, hitContentBar, hitDemoBar, hitChromeBar, hitInspBar, hitSplit,
         hitMachines, hitTermActions, hitTermBar, hitTerminal];
     foreach (i, b; bases)
     {

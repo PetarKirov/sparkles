@@ -42,6 +42,7 @@ enum size_t capDemoBar = 2;    /// the Scrolling page's specimen
 enum size_t capSplit = 3;      /// the Split page's divider
 enum size_t capChromeBar = 4;  /// the Components page's live scroll view
 enum size_t capTermBar = 5;    /// the terminal pane's scrollback bar
+enum size_t capInspBar = 6;    /// the inspector panel's bar
 
 /// The columns a vertical bar's gutter reserves. Fixed, so the pane's width
 /// does not change when the bar expands — a page that reflowed on hover would
