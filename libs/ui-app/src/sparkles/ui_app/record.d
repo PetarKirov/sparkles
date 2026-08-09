@@ -29,9 +29,15 @@ import sparkles.ui_app.host : FrameOpsOf, HostState, isHost, recordedOpCapacity,
 /// One recorded frame: what the application drew, and whether it drew at all.
 struct RecordedFrame
 {
+    import core.time : Duration;
+
     DrawOp[] ops;  /// the display list it produced
     bool skipped;  /// it declined to draw (`skipFrame`)
     bool requested; /// it asked for another frame after this one
+    /// The timed-wake ask it made this frame (`HST16`); `Duration.max` when
+    /// none. The recorder does not simulate time — the ask is captured as
+    /// intent, which is the assertable half of the contract.
+    Duration wakeAsk = Duration.max;
 }
 
 /**
@@ -162,6 +168,7 @@ RecordingHost runRecorded(Present, Handle)(
             ops: h.ops()[].dup,
             skipped: h.frameSkipped,
             requested: h.frameRequested,
+            wakeAsk: h.wakeAsk,
         );
     }
 
@@ -324,6 +331,30 @@ unittest
 
     assert(rec.fontSizeRequests == [20, 22]);
     assert(rec.fontSizePx == 22);
+}
+
+@("ui_app.record.wakeAsksAreRecordedPerFrame")
+@safe
+unittest
+{
+    import core.time : Duration, msecs;
+
+    // `HST16`: the timed-wake ask is per-frame intent, captured like ops and
+    // skips — a component's "poll me again in 150 ms while refreshing" is
+    // assertable with no clock and no tty.
+    bool refreshing = true;
+    auto rec = runRecorded(RunConfig.init,
+        (ref RecordingHost h) {
+            if (refreshing)
+                h.wakeIn(150.msecs);
+        },
+        (ref RecordingHost h, in Event e) { refreshing = false; },
+        [charEvent('a')]);
+
+    assert(rec.frames.length == 2);
+    assert(rec.frames[0].wakeAsk == 150.msecs, "the ask while refreshing");
+    assert(rec.frames[1].wakeAsk == Duration.max,
+        "no ask once the work is done — the wake stops costing by itself");
 }
 
 @("ui_app.record.resizeIsNormalized")
