@@ -33,13 +33,14 @@ import raylib;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ghostty.c;
 import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction,
-    KeyEvent, match, Mods;
+    KeyEvent, match, Mods, PointerAction, PointerEvent;
 import sparkles.raylib_text : FontSet;
 import sparkles.terminal_view.child_env : sanitizeChildEnv;
 import sparkles.terminal_view.core;
-import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyKeyOf,
-    withKeyIdentity;
-import sparkles.terminal_view.input : ExitBehavior, handle_mouse, pty_write;
+import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyButtonOf,
+    ghosttyKeyOf, ghosttyModsOf, withKeyIdentity;
+import sparkles.terminal_view.input : ExitBehavior, handle_mouse,
+    mouse_encode_and_write, pty_write;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
@@ -623,6 +624,102 @@ struct TerminalView
         sv.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
         sv.value.delta = deltaLines;
         ghostty_terminal_scroll_viewport(s.terminal, sv);
+    }
+
+    /**
+    Routes one pointer event — pane-relative $(B cell) coordinates — into
+    the pty's mouse encoder (`TVW7`). Mode-aware end to end: nothing is
+    written unless the application asked for mouse reporting (DECSET
+    1000/1002/1003), so an embedder forwards unconditionally and keeps its
+    own routing whenever this returns `false`. Selection, OSC 8 hover and
+    the ctrl-click opener remain the whole-surface polled mouse's for now.
+    */
+    bool sendPointer(in PointerEvent p) @system nothrow @nogc
+    {
+        if (p.action == PointerAction.leave || !prepMouse(
+                p.pos.x, p.pos.y, p.mods,
+                p.action == PointerAction.press || p.action == PointerAction.drag))
+            return false;
+
+        const btn = ghosttyButtonOf(p.button);
+        final switch (p.action)
+        {
+            case PointerAction.press:
+                ghostty_mouse_event_set_action(s.mouse_event, GHOSTTY_MOUSE_ACTION_PRESS);
+                ghostty_mouse_event_set_button(s.mouse_event, btn);
+                break;
+            case PointerAction.release:
+                ghostty_mouse_event_set_action(s.mouse_event, GHOSTTY_MOUSE_ACTION_RELEASE);
+                ghostty_mouse_event_set_button(s.mouse_event, btn);
+                break;
+            case PointerAction.move:
+            case PointerAction.drag:
+                ghostty_mouse_event_set_action(s.mouse_event, GHOSTTY_MOUSE_ACTION_MOTION);
+                if (p.action == PointerAction.drag
+                    && btn != GHOSTTY_MOUSE_BUTTON_UNKNOWN)
+                    ghostty_mouse_event_set_button(s.mouse_event, btn);
+                else
+                    ghostty_mouse_event_clear_button(s.mouse_event);
+                break;
+            case PointerAction.leave:
+                assert(0);
+        }
+        mouse_encode_and_write(s.pty_fd, s.mouse_encoder, s.mouse_event);
+        return true;
+    }
+
+    /**
+    The wheel at pane-relative cell `x`,`y`: the scroll buttons when the
+    application tracks the mouse; `false` hands the wheel back to the
+    embedder — its scrollback to walk.
+    */
+    bool sendWheel(int dy, int x, int y) @system nothrow @nogc
+    {
+        if (dy == 0 || !prepMouse(x, y, Mods(), false))
+            return false;
+        ghostty_mouse_event_set_button(s.mouse_event,
+            dy < 0 ? GHOSTTY_MOUSE_BUTTON_FOUR : GHOSTTY_MOUSE_BUTTON_FIVE);
+        ghostty_mouse_event_set_action(s.mouse_event, GHOSTTY_MOUSE_ACTION_PRESS);
+        mouse_encode_and_write(s.pty_fd, s.mouse_encoder, s.mouse_event);
+        ghostty_mouse_event_set_action(s.mouse_event, GHOSTTY_MOUSE_ACTION_RELEASE);
+        mouse_encode_and_write(s.pty_fd, s.mouse_encoder, s.mouse_event);
+        return true;
+    }
+
+    /// The shared half of the mouse seam: the tracking gate, the encoder's
+    /// mode/size sync, mods and position (cells → the grid's pixel space).
+    private bool prepMouse(int cellX, int cellY, in Mods mods, bool anyPressed)
+        @system nothrow @nogc
+    {
+        if (!opened || s.childExited)
+            return false;
+        bool tracking = false;
+        ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING,
+            cast(void*) &tracking);
+        if (!tracking)
+            return false;
+
+        ghostty_mouse_encoder_setopt_from_terminal(s.mouse_encoder, s.terminal);
+        GhosttyMouseEncoderSize encSize = {
+            size: GhosttyMouseEncoderSize.sizeof,
+            screen_width: cast(uint)(s.cols * s.cellWidth),
+            screen_height: cast(uint)(s.rows * s.cellHeight),
+            cell_width: cast(uint) s.cellWidth,
+            cell_height: cast(uint) s.cellHeight,
+        };
+        ghostty_mouse_encoder_setopt(s.mouse_encoder,
+            GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &encSize);
+        ghostty_mouse_encoder_setopt(s.mouse_encoder,
+            GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &anyPressed);
+        bool trackCell = true;
+        ghostty_mouse_encoder_setopt(s.mouse_encoder,
+            GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL, &trackCell);
+
+        ghostty_mouse_event_set_mods(s.mouse_event, ghosttyModsOf(mods));
+        GhosttyMousePosition gpos = {
+            x: cellX * s.cellWidth, y: cellY * s.cellHeight };
+        ghostty_mouse_event_set_position(s.mouse_event, gpos);
+        return true;
     }
 
     /// The terminal's resolved default background — what an embedder paints

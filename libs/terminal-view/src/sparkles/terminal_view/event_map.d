@@ -10,7 +10,7 @@ path, so swapping the input source cannot silently change an encoding.
 module sparkles.terminal_view.event_map;
 
 import sparkles.ghostty.c;
-import sparkles.input : Key, KeyAction, KeyEvent, Mods;
+import sparkles.input : Key, KeyAction, KeyEvent, Mods, PointerButton;
 import sparkles.terminal_view.input : encodeKeyStroke, KeyStroke;
 
 /// The physical key the encoder addresses, from the event's named key or —
@@ -138,6 +138,31 @@ size_t utf8Of(ref char[4] buf, dchar c)
         return 4;
     }
     return 0;
+}
+
+/// The pointer button, in the encoder's vocabulary (the same spellings the
+/// raylib polling map uses for the side buttons).
+@safe pure nothrow @nogc
+GhosttyMouseButton ghosttyButtonOf(PointerButton b)
+{
+    final switch (b)
+    {
+        case PointerButton.left:    return GHOSTTY_MOUSE_BUTTON_LEFT;
+        case PointerButton.middle:  return GHOSTTY_MOUSE_BUTTON_MIDDLE;
+        case PointerButton.right:   return GHOSTTY_MOUSE_BUTTON_RIGHT;
+        case PointerButton.none:    return GHOSTTY_MOUSE_BUTTON_UNKNOWN;
+        case PointerButton.back:    return GHOSTTY_MOUSE_BUTTON_SEVEN;
+        case PointerButton.forward: return GHOSTTY_MOUSE_BUTTON_SIX;
+    }
+}
+
+@("terminal_view.event_map.ghosttyButtonOf")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(ghosttyButtonOf(PointerButton.left) == GHOSTTY_MOUSE_BUTTON_LEFT);
+    assert(ghosttyButtonOf(PointerButton.right) == GHOSTTY_MOUSE_BUTTON_RIGHT);
+    assert(ghosttyButtonOf(PointerButton.none) == GHOSTTY_MOUSE_BUTTON_UNKNOWN);
 }
 
 /// The event's modifiers, in the encoder's vocabulary.
