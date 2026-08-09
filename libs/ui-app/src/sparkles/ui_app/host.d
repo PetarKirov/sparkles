@@ -208,6 +208,21 @@ enum bool isHost(T) = __traits(compiles, (ref T h) {
 });
 
 /**
+The optional `HST15` errands, capability-by-presence — the ladder's shape,
+like `isCanvas`'s optional primitives: a component probes with these and
+keeps its polled fallback where a host offers neither (a foreign embedding,
+an older host). Presence is compile-time; availability is per-run —
+`spawnDaemon` returns `false` where no ring drives this run (the blocking
+fallback arms, the recorder), and that is the same cue.
+*/
+enum bool canSpawnDaemon(H) = __traits(compiles, (ref H h) {
+    bool live = h.spawnDaemon(delegate void() {});
+});
+
+/// ditto
+enum bool canWake(H) = __traits(compiles, (ref H h) { h.wake(); });
+
+/**
 The default draw phase: nothing.
 
 The loop's third callback (`HST13`) — the post-display-list slot inside the

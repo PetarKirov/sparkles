@@ -117,6 +117,26 @@ struct RecordingHost
     /// ditto
     int[] fontSizeRequests;
 
+    /**
+    The `HST15` errands, recorded. The recorder runs no fibers: each
+    `spawnDaemon` ask is counted and `false` returned, so a component keeps
+    its synchronous fallback — which is exactly what makes a recorded run
+    deterministic. Wakes are counted too; a scripted run has no park to
+    interrupt.
+    */
+    size_t daemonAsks;
+    /// ditto
+    bool spawnDaemon(scope void delegate() fiberBody) pure nothrow
+    {
+        ++daemonAsks;
+        return false;
+    }
+
+    /// ditto
+    size_t wakes;
+    /// ditto
+    void wake() pure nothrow { ++wakes; }
+
     /// The operations of the last frame, for the common single-frame assertion.
     const(DrawOp)[] lastOps() const pure nothrow @nogc
         => frames.length ? frames[$ - 1].ops : null;
@@ -331,6 +351,34 @@ unittest
 
     assert(rec.fontSizeRequests == [20, 22]);
     assert(rec.fontSizePx == 22);
+}
+
+@("ui_app.record.daemonAsksAreCountedAndRefused")
+@safe
+unittest
+{
+    import sparkles.ui_app.host : canSpawnDaemon, canWake;
+
+    // `HST15` is capability-by-presence, and the recorder presents it — a
+    // component's ring branch type-checks headlessly...
+    static assert(canSpawnDaemon!RecordingHost && canWake!RecordingHost);
+
+    // ...but the answer at run time is `false`: no fibers run here, the
+    // component keeps its synchronous fallback, and the test still sees
+    // that the ask was made.
+    bool ringPath;
+    auto rec = runRecorded(RunConfig.init,
+        (ref RecordingHost h) {
+            ringPath = h.spawnDaemon(delegate void() {
+                assert(false, "the recorder must never run a daemon");
+            });
+        },
+        (ref RecordingHost h, in Event e) { h.wake(); },
+        [charEvent('a')]);
+
+    assert(!ringPath, "the recorder refuses, so the sync path stays taken");
+    assert(rec.daemonAsks == 2, "one ask per frame, both captured");
+    assert(rec.wakes == 1);
 }
 
 @("ui_app.record.wakeAsksAreRecordedPerFrame")
