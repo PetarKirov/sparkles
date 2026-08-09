@@ -16,12 +16,12 @@ executed by placing a header comment after the `dub.sdl` block:
 
 Usage:
 ---
-nix run .#ci -- [--verify|--update] [--fail-fast] [--files GLOB|FILE...]
-nix run .#ci -- --example-files [--fail-fast] [--files GLOB|FILE...]
+nix run .#ci -- [--verify|--update] [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
+nix run .#ci -- --example-files [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --test [--fail-fast]
 nix run .#ci -- --test-extracted [--fail-fast]
-nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
-nix run .#ci -- --check-vcs-urls [--files GLOB|FILE...]
+nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
+nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-docs-sidebar
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
@@ -35,7 +35,8 @@ $(LIST
     $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, and `docs/research/manim/examples/*.d`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--test-extracted` — run the test runner's `--better-c` and `--wasm` modes for each sub-package whose sources use the matching marker attribute, failing (rather than skipping) when a mode's toolchain is missing)
-    $(ITEM `--files` — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
+    $(ITEM `--include-files` (alias `--files`) — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
+    $(ITEM `--exclude-files` — drop matching files from the include set (or from the mode's defaults); same path/glob selectors as `--include-files`)
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
@@ -100,7 +101,7 @@ import std.conv : text, to;
 import core.time : Duration, msecs, seconds;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
 import std.parallelism : TaskPool, totalCPUs;
-import std.path : baseName, buildPath;
+import std.path : baseName, buildPath, globMatch;
 import std.process : environment, execute;
 import std.range : iota;
 import std.regex : ctRegex, matchFirst;
@@ -175,11 +176,22 @@ struct CliParams
     @(Option(`F|fail-fast`, description: "Stop on the first failing example and replay its output at the end."))
     bool failFast;
 
-    @(Option(`files`, description: "Explicit file paths or git-style globs to include. Pass one or more selectors immediately after --files."))
+    // Canonical name last (same convention as short|long): `--files` is the
+    // alias, `--include-files` is the primary name shown in synopsis/errors.
+    @(Option(`files|include-files`,
+        description: "File paths or git-style globs to include. Pass one or more "
+            ~ "selectors immediately after the flag. Alias: --files. When omitted, "
+            ~ "each mode uses its tracked defaults."))
     string[] files;
 
+    @(Option(`exclude-files`,
+        description: "File paths or git-style globs to exclude from the include set "
+            ~ "(or from the mode's tracked defaults). Pass one or more selectors "
+            ~ "immediately after the flag. May be repeated."))
+    string[] exclude;
+
     /// The one mode that takes a positional: `--check-commit-scope <path>`.
-    /// Everything else selects its inputs with `--files`.
+    /// Everything else selects its inputs with `--include-files` / `--exclude-files`.
     @(Argument("arg", optional: true))
     string[] positionals;
 
@@ -402,24 +414,24 @@ int ciMain(string[] args)
 
     if (inputFiles.length == 0)
     {
-        if (cli.files.length > 0)
+        if (cli.files.length > 0 || cli.exclude.length > 0)
         {
-            error(i"--files did not match any supported input files for this mode");
+            error(i"--include-files / --exclude-files selection matched no supported input files for this mode");
             return 1;
         }
 
         if (isReferenceMode(mode))
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]");
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
         else if (mode == ProgramMode.runExampleFiles)
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --example-files [--fail-fast] [--files GLOB|FILE...]");
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --example-files [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
         else if (mode == ProgramMode.checkCommitScope)
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-commit-scope [<commit-msg-file> | -]");
         else if (mode == ProgramMode.checkVcsUrls)
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-vcs-urls [--files GLOB|FILE...]");
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
         else if (mode == ProgramMode.checkDocsSidebar)
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-docs-sidebar");
         else
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--files GLOB|FILE...]");
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
         return 1;
     }
 
@@ -510,7 +522,7 @@ private string validateCliMode(
         return "--check-commit-scope accepts at most one argument (a path or '-' for stdin)";
 
     if (positionalArgs.length > 0 && !cli.checkCommitScope)
-        return "Positional file arguments are no longer supported; use --files";
+        return "Positional file arguments are no longer supported; use --include-files (alias --files)";
 
     return null;
 }
@@ -754,12 +766,12 @@ private string[] trackedMarkdownFiles()
 }
 
 /// Git pathspecs for the repository's standalone example `.d` files — the
-/// defaults `--example-files` uses when no `--files` selection is given: the
-/// `base`, `build-primitives`, and `core-cli` library demos plus the worked
-/// examples that accompany
-/// the research docs (`docs/research/async-io/io-uring/`,
-/// `docs/research/units-of-measure/`, `docs/research/cpu-pmu/`,
-/// `docs/research/sanitizers/`, and `docs/research/manim/`).
+/// defaults `--example-files` uses when no `--include-files` selection is
+/// given: the `base`, `build-primitives`, and `core-cli` library demos plus the
+/// worked examples that accompany the research docs
+/// (`docs/research/async-io/io-uring/`, `docs/research/units-of-measure/`,
+/// `docs/research/cpu-pmu/`, `docs/research/sanitizers/`, and
+/// `docs/research/manim/`).
 @safe pure nothrow
 private string[] standaloneExampleGlobs()
 {
@@ -799,6 +811,66 @@ private bool isGlobSelector(string selector)
     return selector.canFind("*")
         || selector.canFind("?")
         || selector.canFind("[");
+}
+
+/// True when `path` should be dropped by a single `--exclude-files` selector.
+///
+/// Glob selectors use $(REF globMatch, std,path) (supports `**`). Non-glob
+/// selectors match the path exactly, or any path under that directory
+/// (`libs/foo` excludes `libs/foo` and `libs/foo/bar.md`).
+@safe pure
+private bool pathMatchesExclude(string path, string selector)
+{
+    if (path.length == 0 || selector.length == 0)
+        return false;
+
+    if (isGlobSelector(selector))
+        return globMatch(path, selector);
+
+    if (path == selector)
+        return true;
+
+    // Directory / prefix form: `libs/syntax/test/data` excludes the tree.
+    const prefix = selector.endsWith("/") ? selector : selector ~ "/";
+    return path.startsWith(prefix);
+}
+
+/// True when `path` matches any selector in `excludeSelectors`.
+@safe pure
+private bool isExcludedBy(string path, const(string)[] excludeSelectors)
+{
+    foreach (selector; excludeSelectors)
+        if (pathMatchesExclude(path, selector))
+            return true;
+    return false;
+}
+
+@("ci.pathMatchesExclude.globAndPrefix")
+@safe pure
+unittest
+{
+    enum golden = "libs/syntax/test/data/md/goldens/code-tall.md";
+
+    assert(pathMatchesExclude(golden, "libs/syntax/test/data/**"));
+    assert(pathMatchesExclude(golden, "**/goldens/**"));
+    assert(pathMatchesExclude(golden, "libs/syntax/test/data"));
+    assert(pathMatchesExclude(golden, "libs/syntax/test/data/"));
+    assert(pathMatchesExclude(golden, golden));
+    assert(!pathMatchesExclude(golden, "libs/syntax/test/other/**"));
+    assert(!pathMatchesExclude(golden, "libs/syntax/test/dat")); // not a path prefix
+    assert(!pathMatchesExclude("README.md", "libs/syntax/test/data/**"));
+    assert(!pathMatchesExclude("", "**"));
+    assert(!pathMatchesExclude(golden, ""));
+}
+
+@("ci.isExcludedBy.anySelector")
+@safe pure
+unittest
+{
+    enum golden = "libs/syntax/test/data/md/goldens/code-tall.md";
+    assert(isExcludedBy(golden, ["docs/**", "libs/syntax/test/data/**"]));
+    assert(!isExcludedBy(golden, ["docs/**", "apps/**"]));
+    assert(!isExcludedBy(golden, cast(string[])[]));
 }
 
 private string[] trackedFilesMatching(string pattern)
@@ -852,6 +924,7 @@ private string[] collectInputFiles(
     return inputFiles
         .filter!(path => path.length > 0)
         .filter!(path => path.endsWith(requiredSuffix))
+        .filter!(path => !isExcludedBy(path, cli.exclude))
         .map!(path => path.idup)
         .array;
 }
