@@ -646,16 +646,45 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
 
     if (opt.groupTabs.titles.length)
     {
-        // Tabs sit ON the border line, browser-style.
-        kids ~= rich([ruleSpan(opt, "╭─ ")]);
+        // The strip is a BOXED part of the border (MDP22): its own top
+        // border above, the tabs' bottom edge being the box's top border
+        // line — the strip's `╭` is the box's top-left corner and the left
+        // wall flows straight down through it:
+        //   ╭─────────┬─────────╮
+        //   │ 󰡨 app.d │ 󰌠 build ├─────────── ⧉ ─╮
+        //   │ 1 void main() {}                   │
+        import sparkles.ui.components.chrome : TabCaps, tabStripTopBorder;
+
         const strip = tabStrip(b, opt.groupTabs.titles, opt.groupTabs.active,
-            0, PressState.init, fitLabels: true, ids: opt.groupTabs.ids);
+            0, PressState.init, fitLabels: true, ids: opt.groupTabs.ids,
+            caps: TabCaps("│", "│", "├"));
         kids ~= strip;
-        used = 3;
+        used = 2 + cast(int) opt.groupTabs.titles.length - 1; // walls
         foreach (t; opt.groupTabs.titles)
             used += cast(int) cellsOf(t) + 2;
-        kids ~= rich([ruleSpan(opt, " ")]);
-        ++used;
+        const hasCopy0 = opt.fenceHitBase != 0;
+        const tailW0 = hasCopy0 ? 5 : 1;
+        int fill0 = boxW - used - tailW0;
+        if (fill0 < 0)
+            fill0 = 0;
+        kids ~= rich([ruleSpan(opt, repGlyph("─", fill0))]);
+        if (hasCopy0)
+        {
+            TextSpan icon0 = TextSpan(" "
+                ~ (opt.copiedFence == blk.codeBody.start
+                    ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon) ~ " ",
+                Slot.code, codeStyle(opt), noBreak: true,
+                fg: opt.theme.codeFg, hasFg: opt.theme.present);
+            kids ~= rich([icon0], hit);
+            kids ~= rich([ruleSpan(opt, "─╮")]);
+        }
+        else
+            kids ~= rich([ruleSpan(opt, "╮")]);
+        const tabsRow = b.add(Widget(kind: WidgetKind.row, children: kids,
+            width: SizeSpec.fixed(boxW)));
+        return b.add(Widget(kind: WidgetKind.column, children: [
+                tabStripTopBorder(b, opt.groupTabs.titles), tabsRow],
+            width: SizeSpec.fixed(boxW)));
     }
     else
     {
