@@ -18,7 +18,7 @@ module sparkles.ui.interp.cells;
 import std.range.primitives : put;
 
 import sparkles.ui.canvas : isCanvas, LineStyle;
-import sparkles.base.term_style : TextAttr;
+import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.ui.style : BorderStyle;
 import sparkles.ui.geometry : cellsOf, Point, Rect, Size;
 import sparkles.ui.style : Visual;
@@ -294,6 +294,14 @@ struct CellGrid
         c.glyph = g;
         c.fg = v.fg;
         c.strikethrough = (v.styleBits & TextAttr.strikethrough.bits) != 0;
+        // A text-decoration underline rides the run's own visual (the tab
+        // strip's bottom border); one another op composited stays.
+        if (v.underline != UnderlineStyle.none)
+        {
+            c.underline = true;
+            c.curly = v.underline == UnderlineStyle.curly;
+            c.underColor = v.fg;
+        }
         if (v.hasBg)
         {
             c.bg = blend(c.hasBg ? c.bg : pageBg, v.bg, v.bgAlpha);
