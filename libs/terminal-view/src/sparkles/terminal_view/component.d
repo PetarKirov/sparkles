@@ -482,8 +482,14 @@ struct TerminalView
         if (s.debugScreenshotAndExit)
         {
             frameCount++;
-            if (frameCount == 120)
-                TakeScreenshot("test_screenshot.png".ptr);
+            // Through the host, not raylib's `TakeScreenshot`: the capture has
+            // to happen between the last draw call and the buffer swap, and
+            // only the arm owning the frame bracket knows when that is. Called
+            // directly here it wrote an all-black PNG on macOS, where the swap
+            // discards the pixels a post-`EndDrawing` read goes looking for.
+            static if (__traits(hasMember, H, "screenshot"))
+                if (frameCount == 120)
+                    h.screenshot("test_screenshot.png".ptr);
             if (frameCount == 130)
                 h.quit();
         }

@@ -169,13 +169,16 @@ struct Gallery
                         }();
                 if (dbgFrame == 200)
                     scrollTerminal(-30);
-                if (dbgFrame == 260)
-                    (() @trusted {
-                        import raylib : TakeScreenshot;
-                        import std.string : toStringz;
+                // Through the host: the capture must land between the last draw
+                // call and the swap, which only the arm knows. raylib's
+                // `TakeScreenshot` called from here wrote a black PNG on macOS.
+                static if (__traits(hasMember, H, "screenshot"))
+                    if (dbgFrame == 260)
+                        (() @trusted {
+                            import std.string : toStringz;
 
-                        TakeScreenshot(shot.toStringz);
-                    })();
+                            h.screenshot(shot.toStringz);
+                        })();
                 if (dbgFrame == 280)
                     h.quit();
             }

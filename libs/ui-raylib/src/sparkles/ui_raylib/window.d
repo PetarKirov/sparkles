@@ -23,6 +23,7 @@ import core.stdc.stdarg : va_list;
 
 import raylib;
 
+import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.ui_raylib.scrollbar : toRaylibCursor;
@@ -95,6 +96,9 @@ struct Window
     // four ints it has no other use for.
     private int savedX, savedY, savedW, savedH;
     private bool fullscreen_;
+    // A capture requested for the current frame, performed by `endFrame` just
+    // before the swap. See $(LREF screenshot).
+    private SmallBuffer!(char, 256) pendingShot;
 
     @disable this(this);
 
@@ -139,8 +143,36 @@ struct Window
     /// Opens the frame. Pair with $(LREF endFrame).
     void beginFrame() @system => BeginDrawing();
 
-    /// Closes the frame and presents it.
-    void endFrame() @system => EndDrawing();
+    /**
+    Closes the frame and presents it — capturing first if one was requested.
+
+    The capture happens $(B here), between the last draw call and the swap,
+    because that is the only moment the pixels exist to be read. See
+    $(LREF screenshot).
+    */
+    void endFrame() @system
+    {
+        if (pendingShot.length != 0)
+        {
+            captureNow(pendingShot[].ptr);
+            pendingShot.clear();
+        }
+        EndDrawing();
+    }
+
+    // The capture itself: flush, read, write. `rlDrawRenderBatchActive` is not
+    // optional — rlgl buffers draw calls and only submits them at `EndDrawing`,
+    // so without it `glReadPixels` sees a framebuffer the frame's geometry has
+    // not reached yet.
+    private void captureNow(scope const(char)* path) @system
+    {
+        import raylib.rlgl : rlDrawRenderBatchActive;
+
+        rlDrawRenderBatchActive();
+        auto img = LoadImageFromScreen();
+        scope (exit) UnloadImage(img);
+        ExportImage(img, path);
+    }
 
     /// Polls the platform's input without drawing — what a frame that
     /// declined to draw still owes the window system (`endFrame` does this
@@ -172,13 +204,36 @@ struct Window
     void clipboard(scope const(char)* text) @system => SetClipboardText(text);
 
     /**
-    Writes the surface to `path` (NUL-terminated).
+    Requests that the surface be written to `path` (NUL-terminated).
 
-    $(B The path is resolved against the working directory), and an absolute
-    one silently writes nothing — a trap worth knowing before trusting a
-    capture that appeared to succeed.
+    $(B Deferred, not immediate.) The write happens in the next
+    $(LREF endFrame), immediately before the buffer swap. Calling it from
+    anywhere in the frame — inside the bracket or, as every caller does,
+    just after closing the previous one — therefore captures the frame that
+    is about to be presented.
+
+    That indirection is the whole point. raylib's own `TakeScreenshot` reads
+    the framebuffer wherever it is called, and on macOS both plausible moments
+    are wrong: before `EndDrawing` the rlgl batch has not been submitted, and
+    after it the swap has already discarded the pixels. Either way it wrote a
+    uniformly black PNG, which is worse than failing — a golden capture that
+    "succeeds" is trusted. On the X11/GLFW arm the post-swap read happened to
+    still see the previous frame, so a static scene hid the bug and callers
+    papered over it with warm-up frames.
+
+    Unlike raylib's version this one takes `path` verbatim rather than
+    resolving it against the working directory, so an absolute path works.
     */
-    void screenshot(scope const(char)* path) @system => TakeScreenshot(path);
+    void screenshot(scope const(char)* path) @system
+    {
+        import core.stdc.string : strlen;
+
+        pendingShot.clear();
+        if (path is null)
+            return;
+        pendingShot ~= path[0 .. strlen(path)];
+        pendingShot ~= '\0';
+    }
 
     /**
     Whether this target has a fullscreen concept the toggle below can serve.

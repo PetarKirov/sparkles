@@ -98,6 +98,18 @@ struct GuiHost
 
     void pointerShape(PointerShape s) @system => session.window.pointerShape(s);
 
+    /**
+    Captures the frame about to be presented into `path`, an errand only the
+    GPU arm can serve — hence probed with `__traits(hasMember)` rather than
+    required of every host (`SPEC` §3.1: absence degrades, never breaks).
+
+    Deferred to the swap by `Window.screenshot`; a component may therefore call
+    it from `frame`, outside the drawing bracket, which is the only place it
+    has a host to call.
+    */
+    void screenshot(scope const(char)* path) @system
+        => session.window.screenshot(path);
+
     void clipboard(scope const(char)[] text) @system
     {
         import std.string : toStringz;
