@@ -21,11 +21,11 @@
 ┃ ● a list inside
 ┃ ● another item
 ┃
-┃ ╭─  ────────────────────────────────────────────────────────────────────────╮
-┃ │ 1 auto x = 1; // a fence inside a callout                                  │
-┃ │ 2 auto y = 2; // continuation lines carry no prefix indentation            │
-┃ │ 3 auto z = 3;                                                              │
-┃ ╰────────────────────────────────────────────────────────────────────────────╯
+┃ ╭─  ───────────────────────────────────────────────────────────────────────╮
+┃ │ 1 auto x = 1; // a fence inside a callout                                 │
+┃ │ 2 auto y = 2; // continuation lines carry no prefix indentation           │
+┃ │ 3 auto z = 3;                                                             │
+┃ ╰───────────────────────────────────────────────────────────────────────────╯
 
 Plain quotes:
 
@@ -65,10 +65,10 @@ Plain quotes:
 ┃ ┃   2. with bold and inline
 ┃ ┃ ● sibling bullet at depth two
 ┃ ┃
-┃ ┃ ╭─  ──────────────────────────────────────────────────────────────────────╮
-┃ ┃ │ 1 // fence at quote depth two                                            │
-┃ ┃ │ 2 auto nested = true;                                                    │
-┃ ┃ ╰──────────────────────────────────────────────────────────────────────────╯
+┃ ┃ ╭─  ────────────────────────────────────────────────────────────────────╮
+┃ ┃ │ 1 // fence at quote depth two                                          │
+┃ ┃ │ 2 auto nested = true;                                                  │
+┃ ┃ ╰────────────────────────────────────────────────────────────────────────╯
 ┃ ┃
 ┃ ┃ ┃ Depth three — more structure still:
 ┃ ┃ ┃
@@ -87,12 +87,12 @@ Plain quotes:
 ┃ ┃ ┃ ┃   󰄱 nested unchecked under a checked task
 ┃ ┃ ┃ ┃
 ┃ ┃ ┃ ┃ ╭───────────┬───────╮
-┃ ┃ ┃ ┃ │  quote.d │  run └──────────────────────────────────────────────────╮
-┃ ┃ ┃ ┃ │ 1 void deep()                                                        │
-┃ ┃ ┃ ┃ │ 2 {                                                                  │
-┃ ┃ ┃ ┃ │ 3     import std.stdio : writeln;                                    │
-┃ ┃ ┃ ┃ │ 4     writeln("quoted");                                             │
-┃ ┃ ┃ ┃ │ 5 }                                                                  │
-┃ ┃ ┃ ┃ ╰──────────────────────────────────────────────────────────────────────╯
+┃ ┃ ┃ ┃ │  quote.d │  run └──────────────────────────────────────────────╮
+┃ ┃ ┃ ┃ │ 1 void deep()                                                    │
+┃ ┃ ┃ ┃ │ 2 {                                                              │
+┃ ┃ ┃ ┃ │ 3     import std.stdio : writeln;                                │
+┃ ┃ ┃ ┃ │ 4     writeln("quoted");                                         │
+┃ ┃ ┃ ┃ │ 5 }                                                              │
+┃ ┃ ┃ ┃ ╰──────────────────────────────────────────────────────────────────╯
 ┃
 ┃ Closing paragraph back at depth one after the nest.
