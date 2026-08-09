@@ -35,7 +35,8 @@ version (UiAppTui):
 version (Posix):
 
 import sparkles.base.term_control : PointerShape;
-import sparkles.input : Event, InputCapabilities, isEndOfInput;
+import sparkles.input : Event, InputCapabilities, isEndOfInput, isNoEvent,
+    NoEvent;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
@@ -60,6 +61,37 @@ struct TuiHost
     /// `true` when the event-horizon arm is driving (one ring wait);
     /// `false` on the blocking fallback (no ring available).
     bool asyncLoop;
+
+    private void delegate(void delegate()) _spawnDaemon;
+    private void delegate() _wake;
+
+    /**
+    Park a background fiber on the loop's own scope (`HST15`): a pty pump, a
+    pipe-readiness watcher, a spawned child's drain. Daemons are reaped by
+    the scope's exit — their parked operations cancelled in-ring — before
+    the session restores the terminal.
+
+    Returns `false` when no ring drives this run (the blocking fallback):
+    the component keeps its polled path, which is the same code it needs for
+    hosts without the errand at all.
+    */
+    bool spawnDaemon(void delegate() fiberBody) @system
+    {
+        if (_spawnDaemon is null)
+            return false;
+        _spawnDaemon(fiberBody);
+        return true;
+    }
+
+    /// `HST15`: make the loop run another frame pass soon — callable from a
+    /// daemon fiber, which is the point (the fiber saw readability; the loop
+    /// does the draining). A no-op on the blocking arm, whose poll deadline
+    /// is the only wake it has.
+    void wake() @system
+    {
+        if (_wake !is null)
+            _wake();
+    }
 
     /// The surface, in cells.
     Size size() const @safe pure nothrow @nogc => size_;
@@ -256,6 +288,20 @@ bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
                     if (winchOk)
                         sc.spawnDaemon(() { pumpResizeSignals(sched, events, winch); });
 
+                // The `HST15` errands, live for this run: application
+                // daemons ride the same scope as the pumps, and a wake is a
+                // no-op event into the same channel the loop parks on.
+                // `sc` is a `ref` parameter — closures capture the slot,
+                // never the referent, so its address goes through a local.
+                auto scP = (() @trusted => &sc)();
+                host._spawnDaemon = (void delegate() b) { scP.spawnDaemon(b); };
+                host._wake = () { cast(void) events.tryPut(Event(NoEvent())); };
+                scope (exit)
+                {
+                    host._spawnDaemon = null;
+                    host._wake = null;
+                }
+
                 while (!host.quitRequested)
                 {
                     // The park deadline: the application's per-frame ask
@@ -313,9 +359,13 @@ bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
                     {
                         if (e.isEndOfInput)
                             return;
-                        // `HST7`: the size the application reads is the
-                        // one the host has.
-                        handle(host, withRealSize(e, host.size));
+                        // A `NoEvent` is a wake (`HST15`), not input: the
+                        // frame pass below does the work, and `handle`
+                        // never sees it.
+                        if (!e.isNoEvent)
+                            // `HST7`: the size the application reads is
+                            // the one the host has.
+                            handle(host, withRealSize(e, host.size));
                     }
                     frame();
                 }
@@ -381,4 +431,14 @@ unittest
         h.toggleFullscreen();
         h.fontSize(h.fontSizePx + 2);
     }));
+
+    // The optional `HST15` errands are present on this host, and refused
+    // (false) outside a live async arm — the blocking-fallback answer.
+    import sparkles.ui_app.host : canSpawnDaemon, canWake;
+
+    static assert(canSpawnDaemon!TuiHost && canWake!TuiHost);
+    TuiHost bare;
+    assert(!bare.spawnDaemon(delegate void() {}),
+        "no ring drives a bare host — the component keeps its polled path");
+    bare.wake(); // and a wake asks nothing
 }

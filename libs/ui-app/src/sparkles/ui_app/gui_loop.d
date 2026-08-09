@@ -49,6 +49,27 @@ struct GuiHost
     /// `false` on the raylib-paced fallback (no ring available).
     bool asyncLoop;
 
+    private void delegate(void delegate()) _spawnDaemon;
+
+    /**
+    Park a background fiber on the loop's own scope (`HST15`): between
+    frames the thread parks in the ring, which is where the daemon runs.
+    Returns `false` on the raylib-paced fallback (no ring): the component
+    keeps its polled path.
+    */
+    bool spawnDaemon(void delegate() fiberBody) @system
+    {
+        if (_spawnDaemon is null)
+            return false;
+        _spawnDaemon(fiberBody);
+        return true;
+    }
+
+    /// `HST15`: on a paced arm the next frame is already coming, so a wake
+    /// asks for nothing — it exists so a component wakes its host without
+    /// branching on the target.
+    void wake() @safe pure nothrow @nogc {}
+
     /// The surface, in cells — pixels divided by the loaded cell metrics, so an
     /// application reasons in the same unit on both targets.
     Size size() const @system
@@ -192,18 +213,32 @@ bool runGui(alias present, alias handle, alias draw = noDraw)(
 
         import core.time : usecs;
 
+        import sparkles.event_horizon.errors : IoError;
         import sparkles.event_horizon.io : Ticker;
+        import sparkles.event_horizon.scope_ : withScope;
 
         const fps = cfg.targetFps > 0 ? cfg.targetFps : 60;
         sched.run(() {
-            auto ticker = Ticker.start(sched, (1_000_000 / fps).usecs);
-            while (!session.window.shouldClose && !host.quitRequested)
-            {
-                // Park in the ring until the frame is due: async work runs
-                // here, costing no frames and dropping no input (HST9).
-                cast(void) ticker.tick(sched);
-                oneFrame();
-            }
+            // The scope is what lets the application park daemons on this
+            // loop (`HST15`); its exit reaps them — parked operations
+            // cancelled in-ring — before the window closes.
+            cast(void) withScope!((ref sc) {
+                // `sc` is a `ref` parameter — closures capture the slot,
+                // never the referent, so its address goes through a local.
+                auto scP = (() @trusted => &sc)();
+                host._spawnDaemon = (void delegate() b) { scP.spawnDaemon(b); };
+                scope (exit) host._spawnDaemon = null;
+
+                auto ticker = Ticker.start(sched, (1_000_000 / fps).usecs);
+                while (!session.window.shouldClose && !host.quitRequested)
+                {
+                    // Park in the ring until the frame is due: async work
+                    // runs here, costing no frames and dropping no input
+                    // (HST9).
+                    cast(void) ticker.tick(sched);
+                    oneFrame();
+                }
+            }, IoError)(sched);
         });
         return true;
     }
@@ -237,4 +272,14 @@ unittest
         h.fontSize(h.fontSizePx + 2);
         auto c = h.canvas;
     }));
+
+    // The optional `HST15` errands are present on this host, and refused
+    // (false) outside a live async arm — the raylib-paced-fallback answer.
+    import sparkles.ui_app.host : canSpawnDaemon, canWake;
+
+    static assert(canSpawnDaemon!GuiHost && canWake!GuiHost);
+    GuiHost bare;
+    assert(!bare.spawnDaemon(delegate void() {}),
+        "no ring paces a bare host — the component keeps its polled path");
+    bare.wake(); // free on a paced arm
 }
