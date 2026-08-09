@@ -27,15 +27,17 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import kit;
 import registry : pages;
 import scrollbars : gutterCells;
-import state : GalleryState, inspectorWidth;
+import state : GalleryState;
 
 @safe:
 
-/// The width the panel's rows are built at: the fixed column less its own
-/// horizontal padding and the bar's gutter. Fixed rather than `grow`, because
-/// the body lives inside a scroll viewport, where `grow` collapses to natural
-/// width (the caught defect the spec's ledger records).
-enum int inspectorInnerWidth = inspectorWidth - 2 - gutterCells;
+/// The width the panel's rows are built at: the dock-arranged column less its
+/// own horizontal padding and the bar's gutter. Fixed rather than `grow`,
+/// because the body lives inside a scroll viewport, where `grow` collapses to
+/// natural width (the caught defect the spec's ledger records) — and read from
+/// the state, because the panel's divider is draggable.
+int inspectorInnerWidth(in GalleryState s) pure nothrow @nogc
+    => s.inspCols - 2 - gutterCells;
 
 /// A dump can run to hundreds of lines; the panel scrolls, but a body that
 /// built every one of them on every frame would be paying for a wall of text
@@ -61,6 +63,7 @@ uint inspectorBody(ref Builder b, in GalleryState s)
     const dump = dumpTree(subjectTree, frames);
     const targets = hoverTargets(subjectTree, frames);
     const keyed = elementKeys(subjectTree);
+    const iw = inspectorInnerWidth(s);
 
     uint[] rows;
     rows ~= b.add(Widget(
@@ -69,7 +72,7 @@ uint inspectorBody(ref Builder b, in GalleryState s)
         slot: Slot.chromeAccent,
         textStyle: TextStyle(bold: true),
     ));
-    rows ~= rule(b);
+    rows ~= rule(b, iw);
     rows ~= kv(b, "page", subject.title, 12, Slot.chromeAccent);
     rows ~= kv(b, "laid out at", text(s.contentWidth, " cells wide"), 12,
         Slot.code);
@@ -78,23 +81,23 @@ uint inspectorBody(ref Builder b, in GalleryState s)
     rows ~= kv(b, "element keys", keyed.length.text, 12, Slot.code);
     rows ~= kv(b, "root size", text(frames[subjectTree.root].rect.width, " × ",
         frames[subjectTree.root].rect.height), 12, Slot.code);
-    rows ~= rule(b);
-    rows ~= dumpLines(b, dump);
+    rows ~= rule(b, iw);
+    rows ~= dumpLines(b, dump, iw);
 
     return b.add(Widget(
         kind: WidgetKind.column,
         children: rows,
-        width: SizeSpec.fixed(inspectorInnerWidth),
+        width: SizeSpec.fixed(iw),
     ));
 }
 
 /// A fixed-width rule — `kit.hrule` grows, and `grow` collapses to nothing
 /// inside the panel's scroll viewport.
-private uint rule(ref Builder b)
+private uint rule(ref Builder b, int width)
     => b.add(Widget(
         kind: WidgetKind.box,
         slot: Slot.border,
-        width: SizeSpec.fixed(inspectorInnerWidth),
+        width: SizeSpec.fixed(width),
         height: SizeSpec.fixed(1),
         paintBackground: true,
         stretch: true,
@@ -105,7 +108,7 @@ private uint rule(ref Builder b)
 /// Per line rather than one wrapped run, because a dump's indentation is its
 /// structure: wrapping a deep line would fold it under a shallower one and
 /// the shape — the only reason to read a dump — would be gone.
-private uint[] dumpLines(ref Builder b, string dump)
+private uint[] dumpLines(ref Builder b, string dump, int width)
 {
     uint[] rows;
     size_t shown;
@@ -118,7 +121,7 @@ private uint[] dumpLines(ref Builder b, string dump)
         rows ~= b.add(Widget(
             kind: WidgetKind.column,
             children: [label(b, line, Slot.code)],
-            width: SizeSpec.fixed(inspectorInnerWidth),
+            width: SizeSpec.fixed(width),
             clipX: true,
         ));
         ++shown;
@@ -197,7 +200,7 @@ private uint[] dumpLines(ref Builder b, string dump)
     auto b = Builder();
     const root = inspectorBody(b, s);
     auto tree = b.finish(root);
-    auto frames = layout(tree, Constraints(maxW: inspectorInnerWidth));
+    auto frames = layout(tree, Constraints(maxW: inspectorInnerWidth(s)));
 
     void walk(uint n, bool clipped)
     {
@@ -205,7 +208,7 @@ private uint[] dumpLines(ref Builder b, string dump)
         if (node.visibility == Visibility.collapsed)
             return;
         if (!clipped)
-            assert(frames[n].rect.right <= inspectorInnerWidth,
+            assert(frames[n].rect.right <= inspectorInnerWidth(s),
                 "the panel body overflows its own width");
         foreach (c; node.children)
             walk(c, clipped || node.clipX);
