@@ -873,6 +873,11 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             MdViewOptions inner = opt;
             inner.depthBudget = opt.depthBudget - 1;
             inner.indentCols = opt.indentCols + 2; // the bar panel's padding
+            // The card's RIGHT padding narrows the room too: `maxWidth` is
+            // the content's right boundary, so a fence inside the card stops
+            // at the card's edge instead of running to the document's.
+            if (opt.maxWidth > 0)
+                inner.maxWidth = opt.maxWidth - 1;
 
             Callout co;
             if (opt.theme.present && detectCallout(blk, src, opt, co))
