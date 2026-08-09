@@ -92,6 +92,29 @@ unittest
     assert(redrawDecision(RedrawInputs(forced: true)));
 }
 
+// The TVW8 ring capabilities, decided per backend at compile time: parked
+// master reads need `OpRead`; the in-ring reap needs `OpWaitid` (io_uring
+// today — the kqueue lowering is event-horizon's O26). Each degrades
+// independently: without `OpWaitid` the pump still parks and the per-frame
+// `WNOHANG` reap stays; without a ring-driven host the whole sync path stays.
+private
+{
+    import sparkles.event_horizon.backend.concept : canSubmitOp;
+    import sparkles.event_horizon.backend.select : DefaultBackend;
+    import sparkles.event_horizon.op : OpRead, OpWaitid;
+
+    enum bool ringPumpCapable = canSubmitOp!(DefaultBackend, OpRead);
+    enum bool ringReapCapable = canSubmitOp!(DefaultBackend, OpWaitid);
+}
+
+/// The `HST15` presence probe, owned here rather than imported: this library
+/// must not depend on `sparkles:ui-app`, and the errand is structural — any
+/// host-shaped embedder offering `spawnDaemon`/`wake` qualifies.
+private enum bool hostSpawnsDaemons(H) = __traits(compiles, (ref H h) {
+    bool live = h.spawnDaemon(delegate void() {});
+    h.wake();
+});
+
 /// What the caller wants of a terminal pane.
 struct TerminalViewOptions
 {
@@ -133,6 +156,11 @@ struct TerminalView
     private bool drainedThisFrame;
     private bool pendingForce;
     private int frameCount;
+    /// `TVW8`: a pump daemon owns the pty drain for this run — the sync
+    /// `drainPty` becomes a no-op (two readers on one fd would interleave
+    /// the byte stream), and where the ring can also reap, the per-frame
+    /// `WNOHANG` poll retires with it.
+    private bool ringPump;
 
     @disable this(this);
 
@@ -376,6 +404,7 @@ struct TerminalView
                 h.skipFrame();
                 return;
             }
+            startRingPump(h);
         }
 
         // Last frame's bracket ended after our paint ran (HST13), so its
@@ -791,6 +820,124 @@ struct TerminalView
 
     // ── internals ───────────────────────────────────────────────────────────
 
+    /**
+    `TVW8`: hand the pty to a daemon on the loop's own scope, where the host
+    offers one (`HST15`) and the backend can park a read. The daemon feeds
+    `feedPtyChunk` as bytes arrive and wakes the loop; on hangup it marks
+    the exit, reaps in-ring where `OpWaitid` exists, and returns. Where any
+    piece is missing — a blocking arm, the recorder, a backend without the
+    op — the per-frame sync path simply stays, which is why `open` needs no
+    answer from this.
+
+    Public because it is the $(B embedder's) hookup too: an application that
+    calls `open`/`openCore` itself (the gallery's tabs) calls this right
+    after, with its own host, and its per-frame `pump()` degrades to a
+    no-op. Idempotent per instance; both `this` and `h` must stay
+    address-pinned for the run (the component already is by contract).
+    */
+    void startRingPump(H)(ref H h)
+    {
+        static if (ringPumpCapable && hostSpawnsDaemons!H)
+        {
+            if (ringPump || !opened)
+                return;
+            // Plain locals for the closure: `this` and `h` are both
+            // references whose SLOTS a closure would capture; the referents
+            // are address-pinned for the run (the component by contract,
+            // the host by its loop's frame).
+            auto self = (() @trusted => &this)();
+            auto hp = (() @trusted => &h)();
+            ringPump = h.spawnDaemon(() { pumpFiber(self, hp); });
+        }
+    }
+
+    /// ditto — the daemon body.
+    private static void pumpFiber(H)(TerminalView* tv, H* h)
+    {
+        import core.lifetime : move;
+        import core.stdc.errno : EAGAIN, EINTR, errno, EIO, EWOULDBLOCK;
+
+        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.event_horizon.io : FileHandle, ringRead = read;
+
+        bool hangup = false;
+        while (!hangup && tv.opened && !tv.s.childExited)
+        {
+            SmallBuffer!(ubyte, 4096) chunk;
+            chunk.length = 4096;
+            auto got = ringRead(FileHandle(tv.s.pty_fd), move(chunk));
+            chunk = move(got.buf);
+            if (got.res.hasError)
+            {
+                // Only the pty's own hangup means the shell is gone. A
+                // cancelled read — the scope tearing down around a live
+                // child — must not claim an exit, or `close` would skip
+                // the SIGHUP and then block reaping a running shell. Any
+                // such error also hands the drain back to the sync path:
+                // a dead pump with `ringPump` still set would freeze the
+                // terminal, and during teardown the flag no longer matters.
+                if (got.res.error.errnoValue != EIO)
+                {
+                    tv.ringPump = false;
+                    h.wake();
+                    return;
+                }
+                break;
+            }
+            if (got.res.value == 0)
+                break; // EOF: the child closed its end
+            feedPtyChunk(tv.s, cast(const(char)[]) chunk[][0 .. got.res.value]);
+
+            // Burst drain: the parked read paid the ring round-trip for the
+            // burst's FIRST chunk; the rest is read synchronously until
+            // `EAGAIN` — the old tight loop, on the fiber that owns the fd.
+            // Without this, churn-rate output costs a ring round-trip and
+            // two fiber switches per 4 KiB (measured: 97.8% → 109.5% CPU on
+            // the churn scenario); with it, one round-trip per burst.
+            char[4096] buf = void;
+            for (;;)
+            {
+                const n = read(tv.s.pty_fd, buf.ptr, buf.length);
+                if (n > 0)
+                {
+                    feedPtyChunk(tv.s, buf[0 .. n]);
+                    continue;
+                }
+                if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK
+                    && errno != EINTR))
+                {
+                    hangup = true; // EOF or EIO: fall through to the reap
+                    break;
+                }
+                if (errno == EINTR)
+                    continue;
+                break; // EAGAIN: burst drained, park again
+            }
+            h.wake();
+        }
+        if (!tv.opened)
+            return;
+        tv.s.childExited = true;
+
+        // The in-ring reap (`TVW8`): the same decode the sync `reapChild`
+        // makes, parked instead of polled. On a cancelled teardown the op
+        // errors and the sync/teardown paths still hold the reap contract.
+        static if (ringReapCapable)
+            if (!tv.s.childReaped && tv.s.child > 0)
+            {
+                import sparkles.event_horizon.live : waitPid;
+
+                auto st = waitPid(tv.s.child);
+                if (!st.hasError)
+                {
+                    tv.s.childReaped = true;
+                    tv.s.childStatus = st.value.signaled
+                        ? 128 + st.value.code : st.value.code;
+                }
+            }
+        h.wake();
+    }
+
     private void onKey(H)(ref H h, in KeyEvent k)
     {
         // Mode changes must reach the encoder before this frame's first
@@ -926,6 +1073,11 @@ struct TerminalView
 
     private void drainPty() @system nothrow @nogc
     {
+        // `TVW8`: the pump daemon owns the fd — a second reader would
+        // interleave the byte stream. Everything already fed by the daemon
+        // is in; the drain-before-encode guarantee holds by arrival order.
+        if (ringPump)
+            return;
         if (s.childExited)
             return;
         char[4096] buf = void;
@@ -960,6 +1112,12 @@ struct TerminalView
         import core.sys.posix.sys.wait : waitpid, WEXITSTATUS, WIFEXITED,
             WIFSIGNALED, WNOHANG, WTERMSIG;
 
+        // `TVW8`: where the ring can reap, the pump daemon does — a second
+        // `waitpid` here would race it for the same pid. Without `OpWaitid`
+        // the daemon only marks the exit and this poll keeps the reap.
+        static if (ringReapCapable)
+            if (ringPump)
+                return;
         if (!s.childExited || s.childReaped)
             return;
         int wstatus;
