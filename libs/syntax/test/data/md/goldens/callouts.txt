@@ -86,7 +86,8 @@ Plain quotes:
 ┃ ┃ ┃ ┃ 󰱒 checked task at depth four
 ┃ ┃ ┃ ┃   󰄱 nested unchecked under a checked task
 ┃ ┃ ┃ ┃
-┃ ┃ ┃ ┃ ╭─   quote.d   run  ─────────────────────────────────────────────────╮
+┃ ┃ ┃ ┃ ╭───────────┬───────╮
+┃ ┃ ┃ ┃ │  quote.d │  run ├──────────────────────────────────────────────────╮
 ┃ ┃ ┃ ┃ │ 1 void deep()                                                        │
 ┃ ┃ ┃ ┃ │ 2 {                                                                  │
 ┃ ┃ ┃ ┃ │ 3     import std.stdio : writeln;                                    │

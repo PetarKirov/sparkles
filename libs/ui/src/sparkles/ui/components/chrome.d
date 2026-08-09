@@ -234,11 +234,45 @@ back with `id - hitBase`. Pass `ids` instead when the caller has its own
 identity scheme — a source-anchored one, say — and the strip uses those
 verbatim.
 */
+/// Border caps for a strip embedded IN a border line (the markdown fence
+/// header): `left` leads the strip, `separator` stands between tabs, and
+/// `right` closes it into the continuing line — all in `Slot.border` — so
+/// the tabs read as a boxed part of the border, not chrome floating on it:
+/// `│ tab │ tab ├──`. The caller typically stacks a matching top-border
+/// row (`╭──┬──╮`) above; $(LREF tabStripTopBorder) builds it from the
+/// same widths.
+struct TabCaps
+{
+    string left;
+    string separator;
+    string right;
+}
+
+/// The `╭──┬──╮` row that boxes a capped strip from above: corners at the
+/// strip's edges, a `┬` over each separator — junctioning into the capped
+/// row's `│`s below. Widths follow the strip's own tab sizing.
+uint tabStripTopBorder(ref Builder b, scope const(string)[] labels)
+{
+    string line = "╭";
+    foreach (i, label; labels)
+    {
+        foreach (_; 0 .. cellsOf(label) + 2)
+            line ~= "─";
+        line ~= i + 1 < labels.length ? "┬" : "╮";
+    }
+    return b.add(Widget(kind: WidgetKind.text, text: line, slot: Slot.border));
+}
+
 uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
     size_t hitBase, in PressState press = PressState.init,
-    bool fitLabels = true, scope const(size_t)[] ids = null)
+    bool fitLabels = true, scope const(size_t)[] ids = null,
+    TabCaps caps = TabCaps.init)
 {
-    auto segs = new uint[](labels.length + 1);
+    uint capGlyph(string g)
+        => b.add(Widget(kind: WidgetKind.text, text: g, slot: Slot.border));
+
+    auto segs = new uint[](0);
+    segs.reserve(labels.length + 1);
     foreach (i, label; labels)
     {
         // Ids default to `hitBase + i`, but a caller with its own identity
@@ -257,7 +291,7 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
                 : armed ? Slot.chromeFocused : Slot.gutter,
             textStyle: TextStyle(bold: isActive),
         ));
-        segs[i] = b.add(Widget(
+        const body = b.add(Widget(
             kind: WidgetKind.column,
             children: [caption],
             // A tab is its label plus one cell of breathing room either
@@ -269,22 +303,39 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
             // The whole tab is the target, not just the glyphs.
             hitId: id,
             slot: isActive ? Slot.chromeFocused : Slot.chrome,
-            paintBackground: true,
+            // A CAPPED strip is line-drawn: solid bands under hairline
+            // walls read as floating blocks (the GUI especially), so only
+            // the active tab keeps a subtle fill inside its walls.
+            paintBackground: !caps.left.length || isActive,
         ));
+        if (caps.left.length)
+        {
+            // Capped: `│` walls between the tabs, the trailing cap
+            // junctioning the strip into the continuing border line.
+            if (i == 0)
+                segs ~= capGlyph(caps.left);
+            segs ~= body;
+            segs ~= capGlyph(i + 1 < labels.length
+                ? caps.separator : caps.right);
+        }
+        else
+            segs ~= body;
     }
     // A filler tail so the strip's background spans the full width even when
     // the tabs do not — and so nothing beyond the last tab is hit-testable.
-    segs[$ - 1] = b.add(Widget(
-        kind: WidgetKind.column,
-        width: SizeSpec.grow(),
-        slot: Slot.chrome,
-        paintBackground: true,
-    ));
+    // A CAPPED strip skips it: the surrounding border line is the filler.
+    if (!caps.left.length)
+        segs ~= b.add(Widget(
+            kind: WidgetKind.column,
+            width: SizeSpec.grow(),
+            slot: Slot.chrome,
+            paintBackground: true,
+        ));
     return b.add(Widget(
         kind: WidgetKind.row,
         children: segs,
         slot: Slot.chrome,
-        paintBackground: true,
+        paintBackground: !caps.left.length,
         stretch: true,
         height: SizeSpec.fixed(1),
     ));
