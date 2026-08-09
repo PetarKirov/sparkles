@@ -15,9 +15,11 @@ module gallery;
 
 import std.conv : text;
 
+import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, isDismiss, Key, KeyAction, KeyEvent, match,
     PointerAction, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.terminal_view.cell_paint : paintCells;
+import sparkles.ui.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.components.chrome : headerBar, scrollView;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
@@ -77,6 +79,20 @@ struct Gallery
     /// shell into the test harness.
     bool spawnEnabled;
 
+    /**
+    The body band's tiling as a dock (`DCK1`): three panes in one horizontal
+    split, so the two seams between them are $(B draggable dividers) rather
+    than fixed chrome. The container owns the extents and the drag machine;
+    the widget row keeps painting exactly what it painted — the divider IS
+    the gap column the row already had — and the shell mirrors the arranged
+    widths into `s.navCols`/`s.inspCols` for the pure views.
+    */
+    DockContainer dock;
+
+    private enum PaneId paneNav = 1;
+    private enum PaneId paneContent = 2;
+    private enum PaneId paneInsp = 3;
+
     private bool prevTermFocus;
     private int dbgFrame; // the UIG_SHOT self-verification hook's clock
 
@@ -103,6 +119,11 @@ struct Gallery
         s.surface = h.size;
         s.backend = h.backend;
         s.caps = h.capabilities;
+
+        // The dock arranges the body band before anything reads a width:
+        // `contentWidth` is a mirror of what the container tiled, and the
+        // page view is about to consume it.
+        syncDock();
 
         // A window paces frames; a terminal wakes on input and reports zero.
         // The toast's own mode follows from that (see `toastConfigFor`).
@@ -191,7 +212,8 @@ struct Gallery
         if (s.inspectorVisible)
         {
             inspRoot = inspectorBody(b, s);
-            s.inspectorRows = measureHeight(b, inspRoot, inspectorInnerWidth);
+            s.inspectorRows = measureHeight(b, inspRoot,
+                inspectorInnerWidth(s));
             const ig = inspectorBarGeometry();
             s.inspView.v = s.inspView.v.scrolledTo(
                 ScrollView.clampOffset(s.inspView.v.offset, ig.content,
@@ -422,6 +444,81 @@ struct Gallery
     /// Whether the keyboard belongs to the shell inside the pane.
     private bool terminalCaptures() const @safe
         => s.page == terminalPageIndex && s.terms.focused && s.terms.any;
+
+    // ── the dock — the resizable body tiling ────────────────────────────────
+
+    /**
+    Builds the three-pane layout once, then per frame: visibility follows the
+    shell's own yield rules, the ceilings follow the surface (hue's shape —
+    a sidebar sized for a wide window must not keep that width when the
+    window shrinks under it), and the arranged widths mirror into the state.
+    */
+    private void syncDock() @safe
+    {
+        if (dock.layout.nodes.length == 0)
+        {
+            const n = dock.layout.addLeaf(paneNav,
+                extent: navWidth, minExtent: navMinCols);
+            const c = dock.layout.addLeaf(paneContent,
+                minExtent: contentMinCols);
+            const i = dock.layout.addLeaf(paneInsp,
+                extent: inspectorWidth, minExtent: inspMinCols);
+            dock.layout.root = dock.layout.addSplit(DockAxis.horizontal,
+                [n, c, i]);
+        }
+
+        dock.layout.setVisible(paneNav, s.navVisible);
+        dock.layout.setVisible(paneInsp, s.inspectorVisible);
+
+        // Ceilings, re-stated per frame so `arrange`'s re-clamp keeps both
+        // side panes inside a shrinking window: a third for the list, half
+        // for the panel — a dump wants width, a list of titles does not.
+        const w = s.surface.width;
+        dock.layout.nodes[dock.layout.nodeOf(paneNav)].maxExtent =
+            w / 3 > navMinCols ? w / 3 : navMinCols;
+        dock.layout.nodes[dock.layout.nodeOf(paneInsp)].maxExtent =
+            w / 2 > inspMinCols ? w / 2 : inspMinCols;
+
+        dock.arrange(bodyArea());
+        mirrorDock();
+    }
+
+    /// The rows the body band occupies — under the header, above the footer.
+    /// The dock tiles the same rect the widget row is laid out into, which
+    /// is the whole reason its divider rects land on the row's gap columns.
+    private Rect bodyArea() const @safe
+        => Rect(0, 1, s.surface.width, s.contentHeight);
+
+    /// The arranged widths, into the state the pure views read. A hidden
+    /// pane's mirror keeps its last value — it comes back at the width it
+    /// was dragged to.
+    private void mirrorDock() @safe
+    {
+        if (s.navVisible)
+            s.navCols = dock.paneExtent(paneNav);
+        if (s.inspectorVisible)
+            s.inspCols = dock.paneExtent(paneInsp);
+    }
+
+    /**
+    After a divider drag: a drag hands its $(B before) node the new extent,
+    and the inspector divider's before node is the centre pane — which must
+    stay flexible, or the page stops following the window the moment that
+    divider is touched. The inspector already took its delta from the same
+    drag, so unfixing the centre re-arranges to the identical picture.
+    (A dock finding the catalog records — hue never sees it, because its
+    flexible pane sits last.)
+    */
+    private void reflexCentre() @safe
+    {
+        const c = dock.layout.nodeOf(paneContent);
+        if (c != uint.max && dock.layout.nodes[c].extent > 0)
+        {
+            dock.layout.nodes[c].extent = 0;
+            dock.arrange(bodyArea());
+        }
+        mirrorDock();
+    }
 
     /**
     The GPU arm's terminal chrome, in the one place that may paint pixels —
@@ -723,7 +820,22 @@ struct Gallery
             Constraints(maxW: s.surface.width, maxH: s.surface.height));
         const targets = hoverTargets(tree, frames);
 
-        // The scrollbars first, and unconditionally. A grab owns the pointer
+        // The dock's dividers first (`DCK13`): a press on the seam between
+        // two panes starts a resize, and a live resize owns the pointer
+        // wherever it strays. Every other event falls straight through —
+        // the container's pane routes are ignored, because the gallery's
+        // own hover/press machinery below IS the pane handling.
+        const route = dock.handle(Event(p));
+        if (route.relayout)
+            reflexCentre();
+        if (route.kind == RouteKind.container)
+        {
+            s.hover.update(p, targets);
+            reportPointerShape(h);
+            return;
+        }
+
+        // The scrollbars next, and unconditionally. A grab owns the pointer
         // for its whole span, so the bar must see every move — including the
         // ones that stray off it, which is exactly when a bar wired only to
         // its own hover rect lets go halfway through a drag.
@@ -862,7 +974,7 @@ struct Gallery
         // columns are the surface's last `inspectorWidth` — a geometric test,
         // because the wheel handler has no frames in hand (`UGL-O5`'s shape,
         // answered here for the second consumer that wanted it).
-        if (s.inspectorVisible && w.pos.x >= s.surface.width - inspectorWidth)
+        if (s.inspectorVisible && w.pos.x >= s.surface.width - s.inspCols)
             return scrollInspector(w.dy);
 
         // Over the terminal pane the wheel belongs to the application when
@@ -902,6 +1014,12 @@ struct Gallery
     */
     private void reportPointerShape(H)(ref H h)
     {
+        // The dock's shape first: a live divider resize (or a hover over
+        // one) wants the resize cursor, and outranks every pane shape.
+        const ds = dock.shape();
+        if (ds != PointerShape.default_)
+            return h.pointerShape(ds);
+
         const overDivider = s.pointerAffordances && s.hover.isHot(hitSplit);
         auto want = wantedPointerShape(s.split, overDivider,
             s.contentView.v, s.demoView.v);
@@ -1000,10 +1118,13 @@ struct Gallery
         return b.add(Widget(
             kind: WidgetKind.column,
             children: [list],
-            width: SizeSpec.fixed(navWidth),
+            // The dock's arranged width, not the nominal constant — this is
+            // the pane the divider beside it resizes.
+            width: SizeSpec.fixed(s.navCols),
             height: SizeSpec.grow(),
             padding: Insets.symmetric(0, 1),
             clipY: true,
+            clipX: true,
             key: keyNavScroll,
             decoration: Decoration(
                 borderWidth: Insets(0, 1, 0, 0),
@@ -1031,7 +1152,7 @@ struct Gallery
         return b.add(Widget(
             kind: WidgetKind.column,
             children: [inner],
-            width: SizeSpec.fixed(inspectorWidth),
+            width: SizeSpec.fixed(s.inspCols),
             height: SizeSpec.grow(),
             padding: Insets.symmetric(0, 1),
             clipX: true,
@@ -1391,6 +1512,94 @@ version (unittest)
     drive(g, [press], 120, 40);
     assert(g.s.inspView.v.dragging, "the press grabbed the bar");
     assert(g.s.inspView.v.offset > 0, "…and jumped the dump");
+}
+
+version (unittest)
+{
+    private Event pointerAt(PointerAction a, int x, int y) @safe
+        => Event(PointerEvent(action: a, button: PointerButton.left,
+            pos: Point(x, y)));
+}
+
+@("ui_gallery.gallery.draggingTheNavDividerResizesTheSidebar")
+@safe unittest
+{
+    // The seam between the sidebar and the page is the dock's divider: a
+    // press on the gap column grabs it, the drag re-tiles, and the page's
+    // width follows the same mirror every pure view reads.
+    Gallery g;
+    drive(g, [
+        pointerAt(PointerAction.press, navWidth, 5),
+        pointerAt(PointerAction.drag, 30, 5),
+        pointerAt(PointerAction.release, 30, 5),
+    ], 120, 40);
+
+    assert(g.s.navCols == 30, "the sidebar followed the divider");
+    assert(g.s.contentWidth == 120 - 31 - scrollGutter,
+        "the page gave up exactly what the sidebar took");
+    assert(!g.dock.resizing, "the release ended the grab");
+
+    // The drag clamps at both ends: a third of the surface, and the floor.
+    drive(g, [
+        pointerAt(PointerAction.press, 30, 5),
+        pointerAt(PointerAction.drag, 110, 5),
+        pointerAt(PointerAction.release, 110, 5),
+    ], 120, 40);
+    assert(g.s.navCols == 120 / 3, "the ceiling held");
+
+    drive(g, [
+        pointerAt(PointerAction.press, 40, 5),
+        pointerAt(PointerAction.drag, 2, 5),
+        pointerAt(PointerAction.release, 2, 5),
+    ], 120, 40);
+    assert(g.s.navCols == navMinCols, "the floor held");
+}
+
+@("ui_gallery.gallery.draggingTheInspectorDividerKeepsTheCentreFlexible")
+@safe unittest
+{
+    // The inspector divider's BEFORE node is the flexible centre, and a
+    // divider drag fixes its before node — the dock finding `reflexCentre`
+    // answers. Without it, the page stops following the window the moment
+    // this divider is touched.
+    Gallery g;
+    g.s.inspectorOpen = true;
+
+    const div = 120 - inspectorWidth - 1;
+    drive(g, [
+        pointerAt(PointerAction.press, div, 5),
+        pointerAt(PointerAction.drag, div - 7, 5),
+        pointerAt(PointerAction.release, div - 7, 5),
+    ], 120, 40);
+    assert(g.s.inspCols == inspectorWidth + 7,
+        "the panel took what the drag gave it");
+
+    // Widen the window: every new column lands in the CENTRE — the sides
+    // keep their dragged widths, which is what "flexible" means here.
+    drive(g, [Event(ResizeEvent(sizeOf(140, 40)))], 140, 40);
+    assert(g.s.inspCols == inspectorWidth + 7 && g.s.navCols == navWidth);
+    assert(g.s.contentWidth
+        == 140 - (navWidth + 1) - (g.s.inspCols + 1) - scrollGutter);
+}
+
+@("ui_gallery.gallery.aHiddenPaneComesBackAtItsDraggedWidth")
+@safe unittest
+{
+    Gallery g;
+    g.s.inspectorOpen = true;
+    const div = 120 - inspectorWidth - 1;
+    drive(g, [
+        pointerAt(PointerAction.press, div, 5),
+        pointerAt(PointerAction.drag, div - 6, 5),
+        pointerAt(PointerAction.release, div - 6, 5),
+        charEvent('|'),
+    ], 120, 40);
+    assert(!g.s.inspectorOpen);
+
+    drive(g, [charEvent('|')], 120, 40);
+    assert(g.s.inspectorOpen);
+    assert(g.s.inspCols == inspectorWidth + 6,
+        "the width survived the round trip");
 }
 
 @("ui_gallery.gallery.navRowsTileTheSidebarAndHitWhereTheyPaint")

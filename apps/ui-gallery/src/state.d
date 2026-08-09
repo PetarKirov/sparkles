@@ -325,6 +325,18 @@ struct GalleryState
     /// the theme says no unicode).
     string termTabGlyphs;
 
+    // ── what the dock arranged ──────────────────────────────────────────────
+    /**
+    The side panes' widths $(B as arranged) — the dock container owns the
+    extents (and their drag), the shell mirrors them here each frame so the
+    pages' pure views can read a width without knowing a dock exists. They
+    start at the nominal widths and keep their last value while a pane is
+    hidden, so a pane comes back at the width it was dragged to.
+    */
+    int navCols = navWidth;
+    /// ditto
+    int inspCols = inspectorWidth;
+
     // ── what the host told us ───────────────────────────────────────────────
     Size surface = Size(80, 24); ///
     Backend backend;             ///
@@ -392,8 +404,8 @@ struct GalleryState
     */
     int contentWidth() const scope
     {
-        const w = surface.width - (navVisible ? navWidth + 1 : 0)
-            - (inspectorVisible ? inspectorWidth + 1 : 0) - scrollGutter;
+        const w = surface.width - (navVisible ? navCols + 1 : 0)
+            - (inspectorVisible ? inspCols + 1 : 0) - scrollGutter;
         return w > 8 ? w : 8;
     }
 }
@@ -420,7 +432,17 @@ enum int inspectorWidth = 42;
 /// The narrowest surface (after a pinned sidebar's cells) that still carries
 /// the inspector panel — see `GalleryState.inspectorVisible`. At exactly this
 /// width the content pane keeps 15 cells, which is cramped but legible.
+/// (The visibility thresholds stay in terms of the $(B nominal) widths even
+/// though the dock lets a reader drag the real ones — a threshold that moved
+/// with the drag would make a pane vanish by being widened.)
 enum int inspectorMinSurface = 60;
+
+/// The dock's drag floors: no divider drag squeezes a pane below these.
+enum int navMinCols = 12;
+/// ditto — the page keeps a readable column whatever the side panes do.
+enum int contentMinCols = 24;
+/// ditto
+enum int inspMinCols = 24;
 
 /**
 How long a toast holds — which depends on whether the target has a frame clock.

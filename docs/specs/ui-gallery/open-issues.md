@@ -118,6 +118,22 @@ one cell here and in most terminals, two under `ambiguous-width=wide`; the
 East-Asian-**Wide** outright, which is why the cap must not pass 20 without
 widening the mini column.
 
+## `UGL-O10` — a divider drag fixes its flexible neighbour · open
+
+`DockContainer`'s divider drag hands the **before** node the new extent and
+lets a fixed follower give up the difference — which is right until the before
+node is the _flexible_ one. The gallery's centre pane sits before the
+inspector's divider, so the first touch of that divider silently converted it
+to a fixed extent and the page stopped following the window. hue never sees
+this: its flexible pane is last, so its only divider's before node is the
+fixed sidebar.
+
+The shell works around it (`reflexCentre`): after every relayout route it
+zeroes the centre's extent back to flexible — the inspector already took its
+delta, so the re-arrange reproduces the identical picture. Closes if the drag
+learns to leave a flexible before node flexible by assigning the delta to the
+fixed neighbour instead.
+
 ## `UGL-O8` — the embedded cell renderer's honest losses · open
 
 `cell_paint.d` paints one `dchar` per cell, so a multi-codepoint grapheme
