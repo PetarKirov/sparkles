@@ -44,7 +44,9 @@ struct TerminalStore
                 slotId = id;
                 slots[i] = new TerminalView;
                 slots[i].opts = TerminalViewOptions(
-                    exitBehavior: ExitBehavior.hold);
+                    exitBehavior: ExitBehavior.hold,
+                    // The gallery draws its own bar beside the pane.
+                    internalScrollbar: false);
                 return slots[i];
             }
         return null;

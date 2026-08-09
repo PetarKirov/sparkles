@@ -77,6 +77,7 @@ struct Gallery
     bool spawnEnabled;
 
     private bool prevTermFocus;
+    private int dbgFrame; // the UIG_SHOT self-verification hook's clock
 
     /**
     The theme this frame paints in.
@@ -120,6 +121,43 @@ struct Gallery
         // per-tab pty pump, title and exit mirroring — before the page view
         // reads the state they update. A pure page cannot do any of this.
         syncTerminals(h);
+
+        // `UIG_SHOT=<file>`: the GPU arm's self-verification hook — spawn
+        // three shells, run a command, scroll back, screenshot, quit. How
+        // this page's pixels get checked from a test script, no human and
+        // no display assumptions in the way (the terminal-view component
+        // has the same idea in `debugScreenshotAndExit`).
+        static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
+        {
+            import std.process : environment;
+
+            const shot = environment.get("UIG_SHOT");
+            if (shot !is null)
+            {
+                dbgFrame++;
+                if (dbgFrame == 30 || dbgFrame == 40 || dbgFrame == 50)
+                    s.terms.spawnRequested = true;
+                if (dbgFrame == 80 && s.terms.any)
+                    if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+                        () @trusted {
+                            import sparkles.terminal_view.input : pty_write;
+
+                            static immutable cmd = "seq 1 100\r";
+                            pty_write(tv.s.pty_fd, cmd.ptr, cmd.length);
+                        }();
+                if (dbgFrame == 200)
+                    scrollTerminal(-30);
+                if (dbgFrame == 260)
+                    (() @trusted {
+                        import raylib : TakeScreenshot;
+                        import std.string : toStringz;
+
+                        TakeScreenshot(shot.toStringz);
+                    })();
+                if (dbgFrame == 280)
+                    h.quit();
+            }
+        }
 
         auto b = Builder();
 
@@ -233,7 +271,7 @@ struct Gallery
                 // only now, at paint time — the one-frame lag is the design.
                 s.terms.paneCols = cast(ushort) inner.width;
                 s.terms.paneRows = cast(ushort) inner.height;
-                static if (__traits(compiles, h.canvas.fonts))
+                static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
                     paintTermChrome(h, tv, inner); // padding fill + pane + rail
                 else static if (__traits(compiles, paintCells(tv.s, h.canvas, inner)))
                     // An lvalue canvas (the recorder). The paint is C FFI over
@@ -511,7 +549,7 @@ struct Gallery
 
         // Last frame's deferred kitty textures resolve pre-bracket, exactly
         // where the whole-surface frame flushes them — GPU arm only.
-        static if (__traits(compiles, h.canvas.fonts))
+        static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
             if (s.terms.any)
             {
                 import sparkles.terminal_view.core : flush_deferred_textures;
@@ -559,8 +597,11 @@ struct Gallery
         }
 
         bool ok;
-        static if (__traits(compiles, h.canvas.fonts))
-            ok = (() @trusted => tv.open(h.canvas.fonts, cols, rows))();
+        static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
+            ok = () @trusted {
+                auto c = h.canvas;
+                return tv.open(c.fonts, cols, rows);
+            }();
         else
             ok = (() @trusted => tv.openCore(cols, rows, 1, 1))();
         if (!ok)
