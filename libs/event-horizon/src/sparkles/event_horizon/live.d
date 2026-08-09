@@ -297,30 +297,57 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
 
 static if (canSubmitOp!(DefaultBackend, OpWaitid))
 {
-    /// Parks until the child exits (in-ring `WAITID`, SPEC §13.2); decodes
-    /// exited-vs-signaled. Sets `pid = -1` on success.
-    IoResult!ExitStatus wait(ref Sched s, ref ChildProcess child) @trusted
+    /**
+    Parks until the process `pid` exits (in-ring `WAITID` over a raw pid,
+    SPEC §13.2); decodes exited-vs-signaled.
+
+    The raw-pid form exists for a child spawned by other means — `forkpty`,
+    a wrapping library — where no `ChildProcess` handle exists to `wait` on
+    (`sparkles:terminal-view`'s in-ring reap, TVW8). The caller still owns
+    the usual reaping contract: one reap per child, no concurrent `waitpid`
+    on the same pid elsewhere.
+    */
+    IoResult!ExitStatus waitPid(ref Sched s, int pid) @trusted
     {
         import core.sys.posix.signal : siginfo_t;
         import core.sys.posix.sys.wait : WEXITED, idtype_t;
 
-        if (child.pid <= 0)
+        if (pid <= 0)
             return ioErr!ExitStatus(10 /* ECHILD */, OpKind.waitid,
                 IoErrorStage.submit, "no child to reap");
 
         // The siginfo out-buffer lives on this parked frame (SPEC §6.5).
         siginfo_t info;
         auto o = s.await(OpWaitid(cast(int) idtype_t.P_PID,
-            cast(uint) child.pid, cast(void*) &info, WEXITED));
+            cast(uint) pid, cast(void*) &info, WEXITED));
         if (o.res < 0)
             return ioErr!ExitStatus(-o.res, OpKind.waitid);
-        child.pid = -1;
 
         enum CLD_EXITED = 1; // si_code: normal exit vs killed/dumped
         const code = info._sifields._sigchld.si_status;
         return ioOk(info.si_code == CLD_EXITED
             ? ExitStatus(false, code)
             : ExitStatus(true, code));
+    }
+
+    /// ditto — on the current fiber's scheduler, the tier-B convention
+    /// `read`/`write` follow: a daemon fiber spawned through a host errand
+    /// was handed no `Sched`, and this is the reap it makes.
+    IoResult!ExitStatus waitPid(int pid) @trusted
+    {
+        auto t = Sched.tryCurrent();
+        assert(t !is null, "waitPid must run on a scheduler fiber");
+        return waitPid(*t.owner, pid);
+    }
+
+    /// Parks until the child exits (in-ring `WAITID`, SPEC §13.2); decodes
+    /// exited-vs-signaled. Sets `pid = -1` on success.
+    IoResult!ExitStatus wait(ref Sched s, ref ChildProcess child) @trusted
+    {
+        auto r = waitPid(s, child.pid);
+        if (!r.hasError)
+            child.pid = -1;
+        return r;
     }
 }
 
@@ -713,6 +740,33 @@ unittest
         assert(st.hasValue && st.value.ok);
         assert(!child, "reaped");
         child.stdoutR.close();
+    });
+    assert(!r.hasError);
+}
+
+@("live.waitPid.reapsAForeignSpawn")
+@safe
+unittest
+{
+    // The raw-pid reap (TVW8's need): a child whose handle came from
+    // elsewhere — here the pid is simply detached from its ChildProcess —
+    // is reaped in-ring by pid alone, with the same exit decode.
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        auto spawned = spawnProcess(["sh", "-c", "exit 7"]);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+        const pid = child.pid;
+        child.pid = -1; // the handle forgets it; only the raw pid remains
+        child.stdoutR.close();
+
+        auto st = waitPid(s, pid);
+        assert(st.hasValue && !st.value.signaled && st.value.code == 7);
+
+        auto again = waitPid(s, -1);
+        assert(again.hasError, "no pid is an error, not a hang");
     });
     assert(!r.hasError);
 }
