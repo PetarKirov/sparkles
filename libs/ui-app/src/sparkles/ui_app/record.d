@@ -23,8 +23,8 @@ import sparkles.input : Event, InputCapabilities, cellPointer;
 import sparkles.ui.canvas : DrawOp, RecordingCanvas;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.host : FrameOps, HostState, isHost, RunConfig,
-    withRealSize;
+import sparkles.ui_app.host : FrameOpsOf, HostState, isHost, recordedOpCapacity,
+    RunConfig, withRealSize;
 
 /// One recorded frame: what the application drew, and whether it drew at all.
 struct RecordedFrame
@@ -42,7 +42,12 @@ Satisfies $(REF isHost, sparkles,ui_app,host), so an application's `present` and
 */
 struct RecordingHost
 {
-    mixin HostState;
+    // A recorder is the one host a test puts on the stack — by the dozen, and
+    // on whatever thread the runner picked. `recordedOpCapacity` keeps it a few
+    // hundred bytes instead of a quarter-megabyte; every frame's operations are
+    // `dup`ed to the heap on the line below anyway, so nothing here was ever
+    // served by inline storage.
+    mixin HostState!recordedOpCapacity;
 
     // ── what the caller sets up ─────────────────────────────────────────────
 

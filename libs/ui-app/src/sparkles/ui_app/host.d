@@ -42,8 +42,25 @@ import sparkles.ui_app.gui_options : GuiOptions;
 /// it still works, it just allocates once.
 enum size_t frameOpCapacity = 2048;
 
-/// The per-frame display-list buffer a host owns and reuses (`HST4`).
-alias FrameOps = SmallBuffer!(DrawOp, frameOpCapacity);
+/**
+What a host that draws nowhere reserves instead.
+
+A quarter-megabyte of inline storage is the right trade for a host that paints
+a real surface once per frame, and the wrong one for a host that is $(B created
+per test), often several deep, on a thread whose stack the platform sizes
+rather than the application: macOS gives a non-main thread 512 KiB, so two
+recorders alone exhaust it and the frame that then runs walks off the guard
+page. The recorder copies each frame's operations to the heap the moment it has
+them, so the inline buffer bought it nothing to begin with.
+*/
+enum size_t recordedOpCapacity = 16;
+
+/// The per-frame display-list buffer a host owns and reuses (`HST4`), at a
+/// given inline capacity.
+alias FrameOpsOf(size_t capacity) = SmallBuffer!(DrawOp, capacity);
+
+/// ditto, at the capacity a host painting a real surface wants.
+alias FrameOps = FrameOpsOf!frameOpCapacity;
 
 /**
 What the caller wants of a run.
@@ -78,13 +95,22 @@ The bookkeeping every host shares: what the application asked of this frame.
 
 Mixed into each concrete host so the three targets cannot drift on the meaning
 of "quit", "another frame please" or "do not draw this one".
+
+`opCapacity` is how much of the per-frame buffer the host carries inline —
+$(LREF frameOpCapacity) for a host that paints, $(LREF recordedOpCapacity) for
+one that does not. The names are qualified because a template mixin's body is
+looked up at the point it is mixed in, and a host module should not have to
+import the spelling of a member it never names.
 */
-mixin template HostState()
+mixin template HostState(size_t opCapacity = frameOpCapacity)
 {
+    /// The per-frame buffer's type at this host's inline capacity.
+    private alias HostOps = sparkles.ui_app.host.FrameOpsOf!opCapacity;
+
     private bool _quit;
     private bool _frameRequested;
     private bool _skipFrame;
-    private FrameOps _ops;
+    private HostOps _ops;
 
     /// End the loop after this frame.
     void quit() @safe pure nothrow @nogc { _quit = true; }
@@ -117,7 +143,7 @@ mixin template HostState()
 
     /// The per-frame display list, owned and reused by the host (`HST4`). An
     /// application appends; it never sizes or clears one.
-    ref FrameOps ops() return @safe pure nothrow @nogc => _ops;
+    ref HostOps ops() return @safe pure nothrow @nogc => _ops;
 
     /// Clears the per-frame flags and buffer. Called by the loop, not the app.
     private void beginFrameState() @safe pure nothrow @nogc
@@ -184,7 +210,7 @@ version (unittest)
 {
     private struct FullFake
     {
-        mixin HostState;
+        mixin HostState!recordedOpCapacity;
         Size size;
         InputCapabilities capabilities;
         Backend backend;
@@ -202,7 +228,7 @@ unittest
 {
     static struct Fake
     {
-        mixin HostState;
+        mixin HostState!recordedOpCapacity;
         void newFrame() { beginFrameState(); }
     }
 
@@ -230,7 +256,7 @@ unittest
 
     static struct Fake
     {
-        mixin HostState;
+        mixin HostState!recordedOpCapacity;
         void newFrame() { beginFrameState(); }
     }
 
