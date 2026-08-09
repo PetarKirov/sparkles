@@ -26,16 +26,26 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    // Fast path (no cycle: nothing in the impl closure depends on raylib-text,
-    // and this package's tests never call skipTest). Only PURE code carries
-    // unittests — the GL-backed FontSet/drawText are validated by the apps'
-    // screenshot goldens — so `dub test :raylib-text` runs headless (linking
-    // libraylib.so needs no display; only InitWindow/LoadFontEx/DrawTextEx do).
+    // Only raylib-FREE code carries unittests — the GL-backed FontSet/drawText
+    // are validated by the apps' screenshot goldens — so `dub test :raylib-text`
+    // runs headless (linking libraylib.so needs no display; only
+    // InitWindow/LoadFontEx/DrawTextEx do).
     //
-    // font_discovery.d is where the tested half lives: name→path resolution,
+    // font_discovery.d is where the portable half lives: name→path resolution,
     // the sibling naming convention and charset parsing, with no raylib import
     // at all (it compiles with raylib absent from the import path entirely).
-    dependency "sparkles:test-runner" path="../.."
+    // font_coretext.d is its macOS sibling — the system font database, reached
+    // by dlopen, so it too is raylib-free and testable.
+    //
+    // Source-including the shim + impl (the cycle-safe recipe base/core-cli
+    // use) rather than taking the runner as a plain `dependency`: font_coretext
+    // calls `skipTest` when the frameworks are unavailable, and skipTest lives
+    // in the impl package. As a `dependency` the impl links as a static archive
+    // positioned BEFORE these objects, so ld.bfd (single-pass) never pulls
+    // skip.o and the build fails on an undefined reference. There is no cycle
+    // to fear here: nothing in the impl's closure depends on raylib-text.
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
