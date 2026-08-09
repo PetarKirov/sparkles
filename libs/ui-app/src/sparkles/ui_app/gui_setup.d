@@ -67,6 +67,9 @@ struct GuiSession
     Window window;   ///
     FontSet fonts;   ///
     int fontSizePx;  /// the resolved pixel size
+    /// Device pixels per coordinate unit — what the atlas is oversampled by.
+    /// Kept so `setFontSize` can reload without re-probing the display.
+    float atlasScale = 1.0f;
 
     @disable this(this);
 
@@ -130,11 +133,19 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
     //    scaling; otherwise the panel decides, which is not an Android special
     //    case — a HiDPI desktop has the same problem and used to get the same
     //    px as a 96-dpi one.
+    //    `scale` magnifies the point size; `renderScale` only oversamples the
+    //    atlas, so a Retina panel gets the same size text with twice the
+    //    pixels rather than text twice as large.
+    const metrics = displayMetrics();
     session.fontSizePx = req.fontSizePxOverride > 0
         ? req.fontSizePxOverride
-        : pixelsForPoints(req.fontSizePoints, displayMetrics());
+        : pixelsForPoints(req.fontSizePoints, metrics);
     if (session.fontSizePx < minFontSizePx)
         session.fontSizePx = minFontSizePx;
+    // A pinned pixel size is a golden capture's request for "the same pixels on
+    // any panel", so it suppresses oversampling too — otherwise the atlas would
+    // still follow the display and the oracle would differ per machine.
+    session.atlasScale = req.fontSizePxOverride > 0 ? 1.0f : metrics.renderScale;
 
     // 3. The font set — after the window, because loading uploads a texture.
     string[] dirs;
@@ -155,7 +166,7 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
         maps ~= m;
 
     if (!FontSet.tryLoad(family, session.fontSizePx, session.fonts,
-            maps, faces, sources))
+            maps, faces, sources, session.atlasScale))
         return false;
 
     // 4. The size, now that a cell has a width. Skipped on Android, where the

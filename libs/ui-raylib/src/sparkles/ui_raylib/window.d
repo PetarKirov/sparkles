@@ -106,6 +106,22 @@ struct Window
     static Window open(in WindowRequest r) @system
     {
         Window w;
+        // BEFORE InitWindow — raylib honours this flag only at creation, and
+        // warns (then ignores it) if set later.
+        //
+        // Without it, raylib's macOS path is internally inconsistent: it builds
+        // the projection from the framebuffer size but sets the GL viewport
+        // from the window's point size, so everything drawn was squeezed into
+        // the bottom-left quadrant of a Retina window. `GetScreenWidth` also
+        // reported device pixels, which made layout compute twice as many cells
+        // as the surface could show. With the flag, the coordinate space is
+        // points and the framebuffer is pixels, consistently — and
+        // `GetWindowScaleDPI` starts telling the truth (2.0 rather than 1.0),
+        // which is what lets the font atlas be oversampled to match.
+        //
+        // Not macOS-only: this is equally the Wayland and fractional-scaling
+        // answer. Where there is no scaling it is a no-op.
+        SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI);
         InitWindow(r.width, r.height, r.title.length ? r.title.ptr : "");
         w.opened = true;
         if (r.resizable)

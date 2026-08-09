@@ -88,7 +88,11 @@ struct FontSet
     // requestGlyph / flushPending; de-duped within a frame).
     private SmallBuffer!(int, 64, true) pending;
 
+    // The size text is DRAWN at, in the backend's own coordinate units, and so
+    // what the cell metrics are expressed in.
     private int fontSize_ = 20;
+    // How much denser the framebuffer is than those units — see $(LREF atlasPx).
+    private float atlasScale_ = 1.0f;
     private int cellW_ = 1;
     private int cellH_ = 1;
 
@@ -107,6 +111,28 @@ struct FontSet
     int cellW() const @safe pure nothrow @nogc => cellW_;
     int cellH() const @safe pure nothrow @nogc => cellH_;
     int size() const @safe pure nothrow @nogc => fontSize_;
+
+    /**
+    The size faces are $(I rasterized) at — `size` times the framebuffer's
+    density.
+
+    $(B Rasterizing and drawing are different sizes on a HiDPI panel.) The
+    backend's coordinate space is points there, so text must be drawn at
+    `size` to land where layout expects it; but a glyph rasterized at `size`
+    and then stretched over twice as many device pixels is exactly the blurry
+    text a Retina display is supposed to eliminate. Loading the atlas
+    oversampled and drawing it at `size` costs nothing extra at draw time —
+    `drawGrapheme` already scales by `fontSize / font.baseSize`, so the
+    oversampled glyph is simply sampled down to 1:1 device pixels.
+
+    `1.0` everywhere the coordinate space already IS device pixels (Android,
+    X11 without scaling), where this collapses to today's behaviour.
+    */
+    int atlasPx() const @safe pure nothrow @nogc
+    {
+        const px = cast(int)(fontSize_ * atlasScale_ + 0.5f);
+        return px < 1 ? 1 : px;
+    }
 
     /// Direct access to the primary raylib `Font`, for callers that measure/draw
     /// with it outside the run/cell path (e.g. an overlay banner).
@@ -138,7 +164,8 @@ struct FontSet
     static bool tryLoad(string nameOrPath, int fontSizePx, out FontSet fs,
         string[] codepointMapOpt = null,
         FaceOverrides faces = FaceOverrides.init,
-        FontSources sources = FontSources.init) @system
+        FontSources sources = FontSources.init,
+        float atlasScale = 1.0f) @system
     {
         import std.file : exists;
         import std.string : toStringz, splitLines;
@@ -164,13 +191,14 @@ struct FontSet
             return false;
 
         fs.fontSize_ = fontSizePx < 1 ? 1 : fontSizePx;
+        fs.atlasScale_ = atlasScale < 1.0f ? 1.0f : atlasScale;
         fs.codepoints = baseCodepoints;
         foreach (cp; baseCodepoints)
             fs.requestedCps ~= cp;
         fs.loadFaceCharset(fontPath, sources.useSystemFontDb);
 
         fs.primary.pathZ = fontPath.toStringz;
-        loadFontInto(fs.primary, fs.fontSize_, fs.requestedCps[]);
+        loadFontInto(fs.primary, fs.atlasPx, fs.requestedCps[]);
         if (!fs.primary.present)
             return false;
 
@@ -195,12 +223,12 @@ struct FontSet
                 if (nerdPath.length != 0)
                 {
                     fs.nerdFallback.pathZ = nerdPath.toStringz;
-                    loadFontInto(fs.nerdFallback, fs.fontSize_, fs.codepoints);
+                    loadFontInto(fs.nerdFallback, fs.atlasPx, fs.codepoints);
                 }
                 if (regularPath.length != 0)
                 {
                     fs.regularFallback.pathZ = regularPath.toStringz;
-                    loadFontInto(fs.regularFallback, fs.fontSize_, fs.codepoints);
+                    loadFontInto(fs.regularFallback, fs.atlasPx, fs.codepoints);
                 }
             }
             else
@@ -220,14 +248,14 @@ struct FontSet
                         if (isNerd && !fs.nerdFallback.present)
                         {
                             fs.nerdFallback.pathZ = path.toStringz;
-                            loadFontInto(fs.nerdFallback, fs.fontSize_, fs.codepoints);
+                            loadFontInto(fs.nerdFallback, fs.atlasPx, fs.codepoints);
                         }
                         else if (!isNerd && !fs.regularFallback.present
                             && (path.canFind("DejaVu") || path.canFind("FreeMono")
                                 || path.canFind("LiberationMono")))
                         {
                             fs.regularFallback.pathZ = path.toStringz;
-                            loadFontInto(fs.regularFallback, fs.fontSize_, fs.codepoints);
+                            loadFontInto(fs.regularFallback, fs.atlasPx, fs.codepoints);
                         }
                         if (fs.nerdFallback.present && fs.regularFallback.present)
                             break;
@@ -248,14 +276,14 @@ struct FontSet
     void reload(int newSizePx) @system nothrow @nogc
     {
         fontSize_ = newSizePx < 1 ? 1 : newSizePx;
-        loadFontInto(primary, fontSize_, requestedCps[]);
-        if (fontBold.pathZ !is null) loadFontInto(fontBold, fontSize_, requestedCps[]);
-        if (fontItalic.pathZ !is null) loadFontInto(fontItalic, fontSize_, requestedCps[]);
-        if (fontBoldItalic.pathZ !is null) loadFontInto(fontBoldItalic, fontSize_, requestedCps[]);
-        if (regularFallback.pathZ !is null) loadFontInto(regularFallback, fontSize_, codepoints);
-        if (nerdFallback.pathZ !is null) loadFontInto(nerdFallback, fontSize_, codepoints);
+        loadFontInto(primary, atlasPx, requestedCps[]);
+        if (fontBold.pathZ !is null) loadFontInto(fontBold, atlasPx, requestedCps[]);
+        if (fontItalic.pathZ !is null) loadFontInto(fontItalic, atlasPx, requestedCps[]);
+        if (fontBoldItalic.pathZ !is null) loadFontInto(fontBoldItalic, atlasPx, requestedCps[]);
+        if (regularFallback.pathZ !is null) loadFontInto(regularFallback, atlasPx, codepoints);
+        if (nerdFallback.pathZ !is null) loadFontInto(nerdFallback, atlasPx, codepoints);
         foreach (i; 0 .. codepointMapCount)
-            loadFontInto(codepointMaps[i].font, fontSize_, codepointMaps[i].cps[]);
+            loadFontInto(codepointMaps[i].font, atlasPx, codepointMaps[i].cps[]);
         measure();
     }
 
@@ -299,10 +327,10 @@ struct FontSet
         foreach (cp; pending[])
             requestedCps ~= cp;
         pending.clear();
-        loadFontInto(primary, fontSize_, requestedCps[]);
-        if (fontBold.pathZ !is null) loadFontInto(fontBold, fontSize_, requestedCps[]);
-        if (fontItalic.pathZ !is null) loadFontInto(fontItalic, fontSize_, requestedCps[]);
-        if (fontBoldItalic.pathZ !is null) loadFontInto(fontBoldItalic, fontSize_, requestedCps[]);
+        loadFontInto(primary, atlasPx, requestedCps[]);
+        if (fontBold.pathZ !is null) loadFontInto(fontBold, atlasPx, requestedCps[]);
+        if (fontItalic.pathZ !is null) loadFontInto(fontItalic, atlasPx, requestedCps[]);
+        if (fontBoldItalic.pathZ !is null) loadFontInto(fontBoldItalic, atlasPx, requestedCps[]);
         return true;
     }
 
@@ -477,7 +505,7 @@ struct FontSet
         }
         if (path.length == 0)
             return;
-        loadVariantFile(target, path, fontSize_, requestedCps[]);
+        loadVariantFile(target, path, atlasPx, requestedCps[]);
     }
 
     // Resolve/load the bold/italic/bold-italic faces of the SAME family as the
@@ -496,11 +524,11 @@ struct FontSet
             string boldPath, italicPath, boldItalicPath;
             fontVariantPaths(fontPath, boldPath, italicPath, boldItalicPath);
             if (!fontBold.present)
-                loadVariantFile(fontBold, boldPath, fontSize_, requestedCps[]);
+                loadVariantFile(fontBold, boldPath, atlasPx, requestedCps[]);
             if (!fontItalic.present)
-                loadVariantFile(fontItalic, italicPath, fontSize_, requestedCps[]);
+                loadVariantFile(fontItalic, italicPath, atlasPx, requestedCps[]);
             if (!fontBoldItalic.present)
-                loadVariantFile(fontBoldItalic, boldItalicPath, fontSize_, requestedCps[]);
+                loadVariantFile(fontBoldItalic, boldItalicPath, atlasPx, requestedCps[]);
             return;
         }
 
@@ -546,11 +574,11 @@ struct FontSet
         }
 
         if (!fontBold.present)
-            loadVariantFile(fontBold, boldPath, fontSize_, requestedCps[]);
+            loadVariantFile(fontBold, boldPath, atlasPx, requestedCps[]);
         if (!fontItalic.present)
-            loadVariantFile(fontItalic, italicPath, fontSize_, requestedCps[]);
+            loadVariantFile(fontItalic, italicPath, atlasPx, requestedCps[]);
         if (!fontBoldItalic.present)
-            loadVariantFile(fontBoldItalic, boldItalicPath, fontSize_, requestedCps[]);
+            loadVariantFile(fontBoldItalic, boldItalicPath, atlasPx, requestedCps[]);
     }
 
     // The macOS half of `loadStyleVariants`, resolving by FAMILY rather than by
@@ -566,11 +594,11 @@ struct FontSet
         string boldPath, italicPath, boldItalicPath;
         variantPathsFor(fontPath, boldPath, italicPath, boldItalicPath);
         if (!fontBold.present)
-            loadVariantFile(fontBold, boldPath, fontSize_, requestedCps[]);
+            loadVariantFile(fontBold, boldPath, atlasPx, requestedCps[]);
         if (!fontItalic.present)
-            loadVariantFile(fontItalic, italicPath, fontSize_, requestedCps[]);
+            loadVariantFile(fontItalic, italicPath, atlasPx, requestedCps[]);
         if (!fontBoldItalic.present)
-            loadVariantFile(fontBoldItalic, boldItalicPath, fontSize_, requestedCps[]);
+            loadVariantFile(fontBoldItalic, boldItalicPath, atlasPx, requestedCps[]);
     }
 
     // Fallback faces without fontconfig: the best-ranked Nerd-Font file in
@@ -609,7 +637,7 @@ struct FontSet
         if (bestNerd.length != 0 && !nerdFallback.present)
         {
             nerdFallback.pathZ = bestNerd.toStringz;
-            loadFontInto(nerdFallback, fontSize_, codepoints);
+            loadFontInto(nerdFallback, atlasPx, codepoints);
         }
         const regular = resolveFontInDirs(
             "DejaVu Sans Mono,Roboto Mono,Droid Sans Mono,Liberation Mono,Cousine",
@@ -617,7 +645,7 @@ struct FontSet
         if (regular.length != 0 && regular != fontPath && !regularFallback.present)
         {
             regularFallback.pathZ = regular.toStringz;
-            loadFontInto(regularFallback, fontSize_, codepoints);
+            loadFontInto(regularFallback, atlasPx, codepoints);
         }
     }
 
@@ -707,7 +735,7 @@ struct FontSet
             foreach (c; cps)
                 m.cps ~= c;
             m.font.pathZ = path.idup.toStringz;
-            loadFontInto(m.font, fontSize_, m.cps[]);
+            loadFontInto(m.font, atlasPx, m.cps[]);
             if (!m.font.present)
             {
                 m.font.pathZ = null;
@@ -736,5 +764,24 @@ Must be called after `InitWindow`.
 DisplayMetrics displayMetrics() @system nothrow @nogc
 {
     const s = GetWindowScaleDPI();
-    return DisplayMetrics(scale: s.x > 0 ? s.x : 1.0f);
+    const dpiScale = s.x > 0 ? s.x : 1.0f;
+
+    // How much of that scale the backend has ALREADY applied to its coordinate
+    // space. raylib reports the window in coordinate units and the framebuffer
+    // in device pixels, so their ratio is exactly the part that must not also
+    // be applied to the point size.
+    //
+    // On macOS/Wayland (a points coordinate space) this is the whole of
+    // `dpiScale`, leaving `scale` at 1 — the panel is denser, not the text
+    // bigger. On Android, where the coordinate space is device pixels, the
+    // ratio is 1 and the density stays in `scale`, which is what makes a phone
+    // render text at a readable size.
+    const sw = GetScreenWidth();
+    const rw = GetRenderWidth();
+    const renderScale = (sw > 0 && rw > 0) ? cast(float) rw / sw : 1.0f;
+
+    const contentScale = renderScale > 0 ? dpiScale / renderScale : dpiScale;
+    return DisplayMetrics(
+        scale: contentScale > 0 ? contentScale : 1.0f,
+        renderScale: renderScale < 1.0f ? 1.0f : renderScale);
 }
