@@ -44,3 +44,17 @@ A code group:
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
+
+A code group with five tabs:
+
+╭──────────┬──────────┬───────────┬───────────┬───────────╮
+│  main.d │  main.c │  main.rs │  main.go │  main.py └────────────────  ─╮
+│  1 import std.stdio;                                                         ┃
+│  2 import std.algorithm : map, filter, sum;                                  ┃
+│  3 import std.range : iota;                                                  │
+│  4                                                                           │
+│  5 int square(int n)                                                         │
+│  6 {                                                                         │
+│  7     return n * n;                                                         │
+│  8 }                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
