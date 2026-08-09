@@ -97,6 +97,11 @@ from their unittest builds:
 
 _Counted 2026-08-06, before any migration work._
 
+_Re-counted 2026-08-09: `gui.d` 3162, hue `app.d` 1325, terminal `app.d`
+**114** (the `terminal-view` extraction landed its target); total 4601. The
+hue modules grew while they waited — the audit trail the
+[P2.B targets](./PLAN.md#excluded-surface-targets-tst4) now carry._
+
 [P0.1](./PLAN.md#phase-0) adds the measurement; [phase 2](./PLAN.md#phase-2) sets the
 per-module targets. This entry holds the numbers so the delta is auditable rather
 than remembered, and records the per-package coverage baseline once it is first

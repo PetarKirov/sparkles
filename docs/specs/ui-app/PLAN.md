@@ -12,12 +12,12 @@ does not allocate. Phase 0 supplies those; phases 1–3 build on them.
 
 ## Phase overview
 
-| #      | Deliverable                                                                                | Depends on | Status |
-| ------ | ------------------------------------------------------------------------------------------ | ---------- | ------ |
-| **P0** | Foundations: `SmallBuffer` for reference-bearing elements, `sparkles:input` growth, `NFR2` | —          | open   |
-| **P1** | `libs/ui-app`: backend selection, the CLI, the host contract, the recording target         | P0         | open   |
-| **P2** | `apps/terminal` and `apps/hue` fully migrated onto the host                                | P1         | open   |
-| **P3** | `apps/diagram` — a new dual-backend application that proves the abstraction                | P2         | open   |
+| #      | Deliverable                                                                                | Depends on | Status                                     |
+| ------ | ------------------------------------------------------------------------------------------ | ---------- | ------------------------------------------ |
+| **P0** | Foundations: `SmallBuffer` for reference-bearing elements, `sparkles:input` growth, `NFR2` | —          | shipped                                    |
+| **P1** | `libs/ui-app`: backend selection, the CLI, the host contract, the recording target         | P0         | shipped (P1.1–P1.6; `TST3` rides P2.B5)    |
+| **P2** | `apps/terminal` and `apps/hue` fully migrated onto the host                                | P1         | P2.A shipped (as `TVW1`–`TVW7`); P2.B open |
+| **P3** | `apps/diagram` — a new dual-backend application that proves the abstraction                | P2         | open                                       |
 
 Each phase must be green before the next starts, and every commit inside a phase
 must build, test and lint on its own.
@@ -173,29 +173,34 @@ shapes `runApp` does not cover.
 
 Both applications migrate fully — CLI, backend decision and event loop. Terminal
 goes first: it is the harder case and the one with a measurable gate, so a defect in
-the contract surfaces before hue's 2536-line GUI module is touched.
+the contract surfaces before hue's GUI module is touched.
 
 ### Excluded-surface targets (`TST4`)
 
-| Module                    | Now  | Target | What leaves                                                                              |
-| ------------------------- | ---- | ------ | ---------------------------------------------------------------------------------------- |
-| `apps/hue/src/gui.d`      | 2536 | ≤ 1200 | frame assembly, chrome composition, hit routing, pointer-shape composition, wheel policy |
-| `apps/hue/src/app.d`      | 934  | ≤ 500  | backend policy assembly, CLI→request mapping, document/sink selection                    |
-| `apps/terminal/src/app.d` | 1340 | ≤ 700  | the dirty/redraw decision, selection, URL hover, scrollbar state, font-resize policy     |
+| Module                    | At exclusion count | Now (2026-08-09) | Target | What leaves                                                                              |
+| ------------------------- | ------------------ | ---------------- | ------ | ---------------------------------------------------------------------------------------- |
+| `apps/hue/src/gui.d`      | 2536               | 3162             | ≤ 1200 | frame assembly, chrome composition, hit routing, pointer-shape composition, wheel policy |
+| `apps/hue/src/app.d`      | 934                | 1325             | ≤ 500  | backend policy assembly, CLI→request mapping, document/sink selection                    |
+| `apps/terminal/src/app.d` | 1340               | 114              | ≤ 700  | **met** by the `terminal-view` extraction — the shell is CLI parse → `runApp`            |
 
-A target that cannot be met is a finding to record, not a number to move.
+A target that cannot be met is a finding to record, not a number to move. Note the
+hue numbers moved **up** while the extraction work waited — the GUI module kept
+absorbing features (diff view, markdown preview polish, hover popups) — which is
+the strongest argument for P2.B1 landing before any more feature work touches it.
 
 ### P2.A — `apps/terminal`
 
-Hard requirements: **identical behavior** and **no measured performance
-regression**.
+**Shipped**, as the `terminal-view` extraction: the core is a new
+**`libs/terminal-view`** library embeddable as a `runApp` component — the full
+design, the paint-hook host extension, and the gate numbers live in
+[terminal-view.md](./terminal-view.md) (`TVW1`–`TVW7`, all full;
+`apps/terminal` is a 114-line shell). The remaining loop work is the ring
+step that spec reserved: **`TVW8`** (pty reads and the reap park on
+`event-horizon`, behind the `HST15` errands), planned there. The historical
+steps below are kept for the record.
 
-The migration's destination grew since these steps were written: the core is
-extracted into a new **`libs/terminal-view`** library so it is embeddable as a
-`runApp` component — the full design, the paint-hook host extension, and the
-gates live in [terminal-view.md](./terminal-view.md) (`TVW`). `P2.A2` is done
-(the `KeyStroke` byte oracle in `apps/terminal/src/input.d`); the steps below
-execute inside that spec's order of work.
+Hard requirements were: **identical behavior** and **no measured performance
+regression** — both held (`TVW6`'s gate row).
 
 | Step  | Deliverable                                                                                                   |
 | ----- | ------------------------------------------------------------------------------------------------------------- |
@@ -221,18 +226,73 @@ belongs in the host contract, not in a private path for one application.
 
 | Step  | Deliverable                                                                                             |
 | ----- | ------------------------------------------------------------------------------------------------------- |
+| P2.B0 | The `HST15`/`HST16` host extensions, proven by `TVW8` before hue consumes them                          |
 | P2.B1 | Extract the GUI module's frame, chrome and routing decisions into tested modules — no behavior change   |
 | P2.B2 | Adopt the shared CLI; delete hue's private backend enum and picker                                      |
 | P2.B3 | Move window/font opening onto the setup helpers, with the capture hooks passed in                       |
 | P2.B4 | Move the GUI loop onto the host — input, then paint, then chrome, as separate commits                   |
 | P2.B5 | Move the TUI loop onto the host; assert both hosts produce the same operations for one scripted session |
 
-P2.B1 comes first deliberately: the GUI module has no tests today, so the migration's
-first commit is the one that gives it some.
+P2.B1 comes first among the hue steps deliberately: the GUI module has no tests
+today, so the migration's first commit is the one that gives it some.
+
+What each step means against the code as it stands (2026-08-09):
+
+- **P2.B0 — the contract extensions the loops need.** Two findings force them.
+  hue's TUI arm computes a **per-iteration** wait deadline (the lantern
+  panel's remainder, the oracle tick where a poll survives) that
+  `RunConfig.idleTimeoutMs` — fixed at startup — cannot express: that is
+  `HST16` (`wakeIn`). And hue's background fibers (the oracle-readiness
+  watchers, the spawned git refresh) plus `terminal-view`'s pty pump all need
+  to park on the loop's scope and wake it: that is `HST15`
+  (`spawnDaemon`/`wake`). Land them recorder-first, then the async arms
+  (the GPU arm needs a scope around its ticker loop), and let `TVW8` prove
+  them on the measurable app before hue's migration leans on them.
+- **P2.B1 — make `gui.d` testable before moving it.** The module is 3162
+  lines and grew ~600 since the exclusion count. Its state is already
+  struct-shaped (`Regime`, `SelectionDrag`, `Panes`, `InputState`,
+  `CopyModes`, `Flashes`, `HoverPopup`, `ResizeDebounce`, `Mode`) — the
+  extraction moves those with their transition logic into tested sibling
+  modules, leaving `gui.d` the frame assembly. No behavior change; the
+  golden-frame screenshots are the oracle that nothing drifted.
+- **P2.B2 — one backend picker.** `app.d`'s `displayAvailable`/`Backend`/
+  `pickBackend` are line-for-line ancestors of `sparkles.ui_app.backend`
+  (`BKD` preserves the rules verbatim, including "explicit `--gui` wins");
+  the CLI re-declares `GuiCliFields`. Both collapse onto the library
+  (structural copy into `GuiOptions`, the ui-gallery `main` is the
+  pattern). One wrinkle stays hue's: the `html`/`ansi` sinks are static
+  and the host returns `notInteractive` for them ([UIAPP-O3]), so hue's
+  `main` keeps that dispatch and calls `runApp` only for `gui`/`tui`.
+- **P2.B3 — the capture hooks stop being environment reads.** `gui.d` reads
+  `HUE_GUI_SCREENSHOT`/`_FRAME`/`_FONTSIZE`/`_TOP`/`_FLASH`/`_HOVER` inline;
+  `CLI6` requires deterministic capture to be **caller-supplied** on the
+  request. The env reads move to hue's `main`, the hooks ride `GuiRequest`,
+  and the screenshot harness keeps working through both.
+- **P2.B4 — the GUI loop.** `runGui` (34 parameters today) becomes a
+  component: `view` from the frame body, `handle` from the input fold,
+  hand-minted `RaylibCanvas` chrome into the `HST13` draw phase. hue's
+  private `Sched`/`pumpUntilFrame`/`targetFps: 0` plumbing is deleted —
+  `gui_loop.d`'s ticker arm already is that code. The dub flip is one line
+  (`subConfiguration "sparkles:ui-app" "tui"` → `"full"`). Input, paint,
+  chrome as separate commits; screenshots and the resize-debounce benchmark
+  green after each.
+- **P2.B5 — the TUI loop, and the parity test.** `WorkspaceTui` already has
+  component shape (`paint(grid)` → the draw phase against `grid()`/
+  `canvas()`; `handle(Event)` exists). What the host absorbs:
+  `runWorkspaceAsync`'s scope/pumps/take-with-deadline skeleton (it **is**
+  `runTui`'s async arm), the oracle watchers and git-refresh fiber onto
+  `HST15`, `waitDeadline` onto `HST16`, the out-of-band drains
+  (`takeClipboard` → `clipboard`, cursor shape → `pointerShape`) onto the
+  existing errands. The repaint `dirty` flag inverts into `skipFrame`
+  (`HST9`: default repaints, idle passes decline). This step closes `TST3`:
+  one scripted session driven through `runAppRecorded` and through the live
+  terminal arm under a pty harness must produce the same operation stream.
 
 Preserve explicitly: the golden-frame screenshot harness and its deterministic
 font-size override; the resize debounce and its benchmark; and the container wiring
 the two hosts already share.
+
+[UIAPP-O3]: ./open-issues.md#uiapp-o3
 
 ## Phase 3 — `apps/diagram` {#phase-3}
 
