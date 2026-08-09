@@ -579,9 +579,18 @@ void handle_mouse(
         if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)) {
             if (IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL) || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL)) {
                 if (hoverState.isHoveringUrl && hoverState.url.length > 0) {
-                    // url is stored NUL-terminated; open it via a detached
-                    // xdg-open (best-effort; errors are ignored).
-                    const(char)*[2] argv = [hoverState.url[].ptr, null];
+                    // url is stored NUL-terminated; hand it to the platform's
+                    // opener as an ARGUMENT (best-effort; errors are ignored).
+                    //
+                    // It used to be argv[0] with no opener at all, which is what
+                    // `execvp` resolves — so the grandchild always _exit(127)'d
+                    // and Ctrl-click had never opened anything on any platform.
+                    version (OSX)
+                        static immutable opener = "open\0";
+                    else
+                        static immutable opener = "xdg-open\0";
+                    const(char)*[3] argv =
+                        [opener.ptr, hoverState.url[].ptr, null];
                     cast(void) spawnDetached(argv[]);
                     return;
                 }
