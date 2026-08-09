@@ -275,6 +275,16 @@ struct RaylibEvents
             if (pending && !released)
             {
                 e.text(textBuf[0 .. textLen]);
+                // A single typed code point is also the stroke's `ch`: every
+                // other producer (the basic grade above, the tui decoder)
+                // delivers the typed character there, and a consumer that
+                // switches on `ch` — the gallery's shell bindings — must not
+                // go deaf the moment a target upgrades to this grade. Found
+                // live: `|` toggled nothing in a window while working in a
+                // terminal. A multi-code-point burst (IME, paste) keeps
+                // `ch` 0 — no single character is THE character then.
+                if (cpCount == 1)
+                    e.ch = cps[0];
                 pending = false;
                 cpCount = 0;
             }
