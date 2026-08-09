@@ -389,7 +389,7 @@ jobs:
           no_output_timeout: 35m
       - run:
           name: Verify markdown runnable examples
-          command: ci/run-batch.sh 35m nix run .#ci -- --verify --fail-fast --files '**.md'
+          command: ci/run-batch.sh 35m nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**'
           no_output_timeout: 35m
       - save_cache:
           # lychee's cache must keep growing, and CircleCI never overwrites an

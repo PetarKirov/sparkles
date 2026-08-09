@@ -384,7 +384,7 @@ jobs:
         # of runner time, and the non-PR runs exist for the link sweep.
         if: github.event_name == 'pull_request'
         run: |
-          nix run .#ci -- --verify --fail-fast --files '**.md'
+          nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**'
 
       - name: Save lychee cache
         if: always()
