@@ -310,7 +310,6 @@ struct ViewerModel
         pageFg = toRgb(current.defaults.fg, hardFallbackFg);
         pageBg = toRgb(current.defaults.bg, hardFallbackBg);
         gutterFg = mix(pageFg, pageBg, 0.5); // muted line numbers
-        gutterBg = mix(pageBg, pageFg, 0.08); // the gutter's distinct band
         quoteBars = quoteBarColors(current, pageFg, pageBg);
         // Scrollbar chrome: tint toward the theme's link color so the hover
         // track and thumb read as a distinct hue against the grayscale bands.
@@ -319,6 +318,17 @@ struct ViewerModel
         sbTrack = mix(pageBg, linkC, 0.22);
         sbThumb = mix(pageBg, linkC, 0.5);
         palette = themes[i].effectivePalette;
+        // The document gutter's band comes from the SAME slot the fence
+        // gutters paint with (`Slot.gutterBand`), so both strips share one
+        // tone — distinct from the page and from a code panel's surface. The
+        // default (non-derived) palette carries it as a translucent wash, so
+        // composite over the page here.
+        {
+            const gb = palette.bg[Slot.gutterBand];
+            gutterBg = gb.kind == Color.Kind.rgb
+                ? mix(pageBg, gb.rgb, palette.bgAlpha[Slot.gutterBand] / 255.0)
+                : mix(pageBg, pageFg, 0.04);
+        }
         palette.fg[Slot.track] = Color.fromRgb(sbTrack);
         palette.fgAlpha[Slot.track] = 0xFF;
         palette.fg[Slot.thumb] = Color.fromRgb(sbThumb);

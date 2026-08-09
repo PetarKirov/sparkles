@@ -131,6 +131,12 @@ struct Theme
         set(Slot.chrome, rgb(mix(fg, bg, 0.25)), rgb(mix(bg, fg, 0.16)));
         set(Slot.chromeFocused, rgb(fg), rgb(mix(bg, fg, 0.24)));   // > chrome
         set(Slot.gutter, rgb(mix(fg, bg, 0.5)), Color.init);
+        // The number-gutter strip sits BETWEEN the page (0.0) and a code
+        // panel's surface (0.08), so it is distinct from both: over the page
+        // it reads as a faint band, inside a fence as the darker inset strip
+        // editors give their gutters.
+        set(Slot.gutterBand, rgb(mix(fg, bg, 0.5)), rgb(mix(bg, fg, 0.04)));
+        p.bgAlpha[Slot.gutterBand] = 0xFF; // the mix IS the final tone
         set(Slot.border, rgb(mix(bg, fg, 0.4)), Color.init);        // rules
         set(Slot.muted, rgb(mix(fg, bg, 0.35)), Color.init);
         // Emphasized chrome (the active tab, key hints): the theme's own
@@ -177,6 +183,12 @@ private RgbColor toRgbOr(in Color c, RgbColor fallback) pure nothrow @nogc
     assert(p.bg[Slot.chrome] == Color.fromRgb(mix(bgA, fgFall, 0.16)));
     assert(p.bg[Slot.chromeFocused] == Color.fromRgb(mix(bgA, fgFall, 0.24)));
     assert(p.bg[Slot.surface] == Color.fromRgb(mix(bgA, fgFall, 0.08)));
+
+    // The gutter strip's band is its own tone — never the page, never the
+    // code panel's surface.
+    assert(p.bg[Slot.gutterBand] == Color.fromRgb(mix(bgA, fgFall, 0.04)));
+    assert(p.bg[Slot.gutterBand] != p.bg[Slot.surface]);
+    assert(p.bg[Slot.gutterBand] != Color.fromRgb(bgA));
 
     // Two different dark backgrounds now disagree.
     const dark2 = Theme(name: "d2",
