@@ -32,7 +32,7 @@ $(LIST
     $(ITEM Default — run examples and display results in boxes)
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
-    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, and `docs/research/manim/examples/*.d`)
+    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, and the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--test-extracted` — run the test runner's `--better-c` and `--wasm` modes for each sub-package whose sources use the matching marker attribute, failing (rather than skipping) when a mode's toolchain is missing)
     $(ITEM `--include-files` (alias `--files`) — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
@@ -164,7 +164,7 @@ struct CliParams
     @(Option(`u|update`, description: "Rewrite the markdown file with actual example output."))
     bool update;
 
-    @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, and docs/research/manim/examples/*.d."))
+    @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, docs/research/manim/examples/*.d, and the per-subject examples directories under docs/research/platform-ui-guidelines/."))
     bool exampleFiles;
 
     @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
@@ -770,8 +770,9 @@ private string[] trackedMarkdownFiles()
 /// given: the `base`, `build-primitives`, and `core-cli` library demos plus the
 /// worked examples that accompany the research docs
 /// (`docs/research/async-io/io-uring/`, `docs/research/units-of-measure/`,
-/// `docs/research/cpu-pmu/`, `docs/research/sanitizers/`, and
-/// `docs/research/manim/`).
+/// `docs/research/cpu-pmu/`, `docs/research/sanitizers/`, `docs/research/manim/`,
+/// and the four per-subject `examples/` directories under
+/// `docs/research/platform-ui-guidelines/`).
 @safe pure nothrow
 private string[] standaloneExampleGlobs()
 {
@@ -786,6 +787,10 @@ private string[] standaloneExampleGlobs()
         "docs/research/cpu-pmu/examples/*.d",
         "docs/research/sanitizers/examples/*.d",
         "docs/research/manim/examples/*.d",
+        "docs/research/platform-ui-guidelines/color-derivation/examples/*.d",
+        "docs/research/platform-ui-guidelines/gnome/examples/*.d",
+        "docs/research/platform-ui-guidelines/kde/examples/*.d",
+        "docs/research/platform-ui-guidelines/terminal/examples/*.d",
     ];
 }
 
