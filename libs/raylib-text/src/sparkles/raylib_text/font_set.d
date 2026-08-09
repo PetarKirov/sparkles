@@ -8,12 +8,15 @@
 /// one instance and pass it by `ref`.
 ///
 /// Face $(I resolution) (name → file path) has two strategies, selected by
-/// `FontSet.FontSources`: the desktop default shells out to fontconfig
-/// (`fc-match`/`fc-query`/`fc-scan`), while `useFontconfig: false` (Android:
-/// no fontconfig, no subprocesses) scans plain font directories —
-/// `resolveFontInDirs` for names, `fontVariantPaths` for styled siblings,
-/// `<font>.charset` sidecar files for coverage. Face $(I loading) is the same
-/// on both: real file paths into `LoadFontEx`.
+/// `FontSet.FontSources`. The desktop default asks the operating system's font
+/// database, which is a different subsystem per platform: fontconfig
+/// subprocesses (`fc-match`/`fc-query`/`fc-scan`) on Linux and the BSDs, and
+/// CoreText on macOS, where fontconfig is normally not installed at all.
+/// `useSystemFontDb: false` (Android: no fontconfig, no subprocesses) scans
+/// plain font directories instead — `resolveFontInDirs` for names,
+/// `fontVariantPaths` for styled siblings, `<font>.charset` sidecar files for
+/// coverage. Face $(I loading) is the same on all three: real file paths into
+/// `LoadFontEx`.
 module sparkles.raylib_text.font_set;
 
 import raylib;
@@ -32,6 +35,11 @@ import sparkles.raylib_text.font : LoadedFont, loadFontInto, loadVariantFile,
 // and charset parsing. Split out because this module needs a GL context and
 // that one does not (IXR29).
 import sparkles.raylib_text.font_discovery;
+// The two system font databases, behind one seam. Which one `useSystemFontDb`
+// means is a platform fact, decided once here rather than at each call site.
+import sparkles.raylib_text.font_fontconfig : fcRun;
+version (OSX)
+    import sparkles.raylib_text.font_coretext;
 import sparkles.raylib_text.metrics_dpi : DisplayMetrics;
 
 /// The face chosen for a cell's bold/italic attributes, plus whether the missing
@@ -133,17 +141,21 @@ struct FontSet
         FontSources sources = FontSources.init) @system
     {
         import std.file : exists;
-        import std.process : execute;
         import std.string : toStringz, splitLines;
 
         string fontPath = nameOrPath;
         if (!fontPath.exists)
         {
-            if (sources.useFontconfig)
+            if (sources.useSystemFontDb)
             {
-                auto res = execute(["fc-match", "-f", "%{file}", nameOrPath]);
-                if (res.status == 0 && res.output.strip.length > 0)
-                    fontPath = res.output.strip.idup;
+                version (OSX)
+                    fontPath = resolveFamilyList(nameOrPath);
+                else
+                {
+                    auto res = fcRun(["fc-match", "-f", "%{file}", nameOrPath]);
+                    if (res.status == 0 && res.output.strip.length > 0)
+                        fontPath = res.output.strip.idup;
+                }
             }
             else
                 fontPath = resolveFontInDirs(nameOrPath, sources.dirs);
@@ -155,7 +167,7 @@ struct FontSet
         fs.codepoints = baseCodepoints;
         foreach (cp; baseCodepoints)
             fs.requestedCps ~= cp;
-        fs.loadFaceCharset(fontPath, sources.useFontconfig);
+        fs.loadFaceCharset(fontPath, sources.useSystemFontDb);
 
         fs.primary.pathZ = fontPath.toStringz;
         loadFontInto(fs.primary, fs.fontSize_, fs.requestedCps[]);
@@ -172,32 +184,54 @@ struct FontSet
         // Optional --font-codepoint-map fonts.
         fs.parseCodepointMaps(codepointMapOpt, sources);
 
-        if (sources.useFontconfig)
+        if (sources.useSystemFontDb)
         {
-            // Fallbacks: the first Nerd Font and first common regular monospace.
-            auto fbRes = execute(["fc-match", "-f", "%{file}\\n", "monospace", "-s"]);
-            if (fbRes.status == 0)
+            version (OSX)
             {
-                foreach (line; fbRes.output.splitLines)
+                // The `fc-match monospace -s` analog, over CoreText's family
+                // enumeration.
+                string nerdPath, regularPath;
+                fallbackFaces(fontPath, nerdPath, regularPath);
+                if (nerdPath.length != 0)
                 {
-                    string path = line.strip.idup;
-                    if (path.length == 0 || path == fontPath)
-                        continue;
-                    const isNerd = path.canFind("NerdFont") || path.canFind("Nerd Font");
-                    if (isNerd && !fs.nerdFallback.present)
+                    fs.nerdFallback.pathZ = nerdPath.toStringz;
+                    loadFontInto(fs.nerdFallback, fs.fontSize_, fs.codepoints);
+                }
+                if (regularPath.length != 0)
+                {
+                    fs.regularFallback.pathZ = regularPath.toStringz;
+                    loadFontInto(fs.regularFallback, fs.fontSize_, fs.codepoints);
+                }
+            }
+            else
+            {
+                // Fallbacks: the first Nerd Font and first common regular
+                // monospace.
+                auto fbRes = fcRun(["fc-match", "-f", "%{file}\\n", "monospace", "-s"]);
+                if (fbRes.status == 0)
+                {
+                    foreach (line; fbRes.output.splitLines)
                     {
-                        fs.nerdFallback.pathZ = path.toStringz;
-                        loadFontInto(fs.nerdFallback, fs.fontSize_, fs.codepoints);
+                        string path = line.strip.idup;
+                        if (path.length == 0 || path == fontPath)
+                            continue;
+                        const isNerd = path.canFind("NerdFont")
+                            || path.canFind("Nerd Font");
+                        if (isNerd && !fs.nerdFallback.present)
+                        {
+                            fs.nerdFallback.pathZ = path.toStringz;
+                            loadFontInto(fs.nerdFallback, fs.fontSize_, fs.codepoints);
+                        }
+                        else if (!isNerd && !fs.regularFallback.present
+                            && (path.canFind("DejaVu") || path.canFind("FreeMono")
+                                || path.canFind("LiberationMono")))
+                        {
+                            fs.regularFallback.pathZ = path.toStringz;
+                            loadFontInto(fs.regularFallback, fs.fontSize_, fs.codepoints);
+                        }
+                        if (fs.nerdFallback.present && fs.regularFallback.present)
+                            break;
                     }
-                    else if (!isNerd && !fs.regularFallback.present
-                        && (path.canFind("DejaVu") || path.canFind("FreeMono")
-                            || path.canFind("LiberationMono")))
-                    {
-                        fs.regularFallback.pathZ = path.toStringz;
-                        loadFontInto(fs.regularFallback, fs.fontSize_, fs.codepoints);
-                    }
-                    if (fs.nerdFallback.present && fs.regularFallback.present)
-                        break;
                 }
             }
         }
@@ -362,14 +396,12 @@ struct FontSet
     }
 
     // Parse the primary FACE's coverage into the sorted lo/hi buffers — from
-    // fc-query, or (no fontconfig) from a `<fontPath>.charset` sidecar written
-    // at build time. Best-effort: on failure the buffers stay empty (on-demand
-    // requesting simply disabled).
-    private void loadFaceCharset(string fontPath, bool useFontconfig) @system
+    // the system font database (fc-query, or CoreText's character set), or
+    // from a `<fontPath>.charset` sidecar written at build time. Best-effort:
+    // on failure the buffers stay empty (on-demand requesting simply disabled).
+    private void loadFaceCharset(string fontPath, bool useSystemFontDb) @system
     {
-        import std.process : execute;
-
-        if (!useFontconfig)
+        if (!useSystemFontDb)
         {
             import std.file : exists, readText;
 
@@ -382,10 +414,15 @@ struct FontSet
             return;
         }
 
-        auto res = execute(["fc-query", "--format=%{charset}", fontPath]);
-        if (res.status != 0)
-            return;
-        parseCharsetTokens(res.output, faceLo, faceHi);
+        version (OSX)
+            cast(void) charsetRanges(fontPath, faceLo, faceHi);
+        else
+        {
+            auto res = fcRun(["fc-query", "--format=%{charset}", fontPath]);
+            if (res.status != 0)
+                return;
+            parseCharsetTokens(res.output, faceLo, faceHi);
+        }
     }
 
     // Load one explicitly-selected styled face: a file path directly, else a
@@ -395,20 +432,34 @@ struct FontSet
         string style, in FontSources sources) @system
     {
         import std.file : exists;
-        import std.process : execute;
 
         if (spec.length == 0)
             return;
         string path = spec;
         if (!path.exists)
         {
-            if (sources.useFontconfig)
+            if (sources.useSystemFontDb)
             {
-                const pattern = spec.canFind(':') ? spec : spec ~ ":" ~ style;
-                auto res = execute(["fc-match", "-f", "%{file}", pattern]);
-                if (res.status != 0 || res.output.strip.length == 0)
-                    return;
-                path = res.output.strip.idup;
+                version (OSX)
+                {
+                    // The style is a trait pair here, not a pattern suffix: a
+                    // family with no such face reports nothing rather than its
+                    // Regular file, which is what keeps an explicit
+                    // `--font-bold Family` from silently rendering unbolded.
+                    path = resolveStyledFace(spec,
+                        bold: style == "bold" || style == "bold:italic",
+                        italic: style == "italic" || style == "bold:italic");
+                    if (path.length == 0)
+                        return;
+                }
+                else
+                {
+                    const pattern = spec.canFind(':') ? spec : spec ~ ":" ~ style;
+                    auto res = fcRun(["fc-match", "-f", "%{file}", pattern]);
+                    if (res.status != 0 || res.output.strip.length == 0)
+                        return;
+                    path = res.output.strip.idup;
+                }
             }
             else
             {
@@ -436,12 +487,11 @@ struct FontSet
     // (`fontVariantPaths`).
     private void loadStyleVariants(string fontPath, in FontSources sources) @system
     {
-        import std.process : execute;
         import std.string : splitLines, join;
         import std.conv : to;
         import std.path : dirName;
 
-        if (!sources.useFontconfig)
+        if (!sources.useSystemFontDb)
         {
             string boldPath, italicPath, boldItalicPath;
             fontVariantPaths(fontPath, boldPath, italicPath, boldItalicPath);
@@ -454,10 +504,16 @@ struct FontSet
             return;
         }
 
+        version (OSX)
+        {
+            loadStyleVariantsCoreText(fontPath);
+            return;
+        }
+
         string pFamily;
         int pWeight, pSlant;
         {
-            auto q = execute(["fc-query", "--format=%{family[0]}\n%{weight}\n%{slant}", fontPath]);
+            auto q = fcRun(["fc-query", "--format=%{family[0]}\n%{weight}\n%{slant}", fontPath]);
             if (q.status != 0) return;
             auto lines = q.output.splitLines;
             if (lines.length < 3) return;
@@ -467,7 +523,7 @@ struct FontSet
         }
         if (pFamily.length == 0) return;
 
-        auto sc = execute(["fc-scan", "--format=%{file}:%{family[0]}:%{weight}:%{slant}\n", fontPath.dirName]);
+        auto sc = fcRun(["fc-scan", "--format=%{file}:%{family[0]}:%{weight}:%{slant}\n", fontPath.dirName]);
         if (sc.status != 0) return;
 
         // fontconfig bold is weight 200; italic/oblique is any non-zero slant.
@@ -489,6 +545,26 @@ struct FontSet
             else if (w == 200 && sl != pSlant) { if (boldItalicPath.length == 0) boldItalicPath = file.idup; }
         }
 
+        if (!fontBold.present)
+            loadVariantFile(fontBold, boldPath, fontSize_, requestedCps[]);
+        if (!fontItalic.present)
+            loadVariantFile(fontItalic, italicPath, fontSize_, requestedCps[]);
+        if (!fontBoldItalic.present)
+            loadVariantFile(fontBoldItalic, boldItalicPath, fontSize_, requestedCps[]);
+    }
+
+    // The macOS half of `loadStyleVariants`, resolving by FAMILY rather than by
+    // directory. fc-scan can only look where the primary's file lives; CoreText
+    // knows a family's members wherever they are, which on macOS routinely
+    // spans /System/Library/Fonts, .../Supplemental and ~/Library/Fonts.
+    //
+    // A separate method rather than a `version` block inside `loadStyleVariants`
+    // because its locals would shadow that function's own boldPath/italicPath.
+    version (OSX)
+    private void loadStyleVariantsCoreText(string fontPath) @system
+    {
+        string boldPath, italicPath, boldItalicPath;
+        variantPathsFor(fontPath, boldPath, italicPath, boldItalicPath);
         if (!fontBold.present)
             loadVariantFile(fontBold, boldPath, fontSize_, requestedCps[]);
         if (!fontItalic.present)
@@ -550,7 +626,6 @@ struct FontSet
     // (without fontconfig: only families the directory scan resolves).
     private void parseCodepointMaps(string[] entries, in FontSources sources) @system
     {
-        import std.process : execute;
         import std.string : lastIndexOf, startsWith, toStringz;
         import std.conv : to;
         import std.algorithm : sort, uniq;
@@ -598,20 +673,30 @@ struct FontSet
             cps = cps.sort.uniq.array;
 
             string path;
-            if (sources.useFontconfig)
+            if (sources.useSystemFontDb)
             {
-                auto res = execute(["fc-match", "-f", "%{file}\t%{family}", family]);
-                if (res.status != 0)
-                    continue;
-                auto fields = res.output.strip.split("\t");
-                if (fields.length < 2)
-                    continue;
-                // No .idup: `execute().output` is a GC-owned string and
-                // `strip`/`split` return slices of it, so this already has
-                // process lifetime. (`toStringz` below copies again anyway.)
-                path = fields[0];
-                if (!fields[1].toLower.canFind(family.toLower))
-                    continue; // fontconfig substituted a different family → not installed
+                version (OSX)
+                {
+                    // No substitution check needed: `familyFaces` matches the
+                    // family as a MANDATORY attribute, so an uninstalled
+                    // family yields nothing rather than a near miss.
+                    path = resolveFamilyList(family);
+                }
+                else
+                {
+                    auto res = fcRun(["fc-match", "-f", "%{file}\t%{family}", family]);
+                    if (res.status != 0)
+                        continue;
+                    auto fields = res.output.strip.split("\t");
+                    if (fields.length < 2)
+                        continue;
+                    // No .idup: `execute().output` is a GC-owned string and
+                    // `strip`/`split` return slices of it, so this already has
+                    // process lifetime. (`toStringz` below copies again anyway.)
+                    path = fields[0];
+                    if (!fields[1].toLower.canFind(family.toLower))
+                        continue; // fontconfig substituted a different family → not installed
+                }
             }
             else
                 path = resolveFontInDirs(family, sources.dirs);

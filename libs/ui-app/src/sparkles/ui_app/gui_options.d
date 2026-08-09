@@ -214,12 +214,13 @@ struct FontRequest
     string italic = defaultGuiFontFamily;     /// ditto
     string boldItalic = defaultGuiFontFamily; /// ditto
     string[] codepointMaps;         /// `--font-codepoint-map` entries
-    string[] searchDirs;            /// scan these instead of asking fontconfig
+    string[] searchDirs;            /// scan these instead of asking the system
 
-    /// Whether to consult fontconfig. False as soon as a directory is given:
-    /// `--font-dir` exists precisely to make selection deterministic, so
-    /// falling back to fc-match would defeat it.
-    bool useFontconfig() const @safe pure nothrow @nogc => searchDirs.length == 0;
+    /// Whether to consult the OS font database (fontconfig on Linux, CoreText
+    /// on macOS). False as soon as a directory is given: `--font-dir` exists
+    /// precisely to make selection deterministic, so asking the system anyway
+    /// would defeat it.
+    bool useSystemFontDb() const @safe pure nothrow @nogc => searchDirs.length == 0;
 }
 
 /// The font request `o` describes.
@@ -380,10 +381,11 @@ unittest
     assert(r.bold == "Iosevka Bold", "an explicit face wins");
     assert(r.italic == defaultGuiFontFamily, "an untouched face keeps the default");
 
-    // `--font-dir` turns fontconfig off. It exists to make selection
-    // deterministic; consulting fc-match anyway would defeat the flag.
-    assert(!r.useFontconfig);
-    assert(GuiOptions.init.fontRequestOf.useFontconfig);
+    // `--font-dir` turns the system font database off. It exists to make
+    // selection deterministic; asking fc-match/CoreText anyway would defeat
+    // the flag.
+    assert(!r.useSystemFontDb);
+    assert(GuiOptions.init.fontRequestOf.useSystemFontDb);
 }
 
 @("ui_app.gui_options.theme")

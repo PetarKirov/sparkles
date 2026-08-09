@@ -28,27 +28,44 @@ import std.uni : icmp;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 
-/// Where face resolution looks for font files. The default — no dirs,
-/// `useFontconfig: true` — preserves the desktop behaviour exactly
-/// (fc-match/fc-query/fc-scan subprocesses). With `useFontconfig: false` names
-/// resolve by scanning `dirs` in order ($(LREF resolveFontInDirs)), styled
-/// variants by the sibling-file naming convention ($(LREF fontVariantPaths)),
-/// and coverage from a `<font>.charset` sidecar (written at build time from
-/// `fc-query --format=%{charset}`; without one, on-demand atlas growth is
-/// simply disabled).
+/**
+Where face resolution looks for font files.
+
+The default — no dirs, `useSystemFontDb: true` — asks the operating system's
+own font database, which is a different subsystem on each platform and so a
+different module: `fc-match`/`fc-query`/`fc-scan` subprocesses on Linux and the
+BSDs, and CoreText
+($(REF resolveFamilyList, sparkles,raylib_text,font_coretext)) on macOS, where
+fontconfig is normally not installed at all.
+
+With `useSystemFontDb: false` nothing outside `dirs` is consulted: names
+resolve by scanning them in order ($(LREF resolveFontInDirs)), styled variants
+by the sibling-file naming convention ($(LREF fontVariantPaths)), and coverage
+from a `<font>.charset` sidecar (written at build time from
+`fc-query --format=%{charset}`; without one, on-demand atlas growth is simply
+disabled). That is what Android needs — no fontconfig, no subprocesses — and
+what any portable or deterministic build wants, since a system font database's
+answer varies with the host.
+
+$(B The field is not named `useFontconfig` any more.) It was, and the name
+quietly asserted that "ask the system" and "run fontconfig" are the same thing
+— which is exactly the assumption that made every GUI arm die on macOS, where
+the subprocess does not exist and `std.process.execute` throws rather than
+reporting a status.
+*/
 struct FontSources
 {
     string[] dirs;
-    bool useFontconfig = true;
+    bool useSystemFontDb = true;
 }
 
 // The default is the entire guarantee that adding `FontSources` changed no
 // desktop behaviour: every pre-existing caller passes fewer arguments and so
 // gets `FontSources.init`. A one-character edit here would silently move them
 // all onto the directory scanner, so it is pinned rather than trusted.
-static assert(FontSources.init.useFontconfig && FontSources.init.dirs is null,
-    "FontSources.init must stay the fontconfig path — it is what every "
-    ~ "pre-existing tryLoad caller resolves to.");
+static assert(FontSources.init.useSystemFontDb && FontSources.init.dirs is null,
+    "FontSources.init must stay the system-font-database path — it is what "
+    ~ "every pre-existing tryLoad caller resolves to.");
 
 /// Lowercase with spaces and dashes stripped — the normalization under which a
 /// family name ("FiraCode Nerd Font Mono") matches a font file's basename

@@ -143,7 +143,7 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
     foreach (d; req.extraFontSources)
         dirs ~= d;
     auto sources = FontSet.FontSources(dirs,
-        useFontconfig: req.font.useFontconfig && req.extraFontSources.length == 0);
+        useSystemFontDb: req.font.useSystemFontDb && req.extraFontSources.length == 0);
     auto faces = FontSet.FaceOverrides(
         req.font.bold, req.font.italic, req.font.boldItalic);
 

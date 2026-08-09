@@ -25,6 +25,9 @@ public import sparkles.raylib_text.metrics;
 public import sparkles.raylib_text.metrics_dpi;
 public import sparkles.raylib_text.font;
 public import sparkles.raylib_text.font_discovery;
+// macOS only: the module body is behind `version (OSX)`, so this is an empty
+// import everywhere else and costs a consumer nothing.
+public import sparkles.raylib_text.font_coretext;
 public import sparkles.raylib_text.font_set;
 public import sparkles.raylib_text.draw;
 public import sparkles.raylib_text.box;
