@@ -247,6 +247,12 @@ applications:
 4. `apps/terminal` follows (the M13 port, now with its substrate in
    place): PTY master reads and the child reap park instead of the
    per-frame `EAGAIN` drain; the idle no-swap behavior is preserved.
+   (Half landed via the `terminal-view` extraction: the loop itself now
+   runs on the host's `Sched` + `Ticker` arm — the idle gate's 99.7→0.3%
+   is ring parking replacing busy-wait pacing. The pty/reap half is
+   specced as [`TVW8`](../ui-app/terminal-view.md), behind the `HST15`
+   host errands; the in-ring reap needs a `waitid(P_PID)`-over-raw-pid
+   verb here, since `wait` takes a `ChildProcess`.)
 
 Coordinate with the [`sparkles:ui-app` plan](../ui-app/PLAN.md): the host
 package's `tui_loop.d`/`gui_loop.d` arms are the natural final home of
