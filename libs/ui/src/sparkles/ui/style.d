@@ -58,7 +58,10 @@ enum Slot : ubyte
     // requires — `THM2`): bands, gutters and scroll affordances.
     chrome,          /// header / status-bar band (its background + text)
     chromeAccent,    /// emphasized chrome text (title, active segment, key hints)
-    gutter,          /// line-number / marker column
+    gutter,          /// line-number / marker column (foreground only)
+    /// the line-number gutter STRIP: its own band, distinct from both the
+    /// page and a code panel's surface
+    gutterBand,
     track,           /// scrollbar track
     thumb,           /// scrollbar thumb
     selection,       /// selected-content tint (background only)
@@ -337,6 +340,12 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.bgAlpha[chromeFocused] = 0x48;
         p.fg[chromeAccent] = Color.fromRgb(0x37, 0x72, 0xcf);
         p.fg[gutter] = Color.fromRgb(0x88, 0x88, 0x88);
+        // The number-gutter strip: the muted number fg over a faint neutral
+        // wash that reads on any page — a personalized theme overrides both
+        // with opaque mixes of its own page colors (`THM7`).
+        p.fg[gutterBand] = Color.fromRgb(0x88, 0x88, 0x88);
+        p.bg[gutterBand] = Color.fromRgb(0x7f, 0x7f, 0x7f);
+        p.bgAlpha[gutterBand] = 0x14;
         p.fg[track] = Color.fromRgb(0x88, 0x88, 0x88);
         p.fgAlpha[track] = 0x50;
         p.fg[thumb] = Color.fromRgb(0x88, 0x88, 0x88);
