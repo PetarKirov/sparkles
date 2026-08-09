@@ -25,6 +25,22 @@ struct DisplayMetrics
     float scale = 1.0f; /// panel content scale (1.0 = the nominal DPI)
     int dpi = 96;       /// the DPI `points` are interpreted against
     float maxScale = 4.0f; /// ceiling on `scale`, to bound atlas growth
+
+    /**
+    How many device pixels the backend puts behind one coordinate unit.
+
+    $(B Not the same question as `scale`, and conflating them is a bug in
+    both directions.) `scale` asks "how much bigger should the UI be?" and
+    multiplies the point size; this asks "how dense is the framebuffer?" and
+    multiplies only the $(I rasterization) size, leaving layout alone.
+
+    A Retina Mac wants `scale` 1 and `renderScale` 2: same physical text size,
+    twice the pixels. An Android phone wants the reverse — its coordinate
+    space already IS device pixels, so density belongs in `scale` and this
+    stays 1. Feeding a Retina panel's 2 into `scale` would render everything
+    at double size; feeding a phone's density in here would render it at half.
+    */
+    float renderScale = 1.0f;
 }
 
 /**
@@ -64,4 +80,21 @@ unittest
     // Never zero: a degenerate request still yields a loadable face.
     assert(pixelsForPoints(0, DisplayMetrics.init) == 1);
     assert(pixelsForPoints(-5, DisplayMetrics.init) == 1);
+}
+
+@("raylib_text.pixelsForPoints.renderScaleDoesNotMagnify")
+@safe pure nothrow @nogc
+unittest
+{
+    // The distinction the two fields exist to keep. A Retina panel reports
+    // `renderScale: 2` and must NOT change the point size — same physical
+    // text, oversampled atlas. Feeding that 2 into `scale` instead is the bug
+    // this pins: it renders everything at double size.
+    assert(pixelsForPoints(14, DisplayMetrics(renderScale: 2.0f))
+        == pixelsForPoints(14, DisplayMetrics.init));
+
+    // And they compose independently: a dense phone panel magnifies (scale)
+    // while its coordinate space stays device pixels (renderScale 1).
+    assert(pixelsForPoints(14, DisplayMetrics(scale: 2.0f, renderScale: 2.0f))
+        == pixelsForPoints(14, DisplayMetrics(scale: 2.0f)));
 }
