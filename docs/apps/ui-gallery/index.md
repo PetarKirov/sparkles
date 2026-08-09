@@ -36,7 +36,18 @@ disagree about anything, the gallery is where you find out.
 | **State**      | a tile per interaction machine, each printing its own current value                |
 | **Split**      | a draggable divider whose grab is relative, and the pointer shape that follows it  |
 | **Terminal**   | real shells in VSCode-style tabs — `sparkles:terminal-view` embedded as a widget   |
-| **Inspector**  | `dumpTree` of the page you were last looking at                                    |
+
+Beside the catalog there is the **inspector** — not a page but a side panel,
+toggled with `|` on every page. It shows `dumpTree` of the page beside it —
+one depth-indented line per node: kind, resolved size, absolute position — at
+the width the page is actually laid out at, so the dump describes the frame on
+screen. It began as a page dumping the _previously viewed_ one, which meant the
+subject was never visible while its dump was; as a panel the two share the
+frame, and it follows every page move, knob press and resize. It has its own
+scrollbar and its own wheel: scrolling the dump never moves the page it
+describes. On a surface too narrow for both, the sidebar yields to it first
+(the panel was asked for explicitly), and below 60 columns the panel yields
+too — staying toggled on, so widening the window brings it back.
 
 ## Driving it
 
@@ -53,6 +64,7 @@ reporting must still be fully navigable.
 | `PgUp` / `PgDn`         | scroll the page; `Home` / `End` for its ends                   |
 | `[` / `]`               | previous / next theme                                          |
 | `\`                     | show the page list on a narrow terminal                        |
+| `\|`                    | toggle the inspector panel                                     |
 | `?`                     | every binding, including the showing page's own                |
 | `q` / `Esc`             | quit                                                           |
 | `Ctrl+]` / `` Ctrl+` `` | give the keyboard back to the gallery, from a focused terminal |
