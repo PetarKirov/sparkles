@@ -894,6 +894,101 @@ export default withMermaid(
           collapsed: true,
           items: [
             {
+              text: 'Platform UI Guidelines',
+              link: '/research/platform-ui-guidelines/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts & Vocabulary',
+                  link: '/research/platform-ui-guidelines/concepts',
+                },
+                {
+                  text: 'Mobile',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'iOS / iPadOS',
+                      link: '/research/platform-ui-guidelines/ios',
+                    },
+                    {
+                      text: 'Android (Material You)',
+                      link: '/research/platform-ui-guidelines/android',
+                    },
+                  ],
+                },
+                {
+                  text: 'Linux desktop',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'GNOME (XDG portal)',
+                      link: '/research/platform-ui-guidelines/gnome/',
+                    },
+                    {
+                      text: 'KDE Plasma',
+                      link: '/research/platform-ui-guidelines/kde',
+                    },
+                  ],
+                },
+                {
+                  text: 'Desktop OS',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Windows',
+                      link: '/research/platform-ui-guidelines/windows',
+                    },
+                    {
+                      text: 'macOS',
+                      link: '/research/platform-ui-guidelines/macos',
+                    },
+                  ],
+                },
+                {
+                  text: 'Non-GUI surfaces',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Terminal emulators',
+                      link: '/research/platform-ui-guidelines/terminal/',
+                    },
+                    {
+                      text: 'The web',
+                      link: '/research/platform-ui-guidelines/web',
+                    },
+                  ],
+                },
+                {
+                  text: 'Prior art',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'libadwaita AdwSettings',
+                      link: '/research/platform-ui-guidelines/libadwaita',
+                    },
+                  ],
+                },
+                {
+                  text: 'Applying it',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Color derivation',
+                      link: '/research/platform-ui-guidelines/color-derivation/',
+                    },
+                    {
+                      text: 'Comparison & synthesis',
+                      link: '/research/platform-ui-guidelines/comparison',
+                    },
+                    {
+                      text: 'Sparkles proposal',
+                      link: '/research/platform-ui-guidelines/sparkles-proposal',
+                    },
+                  ],
+                },
+              ],
+            },
+            {
               text: 'Serde Expressiveness',
               link: '/research/serde/',
               collapsed: true,
