@@ -1,5 +1,5 @@
 /**
-The Slots page: all thirty-four semantic roles, resolved against the live theme.
+The Slots page: all thirty-five semantic roles, resolved against the live theme.
 
 A widget names a slot and never a colour. That sentence is the toolkit's central
 claim and it is unfalsifiable in prose — so here is the whole vocabulary at
@@ -27,7 +27,7 @@ import state : GalleryState;
 @safe:
 
 /// Slots grouped the way the vocabulary is actually organised, so a reader sees
-/// the shape of it rather than thirty-four names in declaration order.
+/// the shape of it rather than thirty-five names in declaration order.
 private struct Group
 {
     string name;

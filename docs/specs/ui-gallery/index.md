@@ -8,7 +8,7 @@
 
 ## Why
 
-`sparkles:ui` had no showcase. Ten widget kinds, a layout engine, thirty-four
+`sparkles:ui` had no showcase. Ten widget kinds, a layout engine, thirty-five
 semantic slots, thirty-six themes, a component set and fifteen interaction
 machines, and the only way to see any of it was to read a unit test. There was
 also no artifact that demonstrated the backend-neutrality claim by _running the
