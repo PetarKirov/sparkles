@@ -905,9 +905,11 @@ struct ViewerModel
     }
 
     /// Measures the fence whose body starts at `bodyStart` (zeros when
-    /// absent). `innerW` assumes a top-level fence; an indented one is
-    /// slightly narrower, so the x clamp is a ceiling, not a promise of
-    /// reachable content.
+    /// absent). `innerW` comes from the fence's laid-out hit rect — a
+    /// nested fence's box is narrower than a top-level one's, and the x
+    /// clamp must know the REAL interior or scrolling stops short of the
+    /// end. The top-level formula is only the fallback when hit targets
+    /// were not derived.
     FenceExtent fenceExtent(size_t bodyStart) const @safe
     {
         import sparkles.ui.geometry : cellsOf;
@@ -939,7 +941,17 @@ struct ViewerModel
             int numW;
             for (auto n = e.lines; n; n /= 10)
                 ++numW;
-            e.innerW = widthCols - 4 - (codeLineNumbers ? numW + 1 : 0);
+            // The h-bar row is the one full-`boxW` target carrying this
+            // fence's identity (the fence id itself marks only the copy
+            // cutout); it exists exactly when the fence h-overflows — the
+            // only case the x clamp matters.
+            int boxW;
+            foreach (ref const t; targets)
+                if (t.hitId == fenceHBarHitBase + bodyStart
+                    && t.rect.width > boxW)
+                    boxW = t.rect.width;
+            e.innerW = (boxW ? boxW : widthCols) - 4
+                - (codeLineNumbers ? numW + 1 : 0);
             const maxLines = resolvedCodeMaxLines();
             e.shownRows = maxLines > 0 && e.lines > maxLines
                 ? maxLines : e.lines;
