@@ -627,8 +627,9 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
     const hit = opt.fenceHitBase != 0
         ? opt.fenceHitBase + blk.codeBody.start : opt.hitId;
 
-    // `banded: false` for the grouped header: its strip is line-drawn, and
-    // a band starting mid-row (after the strip) reads as a seam.
+    // Every box-drawing cell of the header — grouped or not — sits on the
+    // code panel's band; in a grouped header only the tab CAPTIONS keep
+    // their own fills (the strip's walls band via `TabCaps`).
     uint rich(TextSpan[] spans, size_t hitId = 0, bool banded = true)
     {
         Widget w = Widget(kind: WidgetKind.rich, spans: spans,
@@ -657,9 +658,19 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
         //   │ 1 void main() {}                   │
         import sparkles.ui.components.chrome : TabCaps, tabStripTopBorder;
 
+        // The strip's BOX-DRAWING cells sit on the code panel's own
+        // background — the chrome reads as one piece with the block below —
+        // while the captions keep their fills (accent tint active, page
+        // idle).
+        TabCaps caps = TabCaps("│", "│", "└");
+        if (opt.theme.present)
+        {
+            caps.bandBg = opt.theme.codePanelBg;
+            caps.hasBandBg = true;
+        }
         const strip = tabStrip(b, opt.groupTabs.titles, opt.groupTabs.active,
             0, PressState.init, fitLabels: true, ids: opt.groupTabs.ids,
-            caps: TabCaps("│", "│", "└"));
+            caps: caps);
         kids ~= strip;
         used = 2 + cast(int) opt.groupTabs.titles.length - 1; // walls
         foreach (t; opt.groupTabs.titles)
@@ -669,7 +680,7 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
         int fill0 = boxW - used - tailW0;
         if (fill0 < 0)
             fill0 = 0;
-        kids ~= rich([ruleSpan(opt, repGlyph("─", fill0))], 0, false);
+        kids ~= rich([ruleSpan(opt, repGlyph("─", fill0))]);
         if (hasCopy0)
         {
             TextSpan icon0 = TextSpan(" "
@@ -677,15 +688,15 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
                     ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon) ~ " ",
                 Slot.code, codeStyle(opt), noBreak: true,
                 fg: opt.theme.codeFg, hasFg: opt.theme.present);
-            kids ~= rich([icon0], hit, false);
-            kids ~= rich([ruleSpan(opt, "─╮")], 0, false);
+            kids ~= rich([icon0], hit);
+            kids ~= rich([ruleSpan(opt, "─╮")]);
         }
         else
-            kids ~= rich([ruleSpan(opt, "╮")], 0, false);
+            kids ~= rich([ruleSpan(opt, "╮")]);
         const tabsRow = b.add(Widget(kind: WidgetKind.row, children: kids,
             width: SizeSpec.fixed(boxW)));
         return b.add(Widget(kind: WidgetKind.column, children: [
-                tabStripTopBorder(b, opt.groupTabs.titles), tabsRow],
+                tabStripTopBorder(b, opt.groupTabs.titles, caps), tabsRow],
             width: SizeSpec.fixed(boxW)));
     }
     else

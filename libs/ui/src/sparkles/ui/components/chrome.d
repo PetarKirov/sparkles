@@ -13,6 +13,7 @@ module sparkles.ui.components.chrome;
 
 import std.conv : text;
 
+import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : cellsOf, Insets, Point, SizeSpec;
 import sparkles.ui.state : PressState, ScrollAxis, ScrollbarState, ScrollState,
     scrollbarThumb;
@@ -246,12 +247,36 @@ struct TabCaps
     string left;
     string separator;
     string right;
+
+    /// A resolved background for the strip's BOX-DRAWING cells (the walls
+    /// and the matching top-border row), gated by `hasBandBg` — so the
+    /// strip's line work sits on the same surface as the panel it borders
+    /// while the tab captions keep their own fills. The markdown view pins
+    /// its code panel's exact background here (the theme channel resolves
+    /// outside the slot vocabulary, like a span's `fg`/`hasFg`).
+    RgbColor bandBg;
+    bool hasBandBg; /// ditto
+}
+
+/// A border cap / top-border cell: `Slot.border` line work, over the caps'
+/// band background when one is pinned.
+private Widget bandedGlyph(string g, in TabCaps caps)
+{
+    Widget w = Widget(kind: WidgetKind.text, text: g, slot: Slot.border);
+    if (caps.hasBandBg)
+    {
+        w.paintBackground = true;
+        w.bgOverride = caps.bandBg;
+        w.hasBgOverride = true;
+    }
+    return w;
 }
 
 /// The `╭──┬──╮` row that boxes a capped strip from above: corners at the
 /// strip's edges, a `┬` over each separator — junctioning into the capped
 /// row's `│`s below. Widths follow the strip's own tab sizing.
-uint tabStripTopBorder(ref Builder b, scope const(string)[] labels)
+uint tabStripTopBorder(ref Builder b, scope const(string)[] labels,
+    TabCaps caps = TabCaps.init)
 {
     string line = "╭";
     foreach (i, label; labels)
@@ -260,7 +285,7 @@ uint tabStripTopBorder(ref Builder b, scope const(string)[] labels)
             line ~= "─";
         line ~= i + 1 < labels.length ? "┬" : "╮";
     }
-    return b.add(Widget(kind: WidgetKind.text, text: line, slot: Slot.border));
+    return b.add(bandedGlyph(line, caps));
 }
 
 uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
@@ -269,8 +294,7 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
     TabCaps caps = TabCaps.init)
 {
     const capped = caps.left.length != 0;
-    uint capGlyph(string g)
-        => b.add(Widget(kind: WidgetKind.text, text: g, slot: Slot.border));
+    uint capGlyph(string g) => b.add(bandedGlyph(g, caps));
 
     auto segs = new uint[](0);
     segs.reserve(labels.length + 1);
