@@ -182,6 +182,8 @@ struct TermsState
     int closeRequested = -1; /// tab index to close, -1 for none
     ushort paneCols;        /// the pane rect at the last paint, in cells —
     ushort paneRows;        /// next frame's grid follow reads it
+    ushort paneX;           /// …and its origin, for pane-relative pointer
+    ushort paneY;           /// forwarding (the wheel has no frames in hand)
     long sbTotal;           /// the active tab's scrollback: history + screen,
     long sbLen;             /// the viewport's rows,
     long sbOffset;          /// and its offset — mirrored so the page can draw

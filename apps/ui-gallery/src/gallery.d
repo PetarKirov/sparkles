@@ -271,6 +271,8 @@ struct Gallery
                 // only now, at paint time — the one-frame lag is the design.
                 s.terms.paneCols = cast(ushort) inner.width;
                 s.terms.paneRows = cast(ushort) inner.height;
+                s.terms.paneX = cast(ushort) inner.x;
+                s.terms.paneY = cast(ushort) inner.y;
                 static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
                     paintTermChrome(h, tv, inner); // padding fill + pane + rail
                 else static if (__traits(compiles, paintCells(tv.s, h.canvas, inner)))
@@ -707,6 +709,33 @@ struct Gallery
             return;
         }
 
+        // Inside the terminal pane, the pointer belongs to the application
+        // running there when it asked for mouse reporting (vim, htop): the
+        // event forwards pane-relative through the mode-aware encoder, and a
+        // forwarded press also focuses the pane — pointing into an app means
+        // working in it. When the application does not track the mouse the
+        // seam writes nothing and the shell's routing (click-to-focus,
+        // hover) continues below.
+        if (s.page == terminalPageIndex && s.terms.any)
+        {
+            const paneRect = rectOf(tree, frames, hitPane);
+            if (paneRect.width > 0 && paneRect.contains(p.pos))
+                if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+                {
+                    const rel = PointerEvent(action: p.action,
+                        button: p.button, mods: p.mods,
+                        pos: Point(p.pos.x - paneRect.x, p.pos.y - paneRect.y));
+                    if ((() @trusted => tv.sendPointer(rel))())
+                    {
+                        if (p.action == PointerAction.press)
+                            s.terms.focused = true;
+                        s.hover.update(p, targets);
+                        reportPointerShape(h);
+                        return;
+                    }
+                }
+        }
+
         scope (exit)
             reportPointerShape(h);
 
@@ -779,10 +808,17 @@ struct Gallery
 
     private void onWheel(in WheelEvent w) @safe
     {
-        // Over the terminal pane, the wheel walks the shell's scrollback —
-        // the one target whose document is not the gallery's to scroll.
+        // Over the terminal pane the wheel belongs to the application when
+        // it tracks the mouse (the scroll buttons); otherwise it walks the
+        // shell's scrollback — either way, not the gallery's document.
         if (s.page == terminalPageIndex && s.terms.any && s.hover.isHot(hitPane))
+        {
+            if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+                if ((() @trusted => tv.sendWheel(w.dy,
+                        w.pos.x - s.terms.paneX, w.pos.y - s.terms.paneY))())
+                    return;
             return scrollTerminal(w.dy);
+        }
 
         // The producer already multiplied by `linesPerNotch`; multiplying again
         // here is the bug `INP12` names.
