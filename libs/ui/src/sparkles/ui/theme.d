@@ -28,8 +28,8 @@ $(REF TermStyle, sparkles,base,term_style), both of which `sparkles:base` owns.
 */
 module sparkles.ui.theme;
 
-import sparkles.base.term_color : Color, RgbColor;
-import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Palette,
+import sparkles.base.term_color : Color, mix, RgbColor;
+import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Palette, Slot,
     schemeForBackground;
 
 // The resolved-style vocabulary lives in `base` so `styled_template`, `syntax`
@@ -103,7 +103,54 @@ struct Theme
     {
         if (hasPalette)
             return palette;
-        return defaultTwoslashPalette(schemeForBackground(defaultBg.toRgbOr(RgbColor(0, 0, 0))));
+        const bg = defaultBg.toRgbOr(RgbColor(0, 0, 0));
+        const scheme = schemeForBackground(bg);
+        auto p = defaultTwoslashPalette(scheme);
+        if (defaultBg.kind != Color.Kind.rgb)
+            return p; // nothing personal to derive from — the scheme default
+
+        // A theme that pins its page colors gets a palette DERIVED from
+        // them, in the same design language the markdown view mixes
+        // (`MdViewTheme.derive` — one set of formulas, two consumers), so
+        // chrome bands, tab strips, panels, and rules all track the theme
+        // instead of collapsing onto one shared grey per scheme. An
+        // explicit palette still wins above.
+        const fg = defaultFg.toRgbOr(scheme == ColorScheme.dark
+            ? RgbColor(0xcc, 0xcc, 0xcc) : RgbColor(0x30, 0x30, 0x30));
+        void set(Slot s, Color slotFg, Color slotBg) @safe pure nothrow @nogc
+        {
+            if (slotFg.kind == Color.Kind.rgb)
+                p.fg[s] = slotFg;
+            if (slotBg.kind == Color.Kind.rgb)
+                p.bg[s] = slotBg;
+        }
+
+        Color rgb(RgbColor c) => Color.fromRgb(c);
+        set(Slot.surface, Color.init, rgb(mix(bg, fg, 0.08)));      // panel
+        set(Slot.chip, Color.init, rgb(mix(bg, fg, 0.12)));         // inline code
+        set(Slot.chrome, rgb(mix(fg, bg, 0.25)), rgb(mix(bg, fg, 0.16)));
+        set(Slot.chromeFocused, rgb(fg), rgb(mix(bg, fg, 0.24)));   // > chrome
+        set(Slot.gutter, rgb(mix(fg, bg, 0.5)), Color.init);
+        set(Slot.border, rgb(mix(bg, fg, 0.4)), Color.init);        // rules
+        set(Slot.muted, rgb(mix(fg, bg, 0.35)), Color.init);
+        // Emphasized chrome text (the active tab's caption, key hints):
+        // the theme's own accent where its rules pin one.
+        const accent = ruleFgFor("function", ruleFgFor("markup.link"));
+        if (accent.kind == Color.Kind.rgb)
+            set(Slot.chromeAccent, accent, Color.init);
+        return p;
+    }
+
+    /// The fg of the first rule whose selector is exactly `label` (the
+    /// palette derivation's accent probe — no LabelSet resolution here),
+    /// else `fallback`.
+    private Color ruleFgFor(string label, Color fallback = Color.init)
+        const pure nothrow @nogc
+    {
+        foreach (ref const r; rules)
+            if (r.selector == label && r.style.fg.kind == Color.Kind.rgb)
+                return r.style.fg;
+        return fallback;
     }
 }
 
@@ -114,15 +161,47 @@ private RgbColor toRgbOr(in Color c, RgbColor fallback) pure nothrow @nogc
     => c.kind == Color.Kind.rgb ? c.rgb : fallback;
 
 @("ui.theme.effectivePalette.derivesFromBackground")
-@safe pure nothrow @nogc
-unittest
+@safe unittest
 {
-    // A theme carrying only syntax rules still resolves slots: a dark page
-    // background selects the dark scheme.
-    const dark = Theme(name: "d", defaultBg: Color.fromRgb(RgbColor(0x1e, 0x1e, 0x2e)));
-    const light = Theme(name: "l", defaultBg: Color.fromRgb(RgbColor(0xff, 0xff, 0xff)));
-    assert(dark.effectivePalette() == defaultTwoslashPalette(ColorScheme.dark));
-    assert(light.effectivePalette() == defaultTwoslashPalette(ColorScheme.light));
+    // A theme that PINS its page background derives a PERSONALIZED palette
+    // (the md design language's mixes over its own bg/fg) — chrome bands,
+    // panels and rules track the theme instead of collapsing onto one
+    // shared grey per scheme.
+    const bgA = RgbColor(0x1e, 0x1e, 0x2e);
+    const fgFall = RgbColor(0xcc, 0xcc, 0xcc); // dark scheme's fg fallback
+    const dark = Theme(name: "d", defaultBg: Color.fromRgb(bgA));
+    const p = dark.effectivePalette();
+    assert(p.bg[Slot.chrome] == Color.fromRgb(mix(bgA, fgFall, 0.16)));
+    assert(p.bg[Slot.chromeFocused] == Color.fromRgb(mix(bgA, fgFall, 0.24)));
+    assert(p.bg[Slot.surface] == Color.fromRgb(mix(bgA, fgFall, 0.08)));
+
+    // Two different dark backgrounds now disagree.
+    const dark2 = Theme(name: "d2",
+        defaultBg: Color.fromRgb(RgbColor(0x10, 0x14, 0x18)));
+    assert(dark2.effectivePalette().bg[Slot.chrome] != p.bg[Slot.chrome]);
+
+    // A pinned fg is honored over the scheme fallback.
+    const fgB = RgbColor(0xee, 0xdd, 0xcc);
+    const pinned = Theme(name: "p", defaultBg: Color.fromRgb(bgA),
+        defaultFg: Color.fromRgb(fgB));
+    assert(pinned.effectivePalette().bg[Slot.chrome]
+        == Color.fromRgb(mix(bgA, fgB, 0.16)));
+
+    // The accent probe: a `function` rule's fg becomes the chrome accent.
+    const accent = RgbColor(0x89, 0xb4, 0xfa);
+    const ruled = Theme(name: "r", defaultBg: Color.fromRgb(bgA),
+        rules: [ThemeRule("function", StyleSpec(fg: Color.fromRgb(accent)))]);
+    assert(ruled.effectivePalette().fg[Slot.chromeAccent]
+        == Color.fromRgb(accent));
+
+    // No pinned background: the scheme default, untouched.
+    assert(Theme(name: "n").effectivePalette()
+        == defaultTwoslashPalette(ColorScheme.dark));
+    const light = Theme(name: "l",
+        defaultBg: Color.fromRgb(RgbColor(0xff, 0xff, 0xff)));
+    assert(light.effectivePalette().bg[Slot.chrome]
+        == Color.fromRgb(mix(RgbColor(0xff, 0xff, 0xff),
+            RgbColor(0x30, 0x30, 0x30), 0.16)));
 }
 
 @("ui.theme.effectivePalette.explicitWins")
