@@ -217,24 +217,12 @@ row, and hovering it must not un-hover the row it closes.
 */
 private uint termTable(ref Builder b, in GalleryState s, int paneRows)
 {
+    // The rows sit ADJACENT — a cell-tall separator reads as a gap, not a
+    // rule, on the GPU arm's hairline metrics. Zebra washes divide them
+    // instead, the same on both arms.
     uint[] rows;
     foreach (i; 0 .. s.terms.count)
-    {
-        if (i > 0)
-            // The inner border: a REAL drawn rule. `kit.hrule` fills with
-            // `Slot.border`'s background, which the palette leaves unset —
-            // so it painted nothing and the rows read as gapped, not ruled.
-            rows ~= b.add(Widget(
-                kind: WidgetKind.box,
-                width: SizeSpec.grow(),
-                height: SizeSpec.fixed(1),
-                decoration: Decoration(
-                    borderWidth: intoTop(1),
-                    borderStyle: BorderStyle.solid,
-                    borderSlot: Slot.border),
-            ));
         rows ~= termRow(b, s, i);
-    }
     const inner = b.add(Widget(
         kind: WidgetKind.column,
         children: rows,
@@ -289,7 +277,10 @@ private uint termRow(ref Builder b, in GalleryState s, size_t i)
         width: SizeSpec.grow(),
         hitId: tabHit(t.id),
         paintBackground: true,
-        slot: active ? Slot.chromeFocused : hot ? Slot.selection : Slot.chip,
+        // Adjacent rows divide by wash: zebra when idle, selection under the
+        // pointer, the accent wash + bold for the active tab.
+        slot: active ? Slot.chromeFocused : hot ? Slot.selection
+            : (i % 2 == 1 ? Slot.chrome : Slot.chip),
         gap: 1,
     ));
 }
@@ -398,12 +389,6 @@ private auto intoSymmetric(int v, int h) pure nothrow @nogc
     return Insets.symmetric(v, h);
 }
 
-private auto intoTop(int n) pure nothrow @nogc
-{
-    import sparkles.ui.geometry : Insets;
-
-    return Insets(n, 0, 0, 0);
-}
 
 /// ditto — offered keys only while the keyboard is in the content region and
 /// no terminal is focused (capture is intercepted upstream in `gallery.d`).

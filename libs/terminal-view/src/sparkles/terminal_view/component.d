@@ -102,6 +102,9 @@ struct TerminalViewOptions
     ExitBehavior exitBehavior = ExitBehavior.holdOnFailure;
     /// Debug hook: screenshot at frame 120, quit at 130.
     bool debugScreenshotAndExit = false;
+    /// The emulator's own overlay scrollbar. An embedding application draws
+    /// its bar beside the pane and turns this one off (`TVW7`).
+    bool internalScrollbar = true;
 }
 
 /**
@@ -171,6 +174,7 @@ struct TerminalView
         s.cols = cols > 0 ? cols : 1;
         s.rows = rows > 0 ? rows : 1;
         s.exitBehavior = opts.exitBehavior;
+        s.internalScrollbar = opts.internalScrollbar;
         s.debugScreenshotAndExit = opts.debugScreenshotAndExit;
         forceRedrawEnv = getenv("SPARKLES_BENCH_FORCE_REDRAW") !is null;
 

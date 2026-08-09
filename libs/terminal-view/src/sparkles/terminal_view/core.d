@@ -440,6 +440,11 @@ struct CoreState
     // feedPtyChunk); persists across pty read chunks.
     OscScanner oscScan;
 
+    // The emulator's own overlay scrollbar (mouse-driven). The standalone
+    // app wants it; an embedding application draws its own bar beside the
+    // pane and turns this one off.
+    bool internalScrollbar = true;
+
     // Child-process lifecycle. childExited is set when the pty signals EOF/EIO;
     // childReaped once waitpid() collects the exit status.
     bool childExited;
@@ -695,7 +700,7 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
         GhosttyTerminalScrollbar sb;
         ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR, cast(void*)&sb);
 
-        if (sb.total > sb.len)
+        if (s.internalScrollbar && sb.total > sb.len)
         {
             float track_height = cast(float)viewH;
             float thumb_height = track_height * (cast(float)sb.len / cast(float)sb.total);
