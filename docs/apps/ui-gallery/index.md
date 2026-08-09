@@ -28,7 +28,7 @@ disagree about anything, the gallery is where you find out.
 | **Tracks**     | the CSS-Grid subset resolved live, as both numbers and bars                        |
 | **Text**       | the three wrap strategies at one column, and `cellsOf` beside a byte count         |
 | **Themes**     | all thirty-six built-ins; selecting one repaints the whole window                  |
-| **Slots**      | every one of the thirty-four semantic roles, resolved against the live theme       |
+| **Slots**      | every one of the thirty-five semantic roles, resolved against the live theme       |
 | **Decoration** | box and text chrome, and what a cell grid can actually express                     |
 | **Components** | `headerBar`, `tabStrip`, `actionBar`, `gutter`, `scrollbar`, `scrollView`          |
 | **Tree**       | the data / interaction / view split, one tree rendered twice                       |
