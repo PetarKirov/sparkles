@@ -233,6 +233,12 @@ belongs in the host contract, not in a private path for one application.
 | P2.B4 | Move the GUI loop onto the host — input, then paint, then chrome, as separate commits                   |
 | P2.B5 | Move the TUI loop onto the host; assert both hosts produce the same operations for one scripted session |
 
+**Status (2026-08-10): P2.B1 shipped** across #285/#286 and this branch —
+the state vocabulary (`gui_state.d`, 11 suites), the debounce settle, the
+goto-line parse, the selection-drag lifecycle, the search-jump wrap, and the
+line-input typing rules are all tested decisions; `gui.d` keeps routing and
+frame assembly (3181 → 3013 lines). Next: P2.B2.
+
 P2.B1 comes first among the hue steps deliberately: the GUI module has no tests
 today, so the migration's first commit is the one that gives it some.
 
