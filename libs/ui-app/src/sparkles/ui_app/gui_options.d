@@ -81,6 +81,26 @@ through the built-in registry.
 */
 enum defaultTheme = "tokyo-night";
 
+/// Uiua's non-ASCII primitive glyphs, formatted subscripts, and canonicalized
+/// identifier suffixes render from Uiua386 — the shared default
+/// `--font-codepoint-map` entry on every application (it mirrors the machine
+/// config's uiua386glyphs.nix; Android bundles the face, a desktop without it
+/// simply never matches the family).
+enum uiuaCodepointMap =
+    "U+00A4,U+00AC,U+00AF-U+00B1,U+00D7,U+00F7,U+02D9,U+02DC,U+03B7," ~
+    "U+03C0,U+03C4,U+1D62-U+1D63,U+2032-U+2034,U+203C,U+2045," ~
+    "U+207F-U+2089,U+208B,U+2091,U+2099,U+2102,U+2198-U+2199,U+21A5," ~
+    "U+21A7,U+21AF,U+21BB,U+21CC,U+21E1,U+2202,U+220A,U+2218,U+221A," ~
+    "U+221E,U+2220,U+2227-U+222B,U+2235,U+223F,U+224D,U+2260-U+2261," ~
+    "U+2264-U+2265,U+2282-U+2283,U+228F,U+2293,U+2295,U+2297," ~
+    "U+2299-U+229C,U+229E-U+229F,U+22A1-U+22A3,U+22A5,U+22B8,U+22C5," ~
+    "U+22D5,U+22EF,U+2305,U+2308,U+230A,U+2315,U+231D-U+231F,U+2335," ~
+    "U+2346,U+2349,U+234F,U+2356,U+235A,U+235C,U+2361-U+2365,U+2369," ~
+    "U+25A1,U+25B3,U+25BD,U+25C7,U+25CC,U+25E0-U+25E1,U+25EB,U+25F0," ~
+    "U+25F4,U+25FF,U+2607,U+266D,U+2682,U+27DC,U+2919-U+291A,U+2938," ~
+    "U+29B7,U+29C5-U+29C6,U+29C8,U+29CB,U+29FB,U+2A02,U+2A2A,U+2A2C," ~
+    "U+2A5C,U+2B1A,U+2BFE,U+1D110=Uiua386";
+
 /// The default window size, in $(B cells) — not pixels. The window is sized
 /// from the loaded font's cell metrics, which is why `CLI5`'s ordering matters.
 enum int defaultWindowCols = 100;
@@ -99,7 +119,8 @@ mixin template GuiCliFields()
 {
     import sparkles.core_cli.args : Option;
     import sparkles.ui_app.gui_options : defaultFontSizePoints, defaultGuiFont,
-        defaultGuiFontFamily, defaultTheme, defaultWindowCols, defaultWindowRows;
+        defaultGuiFontFamily, defaultTheme, defaultWindowCols, defaultWindowRows,
+        uiuaCodepointMap;
 
     @(Option("font|f", description:
         "Font for the window: a path, a family name, or a fontconfig "
@@ -127,8 +148,9 @@ mixin template GuiCliFields()
 
     @(Option("font-codepoint-map", description:
         "Render a codepoint range from a specific family (repeatable): "
-        ~ "'U+XXXX-U+YYYY,U+ZZZZ=Family'."))
-    string[] fontCodepointMap;
+        ~ "'U+XXXX-U+YYYY,U+ZZZZ=Family'. Defaults to the Uiua386 glyph map; "
+        ~ "a family that is not installed simply never matches."))
+    string[] fontCodepointMap = [uiuaCodepointMap];
 
     @(Option("font-dir", description:
         "Resolve fonts by scanning this directory instead of fontconfig "

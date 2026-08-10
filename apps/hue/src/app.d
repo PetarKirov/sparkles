@@ -297,29 +297,6 @@ private BackgroundMode parseBackgroundMode(string name)
 // with the bundled Maple family, so the Android prepend this file carried is
 // gone — the shared default IS the Android answer now.
 
-version (Android)
-{
-    import sparkles.ui_app.gui_options : defaultGuiFont, defaultGuiFontFamily;
-
-    /// Uiua's non-ASCII primitive glyphs, formatted subscripts, and
-    /// canonicalized identifier suffixes render from the bundled Uiua386 —
-    /// the Android spelling of ghostty's font-codepoint-map (mirrors the
-    /// machine config's uiua386glyphs.nix).
-    enum androidUiuaCodepointMap =
-        "U+00A4,U+00AC,U+00AF-U+00B1,U+00D7,U+00F7,U+02D9,U+02DC,U+03B7," ~
-        "U+03C0,U+03C4,U+1D62-U+1D63,U+2032-U+2034,U+203C,U+2045," ~
-        "U+207F-U+2089,U+208B,U+2091,U+2099,U+2102,U+2198-U+2199,U+21A5," ~
-        "U+21A7,U+21AF,U+21BB,U+21CC,U+21E1,U+2202,U+220A,U+2218,U+221A," ~
-        "U+221E,U+2220,U+2227-U+222B,U+2235,U+223F,U+224D,U+2260-U+2261," ~
-        "U+2264-U+2265,U+2282-U+2283,U+228F,U+2293,U+2295,U+2297," ~
-        "U+2299-U+229C,U+229E-U+229F,U+22A1-U+22A3,U+22A5,U+22B8,U+22C5," ~
-        "U+22D5,U+22EF,U+2305,U+2308,U+230A,U+2315,U+231D-U+231F,U+2335," ~
-        "U+2346,U+2349,U+234F,U+2356,U+235A,U+235C,U+2361-U+2365,U+2369," ~
-        "U+25A1,U+25B3,U+25BD,U+25C7,U+25CC,U+25E0-U+25E1,U+25EB,U+25F0," ~
-        "U+25F4,U+25FF,U+2607,U+266D,U+2682,U+27DC,U+2919-U+291A,U+2938," ~
-        "U+29B7,U+29C5-U+29C6,U+29C8,U+29CB,U+29FB,U+2A02,U+2A2A,U+2A2C," ~
-        "U+2A5C,U+2B1A,U+2BFE,U+1D110=Uiua386";
-}
 
 /// The grammar registry every sink resolves through. Desktop: the nix grammar
 /// bundle via `$SPARKLES_TS_GRAMMAR_PATH`. Android: the soname layout —
@@ -463,7 +440,8 @@ private GrammarRegistry defaultRegistry() @safe
 // `BKD2` — the library preserved hue's rules verbatim, "--gui wins even
 // uncompiled" included; the Android fact is `BKD4`; the display probe is
 // `BKD3`'s socket-level one rather than the env heuristic this replaced).
-import sparkles.ui_app.gui_options : GuiCliFields;
+import sparkles.ui_app.gui_options : defaultGuiFont, defaultGuiFontFamily,
+    GuiCliFields, uiuaCodepointMap;
 import sparkles.ui_app.backend : Backend, BackendPolicy,
     hostPickBackend = pickBackend, platformForcedBackend;
 import sparkles.ui_app.display : displayAvailable;
@@ -1015,7 +993,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             const fontName = defaultGuiFont;
             const faceOv = FontSet.FaceOverrides(defaultGuiFontFamily,
                 defaultGuiFontFamily, defaultGuiFontFamily);
-            string[] cpMaps = [androidUiuaCodepointMap];
+            string[] cpMaps = [uiuaCodepointMap];
         }
         else
         {
