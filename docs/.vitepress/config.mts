@@ -1768,6 +1768,10 @@ export default withMermaid(
                       text: 'Implementation Techniques',
                       link: '/research/async-io/techniques',
                     },
+                    {
+                      text: 'kqueue, PTYs & Signals on macOS',
+                      link: '/research/async-io/kqueue-and-ptys',
+                    },
                   ],
                 },
                 {
