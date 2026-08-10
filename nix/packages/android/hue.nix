@@ -65,9 +65,10 @@
       # (HueGui + the Have_* set of the dependency graph).
       versions = [
         "HueGui"
-        # hue selects sparkles:ui-app's `tui` configuration (dub sets this
-        # version identifier for dependents — UIAPP-O2).
+        # hue selects sparkles:ui-app's `full` configuration (dub sets these
+        # version identifiers for dependents — UIAPP-O2).
         "UiAppTui"
+        "UiAppGui"
         "Have_sparkles_hue"
         "Have_sparkles_ghostty"
         "Have_sparkles_syntax"

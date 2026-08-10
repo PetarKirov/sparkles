@@ -237,21 +237,10 @@ int runGui(
     int shotAt = -1;
     enum shotSettleCap = 240; // ~4 s at 60 FPS
     // `--font-size` arrives in points; convert to pixels (96-DPI, 1pt = 1/72in)
-    // exactly like apps/terminal so both raylib apps size a font identically.
-    // Resolved against the real display below, once the window exists; this
-    // is the nominal-DPI fallback for the paths that read it earlier. The
-    // capture override stays in pixels so goldens are deterministic.
-    int fontSizePx = capture.fontSizePx != 0
-        ? capture.fontSizePx : pixelsForPoints(fontSize, DisplayMetrics.init);
+    // exactly like apps/terminal so both raylib apps size a font identically —
+    // the resolution, the capture's pixel override, and the clamp are all
+    // `openGuiSession`'s now (`CLI5`/`CLI6`).
     const initialTop = capture.initialTop;
-    if (fontSizePx < 6)
-        fontSizePx = 6;
-
-    // Route raylib's own trace log through sparkles' logger (NFR7) before it
-    // opens anything, so its init chatter obeys hue's log level instead of
-    // writing to stderr. Its default LOG_INFO threshold still gates what it
-    // hands us; everything bridged lands at trace level (silent by default).
-    traceLogTo(&raylibTraceLog);
 
     // The frame cadence's owner (M17, event-horizon SPEC §15.3 GUI shape):
     // when the ring is available, raylib's own pacing is disabled
@@ -268,47 +257,40 @@ int runGui(
     Sched sched;
     const asyncLoop = !Sched.create(sched, schedOpts).hasError;
 
-    // Android: 0×0 = the native surface resolution (a non-zero size is NOT
-    // ignored there — raylib letterboxes it onto the screen); the surface is
-    // the app, so no resizable state and no cell-sizing either.
-    // 0×0 on Android = the native surface resolution; the surface IS the app,
-    // so it is neither sized nor resizable there.
-    version (Android)
-        auto window = Window.open(WindowRequest(
-            title: "hue — " ~ title, width: 0, height: 0, resizable: false,
-            targetFps: asyncLoop ? 0 : 60));
-    else
-        auto window = Window.open(WindowRequest(
-            title: "hue — " ~ title, width: 800, height: 600,
-            targetFps: asyncLoop ? 0 : 60));
+    // The window/font opening is the host's (`P2.B3`): `openGuiSession`
+    // encodes the one order that works (`CLI5` — window, pixel size, faces,
+    // then cells), the Android facts (0×0 = the native surface; no cell
+    // sizing), the DPI resolution with the capture's deterministic pixel
+    // override (`CLI6`), and the atlas clamp. The trace-log bridge (NFR7)
+    // rides the request so raylib's creation chatter is captured too.
+    import sparkles.ui_app.gui_options : FontRequest, WindowCells;
+    import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
 
-    // LoadFontEx uploads a GPU texture, so the FontSet must load after InitWindow.
-    // `fontName` may be a path, a family, or a fontconfig preference list.
-    // Android resolves against the extracted asset fonts + /system/fonts (no
-    // fontconfig), and scales the point size by the panel density — 14 pt is
-    // unreadable on a 400-dpi screen. HUE_GUI_FONTSIZE (applied by the caller)
-    // stays the deterministic override for goldens.
-    FontSet.FontSources fontSrc;
+    GuiRequest req = {
+        title: "hue — " ~ title,
+        font: FontRequest(
+            family: fontName,
+            bold: faces.bold,
+            italic: faces.italic,
+            boldItalic: faces.boldItalic,
+            codepointMaps: codepointMaps,
+        ),
+        cells: WindowCells(windowWidth, windowHeight),
+        fontSizePoints: fontSize,
+        fontSizePxOverride: capture.fontSizePx,
+        traceSink: &raylibTraceLog,
+        targetFps: asyncLoop ? 0 : 60,
+    };
     version (Android)
     {
         import android_glue : androidDataDir;
         import android_paths : fontsDir;
 
-        fontSrc = FontSet.FontSources([fontsDir(androidDataDir()), "/system/fonts"],
-            useFontconfig: false);
+        req.extraFontSources = [fontsDir(androidDataDir()), "/system/fonts"];
     }
 
-    // Resolve the point size against the real panel. This is no longer an
-    // Android special case: a HiDPI desktop has the same problem, and used to
-    // get the same 19 px as a 96 dpi one (IXR28). The clamp that keeps the
-    // atlas bounded is the library's now, not a magic 4 here.
-    //
-    // The capture's pixel override stays deterministic for goldens, so it
-    // suppresses scaling entirely rather than being scaled itself.
-    if (capture.fontSizePx == 0)
-        fontSizePx = pixelsForPoints(fontSize, displayMetrics());
-    FontSet fonts;
-    if (!FontSet.tryLoad(fontName, fontSizePx, fonts, codepointMaps, faces, fontSrc))
+    GuiSession session;
+    if (!openGuiSession(req, session))
     {
         stderr.writeln("hue --gui: could not load a font from '", fontName,
             "' (is fontconfig available?)");
@@ -320,13 +302,11 @@ int runGui(
         }
         return 1;
     }
-    scope (exit) fonts.unload();
-
-    // `--window-width`/`--window-height` are in cells (like apps/terminal); size
-    // the window to the loaded cell metrics.
-    version (Android) {}
-    else if (windowWidth > 0 && windowHeight > 0)
-        window.resize(windowWidth * fonts.cellW(), windowHeight * fonts.cellH());
+    // The session owns the window and the faces (its destructor unloads);
+    // these ref accessors keep every downstream `window`/`fonts` use exactly
+    // as it was written.
+    ref Window window() => session.window;
+    ref FontSet fonts() => session.fonts;
 
     // The document pipeline's Whole (PRN1 / the C1 diagnosis): one value owns
     // the document, its theme-resolved colors, widget pipeline, folding,
@@ -838,7 +818,7 @@ int runGui(
         auto wt = b.finish(b.add(colW));
         auto ops = buildDisplayList(wt, layout(wt),
             themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
-        auto c = RaylibCanvas(&fonts, &buf, fonts.cellW(), fonts.cellH(),
+        auto c = RaylibCanvas(&session.fonts, &buf, fonts.cellW(), fonts.cellH(),
             x, y);
         paint(c, ops);
     }
@@ -2188,7 +2168,7 @@ int runGui(
         // 1 px divider, a `cellH - 1` band — and quantising to cells would
         // move it. Chrome that can become a widget should (UIA2); this is the
         // seam for what has not yet.
-        auto chrome = RaylibCanvas(&fonts, &buf, cellW, cellH);
+        auto chrome = RaylibCanvas(&session.fonts, &buf, cellW, cellH);
         // GL scissor state is global; a scissor leaked from any earlier path
         // (or left over across the buffer swap) would CLIP the clear below —
         // exactly the "documents ghost over each other" failure. Start every
@@ -2230,7 +2210,7 @@ int runGui(
         // raylib canvas, offset by the scroll position and culled to the
         // viewport rows (raylib clips px; the cull skips dead draw calls).
         {
-            auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+            auto canvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
                 cast(float)(gutterPx - dhx * cellW),
                 cast(float)(docY0 - vm.top * cellH));
             // The pane's base clip: content (an unwrappable code line inside
@@ -2589,7 +2569,7 @@ int runGui(
             auto tOps = buildDisplayList(wt, layout(wt),
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
             const thx = pn.tree.hOverflows() ? cast(int) pn.tree.hsb.offset : 0;
-            auto tCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+            auto tCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
                 cast(float)(-thx * cellW), cast(float)((treeTopRows + 1) * cellH));
             tCanvas.pushClip(Rect(thx, 0, treeCols - thx, pn.tree.bodyRows));
             paint(tCanvas, tOps);
@@ -2681,7 +2661,7 @@ int runGui(
                 RuleEdge.bottom, Visual(fg: vm.gutterFg));
             auto barOps = buildDisplayList(barTree, barFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
-            auto barCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+            auto barCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
                 0, cast(float) toolbarY);
             paint(barCanvas, barOps);
         }
@@ -2739,7 +2719,7 @@ int runGui(
                 buildDisplayListInto(ltnTree, ltnFrames,
                     themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
                     ltnOps);
-                auto ltnCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+                auto ltnCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
                     0, cast(float) panelY);
                 paint(ltnCanvas, ltnOps[]);
             }

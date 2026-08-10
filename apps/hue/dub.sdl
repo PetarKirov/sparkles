@@ -59,6 +59,7 @@ configuration "application" {
     dependency "sparkles:ui-raylib" path="../.."
     // The off-screen VT that decodes ` ```ansi ` fenced blocks (gui_ansi.d).
     dependency "sparkles:ghostty" path="../.."
+    subConfiguration "sparkles:ui-app" "full"
     versions "HueGui"
 }
 
@@ -84,6 +85,7 @@ configuration "android" {
     dependency "sparkles:raylib-text" path="../.."
     dependency "sparkles:ui-raylib" path="../.."
     dependency "sparkles:ghostty" path="../.."
+    subConfiguration "sparkles:ui-app" "full"
     versions "HueGui"
 }
 
