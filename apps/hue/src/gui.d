@@ -218,6 +218,22 @@ struct GuiArgs
     DiffSession initialDiffSession = DiffSession.init; // changed-file session (DVS4)
     GuiCapture capture = GuiCapture.init; // deterministic-capture hooks (CLI6)
 }
+/// The GUI run's whole mutable state (`P2.B4` second slice): every
+/// loop-carried group as one value — the fields the component will own when
+/// the loop moves onto the host. The pieces are `gui_state`'s tested types;
+/// this is only their aggregation.
+struct GuiRunState
+{
+    ViewerModel vm;
+    ResizeDebounce rd;
+    Panes pn;
+    InputState inp;
+    Flashes flash;
+    HoverPopup pop;
+    SelectionDrag drag;
+    CopyModes cm;
+}
+
 
 /// ditto
 int runGui(GuiArgs guiArgs) @system
@@ -225,6 +241,12 @@ int runGui(GuiArgs guiArgs) @system
     with (guiArgs)
     {
     import std.stdio : stderr;
+    // The run's whole mutable state (`P2.B4` second slice): one value —
+    // the fields the component will own; the body reads the old local names
+    // through `with`.
+    GuiRunState gs;
+    with (gs)
+    {
     import std.string : toStringz;
     import std.process : environment;
     import std.conv : to, text;
@@ -322,7 +344,6 @@ int runGui(GuiArgs guiArgs) @system
     // the document, its theme-resolved colors, widget pipeline, folding,
     // document scroll and search. Window resources and the still-separate
     // interaction groups remain here until HUE-O1 consolidates their ownership.
-    ViewerModel vm;
     vm.names = names;
     vm.themes = themes;
     vm.labels = labels;
@@ -336,7 +357,6 @@ int runGui(GuiArgs guiArgs) @system
     vm.codeMaxLines = codeMaxLines;
     vm.fenceHotGlyphs = false; // the GUI's feedback is the px overlay
 
-    ResizeDebounce rd;
 
     // Line-number gutter width in cells (0 when off) — a stable size from the
     // source line count so toggling wrapping never oscillates the layout.
@@ -353,7 +373,6 @@ int runGui(GuiArgs guiArgs) @system
     // workspace's model, painted through RaylibCanvas. 'e' toggles it.
     import std.path : dirName;
 
-    Panes pn;
     pn.tree.includeGlobs = includeGlobs;
     pn.tree.excludeGlobs = excludeGlobs;
     // The pane arrangement is the toolkit's dock container (C-2a), run in
@@ -415,7 +434,6 @@ int runGui(GuiArgs guiArgs) @system
 
     // Input routing (search/goto line input, pointer capture, the per-frame
     // event fold); the match set and its rects live in `vm`.
-    InputState inp;
 
     // Every view reflows on resize: the model lays the active widget tree
     // out to the new width (raw source rows wrap greedily; line numbers
@@ -714,8 +732,6 @@ int runGui(GuiArgs guiArgs) @system
     enum size_t capContainer = 1, capDocSb = 2, capTreeSb = 3,
         capDocHSb = 4, capTreeHSb = 5, capSelection = 6, capFenceSb = 7;
 
-    Flashes flash;
-    HoverPopup pop;
     pop.forceHover = capture.forceHover;
 
     // Mouse selection has two regimes (a drag stays in the one it starts in, TBL4):
@@ -723,9 +739,8 @@ int runGui(GuiArgs guiArgs) @system
     //    char-precisely; an ANSI body line selects its whole fence-body span (SEL6).
     //  • table (TBL): a 2D grid selection inside one table, resolved from anchor +
     //    head cells (from the table map) under Shift/Alt.
-    SelectionDrag drag;
 
-    auto cm = CopyModes(ansiStrip: ansiCopyStrip, tableFmt: tableCopy);
+    cm = CopyModes(ansiStrip: ansiCopyStrip, tableFmt: tableCopy);
 
     // The text-regime selection as a source range [drag.selMin, drag.selMax) — the union of
     // the anchor and head spans (a char point is a zero-width span).
@@ -2774,6 +2789,7 @@ int runGui(GuiArgs guiArgs) @system
     }
 
     return 0;
+    }
     }
 }
 
