@@ -323,6 +323,37 @@ struct PixelRect
 
 
 /**
+The match to jump to on Enter in search mode: the first whose visual row is
+at/after `top` — matches are in source order, so visual order — wrapping to
+the first match when the viewport sits past every one. `visualOf(i)` names
+the i-th match's visual row, so the scan is testable with a plain array.
+*/
+size_t firstMatchAtOrAfter(alias visualOf)(size_t matchCount, long top)
+{
+    size_t i;
+    while (i < matchCount && visualOf(i) < top)
+        ++i;
+    return i < matchCount ? i : 0;
+}
+
+@("gui_state.firstMatchAtOrAfter")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable long[] rows = [3, 10, 42];
+    alias at = i => rows[i];
+
+    assert(firstMatchAtOrAfter!at(rows.length, 0) == 0);
+    assert(firstMatchAtOrAfter!at(rows.length, 4) == 1);
+    assert(firstMatchAtOrAfter!at(rows.length, 10) == 1, "at counts");
+    assert(firstMatchAtOrAfter!at(rows.length, 11) == 2);
+    // Past every match: wrap to the first.
+    assert(firstMatchAtOrAfter!at(rows.length, 100) == 0);
+    // No matches at all: index 0 (the caller guards on emptiness as before).
+    assert(firstMatchAtOrAfter!at(0, 5) == 0);
+}
+
+/**
 Parses the goto-line query (`:` mode) into the 0-based source line: 1-based
 input, non-positive clamps to the first line, non-numeric (or empty) is `-1` —
 no jump. Deliberately $(B not) range-checked against the document: the

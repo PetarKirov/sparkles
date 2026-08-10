@@ -1280,12 +1280,11 @@ int runGui(
             {
                 if (inp.mode == Mode.search)
                 {
-                    // Jump to the first match whose visual row is at/after the
-                    // vm.current vm.top (vm.matches are in source order → visual order), wrap.
-                    size_t i;
-                    while (i < vm.matches.length && vm.visualOfMatch(vm.matches[i]) < vm.top)
-                        ++i;
-                    jumpToMatch(i < vm.matches.length ? i : 0, visibleRows);
+                    // Jump to the first match at/after the current top —
+                    // the tested `firstMatchAtOrAfter` decision, wrap included.
+                    jumpToMatch(firstMatchAtOrAfter!(
+                        i => vm.visualOfMatch(vm.matches[i]))(
+                        vm.matches.length, vm.top), visibleRows);
                 }
                 else if (inp.query.length) // gotoLine → the source line's visual row
                 {
