@@ -184,6 +184,7 @@ at `6.13` and later are forward-dated "as observed in the v7.1-rc6 checkout" —
 
 - **[Event-Loop Primitives][primitives]** — the layered checklist (Tier 0 → Tier 3), readiness vs completion mapped per primitive.
 - **[Implementation Techniques][techniques]** — reactor/proactor, ring batching, scheduler topologies, wakers, timer wheels, buffer ownership, cancellation, feature probing.
+- **[kqueue, PTYs & Signals on macOS][kqueue-ptys]** — what kqueue will and will not watch, `EVFILT_SIGNAL` vs `signalfd`, `EVFILT_PROC`, and PTY creation, across ten C/Zig/Rust implementations.
 - **[Comparison][comparison]** — the head-to-head matrix and design recommendations for Sparkles.
 - **[Effects & Event Loops][effects]** — how completions resume fibers, continuations, and effect handlers.
 - **[D Landscape][d-landscape]** — existing D options (vibe.d/eventcore, Photon, `during`, `core.thread.Fiber`) + gap analysis.
@@ -238,6 +239,7 @@ this index's classifications are:
 
 [primitives]: ./primitives.md
 [techniques]: ./techniques.md
+[kqueue-ptys]: ./kqueue-and-ptys.md
 [comparison]: ./comparison.md
 [effects]: ./effects-and-event-loops.md
 [d-landscape]: ./d-landscape.md
