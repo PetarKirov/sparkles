@@ -396,6 +396,115 @@ struct PixelRect
 
 
 /**
+The deterministic-capture hooks (`CLI6`, `P2.B3`): everything the golden-frame
+harness pins through `HUE_GUI_*`, parsed $(B by the caller) from the
+environment and passed in — the frame code never reads the environment.
+
+`fromEnv` takes the getter as a delegate so the parse rules are testable with
+a fake: the same shape as `std.process.environment.get(name, fallback)`, where
+a `null` fallback distinguishes unset from set-but-empty (the lantern hook
+shows the root listing on an $(I empty) value).
+*/
+struct GuiCapture
+{
+    string screenshotPath;    /// `HUE_GUI_SCREENSHOT`; path anchoring (Android) is the caller's
+    int screenshotFrame = 20; /// `HUE_GUI_SCREENSHOT_FRAME`; a bad value keeps the default
+    bool flash;               /// `HUE_GUI_FLASH`: the ghosting discriminator
+    long initialTop;          /// `HUE_GUI_TOP`: initial scroll line (clamped downstream)
+    int fontSizePx;           /// `HUE_GUI_FONTSIZE` in pixels; 0 = no override
+    string preview;           /// `HUE_GUI_PREVIEW` raw (`"0"` pins raw view)
+    string search;            /// `HUE_GUI_SEARCH`: preselected query
+    string lantern;           /// `HUE_GUI_LANTERN`: seeded guide keys
+    bool lanternSet;          /// ...present at all (empty shows the root listing)
+    int forceHover = -1;      /// `HUE_GUI_HOVER`: force the Nth popup
+
+    /// ditto
+    static GuiCapture fromEnv(scope string delegate(string, string) @safe get) @safe
+    {
+        import std.conv : to;
+
+        GuiCapture c;
+        c.screenshotPath = get("HUE_GUI_SCREENSHOT", "");
+        c.flash = get("HUE_GUI_FLASH", "").length != 0;
+        try
+            if (get("HUE_GUI_SCREENSHOT_FRAME", null).length)
+                c.screenshotFrame = get("HUE_GUI_SCREENSHOT_FRAME", null).to!int;
+        catch (Exception)
+        {
+        }
+        // One try over BOTH, faithfully: a garbage HUE_GUI_TOP also skipped
+        // the HUE_GUI_FONTSIZE override in the inline version. Debug hooks
+        // keep their exact behavior; the test below pins the coupling.
+        try
+        {
+            c.initialTop = get("HUE_GUI_TOP", "0").to!long;
+            if (get("HUE_GUI_FONTSIZE", null).length)
+                c.fontSizePx = get("HUE_GUI_FONTSIZE", null).to!int;
+        }
+        catch (Exception)
+        {
+        }
+        c.preview = get("HUE_GUI_PREVIEW", "");
+        c.search = get("HUE_GUI_SEARCH", "");
+        const l = get("HUE_GUI_LANTERN", null);
+        c.lanternSet = l !is null;
+        c.lantern = l;
+        try
+            c.forceHover = get("HUE_GUI_HOVER", null).length
+                ? get("HUE_GUI_HOVER", null).to!int : -1;
+        catch (Exception)
+        {
+        }
+        return c;
+    }
+}
+
+@("gui_state.GuiCapture.fromEnv")
+@safe
+unittest
+{
+    // A fake environment: the getter's contract, without setenv (which a
+    // parallel test runner must never touch).
+    string[string] env;
+    string get(string name, string fallback) @safe
+        => name in env ? env[name] : fallback;
+
+    // Unset: the defaults.
+    auto c = GuiCapture.fromEnv(&get);
+    assert(c.screenshotFrame == 20 && !c.flash && c.fontSizePx == 0);
+    assert(c.forceHover == -1 && !c.lanternSet);
+
+    env = [
+        "HUE_GUI_SCREENSHOT": "shot.png",
+        "HUE_GUI_SCREENSHOT_FRAME": "40",
+        "HUE_GUI_FLASH": "1",
+        "HUE_GUI_TOP": "120",
+        "HUE_GUI_FONTSIZE": "22",
+        "HUE_GUI_PREVIEW": "0",
+        "HUE_GUI_SEARCH": "needle",
+        "HUE_GUI_LANTERN": "",
+        "HUE_GUI_HOVER": "3",
+    ];
+    c = GuiCapture.fromEnv(&get);
+    assert(c.screenshotPath == "shot.png" && c.screenshotFrame == 40);
+    assert(c.flash && c.initialTop == 120 && c.fontSizePx == 22);
+    assert(c.preview == "0" && c.search == "needle");
+    assert(c.lanternSet && c.lantern.length == 0,
+        "an empty lantern is SET (it shows the root listing)");
+    assert(c.forceHover == 3);
+
+    // The faithful quirk: garbage HUE_GUI_TOP also skips the font override,
+    // exactly as the inline try/catch did.
+    env["HUE_GUI_TOP"] = "not-a-number";
+    c = GuiCapture.fromEnv(&get);
+    assert(c.initialTop == 0 && c.fontSizePx == 0);
+
+    // A bad frame keeps the default rather than dying.
+    env = ["HUE_GUI_SCREENSHOT_FRAME": "soon"];
+    assert(GuiCapture.fromEnv(&get).screenshotFrame == 20);
+}
+
+/**
 The match to jump to on Enter in search mode: the first whose visual row is
 at/after `top` — matches are in source order, so visual order — wrapping to
 the first match when the viewport sits past every one. `visualOf(i)` names
