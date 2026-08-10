@@ -600,10 +600,12 @@ bool handleActivate(ref GalleryState s, size_t id)
     static bool hasText(in GalleryState s, string wanted)
     {
         auto b = Builder();
-        // The sweep's shape: build + layout, then walk the nodes.
-        auto sCopy = s;
-        auto tree = b.finish(view(b, sCopy));
-        cast(void) layout(tree, Constraints(maxW: sCopy.contentWidth));
+        // The sweep's shape: build + layout, then walk the nodes. The state
+        // is passed straight through rather than copied — `view` takes it
+        // `in`, and a copy here would only ask whether the whole state is
+        // copyable, which is not what this test is about.
+        auto tree = b.finish(view(b, s));
+        cast(void) layout(tree, Constraints(maxW: s.contentWidth));
         foreach (ref n; tree.nodes)
             if (n.kind == WidgetKind.text && n.text == wanted)
                 return true;

@@ -395,7 +395,7 @@ struct DockLayout
 
     /// The pane ids this layout names, in arena order — what a caller
     /// compares against the panes it can actually offer.
-    PaneId[] panes() const
+    PaneId[] panes() const scope
     {
         PaneId[] ps;
         foreach (ref n; nodes)
@@ -405,7 +405,7 @@ struct DockLayout
     }
 
     /// The node holding `pane`, or `uint.max`.
-    uint nodeOf(PaneId pane) const pure nothrow @nogc
+    uint nodeOf(PaneId pane) const scope pure nothrow @nogc
     {
         foreach (i, ref n; nodes)
             if (n.kind == DockKind.leaf && n.pane == pane)
@@ -422,7 +422,7 @@ struct DockLayout
     }
 
     /// ditto
-    bool visible(PaneId pane) const pure nothrow @nogc
+    bool visible(PaneId pane) const scope pure nothrow @nogc
     {
         const i = nodeOf(pane);
         return i != uint.max && nodes[i].visible;
@@ -980,7 +980,7 @@ struct DockContainer
 
     /// The drag-to-redock in flight, for the host's hint overlay (`DCK5`).
     /// `active` is false when there is nothing to draw.
-    DockDrag dragHint() const pure nothrow @nogc => redock;
+    DockDrag dragHint() const scope pure nothrow @nogc => redock;
 
     /// How far a press on a tab must travel before it becomes a re-dock
     /// rather than an activation. In the container's units, so a terminal
@@ -988,7 +988,7 @@ struct DockContainer
     int dragThreshold = 2;
 
     /// `true` while a divider drag owns the pointer.
-    bool resizing() const pure nothrow @nogc => dragDivider != uint.max;
+    bool resizing() const scope pure nothrow @nogc => dragDivider != uint.max;
 
     /**
     Updates the hover chrome from a pointer position — frozen while
