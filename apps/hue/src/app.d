@@ -502,65 +502,36 @@ private GrammarRegistry defaultRegistry() @safe
 
 /// Heuristic for whether a graphical display is available, used to pick the GUI
 /// vs the terminal by default (no `--gui`/`--no-gui`). On Linux/BSD a display is
-/// present when `$DISPLAY` (X11) or `$WAYLAND_DISPLAY` is set; on macOS/Windows a
-/// local session is assumed to have one unless we are in an SSH login
-/// (`$SSH_CONNECTION`). A false negative just falls back to the terminal, and
-/// `--gui` overrides it, so the heuristic only has to be right most of the time.
-private bool displayAvailable()
-{
-    import std.process : environment;
+// The sink vocabulary and the decision are the host's now (`P2.B2`, `BKD1`/
+// `BKD2` — the library preserved hue's rules verbatim, "--gui wins even
+// uncompiled" included; the Android fact is `BKD4`; the display probe is
+// `BKD3`'s socket-level one rather than the env heuristic this replaced).
+import sparkles.ui_app.backend : Backend, BackendPolicy,
+    hostPickBackend = pickBackend, platformForcedBackend;
+import sparkles.ui_app.display : displayAvailable;
 
-    version (OSX)
-        return environment.get("SSH_CONNECTION", "").length == 0;
-    else version (Windows)
-        return environment.get("SSH_CONNECTION", "").length == 0;
-    else
-        return environment.get("DISPLAY", "").length != 0
-            || environment.get("WAYLAND_DISPLAY", "").length != 0;
-}
-
-/// The render sink a run paints into — one choice, made once. The old code
-/// spread this across `wantGui`, `html`, and an `interactive` tty check; the
-/// content question ("what is this document?") lives in `document.detect`.
-enum Backend : ubyte
-{
-    gui,  /// the raylib window
-    tui,  /// the interactive terminal (alt screen)
-    html, /// static HTML on stdout
-    ansi, /// static ANSI on stdout (piped / redirected)
-}
-
-/// Picks the sink: explicit flags win (`--gui`; `--no-gui`/`--tui`/`--html`
-/// force the terminal), then autodetect — a GUI build with a display and a
-/// tty opens the window; a tty gets the interactive viewer; anything else
-/// streams ANSI.
+/// The one choice, made once: hue's part is only assembling the policy —
+/// which flags were given, what this build compiled in, what the process
+/// sees — and the pure picker answers.
 private Backend pickBackend(in CliParams cli)
 {
-    // Android: the library runs inside a NativeActivity — no tty, no argv, no
-    // $DISPLAY. The window *is* the app; every other sink is meaningless.
-    //
-    // Note the heuristic below could not stand in for this: on Android
-    // `isTerminal` and `displayAvailable` are both false, which would answer
-    // `ansi`. The Android fact is not "no display" but "the surface IS the
-    // app" — a statement about the process model, which only hue can make.
-    version (Android)
-        return Backend.gui;
-    else
-    {
-        bool guiCompiledIn = false;
-        version (HueGui) guiCompiledIn = true;
+    Backend forced;
+    if (platformForcedBackend(forced))
+        return forced; // Android: the surface IS the app (`BKD4`)
 
-        if (cli.gui)
-            return Backend.gui; // even without GUI support: the sink reports it
-        if (cli.html)
-            return Backend.html;
-        if (!cli.noGui && !cli.tui && guiCompiledIn
-            && isTerminal(StdStream.stdout) && displayAvailable())
-            return Backend.gui;
-        if (isTerminal(StdStream.stdin) && isTerminal(StdStream.stdout))
-            return Backend.tui;
-        return Backend.ansi;
-    }
+    bool guiCompiledIn = false;
+    version (HueGui) guiCompiledIn = true;
+
+    return hostPickBackend(BackendPolicy(
+        forceGui: cli.gui,
+        forceNoGui: cli.noGui,
+        forceTui: cli.tui,
+        forceHtml: cli.html,
+        guiCompiledIn: guiCompiledIn,
+        stdinTty: isTerminal(StdStream.stdin),
+        stdoutTty: isTerminal(StdStream.stdout),
+        displayPresent: displayAvailable(),
+    ));
 }
 
 int main(string[] args)
