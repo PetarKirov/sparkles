@@ -44,6 +44,118 @@ struct SelectionDrag
         => anchorLo < headLo ? anchorLo : headLo;
     long selMax() const @safe pure nothrow @nogc
         => anchorHi > headHi ? anchorHi : headHi;
+
+    /**
+    Begins a drag from the press's hit: `true` when a drag actually starts —
+    the caller's cue to take the pointer capture. The regime and anchors come
+    from what was under the pointer; a miss still runs (regime `none`,
+    nothing selecting), exactly as the inline version did.
+
+    Templated over the hit (`ok`/`table`/`tableIdx`/`cell`/`lo`/`hi`) because
+    the concrete hit type is frame-local to the GUI's `hitAt` — and a test's
+    fake hit is then just another instantiation.
+    */
+    bool begin(H)(in H h)
+    {
+        selecting = h.ok;
+        if (h.table)
+        {
+            regime = Regime.table;
+            selTable = h.tableIdx;
+            tblAnchor = tblHead = h.cell;
+            tblShift = tblAlt = false;
+        }
+        else if (h.ok)
+        {
+            regime = Regime.text;
+            anchorLo = headLo = h.lo;
+            anchorHi = headHi = h.hi;
+        }
+        else
+            regime = Regime.none;
+        return selecting;
+    }
+
+    /// Extends the running drag with the hover's hit. A table drag only
+    /// follows hits in $(B its own) table and carries the modifier snapshot
+    /// its copy serializes with; a text drag extends over anything with a
+    /// source span — including a table line's block span, so a drag from
+    /// outside sweeps across it.
+    void extend(H)(in H h, bool shiftMod, bool altMod)
+    {
+        if (regime == Regime.table && h.table && h.tableIdx == selTable)
+        {
+            tblHead = h.cell;
+            tblShift = shiftMod;
+            tblAlt = altMod;
+        }
+        else if (regime == Regime.text && h.ok)
+        {
+            headLo = h.lo;
+            headHi = h.hi;
+        }
+    }
+}
+
+version (unittest)
+{
+    /// The hit shape `begin`/`extend` are generic over, as a test fake.
+    private struct FakeHit
+    {
+        bool ok, table;
+        long lo, hi;
+        int tableIdx;
+        GridHit cell;
+    }
+}
+
+@("gui_state.SelectionDrag.beginPicksTheRegime")
+@safe pure nothrow @nogc
+unittest
+{
+    SelectionDrag d;
+
+    // A text hit: anchors collapse onto the hit span; the caller captures.
+    assert(d.begin(FakeHit(ok: true, lo: 10, hi: 14)));
+    assert(d.regime == Regime.text);
+    assert(d.selMin == 10 && d.selMax == 14);
+
+    // A table hit: the drag binds to THAT table, modifiers reset.
+    d.tblShift = true;
+    assert(d.begin(FakeHit(ok: true, table: true, tableIdx: 2,
+        cell: GridHit(row: 1, col: 3))));
+    assert(d.regime == Regime.table);
+    assert(d.selTable == 2);
+    assert(!d.tblShift && !d.tblAlt);
+
+    // A miss: nothing selecting, regime cleared — but the call still runs.
+    assert(!d.begin(FakeHit()));
+    assert(d.regime == Regime.none);
+}
+
+@("gui_state.SelectionDrag.extendFollowsItsRegime")
+@safe pure nothrow @nogc
+unittest
+{
+    SelectionDrag d;
+
+    // A table drag ignores hits in OTHER tables and text spans...
+    cast(void) d.begin(FakeHit(ok: true, table: true, tableIdx: 1,
+        cell: GridHit(row: 0, col: 0)));
+    d.extend(FakeHit(ok: true, table: true, tableIdx: 7,
+        cell: GridHit(row: 9, col: 9)), true, false);
+    assert(d.tblHead == GridHit(row: 0, col: 0) && !d.tblShift);
+    // ...and follows its own, carrying the modifier snapshot.
+    d.extend(FakeHit(ok: true, table: true, tableIdx: 1,
+        cell: GridHit(row: 2, col: 4)), true, true);
+    assert(d.tblHead == GridHit(row: 2, col: 4));
+    assert(d.tblShift && d.tblAlt);
+
+    // A text drag extends over any source span — a table's block span too.
+    cast(void) d.begin(FakeHit(ok: true, lo: 5, hi: 8));
+    d.extend(FakeHit(ok: true, table: true, tableIdx: 3, lo: 40, hi: 44),
+        false, false);
+    assert(d.selMax == 44, "a text drag sweeps across a table from outside");
 }
 
 
