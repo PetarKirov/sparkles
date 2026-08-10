@@ -2192,43 +2192,14 @@ int runGui(
             if (selectStartPressed() && !overSb && !overTree && !copyClicked
                 && !popupClicked && inp.capture.available(capSelection))
             {
-                const h = hitAt(mp.x, mp.y);
-                drag.selecting = h.ok;
-                if (drag.selecting)
+                // The lifecycle decisions live on the state (`gui_state`,
+                // tested); what stays here is the capture, which is the
+                // frame's to take.
+                if (drag.begin(hitAt(mp.x, mp.y)))
                     inp.capture = inp.capture.capturedBy(capSelection);
-                if (h.table)
-                {
-                    drag.regime = Regime.table;
-                    drag.selTable = h.tableIdx;
-                    drag.tblAnchor = drag.tblHead = h.cell;
-                    drag.tblShift = drag.tblAlt = false;
-                }
-                else if (h.ok)
-                {
-                    drag.regime = Regime.text;
-                    drag.anchorLo = drag.headLo = h.lo;
-                    drag.anchorHi = drag.headHi = h.hi;
-                }
-                else
-                    drag.regime = Regime.none;
             }
             if (drag.selecting && inp.fin.leftDown)
-            {
-                const h = hitAt(mp.x, mp.y);
-                if (drag.regime == Regime.table && h.table && h.tableIdx == drag.selTable)
-                {
-                    drag.tblHead = h.cell;
-                    drag.tblShift = shiftMod;
-                    drag.tblAlt = altMod;
-                }
-                else if (drag.regime == Regime.text && h.ok)
-                {
-                    // Extend over anything with a source span — including a table
-                    // line's block span, so a drag from outside sweeps across it.
-                    drag.headLo = h.lo;
-                    drag.headHi = h.hi;
-                }
-            }
+                drag.extend(hitAt(mp.x, mp.y), shiftMod, altMod);
             if (inp.fin.leftReleased)
                 drag.selecting = false;
         }
