@@ -1785,7 +1785,23 @@ int runGui(
             // scrolling up; `WheelEvent.dy` follows the web's `deltaY`, where
             // up is NEGATIVE. So the two subtractions below become additions —
             // the same direction, expressed against the other convention.
-            if (inp.fin.wheelCells != 0)
+            // Ctrl carves the zoom out of that (`FNT3`), the way every
+            // document viewer spells it: up grows, down shrinks. Reading
+            // `mods` — a LEVEL, "as of the last event that carried one" —
+            // is sound here only because hue's producer stamps ONE
+            // `currentMods()` snapshot on every event it emits in a frame
+            // (`RaylibEvents.poll`), so no later key or pointer event can
+            // clobber the wheel's modifiers with a different value.
+            //
+            // The SIGN drives the step, never the magnitude: `fonts.reload`
+            // rebuilds the whole glyph atlas, so a frame gets one ±2 step
+            // however many notches it accumulated — which is also exactly
+            // the step `Ctrl-=` and Android's pinch take.
+            if (inp.fin.wheelCells != 0 && inp.fin.mods.ctrl)
+            {
+                bumpFontSize(inp.fin.wheelCells > 0 ? -2 : 2);
+            }
+            else if (inp.fin.wheelCells != 0)
             {
                 // WHERE a wheel goes is the container's (DCK7): the pane
                 // under the pointer, regardless of focus, with chrome
