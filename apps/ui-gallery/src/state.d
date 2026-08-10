@@ -16,6 +16,7 @@ module state;
 import sparkles.input : InputCapabilities;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.scroll_view : ScrollbarAnim, ScrollView;
+import sparkles.ui.dock : DockContainer;
 import sparkles.ui.state : CaptureState, DisclosureState, FocusState,
     HoverState, PressState, ScrollState, Selection, SplitState, Timeline;
 import sparkles.ui.theme : Theme;
@@ -73,6 +74,7 @@ enum size_t hitDemoBar = 7100;    /// the Scrolling page's specimen bar
 enum size_t hitChromeBar = 7200;  /// the Components page's live scroll view
 enum size_t hitInspBar = 7300;    /// the inspector panel's scrollbar
 enum size_t hitSplit = 8000;    /// the split page's divider
+enum size_t hitDock = 8100;     /// the dock page's live container
 enum size_t hitMachines = 9000; /// the state-machine page's tiles
 enum size_t hitTermActions = 10000; /// the Terminal page's action bar (3 ids)
 enum size_t hitTermBar = 10050;     /// the terminal pane's scrollback bar
@@ -293,6 +295,10 @@ struct GalleryState
     TreeDemo treeDemo;       ///
     MachinesDemo machines;   ///
     SplitState split = SplitState(24); ///
+    /// The Dock page's live container: a sidebar beside a tabbed group of
+    /// two documents. Its own, so dragging a tab here cannot disturb the
+    /// shell's own panes.
+    DockContainer dock;
     size_t themeListTop;     /// first visible row of the theme browser
     size_t componentsTab;    /// the Components page's active tab
     size_t componentsAction = size_t.max; /// …and its last activated segment

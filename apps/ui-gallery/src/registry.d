@@ -26,6 +26,8 @@ import pages.components_page : componentsKeys = keys,
     componentsOnPointer = handlePointer, componentsStep = step,
     componentsView = view;
 import pages.decoration_page : decorationView = view;
+import pages.dock_page : dockKeys = keys, dockOnKey = handleKey,
+    dockOnPointer = handlePointer, dockStep = step, dockView = view;
 import pages.machines_page : machinesAnimating = animating,
     machinesKeys = keys, machinesOnActivate = handleActivate,
     machinesOnKey = handleKey, machinesStep = step, machinesView = view;
@@ -131,6 +133,8 @@ static immutable Page[] pages = [
         machinesKeys, &machinesOnKey, &machinesOnActivate),
     Page("Split", "a divider between two panes", &splitView,
         splitKeys, &splitOnKey),
+    Page("Dock", "panes as a value", &dockView,
+        dockKeys, &dockOnKey, null, &dockOnPointer),
     Page("Terminal", "a shell as a widget", &terminalView,
         terminalKeys, &terminalOnKey, &terminalOnActivate,
         &terminalOnPointer),
@@ -152,6 +156,7 @@ bool stepPage(ref GalleryState s, int dtMs)
     machinesStep(s, dtMs);
     scrollingStep(s, dtMs);
     componentsStep(s, dtMs);
+    dockStep(s, dtMs);
     terminalStep(s, dtMs);
     return machinesAnimating(s);
 }
