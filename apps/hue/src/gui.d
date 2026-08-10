@@ -111,140 +111,10 @@ import live_types : applyTip, LiveTypesSession;
 // The multi-document set the twoslash view navigates with `[`/`]` (`GNV1`), plus
 // the two entry points a navigation reload needs.
 import source_set : SourceEntry, SourceSet;
+import gui_state;
 import sparkles.twoslash.ingest : loadTwoslashFile;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 
-/// Which selection regime a drag runs (`SEL`/`TBL`).
-private enum Regime
-{
-    none,
-    text,
-    table,
-}
-
-/// The mouse-selection drag state (M15 GROUP-S of the GuiState hoist):
-/// which regime the drag runs (text span vs table grid), the live anchors,
-/// and the modifier snapshot a table drag copies with.
-private struct SelectionDrag
-{
-    Regime regime;
-    bool selecting;
-    long anchorLo, anchorHi, headLo, headHi;
-    int selTable = -1;
-    GridHit tblAnchor, tblHead;
-    bool tblShift, tblAlt;
-
-    long selMin() const @safe pure nothrow @nogc
-        => anchorLo < headLo ? anchorLo : headLo;
-    long selMax() const @safe pure nothrow @nogc
-        => anchorHi > headHi ? anchorHi : headHi;
-}
-
-/// The two panes this host composes. Identities, not indices: the
-/// container resolves them to frames.
-private enum PaneId treePane = 1, docPane = 2;
-
-/// The workspace panes (M15 GROUP-P of the GuiState hoist): the explorer
-/// tree pane (XPL2), and the dock container that arranges it beside the
-/// document (C-2a) — the container owns the tiling, the STM8 divider
-/// drag, focus and its own pointer capture. Scrolling moved off with C-1:
-/// each scrollable model owns its `ScrollView` (`vm.scroll` /
-/// `tree.scroll`) — machines, offsets and px easings as one value both
-/// backends step.
-private struct Panes
-{
-    ExplorerTui tree;
-    DockContainer dock;
-
-    /// The key guide's pending path and panel state (`LTN2`). Owned here
-    /// because it is view state like any other, and because both panes feed
-    /// it — the guide is not the viewer's or the tree's.
-    LanternState lantern;
-
-    /// Whether the explorer pane is shown at all ('e' toggles it).
-    bool treeVisible() const @safe pure nothrow
-        => dock.layout.visible(treePane);
-
-    /// ditto
-    void treeVisible(bool v) @safe pure nothrow
-    {
-        dock.layout.setVisible(treePane, v);
-    }
-
-    /// Whether the explorer pane holds focus (`DCK6`, container-owned).
-    bool treeFocused() const @safe pure nothrow @nogc
-        => dock.focused == treePane;
-
-    /// ditto
-    void treeFocused(bool v) @safe pure nothrow @nogc
-    {
-        dock.focused = v ? treePane : docPane;
-    }
-}
-
-/// The input-routing state (M15 GROUP-I of the GuiState hoist): which
-/// line-input surface owns the keyboard ('/' search, ':' goto) and its
-/// typed query, pointer-capture ownership (STM11), and the per-frame
-/// `FrameInput` fold carry (IXB7 — the button level lives across frames).
-private struct InputState
-{
-    Mode mode = Mode.normal;
-    SmallBuffer!(char, 256) query;
-    CaptureState capture;
-    InputFrame fin;
-}
-
-/// The copy modes (M15 GROUP-C of the GuiState hoist), toggleable at
-/// runtime and seeded from the CLI: 'y' flips ANSI strip-vs-raw (SEL7),
-/// 't' flips the table serialization (TBL2); a toggle flashes the new
-/// mode in the status bar (`Flashes.toast`).
-private struct CopyModes
-{
-    bool ansiStrip;
-    TableCopyFormat tableFmt;
-}
-
-/// The transient feedback state (M15 GROUP-T of the GuiState hoist): the
-/// copied-checkmark flash beside a fence's copy button (the copied fence
-/// itself is `vm.copiedFenceSrc`), the copy-mode toast a 'y'/'t' toggle
-/// flashes in the status bar, and the armed vim 'z' fold sequence ('z'
-/// arms it for ~a second; the next key picks the op).
-private struct Flashes
-{
-    Timeline copiedFlash;
-    bool copiedShown; // the ✔ glyph is in the tree; rebuild when the flash ends
-    string copyModeMsg;
-    Timeline toast;
-}
-
-/// The twoslash hover latch (M15 GROUP-T): the open popup's node (+1;
-/// 0 = none), its rect (pointer hysteresis), the token-underline fade
-/// (STM6), and — per popup, not persistent — which collapsed signature
-/// runs the reader opened, with where they landed so a click can name one.
-private struct HoverPopup
-{
-    size_t hotNode = 0;
-    PixelRect hotPopup;
-    bool havePopup = false;
-    ExpandedRegions expandedRegions;
-    KeyTarget[] popupKeys;
-    size_t popupNode = size_t.max;
-    Timeline fade;
-    int forceHover = -1; // HUE_GUI_HOVER=<n>: force the Nth popup (goldens)
-}
-
-/// The live-resize relayout debounce (M15 GROUP-W of the GuiState hoist):
-/// during a drag the column count changes almost every frame, so re-wrap
-/// only once the width has held steady for `settleFrames` frames — the drag
-/// pays one relayout when it settles instead of one per frame. Discrete
-/// width changes (theme / font size / gutter toggles) relayout immediately,
-/// so this only ever debounces a live window resize.
-private struct ResizeDebounce
-{
-    int prevWidthCols = -1;
-    int settle;
-    enum settleFrames = 4; // ~66 ms at 60 FPS
-}
 
 /// The window's default font size in pixels (Ctrl-±/theme cycling arrive in M3).
 private enum defaultFontSize = 18;
@@ -283,13 +153,6 @@ private struct Tint { RgbColor rgb; ubyte alpha; }
 private enum Tint matchTint = Tint(RgbColor(255, 215, 0), 70);
 private enum Tint currentMatchTint = Tint(RgbColor(255, 145, 0), 130);
 
-/// The interactive input mode (M4): normal keys, or typing a search / goto line.
-private enum Mode
-{
-    normal,
-    search,
-    gotoLine,
-}
 
 /// A loaded document — the pipeline's `Document` Whole itself, so the
 /// navigation boundary loses nothing (content kind and diff payload ride
@@ -3161,15 +3024,6 @@ private const(char)[] cstrOf(ref SmallBuffer!(char, 4096) buf, scope const(char)
     buf ~= '\0';
     return buf[][0 .. $ - 1];
 }
-
-/// A pixel-space rectangle — the popup's own geometry. Local rather than the
-/// backend's `Rectangle`, so hue names no raylib type; `sparkles.ui.Rect` is
-/// integer CELLS and cannot express a sub-cell popup edge.
-struct PixelRect
-{
-    float x = 0, y = 0, width = 0, height = 0;
-}
-
 /// `true` iff this frame's keys include `k` — the edge query the input-mode
 /// blocks want, over the drained stream rather than a second poll.
 private bool hasKey(scope const KeyEvent[] keys, Key k) @safe pure nothrow @nogc
