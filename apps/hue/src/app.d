@@ -951,7 +951,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
 
     version (HueGui)
     {
-        import gui : LoadedDoc, runGui;
+        import gui : GuiArgs, LoadedDoc, runGui;
         import sparkles.raylib_text : FontSet;
 
         // A directory target opens in the tree; decided before the Android
@@ -1020,20 +1020,46 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
                 capture.screenshotPath = androidDataDir() ~ "/" ~ capture.screenshotPath;
         }
 
-        return runGui(doc.title, doc.source, doc.events, labels, themeSet.names,
-            themeSet.themes, themeSet.idx, doc.preview, fontName, cli.fontSize,
-            cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
-            cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
-            parseCodeOverflow(cli.codeOverflow), cli.codeMaxLines,
-            docSet, &loadDoc, &cache, doc.twoslash,
-            doc.path, startInTree: startInTree, treeRoot,
-            faceOv, doc.lang,
-            cli.include.dup, cli.exclude.dup, cli.treeWidth,
-            cli.tabWidth, cli.listWhitespace, cpMaps,
-            liveTypes: !cli.noLiveTypes, initialDiff: doc.diffDoc,
+        return runGui(GuiArgs(
+            title: doc.title,
+            source: doc.source,
+            events: doc.events,
+            labels: labels,
+            names: themeSet.names,
+            themes: themeSet.themes,
+            startIdx: themeSet.idx,
+            preview: doc.preview,
+            fontName: fontName,
+            fontSize: cli.fontSize,
+            windowWidth: cli.windowWidth,
+            windowHeight: cli.windowHeight,
+            lineNumbers: cli.lineNumbers,
+            codeLineNumbers: cli.codeLineNumbers,
+            ansiCopyStrip: cli.ansiCopy == "strip",
+            tableCopy: parseTableCopy(cli.tableCopy),
+            codeOverflow: parseCodeOverflow(cli.codeOverflow),
+            codeMaxLines: cli.codeMaxLines,
+            set: docSet,
+            loadDoc: &loadDoc,
+            tsCache: &cache,
+            twoslash: doc.twoslash,
+            docPath: doc.path,
+            startInTree: startInTree,
+            treeRoot: treeRoot,
+            faces: faceOv,
+            docLang: doc.lang,
+            includeGlobs: cli.include.dup,
+            excludeGlobs: cli.exclude.dup,
+            treeWidth: cli.treeWidth,
+            tabWidth: cli.tabWidth,
+            listWhitespace: cli.listWhitespace,
+            codepointMaps: cpMaps,
+            liveTypes: !cli.noLiveTypes,
+            initialDiff: doc.diffDoc,
             initialDiffSides: doc.diffSides,
             initialDiffSession: doc.diffSession,
-            capture: capture);
+            capture: capture,
+        ));
     }
     else
     {

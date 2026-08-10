@@ -173,47 +173,57 @@ and live theme cycling (M3), and search (M4) build on top.
 `names`/`themes` are the sorted, parallel built-in theme arrays; `startIdx` is
 the initially selected theme. Returns a process exit code.
 */
-int runGui(
-    string title,
-    const(char)[] source,
-    const(HighlightEvent)[] events,
-    LabelSet labels,
-    const(string)[] names,
-    immutable(Theme)[] themes,
-    size_t startIdx,
-    PreviewModel preview = PreviewModel.init,
-    string fontName = "monospace",
-    int fontSize = defaultFontSize,
-    int windowWidth = 800,
-    int windowHeight = 600,
-    bool lineNumbers = true,
-    bool codeLineNumbers = true,
-    bool ansiCopyStrip = false,          // --ansi-copy=strip (SEL7/CLI10); default raw
-    TableCopyFormat tableCopy = TableCopyFormat.tsv, // --table-copy (TBL2/CLI11)
-    CodeOverflow codeOverflow = CodeOverflow.scroll, // --code-overflow
-    int codeMaxLines = -1,               // --code-max-lines (COD6; -1 = auto)
-    SourceSet* set = null,               // the document set to navigate (GNV1)
-    DocLoader loadDoc = null,            // loads a set entry (supplied by app.d)
-    TsConfigCache* tsCache = null,       // fence highlighting for the widget view
-    TwoslashReturn twoslash = TwoslashReturn.init, // twoslash document payload
-    string docPath = null,               // on-disk path (reveal in the tree)
-    bool startInTree = false,            // a directory target opens in the tree
-    string treeRoot = null,              // explorer root (default: docPath's dir)
-    FontSet.FaceOverrides faces = FontSet.FaceOverrides.init, // per-style fonts
-    string docLang = null,               // canonical language (CST folds)
-    string[] includeGlobs = null,        // explorer globs (XPF2)
-    string[] excludeGlobs = null,        // ditto
-    int treeWidth = 32,                  // explorer pane width in cells
-    int tabWidth = 4,                    // tab stops in the raw view
-    bool listWhitespace = false,         // vim 'list' whitespace glyphs
-    string[] codepointMaps = null,       // --font-codepoint-map entries (Android defaults)
-    bool liveTypes = true,               // live D types via the oracle (PRJ12)
-    DiffDoc initialDiff = DiffDoc.init,  // diff document payload (ContentKind.diff)
-    DiffSides[] initialDiffSides = null, // per-file side texts (DVM5)
-    DiffSession initialDiffSession = DiffSession.init, // changed-file session (DVS4)
-    GuiCapture capture = GuiCapture.init, // deterministic-capture hooks (CLI6)
-) @system
+/// Everything one GUI run is given (`P2.B4` first slice): the 39 parameters
+/// as one value, so the loop-to-component migration moves a struct instead
+/// of a signature. Field names are the old parameter names — the body reads
+/// them through `with`.
+struct GuiArgs
 {
+    string title;
+    const(char)[] source;
+    const(HighlightEvent)[] events;
+    LabelSet labels;
+    const(string)[] names;
+    immutable(Theme)[] themes;
+    size_t startIdx;
+    PreviewModel preview = PreviewModel.init;
+    string fontName = "monospace";
+    int fontSize = defaultFontSize;
+    int windowWidth = 800;
+    int windowHeight = 600;
+    bool lineNumbers = true;
+    bool codeLineNumbers = true;
+    bool ansiCopyStrip = false;          // --ansi-copy=strip (SEL7/CLI10); default raw
+    TableCopyFormat tableCopy = TableCopyFormat.tsv; // --table-copy (TBL2/CLI11)
+    CodeOverflow codeOverflow = CodeOverflow.scroll; // --code-overflow
+    int codeMaxLines = -1;               // --code-max-lines (COD6; -1 = auto)
+    SourceSet* set = null;               // the document set to navigate (GNV1)
+    DocLoader loadDoc = null;            // loads a set entry (supplied by app.d)
+    TsConfigCache* tsCache = null;       // fence highlighting for the widget view
+    TwoslashReturn twoslash = TwoslashReturn.init; // twoslash document payload
+    string docPath = null;               // on-disk path (reveal in the tree)
+    bool startInTree = false;            // a directory target opens in the tree
+    string treeRoot = null;              // explorer root (default: docPath's dir)
+    FontSet.FaceOverrides faces = FontSet.FaceOverrides.init; // per-style fonts
+    string docLang = null;               // canonical language (CST folds)
+    string[] includeGlobs = null;        // explorer globs (XPF2)
+    string[] excludeGlobs = null;        // ditto
+    int treeWidth = 32;                  // explorer pane width in cells
+    int tabWidth = 4;                    // tab stops in the raw view
+    bool listWhitespace = false;         // vim 'list' whitespace glyphs
+    string[] codepointMaps = null;       // --font-codepoint-map entries (Android defaults)
+    bool liveTypes = true;               // live D types via the oracle (PRJ12)
+    DiffDoc initialDiff = DiffDoc.init;  // diff document payload (ContentKind.diff)
+    DiffSides[] initialDiffSides = null; // per-file side texts (DVM5)
+    DiffSession initialDiffSession = DiffSession.init; // changed-file session (DVS4)
+    GuiCapture capture = GuiCapture.init; // deterministic-capture hooks (CLI6)
+}
+
+/// ditto
+int runGui(GuiArgs guiArgs) @system
+{
+    with (guiArgs)
+    {
     import std.stdio : stderr;
     import std.string : toStringz;
     import std.process : environment;
@@ -2764,6 +2774,7 @@ int runGui(
     }
 
     return 0;
+    }
 }
 
 /**
