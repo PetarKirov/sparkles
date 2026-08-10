@@ -1213,13 +1213,8 @@ int runGui(
         // frames, so a drag that sweeps many widths re-wraps once at the end. While
         // the drag is in flight the (slightly stale) wrapped lines keep painting.
         const wc = widthCols();
-        if (wc != vm.widthCols)
-        {
-            rd.settle = (wc == rd.prevWidthCols) ? rd.settle + 1 : 0;
-            if (rd.settle >= ResizeDebounce.settleFrames)
-                relayout();
-        }
-        rd.prevWidthCols = wc;
+        if (rd.step(wc, vm.widthCols))
+            relayout();
         // The one visual-line space (scroll/selection/search): the active
         // widget tree's rows, whichever view kind built it.
         const total = vm.rows.length;
@@ -1294,13 +1289,18 @@ int runGui(
                 }
                 else if (inp.query.length) // gotoLine → the source line's visual row
                 {
+                    // The parse half is the tested `parseGotoLine`; the jump
+                    // half stays here with the view model.
+                    const parsed = parseGotoLine(inp.query[]);
                     try
                     {
-                        const n = inp.query[].to!long;
-                        const line = cast(size_t)(n > 0 ? n - 1 : 0);
-                        if (line < vm.lineStarts.length)
-                            vm.revealOffset(vm.lineStarts[line]); // FLD6
-                        vm.top = vm.visualOfSrc(line);
+                        if (parsed >= 0)
+                        {
+                            const line = cast(size_t) parsed;
+                            if (line < vm.lineStarts.length)
+                                vm.revealOffset(vm.lineStarts[line]); // FLD6
+                            vm.top = vm.visualOfSrc(line);
+                        }
                     }
                     catch (Exception)
                     {

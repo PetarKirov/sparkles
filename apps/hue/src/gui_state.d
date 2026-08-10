@@ -150,6 +150,46 @@ struct ResizeDebounce
     int prevWidthCols = -1;
     int settle;
     enum settleFrames = 4; // ~66 ms at 60 FPS
+
+    /**
+    Steps the debounce with this frame's width and answers whether to relayout
+    $(B now): only when the width differs from the laid-out one $(B and) has
+    held steady for `settleFrames` consecutive frames — so a drag that sweeps
+    many widths re-wraps once at the end, while discrete changes (theme, font
+    size, gutter toggles) relayout through their own immediate paths.
+    */
+    bool step(int widthCols, int laidOutCols) @safe pure nothrow @nogc
+    {
+        bool fire = false;
+        if (widthCols != laidOutCols)
+        {
+            settle = (widthCols == prevWidthCols) ? settle + 1 : 0;
+            if (settle >= settleFrames)
+                fire = true;
+        }
+        prevWidthCols = widthCols;
+        return fire;
+    }
+}
+
+@("gui_state.ResizeDebounce.firesOnceSteady")
+@safe pure nothrow @nogc
+unittest
+{
+    // A drag sweeping widths: every new width resets the count; only a width
+    // that holds for settleFrames consecutive frames fires.
+    ResizeDebounce rd;
+    assert(!rd.step(80, 100)); // differs from laid-out, first sighting
+    assert(!rd.step(78, 100)); // still sweeping: reset
+    assert(!rd.step(78, 100)); // settle = 1
+    assert(!rd.step(78, 100)); // settle = 2
+    assert(!rd.step(78, 100)); // settle = 3
+    assert(rd.step(78, 100));  // settle = 4: fire
+
+    // At the laid-out width nothing fires and nothing accumulates.
+    ResizeDebounce quiet;
+    foreach (i; 0 .. 10)
+        assert(!quiet.step(100, 100));
 }
 
 /// The interactive input mode (M4): normal keys, or typing a search / goto line.
@@ -169,6 +209,42 @@ struct PixelRect
     float x = 0, y = 0, width = 0, height = 0;
 }
 
+
+/**
+Parses the goto-line query (`:` mode) into the 0-based source line: 1-based
+input, non-positive clamps to the first line, non-numeric (or empty) is `-1` —
+no jump. Deliberately $(B not) range-checked against the document: the
+original handler set the viewport top even past the last line (the view model
+clamps), and this is only the parse half of that decision.
+*/
+long parseGotoLine(scope const(char)[] query) @safe pure nothrow
+{
+    import std.conv : to;
+
+    if (query.length == 0)
+        return -1;
+    long n;
+    try
+        n = query.to!long;
+    catch (Exception)
+        return -1;
+    return n > 0 ? n - 1 : 0;
+}
+
+@("gui_state.parseGotoLine")
+@safe pure nothrow
+unittest
+{
+    // 1-based in, 0-based out; zero and negatives clamp to the first line.
+    assert(parseGotoLine("1") == 0);
+    assert(parseGotoLine("42") == 41);
+    assert(parseGotoLine("0") == 0);
+    assert(parseGotoLine("-5") == 0);
+    // Garbage or nothing typed: no jump.
+    assert(parseGotoLine("abc") == -1);
+    assert(parseGotoLine("") == -1);
+    assert(parseGotoLine("12x") == -1);
+}
 
 // ---------------------------------------------------------------------------
 // Tests — the first coverage gui.d's state has ever had.
