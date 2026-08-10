@@ -49,8 +49,12 @@ struct CliParams
     @(Option("html", description: "Output formatted HTML instead of ANSI terminal escapes."))
     bool html;
 
-    @(Option("theme", description: "Syntax highlighting theme name."))
-    string theme = "catppuccin-mocha";
+    // The window/font/theme/backend-force vocabulary is the host's now
+    // (`CLI1`-`CLI3`): one declaration, one set of defaults, one help text.
+    // USER-VISIBLE (`UIAPP-O1`): --font-size 14 -> 18 and --theme
+    // catppuccin-mocha -> tokyo-night; hue gains --font-dir and
+    // --font-codepoint-map (previously Android-internal).
+    mixin GuiCliFields;
 
     @(Option("include", description: "Explorer glob(s) to always show (overrides hidden, git-ignored, and --exclude); matched against the entry name and its root-relative path. Repeatable."))
     string[] include;
@@ -66,21 +70,6 @@ struct CliParams
 
     @(Option("list-whitespace", description: "Render whitespace visibly in the raw view, vim's 'list' style: tabs as '→', spaces and trailing runs as '·', no-break spaces as '␣'."))
     bool listWhitespace;
-
-    // `--no-gui` is a distinct flag, not the negation of `--gui`: the two say
-    // different things (force the window / force the terminal) and neither
-    // being given is a third answer — autodetect. The parser resolves a
-    // `--no-<name>` token against the FIRST field it matches, so `noGui` must
-    // be declared before `gui`, or `--no-gui` would land on `gui` as a
-    // negation (setting it false) and leave `noGui` unset.
-    @(Option("no-gui", description: "Force terminal output (previewer / ANSI / HTML) even when a display is available."))
-    bool noGui;
-
-    @(Option("tui", description: "Alias for --no-gui."))
-    bool tui;
-
-    @(Option("gui", description: "Force the raylib GPU window (requires the 'gui' build configuration). With neither --gui nor --no-gui, hue opens the window automatically when a display is available and falls back to the terminal otherwise."))
-    bool gui;
 
     @(Option("twoslash", description: "Render a TypeScript twoslash JSON payload (its `code` + nodes) as a type-annotated overlay. Compatibility spelling of --overlay twoslash=<path>; a *.twoslash.json target needs no flag."))
     string twoslash;
@@ -123,27 +112,6 @@ struct CliParams
 
     @(Option("diff-layout", description: "Diff layout: unified (default, one column) or split (two aligned panes). A split narrower than 80 columns degrades to unified, where the same diff reads better."))
     string diffLayout = "unified";
-
-    @(Option("font", description: "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins)."))
-    string font = defaultGuiFont;
-
-    @(Option("font-bold", description: "--gui bold face: a family, fontconfig pattern, or font file (default: the --font family's bold variant)."))
-    string fontBold;
-
-    @(Option("font-italic", description: "--gui italic face: a family, fontconfig pattern, or font file (default: the --font family's italic variant; absent, italic text renders upright — hue never fakes a slant)."))
-    string fontItalic;
-
-    @(Option("font-bold-italic", description: "--gui bold-italic face (default: the --font family's bold-italic variant)."))
-    string fontBoldItalic;
-
-    @(Option("font-size", description: "--gui font size in points (like the terminal)."))
-    int fontSize = 14;
-
-    @(Option("window-width", description: "--gui initial window width in cells (like the terminal)."))
-    int windowWidth = 100;
-
-    @(Option("window-height", description: "--gui initial window height in cells."))
-    int windowHeight = 30;
 
     @(Option("line-numbers", description: "--gui: show the file line-number gutter (default on; disable with =false; toggle at runtime with 'l')."))
     bool lineNumbers = true;
@@ -325,24 +293,13 @@ private BackgroundMode parseBackgroundMode(string name)
     }
 }
 
-/// Default `--gui` font: FiraCode Nerd Font Mono, then a fontconfig preference
-/// list of popular coding fonts (Nerd-Font variants first for icon glyphs),
-/// ending in a generic monospace — the first installed family wins, so hue
-/// renders on a sensible font even when none of the named ones are present.
-/// The markdown preview's decorations (heading/callout/link icons, checkboxes)
-/// are Nerd-Font glyphs; with a non-Nerd `--font` they degrade to tofu.
-enum defaultGuiFont =
-    "FiraCode Nerd Font Mono,JetBrainsMono Nerd Font Mono,JetBrains Mono," ~
-    "CaskaydiaCove Nerd Font Mono,Cascadia Code,Hack Nerd Font Mono,Hack," ~
-    "Iosevka Term,Iosevka,Source Code Pro,DejaVu Sans Mono,monospace";
+// The font default is the host's (`CLI3`): the shared cascade already leads
+// with the bundled Maple family, so the Android prepend this file carried is
+// gone — the shared default IS the Android answer now.
 
 version (Android)
 {
-    /// The bundled on-device family (nix/packages/android/hue.nix ships all
-    /// four styled faces + charset sidecars); the desktop list follows so a
-    /// bundle-less build still finds something.
-    enum androidGuiFontFamily = "Maple Mono NF CN";
-    enum androidGuiFont = androidGuiFontFamily ~ "," ~ defaultGuiFont;
+    import sparkles.ui_app.gui_options : defaultGuiFont, defaultGuiFontFamily;
 
     /// Uiua's non-ASCII primitive glyphs, formatted subscripts, and
     /// canonicalized identifier suffixes render from the bundled Uiua386 —
@@ -506,6 +463,7 @@ private GrammarRegistry defaultRegistry() @safe
 // `BKD2` — the library preserved hue's rules verbatim, "--gui wins even
 // uncompiled" included; the Android fact is `BKD4`; the display probe is
 // `BKD3`'s socket-level one rather than the env heuristic this replaced).
+import sparkles.ui_app.gui_options : GuiCliFields;
 import sparkles.ui_app.backend : Backend, BackendPolicy,
     hostPickBackend = pickBackend, platformForcedBackend;
 import sparkles.ui_app.display : displayAvailable;
@@ -1054,9 +1012,9 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         // codepoint map.
         version (Android)
         {
-            const fontName = androidGuiFont;
-            const faceOv = FontSet.FaceOverrides(androidGuiFontFamily,
-                androidGuiFontFamily, androidGuiFontFamily);
+            const fontName = defaultGuiFont;
+            const faceOv = FontSet.FaceOverrides(defaultGuiFontFamily,
+                defaultGuiFontFamily, defaultGuiFontFamily);
             string[] cpMaps = [androidUiuaCodepointMap];
         }
         else
