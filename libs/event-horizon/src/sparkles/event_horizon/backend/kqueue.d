@@ -39,15 +39,15 @@ version (EventHorizonLibkqueue)
 
 version (EventHorizonKqueue)  :
 
-import core.stdc.errno : EAGAIN, ECANCELED, EINPROGRESS, errno;
+import core.stdc.errno : EAGAIN, ECANCELED, EINPROGRESS, errno, ESRCH;
 import core.sys.posix.sys.socket : accept, connect, recv, send;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
-    OpPollAdd, OpRead, OpRecv, OpSend, OpSlot, OpTimeout, OpToken, OpWrite,
-    PollEvents;
+    OpPollAdd, OpRead, OpRecv, OpSend, OpSlot, OpTimeout, OpToken, OpWaitid,
+    OpWrite, PollEvents;
 
 // ── minimal kqueue bindings (the exact BSD struct layout) ───────────────────
 
@@ -59,6 +59,10 @@ extern (C) nothrow @nogc
     int kevent(int kq, const(kevent_t)* changelist, int nchanges,
         kevent_t* eventlist, int nevents, const(timespec)* timeout);
     int close(int fd);
+    // Declared here rather than taken from druntime: core.sys.posix.sys.wait
+    // exposes `waitid` only under `version (linux)` in the versions this
+    // project builds against, and the BSD/macOS signature is identical.
+    int waitid(int idtype, uint id, void* infop, int options);
 }
 
 struct kevent_t
@@ -79,7 +83,11 @@ struct timespec
 
 enum short EVFILT_READ = -1;
 enum short EVFILT_WRITE = -2;
+enum short EVFILT_PROC = -5;
 enum short EVFILT_TIMER = -7;
+/// `EVFILT_PROC` fflag: the process exited. The only note this backend asks
+/// for — fork/exec tracking has no op to lower onto.
+enum uint NOTE_EXIT = 0x8000_0000;
 enum ushort EV_ADD = 0x0001;
 enum ushort EV_DELETE = 0x0002;
 enum ushort EV_ONESHOT = 0x0010;
@@ -99,6 +107,11 @@ struct KqOp
     uint nextFree; // freelist link (uint.max = none)
     bool live;     // acquired and not yet released — the cancel lookup's guard
     bool multishot; // poll_ only: the registration persists across completions
+    // waitid only: the reap is performed when NOTE_EXIT arrives, so its
+    // arguments have to survive the wait. `fd` carries the pid and `buf` the
+    // caller's `siginfo_t*`.
+    int idType;
+    int waitOptions;
 }
 
 enum OpKindLocal : ubyte
@@ -111,6 +124,7 @@ enum OpKindLocal : ubyte
     connect_,
     timer,
     poll_,
+    waitid_,
 }
 
 public:
@@ -282,6 +296,48 @@ struct KqueueBackend
             return false;
         *op = KqOp(token.raw, o.fd, null, 0, OpKindLocal.connect_, EVFILT_WRITE, uint.max);
         return armFilter(op, EVFILT_WRITE);
+    }
+
+    /**
+    Lowers a child reap onto `EVFILT_PROC`/`NOTE_EXIT`, then performs the
+    `waitid` when the exit notification arrives.
+
+    Two-step because the two kernels answer different questions: io_uring's
+    `WAITID` both waits and reaps, while kqueue only reports that the process
+    ended — so the reap itself is the completion's work (see `performOp`), and
+    the caller's `siginfo_t*` must stay alive until then, not merely until
+    submission.
+
+    $(B The already-exited case is the interesting one), and the reason this
+    cannot be a bare registration: a child that died before the op was
+    submitted has no process left to watch, so `kevent` fails with `ESRCH`.
+    That is not an error — it is the common case for a reap issued after the
+    exit was noticed. The wait is performed inline and completed
+    synthetically, exactly as an immediately-successful `connect` is.
+    */
+    bool trySubmit(in OpWaitid o, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        auto op = acquire();
+        if (op is null)
+            return false;
+        *op = KqOp(token.raw, cast(int) o.id, cast(ubyte*) o.siginfo, 0,
+            OpKindLocal.waitid_, EVFILT_PROC, uint.max);
+        op.idType = o.idType;
+        op.waitOptions = o.options;
+
+        if (armFilter(op, EVFILT_PROC, cast(ushort)(EV_ADD | EV_ONESHOT), NOTE_EXIT))
+            return true;
+
+        // `armFilter` released the slot. ESRCH means "already gone" — reap it
+        // here; anything else is a real registration failure the caller must
+        // see rather than block on.
+        if (_synthCount >= _synth.length)
+            return false;
+        const res = errno == ESRCH
+            ? doWaitid(o.idType, cast(int) o.id, cast(void*) o.siginfo, o.options)
+            : -errno;
+        _synth[_synthCount++] = RawCompletion(token.raw, res, 0);
+        return true;
     }
 
     /// Foreign-fd readiness: the readiness event IS the completion — no
@@ -463,11 +519,28 @@ private:
                 if (ev.flags & EV_EOF)
                     events |= PollEvents.hangup;
                 return events;
+            case OpKindLocal.waitid_:
+                // NOTE_EXIT only says the process ended; the reap is still
+                // ours to perform, and now cannot block.
+                return doWaitid(op.idType, op.fd, cast(void*) op.buf,
+                    op.waitOptions);
         }
     }
 
+    /// `waitid`, as the completion result convention wants it: 0 on success,
+    /// `-errno` on failure.
+    static int doWaitid(int idType, int id, void* siginfo, int options)
+        @trusted nothrow @nogc
+    {
+        import core.sys.posix.signal : siginfo_t;
+
+        const rc = waitid(idType, cast(uint) id, cast(siginfo_t*) siginfo, options);
+        return rc == 0 ? 0 : -errno;
+    }
+
     bool armFilter(KqOp* op, short filter,
-        ushort flags = cast(ushort)(EV_ADD | EV_ONESHOT)) @trusted nothrow @nogc
+        ushort flags = cast(ushort)(EV_ADD | EV_ONESHOT),
+        uint fflags = 0) @trusted nothrow @nogc
     {
         // Mark liveness HERE, not in `acquire`: every `trySubmit` overwrites
         // the slot wholesale (`*op = KqOp(…)`), which would clear a flag set
@@ -478,6 +551,7 @@ private:
         change.ident = cast(size_t) op.fd;
         change.filter = filter;
         change.flags = flags;
+        change.fflags = fflags;
         change.udata = op;
         if (kevent(_kq, &change, 1, null, 0, null) < 0)
         {
