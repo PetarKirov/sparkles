@@ -148,14 +148,20 @@ mixin template GuiCliFields()
     @(Option("window-height", description: "Initial window height in cells."))
     int windowHeight = defaultWindowRows;
 
+    // `noGui` MUST be declared before `gui`: the parser resolves a `--no-X`
+    // token against the FIRST field it matches, in declaration order, and
+    // `--no-gui` stripped is `gui` — declared the other way around, `--no-gui`
+    // lands on `gui` as a negation (a no-op: it was already false) and the
+    // force-terminal request is silently lost. hue learned this the hard way;
+    // the regression test below keeps it learned.
+    @(Option("no-gui", description:
+        "Force terminal output even when a display is available."))
+    bool noGui;
+
     @(Option("gui", description:
         "Force the window. With neither --gui nor --no-gui, a window opens "
         ~ "when one is available and the terminal is used otherwise."))
     bool gui;
-
-    @(Option("no-gui", description:
-        "Force terminal output even when a display is available."))
-    bool noGui;
 
     @(Option("tui", description: "Alias for --no-gui."))
     bool tui;
@@ -305,6 +311,29 @@ unittest
     // Nothing is forced on by default — the backend decision is autodetection's
     // (`BKD`), not a flag's.
     assert(!o.gui && !o.noGui && !o.tui);
+}
+
+@("ui_app.gui_options.noGuiIsAFlagNotANegation")
+@system
+unittest
+{
+    import sparkles.core_cli.args : parseCli;
+
+    // The parser resolves `--no-X` against the FIRST field it matches, in
+    // declaration order. With `gui` declared first, `--no-gui` would land on
+    // it as a negation — a silent no-op (it was already false) — and the
+    // force-terminal request would be lost. The declaration order in
+    // `GuiCliFields` is load-bearing; this is its regression test.
+    auto parsed = parseCli!GuiOptions(["app", "--no-gui"]);
+    assert(parsed);
+    assert(parsed.value.noGui, "--no-gui must set the flag, not negate --gui");
+    assert(!parsed.value.gui);
+
+    // And the window force still works, as does the alias.
+    auto g = parseCli!GuiOptions(["app", "--gui"]);
+    assert(g && g.value.gui && !g.value.noGui);
+    auto t = parseCli!GuiOptions(["app", "--tui"]);
+    assert(t && t.value.tui);
 }
 
 // Not `pure nothrow`, for the same reason as `oneDeclaration` above.
