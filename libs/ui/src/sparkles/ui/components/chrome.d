@@ -15,6 +15,7 @@ import std.conv : text;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : cellsOf, Insets, Point, SizeSpec;
+import sparkles.ui.dock : DockDrag, dockHintRect;
 import sparkles.ui.state : PressState, ScrollAxis, ScrollbarState, ScrollState,
     scrollbarThumb;
 import sparkles.ui.style : Slot, TextStyle;
@@ -368,6 +369,34 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
     ));
 }
 
+/**
+The drag-to-redock preview (`DCK5`): a translucent panel over exactly the
+region a release would fill.
+
+A view, not a painter, so both targets show the same promise from the same
+`DockDrag` the drop will act on — a host that computed the region itself
+could show one thing and do another, which is the whole failure this
+container exists to prevent. Emits nothing when there is nothing to
+promise, so a caller may build it unconditionally.
+*/
+uint dockHint(ref Builder b, in DockDrag drag)
+{
+    if (!drag.willDock)
+        return b.add(Widget(kind: WidgetKind.column,
+            visibility: Visibility.collapsed));
+    const r = dockHintRect(drag.targetRect, drag.zone);
+    return b.add(Widget(
+        kind: WidgetKind.box,
+        slot: Slot.chromeFocused,
+        paintBackground: true,
+        width: SizeSpec.fixed(r.width),
+        height: SizeSpec.fixed(r.height),
+        // The caller positions it: an overlay belongs to whatever layer a
+        // host paints on top, and the container already said where.
+        hitId: 0,
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -653,4 +682,37 @@ version (unittest)
     foreach (sgi; segs)
         total += eframes[sgi].rect.width;
     assert(total == 30, "the segments tile the strip");
+}
+
+@("ui.components.chrome.dockHintShowsTheDropAndNothingOtherwise")
+@safe unittest
+{
+    import sparkles.ui.dock : DockZone;
+    import sparkles.ui.geometry : Rect;
+
+    // A drag over the east band of a 40×30 target: the panel covers the
+    // half a release would fill, sized from the SAME zone the drop acts on.
+    DockDrag d;
+    d.active = true;
+    d.pane = 1;
+    d.target = 2;
+    d.zone = DockZone.east;
+    d.targetRect = Rect(10, 20, 40, 30);
+    auto b = Builder();
+    const hint = dockHint(b, d);
+    auto tree = b.finish(hint);
+    auto frames = layout(tree);
+    assert(frames[hint].rect.width == 20 && frames[hint].rect.height == 30);
+    assert(tree.nodes[hint].slot == Slot.chromeFocused);
+
+    // Nothing to promise ⇒ nothing painted AND nothing hit-testable, so a
+    // caller may build it unconditionally (the IXB9 invariant: invisible
+    // and live is unrepresentable).
+    DockDrag idle;
+    auto e = Builder();
+    const none = dockHint(e, idle);
+    auto etree = e.finish(none);
+    assert(etree.nodes[none].visibility == Visibility.collapsed);
+    import sparkles.ui.state : hoverTargets;
+    assert(hoverTargets(etree, layout(etree)).length == 0);
 }
