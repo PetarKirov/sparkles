@@ -237,7 +237,15 @@ belongs in the host contract, not in a private path for one application.
 the state vocabulary (`gui_state.d`, 11 suites), the debounce settle, the
 goto-line parse, the selection-drag lifecycle, the search-jump wrap, and the
 line-input typing rules are all tested decisions; `gui.d` keeps routing and
-frame assembly (3181 → 3013 lines). Next: P2.B2.
+frame assembly (3181 → 3013 lines). **P2.B2 shipped too** (same day): the
+sink decision through the host picker (hue’s Backend/pickBackend/env
+displayAvailable deleted; the socket-level probe replaces the env sniff),
+and the CLI onto `mixin GuiCliFields` with the shared defaults — the
+UIAPP-O1 user-visible shift (14→18 pt, catppuccin-mocha→tokyo-night,
+Maple-first cascade, +--font-dir/+--font-codepoint-map) plus the Android
+prepend’s deletion. En route: the mixin’s `--no-gui` was a silent no-op
+(declaration order vs the parser’s negation resolution) — fixed with a
+regression test. Next: P2.B3.
 
 P2.B1 comes first among the hue steps deliberately: the GUI module has no tests
 today, so the migration's first commit is the one that gives it some.
