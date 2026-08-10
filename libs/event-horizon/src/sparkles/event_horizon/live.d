@@ -307,6 +307,22 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
     the usual reaping contract: one reap per child, no concurrent `waitpid`
     on the same pid elsewhere.
     */
+    /**
+    The child's exit code out of a `waitid`-filled `siginfo_t`.
+
+    Portable because the struct is not: Linux buries `si_status` in the
+    `_sifields._sigchld` union arm, while the BSDs and macOS expose it as a
+    plain field. Reading the Linux spelling unconditionally is what stopped
+    this module compiling the moment kqueue grew a `WAITID` lowering.
+    */
+    private int childStatusOf(Info)(ref const Info info) @trusted nothrow @nogc
+    {
+        version (linux)
+            return info._sifields._sigchld.si_status;
+        else
+            return info.si_status;
+    }
+
     IoResult!ExitStatus waitPid(ref Sched s, int pid) @trusted
     {
         import core.sys.posix.signal : siginfo_t;
@@ -324,7 +340,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
             return ioErr!ExitStatus(-o.res, OpKind.waitid);
 
         enum CLD_EXITED = 1; // si_code: normal exit vs killed/dumped
-        const code = info._sifields._sigchld.si_status;
+        const code = childStatusOf(info);
         return ioOk(info.si_code == CLD_EXITED
             ? ExitStatus(false, code)
             : ExitStatus(true, code));
@@ -362,7 +378,7 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     ushort cols, ushort rows, in ProcessConfig cfg = ProcessConfig()) @trusted
 {
     import core.stdc.errno : errno;
-    import core.sys.posix.fcntl : O_NOCTTY, O_RDWR;
+    import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
     import core.sys.posix.spawn : posix_spawn_file_actions_adddup2,
         posix_spawn_file_actions_addopen, posix_spawn_file_actions_destroy,
         posix_spawn_file_actions_init, posix_spawn_file_actions_t,
@@ -390,7 +406,25 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
         return ioErr!ChildProcess(5 /* EIO */, OpKind.none,
             IoErrorStage.setup, "ptsname failed");
 
-    // Preset the window size on the master (the slave shares it).
+    // Hold the slave open across the spawn, then preset the window size.
+    //
+    // The order is load-bearing on macOS, which does not instantiate the tty
+    // until the slave is first opened: `TIOCSWINSZ` on a master with no slave
+    // yet fails with `ENOTTY`, and because the result was discarded it failed
+    // silently — every child came up 0x0 instead of the requested size. Linux
+    // is happy either way, so the fix costs it nothing.
+    //
+    // `O_NOCTTY` keeps this from becoming *our* controlling terminal; the
+    // child's own open (as a fresh session leader, without O_NOCTTY) is still
+    // what acquires it.
+    const slaveFd = open(slavePath, O_RDWR | O_NOCTTY);
+    if (slaveFd < 0)
+        return ioErr!ChildProcess(errno ? errno : 5, OpKind.none,
+            IoErrorStage.setup, "pty slave open failed");
+    // Closed only after `posix_spawnp` has run the file actions, so the tty
+    // never has zero opens between the preset and the child's own open.
+    scope (exit) close(slaveFd);
+
     winsize ws = {ws_row: rows, ws_col: cols};
     cast(void) ioctl(master, TIOCSWINSZ, &ws);
 
@@ -595,7 +629,26 @@ version (linux)
 else version (OSX)
     enum ulong TIOCSWINSZ = 0x8008_7467;
 
-enum POSIX_SPAWN_SETSID = 0x80; // glibc and musl agree
+/**
+`POSIX_SPAWN_SETSID` — a $(B per-platform) value, despite how universal the
+name looks.
+
+glibc and musl agree on `0x80`, which is why that was hardcoded. Darwin does
+not: there `0x80` is `POSIX_SPAWN_START_SUSPENDED`, and `SETSID` is `0x400`
+(xnu `bsd/sys/spawn.h`; the flag arrived in 10.15). So the shared constant did
+not merely fail to create a session on macOS — it spawned every `spawnPty`
+child $(B stopped), which is a hang rather than a wrong session: the child
+never execs, the master never becomes readable, and a `wait` on it blocks
+forever.
+
+Diagnosed by resuming one: a child spawned this way reports wait status
+`0x7f` (`_WSTOPPED`) and, after a `SIGCONT`, runs to completion with the exit
+status its script asked for.
+*/
+version (OSX)
+    enum POSIX_SPAWN_SETSID = 0x0400;
+else
+    enum POSIX_SPAWN_SETSID = 0x80; // glibc and musl agree
 
 struct winsize
 {
@@ -803,6 +856,20 @@ unittest
     assert(!r.hasError);
 }
 
+/// `path` with every symlink resolved, or `path` itself when it cannot be —
+/// the form `pwd` reports for a directory reached through a symlink.
+version (unittest)
+private string realPathOf(string path) @trusted
+{
+    import core.stdc.string : strlen;
+    import core.sys.posix.stdlib : realpath;
+    import std.string : toStringz;
+
+    char[1024] buf;
+    auto p = realpath(path.toStringz, buf.ptr);
+    return p is null ? path : buf[0 .. strlen(p)].idup;
+}
+
 @("live.spawn.stderrCaptureAndCwd")
 @safe
 unittest
@@ -824,7 +891,12 @@ unittest
 
         SmallBuffer!(ubyte, 512) err;
         drainInto(s, child.stderrR, err);
-        assert(err[] == cast(const(ubyte)[]) "/tmp\n",
+        // `pwd` reports the PHYSICAL directory, and the requested cwd need not
+        // be one: /tmp is a symlink to /private/tmp on macOS. Resolving the
+        // request is what makes this an assertion about `cfg.cwd` rather than
+        // about the host's filesystem layout.
+        const expected = realPathOf("/tmp") ~ "\n";
+        assert(err[] == cast(const(ubyte)[]) expected,
             "stderr captured; stdout discarded; cwd applied");
 
         auto st = wait(s, child);
