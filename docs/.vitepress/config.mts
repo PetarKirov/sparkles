@@ -1815,6 +1815,10 @@ export default withMermaid(
                       link: '/research/async-io/seastar',
                     },
                     { text: 'libuv (C)', link: '/research/async-io/libuv' },
+                    {
+                      text: 'Grand Central Dispatch (macOS)',
+                      link: '/research/async-io/gcd/',
+                    },
                     { text: 'Zig std.Io', link: '/research/async-io/zig-io' },
                     { text: '.NET Runtime', link: '/research/async-io/dotnet' },
                     { text: 'Java', link: '/research/async-io/java' },

@@ -398,6 +398,7 @@ Linux 2.6.31 `signalfd(2)`) were spot-checked against current documentation.
 
 - [Event-loop primitives][primitives] — the signal and subprocess tiers this page deepens
 - [Implementation techniques][techniques] — feature probing as a general pattern
+- [Grand Central Dispatch][gcd] — the same kqueue interfaces as macOS's own concurrency service exercises them (`EV_DISPATCH` sources, `kevent_qos`/`kevent_id`, `EVFILT_PROC` exit status)
 - [libuv deep-dive][libuv] — the same library from the portability-abstraction angle
 - [Zig `std.Io`][zig-io] — the other Kqueue-backend design in this corpus
 - [terminal-view spec][tvw] — `TVW8`, the consumer these findings feed
@@ -409,6 +410,7 @@ Linux 2.6.31 `signalfd(2)`) were spot-checked against current documentation.
 [primitives]: ./primitives.md
 [techniques]: ./techniques.md
 [libuv]: ./libuv.md
+[gcd]: ./gcd/index.md
 [zig-io]: ./zig-io.md
 [uring-index]: ./io-uring/index.md
 [tvw]: ../../specs/ui-app/terminal-view.md
