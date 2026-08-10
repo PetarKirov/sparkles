@@ -790,6 +790,30 @@ struct DockDrag
         => active && zone != DockZone.none && target != 0 && target != pane;
 }
 
+/**
+The rectangle a drop would occupy, within its target (`DCK5`).
+
+The preview every dock framework shows: a stack fills the target, a
+direction takes the half it would split into. Pure and separate from the
+widget that paints it, so what the reader is promised is checkable — and
+so the promise comes from the same `zone` the drop will act on, rather
+than from a second reading of the pointer.
+*/
+Rect dockHintRect(in Rect target, DockZone zone) @safe pure nothrow @nogc
+{
+    const h = target.height / 2;
+    const w = target.width / 2;
+    final switch (zone) with (DockZone)
+    {
+        case none:   return Rect.init;
+        case center: return target;
+        case north:  return Rect(target.x, target.y, target.width, h);
+        case south:  return Rect(target.x, target.y + target.height - h, target.width, h);
+        case west:   return Rect(target.x, target.y, w, target.height);
+        case east:   return Rect(target.x + target.width - w, target.y, w, target.height);
+    }
+}
+
 /// What the container decided an event means (`DCK13`).
 enum RouteKind : ubyte
 {
@@ -1918,4 +1942,34 @@ version (unittest)
     assert(!r.relayout);
     assert(c.layout == before, "a cancelled drag is a no-op");
     assert(c.paneFrames[0].pane == docA, "and activates nothing");
+}
+
+@("ui.dock.hintRectPromisesWhatTheDropWillDo")
+@safe pure nothrow @nogc unittest
+{
+    const t = Rect(10, 20, 40, 30);
+    // A stack fills the target; a direction takes the half it splits into,
+    // and the far halves are flush with the target's far edges rather than
+    // rounded away from them.
+    assert(dockHintRect(t, DockZone.center) == t);
+    assert(dockHintRect(t, DockZone.north) == Rect(10, 20, 40, 15));
+    assert(dockHintRect(t, DockZone.south) == Rect(10, 35, 40, 15));
+    assert(dockHintRect(t, DockZone.west) == Rect(10, 20, 20, 30));
+    assert(dockHintRect(t, DockZone.east) == Rect(30, 20, 20, 30));
+    assert(dockHintRect(t, DockZone.none) == Rect.init);
+
+    // With an odd extent the halves cannot tile it, and a hint is a
+    // preview rather than a layout — so what must hold is that each half
+    // hugs its own edge and they never overlap. (7 rows ⇒ 3 and 3, with
+    // the middle row belonging to neither.)
+    const o = Rect(0, 0, 5, 7);
+    const n = dockHintRect(o, DockZone.north);
+    const sth = dockHintRect(o, DockZone.south);
+    assert(n.y == o.y, "the north half hugs the top");
+    assert(sth.y + sth.height == o.y + o.height, "the south half hugs the bottom");
+    assert(n.y + n.height <= sth.y, "and they do not overlap");
+    const w = dockHintRect(o, DockZone.west);
+    const e = dockHintRect(o, DockZone.east);
+    assert(w.x == o.x && e.x + e.width == o.x + o.width);
+    assert(w.x + w.width <= e.x);
 }
