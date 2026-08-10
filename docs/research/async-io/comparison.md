@@ -1,6 +1,6 @@
 # Cross-Library Synthesis & Design Recommendations for Sparkles
 
-The capstone of the async-I/O survey. Part 1 distils the eighteen deep-dives and the
+The capstone of the async-I/O survey. Part 1 distils the nineteen deep-dives and the
 two concept docs ([primitives][primitives], [techniques][techniques]) into a head-to-head
 comparison across the axes that actually decide a runtime's character: the
 **reactor/proactor** kernel-model split, **scheduler topology**, the **concurrency /
@@ -33,6 +33,7 @@ every recommendation justified against this repo's [agent guidelines][agents] an
 | [Boost.Asio][boost-asio]          | C++      | Proactor over reactors; true IOCP / `io_uring`       | Executor / thread pool             | Callbacks / C++20 coroutines          | Tier 2–3                            |
 | [Seastar][seastar]                | C++      | Proactor (`io_uring`) + aio/epoll                    | Thread-per-core + NUMA             | Future/promise/continuation           | Tier 3                              |
 | [libuv][libuv]                    | C        | Reactor (epoll/kqueue/IOCP) + `io_uring` fs          | Single-threaded loop + threadpool  | Callbacks                             | Tier 2–3                            |
+| [GCD / libdispatch][gcd]          | C        | Reactor (kqueue), delivered as kernel upcalls        | Kernel-owned pool + queue lanes    | Handlers on hierarchical queues       | Tier 2                              |
 | [Zig std.Io][zig-io]              | Zig      | Pluggable (Threaded / Uring / Kqueue / Dispatch)     | Backend-dependent                  | Stackful fibers (evented)             | Tier 3                              |
 | [.NET][dotnet]                    | C#       | Reactor (epoll/kqueue) + proposed `io_uring`         | ThreadPool                         | `Task` / `async`-`await`              | Tier 2–3                            |
 | [Java][java]                      | Java     | Reactor (NIO/Netty) + FFI `io_uring`; Loom           | ForkJoin / carrier threads         | `CompletableFuture` / virtual threads | Tier 2–3                            |
@@ -263,23 +264,24 @@ add the most lifetime complexity (see [io_uring features][uring-features]).
 
 ### 1.7 Summary comparison matrix
 
-| System                   | Kernel model                   | Scheduler                | Concurrency model               | Buffer model              | Cancellation                           | `io_uring`?                  |
-| ------------------------ | ------------------------------ | ------------------------ | ------------------------------- | ------------------------- | -------------------------------------- | ---------------------------- |
-| [Tokio][tokio]           | reactor (+ exp. uring)         | work-stealing            | async/await (stackless)         | borrowed (owned on uring) | unstructured `abort`                   | experimental                 |
-| [Glommio][glommio]       | proactor                       | thread-per-core          | async/await (`!Send`)           | owned transfer            | drop-based                             | **native**                   |
-| [Monoio][monoio]         | proactor (+ epoll)             | thread-per-core          | async/await (`!Send`)           | owned (`IoBuf`)           | `ASYNC_CANCEL` + `Ignored`             | **native**                   |
-| [Boost.Asio][boost-asio] | proactor (emulated/IOCP/uring) | executor                 | callbacks / coroutines          | borrowed                  | `cancellation_slot` (structured)       | **yes** (`io_uring_service`) |
-| [Seastar][seastar]       | proactor (+ aio/epoll)         | thread-per-core + NUMA   | future/continuation             | owned (per-shard)         | shard-scoped drain (`gate`/`when_all`) | **yes**                      |
-| [libuv][libuv]           | reactor (+ uring fs)           | single loop + threadpool | callbacks                       | borrowed                  | handle close                           | fs offload only              |
-| [Zig std.Io][zig-io]     | pluggable                      | backend-dependent        | stackful fibers (evented)       | implementation-defined    | `Group` + `checkCancel`                | **yes** (PoC)                |
-| [.NET][dotnet]           | reactor (+ proposed uring)     | ThreadPool               | async/await                     | owned (IOCP)              | `CancellationToken`                    | proposed PR                  |
-| [Java][java]             | reactor + FFI uring; Loom      | ForkJoin / carriers      | futures / **virtual threads**   | borrowed (ByteBuffer)     | `StructuredTaskScope`                  | via JUring/Netty             |
-| [Go][go]                 | reactor                        | integrated runtime       | stackful goroutines             | borrowed                  | `context` cancellation                 | **no** (Unplanned)           |
-| [asyncio][python]        | reactor                        | single-threaded          | async/await                     | borrowed                  | `TaskGroup` (3.11)                     | no                           |
-| [Trio][python]           | reactor                        | single-threaded          | async/await                     | borrowed                  | **nurseries** (pioneer)                | no                           |
-| [Eio][eio]               | proactor (+ posix)             | per-domain               | **stackful fibers via effects** | owned                     | **`Switch`** (structured)              | **native**                   |
-| [vibe-core][d-landscape] | reactor (+ exp. uring)         | fiber pool               | stackful fibers                 | borrowed-ish              | `Task` scopes                          | experimental                 |
-| [during][d-landscape]    | proactor (binding)             | none                     | none                            | raw                       | raw `prepCancel`                       | **native binding**           |
+| System                   | Kernel model                   | Scheduler                | Concurrency model               | Buffer model               | Cancellation                             | `io_uring`?                  |
+| ------------------------ | ------------------------------ | ------------------------ | ------------------------------- | -------------------------- | ---------------------------------------- | ---------------------------- |
+| [Tokio][tokio]           | reactor (+ exp. uring)         | work-stealing            | async/await (stackless)         | borrowed (owned on uring)  | unstructured `abort`                     | experimental                 |
+| [Glommio][glommio]       | proactor                       | thread-per-core          | async/await (`!Send`)           | owned transfer             | drop-based                               | **native**                   |
+| [Monoio][monoio]         | proactor (+ epoll)             | thread-per-core          | async/await (`!Send`)           | owned (`IoBuf`)            | `ASYNC_CANCEL` + `Ignored`               | **native**                   |
+| [Boost.Asio][boost-asio] | proactor (emulated/IOCP/uring) | executor                 | callbacks / coroutines          | borrowed                   | `cancellation_slot` (structured)         | **yes** (`io_uring_service`) |
+| [Seastar][seastar]       | proactor (+ aio/epoll)         | thread-per-core + NUMA   | future/continuation             | owned (per-shard)          | shard-scoped drain (`gate`/`when_all`)   | **yes**                      |
+| [libuv][libuv]           | reactor (+ uring fs)           | single loop + threadpool | callbacks                       | borrowed                   | handle close                             | fs offload only              |
+| [GCD][gcd]               | reactor (kqueue upcalls)       | kernel workqueue         | queue lanes + handlers          | borrowed (`dispatch_data`) | source cancel (async, handler-signalled) | **no** (Darwin has none)     |
+| [Zig std.Io][zig-io]     | pluggable                      | backend-dependent        | stackful fibers (evented)       | implementation-defined     | `Group` + `checkCancel`                  | **yes** (PoC)                |
+| [.NET][dotnet]           | reactor (+ proposed uring)     | ThreadPool               | async/await                     | owned (IOCP)               | `CancellationToken`                      | proposed PR                  |
+| [Java][java]             | reactor + FFI uring; Loom      | ForkJoin / carriers      | futures / **virtual threads**   | borrowed (ByteBuffer)      | `StructuredTaskScope`                    | via JUring/Netty             |
+| [Go][go]                 | reactor                        | integrated runtime       | stackful goroutines             | borrowed                   | `context` cancellation                   | **no** (Unplanned)           |
+| [asyncio][python]        | reactor                        | single-threaded          | async/await                     | borrowed                   | `TaskGroup` (3.11)                       | no                           |
+| [Trio][python]           | reactor                        | single-threaded          | async/await                     | borrowed                   | **nurseries** (pioneer)                  | no                           |
+| [Eio][eio]               | proactor (+ posix)             | per-domain               | **stackful fibers via effects** | owned                      | **`Switch`** (structured)                | **native**                   |
+| [vibe-core][d-landscape] | reactor (+ exp. uring)         | fiber pool               | stackful fibers                 | borrowed-ish               | `Task` scopes                            | experimental                 |
+| [during][d-landscape]    | proactor (binding)             | none                     | none                            | raw                        | raw `prepCancel`                         | **native binding**           |
 
 Three structural conclusions fall out of this matrix and shape Part 2:
 
@@ -577,6 +579,7 @@ fibers already make idiomatic.
 [boost-asio]: ./boost-asio.md
 [seastar]: ./seastar.md
 [libuv]: ./libuv.md
+[gcd]: ./gcd/index.md
 [zig-io]: ./zig-io.md
 [dotnet]: ./dotnet.md
 [java]: ./java.md
