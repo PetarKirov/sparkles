@@ -1025,6 +1025,23 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             string[] cpMaps = null;
         }
 
+        // The deterministic-capture hooks (`CLI6`): the environment is read
+        // HERE, once, and the frame code receives values. Android anchors a
+        // relative screenshot path in the app data dir (CWD is '/', not
+        // writable); pull the PNG with `adb shell run-as`.
+        import std.process : environment;
+        import gui_state : GuiCapture;
+
+        auto capture = GuiCapture.fromEnv(
+            (string name, string fallback) => environment.get(name, fallback));
+        version (Android)
+        {
+            import android_glue : androidDataDir;
+
+            if (capture.screenshotPath.length && capture.screenshotPath[0] != '/')
+                capture.screenshotPath = androidDataDir() ~ "/" ~ capture.screenshotPath;
+        }
+
         return runGui(doc.title, doc.source, doc.events, labels, themeSet.names,
             themeSet.themes, themeSet.idx, doc.preview, fontName, cli.fontSize,
             cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
@@ -1037,7 +1054,8 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             cli.tabWidth, cli.listWhitespace, cpMaps,
             liveTypes: !cli.noLiveTypes, initialDiff: doc.diffDoc,
             initialDiffSides: doc.diffSides,
-            initialDiffSession: doc.diffSession);
+            initialDiffSession: doc.diffSession,
+            capture: capture);
     }
     else
     {

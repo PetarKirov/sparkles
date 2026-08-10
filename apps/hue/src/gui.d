@@ -211,6 +211,7 @@ int runGui(
     DiffDoc initialDiff = DiffDoc.init,  // diff document payload (ContentKind.diff)
     DiffSides[] initialDiffSides = null, // per-file side texts (DVM5)
     DiffSession initialDiffSession = DiffSession.init, // changed-file session (DVS4)
+    GuiCapture capture = GuiCapture.init, // deterministic-capture hooks (CLI6)
 ) @system
 {
     import std.stdio : stderr;
@@ -218,57 +219,31 @@ int runGui(
     import std.process : environment;
     import std.conv : to, text;
 
-    // Debug/CI capture: HUE_GUI_SCREENSHOT=<path> renders a few frames, writes a
-    // PNG, and exits — the golden-frame harness the syntax spec's totality and
-    // M5's byte-identical-render checks rely on (skipTest-gated when headless).
-    // Android anchors relative paths in the app data dir (CWD is '/', not
-    // writable); pull the PNG with `adb shell run-as`.
-    auto shotPath = environment.get("HUE_GUI_SCREENSHOT", "");
-    version (Android)
-    {
-        import android_glue : androidDataDir;
-
-        if (shotPath.length && shotPath[0] != '/')
-            shotPath = androidDataDir() ~ "/" ~ shotPath;
-    }
-    // HUE_GUI_FLASH=1: alternate the clear color every ~0.5 s and skip the
-    // pane fill — a ghosting discriminator. If the background flashes
-    // everywhere but stale text rides on vm.top, the ghost is DRAWN each frame;
-    // any region that does NOT flash is not being cleared/presented.
-    const flashDebug = environment.get("HUE_GUI_FLASH", "").length != 0;
-    // HUE_GUI_SCREENSHOT_FRAME=<n> delays the capture (default 20) so a QA
-    // harness can drive synthetic input first.
-    int shotFrame = 20;
+    // The deterministic-capture hooks (`CLI6`): parsed by the caller from the
+    // environment (`GuiCapture.fromEnv` in `main`'s path, Android path
+    // anchoring included) — this frame code never reads the environment.
+    const shotPath = capture.screenshotPath;
+    // The ghosting discriminator: alternate the clear color every ~0.5 s and
+    // skip the pane fill. If the background flashes everywhere but stale text
+    // rides on vm.top, the ghost is DRAWN each frame; any region that does
+    // NOT flash is not being cleared/presented.
+    const flashDebug = capture.flash;
+    // The delayed capture (default frame 20), so a QA harness can drive
+    // synthetic input first.
+    const shotFrame = capture.screenshotFrame;
     // Capture bookkeeping: when the git worker was first seen idle, when the
     // shot was taken, and how long we will wait for the former.
     int settledAt = -1;
     int shotAt = -1;
     enum shotSettleCap = 240; // ~4 s at 60 FPS
-    try
-        if (environment.get("HUE_GUI_SCREENSHOT_FRAME", null).length)
-            shotFrame = environment.get("HUE_GUI_SCREENSHOT_FRAME").to!int;
-    catch (Exception)
-    {
-    }
-    // Debug/CI: HUE_GUI_TOP=<n> sets the initial scroll line (clamped) so a
-    // golden capture can exercise the culled viewport; HUE_GUI_FONTSIZE overrides
-    // the --font-size for deterministic captures.
     // `--font-size` arrives in points; convert to pixels (96-DPI, 1pt = 1/72in)
     // exactly like apps/terminal so both raylib apps size a font identically.
     // Resolved against the real display below, once the window exists; this
-    // is the nominal-DPI fallback for the paths that read it earlier.
-    int fontSizePx = pixelsForPoints(fontSize, DisplayMetrics.init);
-    long initialTop;
-    try
-    {
-        initialTop = environment.get("HUE_GUI_TOP", "0").to!long;
-        // HUE_GUI_FONTSIZE stays in pixels so golden captures are deterministic.
-        if (environment.get("HUE_GUI_FONTSIZE", null).length)
-            fontSizePx = environment.get("HUE_GUI_FONTSIZE").to!int;
-    }
-    catch (Exception)
-    {
-    }
+    // is the nominal-DPI fallback for the paths that read it earlier. The
+    // capture override stays in pixels so goldens are deterministic.
+    int fontSizePx = capture.fontSizePx != 0
+        ? capture.fontSizePx : pixelsForPoints(fontSize, DisplayMetrics.init);
+    const initialTop = capture.initialTop;
     if (fontSizePx < 6)
         fontSizePx = 6;
 
@@ -328,9 +303,9 @@ int runGui(
     // get the same 19 px as a 96 dpi one (IXR28). The clamp that keeps the
     // atlas bounded is the library's now, not a magic 4 here.
     //
-    // HUE_GUI_FONTSIZE stays the deterministic override for goldens, so it
+    // The capture's pixel override stays deterministic for goldens, so it
     // suppresses scaling entirely rather than being scaled itself.
-    if (environment.get("HUE_GUI_FONTSIZE", "").length == 0)
+    if (capture.fontSizePx == 0)
         fontSizePx = pixelsForPoints(fontSize, displayMetrics());
     FontSet fonts;
     if (!FontSet.tryLoad(fontName, fontSizePx, fonts, codepointMaps, faces, fontSrc))
@@ -517,9 +492,9 @@ int runGui(
         source, events, preview, twoslash, docLang, initialDiff,
         initialDiffSides, initialDiffSession);
     // A markdown file opens in preview by default; Tab toggles to the raw
-    // highlighted-source view. `HUE_GUI_PREVIEW=0/1` pins the initial mode
-    // for deterministic golden captures.
-    if (environment.get("HUE_GUI_PREVIEW", "") == "0" && vm.showPreview)
+    // highlighted-source view. The capture's preview pin ("0") fixes the
+    // initial mode for deterministic goldens.
+    if (capture.preview == "0" && vm.showPreview)
     {
         vm.showPreview = false;
         vm.rebuild();
@@ -691,9 +666,9 @@ int runGui(
         vm.top = vm.visualOfMatch(vm.matches[vm.curMatch]) - visibleRows / 2;
     }
 
-    // Debug/CI: HUE_GUI_SEARCH=<text> preselects a search (highlights + jump to
-    // the first match) so a golden capture exercises the match overlay.
-    foreach (ch; environment.get("HUE_GUI_SEARCH", ""))
+    // Debug/CI: a preselected search (highlights + jump to the first match)
+    // so a golden capture exercises the match overlay.
+    foreach (ch; capture.search)
         inp.query ~= ch;
     if (inp.query.length)
     {
@@ -702,13 +677,13 @@ int runGui(
             vm.top = vm.visualOfMatch(vm.matches[0]);
     }
 
-    // Debug/CI: HUE_GUI_LANTERN=<keys> seeds the guide's pending path and
-    // shows it at once, so a golden capture can hold the panel open — there is
-    // otherwise no way to photograph something that only exists between two
-    // keystrokes. An empty value shows the root listing.
-    if (auto seed = environment.get("HUE_GUI_LANTERN", null))
+    // Debug/CI: the lantern seed opens the guide's pending path at once, so a
+    // golden capture can hold the panel open — there is otherwise no way to
+    // photograph something that only exists between two keystrokes. An empty
+    // (but set) value shows the root listing.
+    if (capture.lanternSet)
     {
-        foreach (ch; seed)
+        foreach (ch; capture.lantern)
             pn.lantern.pending ~= Chord(key: Key.char_, ch: ch);
         pn.lantern.shown = true;
     }
@@ -751,12 +726,7 @@ int runGui(
 
     Flashes flash;
     HoverPopup pop;
-    try
-        pop.forceHover = environment.get("HUE_GUI_HOVER", null).length
-            ? environment.get("HUE_GUI_HOVER").to!int : -1;
-    catch (Exception)
-    {
-    }
+    pop.forceHover = capture.forceHover;
 
     // Mouse selection has two regimes (a drag stays in the one it starts in, TBL4):
     //  • text  (SEL): a source byte range [drag.selMin, drag.selMax). Prose/code map a click
