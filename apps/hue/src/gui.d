@@ -1255,27 +1255,19 @@ int runGui(
         }
         else if (inputMode)
         {
-            // Typing a search query or a goto-line number.
+            // Typing a search query or a goto-line number — the acceptance
+            // rules live on the state (`gui_state`, tested); what stays here
+            // is the live re-search, which is the view model's.
             foreach (k; keyBuf)
             {
                 if (k.key != Key.char_)
                     continue;
-                const c = k.ch;
-                if (c < 32 || c >= 127)
-                    continue;
-                if (inp.mode == Mode.gotoLine && (c < '0' || c > '9'))
-                    continue;
-                if (inp.query.length < 255)
-                    inp.query ~= cast(char) c;
-                if (inp.mode == Mode.search)
+                if (inp.typeChar(k.ch) && inp.mode == Mode.search)
                     vm.search(inp.query[]);
             }
-            if (keyBuf.hasKey(Key.backspace) && inp.query.length)
-            {
-                inp.query.popBack();
-                if (inp.mode == Mode.search)
-                    vm.search(inp.query[]);
-            }
+            if (keyBuf.hasKey(Key.backspace) && inp.backspace()
+                && inp.mode == Mode.search)
+                vm.search(inp.query[]);
             if (keyBuf.hasKey(Key.enter))
             {
                 if (inp.mode == Mode.search)

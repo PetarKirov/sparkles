@@ -210,6 +210,79 @@ struct InputState
     SmallBuffer!(char, 256) query;
     CaptureState capture;
     InputFrame fin;
+
+    /**
+    Feeds one typed code point into the query under the mode's acceptance
+    rules — printable ASCII only, goto-line takes digits only, and the query
+    caps at 255. Returns `true` when the character was $(B accepted) (the
+    search mode's cue to re-run the query) — deliberately not "appended":
+    at the cap an accepted character still re-runs the search with the
+    unchanged query, exactly as the inline version did.
+    */
+    bool typeChar(dchar c) @safe pure nothrow
+    {
+        if (c < 32 || c >= 127)
+            return false;
+        if (mode == Mode.gotoLine && (c < '0' || c > '9'))
+            return false;
+        if (query.length < 255)
+            query ~= cast(char) c;
+        return true;
+    }
+
+    /// Deletes the last typed character: `true` when something was deleted —
+    /// the same re-search cue.
+    bool backspace() @safe pure nothrow @nogc
+    {
+        if (query.length == 0)
+            return false;
+        query.popBack();
+        return true;
+    }
+}
+
+@("gui_state.InputState.typeCharAcceptanceRules")
+@safe pure nothrow
+unittest
+{
+    InputState inp;
+    inp.mode = Mode.search;
+    assert(inp.typeChar('a'));
+    assert(inp.typeChar('3'));
+    assert(!inp.typeChar('\x1b'), "control characters never type");
+    assert(!inp.typeChar('é'), "the query is ASCII");
+    assert(inp.query[] == "a3");
+
+    inp.mode = Mode.gotoLine;
+    assert(!inp.typeChar('a'), "goto-line takes digits only");
+    assert(inp.typeChar('7'));
+    assert(inp.query[] == "a37");
+}
+
+@("gui_state.InputState.typeCharCapStillReSearches")
+@safe pure nothrow
+unittest
+{
+    // At the cap the character is accepted (the caller re-searches) but not
+    // appended — the inline behavior, preserved on purpose.
+    InputState inp;
+    inp.mode = Mode.search;
+    foreach (i; 0 .. 255)
+        cast(void) inp.typeChar('x');
+    assert(inp.query.length == 255);
+    assert(inp.typeChar('y'), "accepted at the cap");
+    assert(inp.query.length == 255, "but not appended");
+}
+
+@("gui_state.InputState.backspaceDeletesOrDeclines")
+@safe pure nothrow
+unittest
+{
+    InputState inp;
+    assert(!inp.backspace(), "nothing to delete");
+    cast(void) inp.typeChar('q');
+    assert(inp.backspace());
+    assert(inp.query.length == 0);
 }
 
 /// The copy modes (M15 GROUP-C of the GuiState hoist), toggleable at
