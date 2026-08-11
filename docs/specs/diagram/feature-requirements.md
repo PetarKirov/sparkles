@@ -17,13 +17,13 @@ interaction (`IXN`), rendering (`RND`)._
 
 ## Camera (`CAM`)
 
-| ID   | Requirement                                                                                                                                                                                                                                            | Status      | Traces to      |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | -------------- |
-| CAM1 | The camera is `origin` (world cell at the viewport's top-left) plus a **discrete** `zoom` level (powers of two, clamped) — integer cell geometry on both targets, so GUI and TUI agree on every mapping ([P3 constraints](../ui-app/PLAN.md#phase-3)). | not started | `src/camera.d` |
-| CAM2 | `worldToScreen`/`screenToWorld` round-trip within a cell at every zoom; `zoomAt(pivot)` keeps the world cell under the pointer stationary; `panBy` is unbounded (an infinite canvas has no edge).                                                      | not started | `src/camera.d` |
-| CAM3 | `visibleWorldRect` bounds render culling; `contentBounds` over live entities backs fit-all (`f`) and the minimap's content fit.                                                                                                                        | not started | `src/camera.d` |
-| CAM4 | Minimap math — content→panel fit, panel local↔world, camera frustum in panel space — is pure and lives with the camera, tested without any render.                                                                                                     | not started | `src/camera.d` |
-| CAM5 | Camera math is `@safe pure nothrow @nogc`, tested at **runtime** (union-backed vectors have no CTFE field reads — the recorded `sparkles:math` limitation).                                                                                            | not started | `src/camera.d` |
+| ID   | Requirement                                                                                                                                                                                                                                            | Status | Traces to      |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | -------------- |
+| CAM1 | The camera is `origin` (world cell at the viewport's top-left) plus a **discrete** `zoom` level (powers of two, clamped) — integer cell geometry on both targets, so GUI and TUI agree on every mapping ([P3 constraints](../ui-app/PLAN.md#phase-3)). | full   | `src/camera.d` |
+| CAM2 | `worldToScreen`/`screenToWorld` round-trip within a cell at every zoom; `zoomAt(pivot)` keeps the world cell under the pointer stationary; `panBy` is unbounded (an infinite canvas has no edge).                                                      | full   | `src/camera.d` |
+| CAM3 | `visibleWorldRect` bounds render culling; `contentBounds` over live entities backs fit-all (`f`) and the minimap's content fit.                                                                                                                        | full   | `src/camera.d` |
+| CAM4 | Minimap math — content→panel fit, panel local↔world, camera frustum in panel space — is pure and lives with the camera, tested without any render.                                                                                                     | full   | `src/camera.d` |
+| CAM5 | Camera math is `@safe pure nothrow @nogc`, tested at **runtime** (union-backed vectors have no CTFE field reads — the recorded `sparkles:math` limitation).                                                                                            | full   | `src/camera.d` |
 
 ## World (`WLD`)
 
