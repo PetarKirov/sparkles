@@ -94,6 +94,12 @@ reproduces and then passes drag-over-decoration, outside-window motion and
 outside-window release under a real headless window manager. In-process unit
 tests are insufficient.
 
+[Anchored overlays](./popup.md) newly constrains this issue without closing it:
+`MDL11` forbids specifying modality or dismissal in terms of an OS grab or a
+nested event loop, so the overlay primitive must work without one and acquiring
+a grab later is an improvement rather than a precondition. The issue stays open,
+and its fix stays owned by the input adapter.
+
 ## UI-O4 — An allocation-free display list is borrowed, not owned {#ui-o4}
 
 **Status:** open. **Requirements:** `NFR2`, `PRN1`, `UI-O1`.

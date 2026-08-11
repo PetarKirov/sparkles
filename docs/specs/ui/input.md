@@ -127,9 +127,9 @@ Proposed. Required by the [application host](../ui-app/index.md) and by migratin
 
 ## Hit testing (`INP10`)
 
-| ID    | Requirement                                                                                                                                                                                                                                       | Status  | Traces to                                                                                                                                                                                                     |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| INP10 | A widget's **hit identity must survive the pipeline** — from the widget, through layout frames, into the display list — so hit testing is done once by the toolkit and every backend consumes the result, instead of each rebuilding its own map. | partial | `state.d` `hoverTargets`/`keyTargets` (`f166e099`) are visibility- and clip-aware and consumed by the shared document tree; non-widget pane/chrome routing remains until the container tier owns it (`DCK13`) |
+| ID    | Requirement                                                                                                                                                                                                                                       | Status  | Traces to                                                                                                                                                                                                                                                                                  |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| INP10 | A widget's **hit identity must survive the pipeline** — from the widget, through layout frames, into the display list — so hit testing is done once by the toolkit and every backend consumes the result, instead of each rebuilding its own map. | partial | `state.d` `hoverTargets`/`keyTargets` (`f166e099`) are visibility- and clip-aware and consumed by the shared document tree; non-widget pane/chrome routing remains until the container tier owns it (`DCK13`, whose top-layer rung is specified by [anchored overlays](./popup.md) `LYR5`) |
 
 ### The hit-testing model
 
@@ -148,7 +148,9 @@ order, or equivalently a culled top-down frame-tree descent. The rules:
   assertable in tests.
 - **Out-of-bounds content is a top layer.** Popups and overlays, which
   escape their parent's bounds, keep explicit rects and are tested before
-  the tree/list, front to back.
+  the tree/list, front to back. What that layer _is_ — one ordered,
+  frame-built arena whose index order is paint order is reverse hit order —
+  is specified by [anchored overlays](./popup.md) `LYR1`, `LYR5`.
 - **Events route against the last painted frame's data** — the layout the
   user saw — never against a mid-rebuild state.
 - **Positional hits are the last resort in routing precedence**: pointer
