@@ -709,9 +709,24 @@ against 14 for every other class**, while `totalCPUs` reports 14 — a backgroun
 worker set sized from it oversubscribes the E-cluster 3.5×. libdispatch sizes
 `dispatch_apply` from exactly this call and falls back to the CPU count only if it
 fails (`src/shims.h`). The same bug exists on Linux for a different reason: a
-containerised process's `cpu.max` quota is invisible to `totalCPUs`. _(The cgroup
-half is reasoned by analogy from the Darwin case and has not been measured here —
-verify before relying on it.)_
+containerised process's `cpu.max` quota is invisible to `totalCPUs`.
+
+**Measured on Linux (2026-08-11), correcting this entry.** `totalCPUs` _does_
+honour an affinity mask — under `taskset -c 2,5,9` it reports 3 — so the sizing
+half was already right for masks. Two claims survive, one sharper than written:
+
+- **Quota is invisible to it.** Under `systemd-run -p CPUQuota=150%` on a 32-CPU
+  host, `totalCPUs` reports 32 while `hwParallelism()` reports 2.
+- **Pinning was wrong.** Under `taskset -c 2,5,9`, `cpu % totalCPUs` yields CPUs
+  0, 1, 2 — only one of which is permitted — where `nthAllowedCpu` yields 2, 5, 9.
+
+A third fact came out of the same measurement and is now part of the contract:
+the pinning wrap is over the **allowed-CPU count**, not over `hwParallelism()`.
+The two diverge exactly when a quota binds, and wrapping over the latter would
+stack a quota-limited pool's workers onto the first few CPUs. Note also that a
+cgroup limit is not at `/sys/fs/cgroup/cpu.max`: it lives in the process's own
+cgroup (the `0::` line of `/proc/self/cgroup`) and may be set on any ancestor,
+so the effective quota is the tightest `cpu.max` on the chain up to the root.
 
 **Pinning is worse.** `CPU_SET(cpu % totalCPUs, &set)` distributes workers
 round-robin over a CPU count the process may not be permitted to use; under a
