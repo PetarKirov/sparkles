@@ -1541,22 +1541,16 @@ int runGui(GuiArgs guiArgs) @system
         }
     }
 
-    // The frame clock (asyncLoop only): absolute deadlines, missed frames
-    // skipped — the Ticker discipline, inline at the embedding hatch.
-    import core.time : MonoTime;
-
-    enum framePeriod = 1_000_000.usecs / 60;
-    auto nextFrame = MonoTime.currTime + framePeriod;
-
-    while (!window.shouldClose())
+    // The frame's view half (`P2.B4` fourth slice): drain, dispatch, derive —
+    // everything between the pacing and the window bracket, lifted whole for the
+    // same reason the paint half was. With both halves named the loop is three
+    // statements, and the component's `view`/`paint` split is already drawn.
+    //
+    // Returns false when the run is over: the `quit` command's `return 0` cannot
+    // return for `runGui` from in here, so it becomes a value the loop acts on —
+    // which is also what the host's loop will want when it owns the iteration.
+    bool stepFrame(out FrameGeom geom)
     {
-        // Pace + pump: park in the ring until the frame deadline; any async
-        // completions (subprocesses, watches, timers) dispatch during the
-        // park. Raylib is sampled below as before — it no longer sleeps
-        // (`targetFps: 0`), so the cadence belongs to event-horizon.
-        if (asyncLoop)
-            pumpUntilFrame(sched, nextFrame, framePeriod);
-
         // Gesture thresholds are PHYSICAL, so they track the cell size: a
         // pinch or Ctrl-± changes it, and values fixed before the loop would
         // misclassify after any zoom. Set before the drain, because the drain
@@ -2055,8 +2049,11 @@ int runGui(GuiArgs guiArgs) @system
                 case Command.quit:
                     // The TUI has always had `q`; the GUI gains it here so one
                     // table describes both. The window close path is the same
-                    // one `shouldClose` drives.
-                    return 0;
+                    // one `shouldClose` drives. This used to leave `runGui`
+                    // outright; from inside the view half it reports the run is
+                    // over and the loop returns, which is the shape the host's
+                    // loop needs anyway — it, not the app, owns the exit.
+                    return false;
                 case Command.toggleHoverRegions:
                 case Command.cycleHoverPopup:
                     // TUI-only affordances so far: the terminal has no pointer
@@ -2801,10 +2798,7 @@ int runGui(GuiArgs guiArgs) @system
             if (inp.fin.leftReleased)
                 drag.selecting = false;
         }
-
-        // The view half's whole output, in one value. Everything else the paint
-        // half touches is run-scoped, so this literal IS the frame's interface.
-        paintWindowFrame(FrameGeom(
+        geom = FrameGeom(
             cellW: cellW, cellH: cellH, screenW: screenW, screenH: screenH,
             visibleRows: visibleRows, screenCols: screenCols, screenRows: screenRows,
             docRows: docRows, docY0: docY0, hdrY: hdrY,
@@ -2813,7 +2807,31 @@ int runGui(GuiArgs guiArgs) @system
             treeTopRows: treeTopRows, treePaneRows: treePaneRows,
             treeMaxTop: treeMaxTop,
             inputMode: inputMode, kctx: kctx,
-        ));
+        );
+        return true;
+    }
+
+    // The frame clock (asyncLoop only): absolute deadlines, missed frames
+    // skipped — the Ticker discipline, inline at the embedding hatch.
+    import core.time : MonoTime;
+
+    enum framePeriod = 1_000_000.usecs / 60;
+    auto nextFrame = MonoTime.currTime + framePeriod;
+
+    while (!window.shouldClose())
+    {
+        // Pace + pump: park in the ring until the frame deadline; any async
+        // completions (subprocesses, watches, timers) dispatch during the
+        // park. Raylib is sampled below as before — it no longer sleeps
+        // (`targetFps: 0`), so the cadence belongs to event-horizon.
+        if (asyncLoop)
+            pumpUntilFrame(sched, nextFrame, framePeriod);
+
+        // The frame, in two named halves plus the window bracket in between.
+        FrameGeom geom;
+        if (!stepFrame(geom))
+            return 0;
+        paintWindowFrame(geom);
 
         // On-demand atlas growth: drawText requests any covered-but-unrasterized
         // codepoints (emoji, CJK, higher-plane icons) as it draws; grow the atlas
