@@ -107,7 +107,7 @@ struct World
 
     Tool tool;                       /// the active tool
     Capture capture;                 /// who owns the drag, if anyone
-    Point dragStart;                 /// where the drag began, in world cells
+    Point dragStart;                 /// where the drag began (unit depends on capture)
     Point dragNow;                   /// …and where it is now
     Entity hovered = noEntity;       /// the entity under the pointer
     Entity connectFrom = noEntity;   /// the connect tool's pending half
@@ -115,6 +115,15 @@ struct World
     Point menuAt;                    /// …anchored here, in screen cells
     Entity editing = noEntity;       /// the entity whose label is being edited
     bool minimapVisible = true;      /// `m` toggles it (`IXN4`)
+    /**
+    Space is down (or sticky-armed on a target without key releases).
+
+    The pan binding is Space+LMB (`IXN3`), and a terminal cannot report a key
+    up (`INP16`). On a target that can, this tracks the hold; on one that
+    cannot, a Space press arms it and the pan's release (or a second Space)
+    clears it — same binding, a route that does not need a release.
+    */
+    bool spaceDown;
 
     /// The selection, as a capped list of live entities.
     Entity[selectionCap] selection;
@@ -245,6 +254,45 @@ struct World
         foreach (other; 0 .. _high)
             if (_alive[other] && group[other] == g)
                 shift(cast(Entity) other, dx, dy);
+    }
+
+    /**
+    Moves every selected entity by a world-cell delta, once per group.
+
+    `moveBy` already fans out to group members, so walking the selection
+    naively would double-move any group that had two members selected. This
+    is the drag's one-step: each ungrouped entity once, each group once.
+    */
+    void moveSelectionBy(int dx, int dy) scope
+    {
+        if (dx == 0 && dy == 0)
+            return;
+        // Groups already applied this step. 0 is "no group", and is never
+        // written here — ungrouped entities always go through.
+        GroupId[selectionCap] seen;
+        uint seenN;
+        foreach (i; 0 .. selectionCount)
+        {
+            const e = selection[i];
+            if (!alive(e))
+                continue;
+            const g = group[e];
+            if (g != 0)
+            {
+                bool already;
+                foreach (j; 0 .. seenN)
+                    if (seen[j] == g)
+                    {
+                        already = true;
+                        break;
+                    }
+                if (already)
+                    continue;
+                if (seenN < selectionCap)
+                    seen[seenN++] = g;
+            }
+            moveBy(e, dx, dy);
+        }
     }
 
     private void shift(Entity e, int dx, int dy) scope
@@ -663,4 +711,26 @@ unittest
 
     assert(contentBounds(sink[0 .. n]) == Rect(-20, 0, 24, 10));
     assert(w.alive(a) && w.alive(c));
+}
+
+@("diagram.world.moveSelectionByMovesEachGroupOnce")
+@safe pure nothrow @nogc
+unittest
+{
+    // The drag's one-step: `moveBy` fans out to group members, so a naive
+    // walk over the selection would double-move any group with two members
+    // selected.
+    World w;
+    const a = w.spawn(Rect(0, 0, 2, 2));
+    const b = w.spawn(Rect(4, 0, 2, 2));
+    const loose = w.spawn(Rect(20, 0, 2, 2));
+    w.select(a);
+    w.select(b);
+    w.select(loose);
+    assert(w.groupSelection() != 0);
+
+    w.moveSelectionBy(3, 1);
+    assert(w.bounds[a] == Rect(3, 1, 2, 2));
+    assert(w.bounds[b] == Rect(7, 1, 2, 2), "group moved once, not twice");
+    assert(w.bounds[loose] == Rect(23, 1, 2, 2));
 }

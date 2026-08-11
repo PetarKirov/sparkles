@@ -235,6 +235,64 @@ struct Camera
         const h = ceilDiv(viewport.height, cellsPerWorld) * worldPerCell;
         return Rect(origin.x, origin.y, w, h);
     }
+
+    /**
+    Places `world` under the centre of `viewport` — what a minimap scrub and
+    fit-all both do after they have decided where to look.
+    */
+    void lookAt(in Point world, in Size viewport) scope
+    {
+        const cx = viewport.width / 2;
+        const cy = viewport.height / 2;
+        origin = Point(
+            world.x - divFloor(cx, cellsPerWorld) * worldPerCell,
+            world.y - divFloor(cy, cellsPerWorld) * worldPerCell);
+    }
+
+    /// Restores the only exact magnification a run has (`IXN4`): exponent and
+    /// mantissa both at their identity. Origin is left alone — a reset is not
+    /// a home.
+    void resetZoom() scope
+    {
+        zoom = 0;
+        scalePercent = scaleBase;
+    }
+}
+
+/**
+Frames `content` inside `viewport` at the tightest octave that still fits,
+then centres the camera on it (`IXN4` / `f`). Empty content is a no-op — there
+is nothing to fit, and inventing a rectangle at the origin would be a lie.
+
+The mantissa is pinned at 100: fit-all is an exact, keyboard-driven placement,
+and a fractional cell size would only reintroduce the drift `0` exists to
+erase. Padding keeps content off the chrome edge.
+*/
+void fitContent(ref Camera cam, in Rect content, in Size viewport, int padding = 2)
+    @safe pure nothrow @nogc
+{
+    if (content.empty || viewport.width <= 0 || viewport.height <= 0)
+        return;
+
+    const needW = content.width + padding * 2;
+    const needH = content.height + padding * 2;
+    // Prefer the most zoomed-in level that still covers the content.
+    int z = maxZoom;
+    while (z > minZoom)
+    {
+        Camera trial = cam;
+        trial.zoom = z;
+        trial.scalePercent = scaleBase;
+        const vis = trial.visibleWorldRect(viewport);
+        if (vis.width >= needW && vis.height >= needH)
+            break;
+        --z;
+    }
+    cam.zoom = z;
+    cam.scalePercent = scaleBase;
+    cam.lookAt(
+        Point(content.x + content.width / 2, content.y + content.height / 2),
+        viewport);
 }
 
 /**
