@@ -9,9 +9,11 @@ Boost.Asio "emulated proactor" shape. Regular files have no readiness and
 would go to a small worker pool (the fs verbs, deferred with the M7-domain
 portability).
 
-Each pending op lives in a backend-owned freelist slab; its address is the
-kevent `udata`, so a ready event maps straight back to the op's `user_data`
-token. `nop` is synthesized inline (no fd), the same way IOCP posts to its
+Each pending op lives in a backend-owned freelist slab. The kevent `udata`
+carries a *slot token* — the slab index plus a generation counter — rather than
+the slot's address, so a ready event maps back to the op's `user_data` only
+while that slot still holds the op the registration was made for. See
+`slotToken`/`opFor`. `nop` is synthesized inline (no fd), the same way IOCP posts to its
 port.
 
 Op coverage: `nop`, `recv`/`send`, `read`/`write`, `accept`, non-blocking
@@ -147,8 +149,15 @@ struct KqueueBackend
         const cap = cfg.cqEntries != 0 ? cfg.cqEntries : 2 * cfg.sqEntries;
         _cap = cap != 0 ? cap : 256;
         _ops = (cast(KqOp*) pureMalloc(_cap * KqOp.sizeof))[0 .. _cap];
-        if (_ops.ptr is null)
+        _gens = (cast(uint*) pureMalloc(_cap * uint.sizeof))[0 .. _cap];
+        if (_ops.ptr is null || _gens.ptr is null)
         {
+            if (_ops.ptr !is null)
+                pureFreeSlab(_ops.ptr);
+            if (_gens.ptr !is null)
+                pureFreeSlab(_gens.ptr);
+            _ops = null;
+            _gens = null;
             .close(_kq);
             _kq = -1;
             return ioErr!void(12, OpKind.none, IoErrorStage.setup,
@@ -158,6 +167,10 @@ struct KqueueBackend
         {
             _ops[i] = KqOp.init;
             _ops[i].nextFree = i + 1 == _cap ? uint.max : cast(uint)(i + 1);
+            // Generations start at 1 so an all-zero `udata` — the value a
+            // registration this backend did not make would carry — decodes to
+            // generation 0 and matches nothing.
+            _gens[i] = 1;
         }
         _freeHead = 0;
         _pendCount = 0;
@@ -176,6 +189,11 @@ struct KqueueBackend
         {
             pureFree(_ops.ptr);
             _ops = null;
+        }
+        if (_gens.ptr !is null)
+        {
+            pureFree(_gens.ptr);
+            _gens = null;
         }
         if (_kq >= 0)
         {
@@ -401,9 +419,9 @@ struct KqueueBackend
         _readyCount = 0;
         foreach (i; 0 .. n)
         {
-            auto op = cast(KqOp*) evs[i].udata;
+            auto op = opFor(evs[i].udata);
             if (op is null)
-                continue;
+                continue; // stale registration, or not one of ours
             // A multishot poll's registration persists (EV_CLEAR): keep the
             // op live and flag the completion non-final.
             const retained = op.kind == OpKindLocal.poll_ && op.multishot;
@@ -552,7 +570,7 @@ private:
         change.filter = filter;
         change.flags = flags;
         change.fflags = fflags;
-        change.udata = op;
+        change.udata = slotToken(op);
         if (kevent(_kq, &change, 1, null, 0, null) < 0)
         {
             release(op);
@@ -570,7 +588,7 @@ private:
         change.filter = EVFILT_TIMER;
         change.flags = EV_ADD | EV_ONESHOT;
         change.data = cast(ptrdiff_t) ms; // milliseconds (kqueue default unit)
-        change.udata = op;
+        change.udata = slotToken(op);
         if (kevent(_kq, &change, 1, null, 0, null) < 0)
         {
             release(op);
@@ -591,6 +609,50 @@ private:
 
     static int syscallResult(ptrdiff_t r) @safe pure nothrow @nogc
         => r < 0 ? -EAGAIN : cast(int) r;
+
+    /**
+    The `udata` a registration carries: which slot, and which *use* of it.
+
+    Not the slot's address. `release` returns a slot to the freelist
+    immediately, so a raw pointer stays dereferenceable and plausible after the
+    op it belonged to is gone — and a kernel event already queued against the
+    abandoned registration would then be attributed to whatever op took the
+    slot next, completing the wrong token. Pairing the index with a generation
+    makes that stale event identifiable, which is what `opFor` checks.
+
+    This is the same move `io_uring`'s `user_data` and this library's own
+    `OpToken` already make: an opaque value validated on the way back, not a
+    pointer trusted on sight.
+    */
+    void* slotToken(const(KqOp)* op) const @trusted pure nothrow @nogc
+    {
+        const idx = cast(ulong)(op - _ops.ptr);
+        return cast(void*)((cast(ulong) _gens[cast(size_t) idx] << 32) | idx);
+    }
+
+    /// The live op a delivered `udata` names, or `null` if the registration it
+    /// came from has since been released (or it was never ours).
+    KqOp* opFor(scope const(void)* udata) @trusted nothrow @nogc
+    {
+        const packed = cast(ulong) udata;
+        const idx = cast(uint)(packed & 0xffff_ffff);
+        const gen = cast(uint)(packed >>> 32);
+        if (idx >= _cap)
+            return null;
+        if (_gens[idx] != gen)
+            return null;
+        auto op = &_ops[idx];
+        return op.live ? op : null;
+    }
+
+    /// `pureFree` behind a name the error path can call before `_ops`/`_gens`
+    /// are known-good, without importing it twice.
+    static void pureFreeSlab(void* p) @trusted nothrow @nogc
+    {
+        import core.memory : pureFree;
+
+        pureFree(p);
+    }
 
     KqOp* acquire() @trusted nothrow @nogc
     {
@@ -621,6 +683,11 @@ private:
     void release(KqOp* op) @trusted nothrow @nogc
     {
         const idx = cast(uint)(op - _ops.ptr);
+        // Bump BEFORE the slot can be handed out again: any kernel event still
+        // queued against the registration we are abandoning now carries a stale
+        // generation and will be dropped by `opFor` rather than attributed to
+        // whichever op takes this slot next.
+        ++_gens[idx];
         op.live = false;
         op.nextFree = _freeHead;
         _freeHead = idx;
@@ -637,6 +704,11 @@ private:
 
     int _kq = -1;
     KqOp[] _ops;
+    /// Generation per slot, parallel to `_ops` rather than a field of `KqOp`:
+    /// every `trySubmit` assigns the slot wholesale (`*op = KqOp(…)`), which
+    /// would reset a counter living inside it on each reuse — the same hazard
+    /// `armFilter`'s note about `live` describes.
+    uint[] _gens;
     uint _cap;
     uint _freeHead = uint.max;
     uint _pendCount;
@@ -666,6 +738,49 @@ version (unittest)
 /// The M10 data-path gate (runs on macOS): register recv/send readiness on a
 /// loopback pair, let kqueue synthesize the completions, and confirm the
 /// bytes flow — proving the readiness→syscall→completion mapping end to end.
+@("kqueue.slotToken.aStaleRegistrationCannotHitTheRecycledSlot")
+@system
+unittest
+{
+    KqueueBackend b;
+    if (b.open(BackendConfig()).hasError)
+        skipTest("kqueue unavailable");
+    scope (exit)
+        b.close();
+
+    // A slot, registered and then abandoned — exactly what `release` leaves
+    // behind when a batched `EV_DELETE` has not reached the kernel yet, or when
+    // an event was already queued when the op completed.
+    auto first = b.acquire();
+    assert(first !is null);
+    first.token = 0xAAAA;
+    first.live = true;
+    const stale = b.slotToken(first);
+    assert(b.opFor(stale) is first, "a live registration must resolve");
+
+    b.release(first);
+    assert(b.opFor(stale) is null, "a released slot must not answer its old token");
+
+    // The freelist is LIFO, so the very next acquire takes the same storage.
+    // This is the case a raw `KqOp*` in `udata` gets wrong: the pointer is
+    // still valid and still points at a live op — just not the one the kernel
+    // was told about, so its completion would be reported against 0xBBBB.
+    auto second = b.acquire();
+    assert(second is first, "precondition: the slab hands the same slot back");
+    second.token = 0xBBBB;
+    second.live = true;
+
+    assert(b.opFor(stale) is null,
+        "the recycled slot answered a registration that belonged to a dead op");
+    assert(b.opFor(b.slotToken(second)) is second, "the current op must still resolve");
+
+    // Nothing else may decode: a zero `udata` is what a registration this
+    // backend never made carries, and generations start at 1 so it matches no
+    // slot -- including slot 0, whose index is also zero.
+    assert(b.opFor(null) is null);
+    b.release(second);
+}
+
 @("kqueue.dataPath.recvSendSynthesis")
 @system
 unittest
