@@ -27,7 +27,7 @@ version (UiAppGui):
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.input : Event, InputCapabilities, mousePointer;
+import sparkles.input : Event, InputCapabilities, Mods, mousePointer;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
@@ -36,6 +36,7 @@ import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, PointerUnit,
     RunConfig, withRealSize;
 import sparkles.ui_raylib.raylib_canvas : RaylibCanvas;
 import sparkles.ui_raylib.events : RaylibEvents;
+import sparkles.ui_raylib.window : Window;
 
 /// The host an application sees in a window.
 struct GuiHost
@@ -125,6 +126,21 @@ struct GuiHost
     /// being routed through a display list.
     RaylibCanvas canvas() @system
         => RaylibCanvas(&session.fonts, &drawScratch, session.cellW, session.cellH);
+
+    /**
+    The window, the `HST3` companion to $(LREF canvas).
+
+    A renderer of its own needs more than a canvas: the pixel size (cells are
+    a truncating division of it, so an application positioning chrome to the
+    pixel cannot recover it), the scissor, the clear colour, the screenshot.
+    Each is a $(B window) operation rather than a drawing one, and inventing a
+    host errand per call would only rename them.
+
+    $(B Not the frame bracket.) `beginFrame`/`endFrame` belong to the arm —
+    calling them from `present` or the draw phase nests a bracket inside the
+    one already open, and `HST6`'s declined frame stops meaning anything.
+    */
+    ref Window window() @system => session.window;
 }
 
 static assert(isHost!GuiHost);
@@ -290,6 +306,8 @@ unittest
         h.toggleFullscreen();
         h.fontSize(h.fontSizePx + 2);
         auto c = h.canvas;
+        cast(void) h.window.width; // the `HST3` window handle
+        Mods m = h.modifiers;
     }));
 
     // The optional `HST15` errands are present on this host, and refused
