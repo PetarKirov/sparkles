@@ -180,6 +180,20 @@ and (optionally) a preview/gutter:
 | PRV7 | The theme backdrop must fill the viewport via back-color-erase (open theme bg, then erase), with begin/end synchronized-output markers.                                       | full (`844680a3`) | `CtlSeq.syncBegin`/`eraseDisplay`/`syncEnd` |
 | PRV8 | The alt screen must be entered on start and restored (show cursor, exit alt screen) on exit; its contents are discarded.                                                      | full (`74d8f6a3`) | `enterAltScreen`/`exitAltScreen`            |
 
+## File monitoring (`WCH`)
+
+hue is a viewer, so the one file worth following is the **open document** —
+the explorer's refresh stays manual by decision ([`XPF4`](./tree-view.md)).
+Substrate: `sparkles:event-horizon`'s async inotify watcher (`watch.d`, its
+PLAN M7), whose intended consumer this is.
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                    | Status                                                                                                         | Traces to                                            |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| WCH1 | The open document must be **watched** for on-disk changes: the watch arms on the document's **directory** (editors save by rename — the file's own inode dies) and filters by name; write-close and rename-in trigger. One watcher fiber parked on the ring, woken through the loop's channel. | partial (`de29178e`) — the TUI's async arm; the GUI loop and the kqueue mapping (event-horizon `M10`) are open | `workspace.d` watch fiber; `event-horizon` `watch.d` |
+| WCH2 | A triggered **reload** re-reads in place: the same loader, the **viewport preserved**, highlighting and the retained parse rebuilt, the inspector refreshed — its extent tint clears (an old byte extent is meaningless against a changed file; the next hover re-syncs).                      | full (`de29178e`) for the watched arm                                                                          | `WorkspaceTui.reloadCurrent`                         |
+| WCH3 | **Incremental re-parse**: watching yields whole-file snapshots, not edit deltas — synthesize `ts_tree_edit` edits by diffing old/new bytes (`sparkles:diff`) and re-parse with the old tree, so a large document's reload costs its change, not its size.                                      | researched                                                                                                     | `ts_tree_edit`; `sparkles:diff` byte diff            |
+| WCH4 | Degradation is **structural**, never an error: the blocking loop arm (no ring), non-Linux (until `M10`), and an embedded path-less document simply never arm a watch; navigation still re-reads on open.                                                                                       | full (`de29178e`)                                                                                              | `version (linux)` gates; the async-arm-only wiring   |
+
 ## Degradation & diagnostics (`DEG`)
 
 | ID   | Requirement                                                                                                        | Status            | Traces to                         |
