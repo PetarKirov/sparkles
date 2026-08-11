@@ -4,11 +4,14 @@ backend the loop uses by default on each platform — `UringBackend` on Linux,
 `KqueueBackend` on macOS/BSD, `IocpBackend` on Windows.
 
 The `EventHorizonLibkqueue` version override forces the kqueue backend on
-Linux, on top of [mheily/libkqueue](https://github.com/mheily/libkqueue) — a
-Linux compatibility shim over epoll. It exists so the kqueue backend and the
-full `EventLoop!KqueueBackend` integration can be built and tested on Linux
-CI without a Mac; select it with `-version=EventHorizonLibkqueue` and link
-`-lkqueue`.
+Linux over [mheily/libkqueue](https://github.com/mheily/libkqueue) (an epoll
+shim), so the full `EventLoop!KqueueBackend` stack can be tested on Linux CI
+without a Mac. Set `-version=EventHorizonLibkqueue` and link `-lkqueue` — or
+use the package's `libkqueue` dub configuration:
+
+---
+dub run --single libs/event-horizon/examples/fiber-echo.d -b checked -c libkqueue
+---
 */
 module sparkles.event_horizon.backend.select;
 

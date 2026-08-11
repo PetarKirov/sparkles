@@ -494,7 +494,8 @@ cheap (`-o- -c`, no macOS/Windows runner needed) and are already possible from
 one Linux runner:
 
 ```bash
-bash libs/event-horizon/scripts/verify-kqueue-linux.sh          # kqueue, via libkqueue
+# kqueue via libkqueue (devshell supplies the library)
+nix develop -c dub run --single libs/event-horizon/examples/fiber-echo.d -b checked -c libkqueue
 nix develop .#win32 -c win32-ldc2 -o- -c -unittest …            # IOCP, via the cross toolchain
 ```
 

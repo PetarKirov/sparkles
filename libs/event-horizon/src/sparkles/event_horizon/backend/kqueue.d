@@ -21,7 +21,8 @@ Op coverage: `nop`, `recv`/`send`, `read`/`write`, `accept`, non-blocking
 `EventLoop!KqueueBackend` integration — tier-A loop + tier-B fibers + the
 `io` verbs — is verified two ways: the data path on real macOS
 (`scripts/verify-kqueue-macos.sh`), and the whole stack via a fiber-echo on
-Linux over mheily/libkqueue (`scripts/verify-kqueue-linux.sh`). The
+Linux over mheily/libkqueue —
+`dub run --single examples/fiber-echo.d -b checked -c libkqueue`. The
 regular-file worker pool and native cancellation (`EV_DELETE` on the target
 registration) are the remaining refinements.
 */

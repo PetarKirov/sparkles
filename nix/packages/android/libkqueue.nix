@@ -1,16 +1,13 @@
 # mheily/libkqueue cross-built for Android, one static archive per ABI,
-# linked into libhue.so. It is what makes `sparkles:event-horizon` run on
-# Android at all: the app seccomp policy denies io_uring_setup and the
-# library has no epoll fallback by design (SPEC §3.4), so the Android triple
-# selects the kqueue PEER backend (backend/select.d) over this epoll shim —
-# the same backend + shim combination Linux CI exercises via
-# `EventHorizonLibkqueue`.
+# linked into libhue.so. The app seccomp policy denies io_uring_setup and
+# the library has no epoll fallback (SPEC §3.4), so the Android triple
+# selects the kqueue PEER backend over this epoll shim — the same pair
+# Linux CI exercises via `EventHorizonLibkqueue` (fiber-echo `-c libkqueue`
+# + nixpkgs' host `pkgs.libkqueue`; no parallel host package here).
 #
-# `src = pkgs.libkqueue.src` pins the same version nixpkgs packages for the
-# desktop. The library needs its CMake configure step (generated
-# version.h / sys/event.h / config.h), so this cross-compiles with the NDK's
-# own CMake toolchain file rather than a bare clang invocation; the D side
-# declares its own extern(C) bindings, so only the archive is consumed.
+# `src = pkgs.libkqueue.src` pins the same version the host shell links.
+# Needs CMake (generated headers); cross-built with the NDK toolchain. The
+# D side has its own extern(C) bindings, so only the archive is consumed.
 { lib, ... }:
 {
   perSystem =

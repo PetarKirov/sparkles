@@ -2,8 +2,18 @@
 /+ dub.sdl:
     name "event_horizon_fiber_echo"
     dependency "sparkles:event-horizon" path="../../.."
-    platforms "linux"
+    platforms "linux" "osx"
     targetPath "build"
+    // Platform default, or `-c libkqueue` for the Linux peer path.
+    // `targetType "executable"` is required once any configuration is
+    // declared (otherwise a single-file package silently builds a library).
+    configuration "default-backend" {
+        targetType "executable"
+    }
+    configuration "libkqueue" {
+        targetType "executable"
+        subConfiguration "sparkles:event-horizon" "libkqueue"
+    }
     // Optimised, assertions live, `debug {}` blocks out — the build every nix
     // artifact uses. Neither `debug` (which compiles those blocks in) nor
     // `release` (which deletes assert *expressions*, side effects included).
@@ -15,17 +25,23 @@
  * Tier B end to end: the same loopback TCP echo as `callback-echo.d`, in
  * direct style (SPEC §7) — no callbacks, no state machine, no function
  * coloring. Each side is a fiber running blocking-looking code; every
- * `accept`/`connect`/`send`/`recv` parks the fiber on an SQE and resumes on
- * its terminal CQE, and buffers move in and come back (`BufResult`).
+ * `accept`/`connect`/`send`/`recv` parks the fiber on a submission and
+ * resumes on its terminal completion, and buffers move in and come back
+ * (`BufResult`).
  *
  * Compare `echo()` here with the six callbacks of `callback-echo.d`: same
  * kernel traffic, same completion loop underneath — the fiber tier is a
  * scheduler over tier A, not a second implementation.
  *
- * Run with: `dub run --single fiber-echo.d`
+ * Backend-agnostic (`Sched` only); reports which `DefaultBackend` ran:
  *
- * Portability: prints a `SKIP:` line and exits 0 if `io_uring` is
- * unavailable, so it stays green in CI regardless of host kernel.
+ * ---
+ * dub run --single fiber-echo.d -b checked               # platform default
+ * dub run --single fiber-echo.d -b checked -c libkqueue  # kqueue via libkqueue
+ * ---
+ *
+ * `-c libkqueue` needs the sparkles nix devshell (`libs "kqueue"`). Prints
+ * `SKIP:` and exits 0 if the backend cannot open.
  */
 module event_horizon_fiber_echo;
 
@@ -34,12 +50,18 @@ import core.sys.posix.arpa.inet : htonl, ntohs;
 import core.sys.posix.netinet.in_ : INADDR_LOOPBACK, sockaddr_in;
 import core.sys.posix.sys.socket;
 
-import std.stdio : writefln;
-
+import sparkles.base.logger : LogLevel, info, initLogger, warning;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.io;
 import sparkles.event_horizon.op : SockAddr;
 import sparkles.event_horizon.sched : Sched;
+
+/// Backend this build resolved to (for ok/SKIP messages).
+version (EventHorizonLibkqueue)
+    enum backend = DefaultBackend.stringof ~ " (mheily/libkqueue)";
+else
+    enum backend = DefaultBackend.stringof;
 
 static immutable ubyte[] payload = cast(immutable ubyte[]) "event horizon \xF0\x9F\x8C\x8C";
 
@@ -51,7 +73,7 @@ void echo(Stream conn)
     buf.length = 4096;
     for (;;)
     {
-        auto r = conn.recv(move(buf)); // parks; resumes on the CQE
+        auto r = conn.recv(move(buf)); // parks; resumes on the completion
         buf = move(r.buf);             // the buffer comes back
         if (r.res.hasError || r.res.value == 0)
             return;                    // error / EOF
@@ -66,12 +88,13 @@ void echo(Stream conn)
 
 int main()
 {
+    initLogger(LogLevel.info);
+
     Sched sched;
     auto created = Sched.create(sched);
     if (created.hasError)
     {
-        writefln("SKIP: io_uring unavailable (errno %d) — %s",
-            created.error.errnoValue, created.error.context);
+        warning(i"SKIP: $(backend) unavailable (errno $(created.error.errnoValue)) — $(created.error.context)");
         return 0;
     }
     scope (exit) sched.destroy();
@@ -84,7 +107,7 @@ int main()
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (bind(listenFd, cast(sockaddr*) &a, a.sizeof) != 0 || listen(listenFd, 4) != 0)
     {
-        writefln("SKIP: bind/listen failed");
+        warning(i"SKIP: bind/listen failed");
         return 0;
     }
     socklen_t len = a.sizeof;
@@ -133,7 +156,6 @@ int main()
     listener.close();
 
     assert(verified, "payload mismatch after the round-trip");
-    writefln("ok: %d-byte payload echoed through fibers, direct style (port %d)",
-        cast(int) payload.length, ntohs(a.sin_port));
+    info(i"ok: $(payload.length)-byte payload echoed through fibers over $(backend) (port $(ntohs(a.sin_port)))");
     return 0;
 }
