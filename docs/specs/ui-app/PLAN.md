@@ -12,12 +12,12 @@ does not allocate. Phase 0 supplies those; phases 1–3 build on them.
 
 ## Phase overview
 
-| #      | Deliverable                                                                                | Depends on | Status                                                     |
-| ------ | ------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------------------------- |
-| **P0** | Foundations: `SmallBuffer` for reference-bearing elements, `sparkles:input` growth, `NFR2` | —          | shipped                                                    |
-| **P1** | `libs/ui-app`: backend selection, the CLI, the host contract, the recording target         | P0         | shipped (P1.1–P1.6; `TST3` rides P2.B5)                    |
-| **P2** | `apps/terminal` and `apps/hue` fully migrated onto the host                                | P1         | P2.A shipped (as `TVW1`–`TVW7`); P2.B1–B4 shipped, B5 open |
-| **P3** | `apps/diagram` — a new dual-backend application that proves the abstraction                | P2         | open                                                       |
+| #      | Deliverable                                                                                | Depends on | Status                                               |
+| ------ | ------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------------------- |
+| **P0** | Foundations: `SmallBuffer` for reference-bearing elements, `sparkles:input` growth, `NFR2` | —          | shipped                                              |
+| **P1** | `libs/ui-app`: backend selection, the CLI, the host contract, the recording target         | P0         | shipped (P1.1–P1.6; `TST3` still open — see its row) |
+| **P2** | `apps/terminal` and `apps/hue` fully migrated onto the host                                | P1         | shipped (P2.A as `TVW1`–`TVW7`; P2.B1–B5)            |
+| **P3** | `apps/diagram` — a new dual-backend application that proves the abstraction                | P2         | open                                                 |
 
 Each phase must be green before the next starts, and every commit inside a phase
 must build, test and lint on its own.
@@ -298,7 +298,32 @@ lands on the workstation’s real display, where ambient keystrokes reach the
 window and act as commands — a `t` toggles the copy format, an arrow cycles
 the theme. Pin the display number.
 
-Next: **P2.B5**, the TUI loop and the `TST3` parity test.
+**P2.B5 then shipped too.** `WorkspaceTui` is a component and both private
+loop arms are gone — `runWorkspaceAsync` (230 lines) and
+`runWorkspaceBlocking` were `runTui`'s two arms with hue's names on them, so
+the `EventChannel`, the `withDeadline` take, the signalfd and the arm
+selection all went with them. The oracle watchers and the git-status driver
+park through `HST15`; the wait deadline is `HST16`; `dirty` inverted into
+`skipFrame`; and the out-of-band drains became errands rather than sequences
+hue spelled itself (`takeClipboard` returns the text, `takeCursorShape` a
+`PointerShape`), which is the layer the old code was missing rather than a
+redirection.
+
+Two things worth carrying forward. **The contract landed before the arms
+were deleted**, because unlike `P2.B4` this milestone had no oracle at all —
+`HUE_TWOSLASH_TUI_CAPTURE` renders through `twoslash_tui.d`, which never
+constructs a `WorkspaceTui` — so `view`/`handle`/`paint` went in while both
+arms still ran, and four scripted `runAppRecorded` sessions passed against
+the code the arms were running before anything was removed. And
+`currentScheduler` was **not** right on the first try: it returned `Sched*`,
+which made every consumer dereference a pointer and so needed `@trusted` per
+call site. Returning `ref Sched`, with `onScheduler` carrying the
+nullability as the question it always was, removed the last `@trusted` from
+`workspace.d` — the daemon closures capture `ref` locals (2.111) instead of
+`(() @trusted => &this)()` pointers.
+
+Next: `TST3`, which `P2.B5` sharpened rather than closed — see its row in the
+[feature requirements](./feature-requirements.md).
 
 P2.B1 comes first among the hue steps deliberately: the GUI module has no tests
 today, so the migration's first commit is the one that gives it some.
