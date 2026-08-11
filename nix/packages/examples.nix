@@ -167,6 +167,28 @@
           examplePathRel = lib.concatStringsSep "/" parts;
         };
 
+      # What a manifest's `platforms` entries may name. dub's vocabulary is not
+      # nix's — it says `osx` where the system string says `aarch64-darwin`, and
+      # says `posix`, which appears in no system string at all — so matching
+      # bare against `hostPlatform.system` silently excludes those everywhere.
+      # This must agree with `hostPlatformTokens` in
+      # `apps/ci/src/example_manifest.d`: the two decide the same question, and
+      # a disagreement means an example nix builds is skipped by
+      # `ci --example-files`, or the reverse.
+      hostPlatformTokens = [
+        pkgs.stdenv.hostPlatform.system
+      ]
+      ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+        "linux"
+        "posix"
+      ]
+      ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+        "osx"
+        "darwin"
+        "posix"
+      ]
+      ++ lib.optional pkgs.stdenv.hostPlatform.isWindows "windows";
+
       # Does this example's manifest allow the system we are building for?
       # An empty `platforms` means unrestricted.
       buildableHere =
@@ -174,7 +196,7 @@
         let
           p = builtins.filter (x: x != "") (exampleInfo examplePath).platforms;
         in
-        p == [ ] || builtins.any (want: lib.hasInfix want pkgs.stdenv.hostPlatform.system) p;
+        p == [ ] || builtins.any (want: builtins.any (lib.hasInfix want) hostPlatformTokens) p;
 
       # The source tree an example compiles from. It is a function of the
       # *lib*, not of the individual example — every example of a lib sees the
@@ -227,6 +249,8 @@
         # Examples that depend on sparkles:syntax (or other ImportC bindings)
         # need pkg-config + the C library so dub#3085 can feed -P-I...
         # to ImportC for headers like <tree_sitter/api.h>.
+        # Default configs only — event-horizon's opt-in `libkqueue` path is a
+        # devshell `dub -c libkqueue` run.
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [ pkgs.tree-sitter ];
       };
@@ -409,9 +433,9 @@
       # Every example paired with its derivation and ci-equivalent mode.
       # Filtered exactly like `examplesByLib`: a manifest that restricts its
       # `platforms` has no derivation on other systems, so mapping over the
-      # unfiltered list would look up a missing attribute (every
-      # event-horizon example is `platforms "linux"`, so on Darwin the whole
-      # `event-horizon` group is absent — `attribute 'event-horizon' missing`).
+      # unfiltered list would look up a missing attribute (on Darwin the
+      # `event-horizon` group holds only `fiber-echo`, the one example that is
+      # not `platforms "linux"` — `attribute 'callback-echo' missing`).
       annotatedExamples = map (
         path:
         let

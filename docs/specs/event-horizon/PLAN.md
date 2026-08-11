@@ -129,7 +129,8 @@ Verified on `mac-bsn` (built via `ldc2` directly).
 Gate met: the FULL EventLoop!KqueueBackend integration (tier-A loop + tier-B
 fibers + accept/connect/recv/send verbs) verified green two ways — the data path
 on real macOS (Darwin 25.3.0, scripts/verify-kqueue-macos.sh), and a complete
-fiber TCP echo on Linux over mheily/libkqueue (scripts/verify-kqueue-linux.sh).
+fiber TCP echo on Linux over mheily/libkqueue
+(`dub run --single libs/event-horizon/examples/fiber-echo.d -b checked -c libkqueue`).
 The loop-portability refactor (loop/sched/io/scope/live/group/pool → version(Posix),
 DefaultBackend selection in backend/select.d) landed to enable it. Regular-file
 worker pool + native EV_DELETE cancel remain as refinements.

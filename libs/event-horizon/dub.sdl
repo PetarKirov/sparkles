@@ -17,6 +17,13 @@ configuration "library" {
     targetType "library"
 }
 
+// Linux: kqueue peer backend over mheily/libkqueue (`libs "kqueue"`).
+configuration "libkqueue" {
+    targetType "library"
+    versions "EventHorizonLibkqueue"
+    libs "kqueue" platform="linux"
+}
+
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
 

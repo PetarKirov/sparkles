@@ -152,6 +152,11 @@
         # degrading to SKIP in CI — the `nix run .#ci` wrapper deliberately
         # omits it to keep the .#ci closure small.
         pkgs.valgrind
+
+        # mheily/libkqueue for event-horizon's `libkqueue` config
+        # (`libs "kqueue"`; fiber-echo `-c libkqueue`). Same package the
+        # Android build cross-compiles the source of.
+        pkgs.libkqueue
       ];
 
       devPackages = [
@@ -235,10 +240,10 @@
         export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
 
         ${lib.optionalString pkgs.stdenv.isLinux ''
-          # CPU-PMU research probes: libdw/libelf (elfutils) and libpfm for
-          # `dub run --single` linking (`libs "dw" "elf"` / `libs "pfm"`).
-          export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
-          export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          # libdw/libelf (elfutils), libpfm, libkqueue — for `dub run --single`
+          # linking (`libs "dw" "elf"` / `libs "pfm"` / `libs "kqueue"`).
+          export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         ''}
       '';
 
