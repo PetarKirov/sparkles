@@ -234,6 +234,44 @@ struct GuiRunState
     CopyModes cm;
 }
 
+/// The frame's geometry (`P2.B4` third slice): every per-frame value the view
+/// half computes and the paint half reads. The list is not an estimate — hoisting
+/// `paintWindowFrame` out of the loop turned each captured local into an
+/// "undefined identifier", so the compiler enumerated the seam exactly. This is
+/// what the component's `view` phase will hand its `paint` phase (`HST13`).
+struct FrameGeom
+{
+    // Cell and window metrics, from the font set and the window.
+    int cellW;           // glyph cell width, pixels
+    int cellH;           // ditto, height
+    int screenW;         // window width, pixels
+    int screenH;         // ditto, height
+    int visibleRows;     // screenH / cellH
+    int screenCols;      // screenW / cellW
+    int screenRows;      // screenH / cellH, computed at the other end of the loop
+
+    // The document pane, in cells and in pixels.
+    int docRows;         // content rows of the document pane
+    int docY0;           // pixel Y of the document's first row
+    int hdrY;            // ditto for the header row above it
+    int gcols;           // gutter width in cells (line numbers)
+    int gutterPx;        // pixel X where document text starts
+    int rightPad;        // scrollbar gutter reserved on the right
+    int dhx;             // horizontal scroll offset, cells
+    size_t total;        // total document rows
+    size_t topLine;      // first visible document row
+    long maxTop;         // the document's last legal top
+
+    // The explorer pane.
+    int treeTopRows;     // rows above the tree body (the set header)
+    int treePaneRows;    // the tree body's row count
+    long treeMaxTop;     // the tree's last legal top
+
+    // Input state the chrome renders.
+    bool inputMode;      // a prompt is open (inp.mode != Mode.normal)
+    KeyContext kctx;     // the binding context the lantern lists
+}
+
 
 /// ditto
 int runGui(GuiArgs guiArgs) @system
@@ -923,6 +961,584 @@ int runGui(GuiArgs guiArgs) @system
     {
         bool clickPressed() => inp.fin.leftPressed;
         bool selectStartPressed() => inp.fin.leftPressed;
+    }
+
+    // The frame's paint half (`P2.B4`): everything inside the window bracket —
+    // the `HST13` seam the component's paint phase will absorb. It sits outside
+    // the loop on purpose: a closure over the loop body would have hidden its
+    // inputs, and lifting it made the compiler name every one of them. What is
+    // left captured is run-scoped (the window, the fonts, `gs`), which is
+    // exactly the split between the component's fields and its per-frame value.
+    void paintWindowFrame(in FrameGeom geom)
+    {
+        with (geom)
+        {
+        window.beginFrame();
+        // The chrome fills below go through the backend adapter, not raylib
+        // (UIA7). Pixel-space because hue's chrome is pixel-positioned — a
+        // 1 px divider, a `cellH - 1` band — and quantising to cells would
+        // move it. Chrome that can become a widget should (UIA2); this is the
+        // seam for what has not yet.
+        auto chrome = RaylibCanvas(&session.fonts, &buf, cellW, cellH);
+        // GL scissor state is global; a scissor leaked from any earlier path
+        // (or left over across the buffer swap) would CLIP the clear below —
+        // exactly the "documents ghost over each other" failure. Start every
+        // frame from a clean state so the clear always covers the window.
+        window.resetClip();
+        if (flashDebug)
+            window.clear((frame / 30) % 2 == 0
+                ? RgbColor(70, 20, 20) : RgbColor(20, 20, 70));
+        else
+        {
+            window.clear(vm.pageBg);
+            // Panes own their background: an explicit fill over the document
+            // region every frame, so its pixels never depend on the clear
+            // alone (the tree pane and header fill their own rects).
+            chrome.fillPixels(treePx(), 0, screenW - treePx(), screenH, vm.pageBg);
+        }
+
+        // The gutter strip (the fold column + line numbers) sits on its own
+        // theme-derived band, visually distinct from the document.
+        if (!flashDebug)
+            chrome.fillPixels(treePx(), docY0, gutterPx - treePx(),
+                screenH - docY0, vm.gutterBg);
+
+        // The document pane's header — the SHARED chrome (headerBar +
+        // Slot.chromeFocused + bold title), same look as the TUI's.
+        {
+            import std.conv : text;
+
+            drawChromeBar(treePx(), hdrY, (screenW - treePx()) / cellW,
+                vm.title,
+                text(names[vm.themeIdx], " · ",
+                    vm.showPreview ? "preview"
+                    : vm.plainSyntax ? "plain" : "raw"),
+                text(vm.top + 1, "/", total),
+                focused: !pn.treeFocused || !pn.treeVisible);
+        }
+
+        // The one painter: the active tree's precomputed ops through the
+        // raylib canvas, offset by the scroll position and culled to the
+        // viewport rows (raylib clips px; the cull skips dead draw calls).
+        {
+            auto canvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
+                cast(float)(gutterPx - dhx * cellW),
+                cast(float)(docY0 - vm.top * cellH));
+            // The pane's base clip: content (an unwrappable code line inside
+            // a fence, a wide table) never bleeds past the pane or under the
+            // header — the same rule the tree pane follows.
+            canvas.pushClip(Rect(dhx, cast(int) vm.top,
+                (screenW - rightPad - gutterPx) / cellW, docRows));
+            foreach (ref op; vm.ops)
+            {
+                const oy = op.rect.y;
+                if (op.kind != OpKind.pushClip && op.kind != OpKind.popClip
+                    && (oy + op.rect.height <= vm.top || oy > vm.top + docRows))
+                    continue;
+                paint(canvas, (&op)[0 .. 1]);
+            }
+            canvas.popClip();
+
+            // The fence bars' hover-expand overlay (COD6): the SAME px
+            // renderer, easing, and colors the pane bars use, anchored so
+            // the eased thumb thickens around the glyph border line (its
+            // center = the anchor rect's bottom/right edge minus half the
+            // bar). Pure paint — no rebuild per animation frame; it fades
+            // back to the glyph line after the pointer leaves. The pane
+            // clip scissors it (raylib scissor state clips raw draws too),
+            // so a partially scrolled-off box animates its VISIBLE part
+            // instead of the overlay vanishing wholesale.
+            if (vm.fenceSvOwner != size_t.max)
+            {
+                canvas.pushClip(Rect(dhx, cast(int) vm.top,
+                    (screenW - rightPad - gutterPx) / cellW, docRows));
+                scope (exit)
+                    canvas.popClip();
+                const idleW = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
+                Rect ownerRect(size_t base)
+                {
+                    foreach (ref const t; vm.targets)
+                        if (t.hitId == base + vm.fenceSvOwner)
+                            return t.rect;
+                    return Rect.init;
+                }
+
+                const ext = vm.fenceExtent(vm.fenceSvOwner);
+                const cur = vm.fenceScrollAt.get(vm.fenceSvOwner,
+                    FenceScroll(vm.fenceSvOwner, 0, 0));
+
+                // The rendered interior, derived from the box rect itself
+                // (the extent's `innerW` assumes a top-level fence; an
+                // indented box is narrower and its glyph thumb knows it).
+                int digits(int n)
+                {
+                    int d;
+                    for (auto v = n < 1 ? 1 : n; v; v /= 10)
+                        ++d;
+                    return d;
+                }
+
+                const hr = ownerRect(vm.fenceHBarHitBase);
+                const innerRect = hr.width - 4
+                    - (vm.codeLineNumbers ? digits(ext.lines) + 1 : 0);
+                if (hr.width > 2 && innerRect > 0 && ext.widest > innerRect
+                    && hr.y >= vm.top && hr.y < vm.top + docRows
+                    && (vm.fenceSv.h.hovered || vm.fenceSv.h.dragging
+                        || vm.fenceSv.hAnim.width > idleW + 0.5f))
+                {
+                    const w = cast(int) vm.fenceSv.hAnim.width;
+                    // Cell-quantized like the vertical bar: the px thumb is
+                    // the glyph thumb's cells, so the two never drift.
+                    const g = scrollbarThumb(ext.widest, innerRect, cur.x,
+                        hr.width - 2);
+                    const bx = gutterPx + (hr.x + 1 - dhx) * cellW;
+                    const by = docY0 + cast(int)(hr.y - vm.top) * cellH
+                        + cellH / 2 - w / 2;
+                    const ScrollbarLayout l = {live: true,
+                        track: Rect(bx, by, (hr.width - 2) * cellW, w),
+                        thumb: Rect(bx + g.start * cellW, by,
+                            g.extent * cellW, w)};
+                    drawScrollbar(l, vm.fenceSv.h, vm.sbTrack, vm.sbThumb);
+                }
+
+                const vr = ownerRect(vm.fenceVBarHitBase);
+                if (vr.height > 0 && ext.lines > vr.height
+                    && vr.y + vr.height > vm.top
+                    && vr.y < vm.top + docRows
+                    && (vm.fenceSv.v.hovered || vm.fenceSv.v.dragging
+                        || vm.fenceSv.vAnim.width > idleW + 0.5f))
+                {
+                    const w = cast(int) vm.fenceSv.vAnim.width;
+                    // The px thumb is the GLYPH thumb's rows by
+                    // construction — the same formula over the same track
+                    // (the RENDERED viewport height, `vr.height`), cell-
+                    // quantized then scaled to px — so the overlay can
+                    // never drift from the border line's own thumb; only
+                    // the thickness animates.
+                    const g = scrollbarThumb(ext.lines, vr.height, cur.y,
+                        vr.height);
+                    const bx = gutterPx + (vr.x - dhx) * cellW
+                        + cellW / 2 - w / 2;
+                    const by = docY0 + cast(int)(vr.y - vm.top) * cellH;
+                    const ScrollbarLayout l = {live: true,
+                        track: Rect(bx, by, w, vr.height * cellH),
+                        thumb: Rect(bx, by + g.start * cellH, w,
+                            g.extent * cellH)};
+                    drawScrollbar(l, vm.fenceSv.v, vm.sbTrack, vm.sbThumb);
+                }
+            }
+
+            // Fold markers in the gutter's fold column (FLD5): ▾ on an
+            // open region's first row, ▸ on a folded one's placeholder;
+            // click toggles. The placeholder itself renders unobstructed —
+            // its inline marker is disabled (inlineFoldMarker: false), so
+            // the column is the one fold affordance.
+            foreach (ref const fm; vm.foldMarkers)
+            {
+                if (fm.row < topLine || fm.row >= topLine + docRows)
+                    continue;
+                drawText(fonts, cstrOf(buf, fm.open ? "▾" : "▸"),
+                    cast(float)(treePx() + 2),
+                    docY0 + (fm.row - topLine) * cast(float) cellH,
+                    TextStyle(0), vm.gutterFg);
+            }
+
+            // Source line numbers in the gutter — from the row's source range
+            // (first visual row of each source line only).
+            if (gcols > 0)
+            {
+                size_t prevLine = size_t.max;
+                foreach (row; 0 .. docRows)
+                {
+                    const vi = topLine + row;
+                    if (vi >= vm.rows.length)
+                        break;
+                    if (vm.rows[vi].srcStart == size_t.max)
+                        continue;
+                    const ln = srcLineOf(vm.lineStarts, vm.rows[vi].srcStart);
+                    if (ln == prevLine)
+                        continue;
+                    prevLine = ln;
+                    const s = cstrOf(buf, uintToBuf(ln + 1));
+                    drawText(fonts, s,
+                        gutterPx - (s.length + 1) * cast(float) cellW,
+                        docY0 + row * cast(float) cellH, TextStyle(0), vm.gutterFg);
+                }
+            }
+        }
+
+        flash.copiedFlash = flash.copiedFlash.stepped(frameMs(window.frameSeconds), copiedCfg);
+        // Selection highlight — a translucent tint. `tintRow` takes content columns
+        // (0 = the content origin, i.e. after `gutterPx`).
+        void tintRow(long screenRow, int xStartCol, int xEndCol)
+        {
+            if (screenRow < 0 || screenRow >= docRows || xEndCol <= xStartCol)
+                return;
+            // Content-anchored and whole-cell, so it says so: the gutter
+            // and the first document row are both cell multiples (UIA2).
+            chrome.fillRect(Rect(gutterPx / cellW + xStartCol,
+                cast(int)(docY0 / cellH + screenRow),
+                xEndCol - xStartCol, 1),
+                Visual(bg: vm.quoteBars[1], bgAlpha: 80, hasBg: true));
+        }
+        // Tint a source byte range on the widget path: the toolkit derives the
+        // char-precise rects (document cell coordinates) once for any backend.
+        void tintSrcRange(long lo, long hi)
+        {
+            if (hi <= lo)
+                return;
+            foreach (r; selectionRects(vm.tree, vm.frames,
+                cast(size_t) lo, cast(size_t) hi))
+                tintRow(r.y - vm.top, r.x, r.x + r.width);
+        }
+        if (drag.regime == Regime.text && drag.selMax() > drag.selMin())
+            // One pass covers prose, code and table cells alike — every
+            // span with source identity inside [smin, smax) tints.
+            tintSrcRange(drag.selMin(), drag.selMax());
+        else if (drag.regime == Regime.table && drag.selTable >= 0)
+        {
+            const dims = vm.tableDims(drag.selTable);
+            const reg = tableSelection(drag.tblAnchor, drag.tblHead, drag.tblShift, drag.tblAlt,
+                dims.rows, dims.cols);
+            foreach (ref const mc; vm.cellList)
+            {
+                if (mc.table != drag.selTable)
+                    continue;
+                if (reg.subCell)
+                {
+                    if (mc.row == reg.row && mc.col == reg.col)
+                        tintSrcRange(cast(long)(mc.span.start + reg.charLo),
+                            cast(long)(mc.span.start + reg.charHi));
+                }
+                else if (mc.row >= reg.rowLo && mc.row <= reg.rowHi
+                    && mc.col >= reg.colLo && mc.col <= reg.colHi)
+                    tintSrcRange(cast(long) mc.span.start, cast(long) mc.span.end);
+            }
+        }
+
+        // Search-match overlay (raw view only): a translucent tint over each
+        // visible match, its rects derived once from the identity channel
+        // (the vm.current match brighter).
+        if (!vm.showPreview)
+            foreach (i, rects; vm.matchRects)
+                foreach (ref const r; rects)
+                {
+                    const row = r.y - vm.top;
+                    if (row < 0 || row >= docRows)
+                        continue;
+                    const t = i == vm.curMatch ? currentMatchTint : matchTint;
+                    chrome.fillRect(Rect(gutterPx / cellW + r.x,
+                        cast(int)(docY0 / cellH + row), r.width, 1),
+                        Visual(bg: t.rgb, bgAlpha: t.alpha, hasBg: true));
+                }
+
+        // Twoslash hover: pointer → byte (the identity channel) → hover node;
+        // the token's dotted underline fades in and the popup (the shared
+        // viewHoverPopup chrome via drawPopup) draws on vm.top, with pointer
+        // hysteresis so moving down into the open popup keeps it open.
+        if (vm.showPreview && vm.tw.code.length && tsCache !is null)
+        {
+            const mp = inp.fin.pos;
+            size_t overNode = 0;
+            if (mp.x >= gutterPx)
+            {
+                const off = sourceOffsetAt(vm.tree, vm.frames,
+                    Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
+                        cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH))));
+                if (off >= 0)
+                    foreach (ni, ref const n; vm.tw.nodes)
+                        if (n.type == NodeType.hover && off >= cast(long) n.start
+                            && off < cast(long)(n.start + n.length))
+                            overNode = ni + 1;
+            }
+            if (overNode == 0 && pop.hotNode != 0 && pop.havePopup
+                && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
+                && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height)
+                overNode = pop.hotNode; // still over the open popup → keep it open
+            bool forced = false;
+            if (pop.forceHover >= 0)
+            {
+                int seen = 0;
+                foreach (ni, ref const n; vm.tw.nodes)
+                    if (n.type == NodeType.hover && seen++ == pop.forceHover)
+                    {
+                        overNode = ni + 1;
+                        forced = true;
+                        break;
+                    }
+            }
+            if (overNode != pop.hotNode)
+                pop.fade = Timeline.init;
+            pop.hotNode = overNode;
+            // A lazy span (underlined, no text yet) resolves on demand: ask the
+            // oracle for this node's tip. The request is deduped per node, so
+            // holding the pointer still costs one round trip (~0.6 ms warm);
+            // the popup stays empty until the answer lands a frame or two later.
+            if (liveSession !is null && pop.hotNode != 0
+                && !vm.tw.nodes[pop.hotNode - 1].text.length)
+                liveSession.requestTip(pop.hotNode - 1);
+            if (pop.hotNode != 0)
+            {
+                if (!pop.fade.visible)
+                    pop.fade = Timeline.triggered(fadeCfg);
+                pop.fade = forced ? Timeline(Timeline.Phase.hold, 0)
+                    : pop.fade.stepped(frameMs(window.frameSeconds), fadeCfg);
+            }
+            pop.havePopup = false;
+            if (pop.hotNode != 0)
+            {
+                // The token's geometry through the identity channel.
+                const n = vm.tw.nodes[pop.hotNode - 1];
+                auto rects = selectionRects(vm.tree, vm.frames,
+                    n.start, n.start + n.length);
+                if (rects.length)
+                {
+                    const r = rects[0];
+                    const hx = gutterPx + r.x * cellW;
+                    const hy = cast(int)(docY0 + (r.y - vm.top) * cellH);
+                    const hw = r.width * cellW;
+                    const uy = hy + cellH - 2;
+                    // The hot token's emphasis stroke: the same hue as the
+                    // always-on `Slot.hoverUnderline` marker under every hover
+                    // span, but at the fade's full strength so the pointed-at
+                    // token stands out from its neighbours.
+                    const uv = resolveSlot(
+                        defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
+                        Slot.hoverUnderline, vm.pageFg, vm.pageBg);
+                    const ua = cast(ubyte)(pop.fade.alphaPercent(fadeCfg) * 255 / 100);
+                    for (int i = 0; i + 2 <= hw; i += 4)
+                        chrome.fillPixels(hx + i, uy, 2, 1, uv.fg, ua);
+                    // Room from the anchor to the document pane's right edge,
+                    // in cells — the popup is capped to it and, failing that,
+                    // slid left inside it.
+                    const availCells = (screenW - cast(int) rightPad - hx) / cellW;
+                    // A different token is a different question: drop what the
+                    // last popup had opened.
+                    if (pop.popupNode != pop.hotNode)
+                    {
+                        pop.expandedRegions = null;
+                        pop.popupNode = pop.hotNode;
+                    }
+                    pop.hotPopup = drawPopup(fonts, buf, vm.tw, pop.hotNode - 1,
+                        cast(float) hx, cast(float)(hy + cellH),
+                        cellW, cellH, vm.current, *tsCache,
+                        defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
+                        vm.pageFg, vm.pageBg, availCells,
+                        pop.expandedRegions, pop.popupKeys);
+                    // Zero width ⇒ a lazy node drew no popup (nothing to keep
+                    // the pointer inside yet).
+                    pop.havePopup = pop.hotPopup.width > 0;
+                }
+            }
+        }
+
+        // The explorer pane (XPL2): the tree's widget view painted through
+        // RaylibCanvas at the window's left edge, viewport-sliced, with a
+        // hairline divider. The whole pane clips at its own width.
+        if (pn.treeVisible && pn.tree.git.poll())
+            pn.tree.rebuild(); // a finished async git refresh paints this frame
+        if (pn.treeVisible)
+        {
+            pn.tree.height = visibleRows - treeTopRows - 1; // − the header row
+            pn.tree.width = treeCols; // the shared overflow check uses it
+            pn.tree.scrollBy(0); // bounds only — never yank the view to the cursor
+            chrome.fillPixels(0, 0, treeCols * cellW, screenH, mix(vm.pageBg, vm.pageFg, 0.03));
+            // The divider rule, in the toolkit's vocabulary (UIA2): hue
+            // names the column and the edge, the backend decides how thin a
+            // hairline is on this display.
+            chrome.rule(Rect(treeCols, 0, 1, screenRows),
+                RuleEdge.centerX, Visual(fg: vm.gutterFg));
+
+            // The explorer pane's header — the shared chrome, focused when
+            // the tree holds the input focus.
+            {
+                import std.conv : text;
+                import std.path : baseName;
+
+                drawChromeBar(0, hdrY, treeCols, baseName(pn.tree.root),
+                    null,
+                    text(pn.tree.rows.length ? pn.tree.sel + 1 : 0, "/",
+                        pn.tree.rows.length),
+                    focused: pn.treeFocused);
+            }
+
+            import sparkles.ui.geometry : SizeSpec;
+            import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+            auto tb = Builder();
+            const tFirst = cast(size_t) pn.tree.top;
+            const tLast = tFirst + visibleRows > pn.tree.rows.length
+                ? pn.tree.rows.length : tFirst + visibleRows;
+            const selNode = pn.tree.sel < cast(long) pn.tree.rows.length
+                ? pn.tree.rows[cast(size_t) pn.tree.sel].node : uint.max;
+            const tv = treeView(tb, pn.tree.data, pn.tree.rows[tFirst .. tLast],
+                (uint i) @safe => pn.tree.open.isOpen(pn.tree.data.nodes[i].value.path),
+                selNode, explorerGlyphs, pn.tree.selBg, hasSelectionBg: true);
+            Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
+                width: SizeSpec.fixed(treeCols), clipX: true);
+            auto wt = tb.finish(tb.add(paneW));
+            auto tOps = buildDisplayList(wt, layout(wt),
+                themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
+            const thx = pn.tree.hOverflows() ? cast(int) pn.tree.hsb.offset : 0;
+            auto tCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
+                cast(float)(-thx * cellW), cast(float)((treeTopRows + 1) * cellH));
+            tCanvas.pushClip(Rect(thx, 0, treeCols - thx, pn.tree.bodyRows));
+            paint(tCanvas, tOps);
+            tCanvas.popClip();
+
+            // The horizontal bar (IXB2): the pane's bottom edge — the same
+            // animated-height thumb + hover track as the vertical bars, in
+            // the pane's theme tint; the offset comes from the STM9 machine
+            // (hidden while the filter line owns the row).
+            if (pn.tree.hOverflows() && !pn.tree.searching)
+            {
+                const l = scrollbarLayout(pn.tree.hsb, pn.tree.scroll.hAnim,
+                    pn.tree.contentCols, treeCols - 1,
+                    Rect(0, 0, treeCols * cellW, screenH));
+                drawScrollbar(l, pn.tree.hsb, pn.tree.sbTrack, pn.tree.sbThumb);
+            }
+
+            // The live-filter input line, pinned to the pane's bottom row
+            // (the GUI pane has no status bar; the TUI shows it there).
+            if (pn.tree.searching)
+            {
+                const barY = screenH - cellH;
+                chrome.fillPixels(0, barY, treeCols * cellW, cellH, vm.gutterFg);
+                buf.clear();
+                buf ~= "/";
+                buf ~= pn.tree.filterQuery;
+                buf ~= "▏\0";
+                drawText(fonts, buf[][0 .. $ - 1], 4, cast(float) barY,
+                    TextStyle(0), vm.pageBg);
+            }
+
+            // The pane's scrollbar: the same animated-width thumb + hover
+            // track as the document's, in the pane's theme tint.
+            if (treeMaxTop > 0 && treePaneRows > 0)
+            {
+                const trackTop = (treeTopRows + 1) * cellH;
+                const l = scrollbarLayout(
+                    pn.tree.scroll.v.scrolledTo(pn.tree.top),
+                    pn.tree.scroll.vAnim, pn.tree.rows.length, treePaneRows,
+                    Rect(0, trackTop, treeCols * cellW, screenH - trackTop));
+                drawScrollbar(l, pn.tree.scroll.v, pn.tree.sbTrack,
+                    pn.tree.sbThumb);
+            }
+        }
+
+        // The document pane's horizontal bar (IXB2), over its bottom edge.
+        if (vm.hOverflows() && inp.mode == Mode.normal)
+        {
+            const l = scrollbarLayout(vm.hsb, vm.scroll.hAnim, vm.contentCols,
+                vm.widthCols, Rect(gutterPx, 0, screenW - gutterPx, screenH));
+            drawScrollbar(l, vm.hsb, vm.sbTrack, vm.sbThumb);
+        }
+
+        // Scrollbar: an animated-width thumb, plus a faint track while hovered
+        // or dragging. Colors follow the theme's muted gutter tone.
+        if (maxTop > 0)
+        {
+            // Distinct link-tinted chrome (the gutter behind it is empty page
+            // bg): a subtle full-height track on hover, a brighter thumb.
+            const l = scrollbarLayout(vm.scroll.v.scrolledTo(vm.top),
+                vm.scroll.vAnim, total, docRows,
+                Rect(0, docY0, screenW, screenH - docY0));
+            drawScrollbar(l, vm.scroll.v, vm.sbTrack, vm.sbThumb);
+        }
+
+        // A header bar when navigating a document set (`GNV2`): the entry name and
+        // summary on the left, the set position + keys on the right. Drawn over the
+        // vm.top row so scrolled content passes under it.
+        if (set !is null && !set.empty && loadDoc !is null)
+        {
+            chrome.fillPixels(0, 0, screenW, cellH, mix(vm.pageBg, vm.pageFg, 0.12));
+            chrome.rule(Rect(0, 0, screenCols, 1), RuleEdge.bottom,
+                Visual(fg: vm.gutterFg));
+            const left = vm.summary.length ? vm.title ~ "  " ~ vm.summary : vm.title;
+            drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0, TextStyle(0), vm.pageFg);
+            const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next   i index");
+            const px = cast(float)(screenW - cast(int)((pos.length + 1) * cellW));
+            drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), vm.gutterFg);
+        }
+
+        // Bottom toolbar (Android): the SAME tree and frames the tap handler
+        // hit-tested at the top of the loop, painted through RaylibCanvas
+        // (IXB9). Nothing here measures a label or divides a width — a
+        // collapsed bar simply produces no ops, which is also what made it
+        // untappable.
+        version (Android)
+        {
+            chrome.rule(Rect(0, toolbarY / cellH - 1, screenCols, 1),
+                RuleEdge.bottom, Visual(fg: vm.gutterFg));
+            auto barOps = buildDisplayList(barTree, barFrames,
+                themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
+            auto barCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
+                0, cast(float) toolbarY);
+            paint(barCanvas, barOps);
+        }
+
+        // Input line at the bottom: '/query' while searching, ':n' while going
+        // to a line. Shows a match count for searches.
+        if (inputMode)
+        {
+            const barY = screenH - cellH;
+            chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
+            auto lineText = inp.mode == Mode.search
+                ? text("/", inp.query[], "   ", vm.matches.length, " matches")
+                : text(":", inp.query[]);
+            drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), vm.pageBg);
+        }
+        // Copy-mode toast (when not typing): flashes the mode after a 'y'/'t' toggle.
+        else if (flash.toast.visible)
+        {
+            flash.toast = flash.toast.stepped(frameMs(window.frameSeconds), toastCfg);
+            const barY = screenH - cellH;
+            chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
+            drawText(fonts, cstrOf(buf, flash.copyModeMsg), 4, cast(float) barY, TextStyle(0), vm.pageBg);
+        }
+
+        // The key guide (`LTN5`), last so it sits over everything — it is a
+        // transient answer to "what can I press", not part of the document.
+        if (pn.lantern.shown)
+        {
+            SmallBuffer!(Binding, 128) listed;
+            bindingsAt(listed, kctx, pn.lantern.pending[]);
+            if (listed.length)
+            {
+                Builder ltnBuilder;
+                BoxLayout ltnBox;
+                const ltnRoot = viewLantern(ltnBuilder, ltnLabels, listed[],
+                    pn.lantern.pending.length, screenW / cellW, ltnBox,
+                    Placement.classic, LanternStyle.init, 0,
+                    pn.lantern.scroll);
+                auto ltnTree = ltnBuilder.finish(ltnRoot);
+                // Bounded to the window, so a `classic` panel actually
+                // spans it rather than shrinking to its content.
+                auto ltnFrames = layout(ltnTree,
+                    Constraints(maxW: screenW / cellW));
+                const panel = ltnFrames[ltnTree.root].rect;
+
+                const panelY = screenH - panel.height * cellH
+                    - (inputMode ? cellH : 0);
+                // A reused sink, so a panel that is up every frame costs no
+                // allocation to repaint (`NFR2`).
+                // A scissor from the viewer pane is still live at this
+                // point; the panel is chrome over everything, not content
+                // inside a pane.
+                window.resetClip();
+                ltnOps.clear();
+                buildDisplayListInto(ltnTree, ltnFrames,
+                    themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
+                    ltnOps);
+                auto ltnCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
+                    0, cast(float) panelY);
+                paint(ltnCanvas, ltnOps[]);
+            }
+        }
+
+        window.resetClip(); // never let a scissor survive the frame
+        window.endFrame();
+        }
     }
 
     // The frame clock (asyncLoop only): absolute deadlines, missed frames
@@ -2186,580 +2802,18 @@ int runGui(GuiArgs guiArgs) @system
                 drag.selecting = false;
         }
 
-
-        // The frame's paint half, named (`P2.B4`): everything inside the
-        // window bracket — the HST13 seam the component's paint phase will
-        // absorb. Nested in the loop so its closures pin the exact set of
-        // per-frame values it consumes; parameterizing them is the next step.
-        void paintWindowFrame()
-        {
-        window.beginFrame();
-        // The chrome fills below go through the backend adapter, not raylib
-        // (UIA7). Pixel-space because hue's chrome is pixel-positioned — a
-        // 1 px divider, a `cellH - 1` band — and quantising to cells would
-        // move it. Chrome that can become a widget should (UIA2); this is the
-        // seam for what has not yet.
-        auto chrome = RaylibCanvas(&session.fonts, &buf, cellW, cellH);
-        // GL scissor state is global; a scissor leaked from any earlier path
-        // (or left over across the buffer swap) would CLIP the clear below —
-        // exactly the "documents ghost over each other" failure. Start every
-        // frame from a clean state so the clear always covers the window.
-        window.resetClip();
-        if (flashDebug)
-            window.clear((frame / 30) % 2 == 0
-                ? RgbColor(70, 20, 20) : RgbColor(20, 20, 70));
-        else
-        {
-            window.clear(vm.pageBg);
-            // Panes own their background: an explicit fill over the document
-            // region every frame, so its pixels never depend on the clear
-            // alone (the tree pane and header fill their own rects).
-            chrome.fillPixels(treePx(), 0, screenW - treePx(), screenH, vm.pageBg);
-        }
-
-        // The gutter strip (the fold column + line numbers) sits on its own
-        // theme-derived band, visually distinct from the document.
-        if (!flashDebug)
-            chrome.fillPixels(treePx(), docY0, gutterPx - treePx(),
-                screenH - docY0, vm.gutterBg);
-
-        // The document pane's header — the SHARED chrome (headerBar +
-        // Slot.chromeFocused + bold title), same look as the TUI's.
-        {
-            import std.conv : text;
-
-            drawChromeBar(treePx(), hdrY, (screenW - treePx()) / cellW,
-                vm.title,
-                text(names[vm.themeIdx], " · ",
-                    vm.showPreview ? "preview"
-                    : vm.plainSyntax ? "plain" : "raw"),
-                text(vm.top + 1, "/", total),
-                focused: !pn.treeFocused || !pn.treeVisible);
-        }
-
-        // The one painter: the active tree's precomputed ops through the
-        // raylib canvas, offset by the scroll position and culled to the
-        // viewport rows (raylib clips px; the cull skips dead draw calls).
-        {
-            auto canvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
-                cast(float)(gutterPx - dhx * cellW),
-                cast(float)(docY0 - vm.top * cellH));
-            // The pane's base clip: content (an unwrappable code line inside
-            // a fence, a wide table) never bleeds past the pane or under the
-            // header — the same rule the tree pane follows.
-            canvas.pushClip(Rect(dhx, cast(int) vm.top,
-                (screenW - rightPad - gutterPx) / cellW, docRows));
-            foreach (ref op; vm.ops)
-            {
-                const oy = op.rect.y;
-                if (op.kind != OpKind.pushClip && op.kind != OpKind.popClip
-                    && (oy + op.rect.height <= vm.top || oy > vm.top + docRows))
-                    continue;
-                paint(canvas, (&op)[0 .. 1]);
-            }
-            canvas.popClip();
-
-            // The fence bars' hover-expand overlay (COD6): the SAME px
-            // renderer, easing, and colors the pane bars use, anchored so
-            // the eased thumb thickens around the glyph border line (its
-            // center = the anchor rect's bottom/right edge minus half the
-            // bar). Pure paint — no rebuild per animation frame; it fades
-            // back to the glyph line after the pointer leaves. The pane
-            // clip scissors it (raylib scissor state clips raw draws too),
-            // so a partially scrolled-off box animates its VISIBLE part
-            // instead of the overlay vanishing wholesale.
-            if (vm.fenceSvOwner != size_t.max)
-            {
-                canvas.pushClip(Rect(dhx, cast(int) vm.top,
-                    (screenW - rightPad - gutterPx) / cellW, docRows));
-                scope (exit)
-                    canvas.popClip();
-                const idleW = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
-                Rect ownerRect(size_t base)
-                {
-                    foreach (ref const t; vm.targets)
-                        if (t.hitId == base + vm.fenceSvOwner)
-                            return t.rect;
-                    return Rect.init;
-                }
-
-                const ext = vm.fenceExtent(vm.fenceSvOwner);
-                const cur = vm.fenceScrollAt.get(vm.fenceSvOwner,
-                    FenceScroll(vm.fenceSvOwner, 0, 0));
-
-                // The rendered interior, derived from the box rect itself
-                // (the extent's `innerW` assumes a top-level fence; an
-                // indented box is narrower and its glyph thumb knows it).
-                int digits(int n)
-                {
-                    int d;
-                    for (auto v = n < 1 ? 1 : n; v; v /= 10)
-                        ++d;
-                    return d;
-                }
-
-                const hr = ownerRect(vm.fenceHBarHitBase);
-                const innerRect = hr.width - 4
-                    - (vm.codeLineNumbers ? digits(ext.lines) + 1 : 0);
-                if (hr.width > 2 && innerRect > 0 && ext.widest > innerRect
-                    && hr.y >= vm.top && hr.y < vm.top + docRows
-                    && (vm.fenceSv.h.hovered || vm.fenceSv.h.dragging
-                        || vm.fenceSv.hAnim.width > idleW + 0.5f))
-                {
-                    const w = cast(int) vm.fenceSv.hAnim.width;
-                    // Cell-quantized like the vertical bar: the px thumb is
-                    // the glyph thumb's cells, so the two never drift.
-                    const g = scrollbarThumb(ext.widest, innerRect, cur.x,
-                        hr.width - 2);
-                    const bx = gutterPx + (hr.x + 1 - dhx) * cellW;
-                    const by = docY0 + cast(int)(hr.y - vm.top) * cellH
-                        + cellH / 2 - w / 2;
-                    const ScrollbarLayout l = {live: true,
-                        track: Rect(bx, by, (hr.width - 2) * cellW, w),
-                        thumb: Rect(bx + g.start * cellW, by,
-                            g.extent * cellW, w)};
-                    drawScrollbar(l, vm.fenceSv.h, vm.sbTrack, vm.sbThumb);
-                }
-
-                const vr = ownerRect(vm.fenceVBarHitBase);
-                if (vr.height > 0 && ext.lines > vr.height
-                    && vr.y + vr.height > vm.top
-                    && vr.y < vm.top + docRows
-                    && (vm.fenceSv.v.hovered || vm.fenceSv.v.dragging
-                        || vm.fenceSv.vAnim.width > idleW + 0.5f))
-                {
-                    const w = cast(int) vm.fenceSv.vAnim.width;
-                    // The px thumb is the GLYPH thumb's rows by
-                    // construction — the same formula over the same track
-                    // (the RENDERED viewport height, `vr.height`), cell-
-                    // quantized then scaled to px — so the overlay can
-                    // never drift from the border line's own thumb; only
-                    // the thickness animates.
-                    const g = scrollbarThumb(ext.lines, vr.height, cur.y,
-                        vr.height);
-                    const bx = gutterPx + (vr.x - dhx) * cellW
-                        + cellW / 2 - w / 2;
-                    const by = docY0 + cast(int)(vr.y - vm.top) * cellH;
-                    const ScrollbarLayout l = {live: true,
-                        track: Rect(bx, by, w, vr.height * cellH),
-                        thumb: Rect(bx, by + g.start * cellH, w,
-                            g.extent * cellH)};
-                    drawScrollbar(l, vm.fenceSv.v, vm.sbTrack, vm.sbThumb);
-                }
-            }
-
-            // Fold markers in the gutter's fold column (FLD5): ▾ on an
-            // open region's first row, ▸ on a folded one's placeholder;
-            // click toggles. The placeholder itself renders unobstructed —
-            // its inline marker is disabled (inlineFoldMarker: false), so
-            // the column is the one fold affordance.
-            foreach (ref const fm; vm.foldMarkers)
-            {
-                if (fm.row < topLine || fm.row >= topLine + docRows)
-                    continue;
-                drawText(fonts, cstrOf(buf, fm.open ? "▾" : "▸"),
-                    cast(float)(treePx() + 2),
-                    docY0 + (fm.row - topLine) * cast(float) cellH,
-                    TextStyle(0), vm.gutterFg);
-            }
-
-            // Source line numbers in the gutter — from the row's source range
-            // (first visual row of each source line only).
-            if (gcols > 0)
-            {
-                size_t prevLine = size_t.max;
-                foreach (row; 0 .. docRows)
-                {
-                    const vi = topLine + row;
-                    if (vi >= vm.rows.length)
-                        break;
-                    if (vm.rows[vi].srcStart == size_t.max)
-                        continue;
-                    const ln = srcLineOf(vm.lineStarts, vm.rows[vi].srcStart);
-                    if (ln == prevLine)
-                        continue;
-                    prevLine = ln;
-                    const s = cstrOf(buf, uintToBuf(ln + 1));
-                    drawText(fonts, s,
-                        gutterPx - (s.length + 1) * cast(float) cellW,
-                        docY0 + row * cast(float) cellH, TextStyle(0), vm.gutterFg);
-                }
-            }
-        }
-
-        flash.copiedFlash = flash.copiedFlash.stepped(frameMs(window.frameSeconds), copiedCfg);
-        // Selection highlight — a translucent tint. `tintRow` takes content columns
-        // (0 = the content origin, i.e. after `gutterPx`).
-        void tintRow(long screenRow, int xStartCol, int xEndCol)
-        {
-            if (screenRow < 0 || screenRow >= docRows || xEndCol <= xStartCol)
-                return;
-            // Content-anchored and whole-cell, so it says so: the gutter
-            // and the first document row are both cell multiples (UIA2).
-            chrome.fillRect(Rect(gutterPx / cellW + xStartCol,
-                cast(int)(docY0 / cellH + screenRow),
-                xEndCol - xStartCol, 1),
-                Visual(bg: vm.quoteBars[1], bgAlpha: 80, hasBg: true));
-        }
-        // Tint a source byte range on the widget path: the toolkit derives the
-        // char-precise rects (document cell coordinates) once for any backend.
-        void tintSrcRange(long lo, long hi)
-        {
-            if (hi <= lo)
-                return;
-            foreach (r; selectionRects(vm.tree, vm.frames,
-                cast(size_t) lo, cast(size_t) hi))
-                tintRow(r.y - vm.top, r.x, r.x + r.width);
-        }
-        if (drag.regime == Regime.text && drag.selMax() > drag.selMin())
-            // One pass covers prose, code and table cells alike — every
-            // span with source identity inside [smin, smax) tints.
-            tintSrcRange(drag.selMin(), drag.selMax());
-        else if (drag.regime == Regime.table && drag.selTable >= 0)
-        {
-            const dims = vm.tableDims(drag.selTable);
-            const reg = tableSelection(drag.tblAnchor, drag.tblHead, drag.tblShift, drag.tblAlt,
-                dims.rows, dims.cols);
-            foreach (ref const mc; vm.cellList)
-            {
-                if (mc.table != drag.selTable)
-                    continue;
-                if (reg.subCell)
-                {
-                    if (mc.row == reg.row && mc.col == reg.col)
-                        tintSrcRange(cast(long)(mc.span.start + reg.charLo),
-                            cast(long)(mc.span.start + reg.charHi));
-                }
-                else if (mc.row >= reg.rowLo && mc.row <= reg.rowHi
-                    && mc.col >= reg.colLo && mc.col <= reg.colHi)
-                    tintSrcRange(cast(long) mc.span.start, cast(long) mc.span.end);
-            }
-        }
-
-        // Search-match overlay (raw view only): a translucent tint over each
-        // visible match, its rects derived once from the identity channel
-        // (the vm.current match brighter).
-        if (!vm.showPreview)
-            foreach (i, rects; vm.matchRects)
-                foreach (ref const r; rects)
-                {
-                    const row = r.y - vm.top;
-                    if (row < 0 || row >= docRows)
-                        continue;
-                    const t = i == vm.curMatch ? currentMatchTint : matchTint;
-                    chrome.fillRect(Rect(gutterPx / cellW + r.x,
-                        cast(int)(docY0 / cellH + row), r.width, 1),
-                        Visual(bg: t.rgb, bgAlpha: t.alpha, hasBg: true));
-                }
-
-        // Twoslash hover: pointer → byte (the identity channel) → hover node;
-        // the token's dotted underline fades in and the popup (the shared
-        // viewHoverPopup chrome via drawPopup) draws on vm.top, with pointer
-        // hysteresis so moving down into the open popup keeps it open.
-        if (vm.showPreview && vm.tw.code.length && tsCache !is null)
-        {
-            const mp = inp.fin.pos;
-            size_t overNode = 0;
-            if (mp.x >= gutterPx)
-            {
-                const off = sourceOffsetAt(vm.tree, vm.frames,
-                    Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
-                        cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH))));
-                if (off >= 0)
-                    foreach (ni, ref const n; vm.tw.nodes)
-                        if (n.type == NodeType.hover && off >= cast(long) n.start
-                            && off < cast(long)(n.start + n.length))
-                            overNode = ni + 1;
-            }
-            if (overNode == 0 && pop.hotNode != 0 && pop.havePopup
-                && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
-                && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height)
-                overNode = pop.hotNode; // still over the open popup → keep it open
-            bool forced = false;
-            if (pop.forceHover >= 0)
-            {
-                int seen = 0;
-                foreach (ni, ref const n; vm.tw.nodes)
-                    if (n.type == NodeType.hover && seen++ == pop.forceHover)
-                    {
-                        overNode = ni + 1;
-                        forced = true;
-                        break;
-                    }
-            }
-            if (overNode != pop.hotNode)
-                pop.fade = Timeline.init;
-            pop.hotNode = overNode;
-            // A lazy span (underlined, no text yet) resolves on demand: ask the
-            // oracle for this node's tip. The request is deduped per node, so
-            // holding the pointer still costs one round trip (~0.6 ms warm);
-            // the popup stays empty until the answer lands a frame or two later.
-            if (liveSession !is null && pop.hotNode != 0
-                && !vm.tw.nodes[pop.hotNode - 1].text.length)
-                liveSession.requestTip(pop.hotNode - 1);
-            if (pop.hotNode != 0)
-            {
-                if (!pop.fade.visible)
-                    pop.fade = Timeline.triggered(fadeCfg);
-                pop.fade = forced ? Timeline(Timeline.Phase.hold, 0)
-                    : pop.fade.stepped(frameMs(window.frameSeconds), fadeCfg);
-            }
-            pop.havePopup = false;
-            if (pop.hotNode != 0)
-            {
-                // The token's geometry through the identity channel.
-                const n = vm.tw.nodes[pop.hotNode - 1];
-                auto rects = selectionRects(vm.tree, vm.frames,
-                    n.start, n.start + n.length);
-                if (rects.length)
-                {
-                    const r = rects[0];
-                    const hx = gutterPx + r.x * cellW;
-                    const hy = cast(int)(docY0 + (r.y - vm.top) * cellH);
-                    const hw = r.width * cellW;
-                    const uy = hy + cellH - 2;
-                    // The hot token's emphasis stroke: the same hue as the
-                    // always-on `Slot.hoverUnderline` marker under every hover
-                    // span, but at the fade's full strength so the pointed-at
-                    // token stands out from its neighbours.
-                    const uv = resolveSlot(
-                        defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
-                        Slot.hoverUnderline, vm.pageFg, vm.pageBg);
-                    const ua = cast(ubyte)(pop.fade.alphaPercent(fadeCfg) * 255 / 100);
-                    for (int i = 0; i + 2 <= hw; i += 4)
-                        chrome.fillPixels(hx + i, uy, 2, 1, uv.fg, ua);
-                    // Room from the anchor to the document pane's right edge,
-                    // in cells — the popup is capped to it and, failing that,
-                    // slid left inside it.
-                    const availCells = (screenW - cast(int) rightPad - hx) / cellW;
-                    // A different token is a different question: drop what the
-                    // last popup had opened.
-                    if (pop.popupNode != pop.hotNode)
-                    {
-                        pop.expandedRegions = null;
-                        pop.popupNode = pop.hotNode;
-                    }
-                    pop.hotPopup = drawPopup(fonts, buf, vm.tw, pop.hotNode - 1,
-                        cast(float) hx, cast(float)(hy + cellH),
-                        cellW, cellH, vm.current, *tsCache,
-                        defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
-                        vm.pageFg, vm.pageBg, availCells,
-                        pop.expandedRegions, pop.popupKeys);
-                    // Zero width ⇒ a lazy node drew no popup (nothing to keep
-                    // the pointer inside yet).
-                    pop.havePopup = pop.hotPopup.width > 0;
-                }
-            }
-        }
-
-        // The explorer pane (XPL2): the tree's widget view painted through
-        // RaylibCanvas at the window's left edge, viewport-sliced, with a
-        // hairline divider. The whole pane clips at its own width.
-        if (pn.treeVisible && pn.tree.git.poll())
-            pn.tree.rebuild(); // a finished async git refresh paints this frame
-        if (pn.treeVisible)
-        {
-            pn.tree.height = visibleRows - treeTopRows - 1; // − the header row
-            pn.tree.width = treeCols; // the shared overflow check uses it
-            pn.tree.scrollBy(0); // bounds only — never yank the view to the cursor
-            chrome.fillPixels(0, 0, treeCols * cellW, screenH, mix(vm.pageBg, vm.pageFg, 0.03));
-            // The divider rule, in the toolkit's vocabulary (UIA2): hue
-            // names the column and the edge, the backend decides how thin a
-            // hairline is on this display.
-            chrome.rule(Rect(treeCols, 0, 1, screenRows),
-                RuleEdge.centerX, Visual(fg: vm.gutterFg));
-
-            // The explorer pane's header — the shared chrome, focused when
-            // the tree holds the input focus.
-            {
-                import std.conv : text;
-                import std.path : baseName;
-
-                drawChromeBar(0, hdrY, treeCols, baseName(pn.tree.root),
-                    null,
-                    text(pn.tree.rows.length ? pn.tree.sel + 1 : 0, "/",
-                        pn.tree.rows.length),
-                    focused: pn.treeFocused);
-            }
-
-            import sparkles.ui.geometry : SizeSpec;
-            import sparkles.ui.widget : Builder, Widget, WidgetKind;
-
-            auto tb = Builder();
-            const tFirst = cast(size_t) pn.tree.top;
-            const tLast = tFirst + visibleRows > pn.tree.rows.length
-                ? pn.tree.rows.length : tFirst + visibleRows;
-            const selNode = pn.tree.sel < cast(long) pn.tree.rows.length
-                ? pn.tree.rows[cast(size_t) pn.tree.sel].node : uint.max;
-            const tv = treeView(tb, pn.tree.data, pn.tree.rows[tFirst .. tLast],
-                (uint i) @safe => pn.tree.open.isOpen(pn.tree.data.nodes[i].value.path),
-                selNode, explorerGlyphs, pn.tree.selBg, hasSelectionBg: true);
-            Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
-                width: SizeSpec.fixed(treeCols), clipX: true);
-            auto wt = tb.finish(tb.add(paneW));
-            auto tOps = buildDisplayList(wt, layout(wt),
-                themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
-            const thx = pn.tree.hOverflows() ? cast(int) pn.tree.hsb.offset : 0;
-            auto tCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
-                cast(float)(-thx * cellW), cast(float)((treeTopRows + 1) * cellH));
-            tCanvas.pushClip(Rect(thx, 0, treeCols - thx, pn.tree.bodyRows));
-            paint(tCanvas, tOps);
-            tCanvas.popClip();
-
-            // The horizontal bar (IXB2): the pane's bottom edge — the same
-            // animated-height thumb + hover track as the vertical bars, in
-            // the pane's theme tint; the offset comes from the STM9 machine
-            // (hidden while the filter line owns the row).
-            if (pn.tree.hOverflows() && !pn.tree.searching)
-            {
-                const l = scrollbarLayout(pn.tree.hsb, pn.tree.scroll.hAnim,
-                    pn.tree.contentCols, treeCols - 1,
-                    Rect(0, 0, treeCols * cellW, screenH));
-                drawScrollbar(l, pn.tree.hsb, pn.tree.sbTrack, pn.tree.sbThumb);
-            }
-
-            // The live-filter input line, pinned to the pane's bottom row
-            // (the GUI pane has no status bar; the TUI shows it there).
-            if (pn.tree.searching)
-            {
-                const barY = screenH - cellH;
-                chrome.fillPixels(0, barY, treeCols * cellW, cellH, vm.gutterFg);
-                buf.clear();
-                buf ~= "/";
-                buf ~= pn.tree.filterQuery;
-                buf ~= "▏\0";
-                drawText(fonts, buf[][0 .. $ - 1], 4, cast(float) barY,
-                    TextStyle(0), vm.pageBg);
-            }
-
-            // The pane's scrollbar: the same animated-width thumb + hover
-            // track as the document's, in the pane's theme tint.
-            if (treeMaxTop > 0 && treePaneRows > 0)
-            {
-                const trackTop = (treeTopRows + 1) * cellH;
-                const l = scrollbarLayout(
-                    pn.tree.scroll.v.scrolledTo(pn.tree.top),
-                    pn.tree.scroll.vAnim, pn.tree.rows.length, treePaneRows,
-                    Rect(0, trackTop, treeCols * cellW, screenH - trackTop));
-                drawScrollbar(l, pn.tree.scroll.v, pn.tree.sbTrack,
-                    pn.tree.sbThumb);
-            }
-        }
-
-        // The document pane's horizontal bar (IXB2), over its bottom edge.
-        if (vm.hOverflows() && inp.mode == Mode.normal)
-        {
-            const l = scrollbarLayout(vm.hsb, vm.scroll.hAnim, vm.contentCols,
-                vm.widthCols, Rect(gutterPx, 0, screenW - gutterPx, screenH));
-            drawScrollbar(l, vm.hsb, vm.sbTrack, vm.sbThumb);
-        }
-
-        // Scrollbar: an animated-width thumb, plus a faint track while hovered
-        // or dragging. Colors follow the theme's muted gutter tone.
-        if (maxTop > 0)
-        {
-            // Distinct link-tinted chrome (the gutter behind it is empty page
-            // bg): a subtle full-height track on hover, a brighter thumb.
-            const l = scrollbarLayout(vm.scroll.v.scrolledTo(vm.top),
-                vm.scroll.vAnim, total, docRows,
-                Rect(0, docY0, screenW, screenH - docY0));
-            drawScrollbar(l, vm.scroll.v, vm.sbTrack, vm.sbThumb);
-        }
-
-        // A header bar when navigating a document set (`GNV2`): the entry name and
-        // summary on the left, the set position + keys on the right. Drawn over the
-        // vm.top row so scrolled content passes under it.
-        if (set !is null && !set.empty && loadDoc !is null)
-        {
-            chrome.fillPixels(0, 0, screenW, cellH, mix(vm.pageBg, vm.pageFg, 0.12));
-            chrome.rule(Rect(0, 0, screenCols, 1), RuleEdge.bottom,
-                Visual(fg: vm.gutterFg));
-            const left = vm.summary.length ? vm.title ~ "  " ~ vm.summary : vm.title;
-            drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0, TextStyle(0), vm.pageFg);
-            const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next   i index");
-            const px = cast(float)(screenW - cast(int)((pos.length + 1) * cellW));
-            drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), vm.gutterFg);
-        }
-
-        // Bottom toolbar (Android): the SAME tree and frames the tap handler
-        // hit-tested at the top of the loop, painted through RaylibCanvas
-        // (IXB9). Nothing here measures a label or divides a width — a
-        // collapsed bar simply produces no ops, which is also what made it
-        // untappable.
-        version (Android)
-        {
-            chrome.rule(Rect(0, toolbarY / cellH - 1, screenCols, 1),
-                RuleEdge.bottom, Visual(fg: vm.gutterFg));
-            auto barOps = buildDisplayList(barTree, barFrames,
-                themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
-            auto barCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
-                0, cast(float) toolbarY);
-            paint(barCanvas, barOps);
-        }
-
-        // Input line at the bottom: '/query' while searching, ':n' while going
-        // to a line. Shows a match count for searches.
-        if (inputMode)
-        {
-            const barY = screenH - cellH;
-            chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
-            auto lineText = inp.mode == Mode.search
-                ? text("/", inp.query[], "   ", vm.matches.length, " matches")
-                : text(":", inp.query[]);
-            drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), vm.pageBg);
-        }
-        // Copy-mode toast (when not typing): flashes the mode after a 'y'/'t' toggle.
-        else if (flash.toast.visible)
-        {
-            flash.toast = flash.toast.stepped(frameMs(window.frameSeconds), toastCfg);
-            const barY = screenH - cellH;
-            chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
-            drawText(fonts, cstrOf(buf, flash.copyModeMsg), 4, cast(float) barY, TextStyle(0), vm.pageBg);
-        }
-
-        // The key guide (`LTN5`), last so it sits over everything — it is a
-        // transient answer to "what can I press", not part of the document.
-        if (pn.lantern.shown)
-        {
-            SmallBuffer!(Binding, 128) listed;
-            bindingsAt(listed, kctx, pn.lantern.pending[]);
-            if (listed.length)
-            {
-                Builder ltnBuilder;
-                BoxLayout ltnBox;
-                const ltnRoot = viewLantern(ltnBuilder, ltnLabels, listed[],
-                    pn.lantern.pending.length, screenW / cellW, ltnBox,
-                    Placement.classic, LanternStyle.init, 0,
-                    pn.lantern.scroll);
-                auto ltnTree = ltnBuilder.finish(ltnRoot);
-                // Bounded to the window, so a `classic` panel actually
-                // spans it rather than shrinking to its content.
-                auto ltnFrames = layout(ltnTree,
-                    Constraints(maxW: screenW / cellW));
-                const panel = ltnFrames[ltnTree.root].rect;
-
-                const panelY = screenH - panel.height * cellH
-                    - (inputMode ? cellH : 0);
-                // A reused sink, so a panel that is up every frame costs no
-                // allocation to repaint (`NFR2`).
-                // A scissor from the viewer pane is still live at this
-                // point; the panel is chrome over everything, not content
-                // inside a pane.
-                window.resetClip();
-                ltnOps.clear();
-                buildDisplayListInto(ltnTree, ltnFrames,
-                    themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
-                    ltnOps);
-                auto ltnCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
-                    0, cast(float) panelY);
-                paint(ltnCanvas, ltnOps[]);
-            }
-        }
-
-        window.resetClip(); // never let a scissor survive the frame
-        window.endFrame();
-        }
-        paintWindowFrame();
+        // The view half's whole output, in one value. Everything else the paint
+        // half touches is run-scoped, so this literal IS the frame's interface.
+        paintWindowFrame(FrameGeom(
+            cellW: cellW, cellH: cellH, screenW: screenW, screenH: screenH,
+            visibleRows: visibleRows, screenCols: screenCols, screenRows: screenRows,
+            docRows: docRows, docY0: docY0, hdrY: hdrY,
+            gcols: gcols, gutterPx: gutterPx, rightPad: rightPad, dhx: dhx,
+            total: total, topLine: topLine, maxTop: maxTop,
+            treeTopRows: treeTopRows, treePaneRows: treePaneRows,
+            treeMaxTop: treeMaxTop,
+            inputMode: inputMode, kctx: kctx,
+        ));
 
         // On-demand atlas growth: drawText requests any covered-but-unrasterized
         // codepoints (emoji, CJK, higher-plane icons) as it draws; grow the atlas
