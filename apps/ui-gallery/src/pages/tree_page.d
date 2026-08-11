@@ -15,6 +15,8 @@ there. No base class, no interface, no registration.
 module pages.tree_page;
 
 import sparkles.input : Key, KeyEvent;
+import sparkles.ui.components.tree_view : treeActivate = activate,
+    treeCollapseOrUp = collapseOrUp, TreeStep;
 import sparkles.ui.components.tree_widget : flatten, FlatTreeRow, Guide,
     TreeData, TreeGlyphs, treeView;
 import sparkles.ui.geometry : SizeSpec;
@@ -81,7 +83,11 @@ uint view(ref Builder b, in GalleryState s)
     const data = sampleTree();
     const d = s.treeDemo;
 
+    // The view flattens fresh (it is pure over the state); the cursor's row
+    // index maps to a node through these same rows.
     auto rows = flatten(data, (uint n) => d.open.isOpen(n));
+    const selected = d.sel >= 0 && d.sel < cast(long) rows.length
+        ? rows[cast(size_t) d.sel].node : uint.max;
 
     // The second view is the same data under a different opened set — the
     // property the data/interaction split exists to provide.
@@ -99,7 +105,7 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
 
     body_ ~= section(b, "your view", [
-        treeView(b, data, rows, (uint n) => d.open.isOpen(n), d.selected),
+        treeView(b, data, rows, (uint n) => d.open.isOpen(n), selected),
     ]);
     body_ ~= spacer(b);
     body_ ~= section(b, "the same data, everything open", [
@@ -110,10 +116,10 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= section(b, "the flatten step", [
         kv(b, "nodes", numberText(data.nodes.length), 14, Slot.code),
         kv(b, "visible rows", numberText(rows.length), 14, Slot.code),
-        kv(b, "selected", d.selected < data.nodes.length
-            ? data.nodes[d.selected].value.label : "—", 14, Slot.chromeAccent),
-        kv(b, "has children", data.hasChildren(d.selected) ? "yes" : "no",
-            14, Slot.code),
+        kv(b, "selected", selected < data.nodes.length
+            ? data.nodes[selected].value.label : "—", 14, Slot.chromeAccent),
+        kv(b, "has children", selected < data.nodes.length
+            && data.hasChildren(selected) ? "yes" : "no", 14, Slot.code),
     ]);
     body_ ~= spacer(b);
 
@@ -139,46 +145,49 @@ private string numberText(size_t n)
     return text(n);
 }
 
-/// ditto
+/// The page's keys, as the shared component's verbs: motions move through the
+/// $(B visible) rows, Left is `collapseOrUp`, Enter is `activate`. The page
+/// keeps only what the component leaves to an adapter — the rebuild (a fresh
+/// flatten of the static specimen) and Right's expand-only meaning.
 bool handleKey(ref GalleryState s, in KeyEvent k)
 {
     const data = sampleTree();
-    auto rows = flatten(data, (uint n) => s.treeDemo.open.isOpen(n));
-    if (rows.length == 0)
-        return false;
+    void refresh()
+    {
+        auto open = s.treeDemo.open;
+        s.treeDemo.rows = flatten(data, (uint n) => open.isOpen(n));
+    }
 
-    // The selection moves through the VISIBLE rows, not the arena: pressing
-    // down inside a closed folder must not land on a node nobody can see.
-    size_t at;
-    foreach (i, ref r; rows)
-        if (r.node == s.treeDemo.selected)
-        {
-            at = i;
-            break;
-        }
+    refresh();
+    if (s.treeDemo.rows.length == 0)
+        return false;
+    const node = s.treeDemo.selectedNode;
 
     switch (k.key)
     {
         case Key.down:
-            s.treeDemo.selected = rows[at + 1 < rows.length ? at + 1 : at].node;
+            s.treeDemo.moveSel(1);
             return true;
         case Key.up:
-            s.treeDemo.selected = rows[at > 0 ? at - 1 : 0].node;
+            s.treeDemo.moveSel(-1);
             return true;
         case Key.right:
-            if (data.hasChildren(s.treeDemo.selected))
-                s.treeDemo.open = s.treeDemo.open.opened(s.treeDemo.selected);
+            if (node != uint.max && data.hasChildren(node))
+            {
+                s.treeDemo.open = s.treeDemo.open.opened(node);
+                refresh();
+            }
             return true;
         case Key.left:
-            if (data.hasChildren(s.treeDemo.selected)
-                && s.treeDemo.open.isOpen(s.treeDemo.selected))
-                s.treeDemo.open = s.treeDemo.open.closed(s.treeDemo.selected);
-            else if (data.nodes[s.treeDemo.selected].parent != uint.max)
-                s.treeDemo.selected = data.nodes[s.treeDemo.selected].parent;
+            if (treeCollapseOrUp(s.treeDemo.tv, data, (uint n) => n)
+                == TreeStep.rebuild)
+                refresh();
             return true;
         case Key.enter:
-            if (data.hasChildren(s.treeDemo.selected))
-                s.treeDemo.open = s.treeDemo.open.toggled(s.treeDemo.selected);
+            if (node != uint.max && data.hasChildren(node)
+                && treeActivate(s.treeDemo.tv, data, (uint n) => n)
+                    == TreeStep.rebuild)
+                refresh();
             return true;
         default:
             break;
@@ -189,8 +198,8 @@ bool handleKey(ref GalleryState s, in KeyEvent k)
         // The polarity resets: open everything / close everything, which are
         // O(1) on this machine rather than a walk, because a disclosure state
         // is a default plus a set of exceptions.
-        case 'O': s.treeDemo.open = typeof(s.treeDemo.open).allOpen; return true;
-        case 'C': s.treeDemo.open = typeof(s.treeDemo.open).allClosed; return true;
+        case 'O': s.treeDemo.open = typeof(s.treeDemo.open).allOpen; refresh(); return true;
+        case 'C': s.treeDemo.open = typeof(s.treeDemo.open).allClosed; refresh(); return true;
         default: return false;
     }
 }
@@ -205,9 +214,13 @@ bool handleActivate(ref GalleryState s, size_t id)
         return false;
 
     const node = cast(uint)(id - 1);
-    s.treeDemo.selected = node;
     if (data.hasChildren(node))
         s.treeDemo.open = s.treeDemo.open.toggled(node);
+    auto open = s.treeDemo.open;
+    s.treeDemo.rows = flatten(data, (uint n) => open.isOpen(n));
+    foreach (i, ref r; s.treeDemo.rows)
+        if (r.node == node)
+            s.treeDemo.sel = cast(long) i;
     return true;
 }
 
@@ -235,19 +248,18 @@ bool handleActivate(ref GalleryState s, size_t id)
     // Pressing down inside a collapsed folder must not land on a hidden node.
     // The bug this rules out is stepping the ARENA index instead of the row.
     GalleryState s;
-    s.treeDemo.selected = 0; // src/, closed
     const data = sampleTree();
 
+    // Row 0 is src/, closed: the row after it is `docs/` — not `src/`'s own
+    // first child, which is not on screen.
     handleKey(s, KeyEvent(Key.down));
-    // With everything closed, the row after `src/` is `docs/` — not `src/`'s
-    // own first child, which is not on screen.
-    assert(data.nodes[s.treeDemo.selected].value.label == "docs/");
+    assert(data.nodes[s.treeDemo.selectedNode].value.label == "docs/");
 
     // Opening it puts the children back in the walk.
-    s.treeDemo.selected = 0;
+    s.treeDemo.sel = 0;
     handleKey(s, KeyEvent(Key.right));
     handleKey(s, KeyEvent(Key.down));
-    assert(data.nodes[s.treeDemo.selected].value.label == "sparkles/");
+    assert(data.nodes[s.treeDemo.selectedNode].value.label == "sparkles/");
 }
 
 @("ui_gallery.pages.treeLeftClosesThenClimbs")
@@ -260,19 +272,20 @@ bool handleActivate(ref GalleryState s, size_t id)
     const data = sampleTree();
 
     s.treeDemo.open = s.treeDemo.open.opened(0);
-    s.treeDemo.selected = 0;
+    s.treeDemo.sel = 0; // src/
     handleKey(s, KeyEvent(Key.left));
     assert(!s.treeDemo.open.isOpen(0), "an open node closes");
-    assert(s.treeDemo.selected == 0, "…and stays selected");
+    assert(s.treeDemo.selectedNode == 0, "…and stays selected");
 
     handleKey(s, KeyEvent(Key.left));
-    assert(s.treeDemo.selected == 0, "a root has no parent to climb to");
+    assert(s.treeDemo.selectedNode == 0, "a root has no parent to climb to");
 
     // From a child, Left climbs.
     s.treeDemo.open = s.treeDemo.open.opened(0);
-    s.treeDemo.selected = 1; // sparkles/
+    handleKey(s, KeyEvent(Key.down)); // onto sparkles/, closed
+    assert(s.treeDemo.selectedNode == 1);
     handleKey(s, KeyEvent(Key.left)); // closed already → climbs
-    assert(s.treeDemo.selected == 0, "climbs to the parent");
+    assert(s.treeDemo.selectedNode == 0, "climbs to the parent");
     assert(data.nodes[1].parent == 0);
 }
 

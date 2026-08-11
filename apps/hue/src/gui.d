@@ -58,7 +58,7 @@ import viewer_model : Dims, MdCell, MdFence, ViewerModel;
 
 // The explorer pane (XPL2): the same tree model the TUI workspace uses.
 import explorer : ExplorerTui, explorerGlyphs;
-import sparkles.ui.components.tree_widget : treeView;
+import sparkles.ui.components.tree_view : viewSlice;
 
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
 import sparkles.ui.components.table : GridHit;
@@ -1302,14 +1302,9 @@ int runGui(GuiArgs guiArgs) @system
             import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
             auto tb = Builder();
-            const tFirst = cast(size_t) pn.tree.top;
-            const tLast = tFirst + visibleRows > pn.tree.rows.length
-                ? pn.tree.rows.length : tFirst + visibleRows;
-            const selNode = pn.tree.sel < cast(long) pn.tree.rows.length
-                ? pn.tree.rows[cast(size_t) pn.tree.sel].node : uint.max;
-            const tv = treeView(tb, pn.tree.data, pn.tree.rows[tFirst .. tLast],
+            const tv = viewSlice(tb, pn.tree.data, pn.tree.tv,
                 (uint i) @safe => pn.tree.open.isOpen(pn.tree.data.nodes[i].value.path),
-                selNode, explorerGlyphs, pn.tree.selBg, hasSelectionBg: true);
+                explorerGlyphs, pn.tree.selBg, hasSelectionBg: true);
             Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
                 width: SizeSpec.fixed(treeCols), clipX: true);
             auto wt = tb.finish(tb.add(paneW));
@@ -1937,28 +1932,22 @@ int runGui(GuiArgs guiArgs) @system
 
                 // ── explorer pane ────────────────────────────────────────
                 case Command.treeDown:
-                    ++pn.tree.sel;
-                    pn.tree.clamp();
+                    pn.tree.moveSel(1);
                     break;
                 case Command.treeUp:
-                    --pn.tree.sel;
-                    pn.tree.clamp();
+                    pn.tree.moveSel(-1);
                     break;
                 case Command.treePageDown:
-                    pn.tree.sel += visibleRows;
-                    pn.tree.clamp();
+                    pn.tree.moveSel(pn.tree.bodyRows);
                     break;
                 case Command.treePageUp:
-                    pn.tree.sel -= visibleRows;
-                    pn.tree.clamp();
+                    pn.tree.moveSel(-pn.tree.bodyRows);
                     break;
                 case Command.treeHome:
-                    pn.tree.sel = 0;
-                    pn.tree.clamp();
+                    pn.tree.selHome();
                     break;
                 case Command.treeEnd:
-                    pn.tree.sel = cast(long) pn.tree.rows.length - 1;
-                    pn.tree.clamp();
+                    pn.tree.selEnd();
                     break;
                 case Command.treeActivate:
                     activateTree();
@@ -1988,28 +1977,9 @@ int runGui(GuiArgs guiArgs) @system
                     pn.tree.toggleHidden(); // XPF2
                     break;
                 case Command.treeCollapseOrUp:
-                    // Close the selected dir, or jump to the parent row.
-                    if (pn.tree.sel < cast(long) pn.tree.rows.length)
-                    {
-                        const node = pn.tree.rows[cast(size_t) pn.tree.sel].node;
-                        const v = pn.tree.data.nodes[node].value;
-                        if (v.isDir && pn.tree.open.isOpen(v.path))
-                        {
-                            pn.tree.open = pn.tree.open.closed(v.path);
-                            pn.tree.rebuild();
-                        }
-                        else if (pn.tree.data.nodes[node].parent != uint.max)
-                        {
-                            const par = pn.tree.data.nodes[node].parent;
-                            foreach (i, ref const r; pn.tree.rows)
-                                if (r.node == par)
-                                {
-                                    pn.tree.sel = cast(long) i;
-                                    break;
-                                }
-                            pn.tree.clamp();
-                        }
-                    }
+                    // The universal two-step Left — the explorer's own,
+                    // not a re-implementation of it.
+                    pn.tree.collapseOrUp();
                     break;
                 case Command.treeFilter:
                     pn.tree.filterStart();

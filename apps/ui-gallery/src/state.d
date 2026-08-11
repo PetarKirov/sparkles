@@ -17,6 +17,7 @@ import sparkles.input : InputCapabilities;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
 import sparkles.ui.components.dock : DockContainer;
+import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.state : CaptureState, DisclosureState, FocusState,
     HoverState, PressState, ScrollState, Selection, SplitState, Timeline;
 import sparkles.ui.theme : Theme;
@@ -120,11 +121,13 @@ struct TracksDemo
     int avail = 48; /// the width the tracks are resolved against
 }
 
-/// The Tree page's live state.
+/// The Tree page's live state: the shared interaction layer
+/// (`sparkles.ui.components.tree_view`), keyed by the arena index — the demo
+/// tree is static, so the index IS the node's identity.
 struct TreeDemo
 {
-    uint selected = 1;                 /// the selected node's arena index
-    DisclosureState!uint open;         /// which nodes are expanded
+    TreeViewState!uint tv; ///
+    alias tv this;         /// ditto
 }
 
 /// The state-machine page's live tiles.
