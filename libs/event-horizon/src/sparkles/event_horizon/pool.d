@@ -32,8 +32,8 @@ import core.sync.mutex : Mutex;
 import core.thread : Thread;
 import core.time : Duration, usecs;
 
-import std.parallelism : totalCPUs;
 
+import sparkles.base.hw_caps : hwParallelism, nthAllowedCpu;
 import sparkles.event_horizon.errors : IoResult, ioOk;
 import sparkles.event_horizon.group : LoopGroupConfig, Topology;
 import sparkles.event_horizon.loop : LoopConfig;
@@ -67,7 +67,7 @@ struct WorkStealingPool
         in LoopGroupConfig cfg = LoopGroupConfig(topology: Topology.workStealing))
     {
         pool._cfg = cfg;
-        pool._workers = cfg.workers != 0 ? cfg.workers : totalCPUs;
+        pool._workers = cfg.workers != 0 ? cfg.workers : hwParallelism();
         pool._started = true;
         return ioOk();
     }
@@ -376,7 +376,7 @@ private:
             import core.sys.linux.sched : CPU_SET, cpu_set_t, sched_setaffinity;
 
             cpu_set_t set;
-            CPU_SET(cpu % totalCPUs, &set);
+            CPU_SET(nthAllowedCpu(cpu), &set);
             cast(void) sched_setaffinity(0, cpu_set_t.sizeof, &set);
         }
         // Non-Linux: unpinned (platform pinning primitive is a follow-up).
