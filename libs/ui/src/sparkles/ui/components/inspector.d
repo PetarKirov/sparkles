@@ -82,7 +82,7 @@ that line in the host is what keeps this view free of the adapter's type.
 uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
     in TreeViewState!Key state, scope bool delegate(uint) @safe isOpen,
     string title, in InspectorAction[] actions, in DetailRow[] details,
-    int innerWidth, TreeGlyphs glyphs = TreeGlyphs.init)
+    int innerWidth, TreeGlyphs glyphs = TreeGlyphs.init, uint hitBase = 1)
 {
     uint[] rows;
 
@@ -99,7 +99,7 @@ uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
     rows ~= rule(b, innerWidth);
 
     // The tree, windowed by the shared component's viewport.
-    rows ~= viewSlice(b, data, state, isOpen, glyphs);
+    rows ~= viewSlice(b, data, state, isOpen, glyphs, hitBase: hitBase);
 
     // The details pane, when the adapter supplied rows for the selection.
     if (details.length)
@@ -117,6 +117,7 @@ uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
         kind: WidgetKind.column,
         children: rows,
         width: SizeSpec.fixed(innerWidth),
+        clipX: true,
     ));
 }
 
@@ -152,7 +153,9 @@ struct WidgetInspect
 {
     TreeData!WidgetInspectNode data; ///
 
-    private const(WidgetTree)* subject;
+    // The subject by value: the arena is a heap slice, so this borrows the
+    // same nodes the caller laid out — no lifetime coupling to a local.
+    private WidgetTree subject;
     private const(Frame)[] frames;
 
     /// The details rows for a tree node (`uint.max` → none).
@@ -193,11 +196,10 @@ per (visible) subject node, labelled `kind`, badged with its resolved size.
 The mapping is index-parallel walk order, so the adapter can answer details
 and extents for any selection without a search.
 */
-WidgetInspect inspectWidgets(return in WidgetTree subject,
-    return const(Frame)[] frames) @trusted
+WidgetInspect inspectWidgets(WidgetTree subject, const(Frame)[] frames)
 {
     WidgetInspect wi;
-    wi.subject = &subject;
+    wi.subject = subject;
     wi.frames = frames;
 
     void walk(uint w, uint parent)

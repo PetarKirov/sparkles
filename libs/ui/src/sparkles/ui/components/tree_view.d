@@ -391,13 +391,14 @@ carried across (guides are per-row, so slicing is safe).
 uint viewSlice(Key, T)(ref Builder b, in TreeData!T data,
     in TreeViewState!Key s, scope bool delegate(uint) @safe isOpen,
     TreeGlyphs glyphs = TreeGlyphs.init,
-    RgbColor selectionBg = RgbColor.init, bool hasSelectionBg = false)
+    RgbColor selectionBg = RgbColor.init, bool hasSelectionBg = false,
+    uint hitBase = 1)
 {
     const first = cast(size_t)(s.top < 0 ? 0 : s.top);
     const last = first + s.bodyRows > s.rows.length ? s.rows.length
         : first + s.bodyRows;
     return treeView(b, data, s.rows[first < last ? first : last .. last],
-        isOpen, s.selectedNode, glyphs, selectionBg, hasSelectionBg);
+        isOpen, s.selectedNode, glyphs, selectionBg, hasSelectionBg, hitBase);
 }
 
 // ---------------------------------------------------------------------------

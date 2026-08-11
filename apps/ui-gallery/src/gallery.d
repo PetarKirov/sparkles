@@ -30,7 +30,7 @@ import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle, Visual;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import sparkles.ui_app.run_app : AppTheme;
-import inspector : inspectorBody, inspectorInnerWidth;
+import inspector : inspectorActivate, inspectorBody, inspectorInnerWidth;
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
 import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
@@ -964,6 +964,10 @@ struct Gallery
             return setPage(id - hitNav);
         }
 
+        // The inspector panel's own rows: select, and fold a container.
+        if (inspectorActivate(s, id))
+            return;
+
         // Anything else belongs to the page. The shell does not know what a
         // theme row or a tab is, and does not import a page to find out.
         if (pages[s.page].onActivate !is null && pages[s.page].onActivate(s, id))
@@ -1438,14 +1442,11 @@ version (unittest)
     RecordingHost h;
     h.size = sizeOf(120, 40);
     auto tree = g.view(h);
-    bool title, subject;
+    bool title;
     foreach (ref n; tree.nodes)
-    {
-        title |= n.text == "inspector · dumpTree";
-        subject |= n.text == "Primitives";
-    }
-    assert(title, "the panel is in the frame");
-    assert(subject, "…and names the page beside it");
+        foreach (ref sp; n.spans)
+            title |= sp.text == "inspector · Primitives";
+    assert(title, "the panel is in the frame and names the page beside it");
 
     // The page narrowed to make room, and the second press closes it again.
     assert(g.s.contentWidth
@@ -1467,13 +1468,16 @@ version (unittest)
     g.s.inspView.v = g.s.inspView.v.scrolledTo(12);
     drive(g, [keyEvent(Key.right)], 120, 40);
 
+    import std.algorithm.searching : canFind;
+
     RecordingHost h;
     h.size = sizeOf(120, 40);
     auto tree = g.view(h);
     bool subject;
     foreach (ref n; tree.nodes)
-        subject |= n.text == pages[g.s.page].title;
-    assert(subject, "the dump names the page now showing");
+        foreach (ref sp; n.spans)
+            subject |= sp.text.canFind(pages[g.s.page].title);
+    assert(subject, "the panel names the page now showing");
     assert(g.s.inspView.v.offset == 0, "a new subject starts at its top");
 }
 
