@@ -312,6 +312,121 @@ TsExpected!void highlightInjected(Sink)(
     return interleaveLayers(layers, source, sink, options);
 }
 
+/**
+One retained parse layer: the language, its parsed tree, the byte ranges it
+covers (empty = the whole buffer), and its injection depth. Heap-allocated
+like the highlight path's layers (it owns a non-copyable `TsTree`); freed by
+the GC finalizer when the caller drops it.
+*/
+struct ParsedLayer
+{
+    string language;         /// resolved language name (copied, caller-safe)
+    TsTree tree;             /// this layer's parse, kept alive by the caller
+    const(TSRange)[] ranges; /// included ranges (empty = whole buffer)
+    size_t depth;            /// injection nesting depth (root = 0)
+
+    @disable this(this);
+}
+
+/**
+The retained-parse entry — the module header's "interactive consumer keeps
+the `TsTree` alive" seam, realized for a $(B structural) consumer (the
+tree-sitter inspector): parses `rootLanguage` and discovers + parses its
+injections exactly as $(LREF highlightInjected) does, but hands the trees to
+the caller instead of driving highlight cursors over them. The caller keeps
+them across frames and walks them; $(LREF highlightTree) and the fold
+provider's tree overload can then reuse the root tree instead of re-parsing.
+
+Totality matches the highlight path: a failed or unresolvable injection is
+skipped (that range simply has no layer); only a size-guard trip, a missing
+root grammar, or a failed $(I root) parse errors.
+*/
+TsExpected!void parseLayers(
+    ref TsConfigCache cache, const(char)[] rootLanguage,
+    scope const(char)[] source, out ParsedLayer*[] layers,
+    HighlightOptions options = HighlightOptions()) @system
+{
+    if (source.length > options.maxSourceBytes || source.length > cast(size_t) int.max)
+        return tsErr!void(TsErrorCode.sourceTooLarge);
+
+    auto rootConfig = cache.resolve(rootLanguage);
+    if (rootConfig is null)
+        return tsErr!void(TsErrorCode.grammarNotFound);
+
+    static struct Work
+    {
+        const(TsHighlightConfig)* config;
+        string language;
+        TSRange[] ranges;
+        size_t depth;
+    }
+
+    Work[] queue = [Work(rootConfig, rootLanguage.idup, null, 0)];
+    for (size_t qi = 0; qi < queue.length; ++qi)
+    {
+        auto w = queue[qi];
+
+        auto parser = TsParser.create();
+        auto langSet = parser.setLanguage(w.config.grammar.language);
+        if (langSet.hasError)
+        {
+            if (w.depth == 0)
+                return tsErr!void(langSet.error);
+            continue;
+        }
+        if (w.ranges.length)
+            parser.setIncludedRanges(w.ranges);
+
+        TsError parseError;
+        auto tree = parser.parse(source, parseError,
+            ParseGuards(budget: options.parseBudget, cancelFlag: options.cancelFlag));
+        if (!tree.valid)
+        {
+            if (w.depth == 0)
+                return tsErr!void(parseError);
+            continue;
+        }
+
+        auto layer = new ParsedLayer;
+        layer.language = w.language;
+        layer.ranges = w.ranges;
+        layer.depth = w.depth;
+        move(tree, layer.tree);
+        layers ~= layer;
+
+        if (!w.config.hasInjections || w.depth + 1 > maxInjectionDepth)
+            continue;
+
+        auto injCursor = TsQueryCursor.create();
+        injCursor.setMatchLimit(options.matchLimit);
+        injCursor.exec(w.config.injectionQuery, layer.tree.rootNode);
+
+        TSQueryMatch m;
+        while (injCursor.nextMatch(m))
+        {
+            if (m.pattern_index < w.config.injectionPredicates.length
+                && !satisfies(w.config.injectionPredicates[m.pattern_index], m, source))
+                continue;
+
+            auto inj = injectionForMatch(*w.config, m, source);
+            if (!inj.hasContent || inj.language.length == 0)
+                continue;
+
+            auto childConfig = cache.resolve(inj.language);
+            if (childConfig is null)
+                continue; // grammar/queries missing → no layer for the range
+
+            auto childRanges = intersectRanges(w.ranges, inj.contentNode, inj.includeChildren);
+            if (childRanges.length == 0)
+                continue;
+
+            queue ~= Work(childConfig, inj.language.idup, childRanges, w.depth + 1);
+        }
+    }
+
+    return tsOk();
+}
+
 /// BFS layer construction: parse each layer, run its injections query, resolve
 /// and enqueue child layers. A failed $(I root) parse errors; a failed child
 /// parse (or unresolved injection) is skipped — that range stays plain text.
@@ -983,4 +1098,50 @@ unittest
     // JSON highlights keys/strings; either form proves the injection fired.
     assert(spans.canFind!(s => s.canFind("hello")),
         spans.length ? spans[0] : "no hello span — dub.json injection did not fire");
+}
+
+@("ts.highlighter.parseLayersRetainsTheTrees")
+@system
+unittest
+{
+    import std.process : environment;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.tree_sitter : nodeType;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    static GrammarRegistry registry;
+    registry = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+
+    // A fenced D block inside markdown: the retained set must carry the
+    // markdown root at depth 0 and a ranged D layer under it — the same
+    // discovery the highlight path runs, minus the highlight cursors.
+    const source = "# Title\n\n```d\nvoid main() {}\n```\n";
+    ParsedLayer*[] layers;
+    auto r = parseLayers(cache, "markdown", source, layers);
+    assert(!r.hasError);
+    assert(layers.length >= 2, "root + at least the fence's layer");
+
+    assert(layers[0].language == "markdown" && layers[0].depth == 0);
+    assert(layers[0].ranges.length == 0, "the root covers the whole buffer");
+    assert(layers[0].tree.valid);
+    assert(nodeType(layers[0].tree.rootNode) == "document");
+
+    bool sawD;
+    foreach (l; layers)
+        if (l.language == "d")
+        {
+            sawD = true;
+            assert(l.depth > 0, "the fence layer is injected");
+            assert(l.ranges.length > 0, "…over the fence's byte ranges");
+            assert(l.tree.valid);
+        }
+    assert(sawD, "the fenced language got a retained layer");
+
+    // Totality: an unknown root errors (grammarNotFound), layers stay empty.
+    ParsedLayer*[] none;
+    assert(parseLayers(cache, "no-such-language", source, none).hasError);
+    assert(none.length == 0);
 }
