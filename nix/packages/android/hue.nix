@@ -65,9 +65,10 @@
       # (HueGui + the Have_* set of the dependency graph).
       versions = [
         "HueGui"
-        # hue selects sparkles:ui-app's `full` configuration (dub sets these
-        # version identifiers for dependents — UIAPP-O2).
-        "UiAppTui"
+        # hue selects sparkles:ui-app's `gui` configuration on Android (dub sets
+        # these version identifiers for dependents — UIAPP-O2). Deliberately NOT
+        # `UiAppTui`: APP3 keeps the terminal out of an Android closure, and the
+        # host's terminal arm has no business being compiled for a phone.
         "UiAppGui"
         "Have_sparkles_hue"
         "Have_sparkles_ghostty"

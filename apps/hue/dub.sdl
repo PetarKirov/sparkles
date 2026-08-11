@@ -85,7 +85,12 @@ configuration "android" {
     dependency "sparkles:raylib-text" path="../.."
     dependency "sparkles:ui-raylib" path="../.."
     dependency "sparkles:ghostty" path="../.."
-    subConfiguration "sparkles:ui-app" "full"
+    // `gui`, not `full` (APP3): an Android build has no terminal and must not
+    // link one. Now that hue's loop is the host's, `full` would also put the
+    // terminal arm inside `run`'s `final switch` here — a module graph this
+    // cross build has no reason to walk, and one that walked it into an LDC
+    // ICE with no location to point at.
+    subConfiguration "sparkles:ui-app" "gui"
     versions "HueGui"
 }
 
