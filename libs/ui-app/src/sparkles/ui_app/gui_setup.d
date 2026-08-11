@@ -129,6 +129,13 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
             title: req.title, width: 800, height: 600,
             targetFps: req.targetFps));
 
+    //    `InitWindow` reports failure only through `IsWindowReady`. Without
+    //    this check a headless or locked session (GLFW "Failed to initialize
+    //    platform") runs on into font loading with no GL context and dies on a
+    //    null texture — a SIGSEGV where an error message belongs.
+    if (!session.window.ready)
+        return false;
+
     // 2. The point size. An explicit pixel override wins and suppresses density
     //    scaling; otherwise the panel decides, which is not an Android special
     //    case — a HiDPI desktop has the same problem and used to get the same
