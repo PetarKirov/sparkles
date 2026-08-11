@@ -441,7 +441,7 @@ private GrammarRegistry defaultRegistry() @safe
 // uncompiled" included; the Android fact is `BKD4`; the display probe is
 // `BKD3`'s socket-level one rather than the env heuristic this replaced).
 import sparkles.ui_app.gui_options : defaultGuiFont, defaultGuiFontFamily,
-    GuiCliFields, uiuaCodepointMap;
+    GuiCliFields;
 import sparkles.ui_app.backend : Backend, BackendPolicy,
     hostPickBackend = pickBackend, platformForcedBackend;
 import sparkles.ui_app.display : displayAvailable;
