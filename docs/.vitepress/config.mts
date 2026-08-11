@@ -791,6 +791,7 @@ export default withMermaid(
                   text: 'Containers (planned)',
                   link: '/specs/ui/containers',
                 },
+                { text: 'Inspector', link: '/specs/ui/inspector' },
                 { text: 'Input (planned)', link: '/specs/ui/input' },
                 {
                   text: 'State machines',

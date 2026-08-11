@@ -126,6 +126,10 @@ The exemplar of the view-model/view split.
 > natural fit for live filtering and **coexists** with `VMD2` rather than
 > replacing it. Flat storage is what makes rebuilding per keystroke viable.
 
+The [inspector component](./inspector.md) (`INS`) composes this tree over a
+**subject** — header, details pane, and an adapter-defined selection/extent
+contract — with the widget-tree adapter as the toolkit's self-inspection.
+
 ## Milestones
 
 | Milestone | Scope                                                             | Status                                                                                         | Requirements                     |

@@ -48,6 +48,7 @@ the _decision_.
 | [Input](./input.md)                                 | the abstract event vocabulary, the tier-0/1/2 capability ladder, and the backend adapter contracts                                                                                                                                                                                |
 | [State machines](./state-machines.md)               | presentation-free behavior: scrollbar, selection, hover, focus, disclosure, timeline                                                                                                                                                                                              |
 | [Containers](./containers.md)                       | the container tier: `ScrollView` (owned scrolling) and the single-window docking layout (splits, tabbed groups, drag-to-redock, focus/capture ownership) — `SCV`/`DCK`                                                                                                            |
+| [Inspector](./inspector.md)                         | the generic **inspector component** — a tree over a subject + details pane + the adapter-defined selection/extent contract, with the widget-tree adapter (toolkit self-inspection) — `INS`                                                                                        |
 | [Editor](./editor.md) _(planned)_                   | the **editable-text component** — the `EditorState` machine (`EDT`), per-backend text input incl. IME/soft-keyboard phasing (`EDI`), the editor widget (`EDR`), and its consumers (`EDU`) — the capability behind hue's diff **write wave** ([`UIA9`](../hue/ui-architecture.md)) |
 | [Backends](./backends.md)                           | the `isCanvas` seam, the shipped targets, per-backend declared capabilities, and forward-compatibility rules for additional GPU backends                                                                                                                                          |
 | [Open implementation issues](./open-issues.md)      | concrete deferred gaps: Whole/copy semantics, the closed widget sum, and the native pointer grab                                                                                                                                                                                  |
@@ -101,9 +102,9 @@ trees can cross-reference status without translation.
 Requirement IDs are `<AREA><n>` — a short area mnemonic plus a number, unique
 within a document (e.g. `LAY4`, `WGT2`, `TGT1`). Areas: `UIA`/`PKG`/`NFR`
 (library-wide), `PRN` (principles), `LAY` (layout), `THM` (theme), `WGT`/`VMD`
-(widgets and view models), `INP` (input), `STM` (state machines), `TGT`
-(backends), `MIG` (migration). Each area's mnemonic is expanded at its section
-heading.
+(widgets and view models), `INP` (input), `STM` (state machines), `INS`
+(inspector), `TGT` (backends), `MIG` (migration). Each area's mnemonic is
+expanded at its section heading.
 
 ## Traceability
 
@@ -113,24 +114,25 @@ table at the foot of each spec lists each file against the requirement IDs that
 own it, so coverage is auditable in both directions: requirement → code (the
 "Traces to" column of every row) and code → requirement (the coverage tables).
 
-| Source file                                  | Primary spec + areas                                                                   |
-| -------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `libs/ui/src/sparkles/ui/geometry.d`         | [layout](./layout.md) — `LAY3`, `LAY6`                                                 |
-| `libs/ui/src/sparkles/ui/layout.d`           | [layout](./layout.md) — `LAY1`–`LAY8`, `LAY11`, `LAY12`                                |
-| `libs/ui/src/sparkles/ui/wrap.d`             | [layout](./layout.md) — `LAY10`                                                        |
-| `libs/ui/src/sparkles/ui/tracks.d`           | [layout](./layout.md) — `LAY9`                                                         |
-| `libs/ui/src/sparkles/ui/style.d`            | [theme](./theme.md) — `THM1`–`THM5`                                                    |
-| `libs/ui/src/sparkles/ui/theme.d`            | [theme](./theme.md) — `THM6`–`THM9`                                                    |
-| `libs/ui/src/sparkles/ui/canvas.d`           | [backends](./backends.md) — `TGT1`, `TGT5`                                             |
-| `libs/ui/src/sparkles/ui/widget.d`           | [widgets](./widgets.md) — `WGT1`–`WGT6`                                                |
-| `libs/ui/src/sparkles/ui/display_list.d`     | [backends](./backends.md) — `TGT2`                                                     |
-| `libs/ui/src/sparkles/ui/state.d`            | [state machines](./state-machines.md) — `STM1`–`STM7`                                  |
-| `libs/ui/src/sparkles/ui/interp/immediate.d` | [backends](./backends.md) — `TGT3`                                                     |
-| `libs/ui/src/sparkles/ui/interp/cells.d`     | [backends](./backends.md) — `TGT6`; superseded by the cell adapter and retired with it |
-| `libs/ui/src/sparkles/ui/interp/html.d`      | [backends](./backends.md) — `TGT4`, `TGT7`                                             |
-| `libs/ui/src/sparkles/ui/components/`        | [widgets](./widgets.md) — `VMD*`, `WGT7`+                                              |
-| `libs/input/src/sparkles/input/`             | [input](./input.md) — `INP1`–`INP9`                                                    |
-| `libs/ui-tui/src/`                           | [backends](./backends.md) — `TGT6`                                                     |
-| `libs/ui-raylib/src/`                        | [backends](./backends.md) — `TGT6`                                                     |
+| Source file                                      | Primary spec + areas                                                                   |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `libs/ui/src/sparkles/ui/geometry.d`             | [layout](./layout.md) — `LAY3`, `LAY6`                                                 |
+| `libs/ui/src/sparkles/ui/layout.d`               | [layout](./layout.md) — `LAY1`–`LAY8`, `LAY11`, `LAY12`                                |
+| `libs/ui/src/sparkles/ui/wrap.d`                 | [layout](./layout.md) — `LAY10`                                                        |
+| `libs/ui/src/sparkles/ui/tracks.d`               | [layout](./layout.md) — `LAY9`                                                         |
+| `libs/ui/src/sparkles/ui/style.d`                | [theme](./theme.md) — `THM1`–`THM5`                                                    |
+| `libs/ui/src/sparkles/ui/theme.d`                | [theme](./theme.md) — `THM6`–`THM9`                                                    |
+| `libs/ui/src/sparkles/ui/canvas.d`               | [backends](./backends.md) — `TGT1`, `TGT5`                                             |
+| `libs/ui/src/sparkles/ui/widget.d`               | [widgets](./widgets.md) — `WGT1`–`WGT6`                                                |
+| `libs/ui/src/sparkles/ui/display_list.d`         | [backends](./backends.md) — `TGT2`                                                     |
+| `libs/ui/src/sparkles/ui/state.d`                | [state machines](./state-machines.md) — `STM1`–`STM7`                                  |
+| `libs/ui/src/sparkles/ui/interp/immediate.d`     | [backends](./backends.md) — `TGT3`                                                     |
+| `libs/ui/src/sparkles/ui/interp/cells.d`         | [backends](./backends.md) — `TGT6`; superseded by the cell adapter and retired with it |
+| `libs/ui/src/sparkles/ui/interp/html.d`          | [backends](./backends.md) — `TGT4`, `TGT7`                                             |
+| `libs/ui/src/sparkles/ui/components/`            | [widgets](./widgets.md) — `VMD*`, `WGT7`+                                              |
+| `libs/ui/src/sparkles/ui/components/inspector.d` | [inspector](./inspector.md) — `INS1`–`INS5`                                            |
+| `libs/input/src/sparkles/input/`                 | [input](./input.md) — `INP1`–`INP9`                                                    |
+| `libs/ui-tui/src/`                               | [backends](./backends.md) — `TGT6`                                                     |
+| `libs/ui-raylib/src/`                            | [backends](./backends.md) — `TGT6`                                                     |
 
 → [Feature requirements](./feature-requirements.md) · [Principles](./principles.md) · [Layout](./layout.md) · [Widgets](./widgets.md)
