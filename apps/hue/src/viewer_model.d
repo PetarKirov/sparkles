@@ -25,6 +25,7 @@ import sparkles.syntax.md.render_widgets : CodeOverflow, FenceScroll,
     foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
     viewMarkdown;
 import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
+import sparkles.syntax.ts.highlighter : ParsedLayer;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewTwoslashDocument;
@@ -132,6 +133,13 @@ struct ViewerModel
     string summary;
     const(char)[] source;
     string lang;                    /// canonical language (CST fold provider)
+    /// The document's retained parse (`TSI`): the root tree + injected layer
+    /// trees, parsed once per (lang, source) and shared by the fold provider
+    /// and the tree-sitter inspector. `parsedFor` keys the validity — a new
+    /// document (or reload) reparses lazily on first use.
+    ParsedLayer*[] layers;
+    private const(char)[] parsedFor; /// ditto
+    private string parsedLang;       /// ditto
     const(HighlightEvent)[] events;
     PreviewModel preview;
     TwoslashReturn tw;              /// empty `code` ⇒ not a twoslash document
@@ -296,6 +304,39 @@ struct ViewerModel
         folds = DisclosureState!size_t(true);
         rebuild();
     }
+
+    /**
+    Ensures the retained parse matches the current document. Lazy: the parse
+    runs on first use (a fold rebuild, the inspector opening), not in
+    `setDocument` — many documents never need a tree. A failed parse is
+    cached as "no layers" so a broken document does not reparse per frame;
+    a reload (new `source` value) invalidates by identity.
+    */
+    void ensureParsed()
+    {
+        import sparkles.syntax.ts.highlighter : parseLayers;
+
+        if (cache is null || lang.length == 0 || source.length == 0)
+        {
+            layers = null;
+            parsedFor = null;
+            parsedLang = null;
+            return;
+        }
+        if (parsedFor is source && parsedLang == lang)
+            return;
+        layers = null;
+        ParsedLayer*[] fresh;
+        if (!parseLayers(*cache, lang, source, fresh).hasError)
+            layers = fresh;
+        parsedFor = source;
+        parsedLang = lang;
+    }
+
+    /// The retained root layer, or `null` when the document has none (no
+    /// grammar, plain text, a failed parse).
+    ParsedLayer* rootLayer() return @safe pure nothrow @nogc
+        => layers.length ? layers[0] : null;
 
     /// Whether the horizontal bar is live (content wider than the pane).
     bool hOverflows() const @safe pure nothrow @nogc
@@ -462,11 +503,15 @@ struct ViewerModel
             // The raw view: the highlighted source as the same widget
             // pipeline (one painter for every view kind). Fold ranges come
             // from the CST provider (FSR1/FSR2) when a grammar is known.
-            import sparkles.syntax.ts.folds : foldableSpansCst;
+            import sparkles.syntax.ts.folds : foldableSpansFromTree;
             import sparkles.ui.wrap : TextWrap;
 
-            foldable = cache !is null && lang.length
-                ? foldableSpansCst(*cache, lang, source) : null;
+            // The retained parse (ensureParsed) serves the fold provider and
+            // the inspector alike — one parse per document, not one per
+            // rebuild.
+            ensureParsed();
+            foldable = cache !is null && lang.length && rootLayer !is null
+                ? foldableSpansFromTree(*cache, lang, rootLayer.tree) : null;
             Span[] closed;
             foreach (sp; foldable)
                 if (!folds.isOpen(sp.start))
