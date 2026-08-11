@@ -15,7 +15,7 @@ import std.conv : text;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : cellsOf, Insets, Point, SizeSpec;
-import sparkles.ui.dock : DockDrag, dockHintRect;
+import sparkles.ui.components.dock : DockDrag, dockHintRect;
 import sparkles.ui.state : PressState, ScrollAxis, ScrollbarState, ScrollState,
     scrollbarThumb;
 import sparkles.ui.style : Slot, TextStyle;
@@ -687,7 +687,7 @@ version (unittest)
 @("ui.components.chrome.dockHintShowsTheDropAndNothingOtherwise")
 @safe unittest
 {
-    import sparkles.ui.dock : DockZone;
+    import sparkles.ui.components.dock : DockZone;
     import sparkles.ui.geometry : Rect;
 
     // A drag over the east band of a 40×30 target: the panel covers the

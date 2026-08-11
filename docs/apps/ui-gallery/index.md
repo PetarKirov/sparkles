@@ -99,7 +99,7 @@ action segment, drag the split divider, and **grab a scrollbar** — a press on
 the track jumps the thumb there, a press on the thumb grabs it in place, and
 the drag then follows wherever the pointer goes until you let go. The shell's
 own seams resize the same way: the gap columns beside the sidebar and the
-inspector panel are `sparkles.ui.dock` dividers (the machinery behind hue's
+inspector panel are `sparkles.ui.components.dock` dividers (the machinery behind hue's
 resizable file explorer), so a press on one grabs it — the resize cursor
 announces it — and the page gives up exactly what the side pane takes, within
 each pane's floor and ceiling. A pane hidden and shown again comes back at the

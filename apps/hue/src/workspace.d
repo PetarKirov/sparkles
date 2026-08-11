@@ -29,7 +29,7 @@ import sparkles.ui_app.run : run, RunOutcome;
 import sparkles.input : EndOfInput, Event, isEndOfInput, isNoEvent, Key,
     KeyEvent, linesPerNotch, match, NoEvent, PointerAction, PointerButton,
     PointerEvent, ResizeEvent, WheelEvent;
-import sparkles.ui.dock : DockAxis, DockContainer, PaneId, RouteKind;
+import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 import sparkles.ui.geometry : Point, Rect, Size;

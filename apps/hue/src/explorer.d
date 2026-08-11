@@ -35,7 +35,7 @@ import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : layout;
-import sparkles.ui.scroll_view : ScrollView;
+import sparkles.ui.components.scroll_view : ScrollView;
 import sparkles.ui.state : DisclosureState, LineEditState, ScrollAxis,
     ScrollbarState, scrollbarThumb, ScrollState;
 import sparkles.ui.style : Palette, Slot, TextStyle;

@@ -13,7 +13,7 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.input.frame : InputFrame;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.ui.components.table : GridHit;
-import sparkles.ui.dock : DockContainer, PaneId;
+import sparkles.ui.components.dock : DockContainer, PaneId;
 import sparkles.ui.state : CaptureState, KeyTarget, Timeline;
 
 import explorer : ExplorerTui;

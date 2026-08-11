@@ -29,7 +29,7 @@ Tabbed groups (`DCK4`) and drag-to-redock (`DCK5`) extend the same arena
 in `C-2b`/`C-2c`; the node kind is already a sum over roles so they add a
 case rather than re-cutting the value.
 */
-module sparkles.ui.dock;
+module sparkles.ui.components.dock;
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.events : Event, match, PointerAction, PointerButton,

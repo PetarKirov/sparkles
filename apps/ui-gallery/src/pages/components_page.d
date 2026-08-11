@@ -18,7 +18,7 @@ import sparkles.ui.components.chrome : actionBar, gutter, headerBar, scrollbar,
     ScrollbarGlyphs, scrollView, tabStrip;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.layout : Frame;
-import sparkles.ui.scroll_view : ScrollExtents;
+import sparkles.ui.components.scroll_view : ScrollExtents;
 import sparkles.ui.state : ScrollState;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
