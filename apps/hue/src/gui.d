@@ -2187,6 +2187,12 @@ int runGui(GuiArgs guiArgs) @system
         }
 
 
+        // The frame's paint half, named (`P2.B4`): everything inside the
+        // window bracket — the HST13 seam the component's paint phase will
+        // absorb. Nested in the loop so its closures pin the exact set of
+        // per-frame values it consumes; parameterizing them is the next step.
+        void paintWindowFrame()
+        {
         window.beginFrame();
         // The chrome fills below go through the backend adapter, not raylib
         // (UIA7). Pixel-space because hue's chrome is pixel-positioned — a
@@ -2752,6 +2758,8 @@ int runGui(GuiArgs guiArgs) @system
 
         window.resetClip(); // never let a scissor survive the frame
         window.endFrame();
+        }
+        paintWindowFrame();
 
         // On-demand atlas growth: drawText requests any covered-but-unrasterized
         // codepoints (emoji, CJK, higher-plane icons) as it draws; grow the atlas
