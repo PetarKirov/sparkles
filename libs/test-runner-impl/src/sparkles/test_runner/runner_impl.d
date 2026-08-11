@@ -606,7 +606,8 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     import core.atomic : atomicOp;
     import std.algorithm.iteration : filter;
     import std.array : array;
-    import std.parallelism : TaskPool, totalCPUs;
+    import sparkles.base.hw_caps : hwParallelism;
+    import std.parallelism : TaskPool;
     import std.stdio : stdout;
 
     RunTotals totals;
@@ -630,7 +631,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
         .array;
 
     shared size_t passed, failed, skipped;
-    const threads = options.threads ? options.threads : totalCPUs;
+    const threads = options.threads ? options.threads : hwParallelism();
 
     bool ranLive = false;
     static if (hasLiveRegion)

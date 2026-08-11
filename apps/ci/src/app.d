@@ -101,6 +101,7 @@ import std.conv : text, to;
 import core.time : Duration, msecs, seconds;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
 import std.parallelism : TaskPool, totalCPUs;
+import sparkles.base.hw_caps : hwParallelism;
 import std.path : baseName, buildPath, globMatch;
 import std.process : environment, execute;
 import std.range : iota;
@@ -1045,7 +1046,10 @@ private uint exampleJobCount()
         catch (Exception) { /* fall through to the computed default */ }
     }
 
-    uint jobs = totalCPUs < 1 ? 1 : cast(uint) totalCPUs;
+    // What this host will actually let us run in parallel: a CI container's
+    // CPU quota is invisible to `totalCPUs`, and over-subscribing it just
+    // adds context switches to an already build-bound job.
+    uint jobs = hwParallelism();
 
     // Budget ~2 GiB of headroom per concurrent build.
     if (const memGiB = totalMemoryGiB())
