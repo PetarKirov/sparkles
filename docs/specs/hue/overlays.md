@@ -110,11 +110,19 @@ A debugging overlay — the tree-sitter-playground inspector, in hue. Unique amo
 the overlays in needing **no external artifact**: it reads the parse tree that
 `sparkles:syntax` / `sparkles:tree-sitter` already build for highlighting.
 
-| ID   | Requirement                                                                                                                                                                                              | Status      | Traces to                                                 |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------- |
-| TSI1 | The producer must read the tree-sitter tree directly (no data file); hovering (or moving the cursor onto) a token must show its **node type**, **field name**, and named-ancestor **S-expression path**. | researched  | `sparkles:tree-sitter` `TSNode`; `sparkles:syntax` engine |
-| TSI2 | The hovered node's **byte extent** must be outlined/tinted; a toggle must reveal anonymous nodes and mark `ERROR`/`MISSING` nodes distinctly.                                                            | not started | `TSI` producer → inline span + gutter                     |
-| TSI3 | A panel/annotation must render the S-expression for the current line or selection (the playground's tree view).                                                                                          | not started | `TSI` producer → below-line block                         |
+> [!NOTE]
+> **Delivered as a dock panel, not through the overlay framework**: the `TSI`
+> rows shipped as the [inspector component](../ui/inspector.md)'s first hue
+> mount (`<leader>vi`, both backends), matching the reference UX — neovim's
+> `:InspectTree` is a split window. When the `OVL*` framework lands, the panel
+> becomes its self-contained first migration candidate; nothing here blocks on
+> it.
+
+| ID   | Requirement                                                                                                                                                                                              | Status                                                                                                                                                                                                                                                | Traces to                                                                    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| TSI1 | The producer must read the tree-sitter tree directly (no data file); hovering (or moving the cursor onto) a token must show its **node type**, **field name**, and named-ancestor **S-expression path**. | full (`8dc7128c`) — hover drives the panel's selection live (`INS6` sync); the row shows `field: type`, the tree shows the ancestor path, the details pane the rest                                                                                   | the retained parse (`ViewerModel.ensureParsed`); `apps/hue/src/ts_inspect.d` |
+| TSI2 | The hovered node's **byte extent** must be outlined/tinted; a toggle must reveal anonymous nodes and mark `ERROR`/`MISSING` nodes distinctly.                                                            | full (`8dc7128c`) — extent tint via the viewer's identity channel (off-screen-only scroll-follow); `a` toggles anonymous with the cursor preserved; `MISSING`/`ERROR` take the error slot (exceeding the reference, which special-cases only MISSING) | `ViewerModel.setInspectExtent`; `ts_inspect.d`                               |
+| TSI3 | A panel/annotation must render the S-expression for the current line or selection (the playground's tree view).                                                                                          | full (`8dc7128c`) — the panel IS the playground's tree view, and `queryText` emits the neovim-compatible query-syntax S-expression                                                                                                                    | `inspector_pane.d`; `ts_inspect.queryText`                                   |
 
 ## Function-code-size overlay (`CSZ`)
 
