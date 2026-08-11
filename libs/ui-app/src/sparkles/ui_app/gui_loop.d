@@ -32,8 +32,8 @@ import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
-import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, RunConfig,
-    withRealSize;
+import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, PointerUnit,
+    RunConfig, withRealSize;
 import sparkles.ui_raylib.raylib_canvas : RaylibCanvas;
 import sparkles.ui_raylib.events : RaylibEvents;
 
@@ -164,10 +164,29 @@ bool runGui(alias present, alias handle, alias draw = noDraw)(
     // One frame: sample input, present, swap unless declined (`HST6`).
     void oneFrame()
     {
+        // Gesture thresholds are PHYSICAL, so they track the cell size — a
+        // pinch or a font-size change moves it, and the recogniser's own
+        // defaults (12 px slop, a 16 px row) describe no font we ship. Set
+        // per frame, before the drain, because the drain is what advances the
+        // recogniser. This is the host's job by construction: `cfg` is public
+        // so the side that knows the rendered cell size sets it.
+        const slop = session.cellH / 2.0f;
+        events.gestures.cfg.slopPx = slop > 8 ? slop : 8;
+        events.gestures.cfg.cellH = session.cellH;
+
         // Input first: the frame an application presents should reflect what
-        // just happened, not what happened before it.
+        // just happened, not what happened before it. `HST18`: a 1×1 cell is
+        // how "positions in pixels" is spelled — the synthesizer's divisor,
+        // set to the identity.
+        const unit = cfg.pointerUnit == PointerUnit.pixels
+            ? 1 : session.cellW;
+        const unitH = cfg.pointerUnit == PointerUnit.pixels
+            ? 1 : session.cellH;
         events.poll((Event e) { handle(host, withRealSize(e, host.size)); },
-            session.cellW, session.cellH);
+            unit, unitH);
+        // `HST17`: the live level, not the last event's — read after the
+        // drain, so a frame sees the modifiers it was actually held under.
+        host.noteModifiers(events.modifiers);
 
         if (host.quitRequested)
             return;
