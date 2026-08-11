@@ -931,3 +931,56 @@ unittest
     auto events = injectedEventsForTest("markdown", source);
     assertWellFormed(events, source);
 }
+
+@("ts.highlighter.dubSingleFileSdlInjection")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // A DUB single-file package: the `/+ dub.sdl: … +/` nesting comment must
+    // inject as SDL so the recipe's tag/string captures light up. Labels on
+    // `name` / the package string can only come from the injected SDL layer —
+    // the D grammar styles the comment as a single `@comment` span.
+    const source =
+        "#!/usr/bin/env dub\n" ~
+        "/+ dub.sdl:\n" ~
+        "    name \"hello\"\n" ~
+        "    dependency \"vibe-d\" version=\"~>0.9\"\n" ~
+        "+/\n" ~
+        "void main() {}\n";
+    auto events = injectedEventsForTest("d", source);
+    assertWellFormed(events, source);
+
+    const spans = labeledSpans(events, source);
+    // SDL highlights tag names as `@tag` and strings as `@string`.
+    assert(spans.canFind!(s => s.canFind("tag") && s.canFind("name")),
+        spans.length ? spans[0] : "no tag:name — dub.sdl injection did not fire");
+    assert(spans.canFind!(s => s.canFind("string") && s.canFind("hello")),
+        spans.length ? spans[0] : "no string:hello — recipe body not highlighted as SDL");
+    // The surrounding D still highlights.
+    assert(spans.canFind!(s => s.canFind("void") || s.canFind("main")),
+        spans.length ? spans[0] : "D body not highlighted");
+}
+
+@("ts.highlighter.dubSingleFileJsonInjection")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const source =
+        "/+ dub.json:\n" ~
+        "{\n" ~
+        "    \"name\": \"hello\"\n" ~
+        "}\n" ~
+        "+/\n" ~
+        "void main() {}\n";
+    auto events = injectedEventsForTest("d", source);
+    assertWellFormed(events, source);
+
+    const spans = labeledSpans(events, source);
+    // JSON highlights keys/strings; either form proves the injection fired.
+    assert(spans.canFind!(s => s.canFind("hello")),
+        spans.length ? spans[0] : "no hello span — dub.json injection did not fire");
+}

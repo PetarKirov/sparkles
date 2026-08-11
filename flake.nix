@@ -67,6 +67,7 @@
         ./nix/packages/libghostty-vt.nix
         ./nix/packages/text-wasm.nix
         ./nix/packages/table-wasm.nix
+        ./nix/packages/tree-sitter-d.nix
         ./nix/packages/tree-sitter-sdl.nix
         ./nix/packages/ts-grammars.nix
         ./nix/packages/twoslash-extract.nix

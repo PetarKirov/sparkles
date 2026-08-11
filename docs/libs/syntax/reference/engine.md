@@ -70,7 +70,8 @@ every 100 events plus inside the C query execution.
 ## Injections
 
 `highlightInjected` highlights embedded languages — fenced code blocks,
-`markdown_inline`, HTML/YAML/TOML front-matter:
+`markdown_inline`, HTML/YAML/TOML front-matter, and DUB single-file package
+recipes (via D's `injections.scm`):
 
 ```d
 auto registry = GrammarRegistry.fromEnvironment();
@@ -93,6 +94,12 @@ range as plain text (totality). The injected language comes from a captured
 _named_ children are excluded (so a query that omits the directive still
 re-parses escapes/delimiters). `injection.combined` and locals are deferred;
 nesting is depth-capped (`injectionDepthExceeded`).
+
+**DUB single-file packages** are handled entirely in D's grammar queries
+(pinned from [`PetarKirov/tree-sitter-d`](https://github.com/PetarKirov/tree-sitter-d)):
+nesting comments of the form `/+ dub.sdl: … +/` and `/+ dub.json: … +/` inject
+as SDL and JSON. No engine special case — the same `#match?` / `#set!`
+machinery as every other injection.
 
 `highlight` stays the single-language entry point — a language with no
 injections yields a byte-identical stream through either path.
