@@ -15,7 +15,7 @@ module sparkles.ui_app.run;
 
 import sparkles.ui_app.backend : Backend, BackendPolicy, isInteractive,
     pickBackend, platformForcedBackend;
-import sparkles.ui_app.host : noDraw, RunConfig;
+import sparkles.ui_app.host : noDraw, noSetup, RunConfig;
 
 /// Why a run did not happen. `ok` is the only value that means a loop ran.
 enum RunOutcome : ubyte
@@ -117,13 +117,17 @@ Params:
     draw = the optional post-display-list phase (`HST13`), as `(ref host)` —
         called inside the frame bracket after the host's operations painted,
         which is the only place a canvas call is valid. Defaults to a no-op.
+    setup = the optional setup phase (`HST19`), as `(ref host)` — called once
+        after the arm opens and before the first frame, for an application
+        that lays out before the loop rather than from inside it. Defaults to
+        a no-op.
     cfg = the run configuration, including the window/font request
     policy = the backend decision's inputs. Its `guiCompiledIn` is overwritten
         with the truth, so a caller cannot accidentally claim an arm this build
         does not carry.
 */
-RunOutcome run(alias present, alias handle, alias draw = noDraw)(
-    in RunConfig cfg, BackendPolicy policy)
+RunOutcome run(alias present, alias handle, alias draw = noDraw,
+    alias setup = noSetup)(in RunConfig cfg, BackendPolicy policy)
 {
     const arms = compiledArms();
     policy.guiCompiledIn = arms.gui;
@@ -152,8 +156,12 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw)(
                 req.cells = windowCellsOf(cfg.gui);
                 req.fontSizePoints = cfg.gui.fontSize;
                 req.targetFps = cfg.targetFps;
+                req.fontSizePxOverride = cfg.fontSizePxOverride;
+                // `in` makes the config const; the request owns a mutable slice.
+                req.extraFontSources = cfg.extraFontSources.dup;
+                req.traceSink = cfg.traceSink;
 
-                return runGui!(present, handle, draw)(cfg, req)
+                return runGui!(present, handle, draw, setup)(cfg, req)
                     ? RunOutcome.ok : RunOutcome.openFailed;
             }
             else
@@ -172,7 +180,7 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw)(
                         {
                             import sparkles.ui_app.tui_loop : runTui;
 
-                            return runTui!(present, handle, draw)(cfg)
+                            return runTui!(present, handle, draw, setup)(cfg)
                                 ? RunOutcome.ok : RunOutcome.openFailed;
                         }
                     }
@@ -296,4 +304,18 @@ unittest
             (ref h, in Event e) { h.quit(); },
         )(cfg, policy);
     }), "run must compile against both arms");
+
+    // With every phase supplied, including `HST19`'s — the shape a migrated
+    // application uses, where the setup phase is what lays out against a
+    // surface that does not exist until the arm has opened it.
+    static assert(__traits(compiles, {
+        RunConfig cfg;
+        BackendPolicy policy;
+        run!(
+            (ref h) { h.requestFrame(); },
+            (ref h, in Event e) { h.quit(); },
+            (ref h) { auto c = h.canvas; },
+            (ref h) { const sz = h.size; },
+        )(cfg, policy);
+    }), "the setup and draw phases must compile against both arms");
 }

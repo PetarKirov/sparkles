@@ -169,8 +169,10 @@ Params:
     present = called to build each frame
     handle = called per event
     script = the events to deliver, in order
-    setup = an optional lambda to configure the host (size, capabilities)
-        before the run
+    setup = the `HST19` setup phase: configure the host (size, capabilities)
+        and run whatever the application does once the surface exists, before
+        the first frame. Optional — pass `null` for an application whose first
+        frame is its first contact with the surface.
 */
 RecordingHost runRecorded(Present, Handle)(
     in RunConfig cfg, scope Present present, scope Handle handle,

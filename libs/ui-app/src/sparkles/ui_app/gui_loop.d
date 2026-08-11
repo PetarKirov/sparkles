@@ -32,8 +32,8 @@ import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
-import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, PointerUnit,
-    RunConfig, withRealSize;
+import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, noSetup,
+    PointerUnit, RunConfig, withRealSize;
 import sparkles.ui_raylib.raylib_canvas : RaylibCanvas;
 import sparkles.ui_raylib.events : RaylibEvents;
 import sparkles.ui_raylib.window : Window;
@@ -157,8 +157,8 @@ valid, which is why an application with a renderer of its own cannot paint from
 Returns `false` when the window opened but no font resolved — the caller reports
 which family it asked for, since a window painting without a font is a blank one.
 */
-bool runGui(alias present, alias handle, alias draw = noDraw)(
-    in RunConfig cfg, in GuiRequest req)
+bool runGui(alias present, alias handle, alias draw = noDraw,
+    alias setup = noSetup)(in RunConfig cfg, in GuiRequest req)
 {
     import sparkles.base.term_color : RgbColor;
     import sparkles.ui.interp.immediate : paint;
@@ -173,6 +173,10 @@ bool runGui(alias present, alias handle, alias draw = noDraw)(
     // The terminal-grade keyboard, where the application asked for it: the
     // capability declaration IS the switch — RaylibEvents reads it back.
     host.capabilities.keyRelease = cfg.keyRelease;
+
+    // `HST19`: the window exists and the font has settled on a cell size, so
+    // an application that lays out before its first frame can now do it.
+    setup(host);
 
     RaylibEvents events;
     events.capabilities = host.capabilities;

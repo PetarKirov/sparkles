@@ -41,7 +41,7 @@ import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.host : FrameOps, HostState, isHost, modsOf, noDraw,
-    RunConfig, withRealSize;
+    noSetup, RunConfig, withRealSize;
 import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
 
 /**
@@ -204,7 +204,8 @@ diffed. A skipped frame skips it too.
 Returns `false` when the terminal could not be put into raw mode, which is the
 caller's cue to fall back rather than paint into nothing.
 */
-bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
+bool runTui(alias present, alias handle, alias draw = noDraw,
+    alias setup = noSetup)(in RunConfig cfg)
 {
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui_tui.grid_canvas : paintGrid;
@@ -217,6 +218,14 @@ bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
 
     TuiHost host;
     host.session = &session;
+    // `HST19`. The size is the frame's to read (it re-queries every pass), so
+    // seed it here too: a setup phase that saw a zero surface would lay out
+    // against nothing, which is exactly what it exists to avoid.
+    host.size_ = () {
+        const sz = session.resizeToTerminal();
+        return Size(sz.width, sz.height);
+    }();
+    setup(host);
 
     void frame()
     {
