@@ -467,7 +467,16 @@ private:
 }
 
 /**
-The scheduler driving the calling fiber, or `null` off one.
+Whether the caller is running on a scheduler fiber.
+
+The question $(LREF currentScheduler) cannot answer, and the reason it does
+not have to: a caller deciding between a parked path and a polled one asks
+this, and "there is no loop here" is a routine answer rather than a defect.
+*/
+bool onScheduler() @safe nothrow @nogc => Sched.tryCurrent() !is null;
+
+/**
+The scheduler driving the calling fiber.
 
 The tier-B verbs already work this way — `read`, `write`, `accept` take no
 scheduler because a fiber knows which loop resumed it. This exposes the same
@@ -478,42 +487,55 @@ $(B It exists because a daemon body cannot be handed a scheduler.) An
 application parks background work through its host's `spawnDaemon`, which
 takes a plain `void delegate()` — the host deliberately does not publish the
 loop, since two of the three targets have none. A fiber that needs the
-scheduler therefore has to ask at the top, and this is the ask. Off a fiber
-it returns `null` rather than asserting: the caller is usually deciding
-between a parked path and a polled one, and "there is no loop here" is a
-routine answer rather than a defect.
+scheduler therefore has to ask at the top, and this is the ask.
+
+$(B By `ref`, never by pointer.) Every consumer wants `ref Sched`, so handing
+back a pointer would make each of them dereference one — and a dereference in
+`@safe` code is not free, it is a `@trusted` escape hatch per call site. A
+`ref` return plus a `ref` local (`ref Sched s = currentScheduler();`) keeps
+the whole chain `@safe`. The nullability that a pointer also carried moves to
+$(LREF onScheduler), where it reads as the question it always was.
 */
-Sched* currentScheduler() @trusted nothrow @nogc
-{
-    auto t = Sched.tryCurrent();
-    return t is null ? null : t.owner;
-}
+ref Sched currentScheduler() @trusted nothrow @nogc
+in (onScheduler, "currentScheduler is only callable on a scheduler fiber")
+    // @trusted: `owner` is the address stored by `run` for the fiber that is
+    // executing right now, so it is non-null and its `Sched` outlives this
+    // call — `run` blocks on that frame until every fiber it spawned is done.
+    => *Sched.tryCurrent().owner;
 
 @("sched.currentScheduler.isTheLoopThatResumedYou")
 @safe
 unittest
 {
-    // Off a fiber there is no answer, and that is a value rather than a
+    // Off a fiber there is no loop, and that is a question rather than a
     // defect: a component asking is usually choosing between a parked path
     // and a polled one, and the polled one is a legitimate outcome.
-    assert(currentScheduler() is null, "no fiber, no loop");
+    assert(!onScheduler, "no fiber, no loop");
 
     Sched s;
     schedOrSkip(s);
 
-    Sched* fromRoot, fromChild;
+    bool rootIsSelf, childIsSelf;
     auto r = s.run(() {
-        fromRoot = currentScheduler();
+        // `ref` locals, not pointers (2.111): the identity check below is the
+        // whole assertion, and comparing the addresses of two `ref`s is
+        // `@safe` under dip1000 — where dereferencing a returned pointer to
+        // make the same comparison would have needed `@trusted`.
+        ref Sched mine = currentScheduler();
+        rootIsSelf = &mine is &s;
+
         // A spawned daemon is the case this exists for: its body is a plain
-        // delegate, handed no scheduler by the host that parked it.
-        assert(!s.spawn(() { fromChild = currentScheduler(); }).hasError);
+        // delegate, handed no scheduler by whoever parked it.
+        assert(!s.spawn(() {
+            ref Sched theirs = currentScheduler();
+            childIsSelf = &theirs is &s;
+        }).hasError);
     });
     assert(!r.hasError);
 
-    const sp = (() @trusted => &s)();
-    assert(fromRoot is sp, "the root fiber's loop is the one it runs on");
-    assert(fromChild is sp, "and so is a fiber spawned from it");
-    assert(currentScheduler() is null, "the run is over");
+    assert(rootIsSelf, "the root fiber's loop is the one it runs on");
+    assert(childIsSelf, "and so is a fiber spawned from it");
+    assert(!onScheduler, "the run is over");
 }
 
 @("sched.spawn.runsToCompletion")
