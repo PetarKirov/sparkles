@@ -259,8 +259,10 @@ struct PreviewTui
         height = h;
     }
 
-    /// The pending OSC 52 clipboard write, if any (cleared by the take) — the
-    /// event loop flushes it out of band after the frame.
+    /// The text waiting to reach the system clipboard, if any (cleared by the
+    /// take). The frame hands it to the host, which knows how this target
+    /// carries one — OSC 52 on a terminal, the window system's own call in a
+    /// window. Empty when nothing was copied.
     const(char)[] takeClipboard() return @safe pure nothrow @nogc
     {
         if (!clipReady)
@@ -396,16 +398,13 @@ struct PreviewTui
         sel = Selection!long.cleared;
     }
 
-    // Queue `text` for the system clipboard via OSC 52 (`ESC ] 52 ; c ; <b64> BEL`),
-    // the only portable in-band terminal clipboard; the loop flushes `clip` after.
+    // Queue `text` for the system clipboard. The PAYLOAD, not a sequence:
+    // OSC 52 is how a terminal carries one, and the host owns that (`HST`)
+    // because a window carries the same text a different way entirely.
     private void writeClipboard(scope const(char)[] text) @system
     {
-        import std.base64 : Base64;
-
         clip.clear();
-        clip.put("\x1b]52;c;");
-        clip.put(Base64.encode(cast(const(ubyte)[]) text));
-        clip.put("\x07");
+        clip.put(text);
         clipReady = true;
     }
 
@@ -1657,9 +1656,10 @@ unittest
     const clicked = t.handle(Event(PointerEvent(action: PointerAction.press,
         button: PointerButton.left, pos: Point(ix, iy))));
     assert(clicked && t.clipReady);
-    import std.base64 : Base64;
-    assert((cast(string) t.clip[]).canFind(
-        Base64.encode(cast(const(ubyte)[]) src[12 .. $])));
+    // The PAYLOAD, not an OSC 52 sequence: how a target carries a clipboard
+    // write is the host's to know (`HST`), and a window carries the same
+    // text a different way entirely.
+    assert((cast(string) t.clip[]).canFind(src[12 .. $]));
     t.paint(g);
     assert(row(cast(ushort) hdrY).canFind("\U0000F00C"),
         "copied feedback glyph not shown");
@@ -1670,8 +1670,7 @@ unittest
         button: PointerButton.left, pos: Point(1, 1))));
     t.copySelection();
     assert(t.clipReady);
-    assert((cast(string) t.clip[]).canFind(
-        Base64.encode(cast(const(ubyte)[]) src[0 .. 11])));
+    assert((cast(string) t.clip[]).canFind(src[0 .. 11]));
 }
 
 @("tui.fold.zTogglesInnermostRegion")

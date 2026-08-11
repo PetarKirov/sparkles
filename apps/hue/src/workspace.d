@@ -126,15 +126,27 @@ struct WorkspaceTui
     // column → ns-resize). The loop drains `takeCursorShape` after each
     // event and writes it out of band — only transitions emit.
     private PointerShape curShape = PointerShape.default_;
-    private const(char)[] pendingCursor;
+    private PointerShape pendingShape;
+    private bool shapePending;
 
-    /// The pointer-shape sequence to write to the terminal, if the hover
-    /// state changed since the last take (empty otherwise).
-    const(char)[] takeCursorShape() return @safe pure nothrow @nogc
+    /**
+    The shape the pointer should take, if the hover state changed since the
+    last take.
+
+    The $(B shape), not the escape sequence that spells it: OSC 22 is how a
+    terminal is told, and the host owns that — a window sets a cursor through
+    the window system instead, and an application that hand-rolled the
+    sequence could only ever address one of them.
+
+    Returns `false` when nothing changed, which is most frames.
+    */
+    bool takeCursorShape(out PointerShape shape) @safe pure nothrow @nogc
     {
-        const s = pendingCursor;
-        pendingCursor = null;
-        return s;
+        if (!shapePending)
+            return false;
+        shapePending = false;
+        shape = pendingShape;
+        return true;
     }
 
     /// Builds the two-pane arrangement — called once, before `arrange`.
@@ -521,7 +533,8 @@ struct WorkspaceTui
             if (want != curShape || (grabbed && p.action == PointerAction.drag))
             {
                 curShape = want;
-                pendingCursor = "\x1b]22;" ~ cast(string) want ~ "\x1b\\";
+                pendingShape = want;
+                shapePending = true;
             }
         }, (_) {});
 
@@ -768,15 +781,16 @@ struct WorkspaceTui
             dirty = true;
         }
 
-        // Out of band, and before the frame: these sequences address the
-        // terminal itself rather than the cell surface, so the retained diff
-        // must never see them.
+        // Before the frame, and as errands rather than sequences: both of
+        // these address the target itself rather than the cell surface, and
+        // the host is what knows how this one carries them — OSC 52 and
+        // OSC 22 on a terminal, the window system's own calls in a window.
         const clip = viewer.takeClipboard();
         if (clip.length)
-            h.writeOutOfBand(clip); // OSC 52 clipboard
-        const shape = takeCursorShape();
-        if (shape.length)
-            h.writeOutOfBand(shape); // OSC 22 pointer shape
+            h.clipboard(clip);
+        PointerShape shape;
+        if (takeCursorShape(shape))
+            h.pointerShape(shape);
 
         // `HST16`: the lantern panel's remainder, capped by the live oracle's
         // tick and by a git refresh in flight — a deadline that moves every
@@ -1206,6 +1220,49 @@ unittest
         "an idle pass over an unchanged document draws nothing");
 }
 
+@("workspace.component.outOfBandWorkBecomesHostErrands")
+@system
+unittest
+{
+    import std.file : rmdirRecurse;
+    import sparkles.input : PointerAction, PointerEvent;
+    import sparkles.ui_app.host : RunConfig;
+    import sparkles.ui_app.run_app : runAppRecorded;
+    import sparkles.ui_app.record : RecordingHost;
+
+    // The pointer shape used to be a string of hand-rolled OSC 22 the loop
+    // wrote out of band; it is an errand now, so what the workspace asks for
+    // is assertable without a terminal to read the bytes back from — and a
+    // window, which spells the same intent through the window system, gets
+    // it for free.
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-workspace-errand-test");
+    scope (exit) rmdirRecurse(root);
+    if (!w.treeVisible)
+        return; // no divider to hover; the arrangement decides that
+
+    // The divider column is the one just past the tree pane — the same one
+    // the OSC 22 test hovers.
+    const divider = w.tree.width;
+
+    RunConfig cfg;
+    auto rec = runAppRecorded(w, cfg,
+        [
+            Event(PointerEvent(action: PointerAction.move,
+                pos: Point(divider, 4))),
+            Event(PointerEvent(action: PointerAction.move,
+                pos: Point(divider + 8, 4))),
+        ],
+        (ref RecordingHost h) { h.size = Size(80, 24); });
+
+    assert(rec.frames.length == 3);
+    assert(rec.shapes.length >= 1,
+        "hovering the divider asked the host for a resize pointer");
+    assert(rec.shapes[0] == PointerShape.ewResize);
+    assert(rec.outOfBand.length == 0,
+        "and asked for it as an errand, not as bytes for one target");
+}
+
 @("workspace.component.quitEndsTheRun")
 @system
 unittest
@@ -1497,19 +1554,20 @@ unittest
     const div = w.tree.width;
     assert(w.handle(Event(PointerEvent(action: PointerAction.move,
         pos: Point(div, 4)))));
-    assert(w.takeCursorShape() == "\x1b]22;ew-resize\x1b\\");
+    PointerShape shape;
+    assert(w.takeCursorShape(shape) && shape == PointerShape.ewResize);
     assert(w.handle(Event(PointerEvent(action: PointerAction.move,
         pos: Point(div, 6)))));
-    assert(w.takeCursorShape().length == 0, "no transition, no write");
+    assert(!w.takeCursorShape(shape), "no transition, no errand");
     assert(w.handle(Event(PointerEvent(action: PointerAction.move,
         pos: Point(60, 6)))));
-    assert(w.takeCursorShape() == "\x1b]22;default\x1b\\");
+    assert(w.takeCursorShape(shape) && shape == PointerShape.default_);
 
     // The viewer's scrollbar column hovers as ns-resize (vertical), and a
     // grab HOLDS the shape wherever the drag strays — no revert mid-drag.
     assert(w.handle(Event(PointerEvent(action: PointerAction.move,
         pos: Point(99, 4)))));
-    assert(w.takeCursorShape() == "\x1b]22;ns-resize\x1b\\");
+    assert(w.takeCursorShape(shape) && shape == PointerShape.nsResize);
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(99, 4)))));
     assert(w.viewer.sb.dragging);
@@ -1518,13 +1576,13 @@ unittest
     // Mid-grab drags RE-ASSERT the held shape (never default): terminals /
     // multiplexers may reset the pointer on drag start, so the idempotent
     // re-set keeps the resize shape pinned.
-    assert(w.takeCursorShape() == "\x1b]22;ns-resize\x1b\\",
+    assert(w.takeCursorShape(shape) && shape == PointerShape.nsResize,
         "the grab re-asserts its shape through the stray drag");
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(60, 6)))));
     assert(w.handle(Event(PointerEvent(action: PointerAction.move,
         pos: Point(60, 6)))));
-    assert(w.takeCursorShape() == "\x1b]22;default\x1b\\");
+    assert(w.takeCursorShape(shape) && shape == PointerShape.default_);
 
     // Focus indication: paint stamps the focused pane; the hidden-tree
     // viewer is always focused (the standalone look).
