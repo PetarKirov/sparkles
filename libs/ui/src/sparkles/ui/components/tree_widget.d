@@ -153,7 +153,8 @@ one renderer with no type hierarchy.
 uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
     scope bool delegate(uint) @safe isOpen,
     uint selected = uint.max, TreeGlyphs glyphs = TreeGlyphs.init,
-    RgbColor selectionBg = RgbColor.init, bool hasSelectionBg = false)
+    RgbColor selectionBg = RgbColor.init, bool hasSelectionBg = false,
+    uint hitBase = 1)
 {
     static const(char)[] labelOf(ref const T v)
     {
@@ -231,7 +232,7 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
             }
 
         Widget w = Widget(kind: WidgetKind.rich, spans: spans,
-            hitId: node + 1, // hit identity = node index + 1 (0 = none)
+            hitId: hitBase + node, // hit identity (0 = none; default base 1)
             paintBackground: node == selected, stretch: node == selected,
             slot: node == selected ? Slot.selection : Slot.inherit);
         // A resolved (theme-derived) selection tint overrides the palette slot.

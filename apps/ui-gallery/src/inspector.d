@@ -1,35 +1,43 @@
 /**
 The inspector panel: the toolkit looking at itself, beside whatever it shows.
 
-`dumpTree` prints one depth-indented line per node — kind, resolved size,
-absolute position, and a text node's content. It is the first thing to reach for
-when a layout is wrong, and the reason it belongs in the catalog is that most
-people never learn it exists.
+The panel mounts the generic inspector component
+($(MREF sparkles,ui,components,inspector)) over the showing page's own widget
+tree — the `inspectWidgets` adapter, so the catalog dogfoods the component it
+catalogs. Rows are collapsible (click a container to fold its subtree), a
+click selects a node and the details pane answers for it (kind, resolved
+rect, text, key, hit id, slot) from the $(B same) frames the page painted
+with.
 
 It used to be a $(B page), dumping the previously viewed one — which meant the
 subject was never on screen while its dump was. As a shell panel toggled with
-`|` it sits beside the showing page and dumps $(I that), live: move to another
-page, press a knob, resize — the dump follows. A panel cannot dump itself into
-recursion the way a page could: it is not in the catalog, so no `view` here ever
-calls back into it.
+`|` it sits beside the showing page and inspects $(I that), live: move to
+another page, press a knob, resize — the tree follows. A panel cannot inspect
+itself into recursion the way a page could: it is not in the catalog, so no
+`view` here ever calls back into it.
 */
 module inspector;
 
-import std.algorithm : count, splitter;
 import std.conv : text;
 
-import sparkles.ui.geometry : Constraints, SizeSpec;
-import sparkles.ui.layout : dumpTree, layout;
-import sparkles.ui.state : elementKeys, hoverTargets;
-import sparkles.ui.style : Slot, TextStyle;
-import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.components.inspector : DetailRow, inspectorView,
+    inspectWidgets, WidgetInspect;
+import sparkles.ui.components.tree_view : treeActivate = activate, TreeStep,
+    TreeViewState;
+import sparkles.ui.components.tree_widget : flatten;
+import sparkles.ui.geometry : Constraints;
+import sparkles.ui.layout : layout;
+import sparkles.ui.widget : Builder, WidgetTree;
 
-import kit;
 import registry : pages;
 import scrollbars : gutterCells;
 import state : GalleryState;
 
 @safe:
+
+/// The panel tree's hit-id base — far above the shell's chrome bases and any
+/// page's own ids, so a widget tree of any size cannot collide.
+enum uint hitInspTree = 100_000;
 
 /// The width the panel's rows are built at: the dock-arranged column less its
 /// own horizontal padding and the bar's gutter. Fixed rather than `grow`,
@@ -39,106 +47,90 @@ import state : GalleryState;
 int inspectorInnerWidth(in GalleryState s) pure nothrow @nogc
     => s.inspCols - 2 - gutterCells;
 
-/// A dump can run to hundreds of lines; the panel scrolls, but a body that
-/// built every one of them on every frame would be paying for a wall of text
-/// nobody scrolled to.
-enum int maxDumpLines = 400;
-
-/**
-The panel's body: the showing page rebuilt in its $(B own) builder, laid out at
-the width the content pane actually has — so the dump describes the frame on
-screen, not a hypothetical one — then the numbers and the tree.
-
-The rebuild is what pages being pure views over the state buys: calling
-`pages[s.page].view` twice a frame cannot double anything, because a page owns
-nothing to double.
-*/
-uint inspectorBody(ref Builder b, in GalleryState s)
+/// The showing page, rebuilt in its own builder and laid out at the width
+/// the content pane actually has — so the inspection describes the frame on
+/// screen, not a hypothetical one. The rebuild is what pages being pure
+/// views over the state buys: calling `view` twice a frame doubles nothing,
+/// because a page owns nothing to double.
+private WidgetInspect inspectShowing(in GalleryState s,
+    out WidgetTree subjectTree, out size_t frameCount) @safe
 {
     const subject = pages[s.page];
     auto sb = Builder();
-    auto subjectTree = sb.finish(subject.view(sb, s));
+    subjectTree = sb.finish(subject.view(sb, s));
     auto frames = layout(subjectTree, Constraints(maxW: s.contentWidth));
-
-    const dump = dumpTree(subjectTree, frames);
-    const targets = hoverTargets(subjectTree, frames);
-    const keyed = elementKeys(subjectTree);
-    const iw = inspectorInnerWidth(s);
-
-    uint[] rows;
-    rows ~= b.add(Widget(
-        kind: WidgetKind.text,
-        text: "inspector · dumpTree",
-        slot: Slot.chromeAccent,
-        textStyle: TextStyle(bold: true),
-    ));
-    rows ~= rule(b, iw);
-    rows ~= kv(b, "page", subject.title, 12, Slot.chromeAccent);
-    rows ~= kv(b, "laid out at", text(s.contentWidth, " cells wide"), 12,
-        Slot.code);
-    rows ~= kv(b, "nodes", subjectTree.nodes.length.text, 12, Slot.code);
-    rows ~= kv(b, "hit targets", targets.length.text, 12, Slot.code);
-    rows ~= kv(b, "element keys", keyed.length.text, 12, Slot.code);
-    rows ~= kv(b, "root size", text(frames[subjectTree.root].rect.width, " × ",
-        frames[subjectTree.root].rect.height), 12, Slot.code);
-    rows ~= rule(b, iw);
-    rows ~= dumpLines(b, dump, iw);
-
-    return b.add(Widget(
-        kind: WidgetKind.column,
-        children: rows,
-        width: SizeSpec.fixed(iw),
-    ));
+    frameCount = frames.length;
+    return inspectWidgets(subjectTree, frames);
 }
 
-/// A fixed-width rule — `kit.hrule` grows, and `grow` collapses to nothing
-/// inside the panel's scroll viewport.
-private uint rule(ref Builder b, int width)
-    => b.add(Widget(
-        kind: WidgetKind.box,
-        slot: Slot.border,
-        width: SizeSpec.fixed(width),
-        height: SizeSpec.fixed(1),
-        paintBackground: true,
-        stretch: true,
-    ));
-
-/// The dump, as one clipped text node per line.
-///
-/// Per line rather than one wrapped run, because a dump's indentation is its
-/// structure: wrapping a deep line would fold it under a shallower one and
-/// the shape — the only reason to read a dump — would be gone.
-private uint[] dumpLines(ref Builder b, string dump, int width)
+/// The panel's body: the component over the showing page's tree.
+uint inspectorBody(ref Builder b, in GalleryState s)
 {
-    uint[] rows;
-    size_t shown;
-    foreach (line; dump.splitter('\n'))
-    {
-        if (shown >= maxDumpLines)
-            break;
-        if (line.length == 0)
-            continue;
-        rows ~= b.add(Widget(
-            kind: WidgetKind.column,
-            children: [label(b, line, Slot.code)],
-            width: SizeSpec.fixed(width),
-            clipX: true,
-        ));
-        ++shown;
-    }
+    WidgetTree subjectTree;
+    size_t frames;
+    auto wi = inspectShowing(s, subjectTree, frames);
 
-    const total = dump.splitter('\n').count;
-    if (total > shown)
-        rows ~= label(b, text("… ", total - shown, " more lines"), Slot.muted);
-    return rows;
+    // The panel's tree state, made concrete for this frame: the persistent
+    // pieces (disclosure, selection) from the state, rows from the current
+    // disclosure, the window covering every row (the panel's own scroll
+    // viewport does the scrolling).
+    TreeViewState!uint tv;
+    tv.open = typeof(tv.open)(s.insp.open.defaultOpen,
+        s.insp.open.exceptions.dup);
+    tv.sel = s.insp.sel;
+    const open = tv.open;
+    tv.rows = flatten(wi.data, (uint n) => open.isOpen(n));
+    tv.chromeRows = 0;
+    tv.height = cast(int) tv.rows.length;
+
+    const selNode = tv.selectedNode;
+    auto details = wi.details(selNode);
+    if (selNode == uint.max)
+        details = [
+            DetailRow("page", pages[s.page].title),
+            DetailRow("laid out at", text(s.contentWidth, " cells wide")),
+            DetailRow("nodes", text(subjectTree.nodes.length)),
+        ];
+
+    return inspectorView(b, wi.data, tv, (uint n) => open.isOpen(n),
+        text("inspector · ", pages[s.page].title), null, details,
+        inspectorInnerWidth(s), hitBase: hitInspTree);
 }
 
-@("ui_gallery.inspector.dumpsTheShowingPage")
+/// A completed press on a panel row: select it; a container also toggles its
+/// subtree. Returns false for ids that are not the panel's.
+bool inspectorActivate(ref GalleryState s, size_t id) @safe
+{
+    if (id < hitInspTree)
+        return false;
+
+    WidgetTree subjectTree;
+    size_t frames;
+    auto wi = inspectShowing(s, subjectTree, frames);
+    const node = cast(uint)(id - hitInspTree);
+    if (node >= wi.data.nodes.length)
+        return false;
+
+    auto open = s.insp.open;
+    s.insp.rows = flatten(wi.data, (uint n) => open.isOpen(n));
+    foreach (i, ref const r; s.insp.rows)
+        if (r.node == node)
+            s.insp.sel = cast(long) i;
+    if (treeActivate(s.insp, wi.data, (uint n) => n) == TreeStep.rebuild)
+    {
+        auto open2 = s.insp.open;
+        s.insp.rows = flatten(wi.data, (uint n) => open2.isOpen(n));
+    }
+    return true;
+}
+
+@("ui_gallery.inspector.namesAndMirrorsTheShowingPage")
 @safe unittest
 {
+    import std.algorithm.searching : canFind;
     import registry : pageIndexOf;
 
-    // The panel names and dumps the page beside it — the question the old
+    // The panel names and inspects the page beside it — the question the old
     // last-page inspector could never answer while its subject was hidden.
     GalleryState s;
     s.page = pageIndexOf("primitives");
@@ -148,28 +140,36 @@ private uint[] dumpLines(ref Builder b, string dump, int width)
 
     bool named;
     foreach (ref n; tree.nodes)
-        named |= n.text == "Primitives";
+        foreach (ref sp; n.spans)
+            named |= sp.text.canFind("Primitives");
     assert(named, "the panel names its subject");
 }
 
-@("ui_gallery.inspector.dumpMatchesTheEngine")
+@("ui_gallery.inspector.treeMirrorsTheEngine")
 @safe unittest
 {
+    import sparkles.ui.layout : dumpTree;
+    import std.algorithm : count, splitter;
     import registry : pageIndexOf;
 
-    // The numbers the panel reports come from the same layout the dump does —
-    // a panel showing a node count that disagreed with the tree beneath it
-    // would be worse than no panel.
+    // The panel's tree has one row per subject node (everything open), and
+    // the engine's own dump agrees on the count — a panel disagreeing with
+    // the tree beneath it would be worse than no panel.
     GalleryState s;
     s.page = pageIndexOf("layout");
 
-    auto sb = Builder();
-    auto subject = sb.finish(pages[s.page].view(sb, s));
-    auto frames = layout(subject, Constraints(maxW: s.contentWidth));
+    WidgetTree subjectTree;
+    size_t frames;
+    auto wi = inspectShowing(s, subjectTree, frames);
+    auto rows = flatten(wi.data, (uint) => true);
+    assert(rows.length == subjectTree.nodes.length);
 
-    const dump = dumpTree(subject, frames);
+    auto sb = Builder();
+    auto subject2 = sb.finish(pages[s.page].view(sb, s));
+    auto lay = layout(subject2, Constraints(maxW: s.contentWidth));
     // `dumpTree` writes one line per node plus a trailing newline.
-    assert(dump.splitter('\n').count == subject.nodes.length + 1);
+    assert(dumpTree(subject2, lay).splitter('\n').count
+        == subject2.nodes.length + 1);
 }
 
 @("ui_gallery.inspector.handlesEveryPage")
@@ -183,8 +183,30 @@ private uint[] dumpLines(ref Builder b, string dump, int width)
         s.page = i;
         auto b = Builder();
         auto tree = b.finish(inspectorBody(b, s));
-        assert(tree.nodes.length > 0, "no dump for " ~ p.title);
+        assert(tree.nodes.length > 0, "no tree for " ~ p.title);
     }
+}
+
+@("ui_gallery.inspector.clickSelectsAndTogglesContainers")
+@safe unittest
+{
+    import registry : pageIndexOf;
+
+    GalleryState s;
+    s.page = pageIndexOf("primitives");
+
+    // Ids below the panel's base are not the panel's.
+    assert(!inspectorActivate(s, 5));
+
+    // The root (node 0) is a container: activating selects and folds it.
+    assert(inspectorActivate(s, hitInspTree + 0));
+    assert(s.insp.selectedNode == 0);
+    assert(!s.insp.open.isOpen(0), "a container click folds its subtree");
+    assert(s.insp.rows.length >= 1);
+
+    // A second activation opens it again.
+    assert(inspectorActivate(s, hitInspTree + 0));
+    assert(s.insp.open.isOpen(0));
 }
 
 @("ui_gallery.inspector.bodyStaysInsideThePanelWidth")
@@ -192,8 +214,8 @@ private uint[] dumpLines(ref Builder b, string dump, int width)
 {
     import sparkles.ui.widget : Visibility;
 
-    // Dump lines are long and the panel is narrow: every line must clip at
-    // the panel's width rather than pushing the body row past the surface.
+    // Tree rows and details are long and the panel is narrow: the body must
+    // clip at the panel's width rather than pushing rows past the surface.
     GalleryState s;
     s.page = 1;
 

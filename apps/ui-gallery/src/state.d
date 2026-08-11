@@ -262,7 +262,12 @@ struct GalleryState
     size_t page;      /// index into `registry.pages`
     Region region = Region.nav; /// which half the keyboard drives
     bool helpOpen;    /// the `?` overlay
-    bool inspectorOpen; /// the `|` side panel — `dumpTree` of the showing page
+    bool inspectorOpen; /// the `|` side panel — the showing page, inspected
+    /// The inspector panel's tree state: disclosure (default: everything
+    /// open — the dump-it-all spirit) + the click-selected row, keyed by
+    /// the inspected tree's arena index.
+    TreeViewState!uint insp = TreeViewState!uint(
+        DisclosureState!uint.allOpen);
 
     // ── theming ─────────────────────────────────────────────────────────────
     size_t themeIndex = 7; /// `tokyo-night` — the shared default (`CLI3`)
