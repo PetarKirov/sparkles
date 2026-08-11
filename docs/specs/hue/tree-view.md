@@ -17,7 +17,7 @@ graph._
 
 > [!IMPORTANT]
 > The generic tree is a **toolkit** component, specified as
-> [`WGT12`/`VMD1`–`VMD6`](../ui/widgets.md); this page specifies hue's _use_ of
+> [`WGT12`/`VMD1`–`VMD7`](../ui/widgets.md); this page specifies hue's _use_ of
 > it. Two consequences worth stating up front:
 >
 > - **`TVU1` becomes the directory target.** A directory argument opens the file
