@@ -111,7 +111,20 @@ private uint viewWith(ref Builder b, in DockContainer c, in GalleryState s)
         ~ "Nothing here keeps a second copy of any of that.", w);
     body_ ~= spacer(b);
 
-    body_ ~= section(b, "the arrangement", [renderNode(b, c, c.layout.root)]);
+    // ONE hit id, on the arrangement's root: it exists to locate the demo's
+    // origin so a pointer can be translated into the container's space, and
+    // the container resolves everything inside it from there. Stamping the
+    // id on each pane instead would make `rectOf` answer with whichever pane
+    // happens to come first — right only while that pane sits at the origin,
+    // which a re-dock is free to change.
+    const arrangement = b.add(Widget(
+        kind: WidgetKind.column,
+        children: [renderNode(b, c, c.layout.root)],
+        width: SizeSpec.grow(),
+        height: SizeSpec.fixed(dockRows),
+        hitId: hitDock,
+    ));
+    body_ ~= section(b, "the arrangement", [arrangement]);
     body_ ~= spacer(b);
 
     body_ ~= section(b, "the container", [
@@ -247,9 +260,6 @@ private uint paneBox(ref Builder b, in DockContainer c, PaneId pane,
         children: [bar, content],
         width: extent > 0 ? SizeSpec.fixed(extent) : SizeSpec.grow(),
         height: SizeSpec.fixed(dockRows - 1),
-        // One hit id for the whole demo: the container does the rest of the
-        // resolution itself, from a position translated into its own space.
-        hitId: hitDock,
     ));
 }
 
@@ -444,9 +454,14 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
         auto b = Builder();
         const root = view(b, s);
         auto tree = b.finish(root);
+        // Count the pane bodies: every visible pane draws its blurb, and
+        // an inactive tab's pane has no frame at all to draw one from.
         size_t n;
         foreach (ref node; tree.nodes)
-            if (node.hitId == hitDock)
+            if (node.kind == WidgetKind.text
+                && (node.text == "a file tree, say"
+                    || node.text == "the thing being read"
+                    || node.text == "…and a second document"))
                 ++n;
         return n;
     }
