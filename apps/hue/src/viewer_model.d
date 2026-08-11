@@ -617,6 +617,7 @@ struct ViewerModel
         rows = documentRows(tree, frames);
         targets = withTargets ? hoverTargets(tree, frames) : null;
         rebuildMatchRects();
+        rebuildInspectRects();
 
         // Gutter fold markers: the row each foldable region begins on.
         // Both lists are ordered by source position, so one two-pointer
@@ -742,6 +743,64 @@ struct ViewerModel
         matchRects.length = matches.length;
         foreach (i, ref const m; matches)
             matchRects[i] = selectionRects(tree, frames, m.start, m.end);
+    }
+
+    // ── The inspector's extent tint (`TSI2` / `INS6`) ───────────────────────
+
+    /// The selected CST node's extent, as visual rects (same identity
+    /// channel as the search matches). Empty = no inspector selection.
+    Rect[] inspectRects;
+    private size_t inspStart = size_t.max, inspEnd;
+
+    /// Sets / clears the tinted extent; rects recompute here and on every
+    /// rebuild (a resize or fold re-lays the document out from under them).
+    void setInspectExtent(size_t start, size_t end)
+    {
+        inspStart = start;
+        inspEnd = end;
+        rebuildInspectRects();
+    }
+
+    /// ditto
+    void clearInspectExtent()
+    {
+        inspStart = size_t.max;
+        inspEnd = 0;
+        inspectRects = null;
+    }
+
+    private void rebuildInspectRects()
+    {
+        inspectRects = inspStart != size_t.max && inspEnd > inspStart
+            ? selectionRects(tree, frames, inspStart, inspEnd) : null;
+    }
+
+    /// Whether any part of the tinted extent is inside the viewport — the
+    /// sync contract scroll-follows $(B only) when this is false (the
+    /// off-screen-only rule that keeps the panel pleasant, not jumpy).
+    bool inspectExtentVisible(long visRows) const @safe pure nothrow @nogc
+    {
+        foreach (ref const r; inspectRects)
+            if (r.y >= top && r.y < top + visRows)
+                return true;
+        return inspectRects.length == 0;
+    }
+
+    /// Scrolls the extent's first row into view (top-third placement).
+    void scrollInspectIntoView(long visRows)
+    {
+        if (inspectRects.length == 0)
+            return;
+        long first = long.max;
+        foreach (ref const r; inspectRects)
+            if (r.y < first)
+                first = r.y;
+        top = first - visRows / 3;
+        const maxTop = cast(long) rows.length - visRows;
+        if (top > maxTop)
+            top = maxTop;
+        if (top < 0)
+            top = 0;
     }
 
     /// The first visual row at/after source line `srcLine` (goto-line).
