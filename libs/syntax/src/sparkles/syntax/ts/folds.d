@@ -15,7 +15,7 @@ import sparkles.syntax.md.model : Span;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.tree_sitter : nodeNamedChild, nodeNamedChildCount, nodeRange,
     ParseGuards, TsError, TSNode, TsParser, TSQueryMatch, TsQuery,
-    TsQueryCursor;
+    TsQueryCursor, TsTree;
 
 @system:
 
@@ -27,8 +27,11 @@ language has no configured grammar (totality — folding is simply absent).
 Span[] foldableSpansCst(ref TsConfigCache cache, const(char)[] language,
     scope const(char)[] source)
 {
+    if (!source.length)
+        return null;
+
     const cfg = cache.resolve(language);
-    if (cfg is null || !source.length)
+    if (cfg is null)
         return null;
 
     auto parser = TsParser.create();
@@ -37,6 +40,22 @@ Span[] foldableSpansCst(ref TsConfigCache cache, const(char)[] language,
     TsError parseError;
     auto tree = parser.parse(source, parseError, ParseGuards());
     if (!tree.valid)
+        return null;
+
+    return foldableSpansFromTree(cache, language, tree);
+}
+
+/**
+ditto, over a tree the caller already holds — the retained-parse path: an
+interactive consumer that keeps the document's `TsTree` alive (the
+tree-sitter inspector's seam) derives its fold ranges from that tree instead
+of paying a second parse per rebuild.
+*/
+Span[] foldableSpansFromTree(ref TsConfigCache cache, const(char)[] language,
+    ref const TsTree tree)
+{
+    const cfg = cache.resolve(language);
+    if (cfg is null || !tree.valid)
         return null;
 
     // FSR2: a shipped folds.scm defines the ranges (whatever its capture
