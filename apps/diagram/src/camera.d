@@ -2,13 +2,26 @@
 The board's camera (`CAM1`–`CAM5`): the one mapping between an infinite world
 and the viewport the host gave us.
 
-$(B Discrete zoom, integer cells.) A `zoom` is a power of two — one world cell
-occupies `2^level` screen cells above 0, and `2^-level` world cells share one
-screen cell below it. That is not a simplification of a continuous camera; it
-is what makes the two targets agree. A terminal cell cannot be subdivided, so a
-fractional scale would round differently there than in a window, and the same
-board would answer different questions about what is under the pointer. Every
-mapping here is integer arithmetic with a documented rounding direction.
+$(B Magnification is an exponent and a mantissa), for the same reason a float
+is. The exponent is $(LREF Camera.zoom): a power of two, in $(B cells) — one
+world cell occupies `2^level` cells above 0, `2^-level` world cells share one
+cell below it. The mantissa is $(LREF Camera.scalePercent): how large a cell is
+$(B drawn), in `[100, 200)`% of the target's natural cell.
+
+The split is what lets one camera serve both targets honestly. A terminal cell
+cannot be subdivided, so the terminal pins the mantissa at 100 and zooms by
+octaves — which is all a cell grid can express. A window can draw a cell at any
+pixel size, so it moves the mantissa in small steps and only carries into the
+exponent when the mantissa leaves its octave. The user sees a continuous zoom
+in the window and a stepped one in the terminal, and both are looking at the
+same world through the same camera.
+
+$(B The cell mapping does not depend on the mantissa) — that is the point.
+`worldToScreen` answers cells, in integer arithmetic with a documented rounding
+direction, so a hit test and a paint agree exactly on either target. The
+mantissa reaches the screen only where sub-cell resolution exists at all: the
+pixel size the board's canvas is built at, and the pixel positions the pointer
+arrives in (`HST18`).
 
 $(B Everything is pure.) The camera is the piece most likely to be wrong in a
 way no screenshot would catch — an off-by-one in a round-trip, a pivot that
@@ -25,12 +38,18 @@ module camera;
 
 import sparkles.ui.geometry : Point, Rect, Size;
 
-/// The zoom range. Eight steps out and four in is what a board with room for a
-/// few thousand nodes needs: far enough to lose a node in a cell, close enough
-/// to label one.
+/// The zoom range, in octaves. Eight steps out and four in is what a board
+/// with room for a few thousand nodes needs: far enough to lose a node in a
+/// cell, close enough to label one.
 enum int minZoom = -8;
 /// ditto
 enum int maxZoom = 4;
+
+/// The mantissa's octave, in percent. `[100, 200)` — at 200 it is another
+/// exponent step, which is what `normalize` carries.
+enum int scaleBase = 100;
+/// ditto
+enum int scaleTop = 200;
 
 /**
 Where the viewport looks, and how far in.
@@ -42,7 +61,19 @@ to — a board that stopped scrolling would be a document, not a canvas.
 struct Camera
 {
     Point origin;   /// the world cell at the viewport's top-left
-    int zoom;       /// the discrete level; 0 is 1 world cell per screen cell
+    int zoom;       /// the exponent: octaves of world cells per screen cell
+
+    /**
+    The mantissa: how large a cell is $(B drawn), in percent of the target's
+    natural cell, kept in `[100, 200)`.
+
+    A window moves this; a terminal leaves it at 100 because a cell there is
+    indivisible and claiming otherwise would be a lie the renderer could not
+    honour. Nothing in the cell mapping reads it — it reaches the screen as
+    the pixel size the board's canvas is built at, and as the divisor turning
+    a pixel pointer position back into a board cell.
+    */
+    int scalePercent = scaleBase;
 
 @safe pure nothrow @nogc:
 
@@ -103,6 +134,84 @@ struct Camera
         const dy = divFloor(pivot.y - after.y, cellsPerWorld) * worldPerCell;
         origin = Point(origin.x - dx, origin.y - dy);
     }
+
+    /**
+    Zoom by a $(B ratio) — `ratioPercent` of the current magnification —
+    keeping the world cell under `pivot` where it is. The window's wheel and
+    pinch (`IXN4`): `110` is a notch in, `91` a notch out.
+
+    A ratio and not an increment, because zoom is perceived multiplicatively:
+    a fixed number of percentage points would be a large step near 100% and an
+    imperceptible one near 200%, so the same wheel notch would feel different
+    depending on where the mantissa happened to be. A pinch gives a ratio
+    directly.
+
+    The mantissa moves first and carries into the exponent when it leaves its
+    octave, so a run of notches is smooth rather than a staircase: only the
+    carry changes the cell mapping, and between carries the board is simply
+    drawn at a different pixel size. `pivot` is in $(B cells), the unit the
+    exponent works in — the refinement between two carries moves nothing in
+    cell space and so needs no anchor.
+
+    Returns `true` when the exponent carried, which is when the caller
+    re-derives anything measured in cells.
+    */
+    bool zoomByRatio(int ratioPercent, in Point pivot) scope
+    {
+        if (ratioPercent <= 0)
+            return false;
+        int next = cast(int)(cast(long) scalePercent * ratioPercent / scaleBase);
+        if (next < 1)
+            next = 1; // a ratio past the floor clamps rather than wrapping
+
+        // Renormalize into `[100, 200)`, counting octaves. 200% of one octave
+        // IS 100% of the next, which is the whole identity this rests on.
+        int carry;
+        while (next >= scaleTop)
+        {
+            next /= 2;
+            ++carry;
+        }
+        while (next < scaleBase)
+        {
+            next *= 2;
+            --carry;
+        }
+
+        // A carry the exponent cannot take pins the mantissa at the edge of
+        // the range rather than wrapping into a zoom that did not happen.
+        if (carry != 0)
+        {
+            const before = zoom;
+            zoomAt(carry, pivot);
+            if (zoom == before)
+            {
+                scalePercent = carry > 0 ? scaleTop - 1 : scaleBase;
+                return false;
+            }
+        }
+        scalePercent = next;
+        return carry != 0;
+    }
+
+    /// The board's cell size in pixels at this magnification, from the
+    /// target's natural one. A terminal passes 1 and gets 1 back.
+    int cellPixels(int naturalPx) const scope
+        => naturalPx <= 1 ? 1
+            : (naturalPx * scalePercent + scaleBase / 2) / scaleBase;
+
+    /**
+    A pointer position in $(B pixels) → the board cell it names.
+
+    The window's hit-test entry (`HST18` reports pixels there precisely so a
+    board can do this). `originPx` is where the board's canvas starts, so the
+    chrome above and left of it is subtracted before the divide.
+    */
+    Point pixelToCell(in Point pixel, in Point originPx, int cellPxW,
+        int cellPxH) const scope
+        => Point(
+            divFloor(pixel.x - originPx.x, cellPxW > 0 ? cellPxW : 1),
+            divFloor(pixel.y - originPx.y, cellPxH > 0 ? cellPxH : 1));
 
     /// Pan by a screen-cell delta, converted to world units. Unbounded.
     void panBy(int screenDx, int screenDy) scope
@@ -304,6 +413,151 @@ unittest
         assert(before.x - now.x < cam.worldPerCell);
         assert(before.y - now.y < cam.worldPerCell);
     }
+}
+
+@("diagram.camera.fineZoomCarriesIntoTheOctave")
+@safe pure nothrow @nogc
+unittest
+{
+    // The window's zoom: notches that stay smooth, carrying into the exponent
+    // only when the mantissa leaves its octave. A 10% notch takes about seven
+    // to double, so eight of them cross exactly one — and the magnification
+    // must climb monotonically through the carry, never jump back.
+    auto cam = Camera(Point(0, 0), 0, scaleBase);
+    int carries;
+    long previous = magnification(cam);
+
+    foreach (_; 0 .. 8)
+    {
+        if (cam.zoomByRatio(110, Point(20, 10)))
+            ++carries;
+        const now = magnification(cam);
+        assert(now > previous, "a zoom step never goes backwards");
+        assert(cam.scalePercent >= scaleBase && cam.scalePercent < scaleTop,
+            "the mantissa stays inside its octave");
+        previous = now;
+    }
+    assert(carries == 1, "eight notches of 10% cross exactly one octave");
+    assert(cam.zoom == 1);
+
+    // …and back down through the same boundary, monotonically.
+    const top = magnification(cam);
+    foreach (_; 0 .. 8)
+    {
+        const was = magnification(cam);
+        cam.zoomByRatio(91, Point(20, 10));
+        assert(magnification(cam) < was, "and never forwards on the way out");
+        assert(cam.scalePercent >= scaleBase && cam.scalePercent < scaleTop);
+    }
+    assert(magnification(cam) < top);
+
+    // It lands NEAR where it started, not exactly on it: the mantissa is an
+    // integer percentage, so every notch truncates a little and a there-and-
+    // back drifts down. That is why `IXN4` gives the keyboard a `0` — a reset
+    // is the only thing that restores an exact magnification, and pretending
+    // otherwise would mean carrying a rational and rounding at every read.
+    const drift = magnification(cam);
+    assert(drift > 800 && drift < 1200, "within ~20% of the 1000 it began at");
+}
+
+@("diagram.camera.fineZoomLeavesTheCellMappingAlone")
+@safe pure nothrow @nogc
+unittest
+{
+    // The property the split exists for: between carries, zooming changes how
+    // large a cell is DRAWN and nothing else. A hit test and a paint therefore
+    // agree on either target, and the terminal — which pins the mantissa —
+    // loses no correctness by not having one.
+    auto cam = Camera(Point(7, -3), 0, scaleBase);
+    const before = cam.worldToScreen(Point(11, 5));
+
+    assert(!cam.zoomByRatio(140, Point(0, 0)), "×1.4 does not leave the octave");
+    assert(cam.scalePercent == 140);
+    assert(cam.worldToScreen(Point(11, 5)) == before, "cells did not move");
+    assert(cam.zoom == 0 && cam.origin == Point(7, -3));
+
+    // Only the pixel size moved — a 10 px cell is drawn at 14.
+    assert(cam.cellPixels(10) == 14);
+    // …and a terminal cell is still one cell.
+    assert(cam.cellPixels(1) == 1);
+}
+
+@("diagram.camera.pixelPointerLandsOnTheCellItPointsAt")
+@safe pure nothrow @nogc
+unittest
+{
+    // `HST18` gives the window pixel positions precisely so this is possible:
+    // divide by the board's DRAWN cell size, not the font's, or every hit test
+    // drifts as soon as the user zooms.
+    auto cam = Camera(Point(0, 0), 0, 150);
+    const originPx = Point(200, 40); // the board canvas starts after chrome
+    const w = cam.cellPixels(10);    // 15
+    const h = cam.cellPixels(20);    // 30
+    assert(w == 15 && h == 30);
+
+    assert(cam.pixelToCell(Point(200, 40), originPx, w, h) == Point(0, 0));
+    assert(cam.pixelToCell(Point(214, 69), originPx, w, h) == Point(0, 0),
+        "anywhere inside the cell is that cell");
+    assert(cam.pixelToCell(Point(215, 70), originPx, w, h) == Point(1, 1));
+
+    // Left of and above the board is negative, not zero — a drag that leaves
+    // the canvas must keep reporting where it went.
+    assert(cam.pixelToCell(Point(199, 39), originPx, w, h) == Point(-1, -1));
+}
+
+@("diagram.camera.terminalKeepsTheOctavesAndLosesNothing")
+@safe pure nothrow @nogc
+unittest
+{
+    // The terminal's zoom is the exponent alone: a cell there is indivisible,
+    // so a mantissa would be a claim the renderer could not honour. Everything
+    // the cell mapping does is identical to the window's at the same exponent.
+    auto tui = Camera(Point(4, 4), 0, scaleBase);
+    auto gui = Camera(Point(4, 4), 0, 175);
+    tui.zoomAt(2, Point(9, 3));
+    gui.zoomAt(2, Point(9, 3));
+
+    assert(tui.zoom == gui.zoom && tui.origin == gui.origin);
+    foreach (i; -5 .. 6)
+    {
+        const p = Point(i * 4, i * 3);
+        assert(tui.worldToScreen(p) == gui.worldToScreen(p));
+        assert(tui.screenToWorld(p) == gui.screenToWorld(p));
+    }
+    assert(tui.visibleWorldRect(Size(80, 24))
+        == gui.visibleWorldRect(Size(80, 24)));
+}
+
+@("diagram.camera.fineZoomClampsAtTheEnds")
+@safe pure nothrow @nogc
+unittest
+{
+    // A carry the exponent cannot take pins the mantissa at the edge rather
+    // than wrapping into an octave that does not exist.
+    auto cam = Camera(Point(0, 0), maxZoom, scaleTop - 1);
+    assert(!cam.zoomByRatio(150, Point(0, 0)));
+    assert(cam.zoom == maxZoom && cam.scalePercent == scaleTop - 1);
+
+    cam = Camera(Point(0, 0), minZoom, scaleBase);
+    assert(!cam.zoomByRatio(50, Point(0, 0)));
+    assert(cam.zoom == minZoom && cam.scalePercent == scaleBase);
+
+    // A ratio far past the floor lands on the floor rather than wrapping —
+    // a pinch can deliver one in a single gesture.
+    cam = Camera(Point(0, 0), 0, scaleBase);
+    cam.zoomByRatio(1, Point(0, 0));
+    assert(cam.zoom >= minZoom && cam.zoom < 0);
+    assert(cam.scalePercent >= scaleBase && cam.scalePercent < scaleTop);
+    assert(!cam.zoomByRatio(0, Point(0, 0)), "a zero ratio is not a zoom");
+}
+
+/// Total magnification in permille, for the monotonicity assertions above:
+/// `2^zoom` scaled by the mantissa.
+version (unittest)
+private long magnification(in Camera c) @safe pure nothrow @nogc
+{
+    const octave = c.zoom >= 0 ? 1000L << c.zoom : 1000L >> -c.zoom;
+    return octave * c.scalePercent / scaleBase;
 }
 
 @("diagram.camera.zoomClampsWithoutPanning")
