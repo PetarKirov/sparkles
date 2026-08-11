@@ -26,7 +26,11 @@ import sparkles.tree_sitter.tree_sitter_c :
     ts_language_abi_version,
     ts_node_child, ts_node_child_count,
     ts_node_named_child, ts_node_named_child_count,
-    ts_node_has_error, ts_node_start_byte, ts_node_end_byte,
+    ts_node_descendant_for_byte_range, ts_node_field_name_for_child,
+    ts_node_has_error, ts_node_is_error, ts_node_is_extra,
+    ts_node_is_missing, ts_node_is_named, ts_node_is_null,
+    ts_node_named_descendant_for_byte_range, ts_node_parent,
+    ts_node_start_byte, ts_node_end_byte,
     ts_node_start_point, ts_node_end_point, ts_node_string, ts_node_type,
     ts_parser_delete, ts_parser_new, ts_parser_parse,
     ts_parser_parse_with_options, ts_parser_reset,
@@ -332,6 +336,66 @@ uint nodeNamedChildCount(TSNode node) @trusted nothrow @nogc
 TSNode nodeNamedChild(TSNode node, uint i) @trusted nothrow @nogc
     => ts_node_named_child(node, i);
 
+// ── Structural-walk accessors (the tree-sitter inspector's seam) ────────────
+// What a walker that shows the tree — rather than querying it — additionally
+// needs: null/named/missing/error classification, the parent edge, the field
+// name a child occupies, and position → node resolution.
+
+/// `true` for the null node (e.g. the parent of a root, a missing child).
+bool nodeIsNull(TSNode node) @trusted nothrow @nogc
+    => ts_node_is_null(node);
+
+/// `true` iff `node` is $(I named) in the grammar (anonymous token nodes —
+/// punctuation, keywords — return `false`).
+bool nodeIsNamed(TSNode node) @trusted nothrow @nogc
+    => ts_node_is_named(node);
+
+/// `true` iff the parser inserted `node` to recover from an error
+/// (a zero-width `MISSING` node).
+bool nodeIsMissing(TSNode node) @trusted nothrow @nogc
+    => ts_node_is_missing(node);
+
+/// `true` iff `node` is an `ERROR` node.
+bool nodeIsError(TSNode node) @trusted nothrow @nogc
+    => ts_node_is_error(node);
+
+/// `true` iff `node` is an $(I extra) (grammar `extras` — e.g. a comment
+/// anywhere).
+bool nodeIsExtra(TSNode node) @trusted nothrow @nogc
+    => ts_node_is_extra(node);
+
+/// The parent of `node` (the null node for a root — check
+/// $(LREF nodeIsNull)).
+TSNode nodeParent(TSNode node) @trusted nothrow @nogc
+    => ts_node_parent(node);
+
+/// The field name the `i`-th child of `node` occupies (over $(B all)
+/// children, named and anonymous — the index space of $(LREF nodeChild)), or
+/// `null` when it occupies none. Borrowed from the grammar like
+/// $(LREF nodeType).
+const(char)[] nodeFieldNameForChild(TSNode node, uint i) @trusted nothrow @nogc
+{
+    const s = ts_node_field_name_for_child(node, i);
+    if (s is null)
+        return null;
+    size_t n = 0;
+    while (s[n] != '\0')
+        ++n;
+    return s[0 .. n];
+}
+
+/// The smallest node spanning `[startByte, endByte)` — anonymous nodes
+/// included; the $(I named) variant skips to the smallest named cover. The
+/// position → node half of an inspector's cursor sync.
+TSNode nodeDescendantForByteRange(TSNode node, uint startByte,
+    uint endByte) @trusted nothrow @nogc
+    => ts_node_descendant_for_byte_range(node, startByte, endByte);
+
+/// ditto
+TSNode nodeNamedDescendantForByteRange(TSNode node, uint startByte,
+    uint endByte) @trusted nothrow @nogc
+    => ts_node_named_descendant_for_byte_range(node, startByte, endByte);
+
 /// Owning handle over a compiled `TSQuery`.
 struct TsQuery
 {
@@ -597,6 +661,66 @@ unittest
     assert(!error);
     assert(broken.valid);
     assert(broken.rootHasError);
+}
+
+@("tree_sitter.wrappers.structuralWalkAccessors")
+@system
+unittest
+{
+    import std.string : indexOf;
+
+    import sparkles.tree_sitter.loader : loadGrammarForTest;
+
+    const grammar = loadGrammarForTest("json");
+    auto parser = TsParser.create();
+    assert(!parser.setLanguage(grammar.language).hasError);
+
+    const source = `{"a": [1, true]}`;
+    TsError error;
+    auto tree = parser.parse(source, error);
+    assert(tree.valid);
+    auto root = tree.rootNode;
+
+    // Parent edges: a root's parent is the null node, a child's is real.
+    assert(nodeIsNull(nodeParent(root)));
+    auto object = nodeChild(root, 0);
+    assert(nodeType(nodeParent(object)) == "document");
+
+    // Named vs anonymous: the object is named; its `{` token is not.
+    assert(nodeIsNamed(object));
+    auto brace = nodeChild(object, 0);
+    assert(nodeType(brace) == "{" && !nodeIsNamed(brace));
+
+    // Field names, over the ALL-children index space: json's `pair` puts its
+    // string under `key` and its value under `value` (child 1 is the `:`).
+    auto pair = nodeNamedChild(object, 0);
+    assert(nodeType(pair) == "pair");
+    assert(nodeFieldNameForChild(pair, 0) == "key");
+    assert(nodeFieldNameForChild(pair, 1) is null, "`:` occupies no field");
+    assert(nodeFieldNameForChild(pair, 2) == "value");
+
+    // Position → node, both flavors: the byte of `1` sits in a `number`;
+    // the anonymous-including walk can land on a token, the named one never.
+    const one = cast(uint) source.indexOf('1');
+    assert(nodeType(nodeNamedDescendantForByteRange(root, one, one + 1))
+        == "number");
+    const comma = one + 1;
+    assert(nodeType(nodeDescendantForByteRange(root, comma, comma + 1)) == ",");
+    assert(nodeIsNamed(nodeNamedDescendantForByteRange(root, comma, comma + 1)));
+
+    // ERROR and MISSING classification on a broken parse. `{"a" 1}` drops
+    // the `:`; json's grammar recovers with an ERROR subtree.
+    auto broken = parser.parse(`{"a" 1}`, error);
+    assert(broken.valid && broken.rootHasError);
+    bool sawError;
+    void walk(TSNode n)
+    {
+        sawError |= nodeIsError(n) || nodeIsMissing(n);
+        foreach (i; 0 .. nodeChildCount(n))
+            walk(nodeChild(n, i));
+    }
+    walk(broken.rootNode);
+    assert(sawError, "the broken parse surfaces ERROR/MISSING nodes");
 }
 
 @("tree_sitter.wrappers.queryCompileAndErrors")
