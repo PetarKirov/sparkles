@@ -10,7 +10,7 @@ import std.traits : isDynamicArray, isSomeString;
 
 import sparkles.core_cli.args : HelpInfo, parseCli, reportCliError;
 import sparkles.ui_app.gui_options : GuiOptions;
-import sparkles.ui_app.host : RunConfig;
+import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : RunOutcome;
 import sparkles.ui_app.run_app : runApp;
 
@@ -40,6 +40,12 @@ int main(string[] args)
         title: "diagram",
         gui: gui,
         motion: true, // hover affordances want bare pointer motion
+        // Space+LMB pan needs key releases on the window (`IXN3` / `INP16`);
+        // the terminal arm ignores this — it cannot report them.
+        keyRelease: true,
+        // The GUI board hit-tests in pixels at the drawn cell size (`HST18`);
+        // the terminal arm ignores the unit and keeps delivering cells.
+        pointerUnit: PointerUnit.pixels,
     };
 
     DiagramApp app;

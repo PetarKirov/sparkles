@@ -12,30 +12,30 @@ predecessors.
 
 ## Read these first, in this order
 
-| Document                                                            | Why                                                                                     |
-| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| [`docs/specs/diagram/index.md`](docs/specs/diagram/index.md)         | what the app is, how it sits on the stack, and the **zoom design note** (read that one) |
+| Document                                                                                   | Why                                                                                     |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| [`docs/specs/diagram/index.md`](docs/specs/diagram/index.md)                               | what the app is, how it sits on the stack, and the **zoom design note** (read that one) |
 | [`docs/specs/diagram/feature-requirements.md`](docs/specs/diagram/feature-requirements.md) | the requirement tree: `DIA`, `CAM`, `WLD`, `IXN`, `RND` — with per-row status           |
-| [`docs/specs/diagram/PLAN.md`](docs/specs/diagram/PLAN.md)           | the two commit series, their order, and the acceptance gates                            |
-| [`docs/specs/ui-app/feature-requirements.md`](docs/specs/ui-app/feature-requirements.md) | the host contract you are building against: `HST1`–`HST19`, `TST1`                     |
-| [`AGENTS.md`](AGENTS.md)                                             | repo conventions — build, test, commit scopes, the pre-commit hooks that will bite      |
+| [`docs/specs/diagram/PLAN.md`](docs/specs/diagram/PLAN.md)                                 | the two commit series, their order, and the acceptance gates                            |
+| [`docs/specs/ui-app/feature-requirements.md`](docs/specs/ui-app/feature-requirements.md)   | the host contract you are building against: `HST1`–`HST19`, `TST1`                      |
+| [`AGENTS.md`](AGENTS.md)                                                                   | repo conventions — build, test, commit scopes, the pre-commit hooks that will bite      |
 
 ## Where it stands
 
-Branch **`feat/diagram-mvp`**, four commits, rebased on `origin/main`, not yet
-pushed. `dub test :diagram` = **30 passed** on ldc2 and dmd.
+Branch **`feat/diagram-mvp`**, rebased on `origin/main`, not yet pushed.
+`dub test :diagram` = **49 passed** on ldc2 and dmd.
 
-| Step     | State                                                                                       |
-| -------- | ------------------------------------------------------------------------------------------- |
-| **D1.1** | shipped — scaffold: `runApp` component, both configurations, three scripted quit sessions   |
-| **D1.2** | shipped — `src/camera.d` (`CAM1`–`CAM5`), 15 suites                                         |
-| **D1.3** | shipped — `src/world.d` (`WLD1`–`WLD4`), 15 suites                                          |
-| **D1.4** | **next** — `systemInput`: tools, capture owners, scripted-event tests (`IXN1`–`IXN4`)       |
-| **D1.5** | after that — render systems: board + minimap + chrome into one op buffer (`RND1`–`RND5`)    |
-| Series 2 | menus, groups, labels, connectors, fit-all (`D2.1`–`D2.5`)                                  |
+| Step     | State                                                                                     |
+| -------- | ----------------------------------------------------------------------------------------- |
+| **D1.1** | shipped — scaffold: `runApp` component, both configurations, three scripted quit sessions |
+| **D1.2** | shipped — `src/camera.d` (`CAM1`–`CAM5`)                                                  |
+| **D1.3** | shipped — `src/world.d` (`WLD1`–`WLD4`)                                                   |
+| **D1.4** | shipped — `src/systems/input.d` (`IXN1`–`IXN4`): tools, capture, pan/zoom/minimap scrub   |
+| **D1.5** | **next** — render systems: board + minimap + chrome into one op buffer (`RND1`–`RND5`)    |
+| Series 2 | menus, groups, labels, connectors, fit-all (`D2.1`–`D2.5`)                                |
 
 `src/` today: `app.d` (the entry point, excluded from the test build),
-`diagram_app.d` (the component), `camera.d`, `world.d`.
+`diagram_app.d` (the component), `camera.d`, `world.d`, `systems/input.d`.
 
 ## The five things that will save you a day
 
@@ -49,7 +49,7 @@ about the app and start being assertions about a system.
 **2. Zoom is per-target, and the note explains why.** Read
 [Zoom is per-target by design](docs/specs/diagram/index.md#zoom-is-per-target-by-design)
 before touching the camera. Short version: magnification is an exponent
-(octaves, in cells, both targets) plus a mantissa (how large a cell is *drawn*,
+(octaves, in cells, both targets) plus a mantissa (how large a cell is _drawn_,
 window only). **The cell mapping never reads the mantissa** — that invariant is
 what keeps a hit test and a paint in agreement, and it is easy to break by
 "helpfully" folding the scale into `worldToScreen`. The first draft got this
@@ -116,7 +116,7 @@ These are yours to settle; the spec states the requirement, not the mechanism.
 - **The grid's zoom-aware density** (`RND4`) — at what magnification the grid
   changes step, and whether it fades or thins.
 - **`TST3`'s op-stream half.** hue could not close it (it emits no draw
-  operations at all — its frame is cells), and this app *does* emit them, so it
+  operations at all — its frame is cells), and this app _does_ emit them, so it
   is the natural place to finish: one scripted session through `runRecorded` and
   through `runTui` inside a pty, comparing streams. Worth doing here rather than
   inventing a synthetic component for it.
