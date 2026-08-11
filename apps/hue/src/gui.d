@@ -90,14 +90,14 @@ import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind, RuleEdge;
-import sparkles.ui.layout : layout;
+import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.scroll_view : ScrollExtents, ScrollPointer;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
     keyAt, keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
     scrollbarThumb, selectionRects, sourceOffsetAt, wantedPointerShape,
     SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
-import sparkles.ui.widget : Builder;
+import sparkles.ui.widget : Builder, WidgetTree;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : drawScrollbar, namedKey, RaylibCanvas, RaylibEvents,
     ScrollbarAnim, ScrollbarLayout,
@@ -270,6 +270,16 @@ struct FrameGeom
     // Input state the chrome renders.
     bool inputMode;      // a prompt is open (inp.mode != Mode.normal)
     KeyContext kctx;     // the binding context the lantern lists
+
+    // The touch action bar (`IXB`), which only that target has. Its tree is
+    // built and hit-tested in the view half and painted in the paint half, so
+    // on Android it is per-frame data exactly like the fields above.
+    version (Android)
+    {
+        WidgetTree barTree;  // the bar's widgets, already hit-tested
+        Frame[] barFrames;   // ...and their layout
+        int toolbarY;        // pixel Y of the bar's row
+    }
 }
 
 
@@ -1551,6 +1561,17 @@ int runGui(GuiArgs guiArgs) @system
     // which is also what the host's loop will want when it owns the iteration.
     bool stepFrame(out FrameGeom geom)
     {
+        // The action bar crosses from the view half to the paint half like any
+        // other per-frame value, but the block that builds it is nested — so
+        // its three outputs are declared out here, where the geometry the
+        // frame hands on can reach them.
+        version (Android)
+        {
+            WidgetTree barTree;
+            Frame[] barFrames;
+            int toolbarY;
+        }
+
         // Gesture thresholds are PHYSICAL, so they track the cell size: a
         // pinch or Ctrl-± changes it, and values fixed before the loop would
         // misclassify after any zoom. Set before the drain, because the drain
@@ -1694,12 +1715,12 @@ int runGui(GuiArgs guiArgs) @system
                 barB.nodes[barRoot].visibility = Visibility.collapsed;
             Widget barColW = Widget(kind: WidgetKind.column, children: [barRoot],
                 width: SizeSpec.fixed(screenW / cellW));
-            auto barTree = barB.finish(barB.add(barColW));
-            auto barFrames = layout(barTree);
+            barTree = barB.finish(barB.add(barColW));
+            barFrames = layout(barTree);
             const barTargets = hoverTargets(barTree, barFrames);
             // `toolbarY`, not `barY`: the input-line blocks below already own
             // that name for the same row.
-            const toolbarY = screenH - cellH;
+            toolbarY = screenH - cellH;
 
             // The gesture ANCHOR in the bar's cell space: a tap is a release
             // within the slop radius of its press, and slop can exceed half a
@@ -1788,7 +1809,9 @@ int runGui(GuiArgs guiArgs) @system
                 if (pn.treeVisible)
                     toggleExplorer();
                 else
-                    break;
+                    // The same exit `Command.quit` takes: from inside the view
+                    // half this is a value the loop reads, not a jump.
+                    return false;
             }
         }
 
@@ -2808,6 +2831,15 @@ int runGui(GuiArgs guiArgs) @system
             treeMaxTop: treeMaxTop,
             inputMode: inputMode, kctx: kctx,
         );
+        // After the literal, not inside it: a version block cannot appear
+        // mid-initialiser, and the assignment order is what keeps the whole
+        // struct in one place instead of splitting it across two targets.
+        version (Android)
+        {
+            geom.barTree = barTree;
+            geom.barFrames = barFrames;
+            geom.toolbarY = toolbarY;
+        }
         return true;
     }
 
