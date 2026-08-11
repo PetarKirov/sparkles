@@ -766,6 +766,18 @@ struct WorkspaceTui
 
     WidgetTree view(H)(ref H h)
     {
+        // A frame after the quit is a frame nobody sees — the arm's loop
+        // condition ends the run the moment this pass returns. The old loop
+        // got this for free by breaking on `handle`'s `false`; a component is
+        // asked to present first and has to decline. Measurable, not
+        // theoretical: without it the terminal gets one more
+        // synchronized-update bracket on the way out.
+        if (h.quitRequested)
+        {
+            h.skipFrame();
+            return WidgetTree.init;
+        }
+
         armDaemons(h);
         dirty |= pollAll();
 
@@ -1290,6 +1302,14 @@ unittest
     assert(rec.quitRequested);
     assert(rec.frames.length == 2, "the frame the quit happened in is recorded");
     assert(w.treeVisible == treeWas, "the 'e' after the quit never arrived");
+
+    // …and it is recorded as DECLINED. The old loop broke on `handle`'s
+    // `false` and never reached its paint; a component is asked to present
+    // first, so it has to say no. Not theoretical: before this, a real
+    // terminal session got one more synchronized-update bracket on the way
+    // out, which is how the pty smoke test caught it.
+    assert(rec.frames[1].skipped, "a frame after the quit is one nobody sees");
+    assert(rec.drawnFrames == 1);
 }
 
 @("workspace.splitPane.composeToggleAndSync")
