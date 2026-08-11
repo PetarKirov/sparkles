@@ -30,14 +30,15 @@ import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, Point, PointerAction, PointerButton, PointerEvent, ResizeEvent,
     WheelEvent;
 import sparkles.ui.components.chrome : headerBar;
+import sparkles.ui.components.tree_view : jumpMatching, measureContent,
+    treeActivate = activate, treeCollapseOrUp = collapseOrUp, TreeStep,
+    TreeViewState, viewSlice;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
     TreeGlyphs, treeView;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : layout;
-import sparkles.ui.components.scroll_view : ScrollView;
-import sparkles.ui.state : DisclosureState, LineEditState, ScrollAxis,
-    ScrollbarState, scrollbarThumb, ScrollState;
+import sparkles.ui.state : DisclosureState, LineEditState;
 import sparkles.ui.style : Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 import sparkles.ui_tui : CellStyle, Color, Grid, paintGrid;
@@ -72,6 +73,9 @@ struct FsEntry
     int sessionIndex = -1;
 
     const(char)[] label() const @safe pure nothrow @nogc => name;
+    /// The tree view's activation capability: a directory toggles even when
+    /// empty (`hasChildren` would call it a leaf and "pick" it).
+    bool expandable() const @safe pure nothrow @nogc => isDir;
     const(char)[] icon() const @safe pure nothrow @nogc
         => isDir ? (openDir ? "\U0000F115 " : "\U0000F114 ") //  open /  closed
             : fsIcon(name).glyph;
@@ -171,22 +175,18 @@ struct ExplorerTui
     const(SessionEntry)[] session;
 
     TreeData!FsEntry data;
-    FlatTreeRow[] rows;
-    DisclosureState!string open;  // user intent, keyed by path (survives rebuilds)
-    long sel;                     // index into `rows`
-    long top;
-    int width, height;
-    /// Rows of pane chrome above/below the tree (the TUI pane's header +
-    /// status bars; the GUI pane has none). One value, so the wheel, the
-    /// drag, and the thumb all share one scroll space.
-    int chromeRows = 2;
+
+    /// The whole interaction layer — opened set (keyed by path, so it
+    /// survives rebuilds), cursor + viewport, both scrollbars, and the live
+    /// filter — is the shared component's state value; `alias this` keeps
+    /// the established names (`sel`, `top`, `rows`, `open`, …) working.
+    TreeViewState!string tv;
+    /// ditto
+    alias tv this;
 
     /// Whether this pane holds the workspace focus — the header title
     /// renders accented when focused, muted otherwise (like the viewer's).
     bool focused;
-    /// The live filter's editor — the one line-edit machine (STM10);
-    /// `filter.active` IS filter mode.
-    LineEditState filter;
 
     /// The key guide's pending path (`LTN2`), so `gg` and `<leader>` work in
     /// this pane too — the same machine the viewer uses, not a copy.
@@ -203,15 +203,6 @@ struct ExplorerTui
     {
         ltnTick(lantern, elapsed);
     }
-    /// The pane's ScrollView (SCV1): the vertical machine (`sb`) and the
-    /// horizontal bar (IXB2, live when a visible label overflows) as one
-    /// value BOTH backends step; the old names remain as accessors.
-    ScrollView scroll;
-    ref inout(ScrollbarState) sb() inout return @safe pure nothrow @nogc
-        => scroll.v;
-    ref inout(ScrollbarState) hsb() inout return @safe pure nothrow @nogc
-        => scroll.h;
-    int contentCols; // widest visible row, recomputed per rebuild
 
     // Visibility toggles (XPF2), state shown in the status bar: dotfiles are
     // hidden by default; git-ignored entries are listed (dimmed) by default.
@@ -270,16 +261,8 @@ struct ExplorerTui
     private const(char)[] query() const @safe pure nothrow @nogc
         => filter.text;
 
-    /// The live-filter query (for a host that paints its own input line —
-    /// the GUI pane has no status bar of its own).
-    const(char)[] filterQuery() const return @safe pure nothrow @nogc
-        => query;
-
     /// The pane is consuming typed text (the workspace must not steal keys).
     bool inputActive() const @safe pure nothrow @nogc => searching;
-
-    /// Whether filter mode is capturing keys (the machine's `active`).
-    bool searching() const @safe pure nothrow @nogc => filter.active;
 
     // ── The live filter, drivable by either backend's input ───────────────
     /// `/`: enter filter mode (broot's tree-as-search-result — XPL/TRV5).
@@ -511,7 +494,7 @@ struct ExplorerTui
         rows = flatten(data, (uint i) @safe
             => session.length != 0 || filter.text.length != 0
                 || open.isOpen(data.nodes[i].value.path));
-        measureContent();
+        tv.measureContent(data);
         clamp();
     }
 
@@ -568,66 +551,6 @@ struct ExplorerTui
             }
     }
 
-    /// Whether the horizontal bar is live (content wider than the pane).
-    bool hOverflows() const @safe pure nothrow @nogc
-        => contentCols > width - 1 && width > 2;
-
-    /// Recomputes the widest visible row (icon + guides + label + badge).
-    private void measureContent() @safe
-    {
-        import sparkles.ui.geometry : cellsOf;
-
-        contentCols = 0;
-        foreach (ref const r; rows)
-        {
-            const e = &data.nodes[r.node].value;
-            const w = r.depth * 3 + 3 + cast(int) cellsOf(e.label)
-                + (e.badge.length ? 2 : 0);
-            if (w > contentCols)
-                contentCols = w;
-        }
-        hsb = hsb.scrolledTo(hsb.offset); // clamp happens at paint/drag
-    }
-
-    int bodyRows() const @safe pure nothrow @nogc
-        => height > chromeRows ? height - chromeRows : 1;
-
-    /// Scrolls the viewport by `dy` rows (the wheel), leaving the cursor
-    /// where it is; the next cursor move re-snaps the view to it.
-    /// Whether pane-local `(x, y)` sits on the live scrollbar column — the
-    /// workspace's pointer-shape hover check.
-    bool overScrollbar(int x, int y) const @safe pure nothrow @nogc
-        => cast(long) rows.length > bodyRows && x == width - 1
-            && y >= 1 && y <= bodyRows;
-
-    /// ditto for the horizontal bar's row (above the status bar, when live).
-    bool overHScrollbar(int x, int y) const @safe pure nothrow @nogc
-        => hOverflows() && y == height - 2 && x >= 0 && x < width - 1;
-
-    void scrollBy(long dy) @safe pure nothrow @nogc
-    {
-        top += dy;
-        const maxTop = cast(long) rows.length - bodyRows;
-        if (top > maxTop)
-            top = maxTop;
-        if (top < 0)
-            top = 0;
-    }
-
-    void clamp() @safe pure nothrow @nogc
-    {
-        const n = cast(long) rows.length;
-        if (sel >= n) sel = n ? n - 1 : 0;
-        if (sel < 0) sel = 0;
-        if (sel < top) top = sel;
-        if (sel >= top + bodyRows) top = sel - bodyRows + 1;
-        // Never leave dead space below (a reveal before the pane had its
-        // real height can overshoot; the next sized clamp pulls back).
-        const maxTop = n - bodyRows;
-        if (top > maxTop) top = maxTop;
-        if (top < 0) top = 0;
-    }
-
     void paint(ref Grid g) @system
     {
         CellStyle page;
@@ -648,15 +571,6 @@ struct ExplorerTui
             slot: Slot.gutter));
         const hdr = headerBar(b, [name], null, [pos], focused);
 
-        const first = cast(size_t) top;
-        const last = first + bodyRows > rows.length ? rows.length
-            : first + bodyRows;
-        const selNode = sel < cast(long) rows.length
-            ? rows[cast(size_t) sel].node : uint.max;
-        const tree = treeView(b, data, rows[first .. last],
-            (uint i) @safe => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path),
-            selNode, explorerGlyphs, selBg, hasSelectionBg: true);
-
         // The header paints unshifted; the tree shifts left by the
         // horizontal offset (IXB2) and clips to the pane.
         const hx = hOverflows() ? cast(int) hsb.offset : 0;
@@ -666,9 +580,9 @@ struct ExplorerTui
         paintGrid(g, pageBg, buildDisplayList(ht, layout(ht),
             palette, pageFg, pageBg));
         auto tb = Builder();
-        const tree2 = treeView(tb, data, rows[first .. last],
+        const tree2 = viewSlice(tb, data, tv,
             (uint i) @safe => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path),
-            selNode, explorerGlyphs, selBg, hasSelectionBg: true);
+            explorerGlyphs, selBg, hasSelectionBg: true);
         Widget colW = Widget(kind: WidgetKind.column, children: [tree2],
             width: SizeSpec.fixed(width + hx));
         auto wt = tb.finish(tb.add(colW));
@@ -732,65 +646,15 @@ struct ExplorerTui
         return e.match!(
             (in KeyEvent k) => handleKey(k),
             (in WheelEvent w) {
-                sel += w.dy;
-                clamp();
+                moveSel(w.dy);
                 return true;
             },
             (in PointerEvent p) {
-                if (p.button != PointerButton.left)
-                    return true;
-                if (p.action == PointerAction.release)
-                {
-                    sb = sb.released();
-                    hsb = hsb.released();
-                    return true;
-                }
-                // The horizontal bar (IXB2): its row is one above the
-                // status bar; same grab-owns-the-pointer machine.
-                if ((p.action == PointerAction.press && hOverflows()
-                        && p.pos.y == height - 2 && p.pos.x >= 0
-                        && p.pos.x < width - 1)
-                    || (p.action == PointerAction.drag && hsb.dragging))
-                {
-                    hsb = p.action == PointerAction.press && !hsb.dragging
-                        ? hsb.pressed(p.pos.x, contentCols, width - 1,
-                            width - 1)
-                        : hsb.dragged(p.pos.x, contentCols, width - 1,
-                            width - 1);
-                    return true;
-                }
-                // The scrollbar column (last, only when the tree overflows):
-                // a press there grabs the thumb — it is never a row click —
-                // and the grab owns the pointer until release, wherever the
-                // drag strays (STM2's inverse mapping, like the viewer's).
-                const overflows = cast(long) rows.length > bodyRows;
-                if ((p.action == PointerAction.press && overflows
-                        && p.pos.x == width - 1 && p.pos.y >= 1
-                        && p.pos.y <= bodyRows)
-                    || (p.action == PointerAction.drag && sb.dragging))
-                {
-                    // The one scrollbar machine (STM9), same as the viewer.
-                    sb = p.action == PointerAction.press && !sb.dragging
-                        ? sb.scrolledTo(top).pressed(p.pos.y - 1,
-                            rows.length, bodyRows, bodyRows)
-                        : sb.scrolledTo(top).dragged(p.pos.y - 1,
-                            rows.length, bodyRows, bodyRows);
-                    top = sb.offset;
-                    scrollBy(0); // clamp top without moving the selection
-                    return true;
-                }
-                if (p.action == PointerAction.press && p.pos.y >= 1
-                    && p.pos.y <= bodyRows)
-                {
-                    const i = top + (p.pos.y - 1);
-                    if (i >= 0 && i < cast(long) rows.length)
-                    {
-                        const already = i == sel;
-                        sel = i;
-                        if (already)
-                            return activate();
-                    }
-                }
+                // The shared precedence (bars grab, rows select, a second
+                // click activates) is the component's; only what activation
+                // MEANS — open the file / jump the diff — stays here.
+                if (tv.pointer(p) == TreeStep.activated)
+                    return activate();
                 return true;
             },
             (in EndOfInput _) => false,
@@ -912,40 +776,31 @@ struct ExplorerTui
     /// change — a badge-carrying status; ignored rows are skipped.
     void jumpChange(int dir) @system
     {
-        const n = cast(long) rows.length;
-        if (n == 0)
-            return;
-        foreach (step; 1 .. n + 1)
-        {
-            const i = ((sel + dir * step) % n + n) % n;
-            const st = data.nodes[rows[cast(size_t) i].node].value.gitSt;
-            if (st > GitStatus.ignored)
-            {
-                sel = i;
-                clamp();
-                return;
-            }
-        }
+        tv.jumpMatching(dir,
+            (uint n) => data.nodes[n].value.gitSt > GitStatus.ignored);
     }
 
     /// Enter/→ on a dir toggles it; on a file, picks it (`picked` is set and
     /// `false` returned — the host opens it and clears `picked`).
     bool activate() @system
     {
-        if (sel >= cast(long) rows.length)
-            return true;
-        ref const v = data.nodes[rows[cast(size_t) sel].node].value;
-        if (v.isDir)
+        final switch (treeActivate(tv, data, (uint n) => data.nodes[n].value.path))
         {
-            open = open.toggled(v.path);
-            rebuild();
-            return true;
+            case TreeStep.none:
+            case TreeStep.handled:
+                return true;
+            case TreeStep.rebuild:
+                rebuild();
+                return true;
+            case TreeStep.activated:
+                ref const v = data.nodes[rows[cast(size_t) sel].node].value;
+                picked = v.path;
+                // `TVU6`: a session row names a file in the diff, not a
+                // document to load — the workspace jumps the diff pane to it
+                // instead of reading it.
+                pickedSession = v.sessionIndex;
+                return false;
         }
-        picked = v.path;
-        // `TVU6`: a session row names a file in the diff, not a document to
-        // load — the workspace jumps the diff pane to it instead of reading it.
-        pickedSession = v.sessionIndex;
-        return false;
     }
 
     private bool handleKey(in KeyEvent e) @system
@@ -982,12 +837,12 @@ struct ExplorerTui
 
             case Command.quit: return false;
 
-            case Command.treeDown:  ++sel; clamp(); break;
-            case Command.treeUp:    --sel; clamp(); break;
-            case Command.treeHome:  sel = 0; clamp(); break;
-            case Command.treeEnd:   sel = cast(long) rows.length - 1; clamp(); break;
-            case Command.treePageDown: sel += bodyRows; clamp(); break;
-            case Command.treePageUp:   sel -= bodyRows; clamp(); break;
+            case Command.treeDown:  moveSel(1); break;
+            case Command.treeUp:    moveSel(-1); break;
+            case Command.treeHome:  selHome(); break;
+            case Command.treeEnd:   selEnd(); break;
+            case Command.treePageDown: moveSel(bodyRows); break;
+            case Command.treePageUp:   moveSel(-bodyRows); break;
             case Command.treeActivate: return activate();
             case Command.treeCollapseOrUp: collapseOrUp(); break;
             case Command.treeFilter:   filterStart(); break;
@@ -1036,41 +891,19 @@ struct ExplorerTui
     }
 
     /// Close the selected directory, else jump to its parent — `h` and `←`.
-    private void collapseOrUp() @system
+    /// Public, so the GUI host dispatches here instead of re-implementing it.
+    void collapseOrUp() @system
     {
-        if (sel >= cast(long) rows.length)
-            return;
-        const node = rows[cast(size_t) sel].node;
-        ref const v = data.nodes[node].value;
-        if (v.isDir && open.isOpen(v.path))
-        {
-            open = open.closed(v.path);
+        if (treeCollapseOrUp(tv, data, (uint n) => data.nodes[n].value.path)
+            == TreeStep.rebuild)
             rebuild();
-            return;
-        }
-        if (data.nodes[node].parent == uint.max)
-            return;
-        const p = data.nodes[node].parent;
-        foreach (i, ref const r; rows)
-            if (r.node == p)
-            {
-                sel = cast(long) i;
-                break;
-            }
-        clamp();
     }
 
     private bool handleSearch(in Event ev) @system
     {
         return ev.match!((in KeyEvent e) {
-            switch (e.key)
-            {
-                case Key.char_: filterInput(e.ch); break;
-                case Key.backspace: filterBackspace(); break;
-                case Key.enter: filterAccept(); break;
-                case Key.escape: filterCancel(); break;
-                default: break;
-            }
+            if (tv.filterKey(e) == TreeStep.rebuild)
+                rebuild();
             return true;
         }, (in EndOfInput _) => false, _ => true);
     }
