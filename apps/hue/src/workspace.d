@@ -22,14 +22,17 @@ import sparkles.syntax.md.render_widgets : CodeOverflow;
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
     Theme, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
-import sparkles.event_horizon.sched : Sched;
 import sparkles.ui_tui : CellStyle, Color, Grid;
-import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
+import sparkles.ui_app.backend : Backend, BackendPolicy;
+import sparkles.ui_app.host : RunConfig;
+import sparkles.ui_app.run : run, RunOutcome;
 import sparkles.input : EndOfInput, Event, isEndOfInput, isNoEvent, Key,
     KeyEvent, linesPerNotch, match, NoEvent, PointerAction, PointerButton,
     PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.dock : DockAxis, DockContainer, PaneId, RouteKind;
-import sparkles.ui.geometry : Point, Rect;
+import sparkles.ui.layout : Frame;
+import sparkles.ui.widget : WidgetTree;
+import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.style : Slot;
 
 import ansi_model : BackgroundMode;
@@ -622,6 +625,196 @@ struct WorkspaceTui
         syncTreeTheme();
         return alive;
     }
+
+    // ── the component contract (`P2.B5`) ────────────────────────────────────
+
+    /**
+    Whether an event reached this pass.
+
+    Both loop arms knew by construction — an expired deadline and a delivered
+    event came out of different branches. A component is only told about
+    events, so the distinction has to be remembered: it is what separates
+    "nothing happened, tick the guide's clock and check the git worker" from
+    "a key arrived".
+    */
+    private bool sawEvent = true;
+
+    /// The deadline the previous pass asked for (`HST16`), so an expiry knows
+    /// how much time to advance the guide's clock by (`LTN4`).
+    private Duration lastAsk = Duration.max;
+
+    /// Whether a repaint is due. Inverted into `skipFrame` (`HST9`): the
+    /// default is to draw, and an idle pass that changed nothing declines —
+    /// which is what keeps an untouched document emitting no bytes at all.
+    private bool dirty = true;
+
+    /// The per-pass drains both arms run before anything else: an arriving
+    /// payload or tip must paint in the same pass it landed in.
+    package bool pollAll() @system
+    {
+        bool changed = pollLive();
+        changed |= pollDiffTypes();
+        if (tree.git.poll())
+        {
+            tree.rebuild();
+            changed = true;
+        }
+        return changed;
+    }
+
+    /**
+    The frame's pre-render half.
+
+    Returns an $(B empty) tree: hue paints its own cells, so the work is in
+    `paint` (`HST13`) and this is the decision half — drain, re-arrange if the
+    terminal moved, hand the terminal its out-of-band sequences, ask for the
+    next wake, and decide whether there is anything to draw at all.
+    */
+    /// Whether the git driver and the oracle watchers are installed. Retried
+    /// each frame until it takes: `spawnDaemon` only answers once the arm's
+    /// scope exists, which is after the setup phase and before the first one.
+    private bool gitDriverArmed;
+    /// The oracle sessions already watched, by slot. A replaced session's
+    /// watcher exits on its own (its fd turns -1), so a changed slot is the
+    /// signal to park a new one.
+    private LiveTypesSession*[3] watched;
+
+    /**
+    Parks this run's background work on the loop's own scope (`HST15`).
+
+    Two kinds, and both replace a poll: an oracle watcher turns "is the pipe
+    readable" into a parked read, retiring the 33 ms tick; the git driver turns
+    the status refresh into spawned children on the ring, retiring the 150 ms
+    cap. Where the host offers neither — the blocking arm, the recorder, a
+    foreign embedding — nothing is armed and the deadlines below stay the
+    polled ones, which is the same code either way.
+    */
+    void armDaemons(H)(ref H h)
+    {
+        import sparkles.ui_app.host : canSpawnDaemon;
+
+        static if (canSpawnDaemon!H)
+        {
+            import sparkles.event_horizon.backend.concept : canSubmitOp;
+            import sparkles.event_horizon.backend.select : DefaultBackend;
+            import sparkles.event_horizon.op : OpPollAdd, OpWaitid;
+
+            // What this backend lets the loop own outright.
+            enum liveWatchable = canSubmitOp!(DefaultBackend, OpPollAdd);
+            enum gitAsync = canSubmitOp!(DefaultBackend, OpWaitid);
+
+            // `ref` locals (2.111), not addresses: a closure over a `ref`
+            // variable refers to the variable's referent, which is what the
+            // old `&this`/`&h` dance was buying — at the cost of a `@trusted`
+            // lambda apiece and a pointer everything downstream had to
+            // dereference. Both referents outlive the run: the workspace by
+            // the entry point's frame, the host by its loop's.
+            ref WorkspaceTui self = this;
+            ref H host = h;
+
+            static if (gitAsync)
+                if (!gitDriverArmed)
+                {
+                    // A root change wipes the cache, delegate included, so
+                    // this re-installs whenever it went missing.
+                    if (tree.git.asyncSpawn is null)
+                        tree.git.asyncSpawn = (string root, uint gen) {
+                            gitDriverArmed = host.spawnDaemon(() {
+                                refreshGitStatus(self, host, root, gen);
+                            });
+                        };
+                    else
+                        gitDriverArmed = true;
+                }
+
+            static if (liveWatchable)
+            {
+                LiveTypesSession*[3] sessions = [live, diffLive[0], diffLive[1]];
+                foreach (i, s; sessions)
+                    if (s !is watched[i])
+                    {
+                        watched[i] = s;
+                        if (s !is null)
+                            // A real function frame per call: a closure
+                            // declared in a loop captures ONE shared slot,
+                            // so each watcher gets its own through a call.
+                            watchSession(host, s);
+                    }
+            }
+        }
+    }
+
+    /// ditto — one watcher, spawned with its own `sess`.
+    private void watchSession(H)(ref H h, LiveTypesSession* sess)
+    {
+        ref H host = h;
+        cast(void) host.spawnDaemon(() { watchOracle(host, sess); });
+    }
+
+    WidgetTree view(H)(ref H h)
+    {
+        armDaemons(h);
+        dirty |= pollAll();
+
+        // A pass with no event is a deadline that expired.
+        if (!sawEvent)
+            dirty |= onWaitExpired(this, lastAsk);
+        sawEvent = false;
+
+        const sz = h.size;
+        if (sz.width != width || sz.height != height)
+        {
+            arrange(sz.width, sz.height);
+            dirty = true;
+        }
+
+        // Out of band, and before the frame: these sequences address the
+        // terminal itself rather than the cell surface, so the retained diff
+        // must never see them.
+        const clip = viewer.takeClipboard();
+        if (clip.length)
+            h.writeOutOfBand(clip); // OSC 52 clipboard
+        const shape = takeCursorShape();
+        if (shape.length)
+            h.writeOutOfBand(shape); // OSC 22 pointer shape
+
+        // `HST16`: the lantern panel's remainder, capped by the live oracle's
+        // tick and by a git refresh in flight — a deadline that moves every
+        // pass, which is exactly what `idleTimeoutMs` could not express.
+        lastAsk = waitDeadline(this);
+        if (lastAsk != Duration.max)
+            h.wakeIn(lastAsk);
+
+        if (!dirty)
+            h.skipFrame();
+        dirty = false;
+        return WidgetTree.init;
+    }
+
+    /// One event. A resize is not routed — the next `view` re-measures against
+    /// the host's size and re-arranges, which is where that knowledge lives.
+    void handle(H)(ref H h, in Event e)
+    {
+        sawEvent = true;
+        dirty = true;
+        if (e.match!((in ResizeEvent _) => true, _ => false))
+            return;
+        if (!handle(e))
+            h.quit();
+    }
+
+    /// The renderer, inside the frame the host opened (`HST13`): hue's own
+    /// cells, painted through the host's grid.
+    void paint(H)(ref H h, in WidgetTree, in Frame[])
+    {
+        // A host with no cell grid has nothing to paint into. That is the
+        // recorder, and it is not a gap: hue emits no display-list operations
+        // at all — its frame IS cells — so what a recorded run has to say is
+        // what `view` decided (drew or declined, asked to wake when, wrote
+        // which sequence out of band), which it captures exactly.
+        static if (__traits(compiles, h.grid))
+            paint(h.grid);
+    }
 }
 
 /**
@@ -708,37 +901,45 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     // The terminal session is a block of its own: the live-types notice must
     // reach a restored screen, never the alt screen (`PRJ15`).
     {
-        // Any-event tracking (1003): bare pointer motion reports too, so the
-        // divider can show a hover resize cursor.
-        // The session owns raw-mode entry and restore, the surface and the
-        // input reader (UIA8) — hue names no `sparkles:tui` type for any of
-        // it. The grid is still handed out, because hue paints some chrome by
-        // hand; folding it in is the same change as widget-ising that chrome.
-        auto term = TerminalSession.open(TerminalRequest(motion: true));
-        if (!term.active)
-            return 1;
         scope (exit) w.stopLive();
 
-        // The event-horizon arm (its SPEC §15.3, `UIA10`): input and
-        // SIGWINCH are fibers feeding a channel, the workspace loop is the
-        // root fiber, and the thread's single blocking point is the ring
-        // wait — same dynamic deadlines, no nested git polling loop, no
-        // EINTR resize. Where loop creation fails (no io_uring — a
-        // seccomp'd sandbox), the classic blocking loop below is the
-        // explicit fallback arm, never a silent one.
-        import sparkles.event_horizon.sched : Sched, SchedOptions;
+        // The loop is the host's (`HST1`). Its terminal arm is the code this
+        // module used to carry twice over: the event-horizon shape (input and
+        // SIGWINCH as fibers feeding one channel, the workspace in the root
+        // fiber, a single ring wait on a deadline that moves every pass) and
+        // the blocking fallback for a platform or sandbox without a ring —
+        // selected once, reported, never silently forked.
+        //
+        // `motion: true` is any-event tracking (1003): bare pointer motion
+        // reports too, so the divider can show a hover resize cursor.
+        RunConfig cfg = {
+            title: "hue",
+            motion: true,
+            backend: Backend.tui,
+            autoBackend: false,
+        };
+        // The sink was already decided — `main` reaches this only for the
+        // terminal — so the policy states it rather than re-probing.
+        BackendPolicy policy = {
+            forceTui: true,
+            stdinTty: true,
+            stdoutTty: true,
+        };
 
-        SchedOptions schedOpts;
-        schedOpts.stackSize = 1024 * 1024; // frames paint on the fiber stack
-        schedOpts.maxFibers = 16;
-        Sched sched;
-        if (!Sched.create(sched, schedOpts).hasError)
+        final switch (run!(
+            (ref h) { cast(void) w.view(h); },
+            (ref h, in Event e) { w.handle(h, e); },
+            (ref h) { w.paint(h, WidgetTree.init, null); },
+        )(cfg, policy))
         {
-            scope (exit) sched.destroy();
-            runWorkspaceAsync(w, term, sched);
+            case RunOutcome.ok:
+                break;
+            case RunOutcome.openFailed:
+                return 1; // raw mode refused: nothing was drawn
+            case RunOutcome.noBackend:
+            case RunOutcome.notInteractive:
+                return 1;
         }
-        else
-            runWorkspaceBlocking(w, term);
     }
 
     const notice = w.takeLiveNotice();
@@ -749,6 +950,87 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         stderr.writeln("hue: live D types unavailable: ", notice);
     }
     return 0;
+}
+
+/**
+One oracle watcher (`HST15`): parks until the oracle's stdout is readable,
+wakes the host, and re-arms.
+
+The loop's poll pass does the draining — a watcher only converts readability
+into a wakeup. It exits when the session ends (its fd turns -1); at worst one
+spurious wake follows a drained burst (the readiness op completed before the
+drain), which the poll pass answers with "no change" and no repaint.
+*/
+private void watchOracle(H)(ref H h, LiveTypesSession* session) @system
+{
+    import sparkles.event_horizon.io : waitReadable;
+    import sparkles.event_horizon.sched : currentScheduler, onScheduler, Sched;
+
+    if (!onScheduler)
+        return; // nothing parked us; the polled tick still covers this
+
+    // The loop that resumed this fiber. A daemon body is handed a plain
+    // delegate — the host publishes no scheduler, because two of its three
+    // targets have none — so it asks once, here, and by `ref`.
+    ref Sched sched = currentScheduler();
+
+    for (;;)
+    {
+        const fd = session.readFd;
+        if (fd < 0)
+            return; // failed, shut down, or replaced
+        if (waitReadable(sched, fd).hasError)
+            return;
+        h.wake();
+    }
+}
+
+/**
+One git refresh (`HST15`): the `GitStatusCache.asyncSpawn` driver — the worker
+thread re-shaped as spawned children on the ring.
+
+Failures deliver `ok: false`, exactly like the thread path did.
+*/
+private void refreshGitStatus(H)(ref WorkspaceTui w, ref H h, string root,
+    uint gen) @system
+{
+    import std.string : strip;
+    import sparkles.event_horizon.live : capture;
+    import sparkles.event_horizon.proc : ProcessConfig, StdioMode, StdioSpec;
+    import sparkles.event_horizon.sched : currentScheduler, onScheduler, Sched;
+
+    if (!onScheduler)
+    {
+        // Nothing parked us, so there is no ring to spawn on. Delivering a
+        // failure is what the thread path did when its worker could not run,
+        // and the cache treats it the same way.
+        w.tree.git.deliver(gen, false, null, null);
+        h.wake();
+        return;
+    }
+    ref Sched sched = currentScheduler();
+
+    ProcessConfig cfg;
+    cfg.stdoutSpec = StdioSpec(StdioMode.pipe);
+    cfg.stderrSpec = StdioSpec(StdioMode.nullDev);
+
+    bool ok;
+    string top, payload;
+    auto tl = capture(sched,
+        ["git", "-C", root, "rev-parse", "--show-toplevel"], cfg);
+    if (!tl.hasError && tl.value.status.ok)
+    {
+        top = (cast(const(char)[]) tl.value.stdout_[]).strip.idup;
+        auto st = capture(sched, ["git", "-C", root, "status",
+            "--porcelain", "-z", "--ignored=matching"], cfg);
+        if (!st.hasError && st.value.status.ok)
+        {
+            payload = (cast(const(char)[]) st.value.stdout_[]).idup;
+            ok = true;
+        }
+    }
+    w.tree.git.deliver(gen, ok, top, payload);
+    h.wake();
 }
 
 /// How long the loop waits for input before ticking the live oracle again
@@ -790,298 +1072,167 @@ private bool onWaitExpired(ref WorkspaceTui w, Duration waited) @system
     return false;
 }
 
-/**
-The event-horizon workspace loop (M17): the SPEC §15.3 TUI shape. Input
-bytes and `SIGWINCH` are daemon fibers feeding one channel; the workspace
-runs in the root fiber and parks on `take` with the same dynamic deadline
-the blocking arm passes to `next()`. An idle document costs zero wakeups.
-*/
-private void runWorkspaceAsync(ref WorkspaceTui w, ref TerminalSession term,
-    ref Sched sched) @system
+version (unittest)
 {
-    import sparkles.event_horizon.backend.concept : canSubmitOp;
-    import sparkles.event_horizon.backend.select : DefaultBackend;
-    import sparkles.event_horizon.errors : IoError;
-    import sparkles.event_horizon.op : OpPollAdd, OpWaitid;
-    import sparkles.event_horizon.scope_ : withDeadline, withScope;
-    import sparkles.ui_app.event_source : EventChannel, pumpTerminalInput;
-
-    // What this backend lets the loop own outright: with `OpPollAdd` the
-    // live oracles become parked pipe reads (no 33 ms tick); with `OpWaitid`
-    // the git refresh becomes a spawned child on the ring (no 150 ms cap).
-    enum liveWatchable = canSubmitOp!(DefaultBackend, OpPollAdd);
-    enum gitAsync = canSubmitOp!(DefaultBackend, OpWaitid);
-
-    // One oracle watcher (a daemon fiber): parks until the oracle's stdout
-    // is readable, wakes the loop with a `NoEvent`, and re-arms. The loop's
-    // poll pass does the draining — the watcher only converts readability
-    // into a wakeup. Exits when the session ends (its fd turns -1); at
-    // worst one spurious wake follows a drained burst (the readiness op
-    // completed before the drain), which the poll pass answers with "no
-    // change" and no repaint.
-    static void watchOracle(Sched* sched, EventChannel* events,
-        LiveTypesSession* session)
+    /// A workspace over two files in a temp directory, wired the way the
+    /// entry point wires one. Returns the root so the caller can clean up.
+    private string fixtureWorkspace(ref WorkspaceTui w, string stem) @system
     {
-        import sparkles.event_horizon.io : waitReadable;
+        import std.file : mkdirRecurse, tempDir, write;
+        import std.path : baseName, buildPath;
+        import sparkles.syntax : builtinDark, LabelSet;
 
-        for (;;)
-        {
-            const fd = session.readFd;
-            if (fd < 0)
-                return; // failed, shut down, or replaced
-            if (waitReadable(*sched, fd).hasError)
-                return;
-            if (events.put(*sched, Event(NoEvent())).hasError)
-                return; // channel closed: the loop is tearing down
-        }
+        static immutable(Theme)[1] themes = [builtinDark];
+        static immutable string[1] names = ["dark"];
+        const labels = LabelSet.standard();
+
+        const root = buildPath(tempDir(), stem);
+        mkdirRecurse(root);
+        write(buildPath(root, "alpha.d"), "int alpha;\n");
+        write(buildPath(root, "beta.d"), "int beta;\n");
+
+        w.loadDoc = delegate WorkspaceDoc(string path) @system {
+            import std.file : readText;
+
+            const src = readText(path);
+            return WorkspaceDoc(title: baseName(path), source: src,
+                events: [HighlightEvent.sourceSpan(0, src.length)]);
+        };
+        w.liveTypes = false; // no oracle subprocess in a test
+        w.tree.root = root;
+        w.tree.themeValue = &themes[0];
+        w.tree.theme = resolveTheme(themes[0], labels);
+        w.pageFg = w.tree.pageFg = toRgb(w.tree.theme.defaults.fg,
+            RgbColor(0xcc, 0xcc, 0xcc));
+        w.pageBg = w.tree.pageBg = toRgb(w.tree.theme.defaults.bg,
+            RgbColor(0x1e, 0x1e, 0x1e));
+        w.viewer.names = names[];
+        w.viewer.themes = themes[];
+        w.viewer.labels = labels;
+        // Visibility is NOT set here: `arrange` rebuilds the dock layout from
+        // scratch, so anything decided before it is overwritten. Callers read
+        // the post-arrange value and assert against that.
+        w.tree.rebuild();
+        w.arrange(80, 24);
+        w.openDoc(buildPath(root, "alpha.d"));
+        return root;
     }
-
-    // One git refresh (a daemon fiber): the `GitStatusCache.asyncSpawn`
-    // driver — the worker thread re-shaped as spawned children on the ring
-    // (M17). Failures deliver `ok: false`, exactly like the thread path.
-    static if (gitAsync)
-        static void refreshGitStatus(Sched* sched, WorkspaceTui* w,
-            EventChannel* events, string root, uint gen)
-        {
-            import std.string : strip;
-            import sparkles.event_horizon.live : capture;
-            import sparkles.event_horizon.proc : ProcessConfig, StdioMode,
-                StdioSpec;
-
-            ProcessConfig cfg;
-            cfg.stdoutSpec = StdioSpec(StdioMode.pipe);
-            cfg.stderrSpec = StdioSpec(StdioMode.nullDev);
-
-            bool ok;
-            string top, payload;
-            auto tl = capture(*sched,
-                ["git", "-C", root, "rev-parse", "--show-toplevel"], cfg);
-            if (!tl.hasError && tl.value.status.ok)
-            {
-                top = (cast(const(char)[]) tl.value.stdout_[]).strip.idup;
-                auto st = capture(*sched, ["git", "-C", root, "status",
-                    "--porcelain", "-z", "--ignored=matching"], cfg);
-                if (!st.hasError && st.value.status.ok)
-                {
-                    payload = (cast(const(char)[]) st.value.stdout_[]).idup;
-                    ok = true;
-                }
-            }
-            w.tree.git.deliver(gen, ok, top, payload);
-            cast(void) events.put(*sched, Event(NoEvent()));
-        }
-
-    // SIGWINCH becomes a channel event through a signalfd — never an EINTR
-    // side effect (a parked ring read is not interruptible the way the
-    // blocking reader's `read(2)` was). Linux-only; the kqueue platforms
-    // apply a resize on the next event until their EVFILT_SIGNAL lowering.
-    version (linux)
-    {
-        import sparkles.event_horizon.signals : SignalFd;
-        import sparkles.ui_app.event_source : pumpResizeSignals;
-
-        enum int SIGWINCH = 28;
-        SignalFd winch;
-        const winchOk = !SignalFd.create(winch, [SIGWINCH]).hasError;
-    }
-
-    EventChannel events;
-
-    // Fibers capture plain locals, never `ref` parameters — a closure
-    // captures the parameter slot, not the referent. The frames provably
-    // outlive the run: `sched.run` blocks here until every fiber is done.
-    auto wP = (() @trusted => &w)();
-    auto termP = (() @trusted => &term)();
-    auto schedP = (() @trusted => &sched)();
-    version (linux)
-        auto winchP = (() @trusted => &winch)();
-
-    auto eventsP = (() @trusted => &events)();
-
-    sched.run(() {
-        cast(void) withScope!((ref sc) {
-            auto scP = (() @trusted => &sc)();
-            sc.spawnDaemon(() { pumpTerminalInput(*schedP, events, 0); });
-            version (linux)
-                if (winchOk)
-                    sc.spawnDaemon(() { pumpResizeSignals(*schedP, events, *winchP); });
-
-            // The delegate must not outlive this frame; a root change wipes
-            // the cache (delegate included), so it is re-installed each pass.
-            static if (gitAsync)
-                scope (exit) wP.tree.git.asyncSpawn = null;
-
-            // A real function frame per call: a closure declared in a loop
-            // captures ONE shared slot, so the spawn is factored out to give
-            // each watcher its own `sess`.
-            LiveTypesSession*[3] watched;
-            void watchSession(LiveTypesSession* sess)
-            {
-                scP.spawnDaemon(() { watchOracle(schedP, eventsP, sess); });
-            }
-
-            // Every event repaints; a tick only does when it changed the
-            // document, so an idle session emits nothing to the terminal.
-            bool dirty = true;
-            for (;;)
-            {
-                // Live types tick before the frame, so an arriving payload
-                // or tip paints in the same pass.
-                dirty |= wP.pollLive();
-                dirty |= wP.pollDiffTypes();
-                if (wP.tree.git.poll())
-                {
-                    wP.tree.rebuild();
-                    dirty = true;
-                }
-
-                static if (gitAsync)
-                    if (wP.tree.git.asyncSpawn is null)
-                        wP.tree.git.asyncSpawn = (string root, uint gen) {
-                            scP.spawnDaemon(() {
-                                refreshGitStatus(schedP, wP, eventsP, root, gen);
-                            });
-                        };
-
-                // New oracle sessions get their readiness watchers; a
-                // replaced session's watcher exits on its own (fd -1).
-                static if (liveWatchable)
-                {
-                    LiveTypesSession*[3] sessions =
-                        [wP.live, wP.diffLive[0], wP.diffLive[1]];
-                    foreach (i, s; sessions)
-                        if (s !is watched[i])
-                        {
-                            watched[i] = s;
-                            if (s !is null)
-                                watchSession(s);
-                        }
-                }
-
-                if (dirty)
-                {
-                    const sz = termP.resizeToTerminal();
-                    if (sz.width != wP.width || sz.height != wP.height)
-                        wP.arrange(sz.width, sz.height);
-
-                    wP.paint(termP.grid);
-                    termP.present();
-                    dirty = false;
-                }
-
-                const clip = wP.viewer.takeClipboard();
-                if (clip.length)
-                    termP.writeOutOfBand(clip); // OSC 52 clipboard (out of band)
-                const shape = wP.takeCursorShape();
-                if (shape.length)
-                    termP.writeOutOfBand(shape); // OSC 22 pointer shape
-
-                const deadline = waitDeadline(*wP, eventDriven: liveWatchable);
-                Event ev;
-                bool haveEvent;
-                if (deadline == Duration.max)
-                {
-                    auto taken = events.take(*schedP);
-                    if (taken.hasError)
-                        return; // input ended / teardown
-                    ev = taken.value;
-                    haveEvent = true;
-                }
-                else
-                {
-                    // Out-variable shape: the deadline body must not return
-                    // an Expected (the scope would double-wrap it).
-                    Event taken;
-                    bool gotOne;
-                    auto o = withDeadline!((ref _) {
-                        auto t = events.take(*schedP);
-                        if (!t.hasError)
-                        {
-                            taken = t.value;
-                            gotOne = true;
-                        }
-                    })(*schedP, deadline);
-                    if (o.hasError)
-                    {
-                        if (!o.error.isTimeout)
-                            return; // teardown
-                    }
-                    else if (gotOne)
-                    {
-                        ev = taken;
-                        haveEvent = true;
-                    }
-                    else
-                        return; // channel closed: input ended
-                }
-
-                if (!haveEvent)
-                {
-                    dirty |= onWaitExpired(*wP, deadline);
-                    continue;
-                }
-                if (ev.isEndOfInput)
-                    return;
-                if (ev.isNoEvent)
-                    continue; // a wake: the top-of-loop polls do the work
-                dirty = true;
-                if (ev.match!((in ResizeEvent _) => true, _ => false))
-                    continue; // next iteration re-measures + re-arranges
-                if (!wP.handle(ev))
-                    return;
-            }
-        }, IoError)(*schedP);
-        // Scope exit reaps the daemon pumps: their parked reads are
-        // cancelled in-ring before the session restores the terminal.
-    });
 }
 
-/// The fallback arm: the classic blocking loop, byte-for-byte the pre-M17
-/// behavior (minus the nested git polling loop, which both arms now express
-/// as a capped wait deadline).
-private void runWorkspaceBlocking(ref WorkspaceTui w, ref TerminalSession term)
-    @system
+// The loop this module has always run has never been testable: it needs a
+// terminal in raw mode, and its two arms are private functions around a
+// blocking read. The component contract is what removes that — the same
+// `view`/`handle` a live arm drives, driven here by a scripted recorder
+// instead (`TST1`), which is the oracle `P2.B5`'s restructuring needs and did
+// not otherwise have.
+@("workspace.component.recordsWhatAFrameDecided")
+@system
+unittest
 {
-    bool dirty = true;
-    for (;;)
-    {
-        dirty |= w.pollLive();
-        dirty |= w.pollDiffTypes();
+    import std.file : rmdirRecurse;
+    import sparkles.input : charEvent;
+    import sparkles.ui_app.host : RunConfig;
+    import sparkles.ui_app.run_app : isAppFor, runAppRecorded;
+    import sparkles.ui_app.record : RecordingHost;
 
-        if (dirty)
-        {
-            const sz = term.resizeToTerminal();
-            if (sz.width != w.width || sz.height != w.height)
-                w.arrange(sz.width, sz.height);
+    static assert(isAppFor!(WorkspaceTui, RecordingHost),
+        "the workspace must satisfy the component contract the host is"
+        ~ " written against — that is what lets a scripted run drive it");
 
-            w.paint(term.grid);
-            term.present();
-            dirty = false;
-        }
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-workspace-component-test");
+    scope (exit) rmdirRecurse(root);
 
-        const clip = w.viewer.takeClipboard();
-        if (clip.length)
-            term.writeOutOfBand(clip); // OSC 52 clipboard (out of band)
-        const shape = w.takeCursorShape();
-        if (shape.length)
-            term.writeOutOfBand(shape); // OSC 22 pointer shape
+    const treeWas = w.treeVisible;
 
-        const deadline = waitDeadline(w);
-        const ev = deadline == Duration.max
-            ? term.next() : term.next(cast(int) deadline.total!"msecs");
-        if (ev.isEndOfInput)
-            break;
-        if (ev == Event.init)
-        {
-            dirty |= onWaitExpired(w, deadline);
-            continue;
-        }
-        dirty = true;
-        if (ev.match!((in ResizeEvent _) => true, _ => false))
-            continue; // next iteration re-measures + re-arranges
-        if (!w.handle(ev))
-            break;
-    }
+    RunConfig cfg;
+    auto rec = runAppRecorded(w, cfg,
+        [
+            charEvent('e'), // toggle the explorer (focus follows)
+            charEvent('j'), // …and a key the pane it focused owns
+        ],
+        (ref RecordingHost h) { h.size = Size(80, 24); });
+
+    // One frame before any input, then one per event.
+    assert(rec.frames.length == 3);
+
+    // The first frame draws (nothing has been painted yet), and so does every
+    // frame an event reached: a keystroke is a reason to repaint by
+    // construction, which is `HST9`'s default-draw half.
+    assert(!rec.frames[0].skipped);
+    assert(!rec.frames[1].skipped && !rec.frames[2].skipped);
+
+    // The global key reached the workspace through the component, not through
+    // a pane — and the run mutated the caller's workspace, which is what makes
+    // a scripted session an assertion about the real thing.
+    assert(w.treeVisible == !treeWas, "'e' toggled the explorer");
+    assert(w.treeFocused == w.treeVisible, "and focus followed it");
+    assert(!rec.quitRequested, "'e' is not a quit");
+}
+
+@("workspace.component.anIdlePassDeclinesToDraw")
+@system
+unittest
+{
+    import std.file : rmdirRecurse;
+    import sparkles.ui_app.host : RunConfig;
+    import sparkles.ui_app.run_app : runAppRecorded;
+    import sparkles.ui_app.record : RecordingHost;
+
+    // The property the terminal arm's byte cost depends on: a pass that no
+    // event reached and that changed nothing declines the frame, so an
+    // untouched document emits nothing at all. The recorder delivers a frame
+    // per event, so an empty script IS the idle case — one first frame that
+    // draws, and a `requestFrame`-free run that stops there.
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-workspace-idle-test");
+    scope (exit) rmdirRecurse(root);
+
+    RunConfig cfg;
+    auto rec = runAppRecorded(w, cfg, null,
+        (ref RecordingHost h) { h.size = Size(80, 24); });
+
+    assert(rec.frames.length == 1);
+    assert(!rec.frames[0].skipped, "the first frame has never been drawn");
+    assert(!rec.frames[0].requested,
+        "the workspace waits for input; it does not spin");
+
+    // A second pass with no event between it and the first: nothing changed,
+    // so nothing is drawn. This is the `dirty` flag the loop arms carried,
+    // now expressed as `skipFrame` (`HST9`).
+    auto again = runAppRecorded(w, cfg, null,
+        (ref RecordingHost h) { h.size = Size(80, 24); });
+    assert(again.frames.length == 1 && again.frames[0].skipped,
+        "an idle pass over an unchanged document draws nothing");
+}
+
+@("workspace.component.quitEndsTheRun")
+@system
+unittest
+{
+    import std.file : rmdirRecurse;
+    import sparkles.input : charEvent;
+    import sparkles.ui_app.host : RunConfig;
+    import sparkles.ui_app.run_app : runAppRecorded;
+    import sparkles.ui_app.record : RecordingHost;
+
+    // `handle`'s `false` used to break the arm's loop; a component says so
+    // through the host, which is what lets the same decision end a run on
+    // either target.
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-workspace-quit-test");
+    scope (exit) rmdirRecurse(root);
+
+    const treeWas = w.treeVisible;
+
+    RunConfig cfg;
+    auto rec = runAppRecorded(w, cfg,
+        [charEvent('q'), charEvent('e')],
+        (ref RecordingHost h) { h.size = Size(80, 24); });
+
+    assert(rec.quitRequested);
+    assert(rec.frames.length == 2, "the frame the quit happened in is recorded");
+    assert(w.treeVisible == treeWas, "the 'e' after the quit never arrived");
 }
 
 @("workspace.splitPane.composeToggleAndSync")
