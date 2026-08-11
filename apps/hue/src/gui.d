@@ -398,11 +398,14 @@ int runGui(GuiArgs guiArgs) @system
         const t = pn.dock.layout.addLeaf(treePane,
             extent: treeWidth < 12 ? 12 : treeWidth, minExtent: 12);
         const d = pn.dock.layout.addLeaf(docPane);
+        const ins = pn.dock.layout.addLeaf(inspPane, extent: 40,
+            minExtent: 20);
         pn.dock.layout.root = pn.dock.layout.addSplit(DockAxis.horizontal,
-            [t, d]);
+            [t, d, ins]);
     }
     pn.treeVisible = startInTree;
     pn.treeFocused = startInTree;
+    pn.inspVisible = false;
 
     // The container's frames, refreshed only when an input to them moves —
     // the arrangement is read many times a frame and changes rarely.
@@ -418,6 +421,15 @@ int runGui(GuiArgs guiArgs) @system
         // what lets the hit tests stop subtracting chrome by hand.
         pn.dock.layout.nodes[tn].headerExtent = 1;
         pn.dock.layout.nodes[pn.dock.layout.nodeOf(docPane)].headerExtent = 1;
+        // The inspector pane draws its own header (the component's, with
+        // the toggle chips), so the container reserves nothing for it.
+        pn.dock.layout.nodes[pn.dock.layout.nodeOf(inspPane)]
+            .headerExtent = 0;
+        // The middle pane must stay flexible: a drag on the doc|inspector
+        // divider hands its BEFORE node (the document) a fixed extent — the
+        // gallery's reflexCentre finding — so it re-zeroes here, on every
+        // arrange.
+        pn.dock.layout.nodes[pn.dock.layout.nodeOf(docPane)].extent = 0;
         // The document-set bar spans BOTH panes, so it is not a pane's
         // header: the container's area simply starts below it.
         const setRows = set !is null && !set.empty ? 1 : 0;
@@ -438,11 +450,14 @@ int runGui(GuiArgs guiArgs) @system
     int treeCols() => pn.dock.paneExtent(treePane);
     int treePx() => pn.dock.paneOrigin(docPane) * fonts.cellW();
 
+    /// The inspector pane's width in cells (0 when hidden).
+    int inspCols() => pn.inspVisible ? pn.dock.paneExtent(inspPane) : 0;
+
     int widthCols()
     {
         const cw = fonts.cellW();
         const w = (window.width - cw - scrollbarGutter() - gutterCols() * cw
-            - treePx()) / cw;
+            - treePx() - inspCols() * cw) / cw;
         return w < 8 ? 8 : w;
     }
 
@@ -473,6 +488,50 @@ int runGui(GuiArgs guiArgs) @system
     {
         pn.treeVisible = !pn.treeVisible;
         pn.treeFocused = pn.treeVisible;
+        vm.widthCols = -1;
+        relayout();
+    }
+
+    // The tree→source half of the sync contract: tint the selected node's
+    // extent; scroll-follow only when it is fully off-screen (INS6).
+    void syncInspectorExtent()
+    {
+        size_t s, e;
+        if (pn.inspVisible && pn.insp.selectedExtent(s, e))
+        {
+            vm.setInspectExtent(s, e);
+            const visRows = (window.height / fonts.cellH()) - 2;
+            if (!vm.inspectExtentVisible(visRows))
+                vm.scrollInspectIntoView(visRows);
+        }
+        else
+            vm.clearInspectExtent();
+    }
+
+    // <leader>vi: the tree-sitter inspector pane (TSI/INS6); focus follows.
+    // Opening seeds the selection from the foldAtCursor idiom (the text
+    // selection's low offset, else the top visible row) — the viewer has no
+    // caret, deliberately.
+    void toggleInspectorPane()
+    {
+        pn.inspVisible = !pn.inspVisible;
+        pn.inspFocused = pn.inspVisible;
+        if (pn.inspVisible)
+        {
+            pn.insp.rebuild(vm);
+            long off = -1;
+            if (drag.regime == Regime.text && drag.selMax() > drag.selMin())
+                off = drag.selMin();
+            else if (vm.rows.length && vm.top >= 0
+                && vm.top < cast(long) vm.rows.length
+                && vm.rows[cast(size_t) vm.top].srcStart != size_t.max)
+                off = cast(long) vm.rows[cast(size_t) vm.top].srcStart;
+            if (off >= 0)
+                pn.insp.selectAt(cast(size_t) off);
+            syncInspectorExtent();
+        }
+        else
+            vm.clearInspectExtent();
         vm.widthCols = -1;
         relayout();
     }
@@ -1357,6 +1416,43 @@ int runGui(GuiArgs guiArgs) @system
             }
         }
 
+        // The tree-sitter inspector pane (TSI/INS): the shared component's
+        // view at the frame the container arranged, painted like the tree —
+        // one widget pipeline, clipped to the pane.
+        if (pn.inspVisible)
+        {
+            const ir = paneContent(inspPane);
+            if (ir.width > 2)
+            {
+                pn.insp.tv.width = ir.width;
+                pn.insp.tv.height = ir.height;
+                pn.insp.focused = pn.inspFocused;
+
+                // The pane's left divider, in the toolkit's vocabulary.
+                chrome.rule(Rect(ir.x - 1, ir.y, 1, ir.height),
+                    RuleEdge.centerX, Visual(fg: vm.gutterFg));
+
+                import sparkles.ui.geometry : SizeSpec;
+                import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+                auto ib = Builder();
+                const iv = pn.insp.view(ib, ir.width - 1);
+                Widget ipane = Widget(kind: WidgetKind.column,
+                    children: [iv], width: SizeSpec.fixed(ir.width - 1),
+                    clipX: true);
+                auto iwt = ib.finish(ib.add(ipane));
+                auto iOps = buildDisplayList(iwt, layout(iwt),
+                    themes[vm.themeIdx].effectivePalette, vm.pageFg,
+                    vm.pageBg);
+                auto iCanvas = RaylibCanvas(fontsP, &buf, cellW,
+                    cellH, cast(float)(ir.x * cellW),
+                    cast(float)(ir.y * cellH));
+                iCanvas.pushClip(Rect(0, 0, ir.width, ir.height));
+                paint(iCanvas, iOps);
+                iCanvas.popClip();
+            }
+        }
+
         // The document pane's horizontal bar (IXB2), over its bottom edge.
         if (vm.hOverflows() && inp.mode == Mode.normal)
         {
@@ -1803,7 +1899,20 @@ int runGui(GuiArgs guiArgs) @system
         // a press would do.
         KeyContext kctx;
 
-        if (pn.treeFocused && pn.tree.searching)
+        if (pn.inspVisible && pn.inspFocused)
+        {
+            // The inspector pane owns the keys while focused (its own
+            // neovim-parity set); q/Escape close it and return the focus.
+            bool close;
+            foreach (k; keyBuf)
+                if (!pn.insp.handle(Event(k), vm))
+                    close = true;
+            if (close)
+                toggleInspectorPane();
+            else
+                syncInspectorExtent();
+        }
+        else if (pn.treeFocused && pn.tree.searching)
         {
             // The tree pane's live filter (broot mode): typed chars narrow
             // per keystroke; Enter keeps the filtered tree, Esc clears it.
@@ -2024,6 +2133,10 @@ int runGui(GuiArgs guiArgs) @system
                     break;
 
                 // ── shared, normal mode ──────────────────────────────────
+                case Command.toggleInspector:
+                    toggleInspectorPane();
+                    break;
+
                 case Command.toggleExplorer:
                     toggleExplorer(); // XPL2
                     break;
@@ -2638,6 +2751,25 @@ int runGui(GuiArgs guiArgs) @system
                 h.hi = cast(long) vm.rows[cast(size_t) cy].srcEnd;
             }
             return h;
+        }
+
+        // INS6 source→tree: hovering the document drives the inspector's
+        // selection live, while the panel is open and its [sync] toggle on.
+        if (pn.inspVisible && pn.insp.syncHover && inp.mode == Mode.normal)
+        {
+            const smp = inp.fin.pos;
+            if (!(pn.treeVisible && smp.x < treeCols * cellW)
+                && smp.x < screenW - inspCols() * cellW)
+            {
+                const h = hitAt(smp.x, smp.y);
+                if (h.ok && h.lo >= 0
+                    && cast(size_t) h.lo != pn.insp.lastSyncOffset)
+                {
+                    pn.insp.lastSyncOffset = cast(size_t) h.lo;
+                    pn.insp.selectAt(cast(size_t) h.lo);
+                    syncInspectorExtent();
+                }
+            }
         }
 
         {

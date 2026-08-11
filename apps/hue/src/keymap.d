@@ -117,6 +117,7 @@ enum Command : ubyte
 
     // Available in normal mode regardless of which pane has focus.
     toggleExplorer,        /// `e`
+    toggleInspector,       /// `<leader>vi` — the tree-sitter inspector pane
     themeNext, themePrev,  /// `→` / `←`
     fontBigger, fontSmaller, /// `Ctrl-=` / `Ctrl--`
     matchNext, matchPrev,  /// `n` / `Shift-N`
@@ -614,6 +615,8 @@ immutable Binding[] hueBindings = [
         Command.toggleLineNumbers, "line numbers"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('c'),
         Command.toggleCodeLineNumbers, "code line numbers"),
+    bind(Scope_.shared_, chord(leader), chord('v'), chord('i'),
+        Command.toggleInspector, "tree-sitter inspector"),
 
     group(Scope_.shared_, chord(leader), chord('u'), "ui"),
     // Spelled lowercase + `ShiftReq.yes`, never `'T'`: `normalise` folds a

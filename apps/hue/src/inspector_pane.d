@@ -55,6 +55,9 @@ struct InspectorPane
     bool showAnonymous;      ///
     bool syncHover = true;   /// the header's `[sync]` toggle
     bool focused;            ///
+    /// The last hover offset a host synced from (dedupe: `selectAt` per
+    /// pointer $(I move), not per frame).
+    size_t lastSyncOffset = size_t.max;
 
     private const(char)[] builtFor;  // vm.source identity at last rebuild
     private bool builtAnon;
