@@ -268,6 +268,7 @@ struct WorkspaceTui
 
         if (inspRect.width < 3)
             return;
+        insp.ensureFresh(viewer.vm); // a document switch rebuilds next frame
         insp.focused = dock.focused == inspPane;
         auto b = Builder();
         const iv = insp.view(b, inspRect.width);

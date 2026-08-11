@@ -68,6 +68,23 @@ struct InspectorPane
             && ci.data.nodes.length != 0;
 
     /**
+    The per-frame freshness gate: a document switch (or reload, or the
+    anonymous toggle) invalidates the built tree, and the $(B next frame)
+    rebuilds it — so every open path (tree pick, set navigation, reload,
+    startup) is covered without each host remembering to. The stale extent
+    tint clears with it; the next hover re-syncs.
+    */
+    void ensureFresh(ref ViewerModel vm) @system
+    {
+        if (fresh(vm))
+            return;
+        rebuild(vm);
+        tv.sel = 0;
+        lastSyncOffset = size_t.max;
+        vm.clearInspectExtent();
+    }
+
+    /**
     (Re)builds the adapter tree from the document's retained layers. The
     disclosure resets to everything-open (the reference's presentation; a
     structural-path re-match across re-parses is the specced follow-up).
@@ -407,4 +424,36 @@ version (unittest)
         }
     assert(sawSync, "the header shows the sync toggle");
     assert(sawNode, "the details pane names the selection");
+}
+
+@("inspector_pane.documentSwitchRebuildsNextFrame")
+@system unittest
+{
+    import sparkles.syntax : HighlightEvent;
+
+    // UAT: opening a new file kept the inspector for the old one. The
+    // freshness gate rebuilds on the next frame, whatever the open path.
+    auto vm = vmForTest("json", "{\"a\": 1}\n");
+
+    InspectorPane pane;
+    pane.tv.width = 30;
+    pane.tv.height = 16;
+    pane.rebuild(vm);
+    pane.selectAt(1);
+    size_t s, e;
+    assert(pane.selectedExtent(s, e));
+    vm.setInspectExtent(s, e);
+    const nodesBefore = pane.ci.data.nodes.length;
+
+    const src2 = "{\"a\": [1, 2, 3, 4, 5]}\n";
+    vm.setDocument("t2", "", src2,
+        [HighlightEvent.sourceSpan(0, src2.length)],
+        typeof(vm.preview).init, typeof(vm.tw).init, "json");
+    assert(!pane.fresh(vm), "a new document invalidates the built tree");
+
+    pane.ensureFresh(vm);
+    assert(pane.fresh(vm));
+    assert(pane.ci.data.nodes.length > nodesBefore,
+        "the tree describes the new document");
+    assert(vm.inspectRects.length == 0, "the stale extent tint cleared");
 }
