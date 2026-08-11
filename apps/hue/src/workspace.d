@@ -45,6 +45,9 @@ import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import tui : PreviewTui;
 
+version (linux)
+    import sparkles.event_horizon.watch : Watcher;
+
 /// One loaded document, as the viewer pane consumes it — the pipeline's
 /// `Document` Whole itself, so the transport loses nothing at the pane
 /// boundary (the content kind and the diff payload ride along; the pane
@@ -315,6 +318,47 @@ struct WorkspaceTui
         }
     }
 
+    /// The open document's path — what the file watcher (`WCH1`) re-arms
+    /// on and what a reload re-reads. Empty for an embedded document.
+    string currentDocPath;
+    /// Set by the watch fiber on a write-close of the open document; the
+    /// loop's poll pass turns it into `reloadCurrent`.
+    package bool reloadPending;
+    /// The armed watch (loop-owned bookkeeping: the directory and its wd).
+    package string watchedDir;
+    /// ditto
+    package int watchedWd = -1;
+    version (linux)
+    {
+        /// The one inotify instance for document reloads (`WCH1`). Heap so
+        /// the workspace stays copy-friendly for tests.
+        private Watcher* docWatcher;
+        /// Whether the watch daemon is parked on the host's scope.
+        private bool docWatchArmed;
+    }
+
+    /// Reloads the open document from disk in place (`WCH2`): the same
+    /// loader, the viewport preserved, the retained parse and the inspector
+    /// rebuilt against the new content. The extent tint clears — the old
+    /// selection's byte extent is meaningless against a changed file; the
+    /// next hover re-syncs.
+    void reloadCurrent() @system
+    {
+        if (currentDocPath.length == 0)
+            return;
+        const keepTop = viewer.vm.top;
+        openDoc(currentDocPath);
+        viewer.vm.top = keepTop < cast(long) viewer.vm.rows.length
+            ? keepTop : (viewer.vm.rows.length
+                ? cast(long) viewer.vm.rows.length - 1 : 0);
+        if (inspVisible)
+        {
+            insp.rebuild(viewer.vm);
+            insp.lastSyncOffset = size_t.max;
+            viewer.vm.clearInspectExtent();
+        }
+    }
+
     /// Opens `path` in the viewer pane and reveals it in the tree (XPL3/4).
     private void openDoc(string path) @system
     {
@@ -327,6 +371,7 @@ struct WorkspaceTui
         {
             return; // the previous document stays on screen
         }
+        currentDocPath = path;
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
             startPreview: true, doc.twoslash, doc.lang, doc.diffDoc,
             doc.diffSides, doc.diffSession, doc.diffEmphasis);
@@ -793,6 +838,15 @@ struct WorkspaceTui
             tree.rebuild();
             changed = true;
         }
+        // File monitoring (`WCH2`): a pending reload applies before the frame
+        // paints so the viewer never shows a stale buffer for one more pass.
+        version (linux)
+            if (reloadPending)
+            {
+                reloadPending = false;
+                reloadCurrent();
+                changed = true;
+            }
         return changed;
     }
 
@@ -874,6 +928,46 @@ struct WorkspaceTui
                             // so each watcher gets its own through a call.
                             watchSession(host, s);
                     }
+            }
+
+            // Document file monitoring (`WCH1`): one inotify daemon parks on
+            // the open document's DIRECTORY (editors save by rename, so the
+            // file's own inode dies). A write-close or rename-in whose name
+            // matches marks the reload and wakes the loop. Re-arms whenever
+            // the open document's directory changes; a stale watch simply
+            // produces non-matching events.
+            version (linux)
+            {
+                import core.sys.linux.sys.inotify : IN_CLOSE_WRITE, IN_MOVED_TO;
+                import std.path : dirName;
+
+                if (!docWatchArmed)
+                {
+                    if (docWatcher is null)
+                    {
+                        auto w = new Watcher;
+                        if (!Watcher.create(*w).hasError)
+                            docWatcher = w;
+                    }
+                    if (docWatcher !is null)
+                        docWatchArmed = host.spawnDaemon(() {
+                            watchDocuments(self, host);
+                        });
+                }
+                if (docWatcher !is null && currentDocPath.length)
+                {
+                    const dir = dirName(currentDocPath);
+                    if (dir != watchedDir)
+                    {
+                        auto ar = docWatcher.addWatch(dir,
+                            IN_CLOSE_WRITE | IN_MOVED_TO);
+                        if (!ar.hasError)
+                        {
+                            watchedDir = dir;
+                            watchedWd = ar.value;
+                        }
+                    }
+                }
             }
         }
     }
@@ -1133,6 +1227,36 @@ private void watchOracle(H)(ref H h, LiveTypesSession* session) @system
 }
 
 /**
+Document file watcher (`WCH1`): parks on the workspace's one inotify
+descriptor; a write-close (or rename-in — how editors save) whose name
+matches the open document marks the reload and wakes the loop.
+*/
+version (linux)
+private void watchDocuments(H)(ref WorkspaceTui w, ref H h) @system
+{
+    import std.path : baseName;
+    import sparkles.event_horizon.sched : currentScheduler, onScheduler, Sched;
+
+    if (!onScheduler || w.docWatcher is null)
+        return;
+    ref Sched sched = currentScheduler();
+
+    for (;;)
+    {
+        auto ev = w.docWatcher.nextEvent(sched);
+        if (ev.hasError)
+            return; // descriptor closed: the loop is tearing down
+        if (w.currentDocPath.length
+            && ev.value.wd == w.watchedWd
+            && ev.value.name == baseName(w.currentDocPath))
+        {
+            w.reloadPending = true;
+            h.wake();
+        }
+    }
+}
+
+/**
 One git refresh (`HST15`): the `GitStatusCache.asyncSpawn` driver — the worker
 thread re-shaped as spawned children on the ring.
 
@@ -1265,6 +1389,7 @@ version (unittest)
         return root;
     }
 }
+
 
 // The loop this module has always run has never been testable: it needs a
 // terminal in raw mode, and its two arms are private functions around a
@@ -2090,4 +2215,77 @@ unittest
     w.toggleInspector();
     assert(!w.inspVisible);
     assert(w.viewer.vm.inspectRects.length == 0, "the tint cleared");
+}
+
+@("workspace.reloadCurrent.preservesTheViewportAndRefreshesTheInspector")
+@system
+unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, Theme;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.syntax.ts.registry : GrammarRegistry;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    static GrammarRegistry registry;
+    registry = GrammarRegistry.fromEnvironment();
+    static TsConfigCache* cache;
+    cache = new TsConfigCache;
+    *cache = TsConfigCache.create(&registry, LabelSet.standard());
+
+    const root = buildPath(tempDir(), "hue-ws-reload-test");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    const doc = buildPath(root, "d.json");
+    write(doc, "{\"a\": [1,\n2,\n3,\n4,\n5,\n6,\n7,\n8]}\n");
+
+    static immutable string[1] names = ["dark"];
+    static immutable Theme[1] themes = [builtinDark];
+
+    WorkspaceTui w;
+    w.loadDoc = delegate WorkspaceDoc(string path) @system {
+        import std.file : readText;
+        import std.path : baseName;
+
+        const src = readText(path);
+        return WorkspaceDoc(title: baseName(path), source: src, lang: "json",
+            events: [HighlightEvent.sourceSpan(0, src.length)]);
+    };
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = LabelSet.standard();
+    w.viewer.vm.cache = cache;
+    w.tree.themeValue = &themes[0];
+    w.arrange(90, 8); // a short pane, so the document overflows it
+    w.treeVisible = false;
+    w.arrange(90, 8);
+
+    (cast(void delegate(string) @system) &w.openDoc)(doc);
+    assert(w.currentDocPath == doc);
+    w.toggleInspector();
+    const nodesBefore = w.insp.ci.data.nodes.length;
+    assert(nodesBefore > 0);
+    // Scrolled somewhere real, after the toggle's own seed/scroll-follow.
+    w.viewer.vm.top = 3;
+
+    // The file changes on disk; the (watch-triggered) reload re-reads it,
+    // keeps the viewport, and rebuilds the inspector against the new parse.
+    write(doc, "{\"a\": [1,\n2,\n3,\n4,\n5,\n6,\n7,\n8],\n\"b\": true}\n");
+    w.reloadPending = true; // what the watch fiber would set
+    w.reloadPending = false;
+    w.reloadCurrent();
+
+    import std.algorithm.searching : canFind;
+
+    assert(w.viewer.vm.source.canFind("\"b\": true"), "the reload re-read");
+    assert(w.viewer.vm.top == 3, "the viewport survived the reload");
+    assert(w.insp.ci.data.nodes.length > nodesBefore,
+        "the inspector rebuilt against the new parse");
+    assert(w.viewer.vm.inspectRects.length == 0,
+        "the stale extent tint cleared; the next hover re-syncs");
 }
