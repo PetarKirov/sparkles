@@ -33,7 +33,7 @@ import core.time : Duration;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_control : PointerShape;
-import sparkles.input : Event, InputCapabilities;
+import sparkles.input : Event, InputCapabilities, Mods;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
@@ -90,6 +90,29 @@ struct RunConfig
     bool keyRelease;
     int targetFps = 60;         /// GPU pacing
     int idleTimeoutMs = -1;     /// TUI: wake `present` without input (< 0 = never)
+    PointerUnit pointerUnit;    /// what pointer positions are measured in (`HST18`)
+}
+
+/**
+The unit an application reads pointer positions in (`HST18`).
+
+Cells are the default and the toolkit's own unit: a widget's rect is in cells,
+so a hit test against a laid-out tree wants a cell. But the third render level
+exists precisely for applications that paint their own pixels (`HST3`), and
+those hit-test in pixels — a text selection lands mid-glyph, a popup's close
+box is 14 px across, and quantising to a cell would move both.
+
+Only pointer and wheel $(B positions) change; sizes stay in cells (an
+application still reasons about its surface in the toolkit's unit) and so does
+the resize event, which is about the surface rather than the pointer. The GPU
+arm implements this by handing its synthesizer a 1×1 cell — the divisor it
+already applies — so nothing on the path learns a second coordinate system. The
+terminal arm ignores it: a cell is the only unit a tty reports.
+*/
+enum PointerUnit : ubyte
+{
+    cells,  /// the toolkit's unit, and what a widget tree is laid out in
+    pixels, /// device pixels, for an application painting its own surface
 }
 
 /**
@@ -110,8 +133,9 @@ mixin template HostState(size_t opCapacity = frameOpCapacity)
     private alias HostOps = sparkles.ui_app.host.FrameOpsOf!opCapacity;
 
     // A mixin template resolves names at its instantiation site, so the
-    // import must travel with it rather than rely on this module's.
+    // imports must travel with it rather than rely on this module's.
     private import core.time : Duration;
+    private import sparkles.input : Mods;
 
     private bool _quit;
     private bool _frameRequested;
@@ -170,6 +194,23 @@ mixin template HostState(size_t opCapacity = frameOpCapacity)
 
     private Duration _wakeIn = Duration.max;
 
+    /**
+    The modifier keys held right now (`HST17`).
+
+    A level, not an edge, and deliberately not folded from the event stream:
+    an application asking "is Shift down?" while dragging a stationary mouse
+    gets no event to fold, and would read a stale answer forever. The arms
+    refresh it once per frame from whatever their target can say — the GPU
+    arm from the synthesizer's live poll, the others from the last event that
+    carried one, which is the best that target has.
+    */
+    Mods modifiers() const @safe pure nothrow @nogc => _mods;
+
+    /// Called by the loop, not the app.
+    private void noteModifiers(Mods m) @safe pure nothrow @nogc { _mods = m; }
+
+    private Mods _mods;
+
     /// The per-frame display list, owned and reused by the host (`HST4`). An
     /// application appends; it never sizes or clears one.
     ref HostOps ops() return @safe pure nothrow @nogc => _ops;
@@ -205,6 +246,9 @@ enum bool isHost(T) = __traits(compiles, (ref T h) {
     // terminal accepts and drops (the emulator owns the glyphs there).
     int fs = h.fontSizePx;
     h.fontSize(fs + 2);
+    // The modifier level (`HST17`) — `HostState` carries it, so every host
+    // that mixes the state in satisfies this for free.
+    Mods m = h.modifiers;
 });
 
 /**
@@ -248,6 +292,28 @@ Event withRealSize(Event e, Size sz) @safe
     return e.match!(
         (ResizeEvent _) => Event(ResizeEvent(sz)),
         _ => e,
+    );
+}
+
+/**
+The modifier level `e` reports, or `fallback` where it reports none (`HST17`).
+
+What an arm with no live modifier poll refreshes its host from: four of the
+event kinds carry a level, and everything else — focus, resize, end of input —
+leaves the last one standing rather than clearing it, since none of them is
+evidence a key was let go.
+*/
+Mods modsOf(in Event e, Mods fallback) @safe
+{
+    import sparkles.input : GestureEvent, KeyEvent, match, PointerEvent,
+        WheelEvent;
+
+    return e.match!(
+        (in KeyEvent k) => k.mods,
+        (in PointerEvent p) => p.mods,
+        (in WheelEvent w) => w.mods,
+        (in GestureEvent g) => g.mods,
+        (in _) => fallback,
     );
 }
 
@@ -342,6 +408,29 @@ unittest
     // sizes or clears one, and a per-frame rebuild does not allocate again.
     h.newFrame();
     assert(h.ops().length == 0);
+}
+
+@("ui_app.host.modsOfKeepsTheLastLevelWhereAnEventCarriesNone")
+@safe
+unittest
+{
+    import sparkles.input : charEvent, EndOfInput, FocusEvent, PointerAction,
+        PointerButton, PointerEvent, Point, ResizeEvent;
+
+    const shift = Mods(shift: true);
+    const ctrl = Mods(ctrl: true);
+
+    // The four kinds that carry a level report it.
+    assert(modsOf(charEvent('a', shift), Mods.init) == shift);
+    assert(modsOf(Event(PointerEvent(PointerAction.press, PointerButton.left,
+        Point(3, 4), ctrl)), Mods.init) == ctrl);
+
+    // Everything else leaves the last one standing. A focus change or a resize
+    // is not evidence a key was let go, and clearing on one would drop Shift
+    // out from under a drag the moment the window was resized.
+    assert(modsOf(Event(FocusEvent(true)), shift) == shift);
+    assert(modsOf(Event(ResizeEvent(Size(80, 24))), shift) == shift);
+    assert(modsOf(Event(EndOfInput()), shift) == shift);
 }
 
 @("ui_app.host.resizeCarriesTheRealSize")

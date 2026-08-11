@@ -23,8 +23,8 @@ import sparkles.input : Event, InputCapabilities, cellPointer;
 import sparkles.ui.canvas : DrawOp, RecordingCanvas;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.host : FrameOpsOf, HostState, isHost, recordedOpCapacity,
-    RunConfig, withRealSize;
+import sparkles.ui_app.host : FrameOpsOf, HostState, isHost, modsOf,
+    recordedOpCapacity, RunConfig, withRealSize;
 
 /// One recorded frame: what the application drew, and whether it drew at all.
 struct RecordedFrame
@@ -198,6 +198,8 @@ RecordingHost runRecorded(Present, Handle)(
     {
         if (h.quitRequested)
             break;
+        // `HST17`: the script is the only evidence a recorder has.
+        h.noteModifiers(modsOf(e, h.modifiers));
         handle(h, withRealSize(e, h.size));
         frame();
     }
@@ -245,6 +247,32 @@ unittest
     assert(rec.frames[1].ops[0].rect.x == 1);
     assert(rec.frames[2].ops[0].rect.x == 2);
     assert(rec.drawnFrames == 3);
+}
+
+@("ui_app.record.modifierLevelSurvivesAnEventThatCarriesNone")
+@safe
+unittest
+{
+    import sparkles.input : Mods;
+
+    // `HST17` as a recorder can see it: a level, held across the events that
+    // do not report one. The GPU arm re-polls instead — this is the answer for
+    // every target that cannot.
+    Mods[] seen;
+    cast(void) runRecorded(RunConfig.init,
+        (ref RecordingHost h) { seen ~= h.modifiers; },
+        (ref RecordingHost h, in Event e) {},
+        [
+            charEvent('a', Mods(shift: true)),
+            Event(ResizeEvent(Size(80, 24))),
+            charEvent('b'),
+        ]);
+
+    assert(seen.length == 4);
+    assert(!seen[0].shift, "nothing has happened yet");
+    assert(seen[1].shift, "the key reported the level");
+    assert(seen[2].shift, "a resize is not evidence Shift was let go");
+    assert(!seen[3].shift, "a key without it is");
 }
 
 @("ui_app.record.quitStopsTheRun")

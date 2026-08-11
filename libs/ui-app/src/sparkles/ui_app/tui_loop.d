@@ -40,8 +40,8 @@ import sparkles.input : Event, InputCapabilities, isEndOfInput, isNoEvent,
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, RunConfig,
-    withRealSize;
+import sparkles.ui_app.host : FrameOps, HostState, isHost, modsOf, noDraw,
+    RunConfig, withRealSize;
 import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
 
 /**
@@ -363,9 +363,13 @@ bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
                         // frame pass below does the work, and `handle`
                         // never sees it.
                         if (!e.isNoEvent)
+                        {
                             // `HST7`: the size the application reads is
-                            // the one the host has.
+                            // the one the host has. `HST17`: a tty has no
+                            // modifier poll, so the stream is the level.
+                            host.noteModifiers(modsOf(e, host.modifiers));
                             handle(host, withRealSize(e, host.size));
+                        }
                     }
                     frame();
                 }
@@ -401,6 +405,8 @@ bool runTui(alias present, alias handle, alias draw = noDraw)(in RunConfig cfg)
             break;
 
         // `HST7`: the size an application reads is the one the host has.
+        // `HST17`: a tty has no modifier poll, so the stream is the level.
+        host.noteModifiers(modsOf(e, host.modifiers));
         handle(host, withRealSize(e, host.size));
         frame();
     }
