@@ -355,6 +355,43 @@ What each step means against the code as it stands (2026-08-09):
   one scripted session driven through `runAppRecorded` and through the live
   terminal arm under a pty harness must produce the same operation stream.
 
+  **Sub-slices, in dependency order** (surveyed 2026-08-11, against
+  `workspace.d`'s 1686 lines and both of its private arms):
+  1. **`currentScheduler`** — shipped. hue's TUI arm has three background
+     fibers (two oracle-readiness watchers and the git-status refresh) and
+     they need a `ref Sched` for `waitReadable`/`capture`, which
+     `spawnDaemon(void delegate())` cannot hand them. Without this the
+     migration cannot start; with it, each daemon asks at the top.
+  2. **The oracle first, as `P2.B4` did.** The workspace TUI has no headless
+     frame capture — `HUE_TWOSLASH_TUI_CAPTURE` renders through
+     `twoslash_tui.d`, a different path that never constructs a
+     `WorkspaceTui`. So there is nothing to A/B a restructure against, and
+     the first commit has to make one: a scripted `runAppRecorded` session
+     over the component, asserted on the operation stream. The
+     chicken-and-egg (the recorder needs the component; the component wants
+     the recorder) resolves by adding `view`/`handle`/`paint` as member
+     templates **while both private arms keep running**, so the oracle exists
+     before anything is deleted.
+  3. **The component contract.** `WidgetTree view(H)(ref H h)` is the loop's
+     top half — the polls, the git snapshot, `arrange` on a size change, the
+     `HST16` deadline (`waitDeadline` verbatim), the out-of-band drains, and
+     `skipFrame` where `dirty` is false. It returns an empty tree: hue paints
+     its own cells. `paint(H)` is `paint(h.grid)`. `handle(H)` wraps the
+     existing `handle(Event)`, turning its `false` into `h.quit()`. One piece
+     of state has no equivalent yet — the loop distinguishes "an event
+     arrived" from "the deadline expired" (`onWaitExpired`), which becomes a
+     flag `handle` sets and `view` clears.
+  4. **The arms are deleted.** `runWorkspaceAsync` (230 lines) and
+     `runWorkspaceBlocking` are `runTui`'s two arms with hue's names on them;
+     the daemons move to `h.spawnDaemon`, the channel wake to `h.wake`, the
+     `EventChannel`/`withDeadline`/`SIGWINCH` skeleton disappears entirely.
+  5. **The out-of-band drains become errands.** Not a rename:
+     `PreviewTui.takeClipboard` returns an OSC 52 sequence it base64-encoded
+     itself, so `h.clipboard(text)` requires keeping the raw text instead —
+     with `tui.d`'s existing encoding tests moved onto the host's. Same for
+     the cursor shape and `pointerShape`. Behaviour-preserving, but it is a
+     change to what hue emits, not a redirection of it.
+
 Preserve explicitly: the golden-frame screenshot harness and its deterministic
 font-size override; the resize debounce and its benchmark; and the container wiring
 the two hosts already share.
