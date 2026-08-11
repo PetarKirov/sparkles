@@ -29,6 +29,7 @@ $(LREF HostState.skipFrame) is something every target must honour.
 */
 module sparkles.ui_app.host;
 
+import core.stdc.stdarg : va_list;
 import core.time : Duration;
 
 import sparkles.base.smallbuffer : SmallBuffer;
@@ -91,7 +92,41 @@ struct RunConfig
     int targetFps = 60;         /// GPU pacing
     int idleTimeoutMs = -1;     /// TUI: wake `present` without input (< 0 = never)
     PointerUnit pointerUnit;    /// what pointer positions are measured in (`HST18`)
+
+    /**
+    A pixel font size to use verbatim, bypassing point resolution (`0` = off).
+
+    What a reproducible capture needs (`CLI6`): the same pixels on any panel.
+    Carried here rather than left to the arm because the application that
+    wants it — a golden-frame harness — never sees the arm's request.
+    */
+    int fontSizePxOverride;
+
+    /// Extra directories to resolve faces from, ahead of fontconfig. An
+    /// Android build passes its extracted asset directory and `/system/fonts`.
+    string[] extraFontSources;
+
+    /**
+    Where the backend's own trace log goes (`NFR7`).
+
+    Installed $(B before) the window opens, because the interesting lines are
+    emitted during creation — a sink attached afterwards misses exactly the
+    ones worth having when creation is what failed. Which is also why it
+    cannot be a `setup` errand: by then it is too late.
+    */
+    BackendTraceSink traceSink;
 }
+
+/**
+Where a backend's own trace output goes, spelled without naming one.
+
+Structurally the GPU backend's `TraceLogSink`, redeclared here so `RunConfig`
+— which every configuration compiles, including the ones with no window in the
+closure — can carry it. A function pointer converts across the two names
+because they are the same type.
+*/
+alias BackendTraceSink = extern (C) void function(int, const(char)*, va_list)
+    @nogc nothrow;
 
 /**
 The unit an application reads pointer positions in (`HST18`).
@@ -275,6 +310,19 @@ the host's canvas. Most applications have no such renderer, so the arms take
 this no-op by default and it costs nothing (an empty template instantiation).
 */
 void noDraw(Host)(ref Host) {}
+
+/**
+The default `setup` phase (`HST19`): nothing to do once the surface exists.
+
+An application whose first frame is its first contact with the surface needs
+no such phase — it lays out against `size` and draws. One that computes a
+layout $(B before) the loop does: the surface's real size, and the cell
+metrics the loaded font settled on, are not knowable until the arm has opened
+it, and nothing before that point can be measured against them. Called once,
+after the arm opens and before the first frame, with the same host every other
+phase gets.
+*/
+void noSetup(Host)(ref Host) {}
 
 /**
 Normalizes a resize event to carry the surface size the host actually has
