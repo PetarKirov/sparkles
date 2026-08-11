@@ -123,6 +123,14 @@ struct Window
         // answer. Where there is no scaling it is a no-op.
         SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI);
         InitWindow(r.width, r.height, r.title.length ? r.title.ptr : "");
+        // Checked HERE, before any other raylib call. `InitWindow` reports
+        // failure only through `IsWindowReady`, and every call below assumes a
+        // live GLFW: on a host with no window server they warn ("The GLFW
+        // library is not initialized") and then take a SIGSEGV. Leaving
+        // `opened` false also keeps the destructor from calling `CloseWindow`
+        // on a window that never opened.
+        if (!IsWindowReady())
+            return w;
         w.opened = true;
         if (r.resizable)
             SetWindowState(ConfigFlags.FLAG_WINDOW_RESIZABLE);
@@ -138,6 +146,18 @@ struct Window
         if (opened)
             CloseWindow();
     }
+
+    /**
+    Whether the window actually opened.
+
+    `InitWindow` has no return value and reports failure only here, so a caller
+    that skips this check discovers a headless or locked session by segfaulting
+    in the first font upload rather than by printing an error.
+    */
+    /// Reads the flag `open` recorded rather than re-asking raylib: once
+    /// creation failed there is no live GLFW to ask, and this must stay
+    /// answerable on exactly the host where that is true.
+    bool ready() const @safe pure nothrow @nogc => opened;
 
     /// The platform asked to close (title-bar button, session end).
     bool shouldClose() const @system => WindowShouldClose();
