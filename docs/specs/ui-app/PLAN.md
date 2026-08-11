@@ -245,7 +245,34 @@ UIAPP-O1 user-visible shift (14→18 pt, catppuccin-mocha→tokyo-night,
 Maple-first cascade, +--font-dir/+--font-codepoint-map) plus the Android
 prepend’s deletion. En route: the mixin’s `--no-gui` was a silent no-op
 (declaration order vs the parser’s negation resolution) — fixed with a
-regression test. Next: P2.B3.
+regression test.
+
+**Status (2026-08-11): P2.B3 shipped, P2.B4 in progress.** P2.B3 landed in
+two halves — the capture hooks off the environment and onto `GuiRequest`
+(`CLI6`), then window and fonts through `openGuiSession`, which is also what
+put the `HST14` font errand within reach.
+
+P2.B4 is being cut as seams before it is cut as a component, four slices so
+far: `runGui`’s 39 parameters became a `GuiArgs` value, its loop-carried
+state became a `GuiRunState` value, the paint half became
+`paintWindowFrame`, and the view half became `stepFrame`. The third slice is
+the load-bearing one — hoisting the paint half out of the loop made the
+compiler enumerate every value it had been closing over (22 of them), and
+that list is now `FrameGeom`: the exact interface between the frame’s two
+halves, derived rather than guessed. It is also the split the component
+needs, since `FrameGeom` is per-frame (what `view` computes for `paint`,
+`HST13`) and everything still captured is run-scoped (the component’s
+fields). The frame loop is now pace → `stepFrame` → `paintWindowFrame` →
+present, which is `gui_loop.d`’s `oneFrame` with hue’s names on it. Nothing
+in either half’s body changed; `dub test :hue` stays at 194.
+
+What the flip still owes: the window bracket moves from `paintWindowFrame`
+to the arm (`HST13`), hue’s `inputSource` gives way to the host’s poll (it
+reads modifier **levels** and sets gesture metrics from the cell size —
+neither is expressible through `handle` today, so both want a host errand or
+a default the arm can supply), and `frame`/`shotPath` presentation moves to
+the component. Then hue’s private `Sched`/`pumpUntilFrame`/`targetFps: 0` is
+deleted and the dub flip is one line.
 
 P2.B1 comes first among the hue steps deliberately: the GUI module has no tests
 today, so the migration's first commit is the one that gives it some.
