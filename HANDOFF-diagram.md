@@ -23,19 +23,20 @@ predecessors.
 ## Where it stands
 
 Branch **`feat/diagram-mvp`**, rebased on `origin/main`, not yet pushed.
-`dub test :diagram` = **49 passed** on ldc2 and dmd.
+`dub test :diagram` = **57 passed** on ldc2 and dmd.
 
-| Step     | State                                                                                     |
-| -------- | ----------------------------------------------------------------------------------------- |
-| **D1.1** | shipped — scaffold: `runApp` component, both configurations, three scripted quit sessions |
-| **D1.2** | shipped — `src/camera.d` (`CAM1`–`CAM5`)                                                  |
-| **D1.3** | shipped — `src/world.d` (`WLD1`–`WLD4`)                                                   |
-| **D1.4** | shipped — `src/systems/input.d` (`IXN1`–`IXN4`): tools, capture, pan/zoom/minimap scrub   |
-| **D1.5** | **next** — render systems: board + minimap + chrome into one op buffer (`RND1`–`RND5`)    |
-| Series 2 | menus, groups, labels, connectors, fit-all (`D2.1`–`D2.5`)                                |
+| Step     | State                                                                                         |
+| -------- | --------------------------------------------------------------------------------------------- |
+| **D1.1** | shipped — scaffold: `runApp` component, both configurations, three scripted quit sessions     |
+| **D1.2** | shipped — `src/camera.d` (`CAM1`–`CAM5`)                                                      |
+| **D1.3** | shipped — `src/world.d` (`WLD1`–`WLD4`)                                                       |
+| **D1.4** | shipped — `src/systems/input.d` (`IXN1`–`IXN4`): tools, capture, pan/zoom/minimap scrub       |
+| **D1.5** | shipped — `src/systems/render.d` (`RND1`–`RND2`, `RND4`–`RND5`, `DIA5`): board/minimap/chrome |
+| Series 2 | **next** — menus, groups, labels, connectors, fit-all (`D2.1`–`D2.5`)                         |
 
 `src/` today: `app.d` (the entry point, excluded from the test build),
-`diagram_app.d` (the component), `camera.d`, `world.d`, `systems/input.d`.
+`diagram_app.d` (the component), `camera.d`, `world.d`, `systems/input.d`,
+`systems/render.d`.
 
 ## The five things that will save you a day
 
