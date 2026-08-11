@@ -154,6 +154,9 @@ private enum RgbColor hardFallbackBg = RgbColor(0x1e, 0x1e, 0x2e);
 private struct Tint { RgbColor rgb; ubyte alpha; }
 private enum Tint matchTint = Tint(RgbColor(255, 215, 0), 70);
 private enum Tint currentMatchTint = Tint(RgbColor(255, 145, 0), 130);
+/// The inspector's extent tint (TSI2) — a cool band, so it never reads as a
+/// search match.
+private enum Tint inspectTint = Tint(RgbColor(80, 160, 255), 70);
 
 
 /// A loaded document — the pipeline's `Document` Whole itself, so the
@@ -1227,6 +1230,21 @@ int runGui(GuiArgs guiArgs) @system
                         Visual(bg: t.rgb, bgAlpha: t.alpha, hasBg: true));
                 }
 
+        // The inspector's extent tint (TSI2), through the same identity
+        // channel — painted in every view (the preview's blocks carry the
+        // same source anchors).
+        if (pn.inspVisible)
+            foreach (ref const r; vm.inspectRects)
+            {
+                const row = r.y - vm.top;
+                if (row < 0 || row >= docRows)
+                    continue;
+                chrome.fillRect(Rect(gutterPx / cellW + r.x,
+                    cast(int)(docY0 / cellH + row), r.width, 1),
+                    Visual(bg: inspectTint.rgb, bgAlpha: inspectTint.alpha,
+                        hasBg: true));
+            }
+
         // Twoslash hover: pointer → byte (the identity channel) → hover node;
         // the token's dotted underline fades in and the popup (the shared
         // viewHoverPopup chrome via drawPopup) draws on vm.top, with pointer
@@ -1424,6 +1442,7 @@ int runGui(GuiArgs guiArgs) @system
             const ir = paneContent(inspPane);
             if (ir.width > 2)
             {
+                pn.insp.ensureFresh(vm); // a document switch rebuilds next frame
                 pn.insp.tv.width = ir.width;
                 pn.insp.tv.height = ir.height;
                 pn.insp.focused = pn.inspFocused;
@@ -1436,9 +1455,9 @@ int runGui(GuiArgs guiArgs) @system
                 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
                 auto ib = Builder();
-                const iv = pn.insp.view(ib, ir.width - 1);
+                const iv = pn.insp.view(ib, ir.width);
                 Widget ipane = Widget(kind: WidgetKind.column,
-                    children: [iv], width: SizeSpec.fixed(ir.width - 1),
+                    children: [iv], width: SizeSpec.fixed(ir.width),
                     clipX: true);
                 auto iwt = ib.finish(ib.add(ipane));
                 auto iOps = buildDisplayList(iwt, layout(iwt),
@@ -2323,6 +2342,8 @@ int runGui(GuiArgs guiArgs) @system
                 {
                     if (wheelRoute.pane == treePane)
                         pn.tree.scrollBy(inp.fin.wheelCells);
+                    else if (wheelRoute.pane == inspPane)
+                        pn.insp.tv.scrollBy(inp.fin.wheelCells);
                     else
                     {
                         // A vertical notch over a TALL fence scrolls the
@@ -2761,12 +2782,12 @@ int runGui(GuiArgs guiArgs) @system
             if (!(pn.treeVisible && smp.x < treeCols * cellW)
                 && smp.x < screenW - inspCols() * cellW)
             {
-                const h = hitAt(smp.x, smp.y);
-                if (h.ok && h.lo >= 0
-                    && cast(size_t) h.lo != pn.insp.lastSyncOffset)
+                const hit = hitAt(smp.x, smp.y);
+                if (hit.ok && hit.lo >= 0
+                    && cast(size_t) hit.lo != pn.insp.lastSyncOffset)
                 {
-                    pn.insp.lastSyncOffset = cast(size_t) h.lo;
-                    pn.insp.selectAt(cast(size_t) h.lo);
+                    pn.insp.lastSyncOffset = cast(size_t) hit.lo;
+                    pn.insp.selectAt(cast(size_t) hit.lo);
                     syncInspectorExtent();
                 }
             }
@@ -2863,6 +2884,47 @@ int runGui(GuiArgs guiArgs) @system
                     pop.expandedRegions[r] = !pop.expandedRegions.get(r, false);
                 }
             }
+            // The inspector pane owns its own pointer (a click selects, a
+            // second click toggles, the bar grabs) — cell-local through the
+            // shared tree arm; a press also moves the focus there, and a
+            // press anywhere else gives it back.
+            const inspRc = pn.inspVisible ? paneContent(inspPane) : Rect.init;
+            const overInsp = pn.inspVisible && inspRc.width > 0
+                && mp.x >= inspRc.x * cellW;
+            if (pn.inspVisible && (overInsp || pn.insp.tv.sb.dragging))
+            {
+                const lp = Point(cast(int)(mp.x / cellW) - inspRc.x,
+                    cast(int)(mp.y / cellH) - inspRc.y);
+                bool have;
+                PointerEvent pe;
+                if (clickPressed())
+                {
+                    pn.inspFocused = true;
+                    pe = PointerEvent(action: PointerAction.press,
+                        button: PointerButton.left, pos: lp);
+                    have = true;
+                }
+                else if (inp.fin.leftReleased)
+                {
+                    pe = PointerEvent(action: PointerAction.release,
+                        button: PointerButton.left, pos: lp);
+                    have = true;
+                }
+                else if (inp.fin.leftDown)
+                {
+                    pe = PointerEvent(action: PointerAction.drag,
+                        button: PointerButton.left, pos: lp);
+                    have = true;
+                }
+                if (have)
+                {
+                    pn.insp.handle(Event(pe), vm);
+                    syncInspectorExtent();
+                }
+            }
+            else if (clickPressed() && pn.inspFocused)
+                pn.inspFocused = false;
+
             // Levels, not edges (`HST17`): a drag that stops moving still
             // gets no event when Shift goes down, so this is a reading the
             // host takes each frame, not something folded from `evBuf`.
@@ -2872,7 +2934,8 @@ int runGui(GuiArgs guiArgs) @system
             // instance of the allow-list defect: every new draggable had to be
             // added here, and to every other affordance's condition. A popup
             // click is not a draggable — it consumes the press outright.
-            if (selectStartPressed() && !overSb && !overTree && !copyClicked
+            if (selectStartPressed() && !overSb && !overTree && !overInsp
+                && !copyClicked
                 && !popupClicked && inp.capture.available(capSelection))
             {
                 // The lifecycle decisions live on the state (`gui_state`,

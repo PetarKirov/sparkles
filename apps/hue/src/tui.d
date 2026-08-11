@@ -589,6 +589,24 @@ struct PreviewTui
             paintGrid(g, pageBg, buildDisplayList(hbt, layout(hbt),
                 vm.palette, pageFg, pageBg), originX, height - 2);
         }
+        // The inspector's extent tint (TSI2): the selected CST node's rects,
+        // through the same identity channel the search matches use — a
+        // fainter band than the line selection, char-precise.
+        if (vm.inspectRects.length)
+        {
+            const inspFill = Color.fromRgb(mix(pageBg, selBg, 0.55));
+            foreach (ref const r; vm.inspectRects)
+            {
+                const gy = 1 + r.y - top;
+                if (gy < 1 || gy > rows)
+                    continue;
+                foreach (x; r.x - hx .. r.x - hx + r.width)
+                    if (x >= 0 && x < width - 1)
+                        g[cast(ushort)(originX + x), cast(ushort) gy]
+                            .style.bg = inspFill;
+            }
+        }
+
         if (!sel.active)
             return;
         const selFill = Color.fromRgb(selBg);
