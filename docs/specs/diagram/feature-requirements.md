@@ -27,12 +27,12 @@ interaction (`IXN`), rendering (`RND`)._
 
 ## World (`WLD`)
 
-| ID   | Requirement                                                                                                                                                                                       | Status      | Traces to     |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------- |
-| WLD1 | Entities are dense `uint` indices with a free list; components are SoA columns (`bounds`, `zOrder`, `group`, label slot + length) sized by compile-time caps.                                     | not started | `src/world.d` |
-| WLD2 | Groups are a `group` column (0 = none): grouping stamps a fresh group id on the selection, ungrouping clears it, and a move applies to every member — no nested hierarchy in the MVP.             | not started | `src/world.d` |
-| WLD3 | Edges are `(from, to)` entity pairs in their own columns; deleting an entity deletes its edges.                                                                                                   | not started | `src/world.d` |
-| WLD4 | Selection is a capped entity list plus the marquee in progress; all interaction state (tool, drag, menu, label edit, capture/press/hover) lives in `World` so a scripted test inspects one value. | not started | `src/world.d` |
+| ID   | Requirement                                                                                                                                                                                       | Status                                                                                    | Traces to     |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------- |
+| WLD1 | Entities are dense `uint` indices with a free list; components are SoA columns (`bounds`, `zOrder`, `group`, label slot + length) sized by compile-time caps.                                     | full                                                                                      | `src/world.d` |
+| WLD2 | Groups are a `group` column (0 = none): grouping stamps a fresh group id on the selection, ungrouping clears it, and a move applies to every member — no nested hierarchy in the MVP.             | full                                                                                      | `src/world.d` |
+| WLD3 | Edges are `(from, to)` entity pairs in their own columns; deleting an entity deletes its edges.                                                                                                   | full                                                                                      | `src/world.d` |
+| WLD4 | Selection is a capped entity list plus the marquee in progress; all interaction state (tool, drag, menu, label edit, capture/press/hover) lives in `World` so a scripted test inspects one value. | full — the columns, the edges, and every interaction field; the systems consume them next | `src/world.d` |
 
 ## Interaction (`IXN`)
 
