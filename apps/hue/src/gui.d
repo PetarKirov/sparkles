@@ -22,8 +22,6 @@ version (HueGui):
 import core.stdc.stdarg : va_list; // for the TraceLogCallback bridge (NFR7)
 import core.time : dur, Duration, MonoTime, usecs;
 
-import sparkles.event_horizon.sched : Sched;
-
 // The shared raylib text core (extracted in M5). Pulls raylib-d + libs
 // "raylib" transitively, so it is present only in the `gui` build.
 import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
@@ -99,7 +97,11 @@ import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
 import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
 import sparkles.ui.widget : Builder, WidgetTree;
 import sparkles.ui.interp.immediate : paint;
-import sparkles.ui_raylib : drawScrollbar, namedKey, RaylibCanvas, RaylibEvents,
+import sparkles.ui_app.backend : BackendPolicy;
+import sparkles.ui_app.gui_options : GuiOptions;
+import sparkles.ui_app.host : PointerUnit, RunConfig;
+import sparkles.ui_app.run : run, RunOutcome;
+import sparkles.ui_raylib : drawScrollbar, namedKey, RaylibCanvas,
     ScrollbarAnim, ScrollbarLayout,
     traceLevelTag, traceLogTo, Window, WindowRequest,
     scrollbarLayout, toRaylibCursor;
@@ -187,10 +189,11 @@ struct GuiArgs
     immutable(Theme)[] themes;
     size_t startIdx;
     PreviewModel preview = PreviewModel.init;
-    string fontName = "monospace";
-    int fontSize = defaultFontSize;
-    int windowWidth = 800;
-    int windowHeight = 600;
+    // The window/font/theme settings, in the shared shape (`CLI`): one value
+    // instead of the six fields this used to unpack them into, so `--font-dir`
+    // and `--font-codepoint-map` reach the request without hue re-declaring
+    // them — the desktop build was dropping both.
+    GuiOptions gui;
     bool lineNumbers = true;
     bool codeLineNumbers = true;
     bool ansiCopyStrip = false;          // --ansi-copy=strip (SEL7/CLI10); default raw
@@ -204,14 +207,12 @@ struct GuiArgs
     string docPath = null;               // on-disk path (reveal in the tree)
     bool startInTree = false;            // a directory target opens in the tree
     string treeRoot = null;              // explorer root (default: docPath's dir)
-    FontSet.FaceOverrides faces = FontSet.FaceOverrides.init; // per-style fonts
     string docLang = null;               // canonical language (CST folds)
     string[] includeGlobs = null;        // explorer globs (XPF2)
     string[] excludeGlobs = null;        // ditto
     int treeWidth = 32;                  // explorer pane width in cells
     int tabWidth = 4;                    // tab stops in the raw view
     bool listWhitespace = false;         // vim 'list' whitespace glyphs
-    string[] codepointMaps = null;       // --font-codepoint-map entries (Android defaults)
     bool liveTypes = true;               // live D types via the oracle (PRJ12)
     DiffDoc initialDiff = DiffDoc.init;  // diff document payload (ContentKind.diff)
     DiffSides[] initialDiffSides = null; // per-file side texts (DVM5)
@@ -322,71 +323,36 @@ int runGui(GuiArgs guiArgs) @system
     // `openGuiSession`'s now (`CLI5`/`CLI6`).
     const initialTop = capture.initialTop;
 
-    // The frame cadence's owner (M17, event-horizon SPEC §15.3 GUI shape):
-    // when the ring is available, raylib's own pacing is disabled
-    // (`targetFps: 0`) and the loop paces on absolute frame deadlines via
-    // `Sched.tick` — parking in the ring, where subprocess and watch
-    // completions run between frames. Where loop creation fails (Android's
-    // app seccomp blocks io_uring), raylib keeps its SetTargetFPS sleep —
-    // the explicit fallback arm, selected once here.
-    import sparkles.event_horizon.sched : Sched, SchedOptions;
-
-    SchedOptions schedOpts;
-    schedOpts.stackSize = 1024 * 1024;
-    schedOpts.maxFibers = 16;
-    Sched sched;
-    const asyncLoop = !Sched.create(sched, schedOpts).hasError;
-
-    // The window/font opening is the host's (`P2.B3`): `openGuiSession`
-    // encodes the one order that works (`CLI5` — window, pixel size, faces,
-    // then cells), the Android facts (0×0 = the native surface; no cell
-    // sizing), the DPI resolution with the capture's deterministic pixel
-    // override (`CLI6`), and the atlas clamp. The trace-log bridge (NFR7)
-    // rides the request so raylib's creation chatter is captured too.
-    import sparkles.ui_app.gui_options : FontRequest, WindowCells;
-    import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
-
-    GuiRequest req = {
+    // What the run asks of the host (`P2.B4`): the window and the fonts open
+    // inside `run`, the frame cadence is the arm's ticker (which is the code
+    // hue's own `Sched`/`pumpUntilFrame` used to be), and the pacing fallback
+    // where no ring exists — Android's app seccomp blocks io_uring — is the
+    // arm's too. `pointerUnit: pixels` is the one thing hue must say out loud
+    // (`HST18`): its chrome is positioned to the pixel, and cell-quantised
+    // positions would move every hit test in the module.
+    RunConfig cfg = {
         title: "hue — " ~ title,
-        font: FontRequest(
-            family: fontName,
-            bold: faces.bold,
-            italic: faces.italic,
-            boldItalic: faces.boldItalic,
-            codepointMaps: codepointMaps,
-        ),
-        cells: WindowCells(windowWidth, windowHeight),
-        fontSizePoints: fontSize,
+        gui: gui,
+        targetFps: 60,
+        pointerUnit: PointerUnit.pixels,
         fontSizePxOverride: capture.fontSizePx,
         traceSink: &raylibTraceLog,
-        targetFps: asyncLoop ? 0 : 60,
     };
     version (Android)
     {
         import android_glue : androidDataDir;
         import android_paths : fontsDir;
 
-        req.extraFontSources = [fontsDir(androidDataDir()), "/system/fonts"];
+        cfg.extraFontSources = [fontsDir(androidDataDir()), "/system/fonts"];
     }
 
-    GuiSession session;
-    if (!openGuiSession(req, session))
-    {
-        stderr.writeln("hue --gui: could not load a font from '", fontName,
-            "' (is fontconfig available?)");
-        version (Android)
-        {
-            import sparkles.base.logger : error;
-
-            error(i"hue: no font resolved from '$(fontName)'");
-        }
-        return 1;
-    }
-    // The session owns the window and the faces (its destructor unloads);
-    // these ref accessors keep every downstream `window`/`fonts` use exactly
-    // as it was written.
-    ref Window window() => session.window;
-    ref FontSet fonts() => session.fonts;
+    // The window and the face set, published by the setup phase (`HST19`) the
+    // moment the arm has opened them. Every downstream `window`/`fonts` use is
+    // written exactly as it was; what changed is who owns the session.
+    Window* windowP;
+    FontSet* fontsP;
+    ref Window window() => *windowP;
+    ref FontSet fonts() => *fontsP;
 
     // The document pipeline's Whole (PRN1 / the C1 diagnosis): one value owns
     // the document, its theme-resolved colors, widget pipeline, folding,
@@ -536,28 +502,6 @@ int runGui(GuiArgs guiArgs) @system
             pn.tree.rebuild();
     }
 
-    pn.tree.chromeRows = 0; // the GUI pane is all tree rows
-    pn.tree.root = treeRoot.length ? treeRoot
-        : (docPath.length ? dirName(docPath) : ".");
-    // The frames must exist before the first layout: everything below reads
-    // the document pane's width through the container, and an unarranged
-    // container reports nothing.
-    arrangePanes();
-    applyTheme(vm.themeIdx); // resolves the theme before the first document
-    vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
-        source, events, preview, twoslash, docLang, initialDiff,
-        initialDiffSides, initialDiffSession);
-    // A markdown file opens in preview by default; Tab toggles to the raw
-    // highlighted-source view. The capture's preview pin ("0") fixes the
-    // initial mode for deterministic goldens.
-    if (capture.preview == "0" && vm.showPreview)
-    {
-        vm.showPreview = false;
-        vm.rebuild();
-    }
-    vm.top = initialTop;
-    if (docPath.length)
-        pn.tree.reveal(docPath);
 
     SmallBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
 
@@ -653,10 +597,6 @@ int runGui(GuiArgs guiArgs) @system
 
     scope (exit) stopLive();
 
-    // The document hue opened with (a payload target needs no oracle).
-    if (docPath.length)
-        startLive(docPath, vm.tw.code.length != 0);
-    startDiffTypes();
 
     /// Loads the set's currently-selected document in place (`GNV1`): re-read,
     /// re-highlight, rebuild the preview model, relayout. Scroll and search reset;
@@ -722,41 +662,28 @@ int runGui(GuiArgs guiArgs) @system
         vm.top = vm.visualOfMatch(vm.matches[vm.curMatch]) - visibleRows / 2;
     }
 
-    // Debug/CI: a preselected search (highlights + jump to the first match)
-    // so a golden capture exercises the match overlay.
-    foreach (ch; capture.search)
-        inp.query ~= ch;
-    if (inp.query.length)
-    {
-        vm.search(inp.query[]);
-        if (vm.matches.length)
-            vm.top = vm.visualOfMatch(vm.matches[0]);
-    }
-
-    // Debug/CI: the lantern seed opens the guide's pending path at once, so a
-    // golden capture can hold the panel open — there is otherwise no way to
-    // photograph something that only exists between two keystrokes. An empty
-    // (but set) value shows the root listing.
-    if (capture.lanternSet)
-    {
-        foreach (ch; capture.lantern)
-            pn.lantern.pending ~= Chord(key: Key.char_, ch: ch);
-        pn.lantern.shown = true;
-    }
 
 
-    // The ONE input source (IXB7/UIA7): raylib's polled state is synthesised
-    // into `sparkles:input` events by the backend adapter, drained once per
-    // frame here, and folded into the flags the sites below read. hue names no
-    // raylib input call.
+    // The drain, filled by the host's `handle` (IXB7/UIA7): the arm owns the
+    // one synthesizer, hue accumulates its events and the view half folds them
+    // into the flags the sites below read. hue names no raylib input call, and
+    // now no event source either.
     //
-    // `poll(sink, 1, 1)` — a cell of 1×1 px means positions arrive in PIXELS,
-    // which is the unit hue's chrome already works in. Converting coordinates
-    // at the same time as the seam would have made a behaviour change
-    // indistinguishable from a refactor.
-    RaylibEvents inputSource;
+    // Positions arrive in PIXELS, which is the unit hue's chrome works in —
+    // asked for by `RunConfig.pointerUnit` (`HST18`) rather than by the 1×1
+    // cell this used to pass the synthesizer directly.
     Event[] evBuf;
     KeyEvent[] keyBuf;
+
+    // The frame's geometry, computed by the view half and read by the paint
+    // half. One value, because the two halves are now separate callbacks.
+    FrameGeom geom;
+
+    // Whether a frame has been painted. The post-present tail below belongs to
+    // the PREVIOUS frame — the host owns the bracket, so what used to run right
+    // after `endFrame` runs at the top of the next view half instead, and on
+    // the first pass there is no previous frame to finish.
+    bool painted;
 
     // The key guide's per-frame scratch, hoisted out of the loop so a panel
     // that is up every frame costs no allocation to repaint: the label arena
@@ -891,7 +818,7 @@ int runGui(GuiArgs guiArgs) @system
         auto wt = b.finish(b.add(colW));
         auto ops = buildDisplayList(wt, layout(wt),
             themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
-        auto c = RaylibCanvas(&session.fonts, &buf, fonts.cellW(), fonts.cellH(),
+        auto c = RaylibCanvas(fontsP, &buf, fonts.cellW(), fonts.cellH(),
             x, y);
         paint(c, ops);
     }
@@ -983,13 +910,12 @@ int runGui(GuiArgs guiArgs) @system
     {
         with (geom)
         {
-        window.beginFrame();
         // The chrome fills below go through the backend adapter, not raylib
         // (UIA7). Pixel-space because hue's chrome is pixel-positioned — a
         // 1 px divider, a `cellH - 1` band — and quantising to cells would
         // move it. Chrome that can become a widget should (UIA2); this is the
         // seam for what has not yet.
-        auto chrome = RaylibCanvas(&session.fonts, &buf, cellW, cellH);
+        auto chrome = RaylibCanvas(fontsP, &buf, cellW, cellH);
         // GL scissor state is global; a scissor leaked from any earlier path
         // (or left over across the buffer swap) would CLIP the clear below —
         // exactly the "documents ghost over each other" failure. Start every
@@ -1031,7 +957,7 @@ int runGui(GuiArgs guiArgs) @system
         // raylib canvas, offset by the scroll position and culled to the
         // viewport rows (raylib clips px; the cull skips dead draw calls).
         {
-            auto canvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
+            auto canvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
                 cast(float)(gutterPx - dhx * cellW),
                 cast(float)(docY0 - vm.top * cellH));
             // The pane's base clip: content (an unwrappable code line inside
@@ -1390,7 +1316,7 @@ int runGui(GuiArgs guiArgs) @system
             auto tOps = buildDisplayList(wt, layout(wt),
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
             const thx = pn.tree.hOverflows() ? cast(int) pn.tree.hsb.offset : 0;
-            auto tCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
+            auto tCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
                 cast(float)(-thx * cellW), cast(float)((treeTopRows + 1) * cellH));
             tCanvas.pushClip(Rect(thx, 0, treeCols - thx, pn.tree.bodyRows));
             paint(tCanvas, tOps);
@@ -1482,7 +1408,7 @@ int runGui(GuiArgs guiArgs) @system
                 RuleEdge.bottom, Visual(fg: vm.gutterFg));
             auto barOps = buildDisplayList(barTree, barFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
-            auto barCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
+            auto barCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
                 0, cast(float) toolbarY);
             paint(barCanvas, barOps);
         }
@@ -1540,26 +1466,59 @@ int runGui(GuiArgs guiArgs) @system
                 buildDisplayListInto(ltnTree, ltnFrames,
                     themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
                     ltnOps);
-                auto ltnCanvas = RaylibCanvas(&session.fonts, &buf, cellW, cellH,
+                auto ltnCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
                     0, cast(float) panelY);
                 paint(ltnCanvas, ltnOps[]);
             }
         }
 
         window.resetClip(); // never let a scissor survive the frame
-        window.endFrame();
         }
+        painted = true;
     }
 
-    // The frame's view half (`P2.B4` fourth slice): drain, dispatch, derive —
-    // everything between the pacing and the window bracket, lifted whole for the
-    // same reason the paint half was. With both halves named the loop is three
-    // statements, and the component's `view`/`paint` split is already drawn.
-    //
-    // Returns false when the run is over: the `quit` command's `return 0` cannot
-    // return for `runGui` from in here, so it becomes a value the loop acts on —
-    // which is also what the host's loop will want when it owns the iteration.
-    bool stepFrame(out FrameGeom geom)
+    // What used to sit below `endFrame`, now that the bracket is the arm's.
+    // Returns false when the capture is finished and the run is over.
+    bool frameTail()
+    {
+        // On-demand atlas growth: drawText requests any covered-but-unrasterized
+        // codepoints (emoji, CJK, higher-plane icons) as it draws; grow the atlas
+        // after the frame ends so the reupload never lands mid-frame.
+        fonts.flushPending();
+
+        ++frame;
+        if (!shotPath.length)
+            return true;
+
+        // Warm up for a number of frames before capturing: the glyph atlas
+        // uploads over the first frames, and under a headless GL context the
+        // framebuffer swap lags the draw, so an early TakeScreenshot grabs a
+        // black frame. ~20 frames is reliably past both.
+        //
+        // Then WAIT OUT the async git-status worker. Its landing rebuilds
+        // the tree, so a capture that races it is not reproducible: four
+        // runs of one binary produced two different images, differing in
+        // the explorer's selection — which quietly made this fixture
+        // useless as a regression oracle. Two frames after it settles,
+        // the rebuild it triggered has been laid out and painted.
+        if (!(pn.treeVisible && pn.tree.git.refreshing) && settledAt < 0)
+            settledAt = frame;
+        const settled = settledAt >= 0 && frame >= settledAt + 2;
+        // A worker that never finishes must not hang the capture: past
+        // the cap, shoot anyway and let the diff say so.
+        if (shotAt < 0 && frame >= shotFrame
+            && (settled || frame >= shotFrame + shotSettleCap))
+        {
+            window.screenshot(shotPath.toStringz);
+            shotAt = frame;
+        }
+        return !(shotAt >= 0 && frame >= shotAt + 1);
+    }
+
+    // The frame's view half (`P2.B4`): the previous frame's tail, then fold,
+    // dispatch, derive — everything the host calls `present`. Returns false
+    // when the run is over, which the caller turns into `quit` + `skipFrame`.
+    bool stepFrame(H)(ref H h, out FrameGeom geom)
     {
         // The action bar crosses from the view half to the paint half like any
         // other per-frame value, but the block that builds it is nested — so
@@ -1572,22 +1531,24 @@ int runGui(GuiArgs guiArgs) @system
             int toolbarY;
         }
 
-        // Gesture thresholds are PHYSICAL, so they track the cell size: a
-        // pinch or Ctrl-± changes it, and values fixed before the loop would
-        // misclassify after any zoom. Set before the drain, because the drain
-        // is what advances the recogniser.
-        inputSource.gestures.cfg.slopPx =
-            fonts.cellH() / 2.0f > 8 ? fonts.cellH() / 2.0f : 8;
-        inputSource.gestures.cfg.cellH = fonts.cellH();
+        // The previous frame's tail: the host's bracket closed after the paint
+        // half ran (`HST13`), so everything that used to sit below `endFrame`
+        // resolves here instead — the same point in the sequence, one call
+        // later. Nothing to finish before the first frame.
+        if (painted && !frameTail())
+            return false;
 
-        // Drain, then fold. `inp.fin` carries the button LEVEL across frames, which
-        // an event stream reports only as transitions.
-        evBuf.length = 0;
-        inputSource.poll((Event e) { evBuf ~= e; }, 1, 1);
+        // Fold. `inp.fin` carries the button LEVEL across frames, which an
+        // event stream reports only as transitions; `handle` filled `evBuf`
+        // during the arm's drain, and the gesture thresholds it fed the
+        // recogniser are the host's to scale now (`HST17` note).
         keyBuf.length = 0;
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
         inp.fin = foldFrame(evBuf, inp.fin);
+        // Consumed. The clear is here rather than before the drain because the
+        // drain no longer happens here — `handle` runs before this is called.
+        evBuf.length = 0;
 
         // Live D types (`PRJ12`/`PRJ14`): drain the oracle's non-blocking
         // output. The lazy payload attaches to the open document (every hover
@@ -2800,9 +2761,11 @@ int runGui(GuiArgs guiArgs) @system
                     pop.expandedRegions[r] = !pop.expandedRegions.get(r, false);
                 }
             }
-            // Levels, not edges — see `RaylibEvents.modifiers`.
-            const shiftMod = inputSource.modifiers.shift;
-            const altMod = inputSource.modifiers.alt;
+            // Levels, not edges (`HST17`): a drag that stops moving still
+            // gets no event when Shift goes down, so this is a reading the
+            // host takes each frame, not something folded from `evBuf`.
+            const shiftMod = h.modifiers.shift;
+            const altMod = h.modifiers.alt;
             // The five-term negation chain this replaces was the clearest
             // instance of the allow-list defect: every new draggable had to be
             // added here, and to every other affordance's condition. A popup
@@ -2843,107 +2806,123 @@ int runGui(GuiArgs guiArgs) @system
         return true;
     }
 
-    // The frame clock (asyncLoop only): absolute deadlines, missed frames
-    // skipped — the Ticker discipline, inline at the embedding hatch.
-    import core.time : MonoTime;
-
-    enum framePeriod = 1_000_000.usecs / 60;
-    auto nextFrame = MonoTime.currTime + framePeriod;
-
-    while (!window.shouldClose())
+    // The setup phase (`HST19`): the arm has opened the window and settled the
+    // face set on a cell size, so the layout that must exist before the first
+    // frame can finally be built against a real surface. Every statement below
+    // ran inline before the loop; what moved is only the point at which there
+    // is something to measure.
+    void setupPhase(H)(ref H h)
     {
-        // Pace + pump: park in the ring until the frame deadline; any async
-        // completions (subprocesses, watches, timers) dispatch during the
-        // park. Raylib is sampled below as before — it no longer sleeps
-        // (`targetFps: 0`), so the cadence belongs to event-horizon.
-        if (asyncLoop)
-            pumpUntilFrame(sched, nextFrame, framePeriod);
-
-        // The frame, in two named halves plus the window bracket in between.
-        FrameGeom geom;
-        if (!stepFrame(geom))
-            return 0;
-        paintWindowFrame(geom);
-
-        // On-demand atlas growth: drawText requests any covered-but-unrasterized
-        // codepoints (emoji, CJK, higher-plane icons) as it draws; grow the atlas
-        // after EndDrawing so the reupload never lands mid-frame.
-        fonts.flushPending();
-
-        ++frame;
-        if (shotPath.length)
+        // A window and a face set exist on the windowed arm alone, and `run`
+        // type-checks the callbacks against every arm it could dispatch to —
+        // so the terminal instantiation must compile even though hue's `main`
+        // never reaches it (`--tui`, `--html` and `--ansi` are dispatched
+        // before a loop is asked for at all).
+        static if (__traits(compiles, { Window* w = &(h.window()); }))
         {
-            // Warm up for a number of frames before capturing: the glyph atlas
-            // uploads over the first frames, and under a headless GL context the
-            // framebuffer swap lags the draw, so an early TakeScreenshot grabs a
-            // black frame. ~20 frames is reliably past both.
-            //
-            // Then WAIT OUT the async git-status worker. Its landing rebuilds
-            // the tree, so a capture that races it is not reproducible: four
-            // runs of one binary produced two different images, differing in
-            // the explorer's selection — which quietly made this fixture
-            // useless as a regression oracle. Two frames after it settles,
-            // the rebuild it triggered has been laid out and painted.
-            if (!(pn.treeVisible && pn.tree.git.refreshing) && settledAt < 0)
-                settledAt = frame;
-            const settled = settledAt >= 0 && frame >= settledAt + 2;
-            // A worker that never finishes must not hang the capture: past
-            // the cap, shoot anyway and let the diff say so.
-            if (shotAt < 0 && frame >= shotFrame
-                && (settled || frame >= shotFrame + shotSettleCap))
+            windowP = &(h.window());
+            fontsP = h.canvas.fonts;
+        }
+
+        pn.tree.chromeRows = 0; // the GUI pane is all tree rows
+        pn.tree.root = treeRoot.length ? treeRoot
+            : (docPath.length ? dirName(docPath) : ".");
+        // The frames must exist before the first layout: everything below reads
+        // the document pane's width through the container, and an unarranged
+        // container reports nothing.
+        arrangePanes();
+        applyTheme(vm.themeIdx); // resolves the theme before the first document
+        vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
+            source, events, preview, twoslash, docLang, initialDiff,
+            initialDiffSides, initialDiffSession);
+        // A markdown file opens in preview by default; Tab toggles to the raw
+        // highlighted-source view. The capture's preview pin ("0") fixes the
+        // initial mode for deterministic goldens.
+        if (capture.preview == "0" && vm.showPreview)
+        {
+            vm.showPreview = false;
+            vm.rebuild();
+        }
+        vm.top = initialTop;
+        if (docPath.length)
+            pn.tree.reveal(docPath);
+
+        // The document hue opened with (a payload target needs no oracle).
+        if (docPath.length)
+            startLive(docPath, vm.tw.code.length != 0);
+        startDiffTypes();
+
+        // Debug/CI: a preselected search (highlights + jump to the first match)
+        // so a golden capture exercises the match overlay.
+        foreach (ch; capture.search)
+            inp.query ~= ch;
+        if (inp.query.length)
+        {
+            vm.search(inp.query[]);
+            if (vm.matches.length)
+                vm.top = vm.visualOfMatch(vm.matches[0]);
+        }
+
+        // Debug/CI: the lantern seed opens the guide's pending path at once, so a
+        // golden capture can hold the panel open — there is otherwise no way to
+        // photograph something that only exists between two keystrokes. An empty
+        // (but set) value shows the root listing.
+        if (capture.lanternSet)
+        {
+            foreach (ch; capture.lantern)
+                pn.lantern.pending ~= Chord(key: Key.char_, ch: ch);
+            pn.lantern.shown = true;
+        }
+    }
+
+    // The loop is the host's (`HST1`). Its ticker arm IS the code hue used to
+    // carry: park in the ring until the frame deadline, dispatch whatever
+    // completed there, skip missed frames rather than replay them — and fall
+    // back to raylib's own pacing where no ring exists (Android's app seccomp
+    // blocks io_uring). `Sched`, `pumpUntilFrame` and the `targetFps: 0`
+    // handshake are deleted here because they exist there, once, for every
+    // application.
+    //
+    // The three phases are the ones the frame was already cut into: `handle`
+    // collects the drain the view half folds, `present` is the view half, and
+    // `draw` is the paint half — inside the arm's bracket (`HST13`), which is
+    // the only place a canvas call is valid.
+    BackendPolicy policy = { forceGui: true, displayPresent: true };
+    final switch (run!(
+        (ref h) {
+            // Ending the run is a value the view half returns; the host is
+            // told twice on purpose — `quit` stops the loop, and `skipFrame`
+            // keeps the bracket from opening for a frame nobody asked for.
+            if (!stepFrame(h, geom))
             {
-                window.screenshot(shotPath.toStringz);
-                shotAt = frame;
+                h.quit();
+                h.skipFrame();
             }
-            if (shotAt >= 0 && frame >= shotAt + 1)
-                break;
-        }
-    }
-
-    return 0;
-    }
-    }
-}
-
-/**
-One frame's pacing and async pump — the `Sched.tick` embedding hatch
-(event-horizon SPEC §7.2), the incremental-migration shape for a loop the
-application still owns: park in the ring until the frame deadline, running
-any completions that arrive meanwhile. When nothing is armed (`drained` —
-no oracle, no subprocess, no watch), a plain sleep paces the remainder:
-there is nothing to wake for, and that is raylib's own idle behavior.
-
-Absolute deadlines, missed frames skipped (the `Ticker` discipline): a
-slow frame does not queue a burst of stale ones.
-*/
-private void pumpUntilFrame(ref Sched sched, ref MonoTime nextFrame,
-    Duration period) @system
-{
-    import core.thread : Thread;
-    import core.time : MonoTime;
-
-    import sparkles.event_horizon.loop : RunStatus;
-
-    for (;;)
+        },
+        (ref h, in Event e) { evBuf ~= e; },
+        (ref h) { paintWindowFrame(geom); },
+        setupPhase,
+    )(cfg, policy))
     {
-        const now = MonoTime.currTime;
-        if (now >= nextFrame)
-            break;
-        auto r = sched.tick(nextFrame - now);
-        if (r.hasError)
-            break;
-        if (r.value == RunStatus.drained)
-        {
-            const left = nextFrame - MonoTime.currTime;
-            if (left > Duration.zero)
-                Thread.sleep(left);
-            break;
-        }
+        case RunOutcome.ok:
+            return 0;
+        case RunOutcome.openFailed:
+            stderr.writeln("hue --gui: could not load a font from '", gui.font,
+                "' (is fontconfig available?)");
+            version (Android)
+            {
+                import sparkles.base.logger : error;
+
+                error(i"hue: no font resolved from '$(gui.font)'");
+            }
+            return 1;
+        case RunOutcome.noBackend:
+        case RunOutcome.notInteractive:
+            stderr.writeln("hue --gui: this build has no window backend");
+            return 1;
     }
-    nextFrame += period;
-    const after = MonoTime.currTime;
-    if (nextFrame <= after)
-        nextFrame = after + period; // missed frames: skip, never replay
+    }
+    }
 }
 
 /// The source (physical) line containing byte `off` — a binary search over the

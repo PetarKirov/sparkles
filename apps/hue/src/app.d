@@ -988,19 +988,35 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         // all three styled faces (the fontconfig-free override resolution
         // picks its -Bold/-Italic/-BoldItalic siblings) + the Uiua386
         // codepoint map.
+        //
+        // `Params` is `mixin GuiCliFields` plus hue's own flags, so the shared
+        // fields are its first N in declaration order and the copy is
+        // structural rather than a list that could fall out of date — which is
+        // how `--font-dir` and `--font-codepoint-map` reach the request at all.
+        // Unpacking six of these by hand is what dropped both.
+        import sparkles.ui_app.gui_options : GuiOptions;
+        import std.traits : isDynamicArray, isSomeString;
+
+        // By NAME, not by position: `GuiCliFields` is not hue's first
+        // declaration (`--html` precedes it), so the two structs' field
+        // indices do not line up. Names do, because both sides are the same
+        // mixin. The array fields are duplicated because the parsed value
+        // arrives `const`.
+        GuiOptions gui;
+        static foreach (i, T; typeof(GuiOptions.tupleof))
+        {{
+            enum name = __traits(identifier, GuiOptions.tupleof[i]);
+            static if (isDynamicArray!T && !isSomeString!T)
+                gui.tupleof[i] = __traits(getMember, cli, name).dup;
+            else
+                gui.tupleof[i] = __traits(getMember, cli, name);
+        }}
         version (Android)
         {
-            const fontName = defaultGuiFont;
-            const faceOv = FontSet.FaceOverrides(defaultGuiFontFamily,
-                defaultGuiFontFamily, defaultGuiFontFamily);
-            string[] cpMaps = [uiuaCodepointMap];
-        }
-        else
-        {
-            const fontName = cli.font;
-            const faceOv = FontSet.FaceOverrides(cli.fontBold, cli.fontItalic,
-                cli.fontBoldItalic);
-            string[] cpMaps = null;
+            gui.font = defaultGuiFont;
+            gui.fontBold = defaultGuiFontFamily;
+            gui.fontItalic = defaultGuiFontFamily;
+            gui.fontBoldItalic = defaultGuiFontFamily;
         }
 
         // The deterministic-capture hooks (`CLI6`): the environment is read
@@ -1029,10 +1045,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             themes: themeSet.themes,
             startIdx: themeSet.idx,
             preview: doc.preview,
-            fontName: fontName,
-            fontSize: cli.fontSize,
-            windowWidth: cli.windowWidth,
-            windowHeight: cli.windowHeight,
+            gui: gui,
             lineNumbers: cli.lineNumbers,
             codeLineNumbers: cli.codeLineNumbers,
             ansiCopyStrip: cli.ansiCopy == "strip",
@@ -1046,14 +1059,12 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             docPath: doc.path,
             startInTree: startInTree,
             treeRoot: treeRoot,
-            faces: faceOv,
             docLang: doc.lang,
             includeGlobs: cli.include.dup,
             excludeGlobs: cli.exclude.dup,
             treeWidth: cli.treeWidth,
             tabWidth: cli.tabWidth,
             listWhitespace: cli.listWhitespace,
-            codepointMaps: cpMaps,
             liveTypes: !cli.noLiveTypes,
             initialDiff: doc.diffDoc,
             initialDiffSides: doc.diffSides,
