@@ -532,15 +532,18 @@ than is promised would block backends for no user-visible gain.
 
 **Where:** SPEC §13.2 (portability paragraph); PLAN M15.
 
-`OpWaitid` is portable-shaped but only uring lowers it. The peer lowerings
-each carry a sharp edge the implementation must decide on:
+`OpWaitid` is portable-shaped. **The kqueue lowering has since landed**
+(`feat(event-horizon.kqueue): lower OpWaitid onto EVFILT_PROC`); IOCP is still
+outstanding. The sharp edges each lowering carries:
 
 - **kqueue `EVFILT_PROC`/`NOTE_EXIT`** delivers the exit status in `data`,
   but registering the filter races the exit: a child that dies before
   `kevent` registration returns `ESRCH`, so the lowering needs a
   register-then-`waitpid(WNOHANG)` back-check to close the window. Under
   libkqueue on Linux the filter is emulated via pidfd — semantics to
-  verify, not assume.
+  verify, not assume. _(Shipped with the back-check; this is the same
+  mechanism `DISPATCH_SOURCE_TYPE_PROC` uses — see the
+  [GCD survey](../../research/async-io/gcd/index.md).)_
 - **IOCP** has no process-completion primitive; the options are a
   wait-packet (`NtAssociateWaitCompletionPacket`, undocumented-ish but
   what modern runtimes use) vs a thread-pool `RegisterWaitForSingleObject`
@@ -555,3 +558,183 @@ pattern) until the native paths are proven.
 **Leaning:** (B) as the correctness baseline shipped with M15, with (A) as
 per-backend refinements — the API is identical either way, and the bounce
 is exactly how the kqueue backend already handles regular files.
+
+## O27 — kqueue pays a syscall per submit; batch the change list into the wait
+
+**Where:** `backend/kqueue.d` (`armFilter`, `submitAndWait`, `flush`, `cancel`);
+`backend/concept.d`; SPEC §3.1, §16.
+
+`armFilter` issues its own `kevent(_kq, &change, 1, null, 0, null)` for every
+submission, and `submitAndWait` then makes a second, separate call to collect
+events. With `EV_ADD|EV_ONESHOT` the registration is consumed on delivery, so a
+steady-state read loop pays **register + wait, every cycle**. That is the
+mechanism behind `TVW8`'s recorded churn regression (98.2 → 99.6, "one ring
+round-trip per drain cycle under saturation") — but the case for fixing it is
+the flat per-op tax, not the 1.4 pp, since the tax applies to every op the
+backend will ever run and grows as more of the stack moves onto the ring.
+
+`kevent(2)` takes a changelist **and** an eventlist in one call — libdispatch's
+`_dispatch_kq_drain` is built on exactly this, and its workqueue arm goes
+further, returning deferred re-registrations for the kernel to re-arm on the way
+back (see the [GCD survey](../../research/async-io/gcd/index.md)). libkqueue
+implements the combined form too, so the Android default and the Linux CI leg
+are unaffected.
+
+A second, pre-existing defect falls out of the same change. `concept.d` documents
+the submit predicate as `bool queued = … // false = SQ full` — **backpressure
+only** — but `armFilter` also returns `false` when `kevent` itself fails,
+conflating kernel rejection with a full queue. The loop's backpressure path
+retries, so today an `EBADF` submission retries forever.
+
+**Options:** (A) status quo; (B) accumulate changes in a fixed array, pass them
+as the changelist of the next `submitAndWait`, and let submission failures arrive
+as `EV_ERROR` entries synthesized into completions; (C) keep the immediate
+syscall but split the return so kernel errors surface as a completion while
+SQ-full stays `false`.
+
+**Decided: (B).** It is the only option that both removes the tax and repairs the
+contract, and it converges kqueue on `io_uring`, where a bad SQE also fails as a
+CQE rather than at submit time. (C) is more code for less benefit.
+
+Consequences, all decided with it:
+
+- **`false` means "submission resource full, call `flush()`"** on either the
+  op-slot freelist or the change array — the same sentence that is already true
+  of uring's SQ ring.
+- **`flush()` stops being a lie.** It is `=> ioOk(0u)` on kqueue today against a
+  real `_io.submit(0)` on uring; it becomes a change-only `kevent`. Its return is
+  the change-entry count, and `concept.d` should state the contract as
+  **submission-side units flushed, backend-defined** — forcing a shared meaning
+  would make kqueue count ops it did not submit, for a number no caller reads
+  beyond "did progress happen".
+- **Cancellation goes through the same array.** `cancel` issues its own immediate
+  `kevent` today, so a submit-then-cancel before any wait would race its own
+  `EV_ADD`. One FIFO array makes ordering a property of the data structure
+  instead of a rule to remember.
+- **The synth short-circuit must flush first.** `submitAndWait` returns early on
+  `if (_synthCount > 0)` _before_ reaching `kevent`, which would starve pending
+  changes for as long as synthesized completions keep arriving.
+
+## O28 — `EV_DISPATCH` re-arming, and the recycled-slot hazard it opens
+
+**Where:** `backend/kqueue.d` (`armFilter`, `release`, `submitAndWait`); depends
+on O27.
+
+`EV_ONESHOT` consumes the knote on delivery, so every op re-adds from scratch.
+`EV_DISPATCH` instead disables the knote and leaves it registered, making the
+re-arm a change entry rather than a fresh add — which is only worth having once
+O27 makes change entries free. libdispatch uses it on every fd source, and
+libkqueue honours it in `read`/`write`/`timer`/`user`.
+
+Its Darwin companions are **not** portable: libkqueue carries a literal
+`FIXME - Should respect EV_UDATA_SPECIFIC but that's a whole` in
+`src/common/knote.c` and has no `EV_VANISHED` at all. Since Android ships
+kqueue+libkqueue as its default backend, adopting them would mean two
+knote-identity models with CI able to exercise only one.
+
+**The hazard.** `release()` clears `live` and pushes the slot onto the freelist
+immediately, and the reap loop matches an event to its op by
+`cast(KqOp*) evs[i].udata` with no validation beyond a null check. Under today's
+`EV_ONESHOT` plus a synchronous `EV_DELETE` that is safe by construction — the
+knote is always gone before the slot can be recycled. O27's batched cancel and
+this issue's explicit delete-on-release both push that delete into a batch,
+opening a window in which an already-queued kernel event carries a `udata`
+pointing at a **recycled slot** and is attributed to a different op's token.
+
+**Options:** (A) `EV_DISPATCH` only, no `EV_UDATA_SPECIFIC`/`EV_VANISHED`;
+(B) both, with the Darwin-only pair under `version (OSX)`; (C) keep
+`EV_ONESHOT`. And, for the hazard: (1) check `op.live` in the reap loop —
+cheap but ABA-unsafe, since the slot may be live again as a _different_ op;
+(2) an index+generation value in `udata`, bumped on release and validated on
+delivery; (3) flush synchronously on release, reintroducing the per-op syscall.
+
+**Decided: (A) + (2).** `EV_VANISHED`'s payoff is diagnosing a descriptor closed
+under a live registration, which libdispatch itself treats as unrecoverable
+(`DISPATCH_CLIENT_CRASH(err, "Do not close random Unix descriptors")`) — a better
+abort message, not a recovery path, and not worth a Darwin-only lifecycle fork.
+(2) is a convergence rather than a new concept: `io_uring`'s `user_data` and this
+library's own `OpToken` are already validated tokens rather than raw pointers,
+and it costs one `uint` in `KqOp` plus one compare per delivered event.
+
+`EV_DISPATCH` also makes the delete explicit — `EV_ONESHOT` removed the knote for
+free — so slot release must emit one or knotes leak across successive ops on the
+same fd. **The generation token lands as its own commit, before the batching**,
+so the safety fix is bisectable independently of the change that makes it
+necessary.
+
+## O29 — Worker wakeup: one `wake()` capability, both backends
+
+**Where:** `pool.d` (idle backoff), `backend/{kqueue,uring}.d`,
+`backend/concept.d`. Refines O2 and O15.
+
+Idle workers sleep on an exponential-backoff short `TIMEOUT` and re-check — on
+**both** backends, since O2's `FUTEX_WAIT`/`MSG_RING` answer for uring is
+unimplemented. kqueue has a native answer available now: `EVFILT_USER` +
+`NOTE_TRIGGER`, which is precisely what libdispatch uses for its own manager
+wakeup (`_dispatch_kq_init` registers exactly one such knote), and which
+libkqueue implements in `src/linux/user.c`.
+
+Implementing only the kqueue arm would make the peer backend strictly better than
+the primary one at the thing the primary one is optimised for — the inversion O25
+exists to prevent.
+
+**Options:** (A) kqueue-only now, uring's `FUTEX_WAIT` as a follow-up;
+(B) an optional backend capability (`hasWake`/`wake()`) with both arms
+implemented; (C) defer until both can land together.
+
+**Decided: (B), both arms.** The pool's idle path is then written once against a
+seam rather than twice against two backends. The uring arm is testable on the
+`pc2` NixOS host (kernel 6.18, 32 CPUs), comfortably past `FUTEX_WAIT`'s 6.7
+floor.
+
+**Signature: bare, coalescing, no payload.** `EVFILT_USER`/`NOTE_TRIGGER`
+coalesces natively and `FUTEX_WAKE` is edge-triggered, so coalescing is what both
+substrates give for free and a counted wake would mean fighting both. No payload:
+one is only useful for `MSG_RING`-targeted stealing, which is a _different_ O2
+optimisation, and shaping the seam around one backend's capability is the mistake
+this entry chose (B) to avoid.
+
+## O30 — CPU parallelism and affinity are asked wrongly on every platform
+
+**Where:** `pool.d:70`, `pool.d:379`, `group.d:99`, `group.d:236`; a new
+`libs/base` module.
+
+Six call sites reach for `std.parallelism.totalCPUs`, and it is the wrong answer
+twice over.
+
+**Sizing.** On Apple silicon the kernel's parallelism answer is per-QoS, because
+the background class is confined to the efficiency cluster.
+`pthread_qos_max_parallelism` measured on an M4 Max reports **4 for background
+against 14 for every other class**, while `totalCPUs` reports 14 — a background
+worker set sized from it oversubscribes the E-cluster 3.5×. libdispatch sizes
+`dispatch_apply` from exactly this call and falls back to the CPU count only if it
+fails (`src/shims.h`). The same bug exists on Linux for a different reason: a
+containerised process's `cpu.max` quota is invisible to `totalCPUs`. _(The cgroup
+half is reasoned by analogy from the Darwin case and has not been measured here —
+verify before relying on it.)_
+
+**Pinning is worse.** `CPU_SET(cpu % totalCPUs, &set)` distributes workers
+round-robin over a CPU count the process may not be permitted to use; under a
+restricted affinity mask that pins a worker to a CPU it can never run on. Sizing
+over-provisions, pinning can hang a worker.
+
+**Options:** (A) one `hwParallelism()` for sizing, leave pinning; (B) two
+accessors — parallelism _and_ the allowed-CPU set — with pinning selecting within
+the mask.
+
+**Decided: (B), in a new `libs/base` module (`hw_caps.d`)** beside `term_caps.d`,
+which is the stated precedent for "the single place that decision is made".
+`libs/base` rather than `event-horizon` because `test-runner-impl` and `apps/ci`
+ask the same question and get the same wrong answer. Surface: `hwParallelism()`
+(allowed-CPU count clamped by quota) and `nthAllowedCpu(uint i)` (pinning), both
+`@nogc nothrow`, **uncached** — both are called at worker start, never in a hot
+path, so a syscall per call is free and a stale cache is a bug waiting to happen.
+A mid-run affinity change is documented as not observed.
+
+**No QoS parameter, and no portable name for one, yet.** Nothing assigns a QoS to
+a worker today, so the argument would have exactly one caller passing exactly one
+value. `concept.d` already states this repo's position on the pattern — optional
+capabilities are deliberately left undefined until "generic code dispatches on
+them", because defining them earlier "would leave them untested". The same
+applies to domain vocabulary: name it when a second caller means something
+different by it.
