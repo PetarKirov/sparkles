@@ -12,12 +12,12 @@ does not allocate. Phase 0 supplies those; phases 1–3 build on them.
 
 ## Phase overview
 
-| #      | Deliverable                                                                                | Depends on | Status                                     |
-| ------ | ------------------------------------------------------------------------------------------ | ---------- | ------------------------------------------ |
-| **P0** | Foundations: `SmallBuffer` for reference-bearing elements, `sparkles:input` growth, `NFR2` | —          | shipped                                    |
-| **P1** | `libs/ui-app`: backend selection, the CLI, the host contract, the recording target         | P0         | shipped (P1.1–P1.6; `TST3` rides P2.B5)    |
-| **P2** | `apps/terminal` and `apps/hue` fully migrated onto the host                                | P1         | P2.A shipped (as `TVW1`–`TVW7`); P2.B open |
-| **P3** | `apps/diagram` — a new dual-backend application that proves the abstraction                | P2         | open                                       |
+| #      | Deliverable                                                                                | Depends on | Status                                                     |
+| ------ | ------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------------------------- |
+| **P0** | Foundations: `SmallBuffer` for reference-bearing elements, `sparkles:input` growth, `NFR2` | —          | shipped                                                    |
+| **P1** | `libs/ui-app`: backend selection, the CLI, the host contract, the recording target         | P0         | shipped (P1.1–P1.6; `TST3` rides P2.B5)                    |
+| **P2** | `apps/terminal` and `apps/hue` fully migrated onto the host                                | P1         | P2.A shipped (as `TVW1`–`TVW7`); P2.B1–B4 shipped, B5 open |
+| **P3** | `apps/diagram` — a new dual-backend application that proves the abstraction                | P2         | open                                                       |
 
 Each phase must be green before the next starts, and every commit inside a phase
 must build, test and lint on its own.
@@ -266,13 +266,39 @@ fields). The frame loop is now pace → `stepFrame` → `paintWindowFrame` →
 present, which is `gui_loop.d`’s `oneFrame` with hue’s names on it. Nothing
 in either half’s body changed; `dub test :hue` stays at 194.
 
-What the flip still owes: the window bracket moves from `paintWindowFrame`
-to the arm (`HST13`), hue’s `inputSource` gives way to the host’s poll (it
-reads modifier **levels** and sets gesture metrics from the cell size —
-neither is expressible through `handle` today, so both want a host errand or
-a default the arm can supply), and `frame`/`shotPath` presentation moves to
-the component. Then hue’s private `Sched`/`pumpUntilFrame`/`targetFps: 0` is
-deleted and the dub flip is one line.
+**P2.B4 then shipped.** `runGui` stops owning a loop: `handle` collects the
+drain, `present` is the view half, `draw` is the paint half inside the arm’s
+bracket. hue’s `Sched`, its `pumpUntilFrame` (40 lines of `Sched.tick`
+embedding hatch), the `targetFps: 0` handshake, its `openGuiSession` call and
+its own `RaylibEvents` are all deleted — every one of them exists in
+`gui_loop.d`, once, for every application, and hue is why they were written
+there.
+
+Three host contracts had to land first, and each is a finding rather than a
+workaround: `HST18` (hue hit-tests in **pixels**), `HST17` (a live modifier
+level, because a stationary drag gets no event when Shift moves) and `HST19`
+(hue lays out before its first frame, against a window that does not exist
+until the arm opens it). `GuiArgs` also lost six fields to one `GuiOptions`,
+which is how `--font-dir` and `--font-codepoint-map` reach the request at
+all — unpacking them by hand had been dropping both.
+
+Two things the desktop compiler could not have told us. The Android arm
+crosses the same view/paint seam (the touch action bar builds a tree in one
+half and paints it in the other; the back button broke the frame loop), and
+`APP3`’s “an Android build must not link a terminal” turned out to be
+load-bearing: with the loop now the host’s, ui-app’s `full` configuration
+pulled the terminal arm into `run`’s `final switch` for the cross build,
+where it took LDC down with a locationless ICE. Android moves to `gui`.
+
+The oracle for all of it was hue’s own golden capture. `DBG1` makes it
+reproducible, so `origin/main` and the branch must produce byte-identical
+PNGs; five scenarios (twoslash overlay, markdown preview, syntax view) do,
+across every slice. One caveat worth writing down: `xvfb-run -a` sometimes
+lands on the workstation’s real display, where ambient keystrokes reach the
+window and act as commands — a `t` toggles the copy format, an arrow cycles
+the theme. Pin the display number.
+
+Next: **P2.B5**, the TUI loop and the `TST3` parity test.
 
 P2.B1 comes first among the hue steps deliberately: the GUI module has no tests
 today, so the migration's first commit is the one that gives it some.
