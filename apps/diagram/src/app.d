@@ -12,7 +12,7 @@ import sparkles.core_cli.args : HelpInfo, parseCli, reportCliError;
 import sparkles.ui_app.gui_options : GuiOptions;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : RunOutcome;
-import sparkles.ui_app.run_app : runApp;
+import sparkles.ui_app.run_app : appThemeOf, runApp;
 
 import diagram_app : DiagramApp;
 
@@ -49,6 +49,9 @@ int main(string[] args)
     };
 
     DiagramApp app;
+    // Same theme the host uses for the page fill (`RND5`): board slots resolve
+    // against it, so `--theme` reaches the nodes as well as the page.
+    app.theme = appThemeOf(gui);
     final switch (runApp(app, cfg))
     {
         case RunOutcome.ok:
