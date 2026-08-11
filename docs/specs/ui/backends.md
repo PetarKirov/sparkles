@@ -35,30 +35,41 @@ model.
 
 ## Shipped targets (`TGT3`–`TGT6`)
 
-| ID   | Requirement                                                                                                                                                                                         | Status                        | Traces to                                                                                                                           |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| TGT3 | An **immediate** interpreter must walk the display list and issue draw calls per frame.                                                                                                             | full                          | `interp/immediate.d`                                                                                                                |
-| TGT4 | An **HTML** target must serialize the tree to markup and CSS, with semantic class names and an external stylesheet, and must express tier-0 interactivity in **pure CSS** with no script.           | full (`9314a49b`)             | `interp/html_semantic.d` (classes + stylesheet + `:hover`-reveal/`<details>`); `interp/html.d` stays the inline-style parity oracle |
-| TGT5 | Every target must **declare its capabilities** — which chrome features it honours and which input tiers it serves — as data the toolkit can inspect, so degradation is reported rather than silent. | partial (`IXB10`)             | `sparkles.input.capability` `InputCapabilities`; `RaylibEvents.capabilities`, `PosixEvents.capabilities`. Chrome half not started   |
-| TGT6 | Concrete canvases must live in **sibling packages** (`sparkles:ui-tui`, `sparkles:ui-raylib`), so the toolkit stays backend-free and a consumer links only what it uses.                            | full (`2c8356e1`, `6b0c9714`) | `libs/ui-tui` (`GridCanvas`), `libs/ui-raylib` (`RaylibCanvas` + `RaylibEvents`)                                                    |
+| ID   | Requirement                                                                                                                                                                                         | Status                        | Traces to                                                                                                                                                                                                                                                                                                                                               |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TGT3 | An **immediate** interpreter must walk the display list and issue draw calls per frame.                                                                                                             | full                          | `interp/immediate.d`                                                                                                                                                                                                                                                                                                                                    |
+| TGT4 | An **HTML** target must serialize the tree to markup and CSS, with semantic class names and an external stylesheet, and must express tier-0 interactivity in **pure CSS** with no script.           | full (`9314a49b`)             | `interp/html_semantic.d` (classes + stylesheet + `:hover`-reveal/`<details>`); `interp/html.d` stays the inline-style parity oracle                                                                                                                                                                                                                     |
+| TGT5 | Every target must **declare its capabilities** — which chrome features it honours and which input tiers it serves — as data the toolkit can inspect, so degradation is reported rather than silent. | partial (`IXB10`)             | `sparkles.input.capability` `InputCapabilities`; `RaylibEvents.capabilities`, `PosixEvents.capabilities`. Chrome half not started. The overlay slice of both halves — and the rule that a trigger a target cannot serve is resolved to a **published** substitution rather than dropped — is specified by [anchored overlays](./popup.md) `TRG1`–`TRG4` |
+| TGT6 | Concrete canvases must live in **sibling packages** (`sparkles:ui-tui`, `sparkles:ui-raylib`), so the toolkit stays backend-free and a consumer links only what it uses.                            | full (`2c8356e1`, `6b0c9714`) | `libs/ui-tui` (`GridCanvas`), `libs/ui-raylib` (`RaylibCanvas` + `RaylibEvents`)                                                                                                                                                                                                                                                                        |
 
 ## Current degradations
 
 Honest inventory, to become `TGT5` declarations:
 
-| Feature                   | Cell target                     | GPU target                          | HTML target                 |
-| ------------------------- | ------------------------------- | ----------------------------------- | --------------------------- |
-| corner radius             | dropped (box-drawing corners)   | approximated                        | native                      |
-| drop shadow               | dropped                         | approximated                        | native                      |
-| single-side accent border | dropped                         | native                              | native                      |
-| dashed / dotted stroke    | approximated by underline style | approximated                        | native                      |
-| wavy underline            | curly underline where supported | drawn                               | native                      |
-| font role / scale         | n/a (single cell metric)        | **dropped** (single-size font)      | native                      |
-| sub-cell positioning      | n/a                             | available                           | native                      |
-| tier-1 input              | served                          | served                              | **unavailable** (no script) |
-| hover                     | served                          | served (mouse) / **absent** (touch) | served (`:hover`)           |
-| sub-cell pointer          | **absent** (whole cells)        | served                              | n/a                         |
-| multi-pointer             | **absent** (one pointer)        | **absent** (mouse) / served (touch) | **absent**                  |
+| Feature                     | Cell target                               | GPU target                          | HTML target                                           |
+| --------------------------- | ----------------------------------------- | ----------------------------------- | ----------------------------------------------------- |
+| corner radius               | dropped (box-drawing corners)             | approximated                        | native                                                |
+| drop shadow                 | dropped                                   | approximated                        | native                                                |
+| single-side accent border   | dropped                                   | native                              | native                                                |
+| dashed / dotted stroke      | approximated by underline style           | approximated                        | native                                                |
+| wavy underline              | curly underline where supported           | drawn                               | native                                                |
+| font role / scale           | n/a (single cell metric)                  | **dropped** (single-size font)      | native                                                |
+| sub-cell positioning        | n/a                                       | available                           | native                                                |
+| tier-1 input                | served                                    | served                              | **unavailable** (no script)                           |
+| hover                       | served                                    | served (mouse) / **absent** (touch) | served (`:hover`)                                     |
+| sub-cell pointer            | **absent** (whole cells)                  | served                              | n/a                                                   |
+| multi-pointer               | **absent** (one pointer)                  | **absent** (mouse) / served (touch) | **absent**                                            |
+| overlay top layer           | served                                    | served                              | **impossible** (no hoist — boundary override instead) |
+| overlay collision solve     | served                                    | served                              | **frozen at emit**                                    |
+| overlay cascade             | served                                    | served                              | **one level only**                                    |
+| outside-press dismissal     | served                                    | served                              | **absent** (trigger re-activation only)               |
+| overlay warm-up / cool-down | event-scoped collapse (no frame clock)    | served                              | `transition-delay` approximation                      |
+| overlay arrow               | one cell                                  | drawn                               | native                                                |
+| scrim foreground dimming    | **absent** without a foreground treatment | served                              | served                                                |
+
+The overlay rows are the summary; [anchored overlays](./popup.md) § _Declared
+overlay degradation per target_ carries the full grid, including the Android and
+recording targets this table does not split out.
 
 ## Forward compatibility (`TGT7`–`TGT9`)
 

@@ -796,6 +796,10 @@ export default withMermaid(
                   link: '/specs/ui/containers',
                 },
                 { text: 'Inspector', link: '/specs/ui/inspector' },
+                {
+                  text: 'Anchored overlays (proposed)',
+                  link: '/specs/ui/popup',
+                },
                 { text: 'Input (planned)', link: '/specs/ui/input' },
                 {
                   text: 'State machines',

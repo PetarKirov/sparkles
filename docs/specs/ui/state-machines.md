@@ -52,6 +52,19 @@ state`, a pure state transition; the caller assigns the result. Pure queries
 > [`HUE-O2`](../hue/open-issues.md#hue-o2).
 
 > [!NOTE]
+> **The anchored-overlay primitive composes these machines rather than
+> re-defining them** ([`PRN8`](./principles.md)): `STM4` supplies the hover
+> trigger and the "inside" test (its last-hit-wins scan already gives
+> topmost-wins over an appended overlay), `STM6` the fade-in/hold/fade-out and
+> its `holdUntilDismissed` collapse, `STM7` the focus ring and return target,
+> `STM10` the two-phase outside-press identity test (on its **own** instance,
+> keyed by group id), and `STM11` the drag-out exemption whose no-transfer rule
+> must not gain an overlay exemption. `STM5` supplies the tier-0 HTML spelling
+> of a toggle. The only new machine is `DwellState` (the warm-up/rest/cool-down
+> machine), which claims the next free id, `STM14`, and carries its `PRN8`
+> justification in [anchored overlays](./popup.md) `TRG6`.
+
+> [!NOTE]
 > `STM5` is one machine serving two features that look unrelated. A tree's
 > "which nodes are expanded" and a document's "which regions are folded" are the
 > same question over different keys, and implementing them separately would
