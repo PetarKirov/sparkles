@@ -324,6 +324,10 @@ struct ParsedLayer
     TsTree tree;             /// this layer's parse, kept alive by the caller
     const(TSRange)[] ranges; /// included ranges (empty = whole buffer)
     size_t depth;            /// injection nesting depth (root = 0)
+    /// Index of the layer whose injection produced this one (`size_t.max`
+    /// for the root) — a structural consumer attaches an injected tree
+    /// under the covering node of $(I this) layer.
+    size_t parent = size_t.max;
 
     @disable this(this);
 }
@@ -359,6 +363,7 @@ TsExpected!void parseLayers(
         string language;
         TSRange[] ranges;
         size_t depth;
+        size_t parent = size_t.max;
     }
 
     Work[] queue = [Work(rootConfig, rootLanguage.idup, null, 0)];
@@ -391,8 +396,10 @@ TsExpected!void parseLayers(
         layer.language = w.language;
         layer.ranges = w.ranges;
         layer.depth = w.depth;
+        layer.parent = w.parent;
         move(tree, layer.tree);
         layers ~= layer;
+        const thisIndex = layers.length - 1;
 
         if (!w.config.hasInjections || w.depth + 1 > maxInjectionDepth)
             continue;
@@ -420,7 +427,8 @@ TsExpected!void parseLayers(
             if (childRanges.length == 0)
                 continue;
 
-            queue ~= Work(childConfig, inj.language.idup, childRanges, w.depth + 1);
+            queue ~= Work(childConfig, inj.language.idup, childRanges,
+                w.depth + 1, thisIndex);
         }
     }
 
@@ -1129,6 +1137,7 @@ unittest
     assert(layers[0].tree.valid);
     assert(nodeType(layers[0].tree.rootNode) == "document");
 
+    assert(layers[0].parent == size_t.max, "the root has no parent layer");
     bool sawD;
     foreach (l; layers)
         if (l.language == "d")
@@ -1137,6 +1146,9 @@ unittest
             assert(l.depth > 0, "the fence layer is injected");
             assert(l.ranges.length > 0, "…over the fence's byte ranges");
             assert(l.tree.valid);
+            assert(l.parent < layers.length
+                && layers[l.parent].depth == l.depth - 1,
+                "the injected layer records who injected it");
         }
     assert(sawD, "the fenced language got a retained layer");
 
