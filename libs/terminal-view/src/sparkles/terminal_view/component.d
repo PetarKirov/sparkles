@@ -92,6 +92,47 @@ unittest
     assert(redrawDecision(RedrawInputs(forced: true)));
 }
 
+/**
+Does a non-blocking `waitpid` result mean this child needs nothing further?
+
+The three outcomes are not interchangeable, and collapsing them into `!= 0` is
+a live bug: `-1`/`EINTR` says a signal arrived mid-call and says $(B nothing)
+about the child, so treating it as "done" abandons one that is still running.
+`EINTR` is therefore not answered here at all — the caller retries it.
+*/
+private bool reapDone(int rc, int err) @safe pure nothrow @nogc
+{
+    import core.stdc.errno : ECHILD;
+
+    return rc > 0            // status collected
+        || (rc < 0 && err == ECHILD); // not ours — someone else already reaped it
+}
+
+@("terminal_view.component.reapDone.outcomesAreNotInterchangeable")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.stdc.errno : ECHILD, EINTR, EINVAL;
+
+    // Reaped: the pid comes back.
+    assert(reapDone(4242, 0));
+
+    // Alive and unchanged — the whole point of WNOHANG. Nothing to do yet.
+    assert(!reapDone(0, 0));
+
+    // Never ours (already reaped elsewhere): nothing left to wait for.
+    assert(reapDone(-1, ECHILD));
+
+    // Interrupted: carries no information about the child, so it must NOT read
+    // as done — the caller retries. This is the case `!= 0` got wrong, and it
+    // is the one that leaves a live shell behind.
+    assert(!reapDone(-1, EINTR));
+
+    // Any other failure keeps the escalation going rather than declaring
+    // victory on an error we did not anticipate.
+    assert(!reapDone(-1, EINVAL));
+}
+
 // The TVW8 ring capabilities, decided per backend at compile time: parked
 // master reads need `OpRead`; the in-ring reap needs `OpWaitid` (io_uring
 // today — the kqueue lowering is event-horizon's O26). Each degrades
@@ -391,14 +432,20 @@ struct TerminalView
 
     A plain `waitpid(child, null, 0)` is a shutdown that never finishes if the
     child ignores `SIGHUP` — a shell with a trap, a foreground process that
-    detached from the group. Polling with `WNOHANG` for ~50 ms and then sending
-    `SIGKILL` bounds it: a cooperative child still exits on its own terms, and
-    an uncooperative one cannot hold the window open.
+    detached from the group. Polling with `WNOHANG` and then sending `SIGKILL`
+    bounds it: a cooperative child still exits on its own terms, and an
+    uncooperative one cannot hold the window open.
+
+    $(B Every wait here is bounded, including the one after `SIGKILL`.) That
+    last one used to block, on the reasoning that an uncatchable signal makes
+    the status collectable immediately. It does so almost always — and a
+    shutdown path is exactly where "almost" is not good enough: a sampled hang
+    caught the process parked in that `wait4` long after the window had closed,
+    with the app still running. Nothing here may be unbounded.
     */
     private void hangUpAndReap() @system
     {
         import core.sys.posix.signal : kill, SIGHUP, SIGKILL;
-        import core.sys.posix.sys.wait : waitpid, WNOHANG;
         import core.sys.posix.unistd : getpgid, usleep;
 
         if (!s.childExited)
@@ -409,16 +456,47 @@ struct TerminalView
             kill(cast(pid_t)(-pgid), SIGHUP); // the whole foreground group
         }
 
-        // A non-zero `waitpid` means there is nothing left to reap: either it
-        // exited (the pid) or it was never ours (-1/ECHILD).
+        // ~50 ms for the shell to notice the hangup (or the EOF its side got
+        // when the master closed) and leave on its own terms.
         foreach (_; 0 .. 10)
         {
-            if (waitpid(s.child, null, WNOHANG) != 0)
+            if (nothingLeftToReap())
                 return;
             usleep(5_000);
         }
+
         kill(s.child, SIGKILL);
-        waitpid(s.child, null, 0);
+
+        // ~100 ms for an uncatchable signal to land. If the status is still
+        // uncollected after that, give up rather than block: the process is on
+        // its way out, and init reaps whatever it orphans. An extra zombie for
+        // the moments before exit is a far smaller defect than an application
+        // that cannot exit.
+        foreach (_; 0 .. 20)
+        {
+            if (nothingLeftToReap())
+                return;
+            usleep(5_000);
+        }
+    }
+
+    /**
+    One non-blocking reap attempt: `true` once this child needs nothing further
+    — its status was collected, or it was never ours to collect. Retries an
+    interrupted call, which is the only outcome that carries no information.
+    */
+    private bool nothingLeftToReap() @system
+    {
+        import core.stdc.errno : EINTR, errno;
+        import core.sys.posix.sys.wait : waitpid, WNOHANG;
+
+        for (;;)
+        {
+            const rc = waitpid(s.child, null, WNOHANG);
+            if (rc < 0 && errno == EINTR)
+                continue;
+            return reapDone(rc, errno);
+        }
     }
 
     // ── the component contract ──────────────────────────────────────────────
