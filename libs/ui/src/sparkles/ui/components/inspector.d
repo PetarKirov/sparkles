@@ -98,8 +98,25 @@ uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
         textStyle: TextStyle(bold: true)));
     rows ~= rule(b, innerWidth);
 
-    // The tree, windowed by the shared component's viewport.
-    rows ~= viewSlice(b, data, state, isOpen, glyphs, hitBase: hitBase);
+    // The tree, windowed by the shared component's viewport — with a live
+    // vertical bar in the last column when it overflows, exactly where the
+    // tree state's pointer arm expects a bar to be grabbable.
+    if (cast(long) state.rows.length > state.bodyRows)
+    {
+        import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+
+        const treeCol = b.add(Widget(kind: WidgetKind.column,
+            children: [viewSlice(b, data, state, isOpen, glyphs,
+                hitBase: hitBase)],
+            width: SizeSpec.fixed(innerWidth - 1), clipX: true));
+        const bar = scrollbar(b, state.sb.scrolledTo(state.top),
+            state.rows.length, state.bodyRows, state.bodyRows,
+            ScrollbarGlyphs('█', '░'));
+        rows ~= b.add(Widget(kind: WidgetKind.row,
+            children: [treeCol, bar]));
+    }
+    else
+        rows ~= viewSlice(b, data, state, isOpen, glyphs, hitBase: hitBase);
 
     // The details pane, when the adapter supplied rows for the selection.
     if (details.length)
@@ -375,4 +392,35 @@ version (unittest)
     assert(dump.canFind("└─ box #99  4×2"), dump);
     assert(dump.canFind("├─ text"), dump);
     assert(dump[$ - 1] == '\n');
+}
+
+@("ui.inspector.overflowGrowsAVerticalBar")
+@safe unittest
+{
+    import sparkles.ui.state : DisclosureState;
+
+    auto sb2 = Builder();
+    auto subject = subjectTree(sb2);
+    auto frames = layout(subject, Constraints(maxW: 40));
+    auto wi = inspectWidgets(subject, frames);
+
+    TreeViewState!uint s;
+    s.width = 30;
+    s.height = 2; // bodyRows = 2 (chromeRows set below) < 3 rows: overflow
+    s.chromeRows = 0;
+    s.open = DisclosureState!uint.allOpen;
+    auto open = s.open;
+    s.rows = flatten(wi.data, (uint n) => open.isOpen(n));
+    assert(cast(long) s.rows.length > s.bodyRows);
+
+    auto b = Builder();
+    const col = inspectorView(b, wi.data, s, (uint) @safe => true,
+        "inspector", null, null, 28);
+    auto wt = b.finish(col);
+
+    // The tree region is a row of [windowed tree, the vertical bar].
+    bool sawBarRow;
+    foreach (ref n; wt.nodes)
+        sawBarRow |= n.kind == WidgetKind.row && n.children.length == 2;
+    assert(sawBarRow, "an overflowing tree grows its scrollbar");
 }
