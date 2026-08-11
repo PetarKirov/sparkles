@@ -466,6 +466,56 @@ private:
     uint _liveFibers;
 }
 
+/**
+The scheduler driving the calling fiber, or `null` off one.
+
+The tier-B verbs already work this way — `read`, `write`, `accept` take no
+scheduler because a fiber knows which loop resumed it. This exposes the same
+answer to code that has to name one: `waitReadable`, `capture`, anything
+taking `ref Sched`.
+
+$(B It exists because a daemon body cannot be handed a scheduler.) An
+application parks background work through its host's `spawnDaemon`, which
+takes a plain `void delegate()` — the host deliberately does not publish the
+loop, since two of the three targets have none. A fiber that needs the
+scheduler therefore has to ask at the top, and this is the ask. Off a fiber
+it returns `null` rather than asserting: the caller is usually deciding
+between a parked path and a polled one, and "there is no loop here" is a
+routine answer rather than a defect.
+*/
+Sched* currentScheduler() @trusted nothrow @nogc
+{
+    auto t = Sched.tryCurrent();
+    return t is null ? null : t.owner;
+}
+
+@("sched.currentScheduler.isTheLoopThatResumedYou")
+@safe
+unittest
+{
+    // Off a fiber there is no answer, and that is a value rather than a
+    // defect: a component asking is usually choosing between a parked path
+    // and a polled one, and the polled one is a legitimate outcome.
+    assert(currentScheduler() is null, "no fiber, no loop");
+
+    Sched s;
+    schedOrSkip(s);
+
+    Sched* fromRoot, fromChild;
+    auto r = s.run(() {
+        fromRoot = currentScheduler();
+        // A spawned daemon is the case this exists for: its body is a plain
+        // delegate, handed no scheduler by the host that parked it.
+        assert(!s.spawn(() { fromChild = currentScheduler(); }).hasError);
+    });
+    assert(!r.hasError);
+
+    const sp = (() @trusted => &s)();
+    assert(fromRoot is sp, "the root fiber's loop is the one it runs on");
+    assert(fromChild is sp, "and so is a fiber spawned from it");
+    assert(currentScheduler() is null, "the run is over");
+}
+
 @("sched.spawn.runsToCompletion")
 @safe
 unittest
