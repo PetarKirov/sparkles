@@ -17,6 +17,7 @@ import core.time : Duration, seconds;
 import std.experimental.allocator.mallocator : Mallocator;
 import std.typecons : Flag, No, Yes;
 
+import sparkles.base.hw_caps : hwParallelism, nthAllowedCpu;
 import sparkles.event_horizon.cause : Cause, Interrupt, InterruptKind, Outcome,
     outcomeErr, outcomeOk;
 import sparkles.event_horizon.errors : IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
@@ -72,6 +73,12 @@ struct LoopGroup
             "workStealing lands in M9c");
 
         group._cfg = cfg;
+        // Resolved once here rather than per call: `hwParallelism` is a live
+        // query (an affinity mask or a quota can change under a running
+        // process), and a group whose worker count moved mid-run would be
+        // answering a different question than the one it started threads for.
+        group._workers = cfg.topology == Topology.single
+            ? 1 : (cfg.workers != 0 ? cfg.workers : hwParallelism());
         if (cfg.topology == Topology.single)
         {
             // The single topology's one worker is created eagerly on the
@@ -90,14 +97,7 @@ struct LoopGroup
     }
 
     /// Worker threads for the thread-per-core topology (0 = one per online CPU).
-    uint workerCount() const @safe pure nothrow @nogc
-    {
-        import std.parallelism : totalCPUs;
-
-        if (_cfg.topology == Topology.single)
-            return 1;
-        return _cfg.workers != 0 ? _cfg.workers : totalCPUs;
-    }
+    uint workerCount() const @safe pure nothrow @nogc => _workers;
 
     /// Tears down the group's workers.
     void shutdown(Duration grace = 5.seconds) @safe nothrow
@@ -230,10 +230,9 @@ private:
         version (linux)
         {
             import core.sys.linux.sched : CPU_SET, cpu_set_t, sched_setaffinity;
-            import std.parallelism : totalCPUs;
 
             cpu_set_t set;
-            CPU_SET(cpu % totalCPUs, &set);
+            CPU_SET(nthAllowedCpu(cpu), &set);
             cast(void) sched_setaffinity(0, cpu_set_t.sizeof, &set);
         }
         // Non-Linux: CPU pinning via the platform primitive is a follow-up;
@@ -242,6 +241,7 @@ private:
 
     Sched _sched;
     LoopGroupConfig _cfg;
+    uint _workers;
     bool _started;
 }
 
