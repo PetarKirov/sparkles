@@ -39,6 +39,7 @@ import ansi_model : BackgroundMode;
 import diff_view : DiffLayout;
 import document : Document;
 import explorer : ExplorerTui;
+import inspector_pane : InspectorPane;
 import gui_preview : PreviewModel;
 import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
@@ -86,8 +87,11 @@ struct WorkspaceTui
     which panes exist, what its keys mean, and how a pane paints.
     */
     DockContainer dock;
-    private enum PaneId treePane = 1, docPane = 2;
+    private enum PaneId treePane = 1, docPane = 2, inspPane = 3;
     private enum minTreeCols = 12;
+
+    /// The tree-sitter inspector pane (`TSI`/`INS6`), right of the document.
+    InspectorPane insp;
 
     /// The sidebar's width in cells (incl. its own chrome) — `--tree-width`
     /// seeds it, the divider drag moves it.
@@ -149,7 +153,11 @@ struct WorkspaceTui
         return true;
     }
 
-    /// Builds the two-pane arrangement — called once, before `arrange`.
+    /// Whether the inspector pane is shown (`<leader>vi` toggles it).
+    bool inspVisible() const @safe pure nothrow
+        => dock.layout.nodes.length && dock.layout.visible(inspPane);
+
+    /// Builds the three-pane arrangement — called once, before `arrange`.
     private void buildLayout(int treeWidth) @safe
     {
         if (dock.layout.nodes.length)
@@ -158,7 +166,10 @@ struct WorkspaceTui
             extent: treeWidth < minTreeCols ? minTreeCols : treeWidth,
             minExtent: minTreeCols);
         const d = dock.layout.addLeaf(docPane);
-        dock.layout.root = dock.layout.addSplit(DockAxis.horizontal, [t, d]);
+        const ins = dock.layout.addLeaf(inspPane, extent: 40, minExtent: 20);
+        dock.layout.root = dock.layout.addSplit(DockAxis.horizontal,
+            [t, d, ins]);
+        dock.layout.setVisible(inspPane, false);
         dock.focused = docPane;
     }
 
@@ -173,6 +184,10 @@ struct WorkspaceTui
         // container re-clamps the extent against this on every arrange.
         dock.layout.nodes[dock.layout.nodeOf(treePane)].maxExtent =
             w / 2 < minTreeCols ? minTreeCols : w / 2;
+        // The middle pane must stay flexible: a drag on the doc|inspector
+        // divider hands its BEFORE node (the document) a fixed extent — the
+        // gallery's reflexCentre finding — so it re-zeroes on every arrange.
+        dock.layout.nodes[dock.layout.nodeOf(docPane)].extent = 0;
         dock.arrange(Rect(0, 0, w, h));
 
         foreach (ref f; dock.paneFrames)
@@ -181,16 +196,85 @@ struct WorkspaceTui
                 tree.width = f.rect.width;
                 tree.height = f.rect.height;
             }
+            else if (f.pane == inspPane)
+            {
+                insp.tv.width = f.rect.width;
+                insp.tv.height = f.rect.height;
+                inspRect = f.rect;
+            }
             else
             {
                 viewer.originX = f.rect.x;
                 viewer.resize(f.rect.width, f.rect.height);
+                viewerRows = f.rect.height > 2 ? f.rect.height - 2 : 1;
             }
         if (!treeVisible)
             tree.width = 0; // the paint/hit helpers read this as "no pane"
         if (treeVisible)
             tree.rebuild();
         viewer.relayout();
+    }
+
+    private Rect inspRect;
+    private int viewerRows = 1;
+
+    /// `<leader>vi` (drained from the viewer's command arm): toggles the
+    /// inspector pane; opening seeds the selection from the top visible row
+    /// (the viewer has no caret, deliberately) and focuses the pane.
+    void toggleInspector() @system
+    {
+        dock.layout.setVisible(inspPane, !inspVisible);
+        dock.focused = inspVisible ? inspPane : docPane;
+        arrange(width, height);
+        if (inspVisible)
+        {
+            insp.rebuild(viewer.vm);
+            const t0 = viewer.vm.top;
+            if (viewer.vm.rows.length && t0 >= 0
+                && t0 < cast(long) viewer.vm.rows.length
+                && viewer.vm.rows[cast(size_t) t0].srcStart != size_t.max)
+                insp.selectAt(viewer.vm.rows[cast(size_t) t0].srcStart);
+            syncInspectorExtent();
+        }
+        else
+            viewer.vm.clearInspectExtent();
+    }
+
+    /// The tree→source half of the sync contract (`INS6`): tint the selected
+    /// node's extent; scroll-follow only when it is fully off-screen.
+    private void syncInspectorExtent() @system
+    {
+        size_t s, e;
+        if (inspVisible && insp.selectedExtent(s, e))
+        {
+            viewer.vm.setInspectExtent(s, e);
+            if (!viewer.vm.inspectExtentVisible(viewerRows))
+                viewer.vm.scrollInspectIntoView(viewerRows);
+        }
+        else
+            viewer.vm.clearInspectExtent();
+    }
+
+    private void paintInspector(ref Grid g) @system
+    {
+        import sparkles.ui.display_list : buildDisplayList;
+        import sparkles.ui.geometry : SizeSpec;
+        import sparkles.ui.layout : layout;
+        import sparkles.ui.widget : Builder, Widget, WidgetKind;
+        import sparkles.ui_tui : paintGrid;
+
+        if (inspRect.width < 3)
+            return;
+        insp.focused = dock.focused == inspPane;
+        auto b = Builder();
+        const iv = insp.view(b, inspRect.width);
+        Widget col = Widget(kind: WidgetKind.column, children: [iv],
+            width: SizeSpec.fixed(inspRect.width), clipX: true);
+        auto wt = b.finish(b.add(col));
+        paintGrid(g, pageBg, buildDisplayList(wt, layout(wt),
+            viewer.vm.palette, pageFg, pageBg),
+            inspRect.x, inspRect.y,
+            Rect(0, 0, inspRect.width, inspRect.height));
     }
 
     void paint(ref Grid g) @system
@@ -220,6 +304,15 @@ struct WorkspaceTui
                     g.putText(cast(ushort) d.rect.x, cast(ushort) y, "│", div);
         }
         viewer.paint(g);
+        if (inspVisible)
+        {
+            paintInspector(g);
+            CellStyle div = page;
+            div.fg = Color.fromRgb(toRgb(tree.theme.defaults.fg, pageFg));
+            foreach (ref d; dock.dividers)
+                foreach (y; d.rect.y .. d.rect.y + d.rect.height)
+                    g.putText(cast(ushort) d.rect.x, cast(ushort) y, "│", div);
+        }
     }
 
     /// Opens `path` in the viewer pane and reveals it in the tree (XPL3/4).
@@ -603,8 +696,19 @@ struct WorkspaceTui
         }
         if (r.kind == RouteKind.none)
             return true;
-        const toTree = r.pane == treePane;
         const ev = r.event;
+
+        if (r.pane == inspPane && inspVisible)
+        {
+            if (!insp.handle(ev, viewer.vm))
+            {
+                toggleInspector(); // close intent (q/Escape)
+                return true;
+            }
+            syncInspectorExtent();
+            return true;
+        }
+        const toTree = r.pane == treePane;
 
         if (toTree && treeVisible)
         {
@@ -636,6 +740,23 @@ struct WorkspaceTui
         }
         const alive = viewer.handle(ev);
         syncTreeTheme();
+        if (viewer.inspectorToggleRequested)
+        {
+            viewer.inspectorToggleRequested = false;
+            toggleInspector();
+        }
+        // INS6 source→tree: hovering the document drives the panel's
+        // selection live, while it is open and its [sync] toggle on.
+        if (inspVisible && insp.syncHover)
+            ev.match!((in PointerEvent p) {
+                const off = viewer.offsetAt(p.pos);
+                if (off >= 0 && cast(size_t) off != insp.lastSyncOffset)
+                {
+                    insp.lastSyncOffset = cast(size_t) off;
+                    insp.selectAt(cast(size_t) off);
+                    syncInspectorExtent();
+                }
+            }, (_) {});
         return alive;
     }
 
@@ -1912,4 +2033,61 @@ unittest
         if (n.slot == Slot.hoverUnderline)
             ++underlines;
     assert(underlines > 0, "an anchored overlay decorates the diff rows");
+}
+
+@("workspace.inspectorPane.toggleSyncsAndCloses")
+@system
+unittest
+{
+    import std.process : environment;
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, Theme;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.syntax.ts.registry : GrammarRegistry;
+    import sparkles.test_runner.skip : skipTest;
+    import gui_preview : PreviewModel;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    static GrammarRegistry registry;
+    registry = GrammarRegistry.fromEnvironment();
+    static TsConfigCache* cache;
+    cache = new TsConfigCache;
+    *cache = TsConfigCache.create(&registry, LabelSet.standard());
+
+    static immutable string[1] names = ["dark"];
+    static immutable Theme[1] themes = [builtinDark];
+
+    WorkspaceTui w;
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = LabelSet.standard();
+    w.viewer.vm.cache = cache;
+    w.arrange(100, 20);
+    w.treeVisible = false;
+    w.arrange(100, 20);
+
+    const src = "{\"a\": [1, true]}\n";
+    w.viewer.setDocument("t.json", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        false, TwoslashReturn.init, "json");
+
+    // The toggle shows the pane, arranges it a frame, builds the CST tree,
+    // seeds the selection from the top visible row, and tints its extent.
+    assert(!w.inspVisible);
+    w.toggleInspector();
+    assert(w.inspVisible);
+    assert(w.insp.tv.width >= 20, "the pane got its dock frame");
+    assert(w.insp.ci.data.nodes.length >= 5, "the CST tree is built");
+    size_t s, e;
+    assert(w.insp.selectedExtent(s, e), "the seed selected a node");
+    assert(w.viewer.vm.inspectRects.length >= 1, "the extent tint landed");
+
+    // The document pane narrowed to make room.
+    assert(w.viewer.originX == 0, "no tree: the viewer starts at 0");
+
+    // Closing clears the tint and returns the space.
+    w.toggleInspector();
+    assert(!w.inspVisible);
+    assert(w.viewer.vm.inspectRects.length == 0, "the tint cleared");
 }

@@ -17,6 +17,7 @@ import sparkles.ui.components.dock : DockContainer, PaneId;
 import sparkles.ui.state : CaptureState, KeyTarget, Timeline;
 
 import explorer : ExplorerTui;
+import inspector_pane : InspectorPane;
 import lantern : LanternState;
 import table_select : TableCopyFormat;
 
@@ -160,7 +161,7 @@ unittest
 
 
 /// container resolves them to frames.
-enum PaneId treePane = 1, docPane = 2;
+enum PaneId treePane = 1, docPane = 2, inspPane = 3;
 
 /// The workspace panes (M15 GROUP-P of the GuiState hoist): the explorer
 /// tree pane (XPL2), and the dock container that arranges it beside the
@@ -172,6 +173,7 @@ enum PaneId treePane = 1, docPane = 2;
 struct Panes
 {
     ExplorerTui tree;
+    InspectorPane insp;
     DockContainer dock;
 
     /// The key guide's pending path and panel state (`LTN2`). Owned here
@@ -197,6 +199,26 @@ struct Panes
     void treeFocused(bool v) @safe pure nothrow @nogc
     {
         dock.focused = v ? treePane : docPane;
+    }
+
+    /// Whether the tree-sitter inspector pane is shown (`<leader>vi`).
+    bool inspVisible() const @safe pure nothrow
+        => dock.layout.visible(inspPane);
+
+    /// ditto
+    void inspVisible(bool v) @safe pure nothrow
+    {
+        dock.layout.setVisible(inspPane, v);
+    }
+
+    /// Whether the inspector pane holds focus.
+    bool inspFocused() const @safe pure nothrow @nogc
+        => dock.focused == inspPane;
+
+    /// ditto
+    void inspFocused(bool v) @safe pure nothrow @nogc
+    {
+        dock.focused = v ? inspPane : docPane;
     }
 }
 

@@ -860,6 +860,7 @@ struct ExplorerTui
             // arms rather than a `default:`, so a new command is a compile
             // error here until someone decides whether the tree answers it.
             case Command.toggleExplorer:
+            case Command.toggleInspector:
             case Command.viewDown: case Command.viewUp:
             case Command.viewHome: case Command.viewEnd:
             case Command.viewTop:  case Command.viewBottom:

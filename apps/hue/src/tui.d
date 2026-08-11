@@ -126,6 +126,34 @@ struct PreviewTui
     /// muted otherwise — the at-a-glance focus indicator.
     bool focused = true;
 
+    /// Set by the `toggleInspector` command arm; the workspace drains it and
+    /// flips the pane (the pane arrangement is the workspace's, not this
+    /// viewer's — the `tree.picked` handoff pattern). A standalone viewer
+    /// (no workspace) simply never reads it.
+    bool inspectorToggleRequested;
+
+    /// The source byte at pane-local `p`, else `-1` — the inspector's
+    /// hover-sync feed. Char-precise through the identity channel where the
+    /// point carries one; else the row's whole span (the TUI's granularity).
+    long offsetAt(Point p) @system
+    {
+        import sparkles.ui.state : sourceOffsetAt;
+
+        const bodyRows = height > 2 ? height - 2 : 1;
+        if (p.y < 1 || p.y > bodyRows || vm.rows.length == 0)
+            return -1;
+        const line = vm.top + (p.y - 1);
+        if (line < 0 || line >= cast(long) vm.rows.length)
+            return -1;
+        const hx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
+        const off = sourceOffsetAt(vm.tree, vm.frames,
+            Point(p.x + hx, cast(int) line));
+        if (off >= 0)
+            return off;
+        const r = vm.rows[cast(size_t) line];
+        return r.srcStart != size_t.max ? cast(long) r.srcStart : -1;
+    }
+
     // Incremental search (`/`): `searching` is input mode; `qbuf[0 .. qlen]` is
     // the query, reused by `n`/`N` (one line editor pending — IXB6).
     private bool searching;
@@ -1093,6 +1121,10 @@ struct PreviewTui
             case Command.treePrevChange: case Command.treeCloseAll:
             case Command.treeToggleHidden: case Command.treeCollapseOrUp:
             case Command.treeFilter: case Command.toggleExplorer:
+                break;
+
+            case Command.toggleInspector:
+                inspectorToggleRequested = true;
                 break;
 
             case Command.quit: return false;
