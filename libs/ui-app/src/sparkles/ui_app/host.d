@@ -158,19 +158,29 @@ of "quit", "another frame please" or "do not draw this one".
 
 `opCapacity` is how much of the per-frame buffer the host carries inline —
 $(LREF frameOpCapacity) for a host that paints, $(LREF recordedOpCapacity) for
-one that does not. The names are qualified because a template mixin's body is
+one that does not. The name is qualified because a template mixin's body is
 looked up at the point it is mixed in, and a host module should not have to
-import the spelling of a member it never names.
+import the spelling of a member it never names — with a `static import` of
+this module travelling alongside, since qualification on its own has not
+reached an unimported module since DIP22.
 */
 mixin template HostState(size_t opCapacity = frameOpCapacity)
 {
-    /// The per-frame buffer's type at this host's inline capacity.
-    private alias HostOps = sparkles.ui_app.host.FrameOpsOf!opCapacity;
-
     // A mixin template resolves names at its instantiation site, so the
     // imports must travel with it rather than rely on this module's.
     private import core.time : Duration;
     private import sparkles.input : Mods;
+
+    // …and that includes the module the qualified alias below names. A
+    // fully-qualified name has not been able to reach a module the site did
+    // not import since DIP22 (deprecated in 2.071), so the qualification
+    // alone resolves the symbol and then warns about it on every host, in
+    // every build. The `static` form imports no names — which is the point:
+    // it makes `sparkles.ui_app.host.X` legal without putting `X` anywhere.
+    private static import sparkles.ui_app.host;
+
+    /// The per-frame buffer's type at this host's inline capacity.
+    private alias HostOps = sparkles.ui_app.host.FrameOpsOf!opCapacity;
 
     private bool _quit;
     private bool _frameRequested;
