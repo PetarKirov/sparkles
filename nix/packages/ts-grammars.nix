@@ -12,8 +12,12 @@
 #    specific file override).
 #  - ocaml's output ships no queries; they live at the src root.
 #
-# `sdl` is the one grammar not sourced from nixpkgs: it is maintained in-house
-# (nix/packages/tree-sitter-sdl.nix) because no SDLang grammar existed.
+# Grammars not taken from nixpkgs (or pinned ahead of it):
+#  - `sdl` — in-house (nix/packages/tree-sitter-sdl.nix); no SDLang grammar
+#    existed upstream.
+#  - `d` — pinned to PetarKirov/tree-sitter-d for DUB single-file package
+#    recipe injections until that lands in gdamore/tree-sitter-d + nixpkgs
+#    (nix/packages/tree-sitter-d.nix).
 {
   perSystem =
     { config, pkgs, ... }:
@@ -64,6 +68,7 @@
         );
 
       # Languages whose nixpkgs output already carries usable queries.
+      # `d` is pinned separately — see `special` below.
       plain = builtins.listToAttrs (
         map
           (name: {
@@ -79,7 +84,6 @@
             "c-sharp"
             "cpp"
             "css"
-            "d"
             "go"
             "haskell"
             "html"
@@ -101,6 +105,11 @@
       );
 
       special = {
+        # Pinned fork: DUB single-file recipe injections in queries/injections.scm.
+        d = entry {
+          name = "d";
+          grammar = config.packages.tree-sitter-d;
+        };
         typescript = entry {
           name = "typescript";
           grammar = g.tree-sitter-typescript;

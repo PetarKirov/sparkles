@@ -61,10 +61,12 @@
 
       soname = lang: "libtree_sitter_${builtins.replaceStrings [ "-" ] [ "_" ] lang}.so";
 
-      # Grammars that do not come from nixpkgs. `sdl` is maintained in-house
-      # (nix/packages/tree-sitter-sdl.nix); only its `src` is used here, since
-      # this builds `src/parser.c` per ABI rather than reusing the host build.
+      # Grammars that do not come from nixpkgs (or are pinned ahead of it).
+      # Only `src` is used here — this builds `src/parser.c` per ABI rather
+      # than reusing the host build. Keep in sync with the desktop pins in
+      # nix/packages/tree-sitter-{d,sdl}.nix.
       extraGrammars = {
+        d = config.packages.tree-sitter-d;
         sdl = config.packages.tree-sitter-sdl;
       };
 
