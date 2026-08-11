@@ -5,7 +5,7 @@ gallery.
 The first version of this application rendered its bars with the position-only
 `scrollbar` overload and kept a bare `ScrollState`. That draws a correct thumb
 and is otherwise inert: no grab, no hover, no capture, no easing. All four live
-on $(REF ScrollView, sparkles,ui,scroll_view), which folds both axes' machines,
+on $(REF ScrollView, sparkles,ui,components,scroll_view), which folds both axes' machines,
 the capture protocol and the hover-expand easing into one per-frame transition —
 and an application that reaches past it to `ScrollState` has opted out of the
 whole thing without noticing.
@@ -25,7 +25,7 @@ import sparkles.input : InputCapabilities, PointerAction, PointerButton,
 import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : Frame;
-import sparkles.ui.scroll_view : ScrollExtents, ScrollPointer, ScrollView;
+import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer, ScrollView;
 import sparkles.ui.state : CaptureState;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 

@@ -24,8 +24,8 @@ import std.conv : text;
 
 import sparkles.input : Event, Key, KeyEvent, Point, PointerEvent;
 import sparkles.ui.components.chrome : dockHint, tabStrip;
-import sparkles.ui.dock : DockAxis, DockContainer, DockKind, DockLayout,
-    DockZone, PaneId, RouteKind;
+import sparkles.ui.components.dock : DockAxis, DockContainer, DockKind,
+    DockLayout, DockZone, PaneId, RouteKind;
 import sparkles.ui.geometry : Rect, Size, SizeSpec;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.style : Slot, TextStyle;

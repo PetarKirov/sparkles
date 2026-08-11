@@ -15,8 +15,8 @@ module state;
 
 import sparkles.input : InputCapabilities;
 import sparkles.ui.geometry : Size;
-import sparkles.ui.scroll_view : ScrollbarAnim, ScrollView;
-import sparkles.ui.dock : DockContainer;
+import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
+import sparkles.ui.components.dock : DockContainer;
 import sparkles.ui.state : CaptureState, DisclosureState, FocusState,
     HoverState, PressState, ScrollState, Selection, SplitState, Timeline;
 import sparkles.ui.theme : Theme;

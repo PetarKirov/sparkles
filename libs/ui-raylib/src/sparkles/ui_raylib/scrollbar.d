@@ -24,7 +24,7 @@ import sparkles.ui.state : ScrollAxis, ScrollbarState;
 
 /// The hover-expand animation state now lives with the `ScrollView`
 /// container (`SCV1`) — re-exported here so px hosts keep one import.
-public import sparkles.ui.scroll_view : ScrollbarAnim;
+public import sparkles.ui.components.scroll_view : ScrollbarAnim;
 
 /// The bar's drawable geometry for one frame, in px: the track rectangle
 /// and the thumb rectangle inside it (both empty when the content fits).

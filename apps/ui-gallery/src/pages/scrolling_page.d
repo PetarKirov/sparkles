@@ -20,7 +20,7 @@ import sparkles.input : Key, KeyEvent, PointerEvent;
 import sparkles.ui.components.chrome : scrollbar, scrollView;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.layout : Frame;
-import sparkles.ui.scroll_view : ScrollExtents, ScrollView;
+import sparkles.ui.components.scroll_view : ScrollExtents, ScrollView;
 import sparkles.ui.state : ScrollState, scrollbarThumb;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;

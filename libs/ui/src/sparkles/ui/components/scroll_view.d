@@ -17,7 +17,7 @@ The container does NOT route: which pane a wheel or pointer event belongs
 to stays with the workspace/dock composition (`DCK7`/`DCK13`); a host
 feeds this value only events it already routed here.
 */
-module sparkles.ui.scroll_view;
+module sparkles.ui.components.scroll_view;
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.capability : InputCapabilities;

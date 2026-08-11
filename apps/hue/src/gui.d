@@ -85,11 +85,11 @@ import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.ui.style : defaultTwoslashPalette, Palette, Visual,
     resolveSlot, schemeForBackground, Slot, UiTextStyle = TextStyle;
 import sparkles.ui.components.chrome : actionBar, headerBar;
-import sparkles.ui.dock : DockAxis, DockContainer, PaneId, RouteKind;
+import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind, RuleEdge;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.scroll_view : ScrollExtents, ScrollPointer;
+import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
     keyAt, keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
     scrollbarThumb, selectionRects, sourceOffsetAt, wantedPointerShape,
@@ -2429,7 +2429,7 @@ int runGui(GuiArgs guiArgs) @system
         // hit targets, so their rects come from the same list every other
         // affordance uses. One machine: a single pointer drags one bar.
         {
-            import sparkles.ui.scroll_view : ScrollExtents, ScrollPointer;
+            import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
 
             const mpf = inp.fin.pos;
             const dpf = Point(cast(int)((mpf.x - gutterPx) / cellW) + dhx,

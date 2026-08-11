@@ -33,7 +33,7 @@ import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Rect;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.scroll_view : ScrollView;
+import sparkles.ui.components.scroll_view : ScrollView;
 import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, HoverTarget,
     hoverTargets, KeyedRect, keyedRects, selectionRects;
 import sparkles.base.term_color : Color;

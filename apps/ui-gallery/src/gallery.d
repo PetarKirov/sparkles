@@ -19,11 +19,11 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, isDismiss, Key, KeyAction, KeyEvent, match,
     PointerAction, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.terminal_view.cell_paint : paintCells;
-import sparkles.ui.dock : DockAxis, DockContainer, PaneId, RouteKind;
+import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.components.chrome : headerBar, scrollView;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.scroll_view : ScrollExtents, ScrollView;
+import sparkles.ui.components.scroll_view : ScrollExtents, ScrollView;
 import sparkles.ui.state : hoverTargets, keyedRects, ScrollState,
     wantedPointerShape;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle, Visual;
