@@ -114,6 +114,14 @@ struct World
     bool menuOpen;                   /// the context menu is up (`IXN5`)
     Point menuAt;                    /// …anchored here, in screen cells
     Entity editing = noEntity;       /// the entity whose label is being edited
+    /**
+    In-progress label text (`IXN5`). Same contract as the toolkit's
+    $(REF LineEditState, sparkles,ui,state) — type / erase / accept / cancel —
+    but over a fixed slot so the frame stays allocation-free (`DIA5`).
+    */
+    char[labelCap] editBuf;
+    /// ditto
+    ubyte editLen;
     bool minimapVisible = true;      /// `m` toggles it (`IXN4`)
     /**
     Space is down (or sticky-armed on a target without key releases).
@@ -195,7 +203,11 @@ struct World
         deselect(e);
         if (hovered == e) hovered = noEntity;
         if (connectFrom == e) connectFrom = noEntity;
-        if (editing == e) editing = noEntity;
+        if (editing == e)
+        {
+            editing = noEntity;
+            editLen = 0;
+        }
     }
 
     /// Sets `e`'s label, truncated to the slot.
@@ -211,6 +223,66 @@ struct World
     /// `e`'s label, or an empty slice.
     const(char)[] labelOf(Entity e) const scope return
         => alive(e) ? label[e][0 .. labelLen[e]] : null;
+
+    // ── label edit (`IXN5`) ─────────────────────────────────────────────────
+
+    /// Whether a label edit is in progress.
+    bool isEditing() const scope => editing != noEntity;
+
+    /// The live edit buffer, or empty when not editing.
+    const(char)[] editText() const scope return
+        => isEditing ? editBuf[0 .. editLen] : null;
+
+    /**
+    Opens a label edit on `e`, seeding the buffer from its current label.
+
+    Closes any prior edit without committing — switching targets mid-edit
+    discards the draft, which matches a cancelled LineEditState.
+    */
+    void beginEdit(Entity e) scope
+    {
+        if (!alive(e))
+            return;
+        editing = e;
+        editLen = labelLen[e];
+        if (editLen)
+            editBuf[0 .. editLen] = label[e][0 .. editLen];
+    }
+
+    /// Appends a printable code point (ASCII for the MVP slot). Controls ignored.
+    void editType(dchar c) scope
+    {
+        if (!isEditing || c < 0x20 || c == 0x7f || c > 0x7e)
+            return;
+        if (editLen >= labelCap)
+            return;
+        editBuf[editLen++] = cast(char) c;
+    }
+
+    /// Backspace: drops the last byte (ASCII labels only in the MVP).
+    void editErase() scope
+    {
+        if (!isEditing || editLen == 0)
+            return;
+        --editLen;
+    }
+
+    /// Enter: commit the buffer to the entity's label slot and stop editing.
+    void editCommit() scope
+    {
+        if (!isEditing)
+            return;
+        setLabel(editing, editBuf[0 .. editLen]);
+        editing = noEntity;
+        editLen = 0;
+    }
+
+    /// Esc / cancel: discard the draft and stop editing.
+    void editCancel() scope
+    {
+        editing = noEntity;
+        editLen = 0;
+    }
 
     // ── groups (`WLD2`) ─────────────────────────────────────────────────────
 
@@ -711,6 +783,29 @@ unittest
 
     assert(contentBounds(sink[0 .. n]) == Rect(-20, 0, 24, 10));
     assert(w.alive(a) && w.alive(c));
+}
+
+@("diagram.world.labelEditCommitAndCancel")
+@safe pure nothrow @nogc
+unittest
+{
+    // `IXN5`: LineEditState contract over a fixed slot — type, erase, accept,
+    // cancel — without allocating.
+    World w;
+    const e = w.spawn(Rect(0, 0, 8, 2));
+    w.setLabel(e, "ab");
+    w.beginEdit(e);
+    assert(w.isEditing && w.editText == "ab");
+    w.editType('c');
+    w.editErase(); // drop c
+    w.editType('x');
+    w.editCommit();
+    assert(!w.isEditing && w.labelOf(e) == "abx");
+
+    w.beginEdit(e);
+    w.editType('z');
+    w.editCancel();
+    assert(!w.isEditing && w.labelOf(e) == "abx", "cancel discards the draft");
 }
 
 @("diagram.world.moveSelectionByMovesEachGroupOnce")

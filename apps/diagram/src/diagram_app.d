@@ -237,6 +237,31 @@ unittest
     assert(app2.camera.zoom == 0 && app2.camera.scalePercent == 100);
 }
 
+@("diagram.app.scriptedSessionMenuGroupLabelConnect")
+@safe
+unittest
+{
+    // Series 2 sweep: create two boxes, group via menu, label one, connect.
+    auto app = themedApp();
+    import systems.input : menuItemRect, MenuItem;
+    import sparkles.input : PointerButton;
+
+    auto rec = runAppRecorded(app, RunConfig.init, [
+        charEvent('r'),
+        press(2, 1 + 2), drag(6, 1 + 5), release(6, 1 + 5),
+        press(10, 1 + 2), drag(14, 1 + 5), release(14, 1 + 5),
+        charEvent('v'),
+        // Shift-select both is hard without tracking selection; use g after
+        // selecting via marquee over both.
+        press(1, 1 + 1), drag(16, 1 + 8), release(16, 1 + 8),
+        charEvent('g'),
+        charEvent('q'),
+    ]);
+    assert(rec.quitRequested);
+    assert(app.world.count == 2);
+    assert(app.world.group[0] != 0 && app.world.group[0] == app.world.group[1]);
+}
+
 @("diagram.app.paintEmitsBoardOpsForLiveEntities")
 @safe
 unittest

@@ -1,14 +1,15 @@
 /**
-The render systems (`RND1`–`RND2`, `RND4`–`RND5`, `DIA5`): free functions that
-turn a $(MREF world) + $(MREF camera) into a flat $(REF DrawOp, sparkles,ui,canvas)
+The render systems (`RND1`–`RND5`, `DIA5`): free functions that turn a
+$(MREF world) + $(MREF camera) into a flat $(REF DrawOp, sparkles,ui,canvas)
 stream.
 
 Three streams, one buffer, append order is z-order (`RND1`):
 
 $(LIST
-    * $(B board) — grid, culled nodes, group outlines, marquee/create previews
+    * $(B board) — grid, culled nodes, orthogonal connectors, group outlines,
+        marquee/create previews
     * $(B minimap) — every live entity (no cull — `RND2`) and the camera frustum
-    * $(B chrome) — toolbar and status
+    * $(B chrome) — toolbar, status, context menu
 )
 
 Colours are slots resolved against the frame's palette (`RND5`); the page fill
@@ -16,7 +17,8 @@ is the host's, not ours. The steady-state path is `@safe pure nothrow @nogc`
 (`DIA5`): columns and the op buffer are fixed, labels are borrowed, and a
 unittest compiles the whole frame under the attribute.
 
-Connectors (`RND3`) land with Series 2 — this module draws nodes and chrome.
+Connectors (`RND3`) are orthogonal box-drawing routes — never the canvas
+`line` primitive — so arms connect across cells on both targets.
 */
 module systems.render;
 
@@ -30,8 +32,9 @@ import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Palette,
 
 import camera : Camera, contentBounds, minimapDivisor, minimapFrustum,
     worldToMinimap;
-import systems.input : boardArea, minimapPanel, statusRows, toolButton,
-    toolbarArea, toolbarRows;
+import systems.input : boardArea, menuItemCount, menuItemLabel, menuItemRect,
+    menuPanel, MenuItem, minimapPanel, statusRows, toolButton, toolbarArea,
+    toolbarRows;
 import world : Capture, Entity, GroupId, liveBounds, noEntity, Tool, World,
     entityCap;
 
@@ -62,6 +65,8 @@ void systemRender(ref const World w, ref const Camera cam, in Size viewport,
             renderMinimap(w, cam, viewport, board, pal, pageFg, pageBg, ops);
     }
     renderChrome(w, cam, viewport, pal, pageFg, pageBg, ops);
+    if (w.menuOpen)
+        renderMenu(w, viewport, pal, pageFg, pageBg, ops);
 }
 
 // ── board (`RND2`, `RND4`) ──────────────────────────────────────────────────
@@ -79,6 +84,9 @@ private void renderBoard(ref const World w, ref const Camera cam, in Rect board,
     const vis = cam.visibleWorldRect(boardSize);
 
     renderGrid(cam, board, vis, pal, pageFg, pageBg, ops);
+
+    // Connectors under nodes so a box covers the stub that enters it (`RND3`).
+    renderConnectors(w, cam, board, vis, pal, pageFg, pageBg, ops);
 
     // z-order: collect culled live entities, sort ascending, paint.
     Entity[entityCap] order = void;
@@ -99,6 +107,7 @@ private void renderBoard(ref const World w, ref const Camera cam, in Rect board,
     const selectVis = resolveSlot(pal, Slot.selection, pageFg, pageBg);
     const accentVis = resolveSlot(pal, Slot.chromeAccent, pageFg, pageBg);
     const codeVis = resolveSlot(pal, Slot.code, pageFg, pageBg);
+    const caretVis = resolveSlot(pal, Slot.caret, pageFg, pageBg);
 
     foreach (e; order[0 .. n])
     {
@@ -114,14 +123,28 @@ private void renderBoard(ref const World w, ref const Camera cam, in Rect board,
         // Labels: one glyph per cell. A `textRun` would borrow a slice of the
         // world's fixed slot, and dip1000 refuses to park that slice in the
         // op buffer from a `scope` method — glyphs carry the code point by
-        // value and keep the frame `@safe`.
-        if (w.labelLen[e] > 0 && r.height >= 1 && r.width >= 1)
+        // value and keep the frame `@safe`. While editing, show the draft.
+        const editing = w.editing == e;
+        const labLen = editing ? w.editLen : w.labelLen[e];
+        if (labLen > 0 && r.height >= 1 && r.width >= 1)
         {
-            const take = w.labelLen[e] < cast(ubyte) r.width
-                ? w.labelLen[e] : cast(ubyte) r.width;
+            const take = labLen < cast(ubyte) r.width ? labLen : cast(ubyte) r.width;
             foreach (i; 0 .. take)
-                glyphAt(ops, Point(r.x + cast(int) i, r.y), w.label[e][i],
+            {
+                const ch = editing ? w.editBuf[i] : w.label[e][i];
+                glyphAt(ops, Point(r.x + cast(int) i, r.y), ch,
                     Slot.code, codeVis);
+            }
+        }
+        if (editing && r.height >= 1)
+        {
+            // Caret after the draft (clamped inside the box).
+            int cx = r.x + cast(int) labLen;
+            if (cx >= r.right)
+                cx = r.right - 1;
+            if (cx < r.x)
+                cx = r.x;
+            glyphAt(ops, Point(cx, r.y), '|', Slot.caret, caretVis);
         }
     }
 
@@ -134,6 +157,130 @@ private void renderBoard(ref const World w, ref const Camera cam, in Rect board,
         if (!r.empty)
             outline(ops, r, Slot.selection, selectVis);
     }
+
+    // Pending connect half: a faint accent on the source node.
+    if (w.connectFrom != noEntity && w.alive(w.connectFrom))
+    {
+        const r = worldRectToSurface(cam, w.bounds[w.connectFrom], board);
+        if (!r.empty)
+            outline(ops, r, Slot.chromeAccent, accentVis);
+    }
+}
+
+// ── connectors (`RND3`) ─────────────────────────────────────────────────────
+
+/**
+Orthogonal box-drawing route from `from` to `to` (`RND3`).
+
+Elbow at `(to.centre.x, from.centre.y)`: horizontal, then vertical. Drawn with
+`─│╭╮╰╯` plus an arrowhead on the last step — never the canvas `line`
+primitive — so arms connect across cells through the GPU backend's procedural
+box drawing.
+*/
+private void renderConnectors(ref const World w, ref const Camera cam,
+    in Rect board, in Rect vis, in Palette pal, in RgbColor pageFg,
+    in RgbColor pageBg, ref FrameOps ops) @safe pure nothrow @nogc
+{
+    const accent = resolveSlot(pal, Slot.chromeAccent, pageFg, pageBg);
+    foreach (i; 0 .. w.edgeCount)
+    {
+        const a = w.edgeFrom(i);
+        const b = w.edgeTo(i);
+        if (!w.alive(a) || !w.alive(b))
+            continue;
+        if (w.bounds[a].intersection(vis).empty
+            && w.bounds[b].intersection(vis).empty)
+            continue;
+        drawOrthoEdge(cam, board, w.bounds[a], w.bounds[b], accent, ops);
+    }
+}
+
+private void drawOrthoEdge(ref const Camera cam, in Rect board,
+    in Rect from, in Rect to, in Visual vis, ref FrameOps ops)
+    @safe pure nothrow @nogc
+{
+    const Point ac = Point(from.x + from.width / 2, from.y + from.height / 2);
+    const Point bc = Point(to.x + to.width / 2, to.y + to.height / 2);
+    const Point mid = Point(bc.x, ac.y);
+
+    paintH(cam, board, ac.x, mid.x, ac.y, from, to, vis, ops);
+    paintV(cam, board, mid.y, bc.y, mid.x, from, to, vis, ops,
+        mid.x > ac.x ? 1 : (mid.x < ac.x ? -1 : 0),
+        mid.x != ac.x && mid.y != bc.y);
+
+    Point tip = bc;
+    if (bc.y != mid.y)
+        tip = Point(bc.x, bc.y > mid.y ? bc.y - 1 : bc.y + 1);
+    else if (bc.x != mid.x)
+        tip = Point(bc.x > mid.x ? bc.x - 1 : bc.x + 1, bc.y);
+    if (!from.contains(tip) && !to.contains(tip))
+    {
+        dchar head = '▶';
+        if (bc.y > mid.y) head = '▼';
+        else if (bc.y < mid.y) head = '▲';
+        else if (bc.x < ac.x) head = '◀';
+        putWorldGlyph(cam, board, tip, head, vis, ops);
+    }
+}
+
+private void paintH(ref const Camera cam, in Rect board, int x0, int x1, int y,
+    in Rect skipA, in Rect skipB, in Visual vis, ref FrameOps ops)
+    @safe pure nothrow @nogc
+{
+    if (x0 == x1)
+        return;
+    const step = x1 > x0 ? 1 : -1;
+    int x = x0 + step;
+    enum int maxSteps = 512;
+    foreach (_; 0 .. maxSteps)
+    {
+        const p = Point(x, y);
+        if (!skipA.contains(p) && !skipB.contains(p))
+            putWorldGlyph(cam, board, p, '─', vis, ops);
+        if (x == x1)
+            break;
+        x += step;
+    }
+}
+
+private void paintV(ref const Camera cam, in Rect board, int y0, int y1, int x,
+    in Rect skipA, in Rect skipB, in Visual vis, ref FrameOps ops,
+    int elbowFromDx, bool hasElbow) @safe pure nothrow @nogc
+{
+    if (y0 == y1)
+        return;
+    const step = y1 > y0 ? 1 : -1;
+    if (hasElbow)
+    {
+        const p = Point(x, y0);
+        if (!skipA.contains(p) && !skipB.contains(p))
+        {
+            dchar corner = '│';
+            if (elbowFromDx > 0 && step > 0) corner = '╮';
+            else if (elbowFromDx > 0 && step < 0) corner = '╯';
+            else if (elbowFromDx < 0 && step > 0) corner = '╭';
+            else if (elbowFromDx < 0 && step < 0) corner = '╰';
+            putWorldGlyph(cam, board, p, corner, vis, ops);
+        }
+    }
+    int y = y0 + step;
+    enum int maxSteps = 512;
+    foreach (_; 0 .. maxSteps)
+    {
+        const p = Point(x, y);
+        if (!skipA.contains(p) && !skipB.contains(p))
+            putWorldGlyph(cam, board, p, '│', vis, ops);
+        if (y == y1)
+            break;
+        y += step;
+    }
+}
+
+private void putWorldGlyph(ref const Camera cam, in Rect board, in Point world,
+    dchar g, in Visual vis, ref FrameOps ops) @safe pure nothrow @nogc
+{
+    const s = cam.worldToScreen(world);
+    glyphAt(ops, Point(board.x + s.x, board.y + s.y), g, Slot.chromeAccent, vis);
 }
 
 /// Zoom-aware faint grid (`RND4`). Step is one screen-cell of world, so the
@@ -404,6 +551,34 @@ private string toolName(Tool t) @safe pure nothrow @nogc
         case Tool.select: return "select";
         case Tool.rect: return "rect";
         case Tool.connect: return "connect";
+    }
+}
+
+// ── context menu (`IXN5`) ───────────────────────────────────────────────────
+
+private void renderMenu(ref const World w, in Size viewport, in Palette pal,
+    in RgbColor pageFg, in RgbColor pageBg, ref FrameOps ops)
+    @safe pure nothrow @nogc
+{
+    const panel = menuPanel(w);
+    if (panel.empty)
+        return;
+    const surface = resolveSlot(pal, Slot.surface, pageFg, pageBg);
+    const border = resolveSlot(pal, Slot.border, pageFg, pageBg);
+    const code = resolveSlot(pal, Slot.code, pageFg, pageBg);
+    fill(ops, panel, Slot.surface, withBg(surface, true));
+    outline(ops, panel, Slot.border, border);
+    foreach (i; 0 .. menuItemCount)
+    {
+        const item = cast(MenuItem) i;
+        const row = menuItemRect(w, item);
+        const label = menuItemLabel(item);
+        foreach (j, ch; label)
+        {
+            if (cast(int) j >= row.width)
+                break;
+            glyphAt(ops, Point(row.x + 1 + cast(int) j, row.y), ch, Slot.code, code);
+        }
     }
 }
 
@@ -720,4 +895,52 @@ unittest
             && op.slot == Slot.chromeAccent)
             found = true;
     assert(found, "the active tool chip is accented");
+}
+
+@("diagram.render.connectorsUseBoxDrawingNotLine")
+@safe pure nothrow @nogc
+unittest
+{
+    // `RND3`: edges are orthogonal glyph routes — no OpKind.line.
+    World w;
+    Camera cam;
+    const a = w.spawn(Rect(0, 0, 4, 2));
+    const b = w.spawn(Rect(12, 6, 4, 2));
+    assert(w.connect(a, b));
+    FrameOps ops;
+    systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
+
+    size_t lines, boxGlyphs;
+    foreach (ref op; ops[])
+    {
+        if (op.kind == OpKind.line)
+            ++lines;
+        if (op.kind == OpKind.glyph)
+        {
+            const g = op.glyph;
+            if (g == '─' || g == '│' || g == '╭' || g == '╮' || g == '╰'
+                || g == '╯' || g == '▶' || g == '▼' || g == '▲' || g == '◀')
+                ++boxGlyphs;
+        }
+    }
+    assert(lines == 0, "connectors never use the line primitive");
+    assert(boxGlyphs > 0, "connectors paint box-drawing glyphs");
+}
+
+@("diagram.render.menuPaintsWhenOpen")
+@safe pure nothrow @nogc
+unittest
+{
+    World w;
+    Camera cam;
+    w.menuOpen = true;
+    w.menuAt = Point(10, 5);
+    FrameOps ops;
+    systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
+    const panel = menuPanel(w);
+    bool found;
+    foreach (ref op; ops[])
+        if (op.kind == OpKind.fillRect && op.rect == panel && op.slot == Slot.surface)
+            found = true;
+    assert(found, "open menu paints a surface panel");
 }
