@@ -13,7 +13,17 @@ module sparkles.event_horizon.backend.uring;
 // io_uring is Linux-only — and OFF on Android, where the app seccomp policy
 // denies io_uring_setup: the Android triple takes the kqueue-over-libkqueue
 // peer backend instead (backend.select), and `during` never enters its build.
-version (Android)
+//
+// The `libkqueue` configuration is the same exclusion for the same reason: it
+// selects the kqueue peer on Linux so the stack can be tested without a Mac,
+// and `backend.probe` already drops the uring-only helpers this module calls
+// (`kernelVersion`, `buildUringCaps`) under that version. The three-way gate
+// here has to match probe's, or this module compiles against symbols that are
+// correctly absent.
+version (EventHorizonLibkqueue)
+{
+}
+else version (Android)
 {
 }
 else version (linux)  :
