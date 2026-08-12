@@ -14,7 +14,9 @@ vocabulary, which backends produce.
 */
 module sparkles.ui.canvas;
 
+import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : Point, Rect, Size, cellsOf;
+import sparkles.ui.state : scrollbarThumb;
 import sparkles.ui.style : Slot, Visual;
 
 /// How a $(LREF DrawOp)'s `line` is stroked.
@@ -27,14 +29,14 @@ enum LineStyle : ubyte
 /// The drawing primitives, reified so the pure model can hand a painter a
 /// flat `DrawOp[]` with no backend in sight.
 /**
-Where a hairline sits within a cell band (`UIA2`).
+Where a sub-cell band sits within a cell rect (`UIA2`).
 
 The toolkit's geometry is whole cells, but real chrome is thinner than a
 cell: a 1 px pane divider, the hairline under a header, a separator above
-a toolbar. Naming the $(B edge) instead of a pixel count keeps that
-expressible without giving the toolkit device units — the backend decides
-what "a hairline along this edge" is in its own terms, which is the same
-bargain `LineStyle` already makes.
+a toolbar, or a scrollbar rail expanding around a border. Naming the $(B edge)
+instead of a pixel count keeps that expressible without giving the toolkit
+device units — the backend decides what a band along that edge is in its own
+terms, which is the same bargain `LineStyle` already makes.
 */
 enum RuleEdge : ubyte
 {
@@ -53,6 +55,7 @@ enum OpKind : ubyte
     glyph,    /// draw a single `glyph` at `rect.origin`
     line,     /// stroke `rect.origin` → `to` in `lineStyle`
     rule,     /// a hairline along `ruleEdge` of `rect`, in `visual.fg`
+    scrollbar, /// a semantic scrollbar band along `ruleEdge` of `rect`
     pushClip, /// clip subsequent ops to `rect` (nested clips intersect)
     popClip,  /// undo the matching `pushClip`
 }
@@ -71,7 +74,15 @@ struct DrawOp
     const(char)[] text; /// `textRun` payload (borrowed; must outlive the op)
     dchar glyph;        /// `glyph` payload
     LineStyle lineStyle;
-    RuleEdge ruleEdge;  /// `rule` placement
+    RuleEdge ruleEdge;  /// `rule` / `scrollbar` placement
+    int barContent;     /// `scrollbar` content extent, in content units
+    int barViewport;    /// `scrollbar` viewport extent, in content units
+    int barOffset;      /// `scrollbar` offset, in content units
+    ubyte expandPercent; /// `scrollbar` rail expansion: 0 idle, 100 expanded
+    bool barTrackLit;   /// `scrollbar`: paint the optional px track behind the thumb
+    RgbColor barTrackColor; /// `scrollbar` track color (`visual.fg` is the thumb)
+    dchar barTrackGlyph = '│'; /// cell fallback's track glyph
+    dchar barThumbGlyph = '█'; /// cell fallback's thumb glyph
     Slot slot;          /// the semantic role this op was resolved from
     Visual visual;      /// resolved appearance
 }
@@ -103,6 +114,24 @@ void ruleEndpoints(in Rect rect, RuleEdge edge, out Point from, out Point to)
             from = Point(x1, cy); to = Point(x2, cy);
             break;
     }
+}
+
+/// Number of columns/rows a cell backend uses for a semantic scrollbar rail.
+/// The continuous px animation degrades to the gallery's shipped threshold:
+/// idle through 49% is one cell; 50% through fully expanded is two.
+int scrollbarCellCount(ubyte expandPercent) @safe pure nothrow @nogc
+    => expandPercent < 50 ? 1 : 2;
+
+/**
+Returns whether cell `at` along a `track` belongs to the thumb. This is the
+semantic scrollbar's cell degradation over the one `STM2` formula — it does
+not re-derive geometry and therefore retains the flush-at-both-ends property.
+*/
+bool scrollbarCell(int content, int viewport, int offset, int track, int at)
+    @safe pure nothrow @nogc
+{
+    const thumb = scrollbarThumb(content, viewport, offset, track);
+    return at >= thumb.start && at < thumb.start + thumb.extent;
 }
 
 /**
@@ -242,4 +271,22 @@ unittest
     assert(c.ops[3].kind == OpKind.line
         && c.ops[3].to == Point(4, 5) && c.ops[3].lineStyle == LineStyle.wavy);
     assert(c.measure("hello") == Size(5, 1));
+}
+
+@("ui.canvas.scrollbarCell.degradesAtTheSharedThreshold")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(scrollbarCellCount(0) == 1);
+    assert(scrollbarCellCount(49) == 1);
+    assert(scrollbarCellCount(50) == 2);
+    assert(scrollbarCellCount(100) == 2);
+
+    // 40 content units in a 10-unit viewport over ten cells resolves to a
+    // two-cell thumb, flush at both ends through STM2's one formula.
+    assert(scrollbarCell(40, 10, 0, 10, 0));
+    assert(scrollbarCell(40, 10, 0, 10, 1));
+    assert(!scrollbarCell(40, 10, 0, 10, 2));
+    assert(scrollbarCell(40, 10, 30, 10, 8));
+    assert(scrollbarCell(40, 10, 30, 10, 9));
 }

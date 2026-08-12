@@ -26,7 +26,7 @@ import raylib;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
-import sparkles.ui_raylib.scrollbar : toRaylibCursor;
+import sparkles.ui_raylib.events : toRaylibCursor;
 
 /**
 What the caller wants of a window. Sizes are $(B pixels); a caller thinking in

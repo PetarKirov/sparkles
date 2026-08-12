@@ -169,6 +169,14 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             put(w, "\"></div>");
             break;
 
+        case scrollbar:
+            // HTML overflow owns its native scrollbar. Preserve the semantic
+            // leaf's reserved geometry without inventing a second CSS bar.
+            put(w, "<div style=\"");
+            boxStyle(w, node, vis);
+            put(w, "\"></div>");
+            break;
+
         case box:
             put(w, "<div style=\"");
             boxStyle(w, node, vis);

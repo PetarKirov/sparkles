@@ -20,10 +20,99 @@ import sparkles.raylib_text : TextStyle, FontSet, drawText;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
-import sparkles.ui.canvas : isCanvas, LineStyle, RuleEdge;
+import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, RuleEdge;
 import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
 import sparkles.base.term_color : RgbColor;
+import sparkles.ui.state : scrollbarThumb;
 import sparkles.ui.style : BorderStyle, Visual;
+
+/// The idle scrollbar rail thickness for a cell extent, in device pixels.
+int railIdlePx(int cellExtent) @safe pure nothrow @nogc
+{
+    const third = cellExtent / 3;
+    return third < 2 ? 2 : third;
+}
+
+/// The fully-expanded scrollbar rail thickness: exactly 1.5 cells, including
+/// odd cell sizes (integer multiply before divide is the normative rounding).
+int railExpandedPx(int cellExtent) @safe pure nothrow @nogc
+    => cellExtent * 3 / 2;
+
+/// Pure, window-free resolved pixel geometry for one semantic scrollbar op.
+struct ScrollbarRail
+{
+    Rect track;
+    Rect thumb;
+    bool live;
+}
+
+/**
+Resolves a semantic scrollbar operation into pixel track/thumb geometry. The
+op keeps content units and an expansion percentage; this backend alone chooses
+pixel rail thickness and the 24px minimum grabbable thumb.
+*/
+ScrollbarRail scrollbarRail(in DrawOp op, int cellW, int cellH,
+    int originX = 0, int originY = 0, int minExtent = 24)
+    @safe pure nothrow @nogc
+{
+    ScrollbarRail r;
+    if (op.barContent <= op.barViewport || op.barContent <= 0)
+        return r;
+
+    bool vertical;
+    final switch (op.ruleEdge) with (RuleEdge)
+    {
+        case left: case right: case centerX:
+            vertical = true;
+            break;
+        case top: case bottom: case centerY:
+            vertical = false;
+            break;
+    }
+
+    const x = originX + op.rect.x * cellW;
+    const y = originY + op.rect.y * cellH;
+    const w = op.rect.width * cellW;
+    const h = op.rect.height * cellH;
+    const cellExtent = vertical ? cellW : cellH;
+    const idle = railIdlePx(cellExtent);
+    const expanded = railExpandedPx(cellExtent);
+    const thickness = idle
+        + (expanded - idle) * cast(int) op.expandPercent / 100;
+
+    final switch (op.ruleEdge) with (RuleEdge)
+    {
+        case left:
+            r.track = Rect(x, y, thickness, h);
+            break;
+        case right:
+            r.track = Rect(x + w - thickness, y, thickness, h);
+            break;
+        case centerX:
+            r.track = Rect(x + w / 2 - thickness / 2, y, thickness, h);
+            break;
+        case top:
+            r.track = Rect(x, y, w, thickness);
+            break;
+        case bottom:
+            r.track = Rect(x, y + h - thickness, w, thickness);
+            break;
+        case centerY:
+            r.track = Rect(x, y + h / 2 - thickness / 2, w, thickness);
+            break;
+    }
+
+    const track = vertical ? h : w;
+    if (track <= 0 || thickness <= 0)
+        return ScrollbarRail.init;
+    const thumb = scrollbarThumb(op.barContent, op.barViewport,
+        op.barOffset, track, minExtent);
+    r.thumb = vertical
+        ? Rect(r.track.x, y + thumb.start, thickness, thumb.extent)
+        : Rect(x + thumb.start, r.track.y, thumb.extent, thickness);
+    r.live = true;
+    return r;
+}
 
 /// A resolved `Visual`'s foreground as a raylib `Color` (with its alpha).
 Color rlFg(in Visual v) pure nothrow @nogc @trusted
@@ -234,6 +323,21 @@ struct RaylibCanvas
         }
     }
 
+    /// Draws the semantic scrollbar op with the backend's continuous px rail.
+    void scrollbar(in DrawOp op) @system
+    {
+        const r = scrollbarRail(op, cellW, cellH,
+            cast(int) originX, cast(int) originY);
+        if (!r.live)
+            return;
+        if (op.barTrackLit)
+            DrawRectangle(r.track.x, r.track.y, r.track.width, r.track.height,
+                Color(op.barTrackColor.r, op.barTrackColor.g,
+                    op.barTrackColor.b, 255));
+        DrawRectangle(r.thumb.x, r.thumb.y, r.thumb.width, r.thumb.height,
+            rlFg(op.visual));
+    }
+
     void line(in Point from, in Point to, in Visual v, LineStyle style) @system
     {
         const y0 = cast(int) py(from.y);
@@ -375,6 +479,51 @@ struct RaylibCanvas
         *buf ~= '\0';
         return (*buf)[0 .. $ - 1];
     }
+}
+
+@("uiRaylib.scrollbarRail.metricsAndOddCells")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(railIdlePx(5) == 2);
+    assert(railIdlePx(21) == 7);
+    assert(railExpandedPx(5) == 7);  // not cast(int)(5 * 1.5f) by accident
+    assert(railExpandedPx(21) == 31);
+
+    DrawOp op = {
+        rect: Rect(2, 1, 10, 20),
+        ruleEdge: RuleEdge.right,
+        barContent: 400,
+        barViewport: 100,
+        expandPercent: 0,
+    };
+    const idle = scrollbarRail(op, 5, 7);
+    assert(idle.live && idle.track == Rect(58, 7, 2, 140));
+    assert(idle.thumb == Rect(58, 7, 2, 35));
+
+    op.expandPercent = 100;
+    const expanded = scrollbarRail(op, 5, 7);
+    assert(expanded.track == Rect(53, 7, 7, 140));
+    op.expandPercent = 50;
+    const middle = scrollbarRail(op, 5, 7);
+    assert(middle.track.width >= idle.track.width);
+    assert(middle.track.width <= expanded.track.width);
+
+    op.barOffset = 300;
+    const bottom = scrollbarRail(op, 5, 7);
+    assert(bottom.thumb.y + bottom.thumb.height
+        == bottom.track.y + bottom.track.height);
+
+    op.ruleEdge = RuleEdge.bottom;
+    op.rect = Rect(1, 2, 20, 3);
+    op.barContent = 200;
+    op.barViewport = 100;
+    op.barOffset = 100;
+    op.expandPercent = 100;
+    const horizontal = scrollbarRail(op, 5, 7);
+    assert(horizontal.track.height == railExpandedPx(7));
+    assert(horizontal.thumb.x + horizontal.thumb.width
+        == horizontal.track.x + horizontal.track.width);
 }
 
 // The raylib canvas must satisfy the ui capability concept, or the shared

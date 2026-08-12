@@ -10,13 +10,11 @@ the capture protocol and the hover-expand easing into one per-frame transition �
 and an application that reaches past it to `ScrollState` has opted out of the
 whole thing without noticing.
 
-$(B The cell backend cannot render hue's bar.) hue's window draws a ⅓-cell rail
-easing open to 1.5 cells, which is sub-cell geometry reachable only by driving
-the canvas directly. The gallery is a pure host consumer and paints through the
-widget display list on both targets, so its bar eases between $(B one and two
-whole columns) instead. The easing is the same value at the same rate; what
-differs is that the result is quantised, so the animation reads as a short
-delay before the bar widens rather than as a smooth slide. See `UGL-O6`.
+The semantic scrollbar operation lets the pure gallery view express hue's
+⅓-cell rail without naming a canvas. A pixel backend resolves the continuous
+rail up to 1.5 cells; a cell backend thresholds the same percentage to one or
+two columns. The easing value and rate are shared; only device resolution
+differs (`UGL-O6`, closed).
 */
 module scrollbars;
 
@@ -79,31 +77,16 @@ uint verticalBar(ref Builder b, in ScrollView sv, in BarGeometry g,
             width: SizeSpec.fixed(gutterCells),
         ));
 
-    const wide = sv.vAnim.width >= 1.5f;
-    // Expanded also brightens the track: a one-column bar has no width to
-    // spare on a target that rounds it away, and a track that only appears on
-    // hover is the affordance saying it is grabbable.
-    const glyphs = wide
+    // Expanded also brightens the track: a cell backend thresholds the same
+    // semantic percent that a px backend resolves continuously.
+    const glyphs = sv.vAnim.percent >= 50.0f
         ? ScrollbarGlyphs(thumb: '█', track: '░')
         : ScrollbarGlyphs(thumb: '█', track: '│');
-
-    auto columns = new uint[](wide ? 2 : 1);
-    foreach (i; 0 .. columns.length)
-        columns[i] = scrollbar(b, sv.v, g.content, g.viewport, g.track, glyphs);
-
-    // The hit id sits on the whole gutter, not on the glyph columns — so the
-    // grab zone is the bar's EXPANDED width whatever width it is drawn at.
-    // Sizing the zone to the current width instead would make the bar hardest
-    // to hit precisely while it is still thin, which is every time.
-    return b.add(Widget(
-        kind: WidgetKind.row,
-        children: columns,
-        width: SizeSpec.fixed(gutterCells),
-        // Right-aligned inside that gutter, so the pane's text edge stays put
-        // and only the bar moves outward as it widens.
-        alignX: Alignment.end,
-        hitId: hitId,
-    ));
+    return scrollbar(b, sv.v, g.content, g.viewport, g.track, glyphs,
+        expandPercent: cast(ubyte) sv.vAnim.percent,
+        gutter: gutterCells,
+        trackLit: sv.v.hovered || sv.v.dragging,
+        hitId: hitId);
 }
 
 /**
@@ -116,20 +99,17 @@ once. The same collapse the `Timeline` machine names for the same reason.
 */
 void easeVertical(ref ScrollView sv, in InputCapabilities caps, float dtSeconds)
 {
-    enum float expanded = 2.0f;
-    enum float idle = 1.0f;
-
     if (dtSeconds > 0)
-        return sv.easeV(expanded, idle, caps, dtSeconds);
-    sv.vAnim.width = sv.v.expanded(caps) ? expanded : idle;
+        return sv.easeV(caps, dtSeconds);
+    sv.vAnim.percent = sv.v.expanded(caps) ? 100.0f : 0.0f;
 }
 
 /// `true` while the eased width has not reached its target — the cue to ask
 /// for another frame, so an animation that nobody is driving still finishes.
 bool easing(in ScrollView sv, in InputCapabilities caps) pure nothrow @nogc
 {
-    const target = sv.v.expanded(caps) ? 2.0f : 1.0f;
-    const delta = sv.vAnim.width - target;
+    const target = sv.v.expanded(caps) ? 100.0f : 0.0f;
+    const delta = sv.vAnim.percent - target;
     return delta > 0.01f || delta < -0.01f;
 }
 
@@ -305,12 +285,12 @@ version (unittest)
     // reads as an animation instead of a jump. This is the assertion that
     // fails if the width is taken straight from `hovered || dragging`.
     ScrollView sv;
-    sv.vAnim.width = 1.0f;
+    sv.vAnim.percent = 0.0f;
     sv.v = sv.v.hoveredNow(true);
 
     assert(easing(sv, mousePointer));
     easeVertical(sv, mousePointer, 1.0f / 60);
-    assert(sv.vAnim.width > 1.0f && sv.vAnim.width < 2.0f,
+    assert(sv.vAnim.percent > 0.0f && sv.vAnim.percent < 100.0f,
         "one frame is not the whole transition");
 
     int frames = 1;
@@ -329,11 +309,11 @@ version (unittest)
     // A terminal reports no frame time. Easing against a zero delta never
     // converges, so the affordance would never appear at all.
     ScrollView sv;
-    sv.vAnim.width = 1.0f;
+    sv.vAnim.percent = 0.0f;
     sv.v = sv.v.hoveredNow(true);
 
     easeVertical(sv, cellPointer, 0);
-    assert(sv.vAnim.width == 2.0f);
+    assert(sv.vAnim.percent == 100.0f);
     assert(!easing(sv, cellPointer), "nothing left to animate");
 }
 
@@ -347,11 +327,14 @@ version (unittest)
 
     ScrollView sv;
     easeVertical(sv, touchPointer, 0);
-    assert(sv.vAnim.width == 2.0f);
+    assert(sv.vAnim.percent == 100.0f);
 
     auto b = Builder();
     const node = verticalBar(b, sv, g, 7);
-    assert(b.nodes[node].children.length == 2, "two columns, unprompted");
+    assert(b.nodes[node].kind == WidgetKind.scrollbar);
+    assert(b.nodes[node].barExpandPercent == 100,
+        "the semantic rail is fully expanded, unprompted");
+    assert(b.nodes[node].width == SizeSpec.fixed(gutterCells));
 }
 
 @("ui_gallery.scrollbars.theBarKeepsItsGutterWhicheverWidthItIs")
@@ -362,10 +345,10 @@ version (unittest)
 
     // The pane beside it must not reflow when the bar widens — text jumping
     // sideways as you reach for the scrollbar is worse than a static gutter.
-    foreach (width; [1.0f, 2.0f])
+    foreach (percent; [0.0f, 100.0f])
     {
         ScrollView sv;
-        sv.vAnim.width = width;
+        sv.vAnim.percent = percent;
         auto b = Builder();
         const node = verticalBar(b, sv, g, 7);
         auto tree = b.finish(node);

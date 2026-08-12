@@ -25,19 +25,27 @@ import sparkles.ui.state : CaptureState, ScrollAxis, ScrollbarState;
 
 @safe:
 
-/// The hover-expand animation state for px backends: eased every frame
-/// toward the idle rail or the expanded gutter extent. Pure floats — cell
-/// backends simply never read it. (Moved here from `ui_raylib.scrollbar`;
-/// the px layout/draw functions still live there.)
+/// The backend-neutral hover-expand animation state: a semantic percentage,
+/// never a device width. Pixel backends resolve it against their cell extent;
+/// cell backends threshold it through `scrollbarCellCount`.
 struct ScrollbarAnim
 {
-    float width = 4.0f;
+    float percent = 0.0f;
 
-    /// Eases `width` toward `target` at the shared 15/s rate.
-    void step(float target, float dt) pure nothrow @nogc
+    /// Eases `percent` toward idle (0) or expanded (100) at the shared 15/s rate.
+    void step(bool expanded, float dt) pure nothrow @nogc
     {
-        width += (target - width) * 15.0f * dt;
+        const target = expanded ? 100.0f : 0.0f;
+        percent += (target - percent) * 15.0f * dt;
+        if (percent < 0)
+            percent = 0;
+        if (percent > 100)
+            percent = 100;
     }
+
+    /// Transitional/device-backend resolution of the semantic percentage.
+    float extent(float idle, float expanded) const pure nothrow @nogc
+        => idle + (expanded - idle) * percent / 100.0f;
 }
 
 /// The pointer input one axis consumes for one frame (`SCV3`) —
@@ -124,15 +132,15 @@ pure nothrow @nogc:
     /// Eases the px extents toward expanded/idle per the axis' state and
     /// the target's declared capabilities (`IXB10`) — no-hover targets
     /// stay permanently expanded.
-    void easeV(float expanded, float idle, in InputCapabilities caps, float dt)
+    void easeV(in InputCapabilities caps, float dt)
     {
-        vAnim.step(v.expanded(caps) ? expanded : idle, dt);
+        vAnim.step(v.expanded(caps), dt);
     }
 
     /// ditto
-    void easeH(float expanded, float idle, in InputCapabilities caps, float dt)
+    void easeH(in InputCapabilities caps, float dt)
     {
-        hAnim.step(h.expanded(caps) ? expanded : idle, dt);
+        hAnim.step(h.expanded(caps), dt);
     }
 
     /// `true` while either axis owns the pointer. Hosts composing shapes
@@ -178,6 +186,20 @@ pure nothrow @nogc:
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+@("ui.scrollView.animationIsSemanticPercent")
+@safe pure nothrow @nogc
+unittest
+{
+    ScrollbarAnim a;
+    a.step(true, 1.0f / 60);
+    assert(a.percent > 0 && a.percent < 100);
+    assert(a.extent(2, 14) > 2 && a.extent(2, 14) < 14);
+    a.step(true, 1);
+    assert(a.percent == 100, "large frame deltas saturate at expanded");
+    a.step(false, 1);
+    assert(a.percent == 0, "large frame deltas saturate at idle");
+}
 
 @("ui.scrollView.grabLifecycleWithCapture")
 @safe pure nothrow @nogc

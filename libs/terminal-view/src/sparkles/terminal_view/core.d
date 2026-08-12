@@ -16,7 +16,7 @@ import sparkles.ghostty.c;
 import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid,
     drawBox;
 import sparkles.terminal_view.input : ExitBehavior, SelectionState,
-    ScrollbarState, HoverState;
+    OverlayScrollbar, HoverState;
 import sparkles.terminal_view.osc_query : OscScanner;
 
 // Context threaded to every terminal effect callback via the userdata pointer
@@ -433,7 +433,7 @@ struct CoreState
     ushort rows;
 
     SelectionState selState;
-    ScrollbarState sbState;
+    OverlayScrollbar sbState;
     HoverState hoverState;
 
     // Streaming OSC scanner answering OSC 10/11/12 color queries (see

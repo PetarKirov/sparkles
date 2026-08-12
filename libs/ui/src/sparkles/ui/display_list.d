@@ -182,6 +182,34 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                 lineStyle: node.lineStyle, slot: node.slot, visual: vis,
             );
             break;
+        case scrollbar:
+            static int barInt(long value) pure nothrow @nogc
+                => value < int.min ? int.min
+                    : value > int.max ? int.max : cast(int) value;
+            auto trackVis = resolveVisual(pal, Slot.track, node.decoration,
+                node.textStyle, pageFg, pageBg);
+            auto thumbVis = resolveVisual(pal, Slot.thumb, node.decoration,
+                node.textStyle, pageFg, pageBg);
+            if (node.hasBarTrackFgOverride)
+                trackVis.fg = node.barTrackFgOverride;
+            if (node.hasFgOverride)
+                thumbVis.fg = node.fgOverride;
+            ops ~= DrawOp(
+                kind: OpKind.scrollbar,
+                rect: rect,
+                ruleEdge: node.barEdge,
+                barContent: barInt(node.barContent),
+                barViewport: barInt(node.barViewport),
+                barOffset: barInt(node.barOffset),
+                expandPercent: node.barExpandPercent,
+                barTrackLit: node.barTrackLit,
+                barTrackColor: trackVis.fg,
+                barTrackGlyph: node.barTrackGlyph,
+                barThumbGlyph: node.barThumbGlyph,
+                slot: Slot.thumb,
+                visual: thumbVis,
+            );
+            break;
         case box:
             break; // background (if any) already emitted
         case row, column, stack, panel, popup:

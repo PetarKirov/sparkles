@@ -53,21 +53,18 @@ now does. But "shrunk" and "clipped" being different things is a sharp edge, and
 a caller who has not met it will meet it this way. A `clipX` default on text
 whose allocation is below its natural width would remove the class.
 
-## `UGL-O6` — a widget-level bar cannot be sub-cell · open
+## `UGL-O6` — a widget-level bar cannot be sub-cell · closed
 
-hue's window draws a ⅓-cell rail that eases open to 1.5 cells. That is sub-cell
-geometry, reachable only by driving the canvas directly (`ui_raylib`'s
-`scrollbarLayout` / `drawScrollbar`), and the gallery is a pure host consumer
-that paints through the widget display list on both targets.
+hue's window draws a ⅓-cell rail that eases open to 1.5 cells. The widget and
+display-list levels now express it as `ScrollbarSpec` → `OpKind.scrollbar`,
+carrying content units and a semantic `expandPercent` rather than pixels.
+`RaylibCanvas.scrollbar` resolves the continuous device-pixel rail; cell
+backends threshold the same value to one or two columns through the shared
+fallback.
 
-So its bar eases between **one and two whole columns** instead. The value and
-the rate are the same — `ScrollView.easeV` at 15/s — but the result is
-quantised, so the animation reads as a short delay before the bar widens rather
-than as a smooth slide. In the terminal, where the two look identical anyway,
-this is strictly better than hue, which does not expand at all.
-
-Closes if the widget level grows a sub-cell width hint, or stays open as the
-honest price of never naming a canvas.
+Closed 2026-08-12: the gallery remains a pure widget consumer while its GUI bar
+now has the same continuous rail as hue; its terminal rendering remains the
+honest quantised degradation.
 
 One page is the exception that proves the rule: the **Terminal** page's draw
 phase is already its own (that is what embedding a terminal means), so on the

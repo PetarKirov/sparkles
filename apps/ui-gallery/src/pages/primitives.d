@@ -1,7 +1,7 @@
 /**
 The Primitives page: one labelled specimen per `WidgetKind`.
 
-Ten kinds, and the two that surprise people are the containers that are $(B not)
+Eleven kinds, and the ones that surprise people are the containers that are $(B not)
 flows: `stack`, `panel` and `popup` give every child the same origin, so a panel
 handed a caption and a body draws one on top of the other. The page shows that
 outright rather than leaving it to be discovered — the first version of this
@@ -10,7 +10,7 @@ gallery's own `section` helper got it wrong.
 module pages.primitives;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.canvas : LineStyle;
+import sparkles.ui.canvas : LineStyle, RuleEdge;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
@@ -45,6 +45,17 @@ uint view(ref Builder b, in GalleryState s)
         Slot.border, LineStyle.solid));
     leaves ~= specimen(b, "line · wavy", underlined(b, "a squiggled run",
         Slot.error, LineStyle.wavy));
+    leaves ~= specimen(b, "scrollbar", b.add(Widget(
+        kind: WidgetKind.scrollbar,
+        width: SizeSpec.fixed(2),
+        height: SizeSpec.fixed(6),
+        barContent: 24,
+        barViewport: 8,
+        barOffset: 8,
+        barEdge: RuleEdge.right,
+        barExpandPercent: 50,
+        barTrackLit: true,
+    )));
 
     uint[] flows;
     flows ~= specimen(b, "row", b.add(Widget(
@@ -104,7 +115,7 @@ uint view(ref Builder b, in GalleryState s)
     )));
 
     uint[] body_;
-    body_ ~= heading(b, "Primitives · the ten widget kinds");
+    body_ ~= heading(b, "Primitives · the eleven widget kinds");
     body_ ~= spacer(b);
     body_ ~= para(b,
         "Every tree in this catalog is built from these and nothing else. A "

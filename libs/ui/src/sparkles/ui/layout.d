@@ -29,6 +29,7 @@ its canvas's grapheme-aware measurer instead.
 */
 module sparkles.ui.layout;
 
+import sparkles.ui.canvas : RuleEdge;
 import sparkles.ui.geometry : cellsOf, Constraints, Insets, Point, Rect, Size, SizeSpec;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans;
@@ -278,6 +279,11 @@ if (isTextMeasure!TM)
             case glyph:
                 content = 1;
                 break;
+            case scrollbar:
+                content = node.barEdge == RuleEdge.left
+                        || node.barEdge == RuleEdge.right
+                        || node.barEdge == RuleEdge.centerX ? 1 : 0;
+                break;
             case line:
                 content = absInt(node.lineTo.x);
                 break;
@@ -387,6 +393,11 @@ if (isTextMeasure!TM)
             case glyph:
                 content = 1;
                 break;
+            case scrollbar:
+                content = node.barEdge == RuleEdge.top
+                        || node.barEdge == RuleEdge.bottom
+                        || node.barEdge == RuleEdge.centerY ? 1 : 0;
+                break;
             case line:
                 content = node.lineTo.y == 0 ? 1 : absInt(node.lineTo.y);
                 break;
@@ -438,7 +449,7 @@ if (isTextMeasure!TM)
 
         final switch (node.kind) with (WidgetKind)
         {
-            case text, rich, glyph, line, box:
+            case text, rich, glyph, line, scrollbar, box:
                 break; // leaves (children.length == 0 already returned)
             case row:
             {

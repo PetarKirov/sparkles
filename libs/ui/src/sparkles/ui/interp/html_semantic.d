@@ -148,7 +148,7 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx)
             const n = encode(enc, node.glyph);
             escape(w, enc[0 .. n]);
             break;
-        case line, box:
+        case line, scrollbar, box:
             break;
         case row, column, stack, panel, popup:
             foreach (child; node.children)
