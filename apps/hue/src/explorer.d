@@ -645,8 +645,14 @@ struct ExplorerTui
             return handleSearch(e);
         return e.match!(
             (in KeyEvent k) => handleKey(k),
+            // A wheel scrolls the VIEW and leaves the cursor where it is —
+            // what the document pane, the inspector and every GUI pane
+            // already do. This pane moved the selection instead, so the same
+            // gesture meant two things in one application (and the GUI's copy
+            // of this pane disagreed with the terminal's). The cursor is the
+            // reader's place; the wheel is the reader's window.
             (in WheelEvent w) {
-                moveSel(w.dy);
+                tv.scrollBy(w.dy);
                 return true;
             },
             (in PointerEvent p) {
@@ -1051,6 +1057,45 @@ unittest
     assert(x.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(5, 2)))));
     assert(x.sel == want, text(x.sel, " vs ", want));
+}
+
+@("explorer.wheel.scrollsTheViewNotTheCursor")
+@system
+unittest
+{
+    import std.conv : text;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.input : linesPerNotch, WheelEvent;
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    const root = buildPath(tempDir(), "hue-explorer-wheel-test");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    foreach (i; 0 .. 12)
+        write(buildPath(root, text("f", i, ".d")), "int x;\n");
+
+    static immutable Theme dark = builtinDark;
+    ExplorerTui x;
+    x.root = root;
+    x.themeValue = &dark;
+    x.theme = resolveTheme(dark, LabelSet.standard());
+    x.width = 50;
+    x.height = 8; // bodyRows = 6 < 12 rows → there is somewhere to scroll
+    x.rebuild();
+
+    // A wheel notch moves the VIEW and leaves the cursor alone — the same
+    // meaning the document pane, the inspector and both GUI panes give it.
+    // This pane used to move the selection instead.
+    assert(x.handle(Event(WheelEvent(dy: linesPerNotch))));
+    assert(x.top == linesPerNotch, text("top ", x.top));
+    assert(x.sel == 0, "the wheel is the window, not the cursor");
+
+    // …and it clamps at both ends rather than running past them.
+    assert(x.handle(Event(WheelEvent(dy: -linesPerNotch * 10))));
+    assert(x.top == 0 && x.sel == 0);
+    assert(x.handle(Event(WheelEvent(dy: linesPerNotch * 100))));
+    assert(x.top == cast(long) x.rows.length - x.bodyRows);
 }
 
 @("explorer.pointer.horizontalBarScrollsClippedLabels")
