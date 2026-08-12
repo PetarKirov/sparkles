@@ -91,19 +91,9 @@ struct DiagramApp
     {
         systemRender(world, camera, h.size, theme.palette, theme.pageFg,
             theme.pageBg, frameOps);
-        // The recorder exposes `canvas` as a $(B field) — an lvalue whose
-        // mutations stick. The live arms expose it as a by-value handle that
-        // still paints through borrowed pointers, so a local copy is fine.
-        // Choosing by type (not by `compiles`) avoids a false positive where
-        // a temporary binds and the capture is discarded.
-        import sparkles.ui.canvas : RecordingCanvas;
-        static if (is(typeof(h.canvas) == RecordingCanvas))
-            .paint(h.canvas, frameOps[]);
-        else
-        {
-            auto c = h.canvas;
-            .paint(c, frameOps[]);
-        }
+        // One call on every host: `paint` is `auto ref`, so a recorder field
+        // binds by reference and a live by-value handle binds by value.
+        .paint(h.canvas, frameOps[]);
     }
 }
 

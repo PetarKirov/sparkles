@@ -14,10 +14,18 @@ import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind, RuleEdge,
 import sparkles.ui.geometry : Point;
 import sparkles.ui.style : Visual;
 
-/// Replays `ops` onto `canvas`, dispatching each $(REF DrawOp, sparkles,ui,canvas)
-/// to the matching primitive. Backend-neutral: the display list carries resolved
-/// `Visual`s, so the canvas only paints.
-void paint(Canvas)(ref Canvas canvas, in DrawOp[] ops)
+/**
+Replays `ops` onto `canvas`, dispatching each $(REF DrawOp, sparkles,ui,canvas)
+to the matching primitive. Backend-neutral: the display list carries resolved
+`Visual`s, so the canvas only paints.
+
+$(B `auto ref`, not plain `ref`.) Live hosts return a by-value canvas handle
+each frame (a cheap pointer pair into the session); the recorder exposes the
+canvas as a field. Plain `ref` would reject the temporary; a local copy of the
+recorder would discard the capture. `auto ref` binds an lvalue by reference and
+an rvalue by value, so `.paint(h.canvas, ops)` is correct on every host.
+*/
+void paint(Canvas)(auto ref Canvas canvas, in DrawOp[] ops)
 if (isCanvas!Canvas)
 {
     foreach (ref op; ops)
