@@ -54,7 +54,7 @@ version (EventHorizonKqueue)  :
 import core.stdc.errno : EAGAIN, ECANCELED, EINPROGRESS, errno, ESRCH;
 import core.sys.posix.sys.socket : accept, connect, recv, send;
 
-import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
+import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
@@ -97,9 +97,12 @@ enum short EVFILT_READ = -1;
 enum short EVFILT_WRITE = -2;
 enum short EVFILT_PROC = -5;
 enum short EVFILT_TIMER = -7;
+enum short EVFILT_USER = -10;
 /// `EVFILT_PROC` fflag: the process exited. The only note this backend asks
 /// for — fork/exec tracking has no op to lower onto.
 enum uint NOTE_EXIT = 0x8000_0000;
+/// `EVFILT_USER` fflag: post a coalesced wake. What `Waker.wake` writes.
+enum uint NOTE_TRIGGER = 0x0100_0000;
 enum ushort EV_ADD = 0x0001;
 enum ushort EV_DELETE = 0x0002;
 enum ushort EV_ENABLE = 0x0004;
@@ -139,6 +142,7 @@ enum OpKindLocal : ubyte
     timer,
     poll_,
     waitid_,
+    wake,
 }
 
 public:
@@ -232,6 +236,33 @@ struct KqueueBackend
     static ushort selectedBufferId(uint) @safe pure nothrow @nogc => 0;
 
     // ── lowering: register readiness interest, remember the op ──────────────
+
+    /**
+    Persistent `EVFILT_USER` knote bound to `token` (O29, SPEC §5.6).
+    `Waker.wake` is a `NOTE_TRIGGER` on this ident — thread-safe, coalescing,
+    no payload. The ADD is flushed before the handle is handed out so a
+    wake-before-wait is not `ENOENT`.
+    */
+    Waker nativeWaker(OpToken token) @trusted nothrow @nogc
+    {
+        auto op = acquire();
+        if (op is null)
+            return Waker.init;
+        *op = KqOp(token.raw, wakeIdent, null, 0, OpKindLocal.wake,
+            EVFILT_USER, uint.max);
+        if (!armFilter(op, EVFILT_USER, cast(ushort)(EV_ADD | EV_CLEAR)))
+            return Waker.init;
+        auto flushed = flush();
+        if (flushed.hasError)
+        {
+            release(op, true);
+            return Waker.init;
+        }
+        Waker w;
+        w.fd = _kq;
+        w.ident = wakeIdent;
+        return w;
+    }
 
     /// A NOP: no fd — synthesize a completion inline.
     bool trySubmit(in OpNop, OpToken token, ref OpSlot) @trusted nothrow @nogc
@@ -625,6 +656,18 @@ private:
     /// Turns one delivered `kevent_t` into a stashed completion (or drops it).
     void ingest(ref const kevent_t ev) @trusted nothrow @nogc
     {
+        // Darwin (and libkqueue) deliver EVFILT_USER with a null udata —
+        // probed: ident/filter come back, udata does not. Identify the
+        // persistent wake knote by ident instead of the slot token.
+        if (ev.filter == EVFILT_USER && ev.ident == wakeIdent)
+        {
+            auto wakeOp = findWake();
+            if (wakeOp is null)
+                return;
+            pushReady(RawCompletion(wakeOp.token, 0, 0));
+            return;
+        }
+
         auto op = opFor(ev.udata);
         if (op is null)
             return; // a stale registration, a cancel's EV_DELETE receipt, or not ours
@@ -749,6 +792,8 @@ private:
                 // ours to perform, and now cannot block.
                 return doWaitid(op.idType, op.fd, cast(void*) op.buf,
                     op.waitOptions);
+            case OpKindLocal.wake:
+                return 0;
         }
     }
 
@@ -867,6 +912,19 @@ private:
     /// `live` is the guard that matters: a released slot has already delivered
     /// its terminal completion, and cancelling it again would double-release
     /// it onto the freelist.
+    /// The persistent wake op, or `null`. One per backend; a linear scan
+    /// is fine — `nativeWaker` runs once per loop life.
+    KqOp* findWake() @trusted nothrow @nogc
+    {
+        foreach (i; 0 .. _cap)
+        {
+            auto op = &_ops[i];
+            if (op.live && op.kind == OpKindLocal.wake)
+                return op;
+        }
+        return null;
+    }
+
     KqOp* findLive(ulong token) @trusted nothrow @nogc
     {
         foreach (i; 0 .. _cap)
@@ -928,6 +986,8 @@ private:
     enum uint maxChanges = 256;
     // Timer idents live in a high range so they never collide with fds.
     enum uint _timerBase = 0x4000_0000;
+    /// `EVFILT_USER` ident for the persistent wake knote. Not an fd.
+    enum uint wakeIdent = 1;
     // This backend's one raw completion flag: a retained multishot poll's
     // non-final marker (mapFlags translates it to CompletionFlags.more).
     enum uint rawFlagMore = 1;
@@ -956,9 +1016,10 @@ private:
 
 version (unittest)
 {
-    import sparkles.event_horizon.backend.concept : isCompletionBackend;
+    import sparkles.event_horizon.backend.concept : hasNativeWake, isCompletionBackend;
 
     static assert(isCompletionBackend!KqueueBackend);
+    static assert(hasNativeWake!KqueueBackend);
 }
 
 version (unittest)
@@ -1454,4 +1515,78 @@ unittest
     close_(listener);
     close_(clientSock);
     b.close();
+}
+
+// ── O29: EVFILT_USER wake ───────────────────────────────────────────────────
+
+/// A `NOTE_TRIGGER` before any wait is not lost: the ADD is flushed when
+/// the handle is created, so the next wait returns immediately.
+@("kqueue.wake.triggerBeforeWaitCoalesces")
+@system
+unittest
+{
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    const token = OpToken.pack(8, 1, OpClass.internal);
+    auto w = b.nativeWaker(token);
+    assert(w);
+    w.wake();
+    w.wake();
+    w.wake();
+
+    uint n;
+    int res = 1;
+    foreach (spin; 0 .. 10)
+    {
+        n += pumpOnce(b, (ref const RawCompletion c) {
+            assert(c.userData == token.raw);
+            res = c.res;
+        });
+        if (n > 0)
+            break;
+    }
+    assert(n == 1, "three triggers coalesced into one completion");
+    assert(res == 0);
+}
+
+/// A foreign-thread trigger unparks a blocked wait well before its deadline.
+@("kqueue.wake.noteTriggerUnparksTheWait")
+@system
+unittest
+{
+    import core.time : msecs;
+
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    const token = OpToken.pack(9, 1, OpClass.internal);
+    auto w = b.nativeWaker(token);
+    assert(w);
+
+    auto t = new Thread({
+        Thread.sleep(20.msecs);
+        w.wake();
+    });
+    t.start();
+
+    uint n;
+    auto dl = KernelTimespec(2, 0);
+    foreach (spin; 0 .. 20)
+    {
+        cast(void) b.submitAndWait(1, &dl);
+        n += b.reap((ref const RawCompletion c) {
+            assert(c.userData == token.raw);
+        });
+        if (n > 0)
+            break;
+    }
+    t.join();
+    assert(n == 1, "the wait ended on the NOTE_TRIGGER");
 }

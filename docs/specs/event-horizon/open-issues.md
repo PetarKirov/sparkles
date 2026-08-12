@@ -691,6 +691,13 @@ necessary.
 
 ## O29 — Worker wakeup: one `wake()` capability, both backends
 
+**Landed.** Option (B), both arms. The loop prefers `nativeWaker` over the
+fd path. kqueue: `EVFILT_USER` + `NOTE_TRIGGER` (Darwin delivers these
+with a null `udata` — ingest matches on ident). uring: in-ring
+`FUTEX_WAIT`, `Waker.wake` does `FUTEX_WAKE` plus a word increment.
+Pool idle backoff still sleeps on a short `TIMEOUT`; rewriting that
+path against this seam is the leftover of O2.
+
 **Where:** `pool.d` (idle backoff), `backend/{kqueue,uring}.d`,
 `backend/concept.d`. Refines O2 and O15.
 

@@ -29,16 +29,17 @@ else version (Android)
 else version (linux)  :
 
 import during : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags,
+    FUTEX2_PRIVATE, FUTEX2_SIZE_U32, FUTEX_BITSET_MATCH_ANY,
     MsgFlags, Operation,
     SetupFlags, SubmissionEntry, TimeoutFlags, Uring, io_uring_getevents_arg,
-    prepAccept, prepClose, prepConnect, prepFsync, prepMultishotAccept, prepNop,
+    prepAccept, prepClose, prepConnect, prepFsync, prepFutexWait, prepMultishotAccept, prepNop,
     prepOpenat, prepPollAdd, prepPollMultishot, prepRW, prepRead, prepReadFixed,
     prepRecv, prepRecvMsg, prepSend,
     prepSendMsg, prepStatx, prepTimeout, prepWaitid, prepWrite, prepWriteFixed,
     setup;
 import during : DuringTimespec = KernelTimespec, DuringPollEvents = PollEvents;
 
-import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
+import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
 import sparkles.event_horizon.backend.probe;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : CompletionFlags, KernelTimespec, OpAccept,
@@ -105,6 +106,10 @@ struct UringBackend
     void close() @safe nothrow @nogc
     {
         _io = Uring.init;
+        _wakeTokenRaw = 0;
+        _wakeWaitInFlight = false;
+        _wakeWord = 0;
+        _wakeExpected = 0;
     }
 
     /// The capability surface negotiated by `open`.
@@ -116,6 +121,32 @@ struct UringBackend
     // loop owns the flush-and-retry policy, SPEC §5.2). The loop has already
     // moved owned buffers into `slot.pinned` and address/timespec operands
     // into `slot.operands` — the SQE points only at slot-stable memory.
+
+    /**
+    Persistent in-ring `FUTEX_WAIT` bound to `token` (O29, SPEC §5.6).
+    `Waker.wake` increments the word and issues a process-private
+    `FUTEX_WAKE` — thread-safe, coalescing, no payload. The wait is
+    re-armed from `reap` so the loop's native dispatch has nothing to do.
+    */
+    Waker nativeWaker(OpToken token) @trusted nothrow @nogc
+    {
+        if (_wakeTokenRaw != 0)
+        {
+            Waker w;
+            w.futex = cast(shared(uint)*) &_wakeWord;
+            return w;
+        }
+        _wakeTokenRaw = token.raw;
+        _wakeExpected = _wakeWord;
+        if (!submitFutexWait())
+        {
+            _wakeTokenRaw = 0;
+            return Waker.init;
+        }
+        Waker w;
+        w.futex = cast(shared(uint)*) &_wakeWord;
+        return w;
+    }
 
     /// Lowers a NOP.
     bool trySubmit(in OpNop, OpToken token, ref OpSlot) @safe nothrow @nogc
@@ -425,6 +456,11 @@ struct UringBackend
     /// Pushes queued SQEs to the kernel without waiting; the count consumed.
     IoResult!uint flush() @safe nothrow @nogc
     {
+        if (_wakeTokenRaw != 0 && !_wakeWaitInFlight)
+        {
+            _wakeExpected = _wakeWord;
+            cast(void) submitFutexWait();
+        }
         const r = _io.submit(0u);
         return r < 0
             ? ioErr!uint(-r, OpKind.none, IoErrorStage.submit)
@@ -477,6 +513,15 @@ struct UringBackend
             const c = RawCompletion(
                 _io.front.user_data, _io.front.res, cast(uint) _io.front.flags);
             _io.popFront();
+            if (c.userData == _wakeTokenRaw && _wakeTokenRaw != 0)
+            {
+                _wakeWaitInFlight = false;
+                // Snapshot after the CQE so a wake that raced the completion
+                // is visible as *word != expected and fails-fast on re-arm
+                // (or parks on the new value). Coalescing, not a lost wake.
+                _wakeExpected = _wakeWord;
+                cast(void) submitFutexWait();
+            }
             sink(c);
             ++n;
         }
@@ -558,19 +603,39 @@ private:
         return _io.setup(sqEntries, flags);
     }
 
+    bool submitFutexWait() @trusted nothrow @nogc
+    {
+        if (_wakeWaitInFlight || _io.full)
+            return false;
+        const expected = _wakeExpected;
+        const ud = _wakeTokenRaw;
+        _io.putWith!((ref SubmissionEntry e, uint* word, uint val, ulong user) {
+            e.prepFutexWait(word, val, FUTEX_BITSET_MATCH_ANY,
+                FUTEX2_SIZE_U32 | FUTEX2_PRIVATE, 0);
+            e.user_data = user;
+        })(&_wakeWord, expected, ud);
+        _wakeWaitInFlight = true;
+        return true;
+    }
+
     Uring _io;
     BackendCaps _caps;
+    uint _wakeWord;
+    uint _wakeExpected;
+    ulong _wakeTokenRaw;
+    bool _wakeWaitInFlight;
 }
 
 version (unittest)
 {
-    import sparkles.event_horizon.backend.concept : canSubmitOp, isCompletionBackend;
+    import sparkles.event_horizon.backend.concept : canSubmitOp, hasNativeWake, isCompletionBackend;
     import sparkles.event_horizon.errors : skipReason;
     import sparkles.event_horizon.op : OpClass;
     import sparkles.test_runner.skip : skipTest;
 
     static assert(isCompletionBackend!UringBackend);
     static assert(canSubmitOp!(UringBackend, OpNop));
+    static assert(hasNativeWake!UringBackend);
 
     /// Opens a backend for a test, or SKIPs it (no io_uring / old kernel).
     /// Call before arming any `scope (exit)`: it does not return on the skip.

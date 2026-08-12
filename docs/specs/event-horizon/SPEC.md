@@ -564,20 +564,20 @@ paths hold the concrete `EventLoop`.
 ### 5.6 The external waker
 
 `loop.waker()` returns the one loop object callable off-thread (§3.1). The
-first call **arms** the wake channel: the loop opens an `eventfd`
-(`EFD_CLOEXEC`, Linux) and keeps one internal read persistently armed
-against it, re-armed inside `dispatch` on every wake completion. The
-returned `Waker` is a copyable value holding the descriptor;
-`Waker.wake()` writes 8 bytes to it — **thread-safe and async-signal-safe**,
-`nothrow @nogc`, callable from any thread and from signal handlers. Wakes
-coalesce (an eventfd is a counter): N wakes before the loop runs deliver at
-least one wake completion, not N.
+first call **arms** the backend-native wake source when the backend
+implements `nativeWaker` (O29): kqueue registers one `EVFILT_USER` knote
+that `wake()` triggers with `NOTE_TRIGGER`; uring parks an in-ring
+`FUTEX_WAIT` that `wake()` releases with a process-private `FUTEX_WAKE`
+(and a word increment so a re-arm cannot lose the wake); IOCP needs no
+armed op at all — `wake()` posts a zero-byte `PostQueuedCompletionStatus`
+packet. The portable fallback (a backend with no `nativeWaker`) is an
+`eventfd` / pipe and a persistently armed internal read.
 
-Peer backends satisfy the same contract with their native primitive:
-kqueue arms an `EVFILT_USER` filter that `wake()` triggers with
-`NOTE_TRIGGER` (under libkqueue on Linux, a self-pipe read serves the same
-role); IOCP needs no armed op at all — `wake()` posts a zero-byte
-`PostQueuedCompletionStatus` packet carrying the wake token.
+The returned `Waker` is a copyable value. `Waker.wake()` is **thread-safe**,
+`nothrow @nogc`, coalescing, and never blocks. The fd-write fallback is
+also async-signal-safe; native `kevent`/`futex` triggers are not promised
+signal-safe. N wakes before the loop runs deliver at least one wake
+completion, not N.
 
 **Accounting.** The armed wake op is `OpClass.wake` and is **excluded from
 drain accounting**: `inFlight()` and the `RunStatus.drained` decision count
@@ -585,9 +585,10 @@ user and timer ops only, so a loop whose only live op is its waker still
 reports `drained` from `run()` — an armed waker is infrastructure, not
 work. `runOnce(timeout)` on such a loop **does block**: that is precisely
 the "park until something external happens" entry point (§15.3).
-`destroy()` disarms: it cancels the internal read, drains to its terminal
-CQE, and closes the eventfd — the §4.3 invariant applies to the wake slot
-like any other.
+`destroy()` disarms: native wake releases the routing slot (the knote /
+futex / port post dies with the backend); the fd fallback cancels the
+internal read, drains to its terminal CQE, and closes the eventfd. The
+§4.3 invariant applies to the wake slot like any other.
 
 The waker completes two contracts stated earlier: off-thread `stop()`
 (§5.4 — set the flag, then `waker().wake()`) and the group-level idle
