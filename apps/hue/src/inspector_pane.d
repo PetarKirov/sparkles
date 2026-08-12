@@ -70,6 +70,9 @@ struct InspectorPane
 {
     /// The shared interaction layer, keyed by the CST arena index.
     TreeViewState!uint tv;
+    /// When embedded in a scrolling dock, the dock owns the outer bars and
+    /// this component emits only its header, rows and details.
+    bool externalScroll;
     /// Pointer ownership inside this pane; its scrollbars arbitrate as one.
     CaptureState capture;
     private enum size_t scrollCapBase = 1;
@@ -235,8 +238,8 @@ struct InspectorPane
         tv.width = innerWidth;
         tv.chromeRows = 2 + (details.length ? cast(int) details.length + 1 : 0);
         tv.headerRows = 2;
-        tv.scrollGutterV = 2;
-        tv.scrollGutterH = 1;
+        tv.scrollGutterV = externalScroll ? 0 : 2;
+        tv.scrollGutterH = externalScroll ? 0 : 1;
         tv.clampBounds();
         const open = tv.open;
         auto data = ci.data;

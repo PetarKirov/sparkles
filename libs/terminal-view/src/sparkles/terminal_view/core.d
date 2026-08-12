@@ -702,23 +702,16 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
 
         if (s.internalScrollbar && sb.total > sb.len)
         {
-            float track_height = cast(float)viewH;
-            float thumb_height = track_height * (cast(float)sb.len / cast(float)sb.total);
-            if (thumb_height < 20.0f) thumb_height = 20.0f;
-
-            float movable_pixels = track_height - thumb_height;
-            long total_movable_rows = sb.total - sb.len;
-
-            float thumb_y = 0.0f;
-            if (total_movable_rows > 0)
-                thumb_y = movable_pixels * (cast(float)sb.offset / cast(float)total_movable_rows);
-
-            float w = s.sbState.currentWidth;
+            const thumb = s.sbState.view.v.scrolledTo(sb.offset)
+                .thumb(sb.total, sb.len, viewH, 20);
+            float w = s.sbState.view.vAnim.extent(4.0f, 12.0f);
             float x = viewW - w;
 
-            if (s.sbState.isHovered || s.sbState.isDragging)
-                DrawRectangle(cast(int)x, 0, cast(int)w, cast(int)track_height, Color(255, 255, 255, 30));
-            DrawRectangle(cast(int)x, cast(int)thumb_y, cast(int)w, cast(int)thumb_height, Color(255, 255, 255, 120));
+            if (s.sbState.view.v.hovered || s.sbState.view.v.dragging)
+                DrawRectangle(cast(int)x, 0, cast(int)w, viewH,
+                    Color(255, 255, 255, 30));
+            DrawRectangle(cast(int)x, thumb.start, cast(int)w, thumb.extent,
+                Color(255, 255, 255, 120));
         }
 
         // Draw the cursor

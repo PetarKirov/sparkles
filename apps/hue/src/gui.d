@@ -32,7 +32,7 @@ import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
     Mods, PointerAction, PointerButton, PointerEvent, WheelEvent;
-import sparkles.input.frame : InputFrame, foldFrame, pointerFor;
+import sparkles.input.frame : InputFrame, foldFrame;
 import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
     KeyContext;
 import lantern : LanternState, ltnStep = step, ltnTick = tick,
@@ -373,16 +373,16 @@ int runGui(GuiArgs guiArgs) @system
     vm.codeLineNumbers = codeLineNumbers;
     vm.codeOverflow = codeOverflow;
     vm.codeMaxLines = codeMaxLines;
-    vm.fenceHotGlyphs = false; // the GUI's feedback is the px overlay
+    vm.fenceHotGlyphs = true; // resolves the semantic bar's hot thumb color
 
 
     // Line-number gutter width in cells (0 when off) — a stable size from the
     // source line count so toggling wrapping never oscillates the layout.
     int gutterCols() => lineNumbers ? digitCount(vm.srcTotal) + 1 : 0;
 
-    // The right gutter reserved for the scrollbar == its expanded (hover) width,
-    // so the expanded handle fills the gutter exactly instead of overlapping text.
-    int scrollbarGutter() => cast(int)(fonts.cellW() * 1.5f);
+    // Two structural columns contain the animated 1.5-cell rail at every font
+    // size. The dock carves them before content layout, live or dormant.
+    enum int scrollGutterColsV = 2;
 
     // Preview columns available for the vm.current window/font: the screen minus the
     // 1-cell left text padding, the scrollbar gutter on the right, and the line-
@@ -417,6 +417,8 @@ int runGui(GuiArgs guiArgs) @system
     {
         const cw = fonts.cellW();
         const ch = fonts.cellH();
+        pn.dock.cellW = cw;
+        pn.dock.cellH = ch;
         auto tn = pn.dock.layout.nodeOf(treePane);
         pn.dock.layout.nodes[tn].maxExtent =
             (window.width / cw) / 2 < 12 ? 12 : (window.width / cw) / 2;
@@ -429,6 +431,17 @@ int runGui(GuiArgs guiArgs) @system
         // the toggle chips), so the container reserves nothing for it.
         pn.dock.layout.nodes[pn.dock.layout.nodeOf(inspPane)]
             .headerExtent = 0;
+        foreach (pane; [treePane, docPane, inspPane])
+        {
+            auto n = pn.dock.layout.nodeOf(pane);
+            pn.dock.layout.nodes[n].scrollGutterV = scrollGutterColsV;
+            pn.dock.layout.nodes[n].scrollGutterH = 1;
+            pn.dock.layout.nodes[n].scrollMinExtentV = 1;
+            pn.dock.layout.nodes[n].scrollMinExtentH = 1;
+        }
+        pn.tree.scrollGutterV = 0;
+        pn.tree.scrollGutterH = 0;
+        pn.insp.externalScroll = true;
         // The middle pane must stay flexible: a drag on the doc|inspector
         // divider hands its BEFORE node (the document) a fixed extent — the
         // gallery's reflexCentre finding — so it re-zeroes here, on every
@@ -452,6 +465,7 @@ int runGui(GuiArgs guiArgs) @system
     }
 
     int treeCols() => pn.dock.paneExtent(treePane);
+    int treeBodyCols() => paneContent(treePane).width;
     int treePx() => pn.dock.paneOrigin(docPane) * fonts.cellW();
 
     /// The inspector pane's width in cells (0 when hidden).
@@ -465,10 +479,36 @@ int runGui(GuiArgs guiArgs) @system
 
     int widthCols()
     {
-        const cw = fonts.cellW();
-        const w = (window.width - cw - scrollbarGutter() - gutterCols() * cw
-            - treePx() - inspCols() * cw) / cw;
+        const w = paneContent(docPane).width - 1 - gutterCols();
         return w < 8 ? 8 : w;
+    }
+
+    void publishDockExtents()
+    {
+        pn.dock.contentExtent(treePane, pn.tree.contentCols,
+            pn.tree.rows.length);
+        pn.dock.contentExtent(docPane, vm.contentCols, vm.rows.length);
+        pn.dock.contentExtent(inspPane, pn.insp.tv.contentCols,
+            cast(long) pn.insp.tv.rows.length + pn.insp.tv.chromeRows);
+    }
+
+    void commitDockOffsets()
+    {
+        publishDockExtents();
+        pn.dock.scrollTo(treePane, pn.tree.hsb.offset, pn.tree.top);
+        pn.dock.scrollTo(docPane, vm.hsb.offset, vm.top);
+        pn.dock.scrollTo(inspPane, pn.insp.tv.hsb.offset, pn.insp.tv.top);
+    }
+
+    void applyDockOffsets()
+    {
+        pn.tree.top = pn.dock.offsetV(treePane);
+        pn.tree.hsb = pn.tree.hsb.scrolledTo(pn.dock.offsetH(treePane));
+        vm.top = pn.dock.offsetV(docPane);
+        vm.hsb = vm.hsb.scrolledTo(pn.dock.offsetH(docPane));
+        pn.insp.tv.top = pn.dock.offsetV(inspPane);
+        pn.insp.tv.hsb = pn.insp.tv.hsb.scrolledTo(
+            pn.dock.offsetH(inspPane));
     }
 
     // Input routing (search/goto line input, pointer capture, the per-frame
@@ -776,8 +816,7 @@ int runGui(GuiArgs guiArgs) @system
     // ownership (which pane the pointer is in, the divider between them)
     // is the container's own capture — the same two levels the terminal
     // host has, where a pane's grabs live inside its `handle`.
-    enum size_t capContainer = 1, capDocSb = 2, capTreeSb = 3,
-        capDocHSb = 4, capTreeHSb = 5, capSelection = 6, capFenceSb = 7;
+    enum size_t capSelection = 1, capFenceSb = 2;
 
     pop.forceHover = capture.forceHover;
 
@@ -1063,83 +1102,38 @@ int runGui(GuiArgs guiArgs) @system
             // header — the same rule the tree pane follows.
             canvas.pushClip(Rect(dhx, cast(int) vm.top,
                 (docRight - rightPad - gutterPx) / cellW, docRows));
-            foreach (ref op; vm.ops)
+            foreach (ref sourceOp; vm.ops)
             {
-                const oy = op.rect.y;
-                if (op.kind != OpKind.pushClip && op.kind != OpKind.popClip
-                    && (oy + op.rect.height <= vm.top || oy > vm.top + docRows))
+                const oy = sourceOp.rect.y;
+                if (sourceOp.kind != OpKind.pushClip
+                    && sourceOp.kind != OpKind.popClip
+                    && (oy + sourceOp.rect.height <= vm.top
+                        || oy > vm.top + docRows))
                     continue;
+                auto op = sourceOp;
+                if (op.kind == OpKind.scrollbar
+                    && vm.fenceSvOwner != size_t.max)
+                {
+                    const h = op.ruleEdge == RuleEdge.centerY;
+                    const base = h ? vm.fenceHBarHitBase
+                        : vm.fenceVBarHitBase;
+                    const want = base + vm.fenceSvOwner;
+                    foreach (ref const t; vm.targets)
+                    {
+                        if (t.hitId != want || t.rect != op.rect)
+                            continue;
+                        op.expandPercent = barPercent(h
+                            ? vm.fenceSv.hAnim.percent
+                            : vm.fenceSv.vAnim.percent);
+                        op.barTrackLit = h
+                            ? vm.fenceSv.h.hovered || vm.fenceSv.h.dragging
+                            : vm.fenceSv.v.hovered || vm.fenceSv.v.dragging;
+                        break;
+                    }
+                }
                 paint(canvas, (&op)[0 .. 1]);
             }
             canvas.popClip();
-
-            // The fence bars' hover-expand overlay (COD6): the SAME px
-            // renderer, easing, and colors the pane bars use, anchored so
-            // the eased thumb thickens around the glyph border line (its
-            // center = the anchor rect's bottom/right edge minus half the
-            // bar). Pure paint — no rebuild per animation frame; it fades
-            // back to the glyph line after the pointer leaves. The pane
-            // clip scissors it (raylib scissor state clips raw draws too),
-            // so a partially scrolled-off box animates its VISIBLE part
-            // instead of the overlay vanishing wholesale.
-            if (vm.fenceSvOwner != size_t.max)
-            {
-                canvas.pushClip(Rect(dhx, cast(int) vm.top,
-                    (docRight - rightPad - gutterPx) / cellW, docRows));
-                scope (exit)
-                    canvas.popClip();
-                Rect ownerRect(size_t base)
-                {
-                    foreach (ref const t; vm.targets)
-                        if (t.hitId == base + vm.fenceSvOwner)
-                            return t.rect;
-                    return Rect.init;
-                }
-
-                const ext = vm.fenceExtent(vm.fenceSvOwner);
-                const cur = vm.fenceScrollAt.get(vm.fenceSvOwner,
-                    FenceScroll(vm.fenceSvOwner, 0, 0));
-
-                // The rendered interior, derived from the box rect itself
-                // (the extent's `innerW` assumes a top-level fence; an
-                // indented box is narrower and its glyph thumb knows it).
-                int digits(int n)
-                {
-                    int d;
-                    for (auto v = n < 1 ? 1 : n; v; v /= 10)
-                        ++d;
-                    return d;
-                }
-
-                const hr = ownerRect(vm.fenceHBarHitBase);
-                const innerRect = hr.width - 4
-                    - (vm.codeLineNumbers ? digits(ext.lines) + 1 : 0);
-                if (hr.width > 2 && innerRect > 0 && ext.widest > innerRect
-                    && hr.y >= vm.top && hr.y < vm.top + docRows)
-                {
-                    const x = gutterPx / cellW + hr.x + 1 - dhx;
-                    const y = docY0 / cellH + cast(int)(hr.y - vm.top);
-                    drawBar(Rect(x, y, hr.width - 2, 1), RuleEdge.centerY,
-                        ext.widest, innerRect, cur.x,
-                        vm.fenceSv.hAnim.percent,
-                        vm.fenceSv.h.hovered || vm.fenceSv.h.dragging,
-                        vm.sbTrack, vm.sbThumb, '─', '━');
-                }
-
-                const vr = ownerRect(vm.fenceVBarHitBase);
-                if (vr.height > 0 && ext.lines > vr.height
-                    && vr.y + vr.height > vm.top
-                    && vr.y < vm.top + docRows)
-                {
-                    const x = gutterPx / cellW + vr.x - dhx;
-                    const y = docY0 / cellH + cast(int)(vr.y - vm.top);
-                    drawBar(Rect(x, y, 1, vr.height), RuleEdge.centerX,
-                        ext.lines, vr.height, cur.y,
-                        vm.fenceSv.vAnim.percent,
-                        vm.fenceSv.v.hovered || vm.fenceSv.v.dragging,
-                        vm.sbTrack, vm.sbThumb);
-                }
-            }
 
             // Fold markers in the gutter's fold column (FLD5): ▾ on an
             // open region's first row, ▸ on a folded one's placeholder;
@@ -1407,55 +1401,31 @@ int runGui(GuiArgs guiArgs) @system
                 (uint i) @safe => pn.tree.open.isOpen(pn.tree.data.nodes[i].value.path),
                 explorerGlyphs, pn.tree.selBg, hasSelectionBg: true);
             Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
-                width: SizeSpec.fixed(treeCols), clipX: true);
+                width: SizeSpec.fixed(treeBodyCols), clipX: true);
             auto wt = tb.finish(tb.add(paneW));
             auto tOps = buildDisplayList(wt, layout(wt),
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
             const thx = pn.tree.hOverflows() ? cast(int) pn.tree.hsb.offset : 0;
             auto tCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
                 cast(float)(-thx * cellW), cast(float)((treeTopRows + 1) * cellH));
-            tCanvas.pushClip(Rect(thx, 0, treeCols - thx, pn.tree.bodyRows));
+            tCanvas.pushClip(Rect(thx, 0, treeBodyCols - thx,
+                pn.tree.bodyRows));
             paint(tCanvas, tOps);
             tCanvas.popClip();
-
-            // The horizontal bar (IXB2): the pane's bottom edge — the same
-            // animated-height thumb + hover track as the vertical bars, in
-            // the pane's theme tint; the offset comes from the STM9 machine
-            // (hidden while the filter line owns the row).
-            if (pn.tree.hOverflows() && !pn.tree.searching)
-            {
-                drawBar(Rect(0, 0, treeCols, screenRows), RuleEdge.bottom,
-                    pn.tree.contentCols, treeCols - 1, pn.tree.hsb.offset,
-                    pn.tree.scroll.hAnim.percent,
-                    pn.tree.hsb.hovered || pn.tree.hsb.dragging,
-                    pn.tree.sbTrack, pn.tree.sbThumb, '─', '━');
-            }
 
             // The live-filter input line, pinned to the pane's bottom row
             // (the GUI pane has no status bar; the TUI shows it there).
             if (pn.tree.searching)
             {
                 const barY = screenH - cellH;
-                chrome.fillPixels(0, barY, treeCols * cellW, cellH, vm.gutterFg);
+                chrome.fillPixels(0, barY, treeBodyCols * cellW, cellH,
+                    vm.gutterFg);
                 buf.clear();
                 buf ~= "/";
                 buf ~= pn.tree.filterQuery;
                 buf ~= "▏\0";
                 drawText(fonts, buf[][0 .. $ - 1], 4, cast(float) barY,
                     TextStyle(0), vm.pageBg);
-            }
-
-            // The pane's scrollbar: the same animated-width thumb + hover
-            // track as the document's, in the pane's theme tint.
-            if (treeMaxTop > 0 && treePaneRows > 0)
-            {
-                const trackTop = (treeTopRows + 1) * cellH;
-                drawBar(Rect(0, treeTopRows + 1, treeCols,
-                        screenRows - treeTopRows - 1), RuleEdge.right,
-                    pn.tree.rows.length, treePaneRows, pn.tree.top,
-                    pn.tree.scroll.vAnim.percent,
-                    pn.tree.scroll.v.hovered || pn.tree.scroll.v.dragging,
-                    pn.tree.sbTrack, pn.tree.sbThumb);
             }
         }
 
@@ -1497,28 +1467,20 @@ int runGui(GuiArgs guiArgs) @system
             }
         }
 
-        // The document pane's horizontal bar (IXB2), over its bottom edge —
-        // stopping at the pane's right edge, not the window's.
-        if (vm.hOverflows() && inp.mode == Mode.normal)
+        // All outer pane bars come from the dock frame that routed them.
+        foreach (ref const bf; pn.dock.bars)
         {
-            drawBar(Rect(gutterPx / cellW, 0,
-                    (docRight - gutterPx) / cellW, screenRows), RuleEdge.bottom,
-                vm.contentCols, vm.widthCols, vm.hsb.offset,
-                vm.scroll.hAnim.percent, vm.hsb.hovered || vm.hsb.dragging,
-                vm.sbTrack, vm.sbThumb, '─', '━');
-        }
-
-        // Scrollbar: an animated-width thumb, plus a faint track while hovered
-        // or dragging. Colors follow the theme's muted gutter tone.
-        if (maxTop > 0)
-        {
-            // Distinct link-tinted chrome (the gutter behind it is empty page
-            // bg): a subtle full-height track on hover, a brighter thumb.
-            drawBar(Rect(0, docY0 / cellH, docRight / cellW,
-                    screenRows - docY0 / cellH), RuleEdge.right,
-                total, docRows, vm.top, vm.scroll.vAnim.percent,
-                vm.scroll.v.hovered || vm.scroll.v.dragging,
-                vm.sbTrack, vm.sbThumb);
+            const sv = pn.dock.scrollOf(bf.pane);
+            const track = bf.pane == treePane ? pn.tree.sbTrack : vm.sbTrack;
+            const thumb = bf.pane == treePane ? pn.tree.sbThumb : vm.sbThumb;
+            if (bf.hLive)
+                drawBar(bf.hTrack, RuleEdge.bottom, bf.hExtents.content,
+                    bf.hExtents.viewport, sv.h.offset, sv.hAnim.percent,
+                    sv.h.hovered || sv.h.dragging, track, thumb, '─', '━');
+            if (bf.vLive)
+                drawBar(bf.vTrack, RuleEdge.right, bf.vExtents.content,
+                    bf.vExtents.viewport, sv.v.offset, sv.vAnim.percent,
+                    sv.v.hovered || sv.v.dragging, track, thumb);
         }
 
         // A header bar when navigating a document set (`GNV2`): the entry name and
@@ -1691,9 +1653,9 @@ int runGui(GuiArgs guiArgs) @system
         // folded stream.
         if (capture.pointerSet)
             inp.fin.pos = capture.pointer;
-        // Consumed. The clear is here rather than before the drain because the
-        // drain no longer happens here — `handle` runs before this is called.
-        evBuf.length = 0;
+        // The dock drains these real events below, after its current geometry
+        // and content extents have been published. The frame fold above is a
+        // read, not ownership transfer.
 
         // Live D types (`PRJ12`/`PRJ14`): drain the oracle's non-blocking
         // output. The lazy payload attaches to the open document (every hover
@@ -1793,11 +1755,6 @@ int runGui(GuiArgs guiArgs) @system
         // h-scroll drag and cycled the theme. (The general answer is IXB3's
         // pointer ownership in the shared workspace shell; this is the local
         // one until that lands.)
-        version (Android)
-            const int bottomChromeH = inputMode ? 0 : cellH;
-        else
-            const int bottomChromeH = 0;
-
         version (Android)
         {
             // The toolbar, built ONCE per frame (IXB9). The tap handler below
@@ -2375,37 +2332,6 @@ int runGui(GuiArgs guiArgs) @system
         {
             bumpFontSize(inp.fin.wheelCells > 0 ? -2 : 2);
         }
-        else if (inp.fin.wheelCells != 0)
-        {
-            // WHERE a wheel goes is the container's (DCK7): the pane
-            // under the pointer, regardless of focus, with chrome
-            // falling back to the focused pane so a notch is never
-            // dropped. What scrolling MEANS is still the pane's.
-            const wheelRoute = pn.dock.handle(Event(WheelEvent(
-                dy: inp.fin.wheelCells,
-                pos: pointerFor(inp.fin, cellW, cellH).pos)));
-            if (wheelRoute.kind == RouteKind.pane)
-            {
-                if (wheelRoute.pane == treePane)
-                    pn.tree.scrollBy(inp.fin.wheelCells);
-                else if (wheelRoute.pane == inspPane)
-                    pn.insp.tv.scrollBy(inp.fin.wheelCells);
-                else
-                {
-                    // A vertical notch over a TALL fence scrolls the
-                    // fence until its edge (`COD6`); only then does it
-                    // fall through to the document.
-                    const mpw = inp.fin.pos;
-                    const rowW = vm.top
-                        + cast(long)((mpw.y - docY0) / cellH);
-                    const fb = mpw.y >= docY0
-                        ? vm.fenceBodyAtRow(rowW) : size_t.max;
-                    if (fb == size_t.max
-                        || !vm.scrollFenceV(fb, inp.fin.wheelCells))
-                        vm.top += inp.fin.wheelCells;
-                }
-            }
-        }
 
         // The mouse back/forward buttons walk the document set regardless
         // of which pane has focus — the keyboard's `[`/`]` are focus
@@ -2428,110 +2354,86 @@ int runGui(GuiArgs guiArgs) @system
         if (inp.fin.leftReleased)
             inp.capture = inp.capture.released();
 
-        // The pane arrangement, and the divider drag inside it, belong to
-        // the container (DCK3). This host reads a polled pointer rather
-        // than an event queue, so it synthesises the one event the
-        // container needs — in cells, its unit — and lets the routing
-        // decide. A frame the container consumed is a frame the panes'
-        // own affordances sit out, which is how the divider drag keeps
-        // the pointer without any of them naming it.
+        // One unconditional drain through the container. Positions remain in
+        // pixels: `cellW`/`cellH` convert pane routing while bar grabs retain
+        // every device position inside a cell (DCK14).
         arrangePanes();
-        const dockRoute = pn.dock.handle(
-            Event(pointerFor(inp.fin, cellW, cellH)));
-        if (dockRoute.relayout)
-            arrangePanes(); // the width change reflows via the debounce
-        // The container owns the pointer during a divider drag. Mirror that
-        // into the pane-level machine so every affordance's existing
-        // `available` gate still sees a busy pointer — one ownership fact,
-        // asked at two levels, instead of a second negation chain. The
-        // central release above frees it.
-        if (dockRoute.kind == RouteKind.container)
-            inp.capture = inp.capture.capturedBy(capContainer);
-
-        // Interactive scrollbar (hover-expand + thumb grab + track jump):
-        // the ONE STM9 machine in px track units (a thumb press grabs in
-        // place, a track press jumps the leading edge — the shared
-        // semantics), with the hover-expand width eased per frame.
+        pn.tree.width = treeBodyCols();
+        pn.tree.height = paneContent(treePane).height;
+        pn.insp.ensureFresh(vm);
+        commitDockOffsets();
+        bool dockPressConsumed;
+        PaneId dockPressPane;
+        foreach (e; evBuf)
         {
-            // Both widths scale with the font: the expanded (hover) handle equals
-            // the reserved scrollbar gutter (1.5 cells) so it fills the gutter
-            // without overlapping text; the idle rail is a thin ~⅓ cell.
-            const float hoverW = cast(float) scrollbarGutter();
-            const pos = inp.fin.pos;
-            const docVLive = maxTop > 0;
-            // The pane's right edge, not the window's: with the inspector
-            // open the window edge is the PANEL's bar.
-            const docRight = docRightPx();
-            inp.capture = vm.scroll.stepV(inp.capture, capDocSb, docVLive,
-                ScrollPointer(over: pos.x >= docRight - hoverW
-                        && pos.x < docRight,
-                    pressed: clickPressed(), released: inp.fin.leftReleased,
-                    trackPos: cast(int)(pos.y - docY0)),
-                vm.top,
-                ScrollExtents(total, docRows, cast(int)(screenH - docY0),
-                    minExtent: 24));
-            if (docVLive)
-                vm.top = vm.scroll.v.offset;
-            vm.scroll.easeV(caps, window.frameSeconds);
-        }
-
-        // The tree pane's scrollbar — the SAME hover-expand behavior as the
-        // document's (one affordance, two panes): animated width, faint track
-        // on hover, draggable thumb, track click centers.
-        pn.tree.height = visibleRows - treeTopRows - 1; // − the header row
-        const treePaneRows = pn.tree.bodyRows;
-        const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
-        {
-            const float hoverW = cast(float) scrollbarGutter();
-            const trackTop = (treeTopRows + 1) * cellH;
-            const pos = inp.fin.pos;
-            const edge = treeCols * cellW;
-            const treeVLive = pn.treeVisible && treeMaxTop > 0
-                && treePaneRows > 0;
-            inp.capture = pn.tree.scroll.stepV(inp.capture, capTreeSb,
-                treeVLive,
-                ScrollPointer(over: pos.x >= edge - hoverW && pos.x < edge
-                        && pos.y >= trackTop,
-                    pressed: clickPressed(), released: inp.fin.leftReleased,
-                    trackPos: cast(int)(pos.y - trackTop)),
-                pn.tree.top,
-                ScrollExtents(pn.tree.rows.length, treePaneRows,
-                    cast(int)(screenH - trackTop), minExtent: 24));
-            if (treeVLive)
+            const route = pn.dock.handle(e);
+            if (route.relayout)
             {
-                pn.tree.top = pn.tree.scroll.v.offset;
-                pn.tree.scrollBy(0); // clamp
-                pn.tree.scroll.easeV(caps, window.frameSeconds);
+                arrangePanes();
+                commitDockOffsets();
+            }
+            e.match!((in PointerEvent p) {
+                if (p.action == PointerAction.press
+                    && p.button == PointerButton.left)
+                {
+                    dockPressConsumed = route.kind == RouteKind.container;
+                    dockPressPane = route.kind == RouteKind.pane
+                        ? route.pane : PaneId.init;
+                }
+                if (route.kind == RouteKind.pane
+                    && route.pane == inspPane)
+                {
+                    pn.insp.handle(route.event, vm);
+                    syncInspectorExtent();
+                }
+            }, (in WheelEvent w) {
+                if (w.mods.ctrl || route.kind != RouteKind.pane)
+                    return;
+                const dx = w.dx + (w.mods.shift ? w.dy : 0);
+                const dy = w.mods.shift ? 0 : w.dy;
+                if (route.pane != docPane)
+                    pn.dock.scrollBy(route.pane, dx, dy);
+                else
+                {
+                    bool nested;
+                    route.event.match!((in WheelEvent local) {
+                        const row = vm.top + local.pos.y;
+                        const fb = vm.fenceBodyAtRow(row);
+                        if (dx != 0 && fb != size_t.max)
+                            nested = vm.scrollFence(fb, dx);
+                        else if (dy != 0 && fb != size_t.max)
+                            nested = vm.scrollFenceV(fb, dy);
+                    }, (_) {});
+                    if (!nested)
+                        pn.dock.scrollBy(docPane, dx, dy);
+                }
+            }, (_){ });
+        }
+        evBuf.length = 0;
+        applyDockOffsets();
+        const scrollRoute = pn.dock.tickScroll(window.frameSeconds, caps);
+        // Edge autoscroll changed the container after the ordinary event
+        // drain. Publish that offset before the level-driven selection arm
+        // below re-hits the stationary pointer, and deliver the same
+        // synthetic drag to tree-shaped panes (`SCV8`).
+        applyDockOffsets();
+        if (scrollRoute.kind == RouteKind.pane)
+        {
+            if (scrollRoute.pane == treePane && pn.treeVisible)
+                pn.tree.handle(scrollRoute.event);
+            else if (scrollRoute.pane == inspPane && pn.inspVisible)
+            {
+                pn.insp.handle(scrollRoute.event, vm);
+                syncInspectorExtent();
             }
         }
+        const fenceShape = vm.fenceSv.shape();
+        window.pointerShape(pn.dock.shape(
+            vm.fenceSv.grabbing ? fenceShape : PointerShape.default_,
+            fenceShape));
 
-        // The one pointer-shape decision, composed by the container
-        // (DCK9) from its dividers and the shapes this host's panes want:
-        // live grabs outrank hover — a scrollbar drag straying over the
-        // divider stays ns-resize, a divider drag stays ew-resize — then
-        // hover by orientation, else the default arrow. The terminal host
-        // composes the identical result and writes it as OSC 22.
-        PointerShape paneGrab()
-        {
-            if (vm.scroll.grabbing)
-                return vm.scroll.shape();
-            if (vm.fenceSv.grabbing)
-                return vm.fenceSv.shape();
-            if (pn.tree.scroll.grabbing)
-                return pn.tree.scroll.shape();
-            return PointerShape.default_;
-        }
-
-        PointerShape paneHover()
-        {
-            const v = vm.scroll.shape();
-            if (v != PointerShape.default_)
-                return v;
-            const f = vm.fenceSv.shape(); // the fence bars — same machine
-            return f != PointerShape.default_ ? f : pn.tree.scroll.shape();
-        }
-
-        window.pointerShape(pn.dock.shape(paneGrab(), paneHover()));
+        const treePaneRows = pn.tree.bodyRows;
+        const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
 
         vm.top = vm.top < 0 ? 0 : (vm.top > maxTop ? maxTop : vm.top);
         const topLine = cast(size_t) vm.top;
@@ -2542,7 +2444,7 @@ int runGui(GuiArgs guiArgs) @system
         // One-cell background padding on the left, the scrollbar gutter on the
         // right, plus the optional line-number gutter; text starts at `contentX`.
         const padX = cellW;
-        const rightPad = scrollbarGutter();
+        const rightPad = scrollGutterColsV * cellW;
         const gcols = gutterCols();
         // Text starts after the tree pane (when visible), the 1-cell left
         // padding, and the line-number gutter.
@@ -2614,15 +2516,15 @@ int runGui(GuiArgs guiArgs) @system
                 const e = vm.fenceExtent(owner);
                 const cur = vm.fenceScrollAt.get(owner,
                     FenceScroll(owner, 0, 0));
-                // The track excludes the `╰`/`╯` corners.
+                // The semantic target is exactly the corner-free track.
                 inp.capture = vm.fenceSv.stepH(inp.capture, capFenceSb,
                     true,
                     ScrollPointer(over: hTgt.rect.contains(dpf),
                         pressed: clickPressed(),
                         released: inp.fin.leftReleased,
-                        trackPos: dpf.x - (hTgt.rect.x + 1)),
+                        trackPos: dpf.x - hTgt.rect.x),
                     cur.x, ScrollExtents(e.widest, e.innerW,
-                        hTgt.rect.width - 2));
+                        hTgt.rect.width));
                 if (vm.fenceSv.h.dragging && clickPressed())
                     copyClicked = true; // a bar press is not a selection
                 if (vm.fenceSv.h.offset != cur.x)
@@ -2845,61 +2747,15 @@ int runGui(GuiArgs guiArgs) @system
 
         {
             const mp = inp.fin.pos;
-            const docRight = docRightPx();
-            const overSb = mp.x >= docRight - scrollbarGutter()
-                && mp.x < docRight;
             const overTree = pn.treeVisible && mp.x < treeCols * cellW;
-            // The pane's scrollbar strip is NOT a row: without this gate a
-            // scrollbar click also row-selects, and a double click "re-hits"
-            // the row under the cursor and opens it.
-            const overTreeSb = overTree && treeMaxTop > 0
-                && mp.x >= treeCols * cellW - scrollbarGutter();
-            // The document pane's horizontal bar (IXB2): same pattern.
-            {
-                const float hHoverH2 = cast(float) scrollbarGutter();
-                const float hIdleH2 = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
-                const live = vm.hOverflows() && inp.mode == Mode.normal;
-                const over = live && mp.x >= gutterPx && mp.x < docRight
-                    && mp.y >= screenH - bottomChromeH
-                        - (vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2) - 4
-                    && mp.y < screenH - bottomChromeH;
-                inp.capture = vm.scroll.stepH(inp.capture, capDocHSb, live,
-                    ScrollPointer(over: over, pressed: clickPressed(),
-                        released: inp.fin.leftReleased,
-                        trackPos: cast(int)((mp.x - gutterPx) / cellW)),
-                    vm.hsb.offset,
-                    ScrollExtents(vm.contentCols, vm.widthCols, vm.widthCols));
-                vm.scroll.easeH(caps, window.frameSeconds);
-                // The fence bars ease with the SAME constants and rate —
-                // their overlay (painted below) reads these widths.
-                vm.fenceSv.easeH(caps, window.frameSeconds);
-                vm.fenceSv.easeV(caps, window.frameSeconds);
-            }
-
-            // The tree's horizontal bar (IXB2): the pane's bottom edge,
-            // with the SAME hover-expand animation as the vertical bars
-            // (the drag itself runs the shared STM9 machine).
-            const float hHoverH = cast(float) scrollbarGutter();
-            const float hIdleH = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
-            const hLive = pn.tree.hOverflows() && !pn.tree.searching;
-            const overHBar = hLive && overTree
-                && mp.y >= screenH - bottomChromeH
-                    - (pn.tree.hsb.expanded(caps) ? hHoverH : hIdleH) - 4
-                && mp.y < screenH - bottomChromeH;
-            inp.capture = pn.tree.scroll.stepH(inp.capture, capTreeHSb, hLive,
-                ScrollPointer(over: overHBar, pressed: clickPressed(),
-                    released: inp.fin.leftReleased,
-                    trackPos: cast(int)(mp.x / cellW)),
-                pn.tree.hsb.offset,
-                ScrollExtents(pn.tree.contentCols, treeCols - 1,
-                    treeCols - 1));
-            pn.tree.scroll.easeH(caps, window.frameSeconds);
+            vm.fenceSv.easeH(caps, window.frameSeconds);
+            vm.fenceSv.easeV(caps, window.frameSeconds);
             // A row click is not a drag, so it takes no id — it only needs
             // the pointer to be unowned. Focus is NOT set here: the press
             // already moved it to the pane it landed in, which is the
             // container's click-to-focus (DCK6).
-            if (overTree && !overTreeSb && !overHBar && inp.capture.isFree
-                && clickPressed())
+            if (overTree && dockPressPane == treePane && !dockPressConsumed
+                && inp.capture.isFree && clickPressed())
             {
                 // The container answers which of the pane's CONTENT cells
                 // this is (DCK11) — the row cannot drift from the header
@@ -2907,7 +2763,8 @@ int runGui(GuiArgs guiArgs) @system
                 // it had.
                 Point tcell;
                 const inTree = pn.dock.contentCell(
-                    pointerFor(inp.fin, cellW, cellH).pos, treePane, tcell);
+                    Point(cast(int)(mp.x / cellW), cast(int)(mp.y / cellH)),
+                    treePane, tcell);
                 const row = pn.tree.top + tcell.y;
                 if (inTree && row >= 0 && row < cast(long) pn.tree.rows.length)
                 {
@@ -2936,47 +2793,6 @@ int runGui(GuiArgs guiArgs) @system
                     pop.expandedRegions[r] = !pop.expandedRegions.get(r, false);
                 }
             }
-            // The inspector pane owns its own pointer (a click selects, a
-            // second click toggles, the bar grabs) — cell-local through the
-            // shared tree arm; a press also moves the focus there, and a
-            // press anywhere else gives it back.
-            const inspRc = pn.inspVisible ? paneContent(inspPane) : Rect.init;
-            const overInsp = pn.inspVisible && inspRc.width > 0
-                && mp.x >= inspRc.x * cellW;
-            if (pn.inspVisible && (overInsp || pn.insp.tv.sb.dragging))
-            {
-                const lp = Point(cast(int)(mp.x / cellW) - inspRc.x,
-                    cast(int)(mp.y / cellH) - inspRc.y);
-                bool have;
-                PointerEvent pe;
-                if (clickPressed())
-                {
-                    pn.inspFocused = true;
-                    pe = PointerEvent(action: PointerAction.press,
-                        button: PointerButton.left, pos: lp);
-                    have = true;
-                }
-                else if (inp.fin.leftReleased)
-                {
-                    pe = PointerEvent(action: PointerAction.release,
-                        button: PointerButton.left, pos: lp);
-                    have = true;
-                }
-                else if (inp.fin.leftDown)
-                {
-                    pe = PointerEvent(action: PointerAction.drag,
-                        button: PointerButton.left, pos: lp);
-                    have = true;
-                }
-                if (have)
-                {
-                    pn.insp.handle(Event(pe), vm);
-                    syncInspectorExtent();
-                }
-            }
-            else if (clickPressed() && pn.inspFocused)
-                pn.inspFocused = false;
-
             // Levels, not edges (`HST17`): a drag that stops moving still
             // gets no event when Shift goes down, so this is a reading the
             // host takes each frame, not something folded from `evBuf`.
@@ -2986,7 +2802,8 @@ int runGui(GuiArgs guiArgs) @system
             // instance of the allow-list defect: every new draggable had to be
             // added here, and to every other affordance's condition. A popup
             // click is not a draggable — it consumes the press outright.
-            if (selectStartPressed() && !overSb && !overTree && !overInsp
+            if (selectStartPressed() && dockPressPane == docPane
+                && !dockPressConsumed
                 && !copyClicked
                 && !popupClicked && inp.capture.available(capSelection))
             {

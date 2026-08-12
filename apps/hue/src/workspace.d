@@ -27,8 +27,8 @@ import sparkles.ui_app.backend : Backend, BackendPolicy;
 import sparkles.ui_app.host : RunConfig;
 import sparkles.ui_app.run : run, RunOutcome;
 import sparkles.input : EndOfInput, Event, isEndOfInput, isNoEvent, Key,
-    KeyEvent, linesPerNotch, match, NoEvent, PointerAction, PointerButton,
-    PointerEvent, ResizeEvent, WheelEvent;
+    KeyEvent, linesPerNotch, match, mousePointer, NoEvent, PointerAction,
+    PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
@@ -170,6 +170,11 @@ struct WorkspaceTui
             minExtent: minTreeCols);
         const d = dock.layout.addLeaf(docPane);
         const ins = dock.layout.addLeaf(inspPane, extent: 40, minExtent: 20);
+        foreach (leaf; [t, d, ins])
+        {
+            dock.layout.nodes[leaf].scrollGutterV = 1;
+            dock.layout.nodes[leaf].scrollGutterH = 1;
+        }
         dock.layout.root = dock.layout.addSplit(DockAxis.horizontal,
             [t, d, ins]);
         dock.layout.setVisible(inspPane, false);
@@ -193,6 +198,10 @@ struct WorkspaceTui
         dock.layout.nodes[dock.layout.nodeOf(docPane)].extent = 0;
         dock.arrange(Rect(0, 0, w, h));
 
+        tree.tv.scrollGutterV = 0;
+        tree.tv.scrollGutterH = 0;
+        viewer.externalScroll = true;
+        insp.externalScroll = true;
         foreach (ref f; dock.paneFrames)
             if (f.pane == treePane)
             {
@@ -216,10 +225,67 @@ struct WorkspaceTui
         if (treeVisible)
             tree.rebuild();
         viewer.relayout();
+        commitPaneScrolls();
     }
 
     private Rect inspRect;
     private int viewerRows = 1;
+
+    // Pane models still own cursor/reveal policy; the dock owns the resulting
+    // offsets and every pointer interaction with their outer bars. Chrome is
+    // added to the vertical content extent because it is fixed inside the
+    // pane while only the body rows scroll.
+    private void publishPaneExtents() @safe
+    {
+        dock.contentExtent(treePane, tree.contentCols,
+            cast(long) tree.rows.length + tree.chromeRows);
+        dock.contentExtent(docPane, viewer.vm.contentCols,
+            cast(long) viewer.vm.rows.length + 2);
+        dock.contentExtent(inspPane, insp.tv.contentCols,
+            cast(long) insp.tv.rows.length + insp.tv.chromeRows);
+    }
+
+    private void applyDockScrolls() @safe pure nothrow @nogc
+    {
+        tree.top = dock.offsetV(treePane);
+        tree.hsb = tree.hsb.scrolledTo(dock.offsetH(treePane));
+        viewer.vm.top = dock.offsetV(docPane);
+        viewer.vm.hsb = viewer.vm.hsb.scrolledTo(dock.offsetH(docPane));
+        insp.tv.top = dock.offsetV(inspPane);
+        insp.tv.hsb = insp.tv.hsb.scrolledTo(dock.offsetH(inspPane));
+    }
+
+    private void commitPaneScrolls() @safe
+    {
+        publishPaneExtents();
+        dock.scrollTo(treePane, tree.hsb.offset, tree.top);
+        dock.scrollTo(docPane, viewer.vm.hsb.offset, viewer.vm.top);
+        dock.scrollTo(inspPane, insp.tv.hsb.offset, insp.tv.top);
+        applyDockScrolls();
+    }
+
+    /// Advances SCV8 and delivers the pane-local drag produced when content
+    /// moved under a held pointer. The viewer's existing selection arm needs
+    /// no autoscroll vocabulary of its own.
+    private bool tickDock(Duration elapsed) @system
+    {
+        const dt = elapsed == Duration.max ? 0.0f
+            : cast(float) elapsed.total!"msecs" / 1000.0f;
+        const r = dock.tickScroll(dt, mousePointer);
+        applyDockScrolls();
+        if (r.kind != RouteKind.pane)
+            return false;
+        if (r.pane == docPane)
+            viewer.handle(r.event);
+        else if (r.pane == treePane && treeVisible)
+            tree.handle(r.event);
+        else if (r.pane == inspPane && inspVisible)
+        {
+            insp.handle(r.event, viewer.vm);
+            syncInspectorExtent();
+        }
+        return true;
+    }
 
     /// `<leader>vi` (drained from the viewer's command arm): toggles the
     /// inspector pane; opening seeds the selection from the top visible row
@@ -274,6 +340,8 @@ struct WorkspaceTui
         if (inspRect.width < 3)
             return;
         insp.ensureFresh(viewer.vm); // a document switch rebuilds next frame
+        publishPaneExtents();
+        applyDockScrolls();
         insp.focused = dock.focused == inspPane;
         auto b = Builder();
         const iv = insp.view(b, inspRect.width);
@@ -321,6 +389,52 @@ struct WorkspaceTui
             foreach (ref d; dock.dividers)
                 foreach (y; d.rect.y .. d.rect.y + d.rect.height)
                     g.putText(cast(ushort) d.rect.x, cast(ushort) y, "│", div);
+        }
+        paintDockScrollbars(g);
+    }
+
+    /// Paints the semantic bars the dock routed. The terminal degradation is
+    /// the same `WidgetKind.scrollbar` path standalone panes use; only the
+    /// geometry and state owner changed.
+    private void paintDockScrollbars(ref Grid g) @system
+    {
+        import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+        import sparkles.ui.display_list : buildDisplayList;
+        import sparkles.ui.layout : layout;
+        import sparkles.ui.widget : Builder;
+        import sparkles.ui_tui : paintGrid;
+
+        foreach (ref const barFrame; dock.bars)
+        {
+            const sv = dock.scrollOf(barFrame.pane);
+            const pal = barFrame.pane == treePane
+                ? tree.palette : viewer.vm.palette;
+            if (barFrame.hLive)
+            {
+                auto b = Builder();
+                const bar = scrollbar(b, sv.h,
+                    barFrame.hExtents.content, barFrame.hExtents.viewport,
+                    barFrame.hExtents.track, ScrollbarGlyphs('━', '─'),
+                    expandPercent: cast(ubyte) sv.hAnim.percent,
+                    gutter: barFrame.hTrack.height,
+                    trackLit: sv.h.hovered || sv.h.dragging);
+                auto t = b.finish(bar);
+                paintGrid(g, pageBg, buildDisplayList(t, layout(t), pal,
+                    pageFg, pageBg), barFrame.hTrack.x, barFrame.hTrack.y);
+            }
+            if (barFrame.vLive)
+            {
+                auto b = Builder();
+                const bar = scrollbar(b, sv.v,
+                    barFrame.vExtents.content, barFrame.vExtents.viewport,
+                    barFrame.vExtents.track, ScrollbarGlyphs('█', '░'),
+                    expandPercent: cast(ubyte) sv.vAnim.percent,
+                    gutter: barFrame.vTrack.width,
+                    trackLit: sv.v.hovered || sv.v.dragging);
+                auto t = b.finish(bar);
+                paintGrid(g, pageBg, buildDisplayList(t, layout(t), pal,
+                    pageFg, pageBg), barFrame.vTrack.x, barFrame.vTrack.y);
+            }
         }
     }
 
@@ -612,23 +726,15 @@ struct WorkspaceTui
     // precedence (DCK9) puts every grab above every hover.
     private PointerShape paneGrabShape() @safe pure nothrow @nogc
     {
-        if (viewer.vm.scroll.grabbing)
-            return viewer.vm.scroll.shape();
         if (viewer.vm.fenceSv.grabbing)
             return viewer.vm.fenceSv.shape();
-        if (tree.scroll.grabbing)
-            return tree.scroll.shape();
         return PointerShape.default_;
     }
 
     /// ditto
     private PointerShape paneHoverShape() @safe pure nothrow @nogc
     {
-        const v = viewer.vm.scroll.shape();
-        if (v != PointerShape.default_)
-            return v;
-        const f = viewer.vm.fenceSv.shape(); // the fence bars — same machine
-        return f != PointerShape.default_ ? f : tree.scroll.shape();
+        return viewer.vm.fenceSv.shape();
     }
 
     /// Applies one event; returns false to quit.
@@ -651,38 +757,6 @@ struct WorkspaceTui
 
     bool handle(in Event e) @system
     {
-        // Pointer shape (observes only — never consumes). The panes hover
-        // their own bars from pane-local positions; the container composes
-        // those with its dividers into the one wanted shape.
-        e.match!((in PointerEvent p) {
-            // The shape is written out of band, BEFORE the event routes, so
-            // the container's hover is refreshed here rather than waited on.
-            dock.hovered(p.pos);
-            const vx = p.pos.x - viewer.originX;
-            viewer.sb = viewer.sb.hoveredNow(
-                viewer.overScrollbar(vx, p.pos.y));
-            viewer.vm.hsb = viewer.vm.hsb.hoveredNow(
-                viewer.overHScrollbar(vx, p.pos.y));
-            const treeFrame = tree.scrollFrame();
-            tree.sb = tree.sb.hoveredNow(
-                treeVisible && treeFrame.vPointer(p).over);
-            tree.hsb = tree.hsb.hoveredNow(
-                treeVisible && treeFrame.hPointer(p).over);
-            const grabbed = dock.resizing
-                || paneGrabShape() != PointerShape.default_;
-            const want = dock.shape(paneGrabShape(), paneHoverShape());
-            // Re-assert on every event while a grab is live: some terminals
-            // and multiplexers reset the pointer themselves when a drag
-            // starts, clobbering the OSC 22 shape — a repeated set is
-            // idempotent and a few bytes, so keep re-applying it.
-            if (want != curShape || (grabbed && p.action == PointerAction.drag))
-            {
-                curShape = want;
-                pendingShape = want;
-                shapePending = true;
-            }
-        }, (_) {});
-
         // Global keys — only when no pane is consuming typed text.
         const typing = (treeFocused && tree.inputActive)
             || (!treeFocused && viewer.inputActive);
@@ -738,17 +812,56 @@ struct WorkspaceTui
         // the container (DCK13): capture first, then dividers, then the
         // pane under the pointer, with coordinates already pane-local.
         const r = dock.handle(e);
+        // Routing refreshed both divider and bar hover from the very frames
+        // paint consumes. Compose content-level fence chrome after it.
+        e.match!((in PointerEvent p) {
+            const grabbed = dock.resizing
+                || dock.scrollOf(treePane).grabbing
+                || dock.scrollOf(docPane).grabbing
+                || dock.scrollOf(inspPane).grabbing
+                || paneGrabShape() != PointerShape.default_;
+            const want = dock.shape(paneGrabShape(), paneHoverShape());
+            if (want != curShape || (grabbed && p.action == PointerAction.drag))
+            {
+                curShape = want;
+                pendingShape = want;
+                shapePending = true;
+            }
+        }, (_) {});
         if (r.kind == RouteKind.container)
         {
             // A divider drag: the container resized the layout, the panes
             // are told their new rects.
             if (r.relayout)
                 arrange(width, height);
+            else
+                applyDockScrolls();
             return true;
         }
         if (r.kind == RouteKind.none)
             return true;
         const ev = r.event;
+
+        // A wheel remains pane policy, but the outer offset is container
+        // state. The document gets first refusal for a nested fence; the two
+        // tree panes are plain viewports.
+        bool wheel;
+        ev.match!((in WheelEvent w) {
+            wheel = true;
+            if (r.pane == docPane)
+            {
+                viewer.handle(ev);
+                publishPaneExtents();
+                dock.scrollTo(docPane, viewer.vm.hsb.offset, viewer.vm.top);
+            }
+            else
+                dock.scrollBy(r.pane, w.dx + (w.mods.shift ? w.dy : 0),
+                    w.mods.shift ? 0 : w.dy);
+            applyDockScrolls();
+            tickDock(Duration.zero);
+        }, (_) {});
+        if (wheel)
+            return true;
 
         if (r.pane == inspPane && inspVisible)
         {
@@ -758,6 +871,7 @@ struct WorkspaceTui
                 return true;
             }
             syncInspectorExtent();
+            commitPaneScrolls();
             return true;
         }
         const toTree = r.pane == treePane;
@@ -788,6 +902,8 @@ struct WorkspaceTui
                 treeFocused = false;
                 arrange(width, height);
             }
+            else
+                commitPaneScrolls();
             return true;
         }
         const alive = viewer.handle(ev);
@@ -814,6 +930,7 @@ struct WorkspaceTui
                     && p.button == PointerButton.left)
                     insp.picking = false;
             }, (_) {});
+        commitPaneScrolls();
         return alive;
     }
 
@@ -1337,6 +1454,9 @@ private Duration waitDeadline(ref WorkspaceTui w, bool eventDriven = false)
     if (w.tree.git.refreshing && !w.tree.git.asyncMode
         && deadline > 150.msecs)
         deadline = 150.msecs;
+    const untilScroll = w.dock.nextTickIn();
+    if (untilScroll < deadline)
+        deadline = untilScroll;
     return deadline;
 }
 
@@ -1352,7 +1472,7 @@ private bool onWaitExpired(ref WorkspaceTui w, Duration waited) @system
     // The wait expired rather than a key arriving: advance the guide's
     // clock so the panel opens on time.
     w.tickLantern(waited);
-    return false;
+    return w.tickDock(waited);
 }
 
 version (unittest)
@@ -1513,7 +1633,7 @@ unittest
 
     // The divider column is the one just past the tree pane — the same one
     // the OSC 22 test hovers.
-    const divider = w.tree.width;
+    const divider = w.dock.dividers[0].rect.x;
 
     RunConfig cfg;
     auto rec = runAppRecorded(w, cfg,
@@ -1629,7 +1749,8 @@ unittest
 
     // Both panes in one frame: the tree lists both files left of the divider,
     // the viewer header (right of it) names the open one.
-    assert(g[cast(ushort) w.tree.width, 3].grapheme == "│", "divider column");
+    const divider = w.dock.dividers[0].rect.x;
+    assert(g[cast(ushort) divider, 3].grapheme == "│", "divider column");
     assert(row(1)[0 .. w.tree.width].canFind("alpha.d"), row(1));
     assert(row(0)[w.viewer.originX .. $].canFind("alpha.d"), row(0));
     assert(row(1)[w.viewer.originX .. $].canFind("int alpha;"), row(1));
@@ -1687,30 +1808,30 @@ unittest
     w.treeVisible = true;
     w.tree.rebuild();
     w.arrange(100, 12);
-    assert(w.tree.width == 32, "the default split");
+    assert(w.dock.paneExtent(WorkspaceTui.treePane) == 32, "the default split");
 
     // Grab the divider column, drag right by 6, release (STM8).
-    const div = w.tree.width;
+    const div = w.dock.dividers[0].rect.x;
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(div, 4)))));
     assert(w.dock.resizing);
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(div + 6, 4)))));
-    assert(w.tree.width == 38, "the pane followed the drag");
+    assert(w.dock.paneExtent(WorkspaceTui.treePane) == 38, "the pane followed the drag");
     assert(w.viewer.originX == 39, "the viewer moved with the divider");
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(div + 6, 4)))));
-    assert(!w.dock.resizing && w.tree.width == 38);
+    assert(!w.dock.resizing && w.dock.paneExtent(WorkspaceTui.treePane) == 38);
 
     // The drag clamps: far left pins at the minimum, far right at half.
     w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(38, 4))));
     w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(0, 4))));
-    assert(w.tree.width == 12, "clamped at the minimum");
+    assert(w.dock.paneExtent(WorkspaceTui.treePane) == 12, "clamped at the minimum");
     w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(99, 4))));
-    assert(w.tree.width == 50, "clamped at half the screen");
+    assert(w.dock.paneExtent(WorkspaceTui.treePane) == 50, "clamped at half the screen");
     w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(99, 4))));
 }
@@ -1761,17 +1882,19 @@ unittest
 
     // A grab on the tree's scrollbar stays with the tree when the drag
     // crosses the divider into the document pane — no text selection.
-    const sbCol = w.tree.width - 1;
+    const treeBar = w.dock.scrollFrameOf(WorkspaceTui.treePane).vTrack;
+    const sbCol = treeBar.x;
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(sbCol, 2)))));
-    assert(w.tree.sb.dragging);
+    assert(w.dock.scrollOf(WorkspaceTui.treePane).v.dragging);
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(60, 6)))));
-    assert(w.tree.sb.dragging, "the tree kept the grab across the divider");
+    assert(w.dock.scrollOf(WorkspaceTui.treePane).v.dragging,
+        "the tree kept the grab across the divider");
     assert(!w.viewer.selection.active, "no text selection from a tree-owned drag");
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(60, 6)))));
-    assert(!w.tree.sb.dragging);
+    assert(!w.dock.scrollOf(WorkspaceTui.treePane).v.dragging);
 
     // Symmetrically: a selection started in the document keeps extending
     // when the drag crosses into the tree pane — and never steals focus.
@@ -1829,7 +1952,7 @@ unittest
 
     // OSC 22 divider hover: entering emits ew-resize, leaving restores the
     // default, and no-transition motion emits nothing.
-    const div = w.tree.width;
+    const div = w.dock.dividers[0].rect.x;
     assert(w.handle(Event(PointerEvent(action: PointerAction.move,
         pos: Point(div, 4)))));
     PointerShape shape;
@@ -1848,7 +1971,7 @@ unittest
     assert(w.takeCursorShape(shape) && shape == PointerShape.nsResize);
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(99, 4)))));
-    assert(w.viewer.sb.dragging);
+    assert(w.dock.scrollOf(WorkspaceTui.docPane).v.dragging);
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(60, 6)))));
     // Mid-grab drags RE-ASSERT the held shape (never default): terminals /
@@ -1884,6 +2007,42 @@ unittest
     w.arrange(100, 12);
     w.paint(g);
     assert(w.viewer.focused, "a lone viewer is always focused");
+}
+
+@("workspace.selection.edgeAutoscrollExtendsWithoutPointerMotion")
+@system unittest
+{
+    import std.file : rmdirRecurse;
+    import gui_preview : PreviewModel;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-workspace-autoscroll-test");
+    scope (exit) rmdirRecurse(root);
+
+    string src;
+    foreach (i; 0 .. 80)
+        src ~= "int line;\n";
+    w.viewer.setDocument("long.d", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        false, TwoslashReturn.init, "d");
+    w.arrange(80, 12);
+
+    const body = w.dock.scrollFrameOf(WorkspaceTui.docPane).content;
+    const edge = Point(body.x + 5, body.bottom - 2);
+    assert(w.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: edge))));
+    const before = w.viewer.selection;
+    assert(before.active && w.dock.nextTickIn() != Duration.max);
+
+    assert(w.tickDock(16.msecs), "the edge tick emitted a synthetic drag");
+    assert(w.viewer.vm.top > 0, "the content advanced under the held pointer");
+    assert(w.viewer.selection.hi > before.hi,
+        "the unchanged pointer extended over the newly revealed row");
+
+    w.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: edge)));
+    assert(w.dock.nextTickIn() == Duration.max,
+        "release makes the terminal idle again");
 }
 
 @("workspace.wheel.scrollsThePaneUnderTheCursor")
@@ -2317,13 +2476,14 @@ unittest
     // the next frame has painted (the cursor-following re-clamp used to undo
     // it, which is why the bar looked inert). The bar spans the tree window:
     // header, rule, then `bodyRows` rows — the paint above sized it.
-    const barBottom = 1 + w.insp.tv.bodyRows;
+    const barBottom = w.dock.scrollFrameOf(WorkspaceTui.inspPane).vTrack.bottom - 1;
     assert(w.handle(Event(PointerEvent(action: PointerAction.press,
         button: PointerButton.left, pos: Point(inspLast, barBottom)))));
-    const grabbed = w.insp.tv.top;
+    const grabbed = w.dock.offsetV(WorkspaceTui.inspPane);
     assert(grabbed > 0, "the track press jumped the view");
     w.paint(g);
-    assert(w.insp.tv.top == grabbed, "the frame did not scroll it back");
+    assert(w.dock.offsetV(WorkspaceTui.inspPane) == grabbed,
+        "the frame did not scroll it back");
 }
 
 @("workspace.reloadCurrent.preservesTheViewportAndRefreshesTheInspector")

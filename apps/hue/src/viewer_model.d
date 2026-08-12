@@ -977,10 +977,9 @@ struct ViewerModel
 
     private bool fenceHotH, fenceHotV;
 
-    /// Whether hover/grab feedback renders as GLYPH accents in the widget
-    /// tree (the cell hosts). The GUI disables it — its feedback is the px
-    /// hover-expand overlay (`ScrollbarAnim`), painted per frame with no
-    /// rebuild, exactly like the pane bars.
+    /// Whether hover/grab feedback resolves the semantic fence scrollbar's
+    /// thumb to the accent color. The GUI also varies the retained op's
+    /// expansion percent at paint time, so easing needs no per-frame rebuild.
     bool fenceHotGlyphs = true;
 
     /// Rebuilds when the fence-bar hover/grab state changed since the last
@@ -1107,15 +1106,15 @@ struct ViewerModel
             int numW;
             for (auto n = e.lines; n; n /= 10)
                 ++numW;
-            // The h-bar row is the one full-`boxW` target carrying this
-            // fence's identity (the fence id itself marks only the copy
-            // cutout); it exists exactly when the fence h-overflows — the
-            // only case the x clamp matters.
+            // The semantic h-bar's target is exactly its interior track;
+            // adding the two corner cells recovers the fence box width. It
+            // exists exactly when the fence h-overflows — the only case the
+            // x clamp matters.
             int boxW;
             foreach (ref const t; targets)
                 if (t.hitId == fenceHBarHitBase + bodyStart
                     && t.rect.width > boxW)
-                    boxW = t.rect.width;
+                    boxW = t.rect.width + 2;
             e.innerW = (boxW ? boxW : widthCols) - 4
                 - (codeLineNumbers ? numW + 1 : 0);
             const maxLines = resolvedCodeMaxLines();

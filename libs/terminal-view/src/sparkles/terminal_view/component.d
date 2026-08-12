@@ -8,10 +8,12 @@ drains the pty and makes the dirty/skip decision, `handle` maps
 runs the per-cell renderer inside the host's draw phase (`HST13`). `main`
 shrinks to CLI-parse-then-`runApp`.
 
-$(B What stays polled:) the mouse. `handle_mouse` is deeply level-coupled
-(scrollbar drag, selection auto-scroll, hover re-scan) and is called from
-`view` exactly as the polling loop called it — converting it to events is a
-later, separately-measured step (`TVW6`'s discipline, applied to input).
+$(B What stays polled:) the mouse. `handle_mouse` still combines terminal
+selection and hover re-scan and is called from `view` exactly as the polling
+loop called it. Its scrollbar now runs the toolkit `ScrollView` machine over
+the laid-out pane extents (`TVW9`); converting the remaining mouse path to
+events is a later, separately-measured step (`TVW6`'s discipline, applied to
+input).
 Clipboard $(B reads) also stay raylib's (`GetClipboardText`): the host has no
 clipboard-read errand yet.
 
@@ -33,7 +35,7 @@ import raylib;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ghostty.c;
 import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction,
-    KeyEvent, match, Mods, PointerAction, PointerEvent;
+    KeyEvent, match, Mods, mousePointer, PointerAction, PointerEvent;
 import sparkles.raylib_text : FontSet;
 import sparkles.terminal_view.child_env : sanitizeChildEnv;
 import sparkles.terminal_view.core;
@@ -593,7 +595,9 @@ struct TerminalView
         // selection, scrollbar and hover behavior to the pre-component loop.
         if (!s.childExited)
             handle_mouse(s.pty_fd, s.mouse_encoder, s.mouse_event, s.terminal,
-                s.cellWidth, s.cellHeight, s.selState, s.sbState, s.hoverState);
+                s.cellWidth, s.cellHeight, paneCols * s.cellWidth,
+                paneRows * s.cellHeight, s.selState, s.sbState,
+                s.hoverState);
 
         import sparkles.base.term_control : PointerShape;
 
@@ -712,8 +716,9 @@ struct TerminalView
             s.effects_ctx.bellFlashFrames > 0
             || s.selState.isSelecting
             || s.hoverState.isHoveringUrl
-            || s.sbState.isHovered || s.sbState.isDragging
-            || s.sbState.currentWidth != s.sbState.targetWidth;
+            || s.sbState.view.v.hovered || s.sbState.view.v.dragging
+            || s.sbState.view.vAnim.percent !=
+                (s.sbState.view.v.expanded(mousePointer) ? 100 : 0);
 
         const redraw = redrawDecision(RedrawInputs(
             contentDirty: dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE,

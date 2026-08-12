@@ -26,7 +26,11 @@ import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.syntax.ts.registry : canonicalLanguage;
+import sparkles.ui.canvas : RuleEdge;
+import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs,
+    ScrollbarSpec;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
+import sparkles.ui.state : ScrollAxis;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
@@ -736,38 +740,53 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
 }
 
 // The fence's BOTTOM border row: `╰──╯` — and, when the body overflows
-// horizontally, the horizontal SCROLLBAR (`COD6`): the border line is the
-// track, the `━` thumb rides it (`╰──━━━━────╯`), and the whole row is the
-// drag target.
-private uint fenceBottomBorder(ref Builder b, in MdViewOptions opt,
+// horizontally, the horizontal SCROLLBAR (`COD6`). The ordinary border line
+// remains below one semantic scrollbar leaf, so a cell backend gets
+// `╰──━━━━────╯` while a pixel backend expands the same thumb around the
+// border's centre. The leaf's interior rect is the drag target; the corners
+// are decoration, not an independently re-derived track inset.
+private uint fenceRuleRun(ref Builder b, MdViewOptions opt, string text)
+{
+    return b.add(Widget(kind: WidgetKind.rich,
+        spans: [ruleSpan(opt, text)], slot: Slot.border,
+        wrap: TextWrap.none, textStyle: codeStyle(opt)));
+}
+
+private uint fenceBottomBorder(ref Builder b, MdViewOptions opt,
     ref const MdBlock blk, int boxW, int widest, int innerW, int offsetX,
     bool hOver)
 {
-    import sparkles.ui.state : scrollbarThumb;
-
     const track = boxW - 2;
-    TextSpan[] spans = [ruleSpan(opt, "╰")];
-    size_t hit = opt.hitId;
+    uint[] parts = [fenceRuleRun(b, opt, "╰")];
     if (hOver && track > 0)
     {
-        const g = scrollbarThumb(widest, innerW, offsetX, track);
         const hot = opt.hotFenceHBar == blk.codeBody.start;
-        spans ~= ruleSpan(opt, repGlyph("─", g.start));
-        spans ~= TextSpan(repGlyph("━", g.extent), Slot.chromeAccent,
-            opt.baseStyle, noBreak: true,
-            fg: hot ? opt.theme.accentBlue : opt.theme.codeFg,
-            hasFg: opt.theme.present);
-        spans ~= ruleSpan(opt,
-            repGlyph("─", track - g.start - g.extent));
-        if (opt.fenceHBarHitBase != 0)
-            hit = opt.fenceHBarHitBase + blk.codeBody.start;
+        const base = fenceRuleRun(b, opt, repGlyph("─", track));
+        const bar = scrollbar(b, ScrollbarSpec(
+            content: widest,
+            viewport: innerW,
+            offset: offsetX,
+            axis: ScrollAxis.horizontal,
+            glyphs: ScrollbarGlyphs('━', '─'),
+            edge: RuleEdge.centerY,
+            hasEdge: true,
+            hitId: opt.fenceHBarHitBase != 0
+                ? opt.fenceHBarHitBase + blk.codeBody.start : opt.hitId,
+            trackFg: opt.theme.ruleFg,
+            hasTrackFg: opt.theme.present,
+            thumbFg: hot ? opt.theme.accentBlue : opt.theme.codeFg,
+            hasThumbFg: opt.theme.present,
+        ), track);
+        parts ~= b.add(Widget(kind: WidgetKind.stack,
+            children: [base, bar], width: SizeSpec.fixed(track),
+            height: SizeSpec.fixed(1)));
     }
     else
-        spans ~= ruleSpan(opt, repGlyph("─", track));
-    spans ~= ruleSpan(opt, "╯");
+        parts ~= fenceRuleRun(b, opt, repGlyph("─", track));
+    parts ~= fenceRuleRun(b, opt, "╯");
 
-    Widget w = Widget(kind: WidgetKind.rich, spans: spans, slot: Slot.border,
-        wrap: TextWrap.none, hitId: hit, paintBackground: true,
+    Widget w = Widget(kind: WidgetKind.row, children: parts,
+        slot: Slot.border, paintBackground: true,
         textStyle: opt.baseStyle, width: SizeSpec.fixed(boxW));
     if (opt.theme.present)
     {
@@ -777,33 +796,37 @@ private uint fenceBottomBorder(ref Builder b, in MdViewOptions opt,
     return b.add(w);
 }
 
-// The vertical track of a tall fence (`COD6`): an inner right column of
-// `│` track cells with a `┃` thumb, one cell per shown row — the drag
-// target for the y axis.
-private uint fenceVTrack(ref Builder b, in MdViewOptions opt,
+// The vertical track of a tall fence (`COD6`): the `│` border column below
+// one semantic scrollbar leaf. Its `┃` cell fallback and the pixel rail are
+// therefore two renderings of the same extent/offset payload.
+private uint fenceVTrack(ref Builder b, MdViewOptions opt,
     ref const MdBlock blk, int lines, int shownRows, int offsetY)
 {
-    import sparkles.ui.state : scrollbarThumb;
-
-    const g = scrollbarThumb(lines, shownRows, offsetY, shownRows);
     const hot = opt.hotFenceVBar == blk.codeBody.start;
     auto cells = new uint[](0);
     foreach (r; 0 .. shownRows)
     {
-        const onThumb = r >= g.start && r < g.start + g.extent;
-        TextSpan sp = TextSpan(onThumb ? "┃" : "│",
-            onThumb ? Slot.chromeAccent : Slot.border, opt.baseStyle,
-            noBreak: true,
-            fg: onThumb ? (hot ? opt.theme.accentBlue : opt.theme.codeFg)
-                : opt.theme.ruleFg,
-            hasFg: opt.theme.present);
-        cells ~= b.add(Widget(kind: WidgetKind.rich, spans: [sp],
-            slot: Slot.border, textStyle: opt.baseStyle));
+        cells ~= fenceRuleRun(b, opt, "│");
     }
-    return b.add(Widget(kind: WidgetKind.column, children: cells,
-        width: SizeSpec.fixed(1),
+    const base = b.add(Widget(kind: WidgetKind.column, children: cells,
+        width: SizeSpec.fixed(1)));
+    const bar = scrollbar(b, ScrollbarSpec(
+        content: lines,
+        viewport: shownRows,
+        offset: offsetY,
+        axis: ScrollAxis.vertical,
+        glyphs: ScrollbarGlyphs('┃', '│'),
+        edge: RuleEdge.centerX,
+        hasEdge: true,
         hitId: opt.fenceVBarHitBase != 0
-            ? opt.fenceVBarHitBase + blk.codeBody.start : opt.hitId));
+            ? opt.fenceVBarHitBase + blk.codeBody.start : opt.hitId,
+        trackFg: opt.theme.ruleFg,
+        hasTrackFg: opt.theme.present,
+        thumbFg: hot ? opt.theme.accentBlue : opt.theme.codeFg,
+        hasThumbFg: opt.theme.present,
+    ), shownRows);
+    return b.add(Widget(kind: WidgetKind.stack, children: [base, bar],
+        width: SizeSpec.fixed(1), height: SizeSpec.fixed(shownRows)));
 }
 
 private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
@@ -2091,6 +2114,67 @@ version (unittest)
             sawWrap = true;
     }
     assert(sawWrap);
+}
+
+@("md.render_widgets.codeOverflow.fenceBarsAreSemanticLeaves")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints, Rect;
+    import sparkles.ui.state : hoverTargets;
+
+    enum size_t hBase = 10_000, vBase = 20_000;
+    const src = "012345678901234567890123456789\n"
+        ~ "one\n"
+        ~ "two\n"
+        ~ "three\n";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.codeFence,
+            span: Span(0, src.length), codeBody: Span(0, src.length)),
+    ]), src);
+    MdViewOptions opt = {
+        maxWidth: 20,
+        codeMaxLines: 2,
+        fenceHBarHitBase: hBase,
+        fenceVBarHitBase: vBase,
+    };
+    auto tree = viewMarkdown(doc, opt);
+    auto frames = layout(tree, Constraints(maxW: 20));
+    auto targets = hoverTargets(tree, frames);
+
+    Rect hRect, vRect;
+    int bars;
+    foreach (i, ref const node; tree.nodes)
+    {
+        if (node.kind != WidgetKind.scrollbar)
+            continue;
+        ++bars;
+        assert(node.barContent > node.barViewport);
+        if (node.barEdge == RuleEdge.centerY)
+        {
+            hRect = frames[i].rect;
+            assert(node.hitId == hBase && hRect.width == 18
+                && node.barViewport == 16);
+        }
+        else
+        {
+            assert(node.barEdge == RuleEdge.centerX);
+            vRect = frames[i].rect;
+            assert(node.hitId == vBase && vRect.width == 1
+                && vRect.height == 2);
+        }
+    }
+    assert(bars == 2);
+
+    bool hHit, vHit;
+    foreach (ref const t; targets)
+    {
+        if (t.hitId == hBase)
+            hHit = t.rect == hRect;
+        if (t.hitId == vBase)
+            vHit = t.rect == vRect;
+    }
+    assert(hHit && vHit,
+        "the painted semantic track and its hit target share one frame");
 }
 
 @("md.render_widgets.fencePanelAndWrapWidth")

@@ -6,6 +6,12 @@ import raylib;
 
 import sparkles.ghostty.c;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.input : mousePointer, PointerAction, PointerButton,
+    PointerEvent;
+import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
+    ScrollAreaAxis, ScrollView;
+import sparkles.ui.geometry : Point, Rect;
+import sparkles.ui.state : CaptureState;
 import sparkles.terminal_view.posix_util : spawnDetached;
 
 // --- @nogc byte-string helpers (URL hover detection) ------------------------
@@ -270,12 +276,8 @@ struct SelectionState {
 }
 
 struct OverlayScrollbar {
-    bool isHovered = false;
-    bool isDragging = false;
-    float currentWidth = 4.0f;
-    float targetWidth = 4.0f;
-    float dragStartY = 0.0f;
-    long dragStartOffset = 0;
+    ScrollView view;
+    CaptureState capture;
 }
 
 struct HoverState {
@@ -311,6 +313,8 @@ void handle_mouse(
     GhosttyTerminal terminal,
     int cell_width,
     int cell_height,
+    int view_width,
+    int view_height,
     ref SelectionState selState,
     ref OverlayScrollbar sbState,
     ref HoverState hoverState)
@@ -351,94 +355,41 @@ void handle_mouse(
     GhosttyTerminalScrollbar sb;
     ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR, cast(void*)&sb);
 
-    bool has_scrollbar = sb.total > sb.len;
-    float track_height = cast(float)GetScreenHeight();
-    float sb_max_width = 16.0f;
+    const frame = scrollLayout(ScrollArea(
+        rect: Rect(0, 0, view_width, view_height),
+        v: ScrollAreaAxis(content: sb.total, viewport: sb.len,
+            gutter: 16, minExtent: 20),
+    ));
+    PointerAction action = PointerAction.move;
+    if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+        action = PointerAction.press;
+    else if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+        action = PointerAction.release;
+    else if (IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT))
+        action = PointerAction.drag;
+    const pe = PointerEvent(action: action, button: PointerButton.left,
+        pos: Point(cast(int) pos.x, cast(int) pos.y));
+    const wasDragging = sbState.view.v.dragging;
+    const over = frame.vPointer(pe).over;
+    sbState.capture = sbState.view.stepV(sbState.capture, 1, pe,
+        sb.offset, frame);
+    if (action == PointerAction.release)
+        sbState.capture = sbState.capture.released();
+    sbState.view.easeV(mousePointer, GetFrameTime());
 
-    if (has_scrollbar) {
-        float thumb_height = track_height * (cast(float)sb.len / cast(float)sb.total);
-        if (thumb_height < 20.0f) thumb_height = 20.0f;
-
-        float movable_pixels = track_height - thumb_height;
-        long total_movable_rows = sb.total - sb.len;
-
-        float thumb_y = 0.0f;
-        if (total_movable_rows > 0)
-            thumb_y = movable_pixels * (cast(float)sb.offset / cast(float)total_movable_rows);
-
-        bool hover_track = pos.x >= GetScreenWidth() - sb_max_width;
-        bool hover_thumb = hover_track && pos.y >= thumb_y && pos.y <= thumb_y + thumb_height;
-
-        sbState.isHovered = hover_track || sbState.isDragging;
-        sbState.targetWidth = sbState.isHovered ? 12.0f : 4.0f;
-
-        if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)) {
-            if (hover_track) {
-                if (hover_thumb) {
-                    sbState.isDragging = true;
-                    sbState.dragStartY = pos.y;
-                    sbState.dragStartOffset = sb.offset;
-                } else {
-                    float ratio = pos.y / track_height;
-                    long target_offset = cast(long)(ratio * sb.total) - (sb.len / 2);
-                    if (target_offset < 0) target_offset = 0;
-                    if (target_offset > total_movable_rows) target_offset = total_movable_rows;
-
-                    int scroll_delta = cast(int)(target_offset - sb.offset);
-                    if (scroll_delta != 0) {
-                        GhosttyTerminalScrollViewport scroll = { tag: GHOSTTY_SCROLL_VIEWPORT_DELTA };
-                        scroll.value.delta = scroll_delta;
-                        ghostty_terminal_scroll_viewport(terminal, scroll);
-                    }
-                }
-                return; // consume click!
-            }
-        }
-
-        if (sbState.isDragging) {
-            if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT)) {
-                sbState.isDragging = false;
-            } else if (IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT)) {
-                float delta_y = pos.y - sbState.dragStartY;
-                if (movable_pixels > 0 && total_movable_rows > 0) {
-                    long delta_rows = cast(long)(delta_y * total_movable_rows / movable_pixels);
-                    long target_offset = sbState.dragStartOffset + delta_rows;
-                    if (target_offset < 0) target_offset = 0;
-                    if (target_offset > total_movable_rows) target_offset = total_movable_rows;
-
-                    int scroll_delta = cast(int)(target_offset - sb.offset);
-                    if (scroll_delta != 0) {
-                        GhosttyTerminalScrollViewport scroll = { tag: GHOSTTY_SCROLL_VIEWPORT_DELTA };
-                        scroll.value.delta = scroll_delta;
-                        ghostty_terminal_scroll_viewport(terminal, scroll);
-
-                        // Because the buffer scrolled but the mouse cursor is clamped,
-                        // we need to adjust the drag anchor so smooth dragging continues perfectly!
-                        // Actually, if we're doing absolute scrolling based on delta_y from dragStartY,
-                        // and the mouse hits the top/bottom boundary and stops moving, the scroll will also stop.
-                        // But wait! If the mouse is clamped, `pos.y` stops increasing.
-                        // Thus `delta_y` stays the same, and `target_offset` stops changing.
-                        // But if the mouse is clamped and the user is still trying to move it out of bounds,
-                        // we should maybe auto-scroll the scrollbar too?
-                        // The user can't move the mouse further because of clamping. They will have to drag the thumb.
-                        // This is correct behavior for scrollbars.
-                    }
-                }
-            }
-            return; // consume all events while dragging
-        }
-    } else {
-        sbState.isHovered = false;
-        sbState.targetWidth = 4.0f;
+    const target = sbState.view.v.offset;
+    if (target != sb.offset)
+    {
+        GhosttyTerminalScrollViewport scroll = {
+            tag: GHOSTTY_SCROLL_VIEWPORT_DELTA,
+        };
+        scroll.value.delta = cast(int)(target - sb.offset);
+        ghostty_terminal_scroll_viewport(terminal, scroll);
     }
-
-    float dt = GetFrameTime();
-    float diff = sbState.targetWidth - sbState.currentWidth;
-    if (diff != 0.0f) {
-        sbState.currentWidth += diff * 15.0f * dt;
-        if (sbState.currentWidth < 4.0f && sbState.targetWidth == 4.0f) sbState.currentWidth = 4.0f;
-        if (sbState.currentWidth > 12.0f && sbState.targetWidth == 12.0f) sbState.currentWidth = 12.0f;
-    }
+    const barConsumed = wasDragging || sbState.view.v.dragging
+        || (action == PointerAction.press && over);
+    if (barConsumed)
+        return;
 
     bool mouse_tracking = false;
     ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, cast(void*)&mouse_tracking);

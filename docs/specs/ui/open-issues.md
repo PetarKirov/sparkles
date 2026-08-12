@@ -69,6 +69,11 @@ Two symptoms follow:
 2. A drag that leaves the content loses motion and release, so selection can stay
    active and scrollbar dragging cannot continue outside the window.
 
+`SCV8` now removes the common selection failure while the pointer is still in
+the window: parking in the pane's edge band autoscrolls and re-delivers a drag
+without further motion. It cannot recover a release captured by the window
+manager, so this native-grab issue remains open.
+
 App-level mitigations were tried and reverted: vetoing close cannot cover
 minimize/maximize, ending a drag on cursor exit breaks valid outside-window
 dragging, and `GLFW_CURSOR_CAPTURED` was ignored on the tested XWayland/mutter
