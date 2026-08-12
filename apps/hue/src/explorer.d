@@ -38,7 +38,7 @@ import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : layout;
-import sparkles.ui.state : DisclosureState, LineEditState;
+import sparkles.ui.state : CaptureState, DisclosureState, LineEditState;
 import sparkles.ui.style : Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 import sparkles.ui_tui : CellStyle, Color, Grid, paintGrid;
@@ -183,6 +183,9 @@ struct ExplorerTui
     TreeViewState!string tv;
     /// ditto
     alias tv this;
+    /// Pointer ownership inside this pane; the dock owns cross-pane routing.
+    CaptureState capture;
+    private enum size_t scrollCapBase = 1;
 
     /// Whether this pane holds the workspace focus — the header title
     /// renders accented when focused, muted otherwise (like the viewer's).
@@ -558,6 +561,7 @@ struct ExplorerTui
         page.bg = Color.fromRgb(pageBg);
         g.fillRect(0, 0, cast(ushort)(width < g.cols ? width : g.cols),
             g.rows, page);
+        const scrollFrame = tv.scrollFrame();
 
         // Header + tree + status through one widget pipeline. The tree is
         // viewport-sliced (guides are per-row, so slicing is safe).
@@ -573,7 +577,7 @@ struct ExplorerTui
 
         // The header paints unshifted; the tree shifts left by the
         // horizontal offset (IXB2) and clips to the pane.
-        const hx = hOverflows() ? cast(int) hsb.offset : 0;
+        const hx = scrollFrame.hLive ? cast(int) hsb.offset : 0;
         Widget hdrCol = Widget(kind: WidgetKind.column, children: [hdr],
             width: SizeSpec.fixed(width));
         auto ht = b.finish(b.add(hdrCol));
@@ -588,21 +592,25 @@ struct ExplorerTui
         auto wt = tb.finish(tb.add(colW));
         paintGrid(g, pageBg, buildDisplayList(wt, layout(wt),
             palette, pageFg, pageBg),
-            -hx, 1, Rect(hx, 0, width - 1, bodyRows));
+            -hx, scrollFrame.content.y,
+            Rect(hx, 0, scrollFrame.content.width,
+                scrollFrame.content.height));
 
         // The horizontal bar, one row above the status bar, when live —
         // the SAME component/machine as the vertical bar (IXB2).
-        if (hOverflows() && height >= 4)
+        if (scrollFrame.hLive)
         {
             import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
 
             auto hb = Builder();
-            const bar2 = scrollbar(hb, hsb, contentCols, width - 1,
-                width - 1, ScrollbarGlyphs('━', '─'));
+            const bar2 = scrollbar(hb, hsb,
+                scrollFrame.hExtents.content, scrollFrame.hExtents.viewport,
+                scrollFrame.hExtents.track, ScrollbarGlyphs('━', '─'),
+                gutter: scrollFrame.hTrack.height);
             auto hbt = hb.finish(bar2);
             paintGrid(g, pageBg, buildDisplayList(hbt, layout(hbt),
                 palette, pageFg, pageBg),
-                0, height - 2);
+                scrollFrame.hTrack.x, scrollFrame.hTrack.y);
         }
 
         // The status bar pinned to the bottom row (its own one-row pipeline).
@@ -624,17 +632,20 @@ struct ExplorerTui
         // Scrollbar in the pane's last column when the tree overflows —
         // the one component (WGT10) over the one machine (STM9), tinted by
         // the palette's track/thumb entries (B-1).
-        if (cast(long) rows.length > bodyRows && width >= 2
+        if (scrollFrame.vLive && width >= 2
             && width <= g.cols)
         {
             import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
 
             auto vb = Builder();
-            const vbar = scrollbar(vb, this.sb.scrolledTo(top), rows.length,
-                bodyRows, bodyRows, ScrollbarGlyphs('█', '░'));
+            const vbar = scrollbar(vb, this.sb.scrolledTo(top),
+                scrollFrame.vExtents.content, scrollFrame.vExtents.viewport,
+                scrollFrame.vExtents.track, ScrollbarGlyphs('█', '░'),
+                gutter: scrollFrame.vTrack.width);
             auto vbt = vb.finish(vbar);
             paintGrid(g, pageBg, buildDisplayList(vbt, layout(vbt),
-                palette, pageFg, pageBg), width - 1, 1);
+                palette, pageFg, pageBg),
+                scrollFrame.vTrack.x, scrollFrame.vTrack.y);
         }
     }
 
@@ -659,7 +670,8 @@ struct ExplorerTui
                 // The shared precedence (bars grab, rows select, a second
                 // click activates) is the component's; only what activation
                 // MEANS — open the file / jump the diff — stays here.
-                if (tv.pointer(p) == TreeStep.activated)
+                if (tv.pointer(p, capture, scrollCapBase)
+                    == TreeStep.activated)
                     return activate();
                 return true;
             },

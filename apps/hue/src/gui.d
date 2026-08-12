@@ -3043,6 +3043,7 @@ int runGui(GuiArgs guiArgs) @system
         }
 
         pn.tree.chromeRows = 0; // the GUI pane is all tree rows
+        pn.tree.headerRows = 0;
         pn.tree.root = treeRoot.length ? treeRoot
             : (docPath.length ? dirName(docPath) : ".");
         // The frames must exist before the first layout: everything below reads
