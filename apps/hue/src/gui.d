@@ -260,6 +260,9 @@ struct FrameGeom
     int hdrY;            // ditto for the header row above it
     int gcols;           // gutter width in cells (line numbers)
     int gutterPx;        // pixel X where document text starts
+    // Pixel X of the document pane's right edge — less than screenW once the
+    // inspector pane is open. Its bars, clip and tints all end here.
+    int docRight;
     int rightPad;        // scrollbar gutter reserved on the right
     int dhx;             // horizontal scroll offset, cells
     size_t total;        // total document rows
@@ -455,6 +458,12 @@ int runGui(GuiArgs guiArgs) @system
 
     /// The inspector pane's width in cells (0 when hidden).
     int inspCols() => pn.inspVisible ? pn.dock.paneExtent(inspPane) : 0;
+
+    /// The document pane's right edge in px. Everything right of it belongs
+    /// to the inspector pane — including the scrollbar gutter, which is why
+    /// the document's bars are laid out and hit-tested against THIS and not
+    /// the window's edge (they overlapped the panel's own bar before).
+    int docRightPx() => window.width - inspCols() * fonts.cellW();
 
     int widthCols()
     {
@@ -1009,7 +1018,7 @@ int runGui(GuiArgs guiArgs) @system
         {
             import std.conv : text;
 
-            drawChromeBar(treePx(), hdrY, (screenW - treePx()) / cellW,
+            drawChromeBar(treePx(), hdrY, (docRight - treePx()) / cellW,
                 vm.title,
                 text(names[vm.themeIdx], " · ",
                     vm.showPreview ? "preview"
@@ -1029,7 +1038,7 @@ int runGui(GuiArgs guiArgs) @system
             // a fence, a wide table) never bleeds past the pane or under the
             // header — the same rule the tree pane follows.
             canvas.pushClip(Rect(dhx, cast(int) vm.top,
-                (screenW - rightPad - gutterPx) / cellW, docRows));
+                (docRight - rightPad - gutterPx) / cellW, docRows));
             foreach (ref op; vm.ops)
             {
                 const oy = op.rect.y;
@@ -1052,7 +1061,7 @@ int runGui(GuiArgs guiArgs) @system
             if (vm.fenceSvOwner != size_t.max)
             {
                 canvas.pushClip(Rect(dhx, cast(int) vm.top,
-                    (screenW - rightPad - gutterPx) / cellW, docRows));
+                    (docRight - rightPad - gutterPx) / cellW, docRows));
                 scope (exit)
                     canvas.popClip();
                 const idleW = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
@@ -1169,19 +1178,30 @@ int runGui(GuiArgs guiArgs) @system
         }
 
         flash.copiedFlash = flash.copiedFlash.stepped(frameMs(window.frameSeconds), copiedCfg);
-        // Selection highlight — a translucent tint. `tintRow` takes content columns
-        // (0 = the content origin, i.e. after `gutterPx`).
-        void tintRow(long screenRow, int xStartCol, int xEndCol)
+        // Every document tint — selection, search match, the inspector's
+        // extent — lands through this one clip. All three built the same
+        // content-anchored rect, and none of them stopped at the pane: a
+        // wide table's tint bled into the inspector panel, which is exactly
+        // where the document's own glyphs were bleeding too.
+        void tintCells(int xStartCol, long screenRow, int wCols, in Visual v)
         {
-            if (screenRow < 0 || screenRow >= docRows || xEndCol <= xStartCol)
+            if (screenRow < 0 || screenRow >= docRows || wCols <= 0)
                 return;
             // Content-anchored and whole-cell, so it says so: the gutter
             // and the first document row are both cell multiples (UIA2).
-            chrome.fillRect(Rect(gutterPx / cellW + xStartCol,
-                cast(int)(docY0 / cellH + screenRow),
-                xEndCol - xStartCol, 1),
-                Visual(bg: vm.quoteBars[1], bgAlpha: 80, hasBg: true));
+            const x0 = gutterPx / cellW + xStartCol;
+            const lastCol = (docRight - rightPad) / cellW;
+            const x1 = x0 + wCols > lastCol ? lastCol : x0 + wCols;
+            if (x1 <= x0)
+                return;
+            chrome.fillRect(Rect(x0, cast(int)(docY0 / cellH + screenRow),
+                x1 - x0, 1), v);
         }
+        // Selection highlight — a translucent tint. `tintRow` takes content columns
+        // (0 = the content origin, i.e. after `gutterPx`).
+        void tintRow(long screenRow, int xStartCol, int xEndCol)
+            => tintCells(xStartCol, screenRow, xEndCol - xStartCol,
+                Visual(bg: vm.quoteBars[1], bgAlpha: 80, hasBg: true));
         // Tint a source byte range on the widget path: the toolkit derives the
         // char-precise rects (document cell coordinates) once for any backend.
         void tintSrcRange(long lo, long hi)
@@ -1228,8 +1248,7 @@ int runGui(GuiArgs guiArgs) @system
                     if (row < 0 || row >= docRows)
                         continue;
                     const t = i == vm.curMatch ? currentMatchTint : matchTint;
-                    chrome.fillRect(Rect(gutterPx / cellW + r.x,
-                        cast(int)(docY0 / cellH + row), r.width, 1),
+                    tintCells(r.x, row, r.width,
                         Visual(bg: t.rgb, bgAlpha: t.alpha, hasBg: true));
                 }
 
@@ -1242,8 +1261,7 @@ int runGui(GuiArgs guiArgs) @system
                 const row = r.y - vm.top;
                 if (row < 0 || row >= docRows)
                     continue;
-                chrome.fillRect(Rect(gutterPx / cellW + r.x,
-                    cast(int)(docY0 / cellH + row), r.width, 1),
+                tintCells(r.x, row, r.width,
                     Visual(bg: inspectTint.rgb, bgAlpha: inspectTint.alpha,
                         hasBg: true));
             }
@@ -1475,11 +1493,12 @@ int runGui(GuiArgs guiArgs) @system
             }
         }
 
-        // The document pane's horizontal bar (IXB2), over its bottom edge.
+        // The document pane's horizontal bar (IXB2), over its bottom edge —
+        // stopping at the pane's right edge, not the window's.
         if (vm.hOverflows() && inp.mode == Mode.normal)
         {
             const l = scrollbarLayout(vm.hsb, vm.scroll.hAnim, vm.contentCols,
-                vm.widthCols, Rect(gutterPx, 0, screenW - gutterPx, screenH));
+                vm.widthCols, Rect(gutterPx, 0, docRight - gutterPx, screenH));
             drawScrollbar(l, vm.hsb, vm.sbTrack, vm.sbThumb);
         }
 
@@ -1491,7 +1510,7 @@ int runGui(GuiArgs guiArgs) @system
             // bg): a subtle full-height track on hover, a brighter thumb.
             const l = scrollbarLayout(vm.scroll.v.scrolledTo(vm.top),
                 vm.scroll.vAnim, total, docRows,
-                Rect(0, docY0, screenW, screenH - docY0));
+                Rect(0, docY0, docRight, screenH - docY0));
             drawScrollbar(l, vm.scroll.v, vm.sbTrack, vm.sbThumb);
         }
 
@@ -2418,8 +2437,12 @@ int runGui(GuiArgs guiArgs) @system
             const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
             const pos = inp.fin.pos;
             const docVLive = maxTop > 0;
+            // The pane's right edge, not the window's: with the inspector
+            // open the window edge is the PANEL's bar.
+            const docRight = docRightPx();
             inp.capture = vm.scroll.stepV(inp.capture, capDocSb, docVLive,
-                ScrollPointer(over: pos.x >= screenW - hoverW,
+                ScrollPointer(over: pos.x >= docRight - hoverW
+                        && pos.x < docRight,
                     pressed: clickPressed(), released: inp.fin.leftReleased,
                     trackPos: cast(int)(pos.y - docY0)),
                 vm.top,
@@ -2785,7 +2808,7 @@ int runGui(GuiArgs guiArgs) @system
         {
             const smp = inp.fin.pos;
             if (!(pn.treeVisible && smp.x < treeCols * cellW)
-                && smp.x < screenW - inspCols() * cellW)
+                && smp.x < docRightPx())
             {
                 const hit = hitAt(smp.x, smp.y);
                 if (hit.ok && hit.lo >= 0
@@ -2802,7 +2825,9 @@ int runGui(GuiArgs guiArgs) @system
 
         {
             const mp = inp.fin.pos;
-            const overSb = mp.x >= screenW - scrollbarGutter();
+            const docRight = docRightPx();
+            const overSb = mp.x >= docRight - scrollbarGutter()
+                && mp.x < docRight;
             const overTree = pn.treeVisible && mp.x < treeCols * cellW;
             // The pane's scrollbar strip is NOT a row: without this gate a
             // scrollbar click also row-selects, and a double click "re-hits"
@@ -2814,7 +2839,7 @@ int runGui(GuiArgs guiArgs) @system
                 const float hHoverH2 = cast(float) scrollbarGutter();
                 const float hIdleH2 = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
                 const live = vm.hOverflows() && inp.mode == Mode.normal;
-                const over = live && mp.x >= gutterPx
+                const over = live && mp.x >= gutterPx && mp.x < docRight
                     && mp.y >= screenH - bottomChromeH
                         - (vm.hsb.expanded(caps) ? hHoverH2 : hIdleH2) - 4
                     && mp.y < screenH - bottomChromeH;
@@ -2960,7 +2985,8 @@ int runGui(GuiArgs guiArgs) @system
             cellW: cellW, cellH: cellH, screenW: screenW, screenH: screenH,
             visibleRows: visibleRows, screenCols: screenCols, screenRows: screenRows,
             docRows: docRows, docY0: docY0, hdrY: hdrY,
-            gcols: gcols, gutterPx: gutterPx, rightPad: rightPad, dhx: dhx,
+            gcols: gcols, gutterPx: gutterPx, docRight: docRightPx(),
+            rightPad: rightPad, dhx: dhx,
             total: total, topLine: topLine, maxTop: maxTop,
             treeTopRows: treeTopRows, treePaneRows: treePaneRows,
             treeMaxTop: treeMaxTop,
@@ -3023,6 +3049,12 @@ int runGui(GuiArgs guiArgs) @system
         if (docPath.length)
             startLive(docPath, vm.tw.code.length != 0);
         startDiffTypes();
+
+        // Debug/CI: the tree-sitter panel, open before the first frame — the
+        // pane arrangement (its scrollbar beside the document's) is only
+        // visible in a photograph.
+        if (capture.inspect)
+            toggleInspectorPane();
 
         // Debug/CI: a preselected search (highlights + jump to the first match)
         // so a golden capture exercises the match overlay.
