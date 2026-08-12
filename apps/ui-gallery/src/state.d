@@ -19,7 +19,8 @@ import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
 import sparkles.ui.components.dock : DockContainer;
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.state : CaptureState, DisclosureState, FocusState,
-    HoverState, PressState, Selection, SplitState, Timeline;
+    HoverState, PressState, ScrollAxis, ScrollbarState, Selection, SplitState,
+    Timeline;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinThemes;
 import sparkles.ui.widget : Alignment, Visibility;
@@ -72,6 +73,7 @@ enum size_t hitActions = 5000;  /// the components page's action bar
 enum size_t hitTree = 6000;     /// the tree page's rows
 enum size_t hitContentBar = 7000; /// the shell's content-pane scrollbar
 enum size_t hitDemoBar = 7100;    /// the Scrolling page's specimen bar
+enum size_t hitChromeSamples = 7150; /// four Components formula specimens
 enum size_t hitChromeBar = 7200;  /// the Components page's live scroll view
 enum size_t hitInspBar = 7300;    /// the inspector panel's scrollbar
 enum size_t hitSplit = 8000;    /// the split page's divider
@@ -302,8 +304,17 @@ struct GalleryState
     /// second document, so a reader can grab one without the other moving.
     ScrollView demoView = ScrollView(
         vAnim: ScrollbarAnim(percent: 0), hAnim: ScrollbarAnim(percent: 0));
-    /// The Components page's live `scrollView` specimen — the third one, for
-    /// the same reason the Scrolling page has its own.
+    /// The Components page's four formula specimens. Unlike a screenshot of
+    /// four offsets, each is a real machine: hover and grab demonstrate the
+    /// same contract as the live scroll view below them.
+    ScrollView[4] componentBars = [
+        ScrollView(v: ScrollbarState(ScrollAxis.vertical, 0)),
+        ScrollView(v: ScrollbarState(ScrollAxis.vertical, 47)),
+        ScrollView(v: ScrollbarState(ScrollAxis.vertical, 94)),
+        ScrollView(v: ScrollbarState(ScrollAxis.vertical, 47)),
+    ];
+    /// The Components page's live `scrollView` specimen, separate from its
+    /// formula bars so grabbing a catalog sample cannot move the document.
     ScrollView chromeView = ScrollView(
         vAnim: ScrollbarAnim(percent: 0), hAnim: ScrollbarAnim(percent: 0));
     /**
@@ -610,11 +621,12 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
     // ordered with room to grow — an overlap would let a press on one region
     // activate an affordance in another.
     // Ascending, non-zero, and never equal. The gap is a thousand except
-    // between the two scrollbars, which are a hundred apart because they are
-    // one kind of thing and neither will ever mint more than one id.
+    // between the scrollbar regions, which are close because they are one
+    // kind of thing. The Components specimen base owns four consecutive ids.
     static immutable size_t[] bases = [hitNav, hitTheme, hitTabs, hitActions,
-        hitTree, hitContentBar, hitDemoBar, hitChromeBar, hitInspBar, hitSplit,
-        hitMachines, hitTermActions, hitTermBar, hitTerminal];
+        hitTree, hitContentBar, hitDemoBar, hitChromeSamples, hitChromeBar,
+        hitInspBar, hitSplit, hitMachines, hitTermActions, hitTermBar,
+        hitTerminal];
     foreach (i, b; bases)
     {
         assert(b != 0);

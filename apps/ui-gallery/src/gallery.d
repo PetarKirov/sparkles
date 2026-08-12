@@ -564,7 +564,6 @@ struct Gallery
             barViewport: cast(int) s.terms.sbLen,
             barOffset: cast(int) s.termView.v.offset,
             expandPercent: cast(ubyte) s.termView.vAnim.percent,
-            barTrackLit: s.termView.v.hovered || s.termView.v.dragging,
             barTrackColor: mixRgb(bg, theme().pageFg, 0.25f),
             visual: Visual(fg: mixRgb(bg, theme().pageFg, 0.55f)),
         ));
@@ -1671,6 +1670,38 @@ version (unittest)
         button: PointerButton.left, pos: Point(2, bar.y)))], 96, 24);
     assert(!g.dock.scrollOf(Gallery.paneContent).v.dragging);
     assert(g.s.capture.isFree, "the release freed the pointer for everything");
+}
+
+@("ui_gallery.gallery.componentsScrollbarsReachThePageThroughTheShell")
+@safe unittest
+{
+    import registry : pageIndexOf;
+    import sparkles.ui.geometry : Constraints;
+
+    // Page-local machines are useful only if the shell offers them the event.
+    // Keep this at the full composition boundary: dock routing runs first,
+    // then the Components page must still receive a press in its specimen.
+    Gallery g;
+    g.s.page = pageIndexOf("components");
+
+    RecordingHost h;
+    h.size = sizeOf(120, 70);
+    auto tree = g.view(h);
+    const bar = rectOf(tree,
+        layout(tree, Constraints(maxW: 120, maxH: 70)), hitChromeSamples);
+    assert(!bar.empty && bar.y < 70, "the specimen is visible in the frame");
+
+    drive(g, [Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left,
+        pos: Point(bar.x, bar.y + bar.height - 1)))], 120, 70);
+    assert(g.s.componentBars[0].v.offset > 0,
+        "the shell delivered the press to the Components page");
+    assert(g.s.componentBars[0].v.dragging);
+
+    drive(g, [Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left,
+        pos: Point(bar.x, bar.y + bar.height - 1)))], 120, 70);
+    assert(!g.s.componentBars[0].v.dragging && g.s.capture.isFree);
 }
 
 @("ui_gallery.gallery.aScrollbarGrabDoesNotAlsoPressWhatItPassesOver")
