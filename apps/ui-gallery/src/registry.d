@@ -22,6 +22,7 @@ import state : GalleryState;
 // catalog below is called — and the collision is a compile error, not a
 // shadowing surprise.
 import pages.components_page : componentsKeys = keys,
+    componentsAnimating = animating,
     componentsOnActivate = handleActivate, componentsOnKey = handleKey,
     componentsOnPointer = handlePointer, componentsStep = step,
     componentsView = view;
@@ -158,7 +159,7 @@ bool stepPage(ref GalleryState s, int dtMs)
     componentsStep(s, dtMs);
     dockStep(s, dtMs);
     terminalStep(s, dtMs);
-    return machinesAnimating(s);
+    return machinesAnimating(s) || componentsAnimating(s);
 }
 
 /// The index of the page `name` refers to — a title prefix (case-insensitive)

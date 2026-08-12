@@ -4,11 +4,11 @@ gallery.
 
 The first version of this application rendered its bars with the position-only
 `scrollbar` overload and kept a bare `ScrollState`. That draws a correct thumb
-and is otherwise inert: no grab, no hover, no capture, no easing. All four live
-on $(REF ScrollView, sparkles,ui,components,scroll_view), which folds both axes' machines,
-the capture protocol and the hover-expand easing into one per-frame transition —
-and an application that reaches past it to `ScrollState` has opted out of the
-whole thing without noticing.
+and is otherwise inert: no grab, no hover, no capture, no easing. Every live
+bar now owns a $(REF ScrollView, sparkles,ui,components,scroll_view), which folds
+both axes' machines, the capture protocol and hover-expand easing into one
+per-frame transition — and an application that reaches past it to `ScrollState`
+has opted out of the whole thing without noticing.
 
 The semantic scrollbar operation lets the pure gallery view express hue's
 ⅓-cell rail without naming a canvas. A pixel backend resolves the continuous
@@ -41,6 +41,7 @@ enum size_t capSplit = 3;      /// the Split page's divider
 enum size_t capChromeBar = 4;  /// the Components page's live scroll view
 enum size_t capTermBar = 5;    /// the terminal pane's scrollback bar
 enum size_t capInspBar = 6;    /// the inspector panel's bar
+enum size_t capChromeSamples = 7; /// four Components formula specimens
 
 /// The columns a vertical bar's gutter reserves. Fixed, so the pane's width
 /// does not change when the bar expands — a page that reflowed on hover would
@@ -77,16 +78,31 @@ uint verticalBar(ref Builder b, in ScrollView sv, in BarGeometry g,
             width: SizeSpec.fixed(gutterCells),
         ));
 
-    // Expanded also brightens the track: a cell backend thresholds the same
-    // semantic percent that a px backend resolves continuously.
-    const glyphs = sv.vAnim.percent >= 50.0f
-        ? ScrollbarGlyphs(thumb: '█', track: '░')
-        : ScrollbarGlyphs(thumb: '█', track: '│');
-    return scrollbar(b, sv.v, g.content, g.viewport, g.track, glyphs,
+    return scrollbar(b, sv.v, g.content, g.viewport, g.track,
+        ScrollbarGlyphs(thumb: '█', track: '│'),
         expandPercent: cast(ubyte) sv.vAnim.percent,
         gutter: gutterCells,
-        trackLit: sv.v.hovered || sv.v.dragging,
         hitId: hitId);
+}
+
+@("ui_gallery.scrollbars.hoverExpandsOnlyTheThumb")
+@safe unittest
+{
+    // `barTrackLit` is a full-track pixel fill. The gallery's interaction is
+    // a widening handle, not a grey rectangle appearing behind it.
+    ScrollView sv;
+    sv.v = sv.v.hoveredNow(true);
+    sv.vAnim.percent = 100;
+
+    auto b = Builder();
+    const node = verticalBar(b, sv,
+        BarGeometry(content: 40, viewport: 8, track: 8), 42);
+    assert(b.nodes[node].kind == WidgetKind.scrollbar);
+    assert(b.nodes[node].barExpandPercent == 100);
+    assert(!b.nodes[node].barTrackLit,
+        "hover must not request a full-height track fill");
+    assert(b.nodes[node].barTrackGlyph == '│',
+        "the cell fallback's track does not brighten either");
 }
 
 /**

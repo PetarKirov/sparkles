@@ -14,18 +14,18 @@ module pages.components_page;
 import std.conv : text;
 
 import sparkles.input : Key, KeyEvent, PointerEvent;
-import sparkles.ui.components.chrome : actionBar, gutter, headerBar, scrollbar,
+import sparkles.ui.components.chrome : actionBar, gutter, headerBar,
     ScrollbarGlyphs, scrollView, tabStrip;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.layout : Frame;
-import sparkles.ui.components.scroll_view : ScrollExtents;
-import sparkles.ui.state : ScrollState;
+import sparkles.ui.components.scroll_view : ScrollExtents, ScrollView;
+import sparkles.ui.state : ScrollState, scrollbarThumb;
 import sparkles.ui.style : Slot, TextStyle;
-import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import kit;
 import scrollbars;
-import state : GalleryState, hitActions, hitChromeBar, hitTabs;
+import state : GalleryState, hitActions, hitChromeBar, hitChromeSamples, hitTabs;
 
 @safe:
 
@@ -42,6 +42,10 @@ private enum int chromeViewRows = 4;
 /// the thumb and the grab.
 private enum BarGeometry chromeGeom = BarGeometry(
     content: chromeDocRows, viewport: chromeViewRows, track: chromeViewRows);
+
+/// The three formula positions and ASCII specimen share these dimensions.
+private enum BarGeometry specimenGeom = BarGeometry(
+    content: 100, viewport: 6, track: 6);
 
 /// The tab strip's labels — deliberately of different widths, and one with a
 /// multi-byte character, so `fitLabels` is measured in cells and not bytes.
@@ -127,18 +131,24 @@ uint view(ref Builder b, in GalleryState s)
 
     body_ ~= section(b, "scrollbar — the one thumb formula", [
         row(b, [
-            scrollbar(b, 100, 6, 0, 6),
-            label(b, "offset 0", Slot.muted),
-            scrollbar(b, 100, 6, 47, 6),
-            label(b, "offset 47", Slot.muted),
-            scrollbar(b, 100, 6, 94, 6),
-            label(b, "offset 94 (flush)", Slot.muted),
+            verticalBar(b, s.componentBars[0], specimenGeom,
+                hitChromeSamples),
+            label(b, text("offset ", s.componentBars[0].v.offset), Slot.muted),
+            verticalBar(b, s.componentBars[1], specimenGeom,
+                hitChromeSamples + 1),
+            label(b, text("offset ", s.componentBars[1].v.offset), Slot.muted),
+            verticalBar(b, s.componentBars[2], specimenGeom,
+                hitChromeSamples + 2),
+            label(b, text("offset ", s.componentBars[2].v.offset,
+                " (end specimen)"), Slot.muted),
         ]),
         spacer(b),
         label(b, "ASCII glyphs, for a target with no block characters:",
             Slot.muted),
         row(b, [
-            scrollbar(b, 100, 6, 47, 6, ScrollbarGlyphs(thumb: '#', track: '|')),
+            glyphScrollbar(b, s.componentBars[3], specimenGeom,
+                ScrollbarGlyphs(thumb: '#', track: '|'),
+                hitChromeSamples + 3),
         ]),
     ]);
     body_ ~= spacer(b);
@@ -174,6 +184,49 @@ private uint longColumn(ref Builder b)
     return b.add(Widget(kind: WidgetKind.column, children: rows));
 }
 
+/**
+A deliberately literal catalog specimen.
+
+The application scrollbar remains one semantic node so a pixel backend can
+draw sub-cell geometry. This one exists to show a caller-supplied character
+set, so it stays a tiny glyph wrapper: the main column carries `|`/`#`, and
+the optional second column contains only the thumb. Thus hover widens the
+handle without painting a full-height rectangle or widening the ASCII track.
+*/
+private uint glyphScrollbar(ref Builder b, in ScrollView sv,
+    in BarGeometry g, in ScrollbarGlyphs glyphs, size_t hitId)
+{
+    const thumb = scrollbarThumb(g.content, g.viewport, sv.v.offset, g.track);
+
+    uint column(bool thumbOnly)
+    {
+        uint[] cells;
+        foreach (at; 0 .. g.track)
+        {
+            const inThumb = at >= thumb.start && at < thumb.start + thumb.extent;
+            cells ~= b.add(Widget(
+                kind: WidgetKind.glyph,
+                glyph: inThumb ? glyphs.thumb
+                    : thumbOnly ? ' ' : glyphs.track,
+                slot: inThumb ? Slot.thumb : Slot.track,
+            ));
+        }
+        return b.add(Widget(kind: WidgetKind.column, children: cells));
+    }
+
+    uint[] columns;
+    if (sv.vAnim.percent >= 50.0f)
+        columns ~= column(true);
+    columns ~= column(false);
+    return b.add(Widget(
+        kind: WidgetKind.row,
+        children: columns,
+        width: SizeSpec.fixed(gutterCells),
+        alignX: Alignment.end,
+        hitId: hitId,
+    ));
+}
+
 /// ditto
 bool handleKey(ref GalleryState s, in KeyEvent k)
 {
@@ -204,17 +257,38 @@ bool handleKey(ref GalleryState s, in KeyEvent k)
     return false;
 }
 
-/// The live bar's pointer handling — its grab zone is its painted rect,
-/// which only the page can look up in the frames the painter used.
+/// Every bar's pointer handling — each grab zone is its painted rect, which
+/// only the page can look up in the frames the painter used.
 bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     in Frame[] frames)
-    => driveVertical(s.chromeView, s.capture, capChromeBar, p,
+{
+    bool consumed;
+    foreach (i, ref bar; s.componentBars)
+    {
+        const handled = driveVertical(bar, s.capture, capChromeSamples + i, p,
+            rectOf(tree, frames, hitChromeSamples + i), specimenGeom);
+        consumed = handled || consumed;
+    }
+    const handled = driveVertical(s.chromeView, s.capture, capChromeBar, p,
         rectOf(tree, frames, hitChromeBar), chromeGeom);
+    return handled || consumed;
+}
 
-/// Eases the live bar's width. The shell owns the clock.
+/// Eases every bar's width. The shell owns the clock.
 void step(ref GalleryState s, int dtMs)
 {
+    foreach (ref bar; s.componentBars)
+        easeVertical(bar, s.caps, dtMs / 1000.0f);
     easeVertical(s.chromeView, s.caps, dtMs / 1000.0f);
+}
+
+/// Whether one of this page's bars still needs animation frames.
+bool animating(in GalleryState s)
+{
+    foreach (ref bar; s.componentBars)
+        if (easing(bar, s.caps))
+            return true;
+    return easing(s.chromeView, s.caps);
 }
 
 /// ditto
@@ -312,4 +386,64 @@ bool handleActivate(ref GalleryState s, size_t id)
     const end = scrollbarThumb(100, 6, 94, 6);
     assert(top.start == 0);
     assert(end.start + end.extent == 6);
+}
+
+@("ui_gallery.pages.componentsScrollbarsRespondToThePointer")
+@safe unittest
+{
+    import sparkles.input : PointerAction, PointerButton;
+    import sparkles.ui.geometry : Constraints, Point;
+    import sparkles.ui.layout : layout;
+
+    GalleryState s;
+    auto b = Builder();
+    auto tree = b.finish(view(b, s));
+    auto frames = layout(tree, Constraints(maxW: s.contentWidth));
+
+    foreach (i; 0 .. s.componentBars.length)
+    {
+        const r = rectOf(tree, frames, hitChromeSamples + i);
+        assert(!r.empty, "every specimen has a painted hit rect");
+
+        const before = s.componentBars[i].v.offset;
+        const atTop = before > specimenGeom.content / 2;
+        const pos = Point(r.x, atTop ? r.y : r.y + r.height - 1);
+        assert(handlePointer(s, PointerEvent(action: PointerAction.press,
+            button: PointerButton.left, pos: pos), tree, frames));
+        assert(s.componentBars[i].v.dragging,
+            "the specimen takes a real scrollbar grab");
+        assert(s.componentBars[i].v.offset != before,
+            "pressing the opposite end moves its independent offset");
+        assert(handlePointer(s, PointerEvent(action: PointerAction.release,
+            button: PointerButton.left, pos: pos), tree, frames));
+        assert(!s.componentBars[i].v.dragging && s.capture.isFree);
+    }
+}
+
+@("ui_gallery.pages.componentsAsciiScrollbarStaysGlyphBased")
+@safe unittest
+{
+    // This catalog row demonstrates caller-supplied characters even in the
+    // GUI. Sending it through the semantic pixel primitive turns both into a
+    // generic rectangle, which is the regression this pins.
+    GalleryState s;
+    s.componentBars[3].vAnim.percent = 100;
+    auto b = Builder();
+    auto tree = b.finish(glyphScrollbar(b, s.componentBars[3], specimenGeom,
+        ScrollbarGlyphs(thumb: '#', track: '|'), hitChromeSamples + 3));
+
+    size_t thumbs, tracks, semanticBars;
+    foreach (ref node; tree.nodes)
+    {
+        if (node.kind == WidgetKind.scrollbar)
+            ++semanticBars;
+        if (node.kind == WidgetKind.glyph && node.glyph == '#')
+            ++thumbs;
+        if (node.kind == WidgetKind.glyph && node.glyph == '|')
+            ++tracks;
+    }
+    assert(semanticBars == 0, "the ASCII specimen must remain literal glyphs");
+    assert(thumbs == 2, "hover adds only a second thumb glyph");
+    assert(tracks == specimenGeom.track - 1,
+        "the one-column ASCII track does not widen with the handle");
 }
