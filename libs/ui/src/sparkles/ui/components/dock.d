@@ -31,11 +31,12 @@ case rather than re-cutting the value.
 */
 module sparkles.ui.components.dock;
 
+import core.time : Duration, msecs;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.capability : InputCapabilities;
 import sparkles.input.events : Event, match, PointerAction, PointerButton,
     PointerEvent, WheelEvent;
-import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
+import sparkles.ui.components.scroll_view : AutoScroll, scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.state : CaptureState, PressState, SplitState;
@@ -241,6 +242,10 @@ struct DockLayout
                     tabExtent: n.tabExtent, extent: n.extent,
                     minExtent: n.minExtent, maxExtent: n.maxExtent,
                     visible: n.visible, headerExtent: n.headerExtent,
+                    scrollGutterV: n.scrollGutterV,
+                    scrollGutterH: n.scrollGutterH,
+                    scrollMinExtentV: n.scrollMinExtentV,
+                    scrollMinExtentH: n.scrollMinExtentH,
                     title: n.title, headerCenter: n.headerCenter,
                     headerTrailing: n.headerTrailing);
                 return cast(uint)(r.nodes.length - 1);
@@ -918,6 +923,8 @@ struct DockContainer
     int cellW = 1;
     /// ditto
     int cellH = 1;
+    /// Near-edge selection autoscroll policy (`SCV8`).
+    AutoScroll autoScroll;
 
     private Rect area;
     private CaptureState capture;
@@ -931,6 +938,9 @@ struct DockContainer
     private uint hoverDivider = uint.max;
     private PaneId pointerPane;
     private bool havePointerPane;
+    private Point lastPointer;
+    private bool havePointer;
+    private PaneId pendingScrollPane;
 
     // Capture ids (STM11): panes and dividers must not collide, and `0`
     // means "free" to the machine, so both spaces start above it.
@@ -1018,10 +1028,15 @@ struct DockContainer
         const fi = barIndex(pane);
         if (si >= paneScrolls.length || fi >= bars.length)
             return;
+        const x0 = paneScrolls[si].view.h.offset;
+        const y0 = paneScrolls[si].view.v.offset;
         if (dx)
             paneScrolls[si].view.wheeledH(dx, bars[fi].hExtents);
         if (dy)
             paneScrolls[si].view.wheeledV(dy, bars[fi].vExtents);
+        if (paneScrolls[si].view.h.offset != x0
+            || paneScrolls[si].view.v.offset != y0)
+            pendingScrollPane = pane;
     }
 
     /// Sets both pane offsets in content units, clamped.
@@ -1031,12 +1046,17 @@ struct DockContainer
         const fi = barIndex(pane);
         if (si >= paneScrolls.length || fi >= bars.length)
             return;
+        const x0 = paneScrolls[si].view.h.offset;
+        const y0 = paneScrolls[si].view.v.offset;
         paneScrolls[si].view.h = paneScrolls[si].view.h.scrolledTo(
             ScrollView.clampOffset(x, bars[fi].hExtents.content,
                 bars[fi].hExtents.viewport));
         paneScrolls[si].view.v = paneScrolls[si].view.v.scrolledTo(
             ScrollView.clampOffset(y, bars[fi].vExtents.content,
                 bars[fi].vExtents.viewport));
+        if (paneScrolls[si].view.h.offset != x0
+            || paneScrolls[si].view.v.offset != y0)
+            pendingScrollPane = pane;
     }
 
     /// Reveals a content-space rectangle with the smallest per-axis scroll.
@@ -1055,8 +1075,14 @@ struct DockContainer
         scrollTo(pane, x, y);
     }
 
-    /// Advances every visible pane bar's shared hover-expand animation.
-    void tickScroll(float dt, in InputCapabilities caps) pure nothrow @nogc
+    /**
+    Advances pane-bar animation and a live pane capture's edge autoscroll.
+
+    When scrolling changed content under a held pointer, returns the synthetic
+    pane-local drag that extends the pane's existing selection machine. No
+    capture means an empty route and no periodic work.
+    */
+    Route tickScroll(float dt, in InputCapabilities caps) pure nothrow @nogc
     {
         foreach (ref b; bars)
         {
@@ -1076,6 +1102,56 @@ struct DockContainer
                     paneScrolls[i].view.h.expanded(caps) ? 100 : 0;
             }
         }
+
+        PaneId pane;
+        if (capturedPane(pane) && havePointer)
+        {
+            const fi = barIndex(pane);
+            if (fi < bars.length)
+            {
+                const delta = autoScroll.tick(bars[fi].content,
+                    lastPointer, dt);
+                if (delta.x || delta.y)
+                    scrollBy(pane, delta.x, delta.y);
+            }
+            if (pendingScrollPane == pane)
+            {
+                pendingScrollPane = 0;
+                const fi2 = barIndex(pane);
+                Point at = lastPointer;
+                if (fi2 < bars.length && !bars[fi2].content.empty)
+                {
+                    const c = bars[fi2].content;
+                    if (at.x < c.x) at.x = c.x;
+                    if (at.x >= c.right) at.x = c.right - 1;
+                    if (at.y < c.y) at.y = c.y;
+                    if (at.y >= c.bottom) at.y = c.bottom - 1;
+                }
+                return Route(RouteKind.pane, pane,
+                    Event(PointerEvent(action: PointerAction.drag,
+                        button: PointerButton.left, pos: toLocal(at, pane))));
+            }
+        }
+        else
+            pendingScrollPane = 0;
+        return Route.init;
+    }
+
+    /// The terminal may sleep forever unless a pane selection is captured.
+    Duration nextTickIn() const pure nothrow @nogc
+    {
+        PaneId pane;
+        return capturedPane(pane) ? 16.msecs : Duration.max;
+    }
+
+    private bool capturedPane(out PaneId pane) const pure nothrow @nogc
+    {
+        if (capture.owner >= paneCapBase && capture.owner < divCapBase)
+        {
+            pane = cast(PaneId)(capture.owner - paneCapBase);
+            return true;
+        }
+        return false;
     }
 
     private size_t ensurePaneScroll(PaneId pane)
@@ -1367,6 +1443,8 @@ struct DockContainer
     {
         PointerEvent cell = p;
         cell.pos = pointToCells(p.pos);
+        lastPointer = cell.pos;
+        havePointer = true;
         hovered(cell.pos);
 
         // 1. A live divider drag owns everything until release (DCK3).
@@ -2395,4 +2473,58 @@ version (unittest)
     const e = dockHintRect(o, DockZone.east);
     assert(w.x == o.x && e.x + e.width == o.x + o.width);
     assert(w.x + w.width <= e.x);
+}
+
+@("ui.dock.selectionScrollEmitsSyntheticDragAndTicksOnlyWhileHeld")
+@safe unittest
+{
+    import sparkles.input.capability : mousePointer;
+
+    auto c = twoPane();
+    const n = c.layout.nodeOf(doc);
+    c.layout.nodes[n].scrollGutterV = 1;
+    c.layout.nodes[n].scrollGutterH = 1;
+    c.arrange(Rect(0, 0, 100, 20));
+    c.contentExtent(doc, 160, 200);
+    const body = c.scrollFrameOf(doc).content;
+
+    // A body press is a pane capture. A wheel/key scroll performed while it
+    // is held produces the same local drag the pane already understands.
+    auto r = c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(body.x + 5, body.y + 5))));
+    assert(r.kind == RouteKind.pane && r.pane == doc);
+    assert(c.nextTickIn() != Duration.max);
+    c.scrollBy(doc, 0, 4);
+    r = c.tickScroll(0, mousePointer);
+    assert(r.kind == RouteKind.pane && r.pane == doc);
+    r.event.match!((in PointerEvent p) {
+        assert(p.action == PointerAction.drag && p.pos == Point(5, 5));
+    }, (_) { assert(false); });
+
+    // Parking at the last reachable cell advances every tick, then clamps at
+    // the content end. The synthetic drag stays inside the pane content even
+    // if a window reports a pointer beyond it.
+    c.handle(Event(PointerEvent(action: PointerAction.drag,
+        button: PointerButton.left,
+        pos: Point(body.right + 50, body.bottom + 50))));
+    const beforeX = c.offsetH(doc), beforeY = c.offsetV(doc);
+    r = c.tickScroll(0.5f, mousePointer);
+    assert(c.offsetH(doc) > beforeX && c.offsetV(doc) > beforeY);
+    r.event.match!((in PointerEvent p) {
+        assert(p.pos.x == body.width - 1 && p.pos.y == body.height - 1);
+    }, (_) { assert(false); });
+
+    // Once both axes are clamped, further time produces neither movement nor
+    // a redundant drag. Consume the one drag caused by the explicit jump.
+    c.scrollTo(doc, long.max, long.max);
+    c.tickScroll(0, mousePointer);
+    const endX = c.offsetH(doc), endY = c.offsetV(doc);
+    r = c.tickScroll(1, mousePointer);
+    assert(c.offsetH(doc) == endX && c.offsetV(doc) == endY);
+    assert(r.kind == RouteKind.none);
+
+    c.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(body.right, body.bottom))));
+    assert(c.nextTickIn() == Duration.max);
+    assert(c.tickScroll(1, mousePointer).kind == RouteKind.none);
 }

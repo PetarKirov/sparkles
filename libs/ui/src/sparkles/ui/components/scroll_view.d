@@ -22,7 +22,7 @@ module sparkles.ui.components.scroll_view;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : InputCapabilities, PointerAction, PointerButton,
     PointerEvent;
-import sparkles.ui.geometry : Rect;
+import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.state : CaptureState, ScrollAxis, ScrollbarState;
 
 @safe:
@@ -99,6 +99,56 @@ struct ScrollArea
     Rect rect;
     ScrollAreaAxis v;
     ScrollAreaAxis h;
+}
+
+/**
+Continuous near-edge autoscroll policy (`SCV8`).
+
+`band` is the hot inset on every edge of the content viewport. Inside its
+dead centre the answer is zero; crossing into a band ramps linearly to
+`maxRate`, and positions at or beyond the edge saturate. Axes are independent,
+so a diagonal drag can scroll both. The result is in content units for this
+tick; the owning `ScrollView` performs the end clamp.
+*/
+struct AutoScroll
+{
+    int band = 3;
+    float maxRate = 60.0f;
+
+    Point tick(in Rect content, in Point pointer, float dt) const
+        pure nothrow @nogc
+    {
+        if (band <= 0 || maxRate <= 0 || dt <= 0 || content.empty)
+            return Point.init;
+
+        static float deflection(int p, int lo, int hi, int band)
+            pure nothrow @nogc
+        {
+            if (p < lo)
+                return -1;
+            if (p >= hi)
+                return 1;
+            const leftEnd = lo + band;
+            const rightStart = hi - band;
+            if (p < leftEnd)
+                return -cast(float)(leftEnd - p) / band;
+            if (p >= rightStart)
+                return cast(float)(p - rightStart + 1) / band;
+            return 0;
+        }
+        static int rounded(float v) pure nothrow @nogc
+            => v > 0 ? cast(int)(v + 0.5f)
+                : v < 0 ? cast(int)(v - 0.5f) : 0;
+
+        const bx = band < content.width ? band : content.width;
+        const by = band < content.height ? band : content.height;
+        return Point(
+            rounded(deflection(pointer.x, content.x, content.right, bx)
+                * maxRate * dt),
+            rounded(deflection(pointer.y, content.y, content.bottom, by)
+                * maxRate * dt),
+        );
+    }
 }
 
 /**
@@ -530,4 +580,22 @@ unittest
     // A vertical grab outranks the horizontal hover.
     sv.v = sv.v.pressed(0, 400, 100, 400);
     assert(sv.shape() == PointerShape.nsResize);
+}
+
+@("ui.scrollView.autoScrollDeadZoneRampAndAxes")
+@safe pure nothrow @nogc
+unittest
+{
+    const a = AutoScroll(band: 4, maxRate: 8);
+    const r = Rect(10, 20, 20, 12);
+    assert(a.tick(r, Point(20, 26), 1) == Point.init,
+        "the centre is a dead zone");
+    assert(a.tick(r, Point(10, 26), 0.5f) == Point(-4, 0));
+    assert(a.tick(r, Point(11, 26), 0.5f).x == -3,
+        "deflection decreases monotonically toward the dead zone");
+    assert(a.tick(r, Point(29, 31), 0.5f) == Point(4, 4),
+        "both axes saturate independently at their last reachable cell");
+    assert(a.tick(r, Point(40, 10), 0.25f) == Point(2, -2),
+        "outside positions saturate, and rate is linear in dt");
+    assert(a.tick(r, Point(40, 10), 0.5f) == Point(4, -4));
 }

@@ -1,6 +1,6 @@
 # Scrollbars: make the right path the only path
 
-**Working plan + agent handoff.** Branch `feat/hue/tree-sitter-inspector`,
+**Implementation record + agent handoff.** Branch `feat/hue/tree-sitter-inspector`,
 worktree `sparkles-hue-tree-sitter-inspector`. Approved 2026-08-12.
 (A copy of the approved plan also lives at `~/.claude/plans/vast-churning-manatee.md`;
 **this file is the authority** — it carries the handoff context.)
@@ -113,20 +113,21 @@ genuinely tier-2 — the category `IXR17` flagged for the touch fling.
 
 ## 4. Status
 
-`git log` head at handoff: `24b02278`. Uncommitted work in the tree belongs to
-stage 0.
+Implementation completed through the optional outliers on 2026-08-12. The
+stage commits before the final integration are `00bd9dbe`, `f2edea63`,
+`13598992`, `5015aff6`, and `4937e156`.
 
-| Stage                                                           | State                                                                                                                                                                 |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — oracles, wheel hoist, spec rows                             | **in progress** — explorer wheel ✅ (+ test), `gui.d` wheel/back-forward hoisted out of the focus chain ✅ (builds), `HUE_GUI_POINTER` ⬜, spec rows ⬜, baselines ⬜ |
-| 1 — `OpKind.scrollbar` + cell degrade + `ScrollbarAnim.percent` | not started                                                                                                                                                           |
-| 2 — `RaylibCanvas.scrollbar` owns the px look                   | not started                                                                                                                                                           |
-| 3 — `WidgetKind.scrollbar`; the inspector animates              | not started                                                                                                                                                           |
-| 4 — one geometry authority (`SCV7`)                             | not started                                                                                                                                                           |
-| 5 — `TreeViewState` through `ScrollView`                        | not started                                                                                                                                                           |
-| 6 — the dock owns pane scrolling (`DCK14`)                      | not started                                                                                                                                                           |
-| 7 — selection ⨯ scrolling composes (`SCV8`)                     | not started                                                                                                                                                           |
-| 8 — outliers: fence bars + `terminal-view` (droppable)          | not started                                                                                                                                                           |
+| Stage                                                           | State                                                                                                           |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 0 — oracles, wheel hoist, spec rows                             | complete — pointer injection, wheel routing, specs and GUI baselines                                            |
+| 1 — `OpKind.scrollbar` + cell degrade + `ScrollbarAnim.percent` | complete (`f2edea63`)                                                                                           |
+| 2 — `RaylibCanvas.scrollbar` owns the px look                   | complete (`f2edea63`)                                                                                           |
+| 3 — `WidgetKind.scrollbar`; the inspector animates              | complete (`f2edea63`)                                                                                           |
+| 4 — one geometry authority (`SCV7`)                             | complete (`13598992`)                                                                                           |
+| 5 — `TreeViewState` through `ScrollView`                        | complete (`5015aff6`)                                                                                           |
+| 6 — the dock owns pane scrolling (`DCK14`)                      | complete — gallery foundation (`4937e156`) plus Hue TUI/GUI adoption                                            |
+| 7 — selection ⨯ scrolling composes (`SCV8`)                     | complete — pure ramp, synthetic drag, event-driven TUI ticks and end-to-end selection test                      |
+| 8 — outliers: fence bars + `terminal-view` (droppable)          | complete — semantic fence nodes with no GUI overlay; terminal overlay on `ScrollView`/pane-local `scrollLayout` |
 
 ---
 
@@ -140,7 +141,7 @@ Each stage builds, tests and lints alone. The deletion column is the point.
   (+ `explorer.wheel.scrollsTheViewNotTheCursor`).
 - ✅ `gui.d`'s wheel arm **and** the mouse back/forward arm hoisted out of the
   keyboard-focus `else` chain (they were dead whenever a pane held focus).
-- ⬜ **`HUE_GUI_POINTER=<x>,<y>` in `GuiCapture`** (`apps/hue/src/gui_state.d`,
+- ✅ **`HUE_GUI_POINTER=<x>,<y>` in `GuiCapture`** (`apps/hue/src/gui_state.d`,
   beside `HUE_GUI_INSPECT`). Today `HUE_GUI_HOVER` forces the _Nth popup_, not
   a pointer — so the expanded rail, the hover track, the easing and every hit
   zone are **unphotographable**. ~10 lines, covered by the existing `fromEnv`
@@ -148,11 +149,12 @@ Each stage builds, tests and lints alone. The deletion column is the point.
   goldens. Highest value-per-line item in the plan. Inject at
   `apps/hue/src/gui.d:1680` (`inp.fin = foldFrame(evBuf, inp.fin);`) by
   overriding `inp.fin.pos` when the capture is set.
-- ⬜ Spec rows: new `SCV7` (geometry authority), new **`SCV8`** (selection ⨯
+- ✅ Spec rows: new `SCV7` (geometry authority), new **`SCV8`** (selection ⨯
   scrolling composes — §2, stated before it is built), `DCK14` promoted from
   proposed, a `UIA` decision record for `expandPercent` beside the 2026-08-06
   `RuleEdge` one, and `TRV3`/`gui.md SEL` cross-refs.
-- ⬜ Record screenshot baselines (§8).
+- ✅ Record screenshot baselines (§8), including inspector coexistence and an
+  overflowing fence in idle and injected-hover states.
 
 ### Stage 1 — the bar becomes a drawing the toolkit can express (dormant)
 
@@ -394,11 +396,11 @@ bars_, which is the failure mode) · `docs/specs/hue/gui.md` (`SCB1`-`SCB5`,
 ## 8. Verification
 
 ```bash
-dub test :ui            # 311 tests
-dub test :hue           # 213 (+2 skipped without the grammar bundle)
+dub test :ui            # 322 tests
+dub test :hue           # 215 (+2 skipped without the twoslash extractor)
 dub test :ui-gallery    # 122
-dub test :syntax        # 122
-nix run .#ci -- --test  # all 34 sub-packages
+dub test :syntax        # 123
+nix run .#ci -- --test  # 34/34 sub-packages passed (2026-08-12)
 ```
 
 - **Pure/unit**: `RecordingCanvas` degrade test (twin of

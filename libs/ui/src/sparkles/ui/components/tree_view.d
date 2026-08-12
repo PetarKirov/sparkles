@@ -285,7 +285,9 @@ struct TreeViewState(Key)
             press there is a grab, never a row click, and an existing grab
             owns the pointer wherever the drag strays;)
         $(LI a press on a body row selects it; a press on the $(I already)
-            selected row activates it (the caller runs its meaning).)
+            selected row activates it (the caller runs its meaning); a held
+            drag updates the row without activating, including `SCV8`'s
+            synthetic drag after autoscroll.)
     )
     */
     TreeStep pointer(in PointerEvent p, ref CaptureState capture,
@@ -309,36 +311,23 @@ struct TreeViewState(Key)
         if (barConsumed)
             return TreeStep.handled;
 
-        if (p.action == PointerAction.press && p.button == PointerButton.left
-            && capture.isFree && frame.content.contains(p.pos))
+        const rowPress = p.action == PointerAction.press && capture.isFree;
+        const rowDrag = p.action == PointerAction.drag;
+        if ((rowPress || rowDrag) && p.button == PointerButton.left
+            && frame.content.contains(p.pos))
         {
             const i = top + (p.pos.y - frame.content.y);
             if (i >= 0 && i < cast(long) rows.length)
             {
                 const already = i == sel;
                 sel = i;
-                if (already)
+                if (rowPress && already)
                     return TreeStep.activated;
             }
         }
         return TreeStep.handled;
     }
 
-    /**
-    Transitional single-component driver. It preserves the pre-container API
-    while delegating all geometry and both axes to the `ScrollView`; composed
-    hosts pass their shared `CaptureState` to the overload above.
-    */
-    TreeStep pointer(in PointerEvent p) pure nothrow @nogc
-    {
-        CaptureState capture;
-        enum size_t legacyCapBase = 1;
-        if (hsb.dragging)
-            capture = capture.capturedBy(legacyCapBase);
-        else if (sb.dragging)
-            capture = capture.capturedBy(legacyCapBase + 1);
-        return pointer(p, capture, legacyCapBase);
-    }
 }
 
 /**
@@ -648,10 +637,13 @@ version (unittest)
     s.height = 5; // bodyRows = 3 < 6 rows: the bar is live
     s.open = DisclosureState!uint.allOpen;
     rebuild(s, data);
+    CaptureState capture;
+    enum size_t capBase = 1;
 
     // A press on the track jumps the view; the selection stays put.
     assert(s.pointer(PointerEvent(button: PointerButton.left,
-        action: PointerAction.press, pos: Point(29, 3))) == TreeStep.handled);
+        action: PointerAction.press, pos: Point(29, 3)), capture, capBase)
+        == TreeStep.handled);
     assert(s.sb.dragging);
     assert(s.sel == 0, "a scrollbar press never selects a row");
     assert(s.top > 0, "a track press jumped to the pointer");
@@ -659,19 +651,29 @@ version (unittest)
     // The grab owns the pointer off the column; release ends it.
     const grabbed = s.top;
     assert(s.pointer(PointerEvent(button: PointerButton.left,
-        action: PointerAction.drag, pos: Point(10, 1))) == TreeStep.handled);
+        action: PointerAction.drag, pos: Point(10, 1)), capture, capBase)
+        == TreeStep.handled);
     assert(s.top < grabbed && s.sel == 0);
     s.pointer(PointerEvent(button: PointerButton.left,
-        action: PointerAction.release, pos: Point(10, 1)));
+        action: PointerAction.release, pos: Point(10, 1)), capture, capBase);
     assert(!s.sb.dragging);
 
     // Off the bars, a press selects; a second press on the same row activates.
     const want = s.top + 1;
     assert(s.pointer(PointerEvent(button: PointerButton.left,
-        action: PointerAction.press, pos: Point(5, 2))) == TreeStep.handled);
+        action: PointerAction.press, pos: Point(5, 2)), capture, capBase)
+        == TreeStep.handled);
     assert(s.sel == want);
     assert(s.pointer(PointerEvent(button: PointerButton.left,
-        action: PointerAction.press, pos: Point(5, 2))) == TreeStep.activated);
+        action: PointerAction.press, pos: Point(5, 2)), capture, capBase)
+        == TreeStep.activated);
+
+    // A held row drag follows newly exposed content without triggering the
+    // activation meaning of a second press (`SCV8`'s synthetic-drag seam).
+    assert(s.pointer(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(5, 3)), capture, capBase)
+        == TreeStep.handled);
+    assert(s.sel == s.top + 2);
 }
 
 @("ui.tree_view.sharedFrameRoutesBothAxesAndCapture")

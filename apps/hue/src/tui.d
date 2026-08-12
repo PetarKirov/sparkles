@@ -107,6 +107,11 @@ struct PreviewTui
     /// machines, the search input buffer).
     ViewerModel vm;
 
+    /// Embedded panes let `DockContainer` reserve, paint and drive their
+    /// outer bars. A standalone viewer leaves this false and keeps the same
+    /// self-contained component it has always been.
+    bool externalScroll;
+
     BackgroundMode background;      // (kept for the caller; the viewer paints full-bg)
     ColorDepth depth;               // (unused: the cell renderer emits truecolor)
 
@@ -270,16 +275,6 @@ struct PreviewTui
     /// observe it to verify pointer-capture routing.
     Selection!long selection() const @safe pure nothrow @nogc => sel;
 
-    /// Whether pane-local `(x, y)` sits on the live scrollbar column — the
-    /// workspace's pointer-shape hover check.
-    bool overScrollbar(int x, int y) const @safe pure nothrow @nogc
-        => lineCount > bodyRows && x == width - 1
-            && y >= 1 && y <= bodyRows;
-
-    /// ditto for the horizontal bar's row (the last body row, when live).
-    bool overHScrollbar(int x, int y) const @safe pure nothrow @nogc
-        => vm.hOverflows() && y == bodyRows && x >= 0 && x < width - 1;
-
     /// Sets the pane size in cells (the workspace arranges; `relayout` after).
     void resize(int w, int h) @safe pure nothrow @nogc
     {
@@ -309,7 +304,8 @@ struct PreviewTui
     void relayout() @system
     {
         vm.inlineFoldMarker = true; // the placeholder ▸ is the TUI affordance
-        vm.widthCols = width < 9 ? 8 : width - 1;
+        const contentWidth = externalScroll ? width : width - 1;
+        vm.widthCols = contentWidth < 8 ? 8 : contentWidth;
         vm.viewRows = bodyRows();
         vm.applyTheme(themeIdx);
         // Selection tint: toward the theme link color, like the scrollbars.
@@ -528,7 +524,8 @@ struct PreviewTui
 
         paintMarkdown(g);
         paintHoverPopup(g);
-        paintScrollbar(g);
+        if (!externalScroll)
+            paintScrollbar(g);
         paintStatus(g);
         paintLantern(g);
     }
@@ -572,13 +569,14 @@ struct PreviewTui
     {
         const rows = bodyRows();
         const hx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
+        const contentWidth = externalScroll ? width : width - 1;
         paintGrid(g, pageBg, mdOps, originX - hx, cast(int)(1 - top),
-            Rect(hx, cast(int) top, width - 1, rows));
+            Rect(hx, cast(int) top, contentWidth, rows));
 
         // The horizontal bar (IXB2): the last body row, when wide content
         // (a fence line, a table) clips — the same component/machine as
         // the vertical bar, horizontal axis.
-        if (vm.hOverflows())
+        if (!externalScroll && vm.hOverflows())
         {
             import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
 
@@ -601,7 +599,7 @@ struct PreviewTui
                 if (gy < 1 || gy > rows)
                     continue;
                 foreach (x; r.x - hx .. r.x - hx + r.width)
-                    if (x >= 0 && x < width - 1)
+                    if (x >= 0 && x < contentWidth)
                         g[cast(ushort)(originX + x), cast(ushort) gy]
                             .style.bg = inspFill;
             }
@@ -615,7 +613,7 @@ struct PreviewTui
             const gy = 1 + i - top;
             if (gy < 1 || gy > rows)
                 continue;
-            foreach (x; 0 .. (width > 1 ? width - 1 : 0))
+            foreach (x; 0 .. (contentWidth > 0 ? contentWidth : 0))
                 g[cast(ushort)(originX + x), cast(ushort) gy].style.bg = selFill;
         }
     }
@@ -816,8 +814,8 @@ struct PreviewTui
     }
 
     // Press on a fence scrollbar (`COD6`): the same ScrollbarState math the
-    // pane bars use, keyed to the fence via `vm.fenceSvOwner`. The h track
-    // excludes the `╰`/`╯` corners.
+    // pane bars use, keyed to the fence via `vm.fenceSvOwner`. The semantic
+    // h-bar target is already the corner-free track.
     private void fenceBarPress(in HoverTarget t, Point p) @system
     {
         const isH = t.hitId >= fenceHBarHitBase;
@@ -827,8 +825,8 @@ struct PreviewTui
         const cur = vm.fenceScrollAt.get(owner, FenceScroll(owner, 0, 0));
         if (isH)
         {
-            vm.fenceSv.h = vm.fenceSv.h.pressed(p.x - (t.rect.x + 1),
-                ex.widest, ex.innerW, t.rect.width - 2);
+            vm.fenceSv.h = vm.fenceSv.h.pressed(p.x - t.rect.x,
+                ex.widest, ex.innerW, t.rect.width);
             vm.setFenceScroll(owner, vm.fenceSv.h.offset, cur.y);
         }
         else
@@ -856,8 +854,8 @@ struct PreviewTui
             const cur = vm.fenceScrollAt.get(owner, FenceScroll(owner, 0, 0));
             if (isH)
             {
-                vm.fenceSv.h = vm.fenceSv.h.dragged(p.x - (t.rect.x + 1),
-                    ex.widest, ex.innerW, t.rect.width - 2);
+                vm.fenceSv.h = vm.fenceSv.h.dragged(p.x - t.rect.x,
+                    ex.widest, ex.innerW, t.rect.width);
                 vm.setFenceScroll(owner, vm.fenceSv.h.offset, cur.y);
             }
             else
@@ -1255,8 +1253,11 @@ struct PreviewTui
         if (e.button == PointerButton.left
             && e.action == PointerAction.release)
         {
-            sb = sb.released();
-            vm.hsb = vm.hsb.released();
+            if (!externalScroll)
+            {
+                sb = sb.released();
+                vm.hsb = vm.hsb.released();
+            }
             vm.fenceSv.h = vm.fenceSv.h.released();
             vm.fenceSv.v = vm.fenceSv.v.released();
             vm.syncFenceHot(); // the thumb's accent feedback follows
@@ -1275,7 +1276,7 @@ struct PreviewTui
         }
         // The horizontal bar (IXB2): its row is the last body row; the
         // grab owns the pointer, like every scrollbar grab.
-        if (e.button == PointerButton.left
+        if (!externalScroll && e.button == PointerButton.left
             && ((e.action == PointerAction.press && vm.hOverflows()
                     && e.pos.y == rows && e.pos.x >= 0 && e.pos.x < width - 1)
                 || (e.action == PointerAction.drag && vm.hsb.dragging)))
@@ -1292,7 +1293,7 @@ struct PreviewTui
         // (never falling into the selection branch) until release —
         // and symmetrically, a selection drag crossing the last column
         // never jumps the scroll.
-        if (e.button == PointerButton.left
+        if (!externalScroll && e.button == PointerButton.left
             && ((e.action == PointerAction.press && e.pos.x == width - 1
                     && e.pos.y >= 1 && e.pos.y <= rows)
                 || (e.action == PointerAction.drag && sb.dragging)))
