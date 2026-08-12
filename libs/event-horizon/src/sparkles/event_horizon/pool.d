@@ -8,12 +8,11 @@ for locality) and steals from a peer's head (FIFO) only when its own is empty,
 so the common case is uncontended. `submit` runs a task as a local fiber
 (it may park on I/O); `submitBlocking` runs a CPU-bound task inline (no fiber).
 
-An idle worker sleeps with exponential backoff on a short in-ring `TIMEOUT`,
-so its one `io_uring_enter` wait covers both CQE arrivals and the re-check
-tick — a robust, lost-wakeup-free "single wait point" that also keeps an
-over-provisioned pool from thrashing. Event-driven wakeup (in-ring
-`FUTEX_WAIT` ≥ 6.7, or `MSG_RING`-targeted stealing) is the latency
-optimization in open-issues O2.
+An idle I/O worker parks on the loop's native `waker()` (O29: `EVFILT_USER`
+/ `FUTEX_WAIT`) so one wait covers CQE arrivals, steal nudges, and
+shutdown. `enqueue` pokes the owner if that worker is idle, or one idle
+thief if the owner is busy. The CPU-bound arm has no loop; it keeps a
+brief spin then `Thread.sleep`.
 
 For CPU-bound fan-out (no I/O parking), `LoopGroupConfig.cpuBound` drops the
 per-worker ring + fibers entirely: workers become plain threads running
@@ -34,18 +33,14 @@ import core.time : Duration, usecs;
 
 
 import sparkles.base.hw_caps : hwParallelism, nthAllowedCpu;
+import sparkles.event_horizon.backend.concept : Waker;
 import sparkles.event_horizon.errors : IoResult, ioOk;
 import sparkles.event_horizon.group : LoopGroupConfig, Topology;
 import sparkles.event_horizon.loop : LoopConfig;
 import sparkles.event_horizon.sched : Sched, SchedOptions;
 
-/// The idle re-check interval (open-issues O2: event-driven wakeup replaces
-/// this polling as a latency optimization).
-private enum Duration pollInterval = 200.usecs;
-
-/// Idle backoff cap: an idle worker sleeps up to pollInterval << this (200us
-/// << 5 = 6.4 ms), then holds. Bounds both steal-scan thrash and the wake-up
-/// latency for new work / shutdown.
+/// Idle backoff cap for the CPU-bound arm (no loop waker): sleep up to
+/// `cpuBackoffBase << this`, then hold.
 private enum uint maxBackoffShift = 5;
 
 /// CPU-mode idle tuning: spin (Thread.yield) this many rounds for low-latency
@@ -116,6 +111,9 @@ struct WorkStealingPool
         _deques = new Deque[_workers];
         foreach (ref d; _deques)
             d = new Deque;
+        _wakers = new Waker[_workers];
+        _wakerReady = new shared int[_workers];
+        _idle = new shared bool[_workers];
 
         auto cfg = _cfg;
 
@@ -147,16 +145,21 @@ struct WorkStealingPool
                 return; // a worker whose ring won't open is silently skipped
             scope (exit) sched.destroy();
 
+            // Arm and publish the waker before the root fiber parks so an
+            // enqueue from another thread can poke us. Failure degrades
+            // to a one-shot `sleep` below — same as the old backoff, once.
+            auto wr = sched.loop.waker();
+            if (!wr.hasError)
+            {
+                _wakers[id] = wr.value;
+                atomicStore!(MemoryOrder.rel)(_wakerReady[id], 1);
+            }
+
             sched.run(() {
-                // The worker's root fiber: run from its own deque (stealing
-                // when empty), then either yield to run spawned fibers and
-                // re-check immediately (had work) or sleep with EXPONENTIAL
-                // BACKOFF (idle) — until shutdown. The backoff is what keeps an
-                // over-provisioned pool (more workers than the workload needs)
-                // from thrashing: idle workers quiet down instead of
-                // steal-scanning every peer and hammering the shared counter
-                // (the negative scaling the walker exposed).
-                uint idle;
+                // The worker's root fiber: drain the local deque (stealing
+                // when empty), yield so spawned fibers run, and when
+                // nothing is visible park on the loop waker until enqueue
+                // or shutdown pokes us (O2/O29).
                 for (;;)
                 {
                     const didWork = workUntilIdle(sched, id);
@@ -164,16 +167,20 @@ struct WorkStealingPool
                         break;
                     if (didWork)
                     {
-                        idle = 0;
                         cast(void) yieldNow(sched);
+                        continue;
                     }
-                    else
+                    atomicStore!(MemoryOrder.rel)(_idle[id], true);
+                    if (atomicLoad(_done) || workVisible(id))
                     {
-                        const shift = idle < maxBackoffShift ? idle : maxBackoffShift;
-                        cast(void) sleep(sched, pollInterval * (1 << shift));
-                        if (idle < maxBackoffShift)
-                            ++idle;
+                        atomicStore!(MemoryOrder.rel)(_idle[id], false);
+                        continue;
                     }
+                    if (atomicLoad!(MemoryOrder.acq)(_wakerReady[id]))
+                        sched.parkUntilWake();
+                    else
+                        cast(void) sleep(sched, cpuBackoffBase);
+                    atomicStore!(MemoryOrder.rel)(_idle[id], false);
                 }
             });
         }
@@ -234,6 +241,14 @@ private:
         atomicFetchAdd!(MemoryOrder.raw)(_pending, 1);
         const w = (t_workerId >= 0 && t_workerId < _workers) ? t_workerId : 0;
         _deques[w].push(job);
+        // Lost-wakeup protocol: the worker sets `_idle` then rechecks
+        // `workVisible`. If it is already idle, poke it. If it is busy,
+        // recruit one idle thief so work does not sit on a loaded deque
+        // while peers sleep.
+        if (atomicLoad!(MemoryOrder.acq)(_idle[w]))
+            poke(w);
+        else
+            pokeOneIdle(w);
     }
 
     /// Runs jobs — from this worker's own deque first, then stealing from
@@ -362,10 +377,46 @@ private:
         }).hasError;
     }
 
-    /// Sets the shutdown flag; workers observe it at their next re-check tick.
+    /// Sets the shutdown flag and pokes every armed waker so parked
+    /// workers observe it without waiting out a timer.
     void broadcastShutdown() @trusted nothrow
     {
         atomicStore(_done, true);
+        foreach (i; 0 .. _workers)
+            poke(i);
+    }
+
+    /// True if this worker's deque or any peer's looks non-empty. A hint
+    /// (Chase-Lev `maybeEmpty`); the lost-wakeup recheck after advertising
+    /// idle is what makes a stale `true` harmless.
+    bool workVisible(uint id) @trusted
+    {
+        foreach (i; 0 .. _workers)
+            if (!_deques[i].maybeEmpty())
+                return true;
+        return false;
+    }
+
+    void poke(uint id) @trusted nothrow
+    {
+        if (id < _workers && atomicLoad!(MemoryOrder.acq)(_wakerReady[id]))
+            _wakers[id].wake();
+    }
+
+    /// Wake one idle peer so it can steal. `except` is the worker that
+    /// just received work and is (we think) busy.
+    void pokeOneIdle(uint except) @trusted nothrow
+    {
+        foreach (i; 0 .. _workers)
+        {
+            if (i == except)
+                continue;
+            if (atomicLoad!(MemoryOrder.acq)(_idle[i]))
+            {
+                poke(i);
+                return;
+            }
+        }
     }
 
     /// CPU pinning for a worker (best-effort; Linux only for now).
@@ -385,6 +436,9 @@ private:
     LoopGroupConfig _cfg;
     uint _workers;
     Deque[] _deques;
+    Waker[] _wakers;
+    shared int[] _wakerReady;
+    shared bool[] _idle;
     shared long _pending;
     shared bool _done;
     bool _started;

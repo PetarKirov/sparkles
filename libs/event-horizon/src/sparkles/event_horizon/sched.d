@@ -276,7 +276,8 @@ struct Sched
 
         while (_liveFibers > 0 || _loop.inFlight > 0)
         {
-            if (_readyHead is null && _liveFibers > 0 && _loop.inFlight == 0)
+            if (_readyHead is null && _liveFibers > 0 && _loop.inFlight == 0
+                && !_loop.wakerArmed)
                 assert(0, "deadlock: parked fibers with nothing in flight");
             auto r = tick(Duration.max);
             if (r.hasError)
@@ -321,7 +322,37 @@ struct Sched
         auto r = _loop.runOnce(timeout);
         if (r.hasError)
             return r;
+        // A wake completion is infrastructure — dispatch swallows it and
+        // no fiber is enqueued. Resume the idle waiter so it can re-check
+        // (pool steal, shutdown). Any other dispatched completion is also
+        // a reason to look: a just-finished fiber may have submitted work.
+        if (_idleWaiter !is null && r.hasValue
+            && r.value == RunStatus.dispatched)
+        {
+            auto t = _idleWaiter;
+            _idleWaiter = null;
+            if (!t.enqueued)
+                enqueue(t);
+        }
         return ioOk(r.value == RunStatus.drained ? RunStatus.timedOut : r.value);
+    }
+
+    /**
+    Parks the current fiber until the loop makes progress — a wake
+    completion, or any other CQE `tick` then treats as a reason to
+    resume. Used by the pool's idle path (O2/O29): no timer, no payload.
+    The loop's waker must be armed (`waker()`) or `run()` reports
+    deadlock.
+    */
+    void parkUntilWake() @trusted nothrow
+    {
+        auto task = _running;
+        assert(task !is null, "parkUntilWake outside a scheduler fiber");
+        task.wakeKind = WakeKind.manual;
+        _idleWaiter = task;
+        park();
+        if (_idleWaiter is task)
+            _idleWaiter = null;
     }
 
     /**
@@ -463,6 +494,7 @@ private:
     FiberTask _freeHead;
     FiberTask _readyHead, _readyTail;
     FiberTask _running;
+    FiberTask _idleWaiter; /// parked on `parkUntilWake`; resumed from `tick`
     uint _liveFibers;
 }
 
