@@ -121,6 +121,7 @@ in
               lycheeExcludes = [
                 "^AGENTS\\.md$"
                 "^docs/research/.*/grounding/"
+                "^docs/guidelines/d-language-features/grounding/"
               ];
 
               # One wrapper, two variants. `offline` blocks network requests, so

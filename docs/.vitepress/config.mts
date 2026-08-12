@@ -29,13 +29,15 @@ export default withMermaid(
       /\/apps\/hue\/twoslash\//,
     ],
 
-    // The parsing and units-of-measure grounding ledgers are internal QA
-    // evidence (claim-by-claim source verification), not published research —
-    // keep them out of the site.
+    // Internal QA / agent-only docs — not published pages:
+    // research grounding ledgers (claim-by-claim verification), packaging plan,
+    // and the d-language-features agent protocol + its grounding tree.
     srcExclude: [
       '**/research/**/grounding/**',
       '**/research/application-packaging/PLAN.md',
       '**/research/iroh/prompt.md',
+      '**/guidelines/d-language-features/AGENTS.md',
+      '**/guidelines/d-language-features/grounding/**',
     ],
 
     markdown: {
