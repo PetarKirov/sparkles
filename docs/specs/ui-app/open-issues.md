@@ -137,3 +137,50 @@ owns — so the arms need a post-layout paint hook in their draw phase. That hoo
 is deliberately designed in the `libs/terminal-view` PR, against the real
 consumer, under the no-regression gate — not speculated here. Until it lands,
 `runApp` (`HST10`) is widget-level only.
+
+## UIAPP-O6 — Host `canvas` is not always an lvalue {#uiapp-o6}
+
+**Status:** open (workaround shipped). **Requirements:** `HST3`, `HST13`.
+
+Both live hosts expose the third render level as a **factory method** that
+returns a by-value handle each call:
+
+```d
+// GuiHost
+RaylibCanvas canvas() => RaylibCanvas(&session.fonts, &drawScratch, cellW, cellH);
+
+// TuiHost
+auto canvas() => GridCanvas(&session.grid, pageBg);
+```
+
+That is convenient for the arms: the canvas is a cheap view over session state
+(fonts / grid / current cell metrics), so reconstructing it picks up a
+`fontSize` change, starts with an empty clip stack, and needs no long-lived
+object on the host. The recorder, by contrast, keeps `RecordingCanvas` as a
+**field** — it owns the captured ops, so mutations must hit that field.
+
+The asymmetry is load-bearing at the call site. The immediate interpreter's
+`paint` used to take plain `ref Canvas`; a live temporary could not bind, and
+`auto c = h.canvas; paint(c, ops)` discarded the recorder's capture. The
+shipped workaround is `auto ref` on `paint` (`libs/ui/interp/immediate.d`), so
+`.paint(h.canvas, ops)` is correct on every host: lvalue by reference, rvalue
+by value. That is an interpreter patch for a host-contract gap, not a claim
+that by-value is a canvas property.
+
+The right shape is still undecided:
+
+1. **Stable lvalue on every host** — a field (or `ref` return) refreshed at the
+   start of the frame bracket, so `paint` can go back to plain `ref` and every
+   consumer writes `.paint(h.canvas, ops)` without thinking about binding.
+2. **Leave the factory methods** and keep `auto ref` as the permanent answer —
+   document that live canvases are ephemeral handles and that the recorder is
+   the one host whose canvas is owned state.
+
+(1) tightens the host concept; (2) accepts the split. Either way the application
+must not branch on canvas type (diagram briefly did; that path is gone).
+
+Close this entry when the host contract states one rule for `canvas` (lvalue
+everywhere, or "handle by value, recorder is the exception") and the live arms,
+the recorder, and `paint`'s parameter match that rule with no `auto ref` needed
+only as a compatibility shim — or when (2) is chosen and the DDoc on `paint` /
+`HST3` records the exception as intentional.
