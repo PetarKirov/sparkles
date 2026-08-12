@@ -9,7 +9,19 @@ verb's frame — the kernel-stable rule discharged by the §6.5 argument.
 */
 module sparkles.event_horizon.fs;
 
-version (linux)  :  // rides the linux Sched; generalizes with M10
+// Gated on the *backend*, not just the platform. These verbs lower onto
+// `io_uring`'s fs ops; the kqueue peer lowers none of them, because regular
+// files have no readiness and its worker pool is deferred. `version (linux)`
+// alone was enough while Linux implied uring — the `libkqueue` configuration
+// makes Linux+kqueue selectable, and there `canSubmitOp!(Backend, OpStatx)` is
+// false, so every verb here fails to instantiate rather than being absent.
+// Empty is the honest answer: the capability genuinely is not there.
+version (linux)
+{
+    version (EventHorizonLibkqueue) {}
+    else version = EventHorizonRingFs;
+}
+version (EventHorizonRingFs)  :  // rides the linux Sched; generalizes with M10
 
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.io : FileHandle;
