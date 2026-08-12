@@ -301,17 +301,46 @@ if (isCompletionBackend!Backend)
     }
 
     // ── the external waker (SPEC §5.6) ──────────────────────────────────
-    // Portable fd path where the backend lowers reads (uring, kqueue):
-    // eventfd on Linux, a pipe elsewhere, drained by one persistently
-    // re-armed internal read. Native path where the backend can post a wake
-    // completion directly (IOCP). A backend with neither has no waker().
+    // Native path first (O29): EVFILT_USER / FUTEX_WAIT / IOCP post, no
+    // armed pipe or eventfd. Portable fd path only when the backend has
+    // no nativeWaker. A backend with neither has no waker().
 
     version (Posix)
-        private enum bool fdWaker = canSubmitOp!(Backend, OpRead);
+        private enum bool fdWaker = !hasNativeWake!Backend
+            && canSubmitOp!(Backend, OpRead);
     else
         private enum bool fdWaker = false;
 
-    static if (fdWaker)
+    static if (hasNativeWake!Backend)
+    {
+        /// Returns the thread-safe wake handle, arming the backend-native
+        /// wake source on first call. The routing slot is `OpClass.wake`
+        /// infrastructure: excluded from `inFlight`, invisible to `run()`'s
+        /// drained decision — but `runOnce(timeout)` on an otherwise-empty
+        /// loop DOES wait, which is the "park until something external
+        /// happens" entry point.
+        IoResult!Waker waker()
+        {
+            if (_wakeArmed)
+                return ioOk(_nativeWaker);
+            const token = _slab.acquire(OpKind.nop, OpClass.wake, null, null);
+            if (!token)
+                return ioErr!Waker(ENOBUFS, OpKind.nop, IoErrorStage.submit,
+                    "op slab full");
+            auto w = _backend.nativeWaker(token);
+            if (!w)
+            {
+                _slab.release(token);
+                return ioErr!Waker(ENOBUFS, OpKind.nop, IoErrorStage.submit,
+                    "backend wake-op slab full");
+            }
+            _wakeToken = token;
+            _nativeWaker = w;
+            _wakeArmed = true;
+            return ioOk(w);
+        }
+    }
+    else static if (fdWaker)
     {
         /**
         Returns the thread-safe wake handle, arming the wake channel on
@@ -348,30 +377,6 @@ if (isCompletionBackend!Backend)
             }
             _wakeArmed = true;
             return ioOk(Waker(_wakeWriteFd));
-        }
-    }
-    else static if (hasNativeWake!Backend)
-    {
-        /// ditto — the backend posts wake completions natively (no armed op).
-        IoResult!Waker waker()
-        {
-            if (_wakeArmed)
-                return ioOk(_nativeWaker);
-            const token = _slab.acquire(OpKind.nop, OpClass.wake, null, null);
-            if (!token)
-                return ioErr!Waker(ENOBUFS, OpKind.nop, IoErrorStage.submit,
-                    "op slab full");
-            auto w = _backend.nativeWaker(token);
-            if (!w)
-            {
-                _slab.release(token);
-                return ioErr!Waker(ENOBUFS, OpKind.nop, IoErrorStage.submit,
-                    "backend wake-op slab full");
-            }
-            _wakeToken = token;
-            _nativeWaker = w;
-            _wakeArmed = true;
-            return ioOk(w);
         }
     }
 

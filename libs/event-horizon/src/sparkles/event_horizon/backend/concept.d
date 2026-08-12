@@ -97,15 +97,35 @@ version (Windows)
         void* port, uint bytes, size_t key, void* ov) nothrow @nogc;
 }
 
+version (OSX)
+    private enum bool conceptHasKevent = true;
+else version (EventHorizonLibkqueue)
+    private enum bool conceptHasKevent = true;
+else
+    private enum bool conceptHasKevent = false;
+
+static if (conceptHasKevent)
+{
+    private extern (C) int kevent(int kq, const(void)* changelist, int nchanges,
+        void* eventlist, int nevents, const(void)* timeout) nothrow @nogc;
+}
+
+version (linux)
+{
+    private extern (C) int syscall(int sysno, ...) nothrow @nogc;
+}
+
 /**
 The thread-safe wake handle (SPEC §5.6) — the ONLY loop-associated object
 callable off-thread. Obtained from `EventLoop.waker()`; a copyable value.
 
-On Posix it holds the write side of the loop's wake channel — an `eventfd`
-on Linux, a pipe elsewhere — and `wake()` is a single `write(2)`:
-thread-safe AND async-signal-safe. On Windows it posts a zero-byte packet
-to the completion port (`PostQueuedCompletionStatus` — thread-safe; signal
-handlers are not a Windows concept). Wakes coalesce; a wake before the
+The trigger is backend-native when the backend implements `nativeWaker`
+(O29): `EVFILT_USER`/`NOTE_TRIGGER` on kqueue, a `FUTEX_WAKE` on uring,
+`PostQueuedCompletionStatus` on IOCP. The portable fallback is a `write(2)`
+to the loop's wake channel (an `eventfd` on Linux, a pipe elsewhere) —
+thread-safe and async-signal-safe. Native wake is thread-safe and
+coalescing; it is not promised async-signal-safe (`kevent`/`futex` are
+not in the POSIX signal-safe set). Wakes coalesce; a wake before the
 loop waits makes the next wait return immediately.
 
 The handle borrows loop-owned resources: `wake()` after the loop's
@@ -121,7 +141,9 @@ struct Waker
     }
     else
     {
-        package int fd = -1; /// write side of the wake channel
+        package int fd = -1;              /// kqueue fd, or write side of the wake channel
+        package uint ident;               /// 0 = `write(fd)`; else `EVFILT_USER` ident
+        package shared(uint)* futex;      /// if set, `FUTEX_WAKE` this word (uring)
     }
 
     /// `false` for a default (never-armed) handle.
@@ -130,11 +152,11 @@ struct Waker
         version (Windows)
             return port !is null;
         else
-            return fd >= 0;
+            return futex !is null || fd >= 0;
     }
 
-    /// Wakes the loop's wait. Callable from any thread (and, on Posix, from
-    /// signal handlers). Coalescing; never blocks.
+    /// Wakes the loop's wait. Callable from any thread. Coalescing; never
+    /// blocks. The fd-write fallback is also async-signal-safe.
     void wake() const @trusted nothrow @nogc
     {
         version (Windows)
@@ -142,22 +164,39 @@ struct Waker
             if (port !is null)
                 cast(void) PostQueuedCompletionStatus(port, 0, 0, ov);
         }
-        else version (linux)
+        else
         {
-            import core.sys.posix.unistd : write;
-
-            if (fd >= 0)
+            if (futex !is null)
             {
+                import core.atomic : atomicOp;
+
+                // Bump first so a re-arm that snapshots the word cannot
+                // lose this wake; then wake whoever is already parked.
+                // `wake` is `const` (the handle is a value); the word lives
+                // in the backend.
+                auto word = cast(shared(uint)*) futex;
+                atomicOp!"+="(*word, 1);
+                futexWake(word);
+                return;
+            }
+            if (ident != 0 && fd >= 0)
+            {
+                triggerKqueueUser(fd, ident);
+                return;
+            }
+            if (fd < 0)
+                return;
+            version (linux)
+            {
+                import core.sys.posix.unistd : write;
+
                 ulong one = 1; // eventfd counter increment (8 bytes, mandated)
                 cast(void) write(fd, &one, one.sizeof);
             }
-        }
-        else version (Posix)
-        {
-            import core.sys.posix.unistd : write;
-
-            if (fd >= 0)
+            else version (Posix)
             {
+                import core.sys.posix.unistd : write;
+
                 ubyte one = 1; // pipe byte; EAGAIN when full = wake already pending
                 cast(void) write(fd, &one, 1);
             }
@@ -166,8 +205,66 @@ struct Waker
 }
 
 /// Optional native-wake capability: a backend that can deliver a wake
-/// completion with no armed read op (IOCP's completion-port post). The
-/// loop prefers the portable fd path where a read lowering exists.
+/// completion with no armed read op. The loop prefers this over the
+/// portable fd path (O29).
 enum bool hasNativeWake(B) = __traits(compiles, {
     Waker w = lvalueOf!B.nativeWaker(OpToken.init);
 });
+
+version (Posix)
+{
+    private void futexWake(scope shared(uint)* word) @trusted nothrow @nogc
+    {
+        version (linux)
+        {
+            version (X86_64)
+                enum SYS_futex = 202;
+            else version (AArch64)
+                enum SYS_futex = 98;
+            else version (X86)
+                enum SYS_futex = 240;
+            else
+                enum SYS_futex = 0;
+
+            static if (SYS_futex != 0)
+            {
+                enum FUTEX_WAKE = 1;
+                enum FUTEX_PRIVATE_FLAG = 128;
+                cast(void) syscall(SYS_futex, cast(void*) word,
+                    FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, null, null, 0);
+            }
+        }
+        else
+            cast(void) word;
+    }
+
+    private void triggerKqueueUser(int kq, uint ident) @trusted nothrow @nogc
+    {
+        static if (conceptHasKevent)
+        {
+            // Layout matches BSD `struct kevent` / this package's `kevent_t`.
+            struct kevent_t
+            {
+                size_t ident;
+                short filter;
+                ushort flags;
+                uint fflags;
+                ptrdiff_t data;
+                void* udata;
+            }
+
+            enum short EVFILT_USER = -10;
+            enum uint NOTE_TRIGGER = 0x0100_0000;
+            kevent_t ch;
+            ch.ident = ident;
+            ch.filter = EVFILT_USER;
+            ch.fflags = NOTE_TRIGGER;
+            cast(void) kevent(kq, &ch, 1, null, 0, null);
+        }
+        else
+        {
+            cast(void) kq;
+            cast(void) ident;
+        }
+    }
+}
