@@ -2,7 +2,7 @@
 The macOS/BSD peer backend: a completion-synthesizing proactor over kqueue
 readiness (SPEC §3.5, PLAN M10). kqueue is a $(I readiness) interface, so
 unlike io_uring and IOCP this backend does the I/O itself: `trySubmit`
-registers interest (`EVFILT_READ`/`EVFILT_WRITE`, one-shot) and remembers the
+registers interest (`EVFILT_READ`/`EVFILT_WRITE`, `EV_DISPATCH`) and remembers the
 op; when `kevent` reports the fd ready, the backend performs the actual
 `recv`/`send` syscall and emits the resulting `RawCompletion` — the
 Boost.Asio "emulated proactor" shape. Regular files have no readiness and
@@ -33,8 +33,7 @@ Op coverage: `nop`, `recv`/`send`, `read`/`write`, `accept`, non-blocking
 (`scripts/verify-kqueue-macos.sh`), and the whole stack via a fiber-echo on
 Linux over mheily/libkqueue —
 `dub run --single examples/fiber-echo.d -b checked -c libkqueue`. The
-regular-file worker pool and native cancellation (`EV_DELETE` on the target
-registration) are the remaining refinements.
+regular-file worker pool is the remaining refinement.
 */
 module sparkles.event_horizon.backend.kqueue;
 
@@ -82,7 +81,7 @@ struct kevent_t
 {
     size_t ident;    // fd
     short filter;    // EVFILT_READ / EVFILT_WRITE
-    ushort flags;    // EV_ADD | EV_ONESHOT | EV_DELETE | EV_ERROR
+    ushort flags;    // EV_ADD | EV_DISPATCH | EV_DELETE | EV_ERROR
     uint fflags;
     ptrdiff_t data;  // bytes ready (read) / space (write)
     void* udata;     // our pending-op pointer
@@ -103,8 +102,10 @@ enum short EVFILT_TIMER = -7;
 enum uint NOTE_EXIT = 0x8000_0000;
 enum ushort EV_ADD = 0x0001;
 enum ushort EV_DELETE = 0x0002;
+enum ushort EV_ENABLE = 0x0004;
 enum ushort EV_ONESHOT = 0x0010;
 enum ushort EV_CLEAR = 0x0020;
+enum ushort EV_DISPATCH = 0x0080;
 enum ushort EV_ERROR = 0x4000;
 enum ushort EV_EOF = 0x8000;
 
@@ -241,7 +242,7 @@ struct KqueueBackend
         return true;
     }
 
-    /// A socket receive: register `EVFILT_READ`, one-shot.
+    /// A socket receive: register `EVFILT_READ`, dispatched.
     bool trySubmit(in OpRecv o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
         auto op = acquire();
@@ -253,7 +254,7 @@ struct KqueueBackend
         return armFilter(op, EVFILT_READ);
     }
 
-    /// A socket send: register `EVFILT_WRITE`, one-shot.
+    /// A socket send: register `EVFILT_WRITE`, dispatched.
     bool trySubmit(in OpSend o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
         auto op = acquire();
@@ -357,12 +358,12 @@ struct KqueueBackend
             OpKindLocal.waitid_, EVFILT_PROC, uint.max);
         op.idType = o.idType;
         op.waitOptions = o.options;
-        return armFilter(op, EVFILT_PROC, cast(ushort)(EV_ADD | EV_ONESHOT), NOTE_EXIT);
+        return armFilter(op, EVFILT_PROC, cast(ushort)(EV_ADD | EV_DISPATCH), NOTE_EXIT);
     }
 
     /// Foreign-fd readiness: the readiness event IS the completion — no
-    /// syscall is performed on the fd (SPEC §15.1). Multishot registers
-    /// `EV_CLEAR` (edge-per-completion) and keeps the op live.
+    /// syscall is performed on the fd (SPEC §15.1). Multishot keeps the op
+    /// live and re-arms with `EV_ENABLE` after each delivery (O28).
     bool trySubmit(in OpPollAdd o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
         auto op = acquire();
@@ -371,9 +372,7 @@ struct KqueueBackend
         const filter = (o.events & PollEvents.writable) ? EVFILT_WRITE : EVFILT_READ;
         *op = KqOp(token.raw, o.fd, null, 0, OpKindLocal.poll_, filter, uint.max);
         op.multishot = o.multishot;
-        const flags = o.multishot ? cast(ushort)(EV_ADD | EV_CLEAR)
-            : cast(ushort)(EV_ADD | EV_ONESHOT);
-        return armFilter(op, filter, flags);
+        return armFilter(op, filter, cast(ushort)(EV_ADD | EV_DISPATCH));
     }
 
     /// A relative timer via `EVFILT_TIMER` (unique ident from the op index).
@@ -649,12 +648,21 @@ private:
             return;
         }
 
-        // A multishot poll's registration persists (EV_CLEAR): keep the op live
-        // and flag the completion non-final.
+        // A multishot poll's knote is disabled by EV_DISPATCH, not consumed.
+        // Re-arm with EV_ENABLE so the next edge is a change entry rather than
+        // a fresh add (O28). One-shot ops delete on release instead.
         const retained = op.kind == OpKindLocal.poll_ && op.multishot;
         pushReady(RawCompletion(op.token, performOp(op, ev), retained ? rawFlagMore : 0));
-        if (!retained)
-            release(op);
+        if (retained)
+        {
+            // drainKevent consumed the sent prefix before ingest, so there is
+            // always room for one re-arm per delivered event (same accounting
+            // as the delete in `release`).
+            cast(void) enqueueChange(cast(size_t) op.fd, op.filter,
+                cast(ushort)(EV_ENABLE | EV_DISPATCH), 0, 0, slotToken(op));
+        }
+        else
+            release(op, true);
     }
 
     /// Stashes a completion for `reap`. `drainKevent` never asks the kernel for
@@ -756,7 +764,7 @@ private:
     }
 
     bool armFilter(KqOp* op, short filter,
-        ushort flags = cast(ushort)(EV_ADD | EV_ONESHOT),
+        ushort flags = cast(ushort)(EV_ADD | EV_DISPATCH),
         uint fflags = 0) @trusted nothrow @nogc
     {
         // Mark liveness HERE, not in `acquire`: every `trySubmit` overwrites
@@ -779,7 +787,7 @@ private:
         // `op.fd` holds the unique timer ident; `data` is the interval, in
         // milliseconds (kqueue's default unit).
         if (!enqueueChange(cast(size_t) op.fd, EVFILT_TIMER,
-                cast(ushort)(EV_ADD | EV_ONESHOT), 0, cast(ptrdiff_t) ms, slotToken(op)))
+                cast(ushort)(EV_ADD | EV_DISPATCH), 0, cast(ptrdiff_t) ms, slotToken(op)))
         {
             release(op);
             return false;
@@ -870,8 +878,33 @@ private:
         return null;
     }
 
-    void release(KqOp* op) @trusted nothrow @nogc
+    /**
+    Returns the slot to the freelist. `dropKnote` is set when the kernel still
+    holds a registration — `EV_DISPATCH` disables the knote on delivery
+    instead of consuming it, so a release that does not delete leaks it
+    across the next op on the same fd (O28).
+
+    Not set when the add never happened (enqueue failed, `EV_ERROR` rejection)
+    or when the caller already queued the delete (cancel). `dropPendingChange`
+    still wins if the add has not gone down yet: there is then nothing to
+    delete, and we must not append a spurious `EV_DELETE`.
+    */
+    void release(KqOp* op, bool dropKnote = false) @trusted nothrow @nogc
     {
+        if (dropKnote)
+        {
+            // Capture before the generation bump: `dropPendingChange` matches
+            // the token the still-queued add carries.
+            const token = slotToken(op);
+            if (!dropPendingChange(token))
+            {
+                // drainKevent consumed the sent prefix before ingest, so a
+                // delete per delivered event always fits. Cancel takes the
+                // other path (`dropKnote` false) after queueing its own delete.
+                cast(void) enqueueChange(cast(size_t) op.fd, op.filter,
+                    EV_DELETE, 0, 0, null);
+            }
+        }
         const idx = cast(uint)(op - _ops.ptr);
         // Bump BEFORE the slot can be handed out again: any kernel event still
         // queued against the registration we are abandoning now carries a stale
@@ -992,7 +1025,11 @@ unittest
             break;
     }
     assert(got == n, "every batched registration produced its completion");
-    assert(b._changeCount == 0, "and the list was consumed");
+    // EV_DISPATCH leaves the knote registered, so each terminal completion
+    // queues an EV_DELETE (O28). The adds themselves were consumed.
+    assert(b._changeCount == n, "each one-shot completion queued its delete");
+    foreach (i; 0 .. n)
+        assert(b._changes[i].flags == EV_DELETE);
 }
 
 /// The contract repair that falls out of the same change: `trySubmit`'s
@@ -1144,6 +1181,97 @@ unittest
     assert(!b.flush().hasError);
     const n = b.reap((ref const RawCompletion c) { cast(void) c; });
     assert(n == 2, "exactly the cancel pair — the delete produced no completion");
+}
+
+// ── O28: EV_DISPATCH re-arm + explicit delete ───────────────────────────────
+
+/// `EV_ONESHOT` consumed the knote on delivery. `EV_DISPATCH` only disables
+/// it, so a terminal completion must queue an `EV_DELETE` or the knote leaks
+/// onto the next op that reuses the fd.
+@("kqueue.dispatch.aOneShotCompletionQueuesADelete")
+@system
+unittest
+{
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    OpSlot slot;
+    assert(b.trySubmit(OpTimeout(KernelTimespec(0, 1_000_000)),
+        OpToken.pack(1, 1, OpClass.user), slot));
+
+    uint n;
+    foreach (spin; 0 .. 20)
+    {
+        n += pumpOnce(b, (ref const RawCompletion c) { assert(c.res == 0); });
+        if (n > 0)
+            break;
+    }
+    assert(n == 1);
+    assert(b._changeCount == 1, "the knote is still registered until this delete");
+    assert(b._changes[0].flags == EV_DELETE);
+    assert(b._changes[0].udata is null);
+}
+
+/// A multishot poll re-arms with `EV_ENABLE` after each delivery, so a second
+/// write is observed without a fresh `EV_ADD`.
+@("kqueue.dispatch.multishotRearmsWithEnable")
+@system
+unittest
+{
+    import core.sys.posix.unistd : close_ = close, pipe, read, write;
+
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    int[2] p;
+    assert(pipe(p) == 0);
+    scope (exit)
+    {
+        close_(p[0]);
+        close_(p[1]);
+    }
+    immutable ubyte one = 1;
+    assert(write(p[1], &one, 1) == 1);
+
+    OpSlot slot;
+    assert(b.trySubmit(OpPollAdd(p[0], PollEvents.readable, true),
+        OpToken.pack(2, 1, OpClass.user), slot));
+
+    uint first;
+    foreach (spin; 0 .. 10)
+    {
+        first += pumpOnce(b, (ref const RawCompletion c) {
+            assert(c.res & PollEvents.readable);
+        });
+        if (first > 0)
+            break;
+    }
+    assert(first == 1, "the first byte woke the poll");
+    assert(b._changeCount == 1, "the knote was re-armed, not re-added");
+    assert(b._changes[0].flags == (EV_ENABLE | EV_DISPATCH));
+    assert(b._changes[0].udata !is null, "the re-arm names the live op");
+
+    // Drain so the second wakeup is the second write, not leftover data
+    // on a level-triggered re-enable.
+    ubyte drained;
+    assert(read(p[0], &drained, 1) == 1);
+    assert(write(p[1], &one, 1) == 1);
+    uint second;
+    foreach (spin; 0 .. 10)
+    {
+        second += pumpOnce(b, (ref const RawCompletion c) {
+            assert(c.res & PollEvents.readable);
+        });
+        if (second > 0)
+            break;
+    }
+    assert(second == 1, "the re-arm observed the second byte");
 }
 
 /// A process that is already gone has nothing left to watch, so the

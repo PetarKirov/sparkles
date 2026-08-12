@@ -318,7 +318,11 @@ performed by the backend at reap time; regular-file ops go to a small worker
 pool. Registrations accumulate in a change list and ride down with the
 `kevent(2)` that waits, so a steady-state loop pays one syscall per turn
 rather than one per op (O27). A rejected change is an `EV_ERROR` completion,
-not a `trySubmit` `false`. Worker-pool results are pushed onto a thread-safe completed queue owned
+not a `trySubmit` `false`. Registrations use `EV_DISPATCH` rather than
+`EV_ONESHOT`: delivery disables the knote, a multishot re-arm is an
+`EV_ENABLE` change entry, and slot release emits an explicit `EV_DELETE`
+(O28). The Darwin-only `EV_UDATA_SPECIFIC`/`EV_VANISHED` pair is not used —
+libkqueue does not implement them, and Android ships that shim as the default. Worker-pool results are pushed onto a thread-safe completed queue owned
 by the backend; `reap` drains that queue into the same `RawCompletion` stream
 as readiness-synthesized completions, so the loop never distinguishes the two
 paths, and a worker that finishes while the loop is blocked in
