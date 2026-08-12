@@ -33,10 +33,11 @@ int railIdlePx(int cellExtent) @safe pure nothrow @nogc
     return third < 2 ? 2 : third;
 }
 
-/// The fully-expanded scrollbar rail thickness: exactly 1.5 cells, including
-/// odd cell sizes (integer multiply before divide is the normative rounding).
-int railExpandedPx(int cellExtent) @safe pure nothrow @nogc
-    => cellExtent * 3 / 2;
+/// The fully-expanded scrollbar rail thickness: exactly 1.5 glyph-cell widths,
+/// including odd widths (integer multiply before divide is normative). Both
+/// axes use the width so horizontal rails retain their compact GUI height.
+int railExpandedPx(int cellWidth) @safe pure nothrow @nogc
+    => cellWidth * 3 / 2;
 
 /// The pixel backend's minimum grabbable scrollbar-handle length.
 enum int scrollbarMinExtentPx = 24;
@@ -78,9 +79,8 @@ ScrollbarRail scrollbarRail(in DrawOp op, int cellW, int cellH,
     const y = originY + op.rect.y * cellH;
     const w = op.rect.width * cellW;
     const h = op.rect.height * cellH;
-    const cellExtent = vertical ? cellW : cellH;
-    const idle = railIdlePx(cellExtent);
-    const expanded = railExpandedPx(cellExtent);
+    const idle = railIdlePx(vertical ? cellW : cellH);
+    const expanded = railExpandedPx(cellW);
     const thickness = idle
         + (expanded - idle) * cast(int) op.expandPercent / 100;
 
@@ -525,9 +525,14 @@ unittest
     op.barOffset = 100;
     op.expandPercent = 100;
     const horizontal = scrollbarRail(op, 5, 7);
-    assert(horizontal.track.height == railExpandedPx(7));
+    assert(horizontal.track.height == railExpandedPx(5));
     assert(horizontal.thumb.x + horizontal.thumb.width
         == horizontal.track.x + horizontal.track.width);
+
+    // Horizontal bars historically expand to 1.5 glyph widths, not 1.5 row
+    // heights. The distinction is substantial for a typical tall font cell.
+    const compactHorizontal = scrollbarRail(op, 9, 21);
+    assert(compactHorizontal.track.height == 13);
 }
 
 // The raylib canvas must satisfy the ui capability concept, or the shared
