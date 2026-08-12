@@ -11,6 +11,7 @@ module gui_state;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.input.frame : InputFrame;
+import sparkles.input.gesture : PointF;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.ui.components.table : GridHit;
 import sparkles.ui.components.dock : DockContainer, PaneId;
@@ -439,6 +440,8 @@ struct GuiCapture
     string lantern;           /// `HUE_GUI_LANTERN`: seeded guide keys
     bool lanternSet;          /// ...present at all (empty shows the root listing)
     int forceHover = -1;      /// `HUE_GUI_HOVER`: force the Nth popup
+    PointF pointer;           /// `HUE_GUI_POINTER=<x>,<y>` in device pixels
+    bool pointerSet;          /// ditto; distinguishes an unset hook from `(0, 0)`
     /// `HUE_GUI_INSPECT`: open the tree-sitter panel before the first frame.
     /// There is otherwise no way to photograph a pane a keystroke opens — and
     /// the pane's arrangement (its bar beside the document's) is exactly the
@@ -449,6 +452,7 @@ struct GuiCapture
     static GuiCapture fromEnv(scope string delegate(string, string) @safe get) @safe
     {
         import std.conv : to;
+        import std.string : indexOf;
 
         GuiCapture c;
         c.screenshotPath = get("HUE_GUI_SCREENSHOT", "");
@@ -483,6 +487,22 @@ struct GuiCapture
         catch (Exception)
         {
         }
+        try
+        {
+            const raw = get("HUE_GUI_POINTER", null);
+            const comma = raw.indexOf(',');
+            if (comma > 0 && comma + 1 < raw.length)
+            {
+                c.pointer = PointF(
+                    raw[0 .. comma].to!float,
+                    raw[comma + 1 .. $].to!float,
+                );
+                c.pointerSet = true;
+            }
+        }
+        catch (Exception)
+        {
+        }
         return c;
     }
 }
@@ -513,6 +533,7 @@ unittest
         "HUE_GUI_LANTERN": "",
         "HUE_GUI_HOVER": "3",
         "HUE_GUI_INSPECT": "1",
+        "HUE_GUI_POINTER": "123.5,456",
     ];
     c = GuiCapture.fromEnv(&get);
     assert(c.screenshotPath == "shot.png" && c.screenshotFrame == 40);
@@ -521,6 +542,7 @@ unittest
     assert(c.lanternSet && c.lantern.length == 0,
         "an empty lantern is SET (it shows the root listing)");
     assert(c.forceHover == 3);
+    assert(c.pointerSet && c.pointer == PointF(123.5, 456));
 
     // The faithful quirk: garbage HUE_GUI_TOP also skips the font override,
     // exactly as the inline try/catch did.
@@ -531,6 +553,9 @@ unittest
     // A bad frame keeps the default rather than dying.
     env = ["HUE_GUI_SCREENSHOT_FRAME": "soon"];
     assert(GuiCapture.fromEnv(&get).screenshotFrame == 20);
+
+    env = ["HUE_GUI_POINTER": "somewhere"];
+    assert(!GuiCapture.fromEnv(&get).pointerSet);
 }
 
 /**

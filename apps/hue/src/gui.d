@@ -1678,6 +1678,12 @@ int runGui(GuiArgs guiArgs) @system
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
         inp.fin = foldFrame(evBuf, inp.fin);
+        // Deterministic GUI captures need to park the pointer on sub-cell
+        // chrome without synthesising a live window-system event. Override
+        // only the position; button levels and edges still come from the
+        // folded stream.
+        if (capture.pointerSet)
+            inp.fin.pos = capture.pointer;
         // Consumed. The clear is here rather than before the drain because the
         // drain no longer happens here — `handle` runs before this is called.
         evBuf.length = 0;

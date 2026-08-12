@@ -264,6 +264,17 @@ place at the coarsest honest resolution, never silence. That makes the
 right-hand column expressible without changing how the GUI looks, and it is
 the case where the cell backend **gains** the element rather than losing it.
 
+**Decided (2026-08-12): scrollbar expansion crosses the display-list seam as
+semantics, not device geometry.** A scrollbar operation carries
+`ubyte expandPercent` (`0` is the idle rail and `100` is fully expanded), plus
+content, viewport and offset units from which the backend derives its own
+thumb. It never carries pixels or a pre-resolved cell thumb: the raylib backend
+must preserve sub-cell motion and a terminal backend can honestly threshold the
+same value to one or two columns. `RuleEdge` is correspondingly the placement
+of a sub-cell band (`right`, `bottom`, `centerX`, or `centerY`), not only the
+placement of a hairline. This keeps the toolkit backend-neutral and deletes the
+per-consumer copies of idle and expanded rail widths.
+
 #### What each side costs
 
 Not symmetric, and worth knowing before starting:
