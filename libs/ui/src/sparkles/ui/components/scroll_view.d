@@ -20,7 +20,9 @@ feeds this value only events it already routed here.
 module sparkles.ui.components.scroll_view;
 
 import sparkles.base.term_control : PointerShape;
-import sparkles.input.capability : InputCapabilities;
+import sparkles.input : InputCapabilities, PointerAction, PointerButton,
+    PointerEvent;
+import sparkles.ui.geometry : Rect;
 import sparkles.ui.state : CaptureState, ScrollAxis, ScrollbarState;
 
 @safe:
@@ -71,6 +73,112 @@ struct ScrollExtents
     int minExtent = 1;
 }
 
+/// One axis' content-space extents and device-space scrollbar policy.
+///
+/// `content`/`viewport` are content units. `gutter` and `minExtent` are in
+/// this axis' track units: cells for a terminal layout, pixels for a window
+/// layout. Keeping them per axis is intentional — a document may use pixels
+/// vertically and cells horizontally without either axis losing precision.
+struct ScrollAreaAxis
+{
+    long content;
+    long viewport;
+    int gutter;
+    int minExtent = 1;
+}
+
+/**
+One scrollable rectangle before its reserved gutters are carved (`SCV7`).
+
+The rectangle's x coordinates are horizontal track units and its y coordinates
+are vertical track units. That makes mixed-unit panes explicit rather than
+pretending both axes have the same resolution.
+*/
+struct ScrollArea
+{
+    Rect rect;
+    ScrollAreaAxis v;
+    ScrollAreaAxis h;
+}
+
+/**
+The one resolved geometry value painters and pointer routing share (`SCV7`).
+
+The vertical gutter is carved from the right for the full height. The
+horizontal gutter is then carved from the bottom of the remainder, so the
+bottom-right corner belongs to the vertical bar. Gutters remain reserved when
+an axis is dormant; liveness controls interaction and painting, not reflow.
+*/
+struct ScrollLayout
+{
+    Rect content;
+    Rect vTrack;
+    Rect hTrack;
+    bool vLive;
+    bool hLive;
+    ScrollExtents vExtents;
+    ScrollExtents hExtents;
+
+pure nothrow @nogc:
+
+    /// Converts a pointer event through the exact vertical track painters use.
+    ScrollPointer vPointer(in PointerEvent p) const
+        => axisPointer(p, vTrack, true, vLive);
+
+    /// ditto for the horizontal track.
+    ScrollPointer hPointer(in PointerEvent p) const
+        => axisPointer(p, hTrack, false, hLive);
+
+    private static ScrollPointer axisPointer(in PointerEvent p, in Rect track,
+        bool vertical, bool live)
+    {
+        const primary = p.button == PointerButton.left;
+        return ScrollPointer(
+            over: live && p.action != PointerAction.leave
+                && track.contains(p.pos),
+            pressed: primary && p.action == PointerAction.press,
+            released: primary && p.action == PointerAction.release,
+            trackPos: vertical ? p.pos.y - track.y : p.pos.x - track.x,
+        );
+    }
+}
+
+/// Resolves one area's content and both reserved scrollbar tracks (`SCV7`).
+ScrollLayout scrollLayout(in ScrollArea area) pure nothrow @nogc
+{
+    static int reserve(int requested, int available)
+        pure nothrow @nogc
+    {
+        if (requested <= 0 || available <= 0)
+            return 0;
+        return requested < available ? requested : available;
+    }
+
+    const vg = reserve(area.v.gutter, area.rect.width);
+    const hg = reserve(area.h.gutter, area.rect.height);
+    const contentW = area.rect.width - vg;
+    const contentH = area.rect.height - hg;
+    const vTrack = Rect(area.rect.right - vg, area.rect.y,
+        vg, area.rect.height);
+    const hTrack = Rect(area.rect.x, area.rect.bottom - hg,
+        contentW, hg);
+    const vExtents = ScrollExtents(area.v.content, area.v.viewport,
+        vTrack.height, area.v.minExtent);
+    const hExtents = ScrollExtents(area.h.content, area.h.viewport,
+        hTrack.width, area.h.minExtent);
+    return ScrollLayout(
+        content: Rect(area.rect.x, area.rect.y, contentW, contentH),
+        vTrack: vTrack,
+        hTrack: hTrack,
+        vLive: area.v.content > area.v.viewport && vTrack.width > 0
+            && vTrack.height > 0,
+        hLive: area.h.content > area.h.viewport && hTrack.width > 0
+            && hTrack.height > 0,
+        vExtents: vExtents,
+        hExtents: hExtents,
+    );
+}
+
 /**
 One scrollable viewport (`SCV1`). Owned by the scrollable $(B model), not
 by a host: both backends step the same value, so the machines cannot fork
@@ -114,6 +222,22 @@ pure nothrow @nogc:
     {
         h = run(h, capture, capId, live, p, offset, e);
         return capture;
+    }
+
+    /// One vertical step consuming the exact layout used for paint and hit.
+    CaptureState stepV(CaptureState capture, size_t capId,
+        in PointerEvent p, long offset, in ScrollLayout layout)
+    {
+        return stepV(capture, capId, layout.vLive, layout.vPointer(p),
+            offset, layout.vExtents);
+    }
+
+    /// ditto for the horizontal axis.
+    CaptureState stepH(CaptureState capture, size_t capId,
+        in PointerEvent p, long offset, in ScrollLayout layout)
+    {
+        return stepH(capture, capId, layout.hLive, layout.hPointer(p),
+            offset, layout.hExtents);
     }
 
     /// A routed wheel/keys scroll in content units, clamped (`SCV3`).
@@ -199,6 +323,73 @@ unittest
     assert(a.percent == 100, "large frame deltas saturate at expanded");
     a.step(false, 1);
     assert(a.percent == 0, "large frame deltas saturate at idle");
+}
+
+@("ui.scrollView.layoutIsThePaintAndHitAuthority")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.input : Point;
+
+    const area = ScrollArea(
+        rect: Rect(10, 20, 40, 15),
+        v: ScrollAreaAxis(content: 200, viewport: 13, gutter: 2,
+            minExtent: 4),
+        h: ScrollAreaAxis(content: 80, viewport: 38, gutter: 1,
+            minExtent: 3),
+    );
+    const frame = scrollLayout(area);
+
+    assert(frame.content == Rect(10, 20, 38, 14));
+    assert(frame.vTrack == Rect(48, 20, 2, 15),
+        "the vertical bar owns the bottom-right corner");
+    assert(frame.hTrack == Rect(10, 34, 38, 1));
+    assert(frame.vLive && frame.hLive);
+    assert(frame.vExtents == ScrollExtents(200, 13, 15, 4));
+    assert(frame.hExtents == ScrollExtents(80, 38, 38, 3));
+
+    const vp = frame.vPointer(PointerEvent(
+        action: PointerAction.press,
+        button: PointerButton.left,
+        pos: Point(49, 27)));
+    assert(vp.over && vp.pressed && vp.trackPos == 7);
+    const hp = frame.hPointer(PointerEvent(
+        action: PointerAction.drag,
+        button: PointerButton.left,
+        pos: Point(17, 34)));
+    assert(hp.over && !hp.pressed && hp.trackPos == 7);
+}
+
+@("ui.scrollView.layoutReservesDormantGutters")
+@safe pure nothrow @nogc
+unittest
+{
+    const area = ScrollArea(
+        rect: Rect(0, 0, 8, 4),
+        v: ScrollAreaAxis(content: 3, viewport: 3, gutter: 2),
+        h: ScrollAreaAxis(content: 6, viewport: 6, gutter: 1),
+    );
+    const frame = scrollLayout(area);
+    assert(!frame.vLive && !frame.hLive);
+    assert(frame.content == Rect(0, 0, 6, 3),
+        "liveness never makes neighboring content reflow");
+    assert(frame.vTrack == Rect(6, 0, 2, 4));
+    assert(frame.hTrack == Rect(0, 3, 6, 1));
+}
+
+@("ui.scrollView.layoutClampsOversizedGutters")
+@safe pure nothrow @nogc
+unittest
+{
+    const frame = scrollLayout(ScrollArea(
+        rect: Rect(4, 5, 2, 1),
+        v: ScrollAreaAxis(content: 10, viewport: 1, gutter: 9),
+        h: ScrollAreaAxis(content: 10, viewport: 1, gutter: 9),
+    ));
+    assert(frame.content == Rect(4, 5, 0, 0));
+    assert(frame.vTrack == Rect(4, 5, 2, 1));
+    assert(frame.hTrack == Rect(4, 5, 0, 1));
+    assert(frame.vLive && !frame.hLive);
 }
 
 @("ui.scrollView.grabLifecycleWithCapture")
