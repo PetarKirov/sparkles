@@ -182,6 +182,28 @@ struct TreeViewState(Key)
         if (top < 0) top = 0;
     }
 
+    /**
+    Bounds-only clamp: keeps `sel` and `top` $(I valid) without pulling the
+    viewport back to the cursor.
+
+    This is what a $(B per-frame) re-clamp needs. $(LREF clamp) couples the
+    two on purpose — a cursor move should drag the view along — but a
+    scrollbar grab and a wheel notch deliberately leave the cursor behind,
+    and re-running the coupling clamp while painting snaps the view straight
+    back to it. That was a real defect: hue's inspector pane re-clamped in its
+    `view`, and its scrollbar and wheel looked inert because every scroll was
+    undone before it reached the screen.
+    */
+    void clampBounds() pure nothrow @nogc
+    {
+        const n = cast(long) rows.length;
+        if (sel >= n) sel = n ? n - 1 : 0;
+        if (sel < 0) sel = 0;
+        const maxTop = n - bodyRows;
+        if (top > maxTop) top = maxTop;
+        if (top < 0) top = 0;
+    }
+
     /// `/`: enter filter mode. Every filter mutation reports `rebuild` —
     /// the tree is a function of the query.
     TreeStep filterStart() pure nothrow
@@ -482,6 +504,34 @@ version (unittest)
     s.height = 5; // bodyRows = 3
     s.scrollBy(100);
     assert(s.top == 3, "scroll clamps to the last full viewport");
+}
+
+@("ui.tree_view.clampBoundsLeavesTheViewportWhereTheScrollPutIt")
+@safe unittest
+{
+    auto data = sample();
+    TreeViewState!uint s;
+    s.width = 30;
+    s.height = 5; // bodyRows = 3 < 6 rows
+    s.open = DisclosureState!uint.allOpen;
+    rebuild(s, data);
+
+    // A wheel notch (or a bar grab) scrolls away from the cursor…
+    s.scrollBy(3);
+    assert(s.top == 3 && s.sel == 0);
+    s.clampBounds();
+    assert(s.top == 3, "a per-frame re-clamp must not chase the cursor");
+    assert(s.sel == 0, "…nor move it");
+
+    // …while the coupling clamp is still the one a cursor move runs.
+    s.clamp();
+    assert(s.top == 0, "clamp() couples the viewport to the cursor");
+
+    // Bounds are still enforced: an overshoot and a stale cursor both snap in.
+    s.top = 99;
+    s.sel = 99;
+    s.clampBounds();
+    assert(s.top == 3 && s.sel == 5);
 }
 
 @("ui.tree_view.collapseOrUpClosesThenClimbs")
