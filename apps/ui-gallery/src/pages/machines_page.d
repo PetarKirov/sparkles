@@ -130,7 +130,7 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
 
     body_ ~= section(b, "ScrollState — clamped by transformation", [
-        kv(b, "offset", s.contentView.v.offset.text, 14),
+        kv(b, "offset", s.demoView.v.offset.text, 14),
         kv(b, "max for this pane", ScrollState.maxOffset(200,
             s.contentHeight).text, 14),
         label(b, "This is the shell's own scroll offset — the page you are "

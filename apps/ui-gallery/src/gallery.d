@@ -23,7 +23,6 @@ import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.components.chrome : headerBar, scrollView;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.components.scroll_view : ScrollExtents, ScrollView;
 import sparkles.ui.state : hoverTargets, keyedRects, ScrollState,
     wantedPointerShape;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle, Visual;
@@ -192,20 +191,9 @@ struct Gallery
         const pageRoot = pages[s.page].view(b, s);
         s.contentRows = measureHeight(b, pageRoot, s.contentWidth);
         const viewport = s.contentHeight;
-        const geom = contentBarGeometry();
-
-        // Sync the machine from the measurement and clamp: a page that shrank
-        // under a scrolled-down viewport must not leave the thumb past its own
-        // track. `scrolledTo` is how an external move keeps the bar honest.
-        s.contentView.v = s.contentView.v.scrolledTo(
-            ScrollView.clampOffset(s.contentView.v.offset, geom.content,
-                geom.viewport));
-        // The hover-expand easing, at the shared rate. On a target with no
-        // frame clock this snaps instead — see `scrollbars.easeVertical`.
-        easeVertical(s.contentView, s.caps, dtMs / 1000.0f);
+        dock.contentExtent(paneContent, s.contentWidth, s.contentRows);
 
         const header = shellHeader(b);
-        const content = contentPane(b, pageRoot, viewport, geom);
 
         // The inspector panel, the same shape one band over: build the body,
         // measure it, clamp the machine against the measurement, ease. Built
@@ -217,12 +205,11 @@ struct Gallery
             inspRoot = inspectorBody(b, s);
             s.inspectorRows = measureHeight(b, inspRoot,
                 inspectorInnerWidth(s));
-            const ig = inspectorBarGeometry();
-            s.inspView.v = s.inspView.v.scrolledTo(
-                ScrollView.clampOffset(s.inspView.v.offset, ig.content,
-                    ig.viewport));
-            easeVertical(s.inspView, s.caps, dtMs / 1000.0f);
+            dock.contentExtent(paneInsp, inspectorInnerWidth(s),
+                s.inspectorRows);
         }
+        dock.tickScroll(dtMs / 1000.0f, s.caps);
+        const content = contentPane(b, pageRoot, viewport);
         // The bands are pinned to one row each rather than left to fit. On a
         // short terminal the sidebar's natural height exceeds the surface, and
         // a column that has to reclaim the difference takes it from whichever
@@ -270,11 +257,11 @@ struct Gallery
         // animation rather than a jump: the frames it asks for are the frames
         // the ease needs.
         if ((s.toast.visible || pageAnimating
-                || easing(s.contentView, s.caps)
+                || easing(dock.scrollOf(paneContent), s.caps)
                 || easing(s.demoView, s.caps)
                 || easing(s.chromeView, s.caps)
                 || easing(s.termView, s.caps)
-                || easing(s.inspView, s.caps)) && s.hasFrameClock)
+                || easing(dock.scrollOf(paneInsp), s.caps)) && s.hasFrameClock)
             h.requestFrame();
 
         return b.finish(root);
@@ -466,6 +453,9 @@ struct Gallery
                 minExtent: contentMinCols);
             const i = dock.layout.addLeaf(paneInsp,
                 extent: inspectorWidth, minExtent: inspMinCols);
+            dock.layout.nodes[n].scrollGutterV = gutterCells;
+            dock.layout.nodes[c].scrollGutterV = gutterCells;
+            dock.layout.nodes[i].scrollGutterV = gutterCells;
             dock.layout.root = dock.layout.addSplit(DockAxis.horizontal,
                 [n, c, i]);
         }
@@ -484,6 +474,7 @@ struct Gallery
 
         dock.arrange(bodyArea());
         mirrorDock();
+        dock.contentExtent(paneNav, dock.paneExtent(paneNav), pages.length);
     }
 
     /// The rows the body band occupies — under the header, above the footer.
@@ -747,52 +738,24 @@ struct Gallery
         scrollContent(delta);
     }
 
-    /// What the content pane's bar scrolls over, from the last measurement.
-    /// One definition, because the viewport, the clamp, the thumb and the grab
-    /// all read it and three of the four being right is indistinguishable from
-    /// all four being right until someone drags.
-    private BarGeometry contentBarGeometry() @safe
-        => BarGeometry(
-            content: s.contentRows,
-            viewport: s.contentHeight,
-            track: s.contentHeight,
-        );
-
-    /// ditto, for the inspector panel — its own document, its own numbers.
-    private BarGeometry inspectorBarGeometry() @safe
-        => BarGeometry(
-            content: s.inspectorRows,
-            viewport: s.contentHeight,
-            track: s.contentHeight,
-        );
-
     private void scrollInspector(int delta) @safe
-    {
-        const g = inspectorBarGeometry();
-        s.inspView.wheeledV(delta,
-            ScrollExtents(g.content, g.viewport, g.track));
-    }
+        => dock.scrollBy(paneInsp, 0, delta);
 
     private void scrollContent(int delta) @safe
-    {
-        // Through the machine, not around it: an offset moved behind the bar's
-        // back leaves the thumb where it was until something else re-syncs it.
-        const g = contentBarGeometry();
-        s.contentView.wheeledV(delta,
-            ScrollExtents(g.content, g.viewport, g.track));
-    }
+        => dock.scrollBy(paneContent, 0, delta);
 
     private void setPage(size_t to) @safe
     {
         if (to >= pages.length || to == s.page)
             return;
         s.page = to;
+        dock.reveal(paneNav, Rect(0, cast(int) to, 1, 1));
         // A new page starts at its top. Carrying the previous page's offset
         // would land a short page scrolled past its own end. The bar's own
         // state — hover, animation width — is kept: the pointer has not moved.
-        s.contentView.v = s.contentView.v.scrolledTo(0);
+        dock.scrollTo(paneContent, 0, 0);
         // The inspector's dump is a new document too.
-        s.inspView.v = s.inspView.v.scrolledTo(0);
+        dock.scrollTo(paneInsp, 0, 0);
     }
 
     private void cycleTheme(int delta) @safe
@@ -829,31 +792,6 @@ struct Gallery
         if (route.relayout)
             reflexCentre();
         if (route.kind == RouteKind.container)
-        {
-            s.hover.update(p, targets);
-            reportPointerShape(h);
-            return;
-        }
-
-        // The scrollbars next, and unconditionally. A grab owns the pointer
-        // for its whole span, so the bar must see every move — including the
-        // ones that stray off it, which is exactly when a bar wired only to
-        // its own hover rect lets go halfway through a drag.
-        if (driveVertical(s.contentView, s.capture, capContentBar, p,
-                rectOf(tree, frames, hitContentBar), contentBarGeometry()))
-        {
-            // Consumed: a live grab is not also a press on whatever it passes
-            // over. Hover still updates, so the bar stays lit while held.
-            s.hover.update(p, targets);
-            reportPointerShape(h);
-            return;
-        }
-
-        // The inspector panel's bar, under the same rule. When the panel is
-        // not showing, `rectOf` finds nothing and the geometry is not live,
-        // so the call is inert rather than guarded.
-        if (driveVertical(s.inspView, s.capture, capInspBar, p,
-                rectOf(tree, frames, hitInspBar), inspectorBarGeometry()))
         {
             s.hover.update(p, targets);
             reportPointerShape(h);
@@ -973,14 +911,6 @@ struct Gallery
 
     private void onWheel(in WheelEvent w) @safe
     {
-        // Over the inspector panel the wheel scrolls the dump, not the page
-        // it describes. The panel is the body row's rightmost child, so its
-        // columns are the surface's last `inspectorWidth` — a geometric test,
-        // because the wheel handler has no frames in hand (`UGL-O5`'s shape,
-        // answered here for the second consumer that wanted it).
-        if (s.inspectorVisible && w.pos.x >= s.surface.width - s.inspCols)
-            return scrollInspector(w.dy);
-
         // Over the terminal pane the wheel belongs to the application when
         // it tracks the mouse (the scroll buttons); otherwise it walks the
         // shell's scrollback — either way, not the gallery's document.
@@ -994,7 +924,13 @@ struct Gallery
         }
 
         // The producer already multiplied by `linesPerNotch`; multiplying again
-        // here is the bug `INP12` names.
+        // here is the bug `INP12` names. Geometry comes from the dock's pane
+        // frames, including the reserved bar gutters.
+        const route = dock.handle(Event(w));
+        if (route.kind == RouteKind.pane && route.pane == paneInsp)
+            return scrollInspector(w.dy);
+        if (route.kind == RouteKind.pane && route.pane == paneNav)
+            return dock.scrollBy(paneNav, 0, w.dy);
         scrollContent(w.dy);
     }
 
@@ -1026,7 +962,7 @@ struct Gallery
 
         const overDivider = s.pointerAffordances && s.hover.isHot(hitSplit);
         auto want = wantedPointerShape(s.split, overDivider,
-            s.contentView.v, s.demoView.v);
+            s.demoView.v, s.demoView.h);
         h.pointerShape(want);
     }
 
@@ -1118,18 +1054,29 @@ struct Gallery
             kind: WidgetKind.column,
             children: rows,
             width: SizeSpec.grow(),
+            padding: Insets(0, 0, 0, 1),
+        ));
+        const f = dock.scrollFrameOf(paneNav);
+        const view_ = scrollView(b, list, cast(int) f.vExtents.viewport,
+            ScrollState(dock.offsetV(paneNav)), keyNavScroll);
+        b.nodes[view_].width = SizeSpec.fixed(f.content.width);
+        const bar = verticalBar(b, dock.scrollOf(paneNav),
+            BarGeometry(f.vExtents.content, f.vExtents.viewport,
+                f.vExtents.track), 0);
+        const inner = b.add(Widget(
+            kind: WidgetKind.row,
+            children: [view_, bar],
+            width: SizeSpec.fixed(s.navCols),
         ));
         return b.add(Widget(
             kind: WidgetKind.column,
-            children: [list],
+            children: [inner],
             // The dock's arranged width, not the nominal constant — this is
             // the pane the divider beside it resizes.
             width: SizeSpec.fixed(s.navCols),
             height: SizeSpec.grow(),
-            padding: Insets.symmetric(0, 1),
             clipY: true,
             clipX: true,
-            key: keyNavScroll,
             decoration: Decoration(
                 borderWidth: Insets(0, 1, 0, 0),
                 borderStyle: BorderStyle.solid,
@@ -1146,9 +1093,11 @@ struct Gallery
     private uint inspectorPane(ref Builder b, uint bodyRoot, int viewport) @safe
     {
         const view_ = scrollView(b, bodyRoot, viewport,
-            ScrollState(s.inspView.v.offset), keyInspScroll);
-        const bar = verticalBar(b, s.inspView, inspectorBarGeometry(),
-            hitInspBar);
+            ScrollState(dock.offsetV(paneInsp)), keyInspScroll);
+        const f = dock.scrollFrameOf(paneInsp);
+        const bar = verticalBar(b, dock.scrollOf(paneInsp),
+            BarGeometry(f.vExtents.content, f.vExtents.viewport,
+                f.vExtents.track), hitInspBar);
         const inner = b.add(Widget(
             kind: WidgetKind.row,
             children: [view_, bar],
@@ -1158,7 +1107,7 @@ struct Gallery
             children: [inner],
             width: SizeSpec.fixed(s.inspCols),
             height: SizeSpec.grow(),
-            padding: Insets.symmetric(0, 1),
+            padding: Insets(0, 0, 0, 1),
             clipX: true,
             clipY: true,
             decoration: Decoration(
@@ -1169,17 +1118,19 @@ struct Gallery
         ));
     }
 
-    private uint contentPane(ref Builder b, uint pageRoot, int viewport,
-        in BarGeometry geom) @safe
+    private uint contentPane(ref Builder b, uint pageRoot, int viewport) @safe
     {
         const view_ = scrollView(b, pageRoot, viewport,
-            ScrollState(s.contentView.v.offset), keyContentScroll);
+            ScrollState(dock.offsetV(paneContent)), keyContentScroll);
 
         // The gutter is always there; only the bar inside it comes and goes. A
         // track beside content that fits says nothing, but a gutter that
         // appeared with it would reflow the whole page sideways the moment it
         // grew past the viewport (`GalleryState.contentWidth`).
-        const bar = verticalBar(b, s.contentView, geom, hitContentBar);
+        const f = dock.scrollFrameOf(paneContent);
+        const bar = verticalBar(b, dock.scrollOf(paneContent),
+            BarGeometry(f.vExtents.content, f.vExtents.viewport,
+                f.vExtents.track), hitContentBar);
 
         return b.add(Widget(
             kind: WidgetKind.row,
@@ -1462,7 +1413,10 @@ version (unittest)
     Gallery g;
     g.s.inspectorOpen = true;
     g.s.page = pageIndexOf("primitives");
-    g.s.inspView.v = g.s.inspView.v.scrolledTo(12);
+    RecordingHost first;
+    first.size = sizeOf(120, 40);
+    g.view(first);
+    g.dock.scrollTo(Gallery.paneInsp, 0, 12);
     drive(g, [keyEvent(Key.right)], 120, 40);
 
     import std.algorithm.searching : canFind;
@@ -1475,7 +1429,8 @@ version (unittest)
         foreach (ref sp; n.spans)
             subject |= sp.text.canFind(pages[g.s.page].title);
     assert(subject, "the panel names the page now showing");
-    assert(g.s.inspView.v.offset == 0, "a new subject starts at its top");
+    assert(g.dock.offsetV(Gallery.paneInsp) == 0,
+        "a new subject starts at its top");
 }
 
 @("ui_gallery.gallery.theWheelOverTheInspectorScrollsTheDumpNotThePage")
@@ -1486,12 +1441,13 @@ version (unittest)
     Gallery g;
     g.s.inspectorOpen = true;
     drive(g, [Event(WheelEvent(dy: 3, pos: Point(119, 10)))], 120, 40);
-    assert(g.s.inspView.v.offset > 0, "the dump scrolled");
-    assert(g.s.contentView.v.offset == 0, "the page did not");
+    assert(g.dock.offsetV(Gallery.paneInsp) > 0, "the dump scrolled");
+    assert(g.dock.offsetV(Gallery.paneContent) == 0, "the page did not");
 
-    const dumpAt = g.s.inspView.v.offset;
+    const dumpAt = g.dock.offsetV(Gallery.paneInsp);
     drive(g, [Event(WheelEvent(dy: 3, pos: Point(40, 10)))], 120, 40);
-    assert(g.s.inspView.v.offset == dumpAt, "a wheel over the page leaves the dump");
+    assert(g.dock.offsetV(Gallery.paneInsp) == dumpAt,
+        "a wheel over the page leaves the dump");
 }
 
 @("ui_gallery.gallery.theInspectorBarIsGrabbable")
@@ -1506,16 +1462,17 @@ version (unittest)
     RecordingHost h;
     h.size = sizeOf(120, 40);
     auto tree = g.view(h);
-    auto frames = layout(tree, Constraints(maxW: 120, maxH: 40));
-    const bar = rectOf(tree, frames, hitInspBar);
+    layout(tree, Constraints(maxW: 120, maxH: 40));
+    const bar = g.dock.scrollFrameOf(Gallery.paneInsp).vTrack;
     assert(bar.width > 0, "the panel's bar is in the frame");
 
     const press = Event(PointerEvent(action: PointerAction.press,
         button: PointerButton.left,
         pos: Point(bar.x + bar.width - 1, bar.y + bar.height / 2)));
     drive(g, [press], 120, 40);
-    assert(g.s.inspView.v.dragging, "the press grabbed the bar");
-    assert(g.s.inspView.v.offset > 0, "…and jumped the dump");
+    assert(g.dock.scrollOf(Gallery.paneInsp).v.dragging,
+        "the press grabbed the bar");
+    assert(g.dock.offsetV(Gallery.paneInsp) > 0, "…and jumped the dump");
 }
 
 version (unittest)
@@ -1698,19 +1655,21 @@ version (unittest)
     const low = Point(bar.x, bar.y + bar.height - 2);
     drive(g, [Event(PointerEvent(action: PointerAction.press,
         button: PointerButton.left, pos: low))], 96, 24);
-    const jumped = g.s.contentView.v.offset;
+    const jumped = g.dock.offsetV(Gallery.paneContent);
     assert(jumped > 0, "a press on the track moves the page");
-    assert(g.s.contentView.v.dragging, "…and takes the grab");
+    assert(g.dock.scrollOf(Gallery.paneContent).v.dragging,
+        "…and takes the grab");
 
     // …a drag back to the top brings it home, even though the pointer has
     // left the bar's own column entirely.
     drive(g, [Event(PointerEvent(action: PointerAction.drag,
         button: PointerButton.left, pos: Point(2, bar.y)))], 96, 24);
-    assert(g.s.contentView.v.offset < jumped, "the drag tracked the pointer");
+    assert(g.dock.offsetV(Gallery.paneContent) < jumped,
+        "the drag tracked the pointer");
 
     drive(g, [Event(PointerEvent(action: PointerAction.release,
         button: PointerButton.left, pos: Point(2, bar.y)))], 96, 24);
-    assert(!g.s.contentView.v.dragging);
+    assert(!g.dock.scrollOf(Gallery.paneContent).v.dragging);
     assert(g.s.capture.isFree, "the release freed the pointer for everything");
 }
 
@@ -1763,13 +1722,15 @@ version (unittest)
     auto tree = g.view(h);
     const bar = rectOf(tree, layout(tree, Constraints(maxW: 96, maxH: 24)),
         hitContentBar);
-    const narrow = g.s.contentView.vAnim.percent;
+    const narrow = g.dock.scrollOf(Gallery.paneContent).vAnim.percent;
 
     auto rec = drive(g, [Event(PointerEvent(action: PointerAction.move,
         pos: Point(bar.x, bar.y + 3)))], 96, 24);
 
-    assert(g.s.contentView.v.hovered, "the bar knows the pointer is on it");
-    assert(g.s.contentView.vAnim.percent > narrow, "and it is widening");
+    assert(g.dock.scrollOf(Gallery.paneContent).v.hovered,
+        "the bar knows the pointer is on it");
+    assert(g.dock.scrollOf(Gallery.paneContent).vAnim.percent > narrow,
+        "and it is widening");
     assert(rec.frames.length > 2,
         "the run kept framing until the ease finished");
     assert(!rec.frames[$ - 1].requested, "…and then stopped");

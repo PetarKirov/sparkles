@@ -32,8 +32,11 @@ case rather than re-cutting the value.
 module sparkles.ui.components.dock;
 
 import sparkles.base.term_control : PointerShape;
+import sparkles.input.capability : InputCapabilities;
 import sparkles.input.events : Event, match, PointerAction, PointerButton,
     PointerEvent, WheelEvent;
+import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
+    ScrollAreaAxis, ScrollLayout, ScrollView;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.state : CaptureState, PressState, SplitState;
 
@@ -81,6 +84,15 @@ struct DockNode
     /// `leaf` only: rows reserved at the pane's top for its header
     /// (`DCK10`). `0` = no header, which is how a pane opts out.
     int headerExtent;
+    /// `leaf` only: stable gutters reserved for container-owned pane bars
+    /// (`DCK14`). Zero opts an axis out.
+    int scrollGutterV;
+    /// ditto
+    int scrollGutterH;
+    /// Per-axis minimum grabbable thumb, in that track's input units.
+    int scrollMinExtentV = 1;
+    /// ditto
+    int scrollMinExtentH = 1;
     /// `leaf` only: what the header says (`DCK11`). The container places
     /// and focuses the bar; the application still supplies the words,
     /// because only it knows them.
@@ -490,6 +502,24 @@ struct HeaderFrame
 }
 
 /**
+One pane's container-owned scrollbar geometry (`DCK14`). `area` is the pane
+after its header and before gutters; `layout` is the one `SCV7` answer used by
+paint and pointer routing. The frame is data — hosts may paint it through a
+semantic scrollbar op without making `dock.d` depend on `Builder`.
+*/
+struct ScrollFrame
+{
+    PaneId pane;
+    Rect area;
+    ScrollLayout layout;
+    int gutterV;
+    int gutterH;
+    int minExtentV = 1;
+    int minExtentH = 1;
+    alias layout this;
+}
+
+/**
 One arrangement's derived geometry, owned together (`PRN1`).
 
 Panes, dividers, tabs and headers are not four unrelated buffers: they are
@@ -504,6 +534,7 @@ struct DockFrames
     DividerFrame[] dividers;
     TabFrame[] tabs;
     HeaderFrame[] headers;
+    ScrollFrame[] bars;
 }
 
 /**
@@ -518,6 +549,7 @@ void dockFrames(in DockLayout l, in Rect area, ref DockFrames f,
     f.dividers.length = 0;
     f.tabs.length = 0;
     f.headers.length = 0;
+    f.bars.length = 0;
     if (l.nodes.length && l.root < l.nodes.length)
         walk(l, l.root, area, f, focused);
 }
@@ -544,7 +576,18 @@ private void walk(in DockLayout l, uint idx, in Rect area,
             content = Rect(area.x, area.y + n.headerExtent, area.width,
                 area.height - n.headerExtent);
         }
-        f.panes ~= PaneFrame(n.pane, content);
+        const base = scrollLayout(ScrollArea(
+            rect: content,
+            v: ScrollAreaAxis(viewport: content.height,
+                gutter: n.scrollGutterV, minExtent: n.scrollMinExtentV),
+            h: ScrollAreaAxis(viewport: content.width,
+                gutter: n.scrollGutterH, minExtent: n.scrollMinExtentH),
+        ));
+        if (n.scrollGutterV > 0 || n.scrollGutterH > 0)
+            f.bars ~= ScrollFrame(n.pane, content, base,
+                n.scrollGutterV, n.scrollGutterH,
+                n.scrollMinExtentV, n.scrollMinExtentH);
+        f.panes ~= PaneFrame(n.pane, base.content);
         return;
     }
     if (n.kind == DockKind.tabs)
@@ -859,6 +902,9 @@ struct DockContainer
     /// ditto — the reserved header strips (`DCK10`).
     ref inout(HeaderFrame[]) headers() inout return @safe pure nothrow @nogc
         => frames.headers;
+    /// ditto — container-owned pane scrollbar frames (`DCK14`).
+    ref inout(ScrollFrame[]) bars() inout return @safe pure nothrow @nogc
+        => frames.bars;
     /// The focused pane (`DCK6`); click-to-focus and $(LREF focusNext)
     /// maintain it.
     PaneId focused;
@@ -866,9 +912,16 @@ struct DockContainer
     /// exact cell a terminal offers, a pixel host wants a few px either
     /// side. The divider is drawn thin and grabbed thick, as everywhere.
     int grabTolerance;
+    /// Device units per layout cell. The terminal defaults to identity; a
+    /// window sets real cell pixels so routing stays cell-based while a bar
+    /// drag retains sub-cell precision.
+    int cellW = 1;
+    /// ditto
+    int cellH = 1;
 
     private Rect area;
     private CaptureState capture;
+    private PaneScroll[] paneScrolls;
     private PressState tabPress;
     private DockDrag redock;
     private PaneId tabPressPane;
@@ -883,7 +936,16 @@ struct DockContainer
     // means "free" to the machine, so both spaces start above it.
     private enum size_t paneCapBase = 1;
     private enum size_t divCapBase = size_t(1) << 32;
+    private enum size_t scrollCapBase = size_t(1) << 40;
     private enum size_t tabCapBase = size_t(1) << 48;
+
+    private struct PaneScroll
+    {
+        PaneId pane;
+        long cols;
+        long rows;
+        ScrollView view;
+    }
 
     /**
     Recomputes the frames for `area` (`DCK1`), re-clamping fixed extents
@@ -904,12 +966,195 @@ struct DockContainer
                 n.extent = n.maxExtent;
         }
         dockFrames(layout, area, frames, focused);
+        resolveScrollFrames();
+    }
+
+    /**
+    Supplies a pane's content extent (`DCK14`). Columns/rows are content
+    units; the viewport comes from the pane rect the container just carved.
+    State is keyed by `PaneId`, so rearranging or rebuilding a pane preserves
+    both offsets and animation.
+    */
+    void contentExtent(PaneId pane, long cols, long rows)
+    {
+        const i = ensurePaneScroll(pane);
+        paneScrolls[i].cols = cols > 0 ? cols : 0;
+        paneScrolls[i].rows = rows > 0 ? rows : 0;
+        resolveScrollFrame(pane);
+    }
+
+    /// The container-owned vertical/horizontal offset for `pane`.
+    long offsetV(PaneId pane) const pure nothrow @nogc
+    {
+        const i = paneScrollIndex(pane);
+        return i < paneScrolls.length ? paneScrolls[i].view.v.offset : 0;
+    }
+
+    /// ditto
+    long offsetH(PaneId pane) const pure nothrow @nogc
+    {
+        const i = paneScrollIndex(pane);
+        return i < paneScrolls.length ? paneScrolls[i].view.h.offset : 0;
+    }
+
+    /// A read-only snapshot for semantic paint and pointer-shape composition.
+    ScrollView scrollOf(PaneId pane) const pure nothrow @nogc
+    {
+        const i = paneScrollIndex(pane);
+        return i < paneScrolls.length ? paneScrolls[i].view : ScrollView.init;
+    }
+
+    /// The resolved bar frame for `pane`, or an empty frame when it has none.
+    ScrollFrame scrollFrameOf(PaneId pane) const pure nothrow @nogc
+    {
+        const i = barIndex(pane);
+        return i < bars.length ? bars[i] : ScrollFrame.init;
+    }
+
+    /// Scrolls a pane in content units, clamped by the resolved viewport.
+    void scrollBy(PaneId pane, long dx, long dy) pure nothrow @nogc
+    {
+        const si = paneScrollIndex(pane);
+        const fi = barIndex(pane);
+        if (si >= paneScrolls.length || fi >= bars.length)
+            return;
+        if (dx)
+            paneScrolls[si].view.wheeledH(dx, bars[fi].hExtents);
+        if (dy)
+            paneScrolls[si].view.wheeledV(dy, bars[fi].vExtents);
+    }
+
+    /// Sets both pane offsets in content units, clamped.
+    void scrollTo(PaneId pane, long x, long y) pure nothrow @nogc
+    {
+        const si = paneScrollIndex(pane);
+        const fi = barIndex(pane);
+        if (si >= paneScrolls.length || fi >= bars.length)
+            return;
+        paneScrolls[si].view.h = paneScrolls[si].view.h.scrolledTo(
+            ScrollView.clampOffset(x, bars[fi].hExtents.content,
+                bars[fi].hExtents.viewport));
+        paneScrolls[si].view.v = paneScrolls[si].view.v.scrolledTo(
+            ScrollView.clampOffset(y, bars[fi].vExtents.content,
+                bars[fi].vExtents.viewport));
+    }
+
+    /// Reveals a content-space rectangle with the smallest per-axis scroll.
+    void reveal(PaneId pane, in Rect target) pure nothrow @nogc
+    {
+        const fi = barIndex(pane);
+        if (fi >= bars.length)
+            return;
+        long x = offsetH(pane), y = offsetV(pane);
+        const vw = bars[fi].hExtents.viewport;
+        const vh = bars[fi].vExtents.viewport;
+        if (target.x < x) x = target.x;
+        else if (target.right > x + vw) x = target.right - vw;
+        if (target.y < y) y = target.y;
+        else if (target.bottom > y + vh) y = target.bottom - vh;
+        scrollTo(pane, x, y);
+    }
+
+    /// Advances every visible pane bar's shared hover-expand animation.
+    void tickScroll(float dt, in InputCapabilities caps) pure nothrow @nogc
+    {
+        foreach (ref b; bars)
+        {
+            const i = paneScrollIndex(b.pane);
+            if (i >= paneScrolls.length)
+                continue;
+            if (dt > 0)
+            {
+                paneScrolls[i].view.easeV(caps, dt);
+                paneScrolls[i].view.easeH(caps, dt);
+            }
+            else
+            {
+                paneScrolls[i].view.vAnim.percent =
+                    paneScrolls[i].view.v.expanded(caps) ? 100 : 0;
+                paneScrolls[i].view.hAnim.percent =
+                    paneScrolls[i].view.h.expanded(caps) ? 100 : 0;
+            }
+        }
+    }
+
+    private size_t ensurePaneScroll(PaneId pane)
+    {
+        const i = paneScrollIndex(pane);
+        if (i < paneScrolls.length)
+            return i;
+        paneScrolls ~= PaneScroll(pane);
+        return paneScrolls.length - 1;
+    }
+
+    private size_t paneScrollIndex(PaneId pane) const pure nothrow @nogc
+    {
+        foreach (i, ref s; paneScrolls)
+            if (s.pane == pane)
+                return i;
+        return size_t.max;
+    }
+
+    private size_t barIndex(PaneId pane) const pure nothrow @nogc
+    {
+        foreach (i, ref b; bars)
+            if (b.pane == pane)
+                return i;
+        return size_t.max;
+    }
+
+    private void resolveScrollFrames() pure nothrow @nogc
+    {
+        foreach (ref b; bars)
+            resolveScrollFrame(b.pane);
+    }
+
+    private void resolveScrollFrame(PaneId pane) pure nothrow @nogc
+    {
+        const fi = barIndex(pane);
+        if (fi >= bars.length)
+            return;
+        ref b = bars[fi];
+        const si = paneScrollIndex(pane);
+        const cols = si < paneScrolls.length ? paneScrolls[si].cols : 0;
+        const rows = si < paneScrolls.length ? paneScrolls[si].rows : 0;
+        const base = scrollLayout(ScrollArea(
+            rect: b.area,
+            v: ScrollAreaAxis(content: rows, gutter: b.gutterV,
+                minExtent: b.minExtentV),
+            h: ScrollAreaAxis(content: cols, gutter: b.gutterH,
+                minExtent: b.minExtentH),
+        ));
+        b.layout = scrollLayout(ScrollArea(
+            rect: b.area,
+            v: ScrollAreaAxis(content: rows,
+                viewport: base.content.height, gutter: b.gutterV,
+                minExtent: b.minExtentV),
+            h: ScrollAreaAxis(content: cols,
+                viewport: base.content.width, gutter: b.gutterH,
+                minExtent: b.minExtentH),
+        ));
+        if (si < paneScrolls.length)
+        {
+            ref view = paneScrolls[si].view;
+            view.v = view.v.scrolledTo(ScrollView.clampOffset(view.v.offset,
+                rows, b.vExtents.viewport));
+            view.h = view.h.scrolledTo(ScrollView.clampOffset(view.h.offset,
+                cols, b.hExtents.viewport));
+            if (!b.vLive)
+                view.v = view.v.hoveredNow(false).released();
+            if (!b.hLive)
+                view.h = view.h.hoveredNow(false).released();
+        }
     }
 
     /// A pane's laid-out extent along its split's axis, or `0` when it is
     /// hidden — the arrangement's answer to "how wide is the sidebar".
     int paneExtent(PaneId pane) const pure nothrow @nogc
     {
+        foreach (ref b; bars)
+            if (b.pane == pane)
+                return isVerticalStack(pane) ? b.area.height : b.area.width;
         foreach (ref f; paneFrames)
             if (f.pane == pane)
                 return layout.nodes[layout.nodeOf(pane)].kind == DockKind.leaf
@@ -921,6 +1166,9 @@ struct DockContainer
     /// can place content without re-deriving the tiling.
     int paneOrigin(PaneId pane) const pure nothrow @nogc
     {
+        foreach (ref b; bars)
+            if (b.pane == pane)
+                return isVerticalStack(pane) ? b.area.y : b.area.x;
         foreach (ref f; paneFrames)
             if (f.pane == pane)
                 return isVerticalStack(pane) ? f.rect.y : f.rect.x;
@@ -1016,11 +1264,33 @@ struct DockContainer
     {
         if (resizing)
             return dividerShape(dividers[dragDivider].axis);
+        const sg = scrollShape(true);
+        if (sg != PointerShape.default_)
+            return sg;
         if (paneGrab != PointerShape.default_)
             return paneGrab;
         if (hoverDivider != uint.max)
             return dividerShape(dividers[hoverDivider].axis);
-        return paneHover;
+        const sh = scrollShape(false);
+        return sh != PointerShape.default_ ? sh : paneHover;
+    }
+
+    private PointerShape scrollShape(bool grabs) const pure nothrow @nogc
+    {
+        foreach (ref b; bars)
+        {
+            const i = paneScrollIndex(b.pane);
+            if (i >= paneScrolls.length)
+                continue;
+            ref const view = paneScrolls[i].view;
+            if (grabs ? view.grabbing : view.shape() != PointerShape.default_)
+            {
+                const want = view.shape();
+                if (want != PointerShape.default_)
+                    return want;
+            }
+        }
+        return PointerShape.default_;
     }
 
     private static PointerShape dividerShape(DockAxis axis) pure nothrow @nogc
@@ -1061,14 +1331,15 @@ struct DockContainer
                 // chrome (a divider) the position resolves to no pane, and
                 // the focused one takes it — a wheel is never dropped.
                 PaneId pane;
-                if (!paneAt(w.pos, pane))
+                const wp = pointToCells(w.pos);
+                if (!paneAtIncludingScroll(wp, pane))
                 {
                     if (!paneFrames.length)
                         return;
                     pane = focused;
                 }
                 WheelEvent q = w;
-                q.pos = toLocal(w.pos, pane);
+                q.pos = toLocal(wp, pane);
                 r = Route(RouteKind.pane, pane, Event(q));
             },
             (_) {
@@ -1080,22 +1351,36 @@ struct DockContainer
         return r;
     }
 
+    private bool paneAtIncludingScroll(in Point p, out PaneId pane)
+        const pure nothrow @nogc
+    {
+        foreach (ref b; bars)
+            if (b.area.contains(p))
+            {
+                pane = b.pane;
+                return true;
+            }
+        return paneAt(p, pane);
+    }
+
     private Route routePointer(in PointerEvent p)
     {
-        hovered(p.pos);
+        PointerEvent cell = p;
+        cell.pos = pointToCells(p.pos);
+        hovered(cell.pos);
 
         // 1. A live divider drag owns everything until release (DCK3).
         if (resizing)
         {
             const d = dividers[dragDivider];
-            if (p.action == PointerAction.release)
+            if (cell.action == PointerAction.release)
             {
                 drag = drag.released();
                 dragDivider = uint.max;
                 capture = capture.released();
-                return Route(RouteKind.container, 0, Event(p));
+                return Route(RouteKind.container, 0, Event(cell));
             }
-            drag = drag.draggedTo(axisOf(d.axis, p.pos), d.lo, d.hi);
+            drag = drag.draggedTo(axisOf(d.axis, cell.pos), d.lo, d.hi);
             // A drag redistributes between ITS TWO NEIGHBOURS — the same
             // pair the clamp range was derived from. The preceding child
             // takes the new extent; a fixed follower gives up exactly what
@@ -1107,22 +1392,23 @@ struct DockContainer
             if (layout.nodes[d.afterNode].extent > 0)
                 layout.nodes[d.afterNode].extent -= now - was;
             arrange(area);
-            return Route(RouteKind.container, 0, Event(p), relayout: true);
+            return Route(RouteKind.container, 0, Event(cell), relayout: true);
         }
 
         // 2. A press on a divider starts a resize and takes the capture.
-        if (p.action == PointerAction.press && p.button == PointerButton.left
+        if (cell.action == PointerAction.press
+            && cell.button == PointerButton.left
             && capture.isFree)
         {
-            const idx = dividerAt(p.pos);
+            const idx = dividerAt(cell.pos);
             if (idx != uint.max)
             {
                 const d = dividers[idx];
                 dragDivider = idx;
                 drag = SplitState(axisOf(d.axis, Point(d.rect.x, d.rect.y)))
-                    .started(axisOf(d.axis, p.pos));
+                    .started(axisOf(d.axis, cell.pos));
                 capture = capture.capturedBy(divCapBase + idx);
-                return Route(RouteKind.container, 0, Event(p));
+                return Route(RouteKind.container, 0, Event(cell));
             }
         }
 
@@ -1131,26 +1417,26 @@ struct DockContainer
         //    over the SAME tab activates it (STM10) — a press that slides
         //    off cancels, which an `if (clicked && inRect)` never does.
         {
-            const idx = tabAt(p.pos);
+            const idx = tabAt(cell.pos);
             const id = idx == uint.max ? 0 : tabCapBase + idx;
-            if (p.action == PointerAction.press
-                && p.button == PointerButton.left && idx != uint.max)
+            if (cell.action == PointerAction.press
+                && cell.button == PointerButton.left && idx != uint.max)
             {
                 tabPress = tabPress.pressed(id);
                 tabPressPane = tabs[idx].pane;
-                tabPressAt = p.pos;
+                tabPressAt = cell.pos;
                 capture = capture.capturedBy(id);
-                return Route(RouteKind.container, tabs[idx].pane, Event(p));
+                return Route(RouteKind.container, tabs[idx].pane, Event(cell));
             }
             // A pressed tab that TRAVELS becomes a re-dock rather than an
             // activation (DCK5). The threshold is what keeps the two
             // gestures from being the same gesture: without it every
             // slightly-dragged click would either activate something the
             // reader was moving, or move something they were clicking.
-            if (tabPress.armed != 0 && p.action == PointerAction.drag)
+            if (tabPress.armed != 0 && cell.action == PointerAction.drag)
             {
-                const dx = p.pos.x - tabPressAt.x;
-                const dy = p.pos.y - tabPressAt.y;
+                const dx = cell.pos.x - tabPressAt.x;
+                const dy = cell.pos.y - tabPressAt.y;
                 const far = (dx < 0 ? -dx : dx) >= dragThreshold
                     || (dy < 0 ? -dy : dy) >= dragThreshold;
                 if (far || redock.active)
@@ -1160,18 +1446,18 @@ struct DockContainer
                     redock.target = 0;
                     redock.zone = DockZone.none;
                     PaneId over;
-                    if (paneAt(p.pos, over))
+                    if (paneAt(cell.pos, over))
                         foreach (ref f; paneFrames)
                             if (f.pane == over)
                             {
                                 redock.target = over;
                                 redock.targetRect = f.rect;
-                                redock.zone = dockZoneAt(f.rect, p.pos);
+                                redock.zone = dockZoneAt(f.rect, cell.pos);
                             }
                 }
-                return Route(RouteKind.container, redock.pane, Event(p));
+                return Route(RouteKind.container, redock.pane, Event(cell));
             }
-            if (p.action == PointerAction.release && tabPress.armed != 0)
+            if (cell.action == PointerAction.release && tabPress.armed != 0)
             {
                 const wasDrag = redock.active;
                 const drop = redock;
@@ -1190,10 +1476,10 @@ struct DockContainer
                         focused = drop.pane;
                         layout.activate(drop.pane);
                         arrange(area);
-                        return Route(RouteKind.container, drop.pane, Event(p),
+                        return Route(RouteKind.container, drop.pane, Event(cell),
                             relayout: true);
                     }
-                    return Route(RouteKind.container, drop.pane, Event(p));
+                    return Route(RouteKind.container, drop.pane, Event(cell));
                 }
                 if (tabPress.activated != 0)
                 {
@@ -1202,26 +1488,33 @@ struct DockContainer
                     focused = t.pane; // showing a pane gives it the keyboard
                     arrange(area);
                     tabPress = tabPress.cancelled();
-                    return Route(RouteKind.container, t.pane, Event(p),
+                    return Route(RouteKind.container, t.pane, Event(cell),
                         relayout: true);
                 }
-                return Route(RouteKind.container, 0, Event(p));
+                return Route(RouteKind.container, 0, Event(cell));
             }
             if (!capture.isFree && capture.owner >= tabCapBase)
-                return Route(RouteKind.container, 0, Event(p));
+                return Route(RouteKind.container, 0, Event(cell));
         }
+
+        // 3b. Pane scrollbars are chrome: they consume their own press/drag
+        // before a pane-local positional query, and all bars see every move
+        // so hover cannot stick when the pointer crosses between panes.
+        PaneId scrollPane;
+        if (routeScroll(p, scrollPane))
+            return Route(RouteKind.container, scrollPane, Event(cell));
 
         // 4. The positional query — re-aimed on a press, or whenever
         //    nothing owns the pointer; frozen mid-drag, which is the rule.
-        if (p.action == PointerAction.press || capture.isFree)
+        if (cell.action == PointerAction.press || capture.isFree)
         {
             PaneId under;
-            if (paneAt(p.pos, under))
+            if (paneAt(cell.pos, under))
             {
                 pointerPane = under;
                 havePointerPane = true;
-                if (p.action == PointerAction.press
-                    && p.button == PointerButton.left)
+                if (cell.action == PointerAction.press
+                    && cell.button == PointerButton.left)
                 {
                     capture = capture.capturedBy(paneCapBase + under);
                     focused = under; // click-to-focus (DCK6)
@@ -1247,14 +1540,72 @@ struct DockContainer
             target = pointerPane;
             have = true;
         }
-        if (p.action == PointerAction.release)
+        if (cell.action == PointerAction.release)
             capture = capture.released();
         if (!have)
             return Route.init;
 
-        PointerEvent q = p;
-        q.pos = toLocal(p.pos, target);
+        PointerEvent q = cell;
+        q.pos = toLocal(cell.pos, target);
         return Route(RouteKind.pane, target, Event(q));
+    }
+
+    private bool routeScroll(in PointerEvent p, out PaneId pane)
+        pure nothrow @nogc
+    {
+        const ownedBefore = capture.owner >= scrollCapBase
+            && capture.owner < tabCapBase;
+        bool consumed = ownedBefore;
+        foreach (i, ref b; bars)
+        {
+            const si = paneScrollIndex(b.pane);
+            if (si >= paneScrolls.length)
+                continue;
+            ref view = paneScrolls[si].view;
+            const frame = deviceLayout(b);
+            const hWas = view.h.dragging;
+            const vWas = view.v.dragging;
+            const hp = frame.hPointer(p);
+            const vp = frame.vPointer(p);
+            const base = scrollCapBase + i * 2;
+            capture = view.stepH(capture, base, p, view.h.offset, frame);
+            capture = view.stepV(capture, base + 1, p, view.v.offset, frame);
+            const press = p.action == PointerAction.press
+                && p.button == PointerButton.left && (hp.over || vp.over);
+            if (hWas || vWas || view.h.dragging || view.v.dragging || press)
+            {
+                consumed = true;
+                pane = b.pane;
+            }
+        }
+        if (p.action == PointerAction.release && ownedBefore)
+            capture = capture.released();
+        return consumed;
+    }
+
+    private ScrollLayout deviceLayout(in ScrollFrame b) const
+        pure nothrow @nogc
+    {
+        const cw = cellW > 0 ? cellW : 1;
+        const ch = cellH > 0 ? cellH : 1;
+        ScrollLayout r = b.layout;
+        r.content = scaleRect(b.content, cw, ch);
+        r.vTrack = scaleRect(b.vTrack, cw, ch);
+        r.hTrack = scaleRect(b.hTrack, cw, ch);
+        r.vExtents.track = r.vTrack.height;
+        r.hExtents.track = r.hTrack.width;
+        return r;
+    }
+
+    private static Rect scaleRect(in Rect r, int cw, int ch)
+        pure nothrow @nogc
+        => Rect(r.x * cw, r.y * ch, r.width * cw, r.height * ch);
+
+    private Point pointToCells(in Point p) const pure nothrow @nogc
+    {
+        const cw = cellW > 0 ? cellW : 1;
+        const ch = cellH > 0 ? cellH : 1;
+        return Point(p.x / cw, p.y / ch);
     }
 
     /**
@@ -1648,6 +1999,78 @@ version (unittest)
     // rendering a bar with nothing under it.
     c.arrange(Rect(0, 0, 100, 1));
     assert(c.headers.length == 0 && c.paneFrames.length == 2);
+}
+
+@("ui.dock.scrollGuttersAreStructuralAndTheCornerIsVertical")
+@safe unittest
+{
+    enum PaneId page = 1;
+    DockContainer c;
+    const n = c.layout.addLeaf(page);
+    c.layout.nodes[n].scrollGutterV = 2;
+    c.layout.nodes[n].scrollGutterH = 1;
+    c.layout.root = n;
+    c.focused = page;
+    c.contentExtent(page, 80, 100);
+    c.arrange(Rect(0, 0, 20, 10));
+
+    assert(c.paneFrames[0].rect == Rect(0, 0, 18, 9));
+    assert(c.bars.length == 1);
+    assert(c.bars[0].vTrack == Rect(18, 0, 2, 10));
+    assert(c.bars[0].hTrack == Rect(0, 9, 18, 1));
+    assert(c.bars[0].vLive && c.bars[0].hLive);
+
+    Point local;
+    assert(c.contentCell(Point(17, 8), page, local)
+        && local == Point(17, 8));
+    assert(!c.contentCell(Point(18, 8), page, local),
+        "the V gutter cannot leak into pane content");
+    assert(!c.contentCell(Point(17, 9), page, local),
+        "the H gutter cannot leak into pane content");
+
+    // The corner belongs to V: this press takes the vertical machine and is
+    // consumed before the pane can interpret it as content.
+    auto r = c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(19, 9))));
+    assert(r.kind == RouteKind.container && r.pane == page);
+    assert(c.scrollOf(page).v.dragging && !c.scrollOf(page).h.dragging);
+    assert(c.offsetV(page) > 0);
+
+    // A wheel is an independent event: the live pointer capture does not
+    // swallow it, and geometric routing still reaches the focused pane.
+    r = c.handle(Event(WheelEvent(dy: 3, pos: Point(19, 9))));
+    assert(r.kind == RouteKind.pane && r.pane == page);
+
+    r = c.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(3, 3))));
+    assert(r.kind == RouteKind.container && !c.scrollOf(page).v.dragging);
+}
+
+@("ui.dock.scrollDragKeepsDeviceSubcellPrecision")
+@safe unittest
+{
+    enum PaneId page = 1;
+    DockContainer c;
+    const n = c.layout.addLeaf(page);
+    c.layout.nodes[n].scrollGutterV = 2;
+    c.layout.nodes[n].scrollMinExtentV = 24;
+    c.layout.root = n;
+    c.cellW = 10;
+    c.cellH = 20;
+    c.contentExtent(page, 18, 4_000);
+    c.arrange(Rect(0, 0, 20, 10));
+
+    // Native pointer coordinates enter in pixels. Pane/divider routing divides
+    // by the cell size, while the bar keeps all 200 vertical positions.
+    c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(195, 100))));
+    const first = c.offsetV(page);
+    c.handle(Event(PointerEvent(action: PointerAction.drag,
+        button: PointerButton.left, pos: Point(195, 101))));
+    const second = c.offsetV(page);
+    assert(c.scrollOf(page).v.dragging);
+    assert(first != second,
+        "a one-pixel drag must not collapse to one of ten cell positions");
 }
 
 @("ui.dock.contentCellExcludesTheHeaderAndTheNeighbour")

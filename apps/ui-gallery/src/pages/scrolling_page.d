@@ -216,5 +216,4 @@ void step(ref GalleryState s, int dtMs)
     GalleryState s;
     handleKey(s, KeyEvent(Key.char_, 'N'));
     assert(s.demoView.v.offset > 0);
-    assert(s.contentView.v.offset == 0, "the shell's own pane did not move");
 }

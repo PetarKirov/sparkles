@@ -19,7 +19,7 @@ import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
 import sparkles.ui.components.dock : DockContainer;
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.state : CaptureState, DisclosureState, FocusState,
-    HoverState, PressState, ScrollState, Selection, SplitState, Timeline;
+    HoverState, PressState, Selection, SplitState, Timeline;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinThemes;
 import sparkles.ui.widget : Alignment, Visibility;
@@ -277,21 +277,9 @@ struct GalleryState
     HoverState hover;    ///
     PressState press;    ///
     CaptureState capture; ///
-    /**
-    The content pane's scrolling, whole.
-
-    A `ScrollView` rather than a `ScrollState`: the offset is the least of what
-    a scrollbar is, and an application that keeps only the offset has silently
-    given up the grab, the hover, the capture arbitration and the easing. The
-    animation starts at the idle width rather than the type's px-shaped default
-    of four.
-    */
-    ScrollView contentView = ScrollView(
-        vAnim: ScrollbarAnim(percent: 0), hAnim: ScrollbarAnim(percent: 0));
     /// The page's height at the last measurement, so a key handler — which has
     /// no builder — can clamp against the same number the thumb came from.
     int contentRows;
-    ScrollState navScroll;     ///
     Timeline toast;      /// the transient "theme: nord" notice
     string toastText;    /// ditto
     bool hasFrameClock;  /// ditto — see `toastConfigFor`
@@ -325,10 +313,6 @@ struct GalleryState
     viewport delta and mirrors the truth back (`syncTerminals`).
     */
     ScrollView termView = ScrollView(
-        vAnim: ScrollbarAnim(percent: 0), hAnim: ScrollbarAnim(percent: 0));
-    /// The inspector panel's own viewport — a dump outruns any surface, and
-    /// scrolling it must not move the page it describes.
-    ScrollView inspView = ScrollView(
         vAnim: ScrollbarAnim(percent: 0), hAnim: ScrollbarAnim(percent: 0));
     /// The panel body's height at the last measurement — `contentRows`'s twin,
     /// for the same reason: the clamp and the thumb must share one number.

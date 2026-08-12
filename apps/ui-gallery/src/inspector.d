@@ -45,7 +45,7 @@ enum uint hitInspTree = 100_000;
 /// natural width (the caught defect the spec's ledger records) — and read from
 /// the state, because the panel's divider is draggable.
 int inspectorInnerWidth(in GalleryState s) pure nothrow @nogc
-    => s.inspCols - 2 - gutterCells;
+    => s.inspCols - 1 - gutterCells;
 
 /// The showing page, rebuilt in its own builder and laid out at the width
 /// the content pane actually has — so the inspection describes the frame on
