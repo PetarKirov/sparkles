@@ -1,0 +1,35 @@
+# Grounding ledger — Memory safety (`@safe` / `scope` arc)
+
+> Not published. Do not link to it from the guide.
+
+Pin: `351dd6d91bfed604b473c4dedd4b5fdf262c3629`.
+
+| #   | Claim (short)                                                        | Type       | Versions claimed    | Source                                                                                                   | Status       |
+| --- | -------------------------------------------------------------------- | ---------- | ------------------- | -------------------------------------------------------------------------------------------------------- | ------------ |
+| 1   | Framing: “most consequential thread of 2.067–2.111”                  | exposition | —                   | —                                                                                                        | ◯            |
+| 2   | Repo baseline `-preview=dip1000`                                     | opinion    | —                   | Sparkles AGENTS / `dub.sdl`                                                                              | ◯            |
+| 3   | DIP25 `return ref` introduced                                        | fact       | [2.067]             | `2.067.0.dd` § `sealed-references`                                                                       | ✓            |
+| 4   | DIP25 deprecations by default                                        | fact       | [2.092]             | `2.092.0.dd` § `dip25`                                                                                   | ✓            |
+| 5   | DIP25 errors by default                                              | fact       | [2.103]             | `2.103.0.dd` § `dmd.dip25-default`                                                                       | ✓            |
+| 6   | DIP1000 developed 2.073–2.077 behind `-dip1000`                      | fact       | [2.073]–[2.077]     | Scope escape bugfixes in those releases; formal `-preview=dip1000` listed `2.085.0.dd` § `preview-flags` | ≈            |
+| 7   | Phobos compiled with dip1000                                         | fact       | [2.087]             | `2.087.0.dd` § `phobos-dip1000`                                                                          | ✓            |
+| 8   | DIP1000 deprecations by default                                      | fact       | [2.101]             | `2.101.0.dd` § `dmd.dip1000_deprecation_warnings`                                                        | ✓            |
+| 9   | `return` adjacent-after-`scope` means `return scope`                 | behavior   | [2.099]             | `2.099.0.dd` § `22541`                                                                                   | ✓            |
+| 10  | `inout` no longer implies `return`                                   | behavior   | [2.100]             | `2.100.0.dd` § `inout-return`                                                                            | ✓            |
+| 11  | Attr inference: templated aggregates                                 | fact       | [2.063]             | `2.063.dd` § `attribinference`                                                                           | ✓            |
+| 12  | Attr inference: all instantiated functions                           | fact       | [2.065]             | `2.065.0.dd` § `attribinference2`                                                                        | ✓            |
+| 13  | Attr inference: non-template `auto` return                           | fact       | [2.068]             | `2.068.0.dd` § `attribinference3`                                                                        | ✓            |
+| 14  | House rule annotate non-templates / infer templates                  | opinion    | —                   | Sparkles AGENTS                                                                                          | ◯            |
+| 15  | Failed-inference call-chain diagnostics for `@nogc`/`nothrow`/`pure` | fact       | [2.104]             | `2.104.0.dd` § `dmd.attr-inference-diag`                                                                 | ✓            |
+| 16  | Already done for `@safe` (guide: [2.101])                            | fact       | [2.101]             | Related scope-inference explain bugfixes; not a single “@safe chain” TOC bullet                          | ≈            |
+| 17  | `@system` variables DIP1035 preview                                  | fact       | [2.102]             | `2.102.0.dd` § `dmd.system-variables`                                                                    | ✓            |
+| 18  | `scope` array literals on stack                                      | fact       | [2.102]             | `2.102.0.dd` § `dmd.scope-array-on-stack`                                                                | ✓            |
+| 19  | `bool` must be 0 or 1 in `@safe`                                     | fact       | [2.109]→[2.110]     | Void/union since 2.109 (bugfixes); formal § `dmd.unsafe-boolean-values` in `2.110.0.dd`                  | ✓            |
+| 20  | `-preview=fixImmutableConv` intro                                    | fact       | [2.101]             | `2.101.0.dd` § `dmd.fix-immutable-conv`                                                                  | ✓            |
+| 21  | fixImmutableConv extended (const void[] → void[])                    | fact       | [2.110]             | `2.110.0.dd` § `dmd.copying-to-void-arrays`                                                              | ✓            |
+| 22  | `-preview=safer`                                                     | fact       | [2.111]             | `2.111.0.dd` § `dmd.safer`                                                                               | ✓            |
+| 23  | `@live`                                                              | fact       | [2.092]             | `2.092.0.dd` (@live ownership prose)                                                                     | ✓            |
+| 24  | Slicing static array is `@system`                                    | fact       | [2.074]→**[2.073]** | `2.073.0.dd` BUGZILLA 8838 “Slicing static arrays should be considered unsafe (@system)”; not 2.074      | ⚠ R2 → fixed |
+| 25  | `arr.ptr` banned in `@safe`                                          | fact       | [2.079]             | `2.079.0.dd` § `ptr-safe-end-of-deprecation`                                                             | ✓            |
+| 26  | `debug { }` may call `@system`                                       | fact       | [2.082]             | `2.082.0.dd` (debug + @system prose)                                                                     | ✓            |
+| 27  | `debug { }` may throw                                                | fact       | [2.094]             | `2.094.0.dd` § `debug-nothrow`                                                                           | ✓            |
