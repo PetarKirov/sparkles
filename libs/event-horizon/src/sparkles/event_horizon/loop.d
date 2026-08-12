@@ -384,6 +384,11 @@ if (isCompletionBackend!Backend)
     /// infrastructure, not work; SPEC §5.6).
     uint inFlight() const => _slab.liveCount - (_wakeArmed ? 1 : 0);
 
+    /// `true` after a successful `waker()` until `destroy`. An armed waker
+    /// is a valid wait point for parked fibers (SPEC §5.6) — `run()` must
+    /// not treat that as deadlock.
+    bool wakerArmed() const @safe pure nothrow @nogc => _wakeArmed;
+
     /// The loop's monotonic clock.
     MonoTime now() const => MonoTime.currTime;
 

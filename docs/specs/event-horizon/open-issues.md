@@ -60,9 +60,9 @@ it. Verified race-clean under ASan (70 runs) and TSan (see
 `libs/event-horizon/tsan-suppressions.txt` for why the residual reports are
 false positives).
 
-Still open here: idle parking polls a short in-ring timer, so the
-futex/`MSG_RING`-driven wakeup and targeted stealing this entry is really about
-remain unbuilt.
+Idle parking now uses the loop `waker()` (O29) — no more short `TIMEOUT`
+poll. Still open here: targeted `MSG_RING` stealing (a peer publishes work
+at a specific worker rather than "any idle").
 
 ## O3 — betterC reach of tier A
 
@@ -695,8 +695,8 @@ necessary.
 fd path. kqueue: `EVFILT_USER` + `NOTE_TRIGGER` (Darwin delivers these
 with a null `udata` — ingest matches on ident). uring: in-ring
 `FUTEX_WAIT`, `Waker.wake` does `FUTEX_WAKE` plus a word increment.
-Pool idle backoff still sleeps on a short `TIMEOUT`; rewriting that
-path against this seam is the leftover of O2.
+Pool idle parking now uses this seam (see O2). Targeted `MSG_RING`
+stealing remains open.
 
 **Where:** `pool.d` (idle backoff), `backend/{kqueue,uring}.d`,
 `backend/concept.d`. Refines O2 and O15.

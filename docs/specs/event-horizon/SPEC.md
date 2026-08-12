@@ -1266,15 +1266,16 @@ address (druntime's `CheckFiberMigration` exists for exactly this). Stealing
 therefore balances **task starts**, not running fibers — the Glommio/Monoio
 semantics, not Tokio/Go.
 
-**Idle parking and cross-worker signalling.** With `futexPark` on kernel
-≥ 6.7, an idle worker parks in an in-ring `FUTEX_WAIT` on its own futex word,
-so one wait observes CQE arrivals, steal wakes, and message-ring traffic
-alike; peers publish work by bumping the word plus `FUTEX_WAKE`. Below 6.7
-this degrades (per-feature, via caps — not an error) to plain ring-wait
-parking with `MSG_RING` nudges. Cross-worker wakes, cancels, and spawn
-injection travel as `MSG_RING` messages to the owner ring; `wake()` asserts
-owner-worker identity. The M9 benchmark decides the default handoff mix
-(futex-wake vs `MSG_RING` vs eventfd — [open-issues](./open-issues.md) O2).
+**Idle parking and cross-worker signalling.** An idle I/O worker parks on
+its loop `waker()` (O29: `EVFILT_USER` / in-ring `FUTEX_WAIT` / IOCP post),
+so one wait observes CQE arrivals, steal nudges, and shutdown. `enqueue`
+pokes the owner if that worker advertised idle, or one idle thief if the
+owner is busy. The CPU-bound arm has no loop and keeps a spin-then-sleep
+backoff. Targeted `MSG_RING` stealing remains O2.
+
+Cross-worker wakes, cancels, and spawn injection other than this idle
+nudge travel as `MSG_RING` messages to the owner ring; `wake()` asserts
+owner-worker identity.
 
 ## 12. The `Effect!T` veneer (tier C — non-normative sketch)
 
