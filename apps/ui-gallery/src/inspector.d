@@ -81,7 +81,13 @@ uint inspectorBody(ref Builder b, in GalleryState s)
     const open = tv.open;
     tv.rows = flatten(wi.data, (uint n) => open.isOpen(n));
     tv.chromeRows = 0;
+    tv.headerRows = 0;
+    tv.width = inspectorInnerWidth(s);
     tv.height = cast(int) tv.rows.length;
+    // The gallery shell owns this panel's scroll gutter; the nested tree is
+    // deliberately chromeless and must not reserve a second one.
+    tv.scrollGutterV = 0;
+    tv.scrollGutterH = 0;
 
     const selNode = tv.selectedNode;
     auto details = wi.details(selNode);

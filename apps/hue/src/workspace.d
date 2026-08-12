@@ -663,10 +663,11 @@ struct WorkspaceTui
                 viewer.overScrollbar(vx, p.pos.y));
             viewer.vm.hsb = viewer.vm.hsb.hoveredNow(
                 viewer.overHScrollbar(vx, p.pos.y));
+            const treeFrame = tree.scrollFrame();
             tree.sb = tree.sb.hoveredNow(
-                treeVisible && tree.overScrollbar(p.pos.x, p.pos.y));
+                treeVisible && treeFrame.vPointer(p).over);
             tree.hsb = tree.hsb.hoveredNow(
-                treeVisible && tree.overHScrollbar(p.pos.x, p.pos.y));
+                treeVisible && treeFrame.hPointer(p).over);
             const grabbed = dock.resizing
                 || paneGrabShape() != PointerShape.default_;
             const want = dock.shape(paneGrabShape(), paneHoverShape());

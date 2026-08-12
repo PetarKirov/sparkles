@@ -50,7 +50,7 @@ import sparkles.ui.components.inspector : actionAt, DetailRow, InspectorAction,
 import sparkles.ui.components.tree_view : treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep, TreeViewState;
 import sparkles.ui.components.tree_widget : flatten, TreeGlyphs;
-import sparkles.ui.state : DisclosureState;
+import sparkles.ui.state : CaptureState, DisclosureState;
 import sparkles.ui.widget : Builder;
 
 import ts_inspect : CstInspect, inspectCst;
@@ -70,6 +70,9 @@ struct InspectorPane
 {
     /// The shared interaction layer, keyed by the CST arena index.
     TreeViewState!uint tv;
+    /// Pointer ownership inside this pane; its scrollbars arbitrate as one.
+    CaptureState capture;
+    private enum size_t scrollCapBase = 1;
     /// The adapter's product for the current document (+ anonymous flag).
     CstInspect ci;
     bool showAnonymous;      ///
@@ -218,8 +221,9 @@ struct InspectorPane
 
     /// The pane's view: the generic component over the adapter, details for
     /// the selection, both toggles in the header. `chromeRows` is derived
-    /// from what the header + details actually take, so the tree window
-    /// fills exactly the rest of the pane the host arranged.
+    /// from what the header + details actually take, while `headerRows` names
+    /// the two rows above the body (header + rule), so paint and pointer
+    /// routing share the exact same origin.
     ///
     /// The re-clamp is bounds-only ($(REF TreeViewState.clampBounds,
     /// sparkles,ui,components,tree_view)): painting must not chase the
@@ -228,7 +232,11 @@ struct InspectorPane
     uint view(ref Builder b, int innerWidth) @system
     {
         auto details = ci.details(tv.selectedNode);
+        tv.width = innerWidth;
         tv.chromeRows = 2 + (details.length ? cast(int) details.length + 1 : 0);
+        tv.headerRows = 2;
+        tv.scrollGutterV = 2;
+        tv.scrollGutterH = 1;
         tv.clampBounds();
         const open = tv.open;
         auto data = ci.data;
@@ -257,12 +265,8 @@ struct InspectorPane
                     }
                     return true;
                 }
-                // The component's body window starts one row lower than the
-                // shared arm's assumption (header + rule): shift into its
-                // space.
-                const q = PointerEvent(action: p.action, button: p.button,
-                    pos: Point(p.pos.x, p.pos.y - 1));
-                if (tv.pointer(q) == TreeStep.activated)
+                if (tv.pointer(p, capture, scrollCapBase)
+                    == TreeStep.activated)
                     activateSel();
                 return true;
             },

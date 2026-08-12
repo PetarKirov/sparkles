@@ -45,12 +45,15 @@ rebuilding, the state only reports that it is needed.
 module sparkles.ui.components.tree_view;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.input : InputKey = Key, KeyEvent, PointerAction,
-    PointerButton, PointerEvent;
-import sparkles.ui.components.scroll_view : ScrollView;
+import sparkles.input : InputCapabilities, InputKey = Key, KeyEvent,
+    PointerAction, PointerButton, PointerEvent;
+import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
+    ScrollAreaAxis, ScrollLayout, ScrollView;
 import sparkles.ui.components.tree_widget : FlatTreeRow, TreeData, TreeGlyphs,
     treeView;
-import sparkles.ui.state : DisclosureState, LineEditState, ScrollbarState;
+import sparkles.ui.geometry : Rect;
+import sparkles.ui.state : CaptureState, DisclosureState, LineEditState,
+    ScrollbarState;
 import sparkles.ui.widget : Builder;
 
 @safe:
@@ -89,11 +92,19 @@ struct TreeViewState(Key)
     int contentCols;
     /// The live filter's editor (STM13); `filter.active` IS filter mode.
     LineEditState filter;
-    /// Pane geometry: outer size, and rows of pane chrome above/below the
-    /// tree (header + status bars; a chromeless pane sets 0).
+    /// Pane geometry: outer size, and rows of pane chrome outside the tree
+    /// (header + status/details; a chromeless pane sets 0).
     int width, height;
     /// ditto
     int chromeRows = 2;
+    /// Chrome rows above the tree body's track origin. The remaining
+    /// `chromeRows - headerRows` live below it.
+    int headerRows = 1;
+    /// Reserved scrollbar gutters and per-axis minimum thumb extents, in the
+    /// track units this state is being driven with (`SCV7`).
+    int scrollGutterV = 1, scrollGutterH = 1;
+    /// ditto
+    int scrollMinExtentV = 1, scrollMinExtentH = 1;
 
     /// The vertical/horizontal scrollbar machines, by their customary names.
     ref inout(ScrollbarState) sb() inout return pure nothrow @nogc
@@ -102,9 +113,37 @@ struct TreeViewState(Key)
     ref inout(ScrollbarState) hsb() inout return pure nothrow @nogc
         => scroll.h;
 
-    /// Rows available to the tree body once the chrome has its share.
+    /// Rows available to tree content once chrome and a live horizontal bar
+    /// have their share.
     int bodyRows() const pure nothrow @nogc
-        => height > chromeRows ? height - chromeRows : 1;
+        => scrollFrame().content.height;
+
+    /**
+    The tree's one paint-and-hit frame (`SCV7`). `headerRows` establishes the
+    body origin; the vertical gutter is stable, while the horizontal gutter is
+    present only when wide content needs its bar. The bottom-right corner is
+    therefore part of `vTrack`, never an overlapping hit zone.
+    */
+    ScrollLayout scrollFrame() const pure nothrow @nogc
+    {
+        const rawRows = height > chromeRows ? height - chromeRows : 1;
+        const above = headerRows < 0 ? 0
+            : headerRows > chromeRows ? chromeRows : headerRows;
+        const vg = scrollGutterV > 0 && width > 0
+            ? (scrollGutterV < width ? scrollGutterV : width) : 0;
+        const viewportCols = width > vg ? width - vg : 0;
+        const wide = contentCols > viewportCols && viewportCols > 0;
+        const hg = wide && scrollGutterH > 0 && rawRows > 1
+            ? (scrollGutterH < rawRows ? scrollGutterH : rawRows - 1) : 0;
+        const viewportRows = rawRows - hg;
+        return scrollLayout(ScrollArea(
+            rect: Rect(0, above, width, rawRows),
+            v: ScrollAreaAxis(content: rows.length, viewport: viewportRows,
+                gutter: vg, minExtent: scrollMinExtentV),
+            h: ScrollAreaAxis(content: contentCols, viewport: viewportCols,
+                gutter: hg, minExtent: scrollMinExtentH),
+        ));
+    }
 
     /// The selected row's node, or `uint.max` when there is none.
     uint selectedNode() const pure nothrow @nogc
@@ -113,17 +152,7 @@ struct TreeViewState(Key)
 
     /// Whether the horizontal bar is live (content wider than the pane).
     bool hOverflows() const pure nothrow @nogc
-        => contentCols > width - 1 && width > 2;
-
-    /// Whether pane-local `(x, y)` sits on the live vertical bar's column —
-    /// the host's pointer-shape hover check.
-    bool overScrollbar(int x, int y) const pure nothrow @nogc
-        => cast(long) rows.length > bodyRows && x == width - 1
-            && y >= 1 && y <= bodyRows;
-
-    /// ditto for the horizontal bar's row (above the status bar, when live).
-    bool overHScrollbar(int x, int y) const pure nothrow @nogc
-        => hOverflows() && y == height - 2 && x >= 0 && x < width - 1;
+        => scrollFrame().hLive;
 
     /// The pane is consuming typed text (a host must not steal keys).
     bool searching() const pure nothrow @nogc => filter.active;
@@ -164,6 +193,14 @@ struct TreeViewState(Key)
             top = maxTop;
         if (top < 0)
             top = 0;
+    }
+
+    /// Advances both scrollbar hover-expand animations from one target's
+    /// declared input capabilities.
+    void tick(in InputCapabilities caps, float dt) pure nothrow @nogc
+    {
+        scroll.easeV(caps, dt);
+        scroll.easeH(caps, dt);
     }
 
     /// Couples cursor and viewport: the cursor stays valid and in view, and
@@ -240,11 +277,10 @@ struct TreeViewState(Key)
     }
 
     /**
-    One pointer event, in pane-local cells. The precedence is load-bearing
+    One pointer event, in pane-local track units. The precedence is load-bearing
     and shared by every consumer:
 
     $(OL
-        $(LI a release lets go of both bars' grabs;)
         $(LI the horizontal bar's row, then the vertical bar's column — a
             press there is a grab, never a row click, and an existing grab
             owns the pointer wherever the drag strays;)
@@ -252,45 +288,31 @@ struct TreeViewState(Key)
             selected row activates it (the caller runs its meaning).)
     )
     */
-    TreeStep pointer(in PointerEvent p) pure nothrow @nogc
+    TreeStep pointer(in PointerEvent p, ref CaptureState capture,
+        size_t capBase) pure nothrow @nogc
     {
-        if (p.button != PointerButton.left)
+        const frame = scrollFrame();
+        const hGrabbed = hsb.dragging;
+        const vGrabbed = sb.dragging;
+        capture = scroll.stepH(capture, capBase, p, hsb.offset, frame);
+        capture = scroll.stepV(capture, capBase + 1, p, top, frame);
+        top = sb.offset;
+        scrollBy(0); // clamp top without moving the selection
+
+        const hp = frame.hPointer(p);
+        const vp = frame.vPointer(p);
+        const barConsumed = hGrabbed || vGrabbed || hsb.dragging || sb.dragging
+            || (p.action == PointerAction.press && p.button == PointerButton.left
+                && (hp.over || vp.over));
+        if (p.action == PointerAction.release && p.button == PointerButton.left)
+            capture = capture.released();
+        if (barConsumed)
             return TreeStep.handled;
-        if (p.action == PointerAction.release)
+
+        if (p.action == PointerAction.press && p.button == PointerButton.left
+            && capture.isFree && frame.content.contains(p.pos))
         {
-            sb = sb.released();
-            hsb = hsb.released();
-            return TreeStep.handled;
-        }
-        if ((p.action == PointerAction.press && hOverflows()
-                && p.pos.y == height - 2 && p.pos.x >= 0
-                && p.pos.x < width - 1)
-            || (p.action == PointerAction.drag && hsb.dragging))
-        {
-            hsb = p.action == PointerAction.press && !hsb.dragging
-                ? hsb.pressed(p.pos.x, contentCols, width - 1, width - 1)
-                : hsb.dragged(p.pos.x, contentCols, width - 1, width - 1);
-            return TreeStep.handled;
-        }
-        const overflows = cast(long) rows.length > bodyRows;
-        if ((p.action == PointerAction.press && overflows
-                && p.pos.x == width - 1 && p.pos.y >= 1
-                && p.pos.y <= bodyRows)
-            || (p.action == PointerAction.drag && sb.dragging))
-        {
-            sb = p.action == PointerAction.press && !sb.dragging
-                ? sb.scrolledTo(top).pressed(p.pos.y - 1,
-                    rows.length, bodyRows, bodyRows)
-                : sb.scrolledTo(top).dragged(p.pos.y - 1,
-                    rows.length, bodyRows, bodyRows);
-            top = sb.offset;
-            scrollBy(0); // clamp top without moving the selection
-            return TreeStep.handled;
-        }
-        if (p.action == PointerAction.press && p.pos.y >= 1
-            && p.pos.y <= bodyRows)
-        {
-            const i = top + (p.pos.y - 1);
+            const i = top + (p.pos.y - frame.content.y);
             if (i >= 0 && i < cast(long) rows.length)
             {
                 const already = i == sel;
@@ -300,6 +322,22 @@ struct TreeViewState(Key)
             }
         }
         return TreeStep.handled;
+    }
+
+    /**
+    Transitional single-component driver. It preserves the pre-container API
+    while delegating all geometry and both axes to the `ScrollView`; composed
+    hosts pass their shared `CaptureState` to the overload above.
+    */
+    TreeStep pointer(in PointerEvent p) pure nothrow @nogc
+    {
+        CaptureState capture;
+        enum size_t legacyCapBase = 1;
+        if (hsb.dragging)
+            capture = capture.capturedBy(legacyCapBase);
+        else if (sb.dragging)
+            capture = capture.capturedBy(legacyCapBase + 1);
+        return pointer(p, capture, legacyCapBase);
     }
 }
 
@@ -634,6 +672,54 @@ version (unittest)
     assert(s.sel == want);
     assert(s.pointer(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(5, 2))) == TreeStep.activated);
+}
+
+@("ui.tree_view.sharedFrameRoutesBothAxesAndCapture")
+@safe unittest
+{
+    auto data = sample();
+    TreeViewState!uint s;
+    s.width = 12;
+    s.height = 7;
+    s.chromeRows = 3; // two above, one below
+    s.headerRows = 2;
+    s.open = DisclosureState!uint.allOpen;
+    rebuild(s, data);
+    s.contentCols = 40;
+
+    const frame = s.scrollFrame();
+    assert(frame.content == Rect(0, 2, 11, 3));
+    assert(frame.vTrack == Rect(11, 2, 1, 4));
+    assert(frame.hTrack == Rect(0, 5, 11, 1));
+    assert(frame.vLive && frame.hLive);
+
+    // A foreign affordance blocks both bars even when the press lands on
+    // their painted geometry.
+    auto capture = CaptureState().capturedBy(99);
+    s.pointer(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left,
+        pos: Point(frame.vTrack.x, frame.vTrack.bottom - 1)), capture, 40);
+    assert(!s.sb.dragging && !s.hsb.dragging && s.top == 0);
+
+    // With the pointer free, H owns its non-corner remainder and takes the
+    // first id from the caller's range.
+    capture = CaptureState();
+    s.pointer(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left,
+        pos: Point(frame.hTrack.right - 1, frame.hTrack.y)), capture, 40);
+    assert(s.hsb.dragging && !s.sb.dragging && capture.ownedBy(40));
+    assert(s.sel == 0, "a horizontal bar press is not a row click");
+    s.pointer(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left,
+        pos: Point(frame.hTrack.right - 1, frame.hTrack.y)), capture, 40);
+    assert(capture.isFree && !s.hsb.dragging);
+
+    // V owns the corner and the next capture id.
+    s.pointer(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left,
+        pos: Point(frame.vTrack.right - 1, frame.vTrack.bottom - 1)),
+        capture, 40);
+    assert(s.sb.dragging && capture.ownedBy(41) && s.top > 0);
 }
 
 @("ui.tree_view.jumpMatchingIsCyclicAndClamped")

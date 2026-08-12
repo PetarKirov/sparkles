@@ -72,7 +72,8 @@ the selected node's details, as one fixed-width column.
 `innerWidth` is the content width the panel actually has — fixed rather than
 `grow`, because an inspector typically lives inside a scroll viewport, where
 `grow` collapses to natural width. The tree window is `state.bodyRows` tall
-(set `state.height`/`chromeRows` from the pane the host arranged).
+(set `state.width`/`height`, `chromeRows` and `headerRows` from the pane the
+host arranged).
 
 The details pane exists when the adapter has one: pass the selected node's
 `DetailRow`s (or an empty slice for none). Reading them $(I from) an adapter
@@ -98,28 +99,52 @@ uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
         textStyle: TextStyle(bold: true)));
     rows ~= rule(b, innerWidth);
 
-    // The tree, windowed by the shared component's viewport — with a live
-    // vertical bar in the last column when it overflows, exactly where the
-    // tree state's pointer arm expects a bar to be grabbable.
-    if (cast(long) state.rows.length > state.bodyRows)
+    // The tree body and both bars consume the SAME frame as pointer routing:
+    // content first, H below its remainder, V at the right owning the corner.
+    // The stable vertical gutter stays present when dormant; the semantic op
+    // simply paints nothing while the rows fit.
     {
         import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
 
+        const frame = state.scrollFrame();
         const treeCol = b.add(Widget(kind: WidgetKind.column,
             children: [viewSlice(b, data, state, isOpen, glyphs,
                 hitBase: hitBase)],
-            width: SizeSpec.fixed(innerWidth - 2), clipX: true));
-        const bar = scrollbar(b, state.sb.scrolledTo(state.top),
-            state.rows.length, state.bodyRows, state.bodyRows,
-            ScrollbarGlyphs('█', '░'),
-            expandPercent: cast(ubyte) state.scroll.vAnim.percent,
-            gutter: 2,
-            trackLit: state.sb.hovered || state.sb.dragging);
-        rows ~= b.add(Widget(kind: WidgetKind.row,
-            children: [treeCol, bar]));
+            width: SizeSpec.fixed(frame.content.width),
+            height: SizeSpec.fixed(frame.content.height),
+            clipX: true, clipY: true));
+
+        uint body = treeCol;
+        if (frame.hTrack.height > 0)
+        {
+            const hbar = scrollbar(b, state.hsb,
+                frame.hExtents.content, frame.hExtents.viewport,
+                frame.hExtents.track, ScrollbarGlyphs('━', '─'),
+                expandPercent: cast(ubyte) state.scroll.hAnim.percent,
+                gutter: frame.hTrack.height,
+                trackLit: state.hsb.hovered || state.hsb.dragging);
+            body = b.add(Widget(kind: WidgetKind.column,
+                children: [treeCol, hbar],
+                width: SizeSpec.fixed(frame.hTrack.width),
+                height: SizeSpec.fixed(frame.vTrack.height)));
+        }
+
+        if (frame.vTrack.width > 0)
+        {
+            const vbar = scrollbar(b, state.sb.scrolledTo(state.top),
+                frame.vExtents.content, frame.vExtents.viewport,
+                frame.vExtents.track, ScrollbarGlyphs('█', '░'),
+                expandPercent: cast(ubyte) state.scroll.vAnim.percent,
+                gutter: frame.vTrack.width,
+                trackLit: state.sb.hovered || state.sb.dragging);
+            rows ~= b.add(Widget(kind: WidgetKind.row,
+                children: [body, vbar],
+                width: SizeSpec.fixed(innerWidth),
+                height: SizeSpec.fixed(frame.vTrack.height)));
+        }
+        else
+            rows ~= body;
     }
-    else
-        rows ~= viewSlice(b, data, state, isOpen, glyphs, hitBase: hitBase);
 
     // The details pane, when the adapter supplied rows for the selection.
     if (details.length)
@@ -380,7 +405,7 @@ version (unittest)
     auto wi = inspectWidgets(subject, frames);
 
     TreeViewState!uint s;
-    s.width = 30;
+    s.width = 28;
     s.height = 12;
     s.chromeRows = 0;
     s.open = DisclosureState!uint.allOpen;
@@ -449,9 +474,11 @@ version (unittest)
     auto wi = inspectWidgets(subject, frames);
 
     TreeViewState!uint s;
-    s.width = 30;
-    s.height = 2; // bodyRows = 2 (chromeRows set below) < 3 rows: overflow
-    s.chromeRows = 0;
+    s.width = 28;
+    s.height = 4; // two header rows + bodyRows = 2 < 3 rows: overflow
+    s.chromeRows = 2;
+    s.headerRows = 2;
+    s.scrollGutterV = 2;
     s.open = DisclosureState!uint.allOpen;
     auto open = s.open;
     s.rows = flatten(wi.data, (uint n) => open.isOpen(n));
@@ -478,10 +505,27 @@ version (unittest)
     import sparkles.ui.display_list : buildDisplayList;
     import sparkles.ui.style : defaultTwoslashPalette;
 
-    const ops = buildDisplayList(wt, layout(wt), defaultTwoslashPalette(),
+    const laid = layout(wt);
+    const ops = buildDisplayList(wt, laid, defaultTwoslashPalette(),
         RgbColor(255, 255, 255), RgbColor(0, 0, 0));
     bool emitted;
     foreach (ref op; ops)
-        emitted |= op.kind == OpKind.scrollbar;
+        if (op.kind == OpKind.scrollbar)
+        {
+            emitted = true;
+            assert(op.rect == s.scrollFrame().vTrack,
+                "paint consumes the tree state's one resolved track");
+        }
     assert(emitted, "the inspector bar reaches the backend-specific painter");
+
+    import sparkles.input : Point, PointerAction, PointerButton, PointerEvent;
+    import sparkles.ui.state : CaptureState;
+
+    CaptureState capture;
+    const frame = s.scrollFrame();
+    s.pointer(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left,
+        pos: Point(frame.vTrack.x, frame.vTrack.bottom - 1)), capture, 40);
+    assert(s.top == 1 && s.sb.dragging,
+        "a press on the painted rect drives that same bar");
 }
