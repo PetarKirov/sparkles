@@ -38,6 +38,9 @@ int railIdlePx(int cellExtent) @safe pure nothrow @nogc
 int railExpandedPx(int cellExtent) @safe pure nothrow @nogc
     => cellExtent * 3 / 2;
 
+/// The pixel backend's minimum grabbable scrollbar-handle length.
+enum int scrollbarMinExtentPx = 24;
+
 /// Pure, window-free resolved pixel geometry for one semantic scrollbar op.
 struct ScrollbarRail
 {
@@ -52,7 +55,8 @@ op keeps content units and an expansion percentage; this backend alone chooses
 pixel rail thickness and the 24px minimum grabbable thumb.
 */
 ScrollbarRail scrollbarRail(in DrawOp op, int cellW, int cellH,
-    int originX = 0, int originY = 0, int minExtent = 24)
+    int originX = 0, int originY = 0,
+    int minExtent = scrollbarMinExtentPx)
     @safe pure nothrow @nogc
 {
     ScrollbarRail r;

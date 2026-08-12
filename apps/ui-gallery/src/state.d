@@ -349,6 +349,12 @@ struct GalleryState
     // ── what the host told us ───────────────────────────────────────────────
     Size surface = Size(80, 24); ///
     Backend backend;             ///
+    /// Pixel width/height of one GUI cell, or zero on cell/recording targets.
+    /// A cell-position pointer needs these to recognize every cell intersected
+    /// by a proportional pixel thumb.
+    int guiCellW;
+    /// ditto
+    int guiCellH;
     InputCapabilities caps;      ///
 
     /// The theme every slot on every page resolves against.

@@ -57,6 +57,7 @@ struct ScrollbarAnim
 struct ScrollPointer
 {
     bool over;     /// the pointer is inside the bar's hit zone
+    bool thumb;    /// the backend-confirmed painted handle contains the press
     bool pressed;  /// the primary button went down this frame
     bool released; /// the primary button came up this frame
     int trackPos;  /// pointer position along the track, in track units
@@ -344,8 +345,10 @@ pure nothrow @nogc:
             .hoveredNow((p.over && capture.available(capId)) || bar.dragging);
         if (p.over && p.pressed && capture.available(capId))
         {
-            bar = bar.pressed(p.trackPos, e.content, e.viewport, e.track,
-                e.minExtent);
+            bar = p.thumb ? bar.pressedThumb(p.trackPos, e.content,
+                e.viewport, e.track, e.minExtent)
+                : bar.pressed(p.trackPos, e.content, e.viewport, e.track,
+                    e.minExtent);
             capture = capture.capturedBy(capId);
         }
         else if (bar.dragging)

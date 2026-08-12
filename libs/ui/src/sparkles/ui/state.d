@@ -613,6 +613,30 @@ ThumbGeometry scrollbarThumb(long content, long viewport, long offset, int track
 }
 
 /**
+Whether one cell intersects the thumb painted at pixel resolution.
+
+A cell-position input backend discards the pointer's sub-cell remainder, while
+a pixel canvas may paint a proportional thumb across part of two cells. Both
+cells must count as the handle: otherwise clicking the visible half in the
+second cell is misclassified as a track press and jumps the document.
+*/
+bool scrollbarThumbIntersectsCell(long content, long viewport, long offset,
+    int trackCells, int at, int cellPixels, int minExtentPixels)
+    pure nothrow @nogc
+{
+    if (trackCells <= 0 || at < 0 || at >= trackCells || cellPixels <= 0)
+        return false;
+    const long pixelTrack_ = cast(long) trackCells * cellPixels;
+    const pixelTrack = pixelTrack_ > int.max ? int.max : cast(int) pixelTrack_;
+    const thumb = scrollbarThumb(content, viewport, offset, pixelTrack,
+        minExtentPixels);
+    const long cellStart = cast(long) at * cellPixels;
+    const long cellEnd = cellStart + cellPixels;
+    return cellStart < cast(long) thumb.start + thumb.extent
+        && cellEnd > thumb.start;
+}
+
+/**
 Scroll position as a value (`STM2`): the offset of the first visible content
 unit, advanced by transformations that clamp against `content`/`viewport` —
 the caller assigns the result and reads `offset` back into `Widget.childOffset`.
@@ -702,6 +726,19 @@ unittest
             }
 }
 
+@("ui.state.scrollbarThumb.pixelHandleCoversEveryIntersectedInputCell")
+@safe pure nothrow @nogc unittest
+{
+    // At offset 47 the one-cell formula starts at cell 2, while Raylib's
+    // 24px thumb starts at px 60 and ends at 84: it visibly occupies parts of
+    // both 24px input cells 2 and 3. Either cell is therefore the handle.
+    const logical = scrollbarThumb(100, 6, 47, 6);
+    assert(logical.start == 2 && logical.extent == 1);
+    assert(scrollbarThumbIntersectsCell(100, 6, 47, 6, 2, 24, 24));
+    assert(scrollbarThumbIntersectsCell(100, 6, 47, 6, 3, 24, 24));
+    assert(!scrollbarThumbIntersectsCell(100, 6, 47, 6, 4, 24, 24));
+}
+
 @("ui.state.scrollState.clampAndDrag")
 @safe pure nothrow @nogc
 unittest
@@ -767,6 +804,9 @@ struct ScrollbarState
     bool dragging; /// a live grab owns the pointer until `released`
     bool hovered;  /// the pointer sits on the bar (hover chrome / shape)
     private int grab; // pointer offset within the grabbed thumb
+    private int dragAt; // track position where this grab began
+    private int dragStart; // thumb leading edge established by the press
+    private long dragOffset; // exact offset at that position
 
 @safe pure nothrow @nogc:
 
@@ -775,10 +815,33 @@ struct ScrollbarState
     ScrollbarState pressed(int trackPos, long content, long viewport,
         int track, int minExtent = 1) const
     {
+        const thumb = scrollbarThumb(content, viewport, offset, track,
+            minExtent);
+        const onThumb = trackPos >= thumb.start
+            && trackPos < thumb.start + thumb.extent;
         int g;
         const next = ScrollState(offset)
             .pressedAt(trackPos, content, viewport, track, g, minExtent);
-        return ScrollbarState(axis, next.offset, true, hovered, g);
+        const span = track - thumb.extent;
+        int start = onThumb ? thumb.start : trackPos;
+        if (start < 0)
+            start = 0;
+        if (start > span)
+            start = span;
+        return ScrollbarState(axis: axis, offset: next.offset,
+            dragging: true, hovered: hovered, grab: g,
+            dragAt: trackPos, dragStart: start, dragOffset: next.offset);
+    }
+
+    /// Grabs a backend-confirmed painted-thumb hit without moving the offset.
+    ScrollbarState pressedThumb(int trackPos, long content, long viewport,
+        int track, int minExtent = 1) const
+    {
+        const thumb = scrollbarThumb(content, viewport, offset, track,
+            minExtent);
+        return ScrollbarState(axis: axis, offset: offset, dragging: true,
+            hovered: hovered, dragAt: trackPos, dragStart: thumb.start,
+            dragOffset: offset);
     }
 
     /// A drag while grabbed: the thumb follows relative to the grab point,
@@ -788,22 +851,50 @@ struct ScrollbarState
     {
         if (!dragging)
             return this;
-        const next = ScrollState(offset)
-            .draggedTo(trackPos, content, viewport, track, grab, minExtent);
-        return ScrollbarState(axis, next.offset, true, hovered, grab);
+        const limit = ScrollState.maxOffset(content, viewport);
+        const thumb = scrollbarThumb(content, viewport, dragOffset, track,
+            minExtent);
+        const span = track - thumb.extent;
+        if (span <= 0 || limit == 0)
+            return ScrollbarState(axis: axis, offset: dragOffset,
+                dragging: true,
+                hovered: hovered, grab: grab, dragAt: dragAt,
+                dragStart: dragStart, dragOffset: dragOffset);
+
+        // Anchor the drag to the exact offset captured on press. Re-running
+        // the lossy thumb→offset inverse at the same track coordinate can
+        // otherwise change the offset before the pointer has moved at all.
+        const delta = trackPos - dragAt;
+        long next = dragOffset;
+        if (delta != 0)
+        {
+            int start = dragStart + delta;
+            if (start < 0)
+                start = 0;
+            if (start > span)
+                start = span;
+            next = cast(long) start * limit / span;
+        }
+        return ScrollbarState(axis: axis, offset: next, dragging: true,
+            hovered: hovered, grab: grab, dragAt: dragAt,
+            dragStart: dragStart, dragOffset: dragOffset);
     }
 
     /// Released: the offset stays, the grab ends.
     ScrollbarState released() const
-        => ScrollbarState(axis, offset, false, hovered);
+        => ScrollbarState(axis: axis, offset: offset, hovered: hovered);
 
     /// Hover state from a hit test (the bar's own rect, backend-measured).
     ScrollbarState hoveredNow(bool over) const
-        => ScrollbarState(axis, offset, dragging, over, grab);
+        => ScrollbarState(axis: axis, offset: offset, dragging: dragging,
+            hovered: over, grab: grab, dragAt: dragAt, dragStart: dragStart,
+            dragOffset: dragOffset);
 
     /// An external scroll (wheel, keys, a reveal) moved the pane.
     ScrollbarState scrolledTo(long offset_) const
-        => ScrollbarState(axis, offset_, dragging, hovered, grab);
+        => ScrollbarState(axis: axis, offset: offset_, dragging: dragging,
+            hovered: hovered, grab: grab, dragAt: dragAt,
+            dragStart: dragStart, dragOffset: dragOffset);
 
     /// The thumb for a `track`-unit-long bar (STM2's one formula).
     ThumbGeometry thumb(long content, long viewport, int track,
@@ -867,6 +958,8 @@ unittest
     sb = sb.pressed(4, 40, 10, 10);
     assert(sb.dragging && sb.offset == 12);
     assert(sb.shape == PointerShape.nsResize);
+    sb = sb.dragged(4, 40, 10, 10);
+    assert(sb.offset == 12, "a stationary captured pointer cannot scroll");
     sb = sb.dragged(5, 40, 10, 10);
     assert(sb.offset == 15);
     sb = sb.released();

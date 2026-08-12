@@ -196,7 +196,7 @@ the terminal owns the real offset.
 bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     in Frame[] frames)
     => driveVertical(s.termView, s.capture, capTermBar, p,
-        rectOf(tree, frames, hitTermBar), termBarGeometry(s));
+        rectOf(tree, frames, hitTermBar), termBarGeometry(s), s.guiCellH);
 
 /// Eases the bar's hover-expand width. The shell owns the clock.
 void step(ref GalleryState s, int dtMs)

@@ -168,7 +168,7 @@ the page looks the rect up and the two cannot disagree.
 bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     in Frame[] frames)
     => driveVertical(s.demoView, s.capture, capDemoBar, p,
-        rectOf(tree, frames, hitDemoBar), geom);
+        rectOf(tree, frames, hitDemoBar), geom, s.guiCellH);
 
 /// Eases the specimen bar's width. Called by the shell, which owns the clock.
 void step(ref GalleryState s, int dtMs)
