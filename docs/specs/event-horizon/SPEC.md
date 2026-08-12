@@ -184,7 +184,7 @@ enum bool isCompletionBackend(B) = __traits(compiles, {
     BackendConfig cfg;
     IoResult!void o = lvalueOf!B.open(cfg);
     auto caps = lvalueOf!B.caps();
-    bool queued = lvalueOf!B.trySubmit(OpNop(), OpToken.init); // false = SQ full
+    bool queued = lvalueOf!B.trySubmit(OpNop(), OpToken.init); // false = full
     IoResult!uint f = lvalueOf!B.flush();
     IoResult!uint w = lvalueOf!B.submitAndWait(1u, cast(const(KernelTimespec)*) null);
     uint n = lvalueOf!B.reap((ref const RawCompletion c) {});  // non-blocking drain
@@ -203,6 +203,13 @@ enum bool canSubmitOp(B, Op) = __traits(compiles, {
 /// Thread-safe wake handle — the ONLY backend object callable off-thread.
 struct Waker { void wake() shared const nothrow @nogc; }
 ```
+
+Two contracts the expressions cannot state, both load-bearing (O27):
+`trySubmit` returns `false` for **backpressure only** — a submission resource
+is full, so `flush()` and retry. A kernel rejection arrives as an ordinary
+completion carrying `-errno` (a bad SQE on uring, an `EV_ERROR` change-list
+entry on kqueue). `flush()` returns **submission-side units flushed,
+backend-defined** — SQEs on uring, change entries on kqueue.
 
 Optional capabilities are separate traits; absence degrades, never breaks:
 
@@ -308,7 +315,10 @@ and calls `wait(want, args)` explicitly.)
 
 kqueue (M10) synthesizes completions: readiness arms a non-blocking syscall
 performed by the backend at reap time; regular-file ops go to a small worker
-pool. Worker-pool results are pushed onto a thread-safe completed queue owned
+pool. Registrations accumulate in a change list and ride down with the
+`kevent(2)` that waits, so a steady-state loop pays one syscall per turn
+rather than one per op (O27). A rejected change is an `EV_ERROR` completion,
+not a `trySubmit` `false`. Worker-pool results are pushed onto a thread-safe completed queue owned
 by the backend; `reap` drains that queue into the same `RawCompletion` stream
 as readiness-synthesized completions, so the loop never distinguishes the two
 paths, and a worker that finishes while the loop is blocked in
@@ -511,7 +521,11 @@ escapes the pointers, so `scope` must not be claimed); the buffer comes back
 via `Completion.buf`. Submission is non-blocking: on a full submission queue
 the loop performs one implicit `flush` retry, then returns
 `IoError(EAGAIN, kind, submit, "sq full")`. An exhausted slot slab returns
-`IoError(ENOBUFS, kind, submit, "op slab full")`.
+`IoError(ENOBUFS, kind, submit, "op slab full")`. `trySubmit`'s `false` is
+backpressure only — a rejected operation (bad fd, already-reaped pid) is
+queued and completes with `-errno`, the same shape a bad SQE already has on
+io_uring. The loop's retry path depends on this: a `false` it cannot clear
+by flushing is an infinite retry.
 
 ### 5.3 Timers
 

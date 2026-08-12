@@ -53,12 +53,27 @@ enum bool canSubmitOp(B, Op) = __traits(compiles, {
 Required backend primitives — checked as the exact expressions the loop
 calls (DbI guidelines §4.3). All must infer `nothrow @nogc` for the uring
 backend; the unittests static-assert that.
+
+Two contracts the expressions cannot state, both load-bearing:
+
+$(UL
+$(LI `trySubmit` returns `false` for $(B backpressure only) — a submission
+    resource is full, so `flush()` and retry. It never means the kernel
+    rejected the operation: a rejected submission arrives as an ordinary
+    completion carrying `-errno`, whether it was a bad SQE (uring) or a
+    rejected change-list entry (kqueue, O27). The loop's retry path depends on
+    this: a `false` it cannot clear by flushing is an infinite retry.)
+$(LI `flush()` returns $(B submission-side units flushed, backend-defined) —
+    SQEs on uring, change entries on kqueue, where one cancel adds an entry of
+    its own. Forcing a shared unit would make a backend count things it did not
+    submit, for a number no caller reads beyond "did progress happen".)
+)
 */
 enum bool isCompletionBackend(B) = __traits(compiles, {
     BackendConfig cfg;
     IoResult!void o = lvalueOf!B.open(cfg);
     auto caps = lvalueOf!B.caps();
-    bool queued = lvalueOf!B.trySubmit(OpNop(), OpToken.init, lvalueOf!OpSlot); // false = SQ full
+    bool queued = lvalueOf!B.trySubmit(OpNop(), OpToken.init, lvalueOf!OpSlot); // false = full
     IoResult!uint f = lvalueOf!B.flush();
     IoResult!uint w = lvalueOf!B.submitAndWait(1u, cast(const(KernelTimespec)*) null);
     uint n = lvalueOf!B.reap((ref const RawCompletion c) {});  // non-blocking drain

@@ -562,6 +562,8 @@ is exactly how the kqueue backend already handles regular files.
 
 ## O27 — kqueue pays a syscall per submit; batch the change list into the wait
 
+**Landed.** Option (B). Normative contracts are in SPEC §3.1 and §5.2.
+
 **Where:** `backend/kqueue.d` (`armFilter`, `submitAndWait`, `flush`, `cancel`);
 `backend/concept.d`; SPEC §3.1, §16.
 
@@ -615,6 +617,26 @@ Consequences, all decided with it:
 - **The synth short-circuit must flush first.** `submitAndWait` returns early on
   `if (_synthCount > 0)` _before_ reaching `kevent`, which would starve pending
   changes for as long as synthesized completions keep arriving.
+
+libkqueue 2.7.0 facts that are now part of the implementation, not open
+questions:
+
+- `kevent_copyin` writes `EV_ERROR` receipts into the eventlist, then
+  `kevent_wait` times out and the public `kevent` returns 0 — discarding
+  the count but leaving the entries in the buffer. `drainKevent` harvests
+  them. Darwin returns them as `n > 0` and never needs the harvest.
+- Harvesting after the wait would still sit on the caller's deadline
+  (observed: 2 s for one rejected `OpPollAdd`). Under
+  `EventHorizonLibkqueue` a zero-timeout prelude applies the change list
+  first so a rejection completes immediately. Darwin stays on the single
+  combined `kevent(2)`.
+- The errno on that completion is the backend's own: `EBADF` on Darwin,
+  `EFAULT` on libkqueue (`kn_create` substitutes `EFAULT` when the filter
+  leaves errno unset).
+- Never send more changes than eventlist slots. A rejected change that
+  cannot fit makes `kevent` return -1 instead of an `EV_ERROR` entry
+  (libkqueue's own comment: "always provide a kevent array with >=
+  entries as the changelist").
 
 ## O28 — `EV_DISPATCH` re-arming, and the recycled-slot hazard it opens
 

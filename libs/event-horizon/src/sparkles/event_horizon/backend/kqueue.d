@@ -16,6 +16,16 @@ while that slot still holds the op the registration was made for. See
 `slotToken`/`opFor`. `nop` is synthesized inline (no fd), the same way IOCP posts to its
 port.
 
+Registration is $(I batched) (O27): `trySubmit` appends a `kevent_t` to a
+pending change list and `submitAndWait` hands that list to the kernel as the
+same `kevent(2)` call that collects events, so a steady-state loop pays one
+syscall per turn rather than one per op — the call shape libdispatch's
+`_dispatch_kq_drain` is built on. Two consequences worth knowing at the call
+site: a `false` from `trySubmit` means only $(I a submission resource is full,
+call `flush()`), never that the kernel rejected the registration; and a
+rejected registration comes back as an ordinary completion carrying `-errno`
+(an `EV_ERROR` change-list entry), exactly as a bad SQE does on io_uring.
+
 Op coverage: `nop`, `recv`/`send`, `read`/`write`, `accept`, non-blocking
 `connect` (`EVFILT_WRITE` + `SO_ERROR`), and timers (`EVFILT_TIMER`). The full
 `EventLoop!KqueueBackend` integration — tier-A loop + tier-B fibers + the
@@ -175,6 +185,7 @@ struct KqueueBackend
         }
         _freeHead = 0;
         _pendCount = 0;
+        _changeCount = 0;
 
         _caps.backend = BackendId.kqueue;
         _caps.mode = LoopMode.cooperative;
@@ -186,6 +197,8 @@ struct KqueueBackend
     {
         import core.memory : pureFree;
 
+        // Pending changes name a kqueue that is about to stop existing.
+        _changeCount = 0;
         if (_ops.ptr !is null)
         {
             pureFree(_ops.ptr);
@@ -327,12 +340,13 @@ struct KqueueBackend
     the caller's `siginfo_t*` must stay alive until then, not merely until
     submission.
 
-    $(B The already-exited case is the interesting one), and the reason this
-    cannot be a bare registration: a child that died before the op was
-    submitted has no process left to watch, so `kevent` fails with `ESRCH`.
-    That is not an error — it is the common case for a reap issued after the
-    exit was noticed. The wait is performed inline and completed
-    synthetically, exactly as an immediately-successful `connect` is.
+    $(B The already-exited case is the interesting one): a child that died
+    before the op was submitted has no process left to watch, so the `EV_ADD`
+    is rejected with `ESRCH`. That is not an error — it is the common case for
+    a reap issued after the exit was noticed. Since O27 batched the change
+    list, the rejection is no longer visible here; it arrives as the
+    `EV_ERROR` entry `ingest` turns into this op's completion, and that is
+    where the inline reap now happens.
     */
     bool trySubmit(in OpWaitid o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
@@ -343,20 +357,7 @@ struct KqueueBackend
             OpKindLocal.waitid_, EVFILT_PROC, uint.max);
         op.idType = o.idType;
         op.waitOptions = o.options;
-
-        if (armFilter(op, EVFILT_PROC, cast(ushort)(EV_ADD | EV_ONESHOT), NOTE_EXIT))
-            return true;
-
-        // `armFilter` released the slot. ESRCH means "already gone" — reap it
-        // here; anything else is a real registration failure the caller must
-        // see rather than block on.
-        if (_synthCount >= _synth.length)
-            return false;
-        const res = errno == ESRCH
-            ? doWaitid(o.idType, cast(int) o.id, cast(void*) o.siginfo, o.options)
-            : -errno;
-        _synth[_synthCount++] = RawCompletion(token.raw, res, 0);
-        return true;
+        return armFilter(op, EVFILT_PROC, cast(ushort)(EV_ADD | EV_ONESHOT), NOTE_EXIT);
     }
 
     /// Foreign-fd readiness: the readiness event IS the completion — no
@@ -391,21 +392,80 @@ struct KqueueBackend
         return armTimer(op, ms < 0 ? 0 : ms);
     }
 
-    /// No changelist to flush separately — registration happens inline.
-    IoResult!uint flush() @safe nothrow @nogc => ioOk(0u);
+    /**
+    Hands the accumulated change list to the kernel without waiting, and
+    returns the number of change entries submitted.
+
+    "Change entries", not ops: one op is one entry today, but a cancel adds an
+    `EV_DELETE` of its own and O28's re-arm will add more, so the two counts
+    are not the same quantity. `concept.d` states the contract as
+    submission-side units flushed, backend-defined — no caller reads the number
+    beyond "did progress happen".
+
+    A zero timeout means this can still collect events that were already
+    queued; they are stashed for `reap` exactly as `submitAndWait`'s are. It
+    has to: the `EV_ERROR` entries reporting rejected changes come back through
+    the same event list.
+    */
+    IoResult!uint flush() @trusted nothrow @nogc
+    {
+        if (_changeCount == 0)
+            return ioOk(0u);
+        const before = _changeCount;
+        timespec zero;
+        if (drainKevent(&zero) < 0)
+            return ioErr!uint(errno, OpKind.none, IoErrorStage.submit,
+                "kevent (change flush) failed");
+        // Not `before`: `drainKevent` declines to run at all when there is no
+        // room left to stash completions, and reporting a flush that did not
+        // happen is how a caller ends up retrying a submit that cannot succeed.
+        return ioOk(before - _changeCount);
+    }
 
     /**
-    Waits for readiness (or `deadline`), performs the ready ops' syscalls, and
-    stashes their completions for `reap`. Synthesized (`nop`) completions are
-    delivered regardless.
+    Submits the pending change list and waits for readiness (or `deadline`) in
+    $(I one) `kevent(2)`, performs the ready ops' syscalls, and stashes their
+    completions for `reap`. Already-stashed completions are delivered without
+    waiting.
     */
     IoResult!uint submitAndWait(uint want, scope const KernelTimespec* deadline)
         @trusted nothrow @nogc
     {
-        if (_synthCount > 0)
-            return ioOk(_synthCount); // synthesized work is already ready
+        // Completions already in hand short-circuit the *wait* — but not the
+        // change list. Returning here without flushing would starve every
+        // pending registration for as long as synthesized work keeps arriving,
+        // and synthesized work arrives from `nop`, from an inline `connect`,
+        // and from every cancellation.
+        if (_synthCount > 0 || _readyCount > 0)
+        {
+            auto f = flush();
+            if (f.hasError)
+                return f;
+            return ioOk(_synthCount + _readyCount);
+        }
 
-        kevent_t[maxBatch] evs;
+        // libkqueue 2.7.0 writes EV_ERROR receipts in copyin, then waits, and
+        // a wait-timeout returns 0 — hiding those receipts from the return
+        // value. `drainKevent` harvests them from the buffer, but only after
+        // the wait returns, so a rejected change would sit on the caller's
+        // deadline (the 2 s stall the batched-submission example saw). Darwin
+        // returns the EV_ERROR as n > 0 without waiting; this prelude is the
+        // shim-only tax. A zero-timeout drain applies the change list and
+        // lets the harvest run; already-ready fds still complete in that
+        // same call (epoll reports them at timeout 0).
+        version (EventHorizonLibkqueue)
+        {
+            if (_changeCount > 0)
+            {
+                timespec zero;
+                if (drainKevent(&zero) < 0)
+                    return ioErr!uint(errno, OpKind.none, IoErrorStage.submit,
+                        "kevent failed");
+                if (_synthCount + _readyCount > 0)
+                    return ioOk(_synthCount + _readyCount);
+            }
+        }
+
         timespec ts;
         const(timespec)* tsp;
         if (deadline !is null)
@@ -413,25 +473,9 @@ struct KqueueBackend
             ts = timespec(deadline.tv_sec, deadline.tv_nsec);
             tsp = &ts;
         }
-        const n = kevent(_kq, null, 0, evs.ptr, maxBatch, tsp);
-        if (n < 0)
+        if (drainKevent(tsp) < 0)
             return ioErr!uint(errno, OpKind.none, IoErrorStage.submit, "kevent failed");
-
-        _readyCount = 0;
-        foreach (i; 0 .. n)
-        {
-            auto op = opFor(evs[i].udata);
-            if (op is null)
-                continue; // stale registration, or not one of ours
-            // A multishot poll's registration persists (EV_CLEAR): keep the
-            // op live and flag the completion non-final.
-            const retained = op.kind == OpKindLocal.poll_ && op.multishot;
-            _ready[_readyCount++] = RawCompletion(op.token, performOp(op, evs[i]),
-                retained ? rawFlagMore : 0);
-            if (!retained)
-                release(op);
-        }
-        return ioOk(cast(uint) _readyCount);
+        return ioOk(_synthCount + _readyCount);
     }
 
     /// Non-blocking drain: the synthesized completions plus the readiness ones.
@@ -466,10 +510,17 @@ struct KqueueBackend
     unblocking is the whole point — a fiber parked on a long sleep must unwind
     when a sibling fails (SPEC §8), and it is why this must not be a stub.
 
+    The delete goes through the same change list as the registration it
+    undoes, so their order is a property of one FIFO array rather than a rule
+    to remember: a submit-then-cancel before any wait would otherwise race its
+    own `EV_ADD` and leave a registration behind. Better still, when that
+    `EV_ADD` has not reached the kernel yet there is nothing to delete —
+    `dropPendingChange` removes it and no delete is appended at all.
+
     Returns `false` when the target is not live (already completed, or an
-    unknown token) or when the synth ring cannot take both completions — a
-    truthful `false`, because a cancel that reports success while doing
-    nothing fails silently at the call site.
+    unknown token) or when either submission resource is full — a truthful
+    `false`, because a cancel that reports success while doing nothing fails
+    silently at the call site.
     */
     bool trySubmitCancel(OpToken cancelSlot, OpToken target) @trusted nothrow @nogc
     {
@@ -481,19 +532,22 @@ struct KqueueBackend
         if (_synthCount + 2 > _synth.length)
             return false;
 
-        // Timer idents live in their own range (see `armTimer`); everything
-        // else is registered by fd.
-        const ident = op.kind == OpKindLocal.timer
-            ? cast(size_t)(_timerBase + (op - _ops.ptr))
-            : cast(size_t) op.fd;
-        kevent_t ev;
-        ev.ident = ident;
-        ev.filter = op.filter;
-        ev.flags = EV_DELETE;
-        // Best-effort: ENOENT simply means it already fired and is queued —
-        // the synthetic completion below is still the op's terminal one, so the
-        // slot is released exactly once either way.
-        cast(void) kevent(_kq, &ev, 1, null, 0, null);
+        // Before `release`, which bumps the generation and so changes the token.
+        if (!dropPendingChange(slotToken(op)))
+        {
+            // Timer idents live in their own range (see `armTimer`); everything
+            // else is registered by fd.
+            const ident = op.kind == OpKindLocal.timer
+                ? cast(size_t)(_timerBase + (op - _ops.ptr))
+                : cast(size_t) op.fd;
+            // A null `udata` on purpose: the delete may come back as an
+            // `EV_ERROR`/`ENOENT` entry when the knote already fired and is
+            // queued, and `ingest` must ignore that rather than mistake it for
+            // a rejected registration — the op's terminal completion is the
+            // synthetic `-ECANCELED` below, exactly once, either way.
+            if (!enqueueChange(ident, op.filter, EV_DELETE, 0, 0, null))
+                return false;
+        }
 
         _synth[_synthCount++] = RawCompletion(op.token, -ECANCELED, 0);
         release(op);
@@ -502,16 +556,160 @@ struct KqueueBackend
     }
 
 private:
+    /**
+    The one `kevent(2)` this backend makes: the accumulated change list goes
+    down, whatever is ready comes back, and the returned events are ingested.
+    Returns the raw `kevent` result (`< 0` = the call itself failed).
+
+    Bounded by the room left in `_ready`: the caller must reap before the
+    backend can take another full batch. Zero room is not starvation — there
+    are already `readyCap` completions to dispatch, and the loop reaps every
+    turn — but it does mean the change list waits one turn, so `flush`
+    truthfully reports zero submitted.
+    */
+    int drainKevent(scope const(timespec)* tsp) @trusted nothrow @nogc
+    {
+        const room = readyCap - _readyCount;
+        if (room == 0)
+            return 0;
+
+        // Never send more changes than event slots. A rejected change that
+        // cannot fit in the eventlist makes `kevent` return -1 (Darwin:
+        // `EBADF`; libkqueue: `EFAULT`) instead of an `EV_ERROR` entry, and
+        // the op would stay live forever. libkqueue's own comment is the
+        // same rule: "always provide a kevent array with >= entries as the
+        // changelist" (`src/common/kevent.c`, `kevent_copyin`).
+        const pending = _changeCount;
+        const nchanges = pending < room ? pending : room;
+        const nevents = room;
+
+        kevent_t[readyCap] evs = void;
+        // Zero the prefix we might harvest. libkqueue 2.7.0 `kevent_copyin`
+        // writes `EV_ERROR` receipts into the eventlist, then
+        // `kevent_wait` times out and the public `kevent` returns 0 —
+        // discarding the count but leaving the entries in the buffer. Darwin
+        // returns them as `n > 0` and never needs the harvest.
+        evs[0 .. nchanges] = kevent_t.init;
+
+        const n = kevent(_kq, nchanges ? _changes.ptr : null, cast(int) nchanges,
+            evs.ptr, cast(int) nevents, tsp);
+
+        // Consumed either way, including on failure: `kevent` applies the
+        // sent prefix *before* it waits. Re-sending a prefix the kernel
+        // already has would re-register rather than retry. The unsent tail
+        // stays, in order — the FIFO is the submit-then-cancel guarantee.
+        if (nchanges < pending)
+        {
+            foreach (i; 0 .. pending - nchanges)
+                _changes[i] = _changes[nchanges + i];
+        }
+        _changeCount = pending - nchanges;
+
+        int delivered = n;
+        if (n == 0 && nchanges > 0)
+        {
+            delivered = 0;
+            foreach (i; 0 .. nchanges)
+            {
+                if (!(evs[i].flags & EV_ERROR))
+                    break; // copyin writes receipts sequentially from slot 0
+                ++delivered;
+            }
+        }
+        if (delivered <= 0)
+            return n;
+        foreach (i; 0 .. delivered)
+            ingest(evs[i]);
+        return delivered;
+    }
+
+    /// Turns one delivered `kevent_t` into a stashed completion (or drops it).
+    void ingest(ref const kevent_t ev) @trusted nothrow @nogc
+    {
+        auto op = opFor(ev.udata);
+        if (op is null)
+            return; // a stale registration, a cancel's EV_DELETE receipt, or not ours
+
+        if (ev.flags & EV_ERROR)
+        {
+            // The kernel rejected a *change* entry: the registration never
+            // happened, so no event will ever arrive for it and this is the
+            // op's terminal completion. That is O27's contract repair — a bad
+            // registration fails as a completion, the way a bad SQE does on
+            // io_uring, instead of as a `false` the loop reads as backpressure
+            // and retries forever.
+            int res = -cast(int) ev.data;
+            // ESRCH on an `EVFILT_PROC` add is not a failure: the child is
+            // already gone, so there is nothing left to watch and the reap can
+            // be performed right here (see `trySubmit(OpWaitid)`).
+            if (op.kind == OpKindLocal.waitid_ && ev.data == ESRCH)
+                res = doWaitid(op.idType, op.fd, cast(void*) op.buf, op.waitOptions);
+            pushReady(RawCompletion(op.token, res, 0));
+            release(op);
+            return;
+        }
+
+        // A multishot poll's registration persists (EV_CLEAR): keep the op live
+        // and flag the completion non-final.
+        const retained = op.kind == OpKindLocal.poll_ && op.multishot;
+        pushReady(RawCompletion(op.token, performOp(op, ev), retained ? rawFlagMore : 0));
+        if (!retained)
+            release(op);
+    }
+
+    /// Stashes a completion for `reap`. `drainKevent` never asks the kernel for
+    /// more events than `_ready` can take, so the guard is a belt-and-braces
+    /// invariant check rather than a policy.
+    void pushReady(RawCompletion c) @safe nothrow @nogc
+    in (_readyCount < readyCap, "ready ring overflowed its reserved room")
+    {
+        if (_readyCount < readyCap)
+            _ready[_readyCount++] = c;
+    }
+
+    /// Appends one entry to the pending change list; `false` = the list is
+    /// full, which is what makes `trySubmit` return `false` (flush and retry).
+    bool enqueueChange(size_t ident, short filter, ushort flags, uint fflags,
+        ptrdiff_t data, void* udata) @safe nothrow @nogc
+    {
+        if (_changeCount >= maxChanges)
+            return false;
+        auto c = &_changes[_changeCount++];
+        c.ident = ident;
+        c.filter = filter;
+        c.flags = flags;
+        c.fflags = fflags;
+        c.data = data;
+        c.udata = udata;
+        return true;
+    }
+
+    /// Removes a not-yet-submitted change carrying `udata`, if any. Linear and
+    /// order-preserving: the list is small, cancellation is rare, and the FIFO
+    /// order is the guarantee the whole batching scheme rests on.
+    bool dropPendingChange(scope const(void)* udata) @trusted nothrow @nogc
+    {
+        foreach (i; 0 .. _changeCount)
+        {
+            if (_changes[i].udata !is udata)
+                continue;
+            foreach (j; i + 1 .. _changeCount)
+                _changes[j - 1] = _changes[j];
+            --_changeCount;
+            return true;
+        }
+        return false;
+    }
+
     /// Performs the actual syscall for a now-ready op; returns the completion
-    /// `res` (bytes / new fd / 0 / -errno).
+    /// `res` (bytes / new fd / 0 / -errno). Change-list rejections never reach
+    /// here — `ingest` completes those directly.
     int performOp(KqOp* op, ref const kevent_t ev) @trusted nothrow @nogc
     {
         import core.sys.posix.sys.socket : getsockopt, socklen_t, SO_ERROR, SOL_SOCKET,
             sockaddr;
         import core.sys.posix.unistd : read, write;
 
-        if (ev.flags & EV_ERROR)
-            return -cast(int) ev.data;
         final switch (op.kind)
         {
             case OpKindLocal.recv:
@@ -566,16 +764,10 @@ private:
         // at acquisition. `armFilter`/`armTimer` are the single point every
         // submit path converges on, after that assignment.
         op.live = true;
-        kevent_t change;
-        change.ident = cast(size_t) op.fd;
-        change.filter = filter;
-        change.flags = flags;
-        change.fflags = fflags;
-        change.udata = slotToken(op);
-        if (kevent(_kq, &change, 1, null, 0, null) < 0)
+        if (!enqueueChange(cast(size_t) op.fd, filter, flags, fflags, 0, slotToken(op)))
         {
             release(op);
-            return false;
+            return false; // change list full — the caller flushes and retries
         }
         ++_pendCount;
         return true;
@@ -584,13 +776,10 @@ private:
     bool armTimer(KqOp* op, long ms) @trusted nothrow @nogc
     {
         op.live = true; // see the note in `armFilter`
-        kevent_t change;
-        change.ident = cast(size_t) op.fd; // the unique timer ident
-        change.filter = EVFILT_TIMER;
-        change.flags = EV_ADD | EV_ONESHOT;
-        change.data = cast(ptrdiff_t) ms; // milliseconds (kqueue default unit)
-        change.udata = slotToken(op);
-        if (kevent(_kq, &change, 1, null, 0, null) < 0)
+        // `op.fd` holds the unique timer ident; `data` is the interval, in
+        // milliseconds (kqueue's default unit).
+        if (!enqueueChange(cast(size_t) op.fd, EVFILT_TIMER,
+                cast(ushort)(EV_ADD | EV_ONESHOT), 0, cast(ptrdiff_t) ms, slotToken(op)))
         {
             release(op);
             return false;
@@ -696,7 +885,14 @@ private:
             --_pendCount;
     }
 
-    enum size_t maxBatch = 128;
+    /// Events requested per `kevent(2)`.
+    enum uint maxBatch = 128;
+    /// Room reserved for stashed completions. Larger than `maxBatch` so a
+    /// `flush()` that happens to collect a full batch still leaves the
+    /// following wait somewhere to put its own.
+    enum uint readyCap = 2 * maxBatch;
+    /// Change entries that may accumulate before a flush is forced.
+    enum uint maxChanges = 256;
     // Timer idents live in a high range so they never collide with fds.
     enum uint _timerBase = 0x4000_0000;
     // This backend's one raw completion flag: a retained multishot poll's
@@ -713,7 +909,12 @@ private:
     uint _cap;
     uint _freeHead = uint.max;
     uint _pendCount;
-    RawCompletion[maxBatch] _ready;
+    /// Registrations and deletes awaiting the next `kevent(2)` (O27). One FIFO
+    /// array for both, so an add and the delete that undoes it cannot be
+    /// reordered against each other.
+    kevent_t[maxChanges] _changes;
+    uint _changeCount;
+    RawCompletion[readyCap] _ready;
     uint _readyCount;
     RawCompletion[maxBatch] _synth;
     uint _synthCount;
@@ -734,6 +935,261 @@ version (unittest)
     import sparkles.event_horizon.buffer : Buf;
     import sparkles.event_horizon.op : OpClass, OpToken;
     import sparkles.test_runner.skip : skipTest;
+
+    /// Opens a backend or skips — every test here needs a live kqueue, and on
+    /// Linux+libkqueue the shim can be present but refuse to create one.
+    private bool openOrSkip(ref KqueueBackend b, BackendConfig cfg = BackendConfig())
+    {
+        if (b.open(cfg).hasError)
+        {
+            skipTest("kqueue unavailable");
+            return false;
+        }
+        return true;
+    }
+
+    /// A bounded wait: never `null` as the deadline in a test, so a mechanism
+    /// that fails to deliver fails the run instead of hanging it.
+    private uint pumpOnce(ref KqueueBackend b,
+        scope void delegate(ref const RawCompletion) sink)
+    {
+        auto dl = KernelTimespec(0, 100_000_000); // 100 ms
+        cast(void) b.submitAndWait(1, &dl);
+        return b.reap(sink);
+    }
+}
+
+// ── O27: the change list ────────────────────────────────────────────────────
+
+/// The tax O27 removes: submission used to be a syscall of its own, so a
+/// steady-state loop paid register-then-wait per op. Registrations now
+/// accumulate and ride down with the wait that collects their events.
+@("kqueue.changeList.registrationsAccumulateUntilTheWaitCarriesThemDown")
+@system
+unittest
+{
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    enum n = 4;
+    foreach (i; 0 .. n)
+    {
+        OpSlot slot;
+        assert(b.trySubmit(OpTimeout(KernelTimespec(0, 1_000_000)),
+            OpToken.pack(cast(uint)(i + 1), 1, OpClass.user), slot),
+            "a timer that fits in both the slab and the change list queues");
+    }
+    assert(b._changeCount == n, "no registration has reached the kernel yet");
+
+    uint got;
+    foreach (spin; 0 .. 20)
+    {
+        got += pumpOnce(b, (ref const RawCompletion c) { assert(c.res == 0); });
+        if (got == n)
+            break;
+    }
+    assert(got == n, "every batched registration produced its completion");
+    assert(b._changeCount == 0, "and the list was consumed");
+}
+
+/// The contract repair that falls out of the same change: `trySubmit`'s
+/// `false` means "a submission resource is full", never "the kernel said no".
+/// A rejected registration is a completion — the shape a bad SQE already has
+/// on io_uring. Before O27 this returned `false`, which the loop reads as
+/// backpressure and retries forever.
+@("kqueue.changeList.aRejectedRegistrationArrivesAsACompletion")
+@system
+unittest
+{
+    import core.stdc.errno : EBADF, EFAULT;
+
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    // A descriptor number that never named anything. Closing a freshly
+    // allocated fd and then registering it is a race against the parallel
+    // runner: another test can recycle the number before `kevent` sees the
+    // change, and the add succeeds against the wrong file.
+    enum dead = 1_000_000;
+
+    ubyte[16] store;
+    auto buf = Buf.fromForeign(store[], null);
+    buf.length = buf.capacity;
+    OpSlot slot;
+    slot.pinned = () @trusted { import core.lifetime : move; return move(buf); }();
+
+    assert(b.trySubmit(OpRecv(dead), OpToken.pack(7, 1, OpClass.user), slot),
+        "submission-time truth is exactly what batching gives up: queued is all "
+        ~ "`trySubmit` can honestly report");
+
+    int res = 1;
+    uint n;
+    foreach (spin; 0 .. 10)
+    {
+        n += pumpOnce(b, (ref const RawCompletion c) { res = c.res; });
+        if (n > 0)
+            break;
+    }
+    assert(n == 1, "the rejection came back as a completion, not a submit failure");
+    // Darwin reports EBADF. libkqueue 2.7.0's kn_create substitutes EFAULT
+    // when the filter leaves errno unset (`src/common/kevent.c`) — and its
+    // public kevent then hides that EV_ERROR behind a wait-timeout of 0,
+    // which `drainKevent` harvests. Either way the completion carries the
+    // backend's own errno, not a submit-time `false`.
+    assert(res == -EBADF || res == -EFAULT, "carrying the backend's own errno");
+    assert(b._freeHead != uint.max, "and the op's slot went back to the freelist");
+}
+
+/// The other half of the contract: a full change list *is* backpressure, and
+/// `flush()` is what clears it — so the loop's flush-and-retry path works
+/// rather than turning into an unclearable spin.
+@("kqueue.changeList.exhaustionIsBackpressureThatFlushClears")
+@system
+unittest
+{
+    KqueueBackend b;
+    BackendConfig cfg;
+    cfg.cqEntries = KqueueBackend.maxChanges + 8; // more op slots than change entries
+    if (!openOrSkip(b, cfg))
+        return;
+    scope (exit)
+        b.close();
+
+    uint queued;
+    foreach (i; 0 .. KqueueBackend.maxChanges + 4)
+    {
+        OpSlot slot;
+        if (!b.trySubmit(OpTimeout(KernelTimespec(9, 0)),
+                OpToken.pack(cast(uint)(i + 1), 1, OpClass.user), slot))
+            break;
+        ++queued;
+    }
+    assert(queued == KqueueBackend.maxChanges, "the change list is what ran out");
+    assert(b._freeHead != uint.max, "a refused submit hands its slot back");
+
+    const f = b.flush();
+    assert(!f.hasError);
+    assert(f.value == KqueueBackend.maxChanges,
+        "flush reports change entries submitted — the backend-defined unit");
+
+    OpSlot slot;
+    assert(b.trySubmit(OpTimeout(KernelTimespec(9, 0)),
+        OpToken.pack(9999, 1, OpClass.user), slot), "and the retry now fits");
+}
+
+/// Cancellation goes through the same array, which is the point: an
+/// `EV_DELETE` issued immediately would have raced its target's own still-queued
+/// `EV_ADD` and left the registration armed. When the add has not gone down
+/// yet there is nothing to delete at all.
+@("kqueue.cancel.dropsAnAddTheKernelHasNotSeen")
+@system
+unittest
+{
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    const target = OpToken.pack(3, 1, OpClass.user);
+    OpSlot slot;
+    assert(b.trySubmit(OpTimeout(KernelTimespec(9, 0)), target, slot));
+    assert(b._changeCount == 1);
+
+    assert(b.trySubmitCancel(OpToken.pack(4, 1, OpClass.internal), target));
+    assert(b._changeCount == 0, "the add was withdrawn, and no delete replaced it");
+
+    int targetRes = 1, cancelRes = 1;
+    const n = b.reap((ref const RawCompletion c) {
+        if (c.userData == target.raw)
+            targetRes = c.res;
+        else
+            cancelRes = c.res;
+    });
+    assert(n == 2, "both completions the loop needs to unpark the fiber");
+    assert(targetRes == -ECANCELED && cancelRes == 0);
+}
+
+/// Once the add has reached the kernel, the delete is a change entry like any
+/// other — and carries a null `udata`, so the `ENOENT` it earns when the knote
+/// already fired is ignored instead of being mistaken for a rejected
+/// registration and completed twice.
+@("kqueue.cancel.queuesADeleteForAnAddTheKernelAlreadyHas")
+@system
+unittest
+{
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    const target = OpToken.pack(3, 1, OpClass.user);
+    OpSlot slot;
+    assert(b.trySubmit(OpTimeout(KernelTimespec(9, 0)), target, slot));
+    assert(!b.flush().hasError);
+    assert(b._changeCount == 0);
+
+    assert(b.trySubmitCancel(OpToken.pack(4, 1, OpClass.internal), target));
+    assert(b._changeCount == 1, "the delete is queued behind the add it undoes");
+    assert(b._changes[0].flags == EV_DELETE);
+    assert(b._changes[0].udata is null, "a delete must not decode to a live op");
+
+    assert(!b.flush().hasError);
+    const n = b.reap((ref const RawCompletion c) { cast(void) c; });
+    assert(n == 2, "exactly the cancel pair — the delete produced no completion");
+}
+
+/// A process that is already gone has nothing left to watch, so the
+/// `EVFILT_PROC` add is rejected with `ESRCH`. That is the common case for a
+/// reap issued after the exit was noticed, not a failure — and batching moved
+/// where it is noticed: the reap now happens when the rejection is ingested.
+///
+/// The discriminator is the errno. A pid that never existed cannot be reaped,
+/// so the inline `waitid` fails with `ECHILD`; seeing `-ESRCH` here instead
+/// would mean the rejection was passed straight through and the reap never
+/// attempted. (The successful reap is covered end to end by `live.d`'s spawn
+/// tests, which run a real child through `RingProc`.)
+@("kqueue.waitid.aRejectedProcAddStillAttemptsTheReap")
+@system
+unittest
+{
+    import core.stdc.errno : ECHILD;
+    import core.sys.posix.signal : siginfo_t;
+    import core.sys.posix.sys.wait : idtype_t, WEXITED;
+
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    // Above every pid this OS hands out, so it names nothing and never will.
+    enum uint ghost = 999_999;
+
+    siginfo_t si;
+    OpSlot slot;
+    assert(b.trySubmit(OpWaitid(cast(int) idtype_t.P_PID, ghost,
+        () @trusted { return &si; }(), WEXITED),
+        OpToken.pack(5, 1, OpClass.user), slot));
+
+    int res = 1;
+    uint n;
+    foreach (spin; 0 .. 10)
+    {
+        n += pumpOnce(b, (ref const RawCompletion c) { res = c.res; });
+        if (n > 0)
+            break;
+    }
+    assert(n == 1, "the rejection was delivered as this op's completion");
+    assert(res == -ECHILD,
+        "the reap was attempted; -ESRCH would mean the rejection passed through");
 }
 
 /// The M10 data-path gate (runs on macOS): register recv/send readiness on a
