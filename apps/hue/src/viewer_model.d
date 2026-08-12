@@ -778,7 +778,10 @@ struct ViewerModel
     /// Whether any part of the tinted extent is inside the viewport — the
     /// sync contract scroll-follows $(B only) when this is false (the
     /// off-screen-only rule that keeps the panel pleasant, not jumpy).
-    bool inspectExtentVisible(long visRows) const @safe pure nothrow @nogc
+    /// (`@system` by inheritance, like every member here: the fields under
+    /// the label are `@system` variables, and an explicit `@safe` reading one
+    /// is deprecated.)
+    bool inspectExtentVisible(long visRows) const pure nothrow @nogc
     {
         foreach (ref const r; inspectRects)
             if (r.y >= top && r.y < top + visRows)

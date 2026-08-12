@@ -439,6 +439,11 @@ struct GuiCapture
     string lantern;           /// `HUE_GUI_LANTERN`: seeded guide keys
     bool lanternSet;          /// ...present at all (empty shows the root listing)
     int forceHover = -1;      /// `HUE_GUI_HOVER`: force the Nth popup
+    /// `HUE_GUI_INSPECT`: open the tree-sitter panel before the first frame.
+    /// There is otherwise no way to photograph a pane a keystroke opens — and
+    /// the pane's arrangement (its bar beside the document's) is exactly the
+    /// kind of thing only a screenshot catches.
+    bool inspect;
 
     /// ditto
     static GuiCapture fromEnv(scope string delegate(string, string) @safe get) @safe
@@ -468,6 +473,7 @@ struct GuiCapture
         }
         c.preview = get("HUE_GUI_PREVIEW", "");
         c.search = get("HUE_GUI_SEARCH", "");
+        c.inspect = get("HUE_GUI_INSPECT", "").length != 0;
         const l = get("HUE_GUI_LANTERN", null);
         c.lanternSet = l !is null;
         c.lantern = l;
@@ -506,11 +512,12 @@ unittest
         "HUE_GUI_SEARCH": "needle",
         "HUE_GUI_LANTERN": "",
         "HUE_GUI_HOVER": "3",
+        "HUE_GUI_INSPECT": "1",
     ];
     c = GuiCapture.fromEnv(&get);
     assert(c.screenshotPath == "shot.png" && c.screenshotFrame == 40);
     assert(c.flash && c.initialTop == 120 && c.fontSizePx == 22);
-    assert(c.preview == "0" && c.search == "needle");
+    assert(c.preview == "0" && c.search == "needle" && c.inspect);
     assert(c.lanternSet && c.lantern.length == 0,
         "an empty lantern is SET (it shows the root listing)");
     assert(c.forceHover == 3);
