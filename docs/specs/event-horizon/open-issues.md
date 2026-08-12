@@ -640,6 +640,10 @@ questions:
 
 ## O28 — `EV_DISPATCH` re-arming, and the recycled-slot hazard it opens
 
+**Landed.** Option (A) + (2). The generation token shipped first in
+`60e8fb90`; this change switches flags to `EV_DISPATCH`, re-arms multishot
+with `EV_ENABLE`, and emits `EV_DELETE` on terminal release. SPEC §3.5.
+
 **Where:** `backend/kqueue.d` (`armFilter`, `release`, `submitAndWait`); depends
 on O27.
 
