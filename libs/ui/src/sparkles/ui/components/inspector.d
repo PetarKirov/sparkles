@@ -138,6 +138,31 @@ uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
     ));
 }
 
+/**
+The header's hit geometry (`INS3`): which action `x` lands on in the row
+$(LREF inspectorView) paints, or `-1` for none.
+
+The chips are laid out by the same rule in both directions — title, then
+`" [label]"` per action — so a host hit-tests its own header without
+retaining a frame or minting per-chip hit ids. `x` is pane-local, in cells,
+on the header row (row 0 of the component's column).
+*/
+int actionAt(string title, in InspectorAction[] actions, int x)
+{
+    import sparkles.ui.geometry : cellsOf;
+
+    int at = cast(int) cellsOf(title);
+    foreach (i, ref const a; actions)
+    {
+        const lo = at + 1; // the separating space belongs to nobody
+        const hi = lo + 2 + cast(int) cellsOf(a.label); // "[" label "]"
+        if (x >= lo && x < hi)
+            return cast(int) i;
+        at = hi;
+    }
+    return -1;
+}
+
 /// A fixed-width rule (`grow` collapses inside a scroll viewport).
 private uint rule(ref Builder b, int width)
     => b.add(Widget(
@@ -375,6 +400,22 @@ version (unittest)
             sawKind |= sp.text == "box";
         }
     assert(sawTitle && sawAction && sawKind);
+}
+
+@("ui.inspector.headerChipsAreHitTestable")
+@safe unittest
+{
+    // The same layout the view paints: "insp" then " [⌕]" then " [anon]".
+    const actions = [InspectorAction("⌕", false), InspectorAction("anon", true)];
+    assert(actionAt("insp", actions, 0) == -1, "the title is not a chip");
+    assert(actionAt("insp", actions, 4) == -1, "nor the separating space");
+    assert(actionAt("insp", actions, 5) == 0, "[");
+    assert(actionAt("insp", actions, 6) == 0, "the glyph, one cell wide");
+    assert(actionAt("insp", actions, 7) == 0, "]");
+    assert(actionAt("insp", actions, 8) == -1);
+    assert(actionAt("insp", actions, 9) == 1);
+    assert(actionAt("insp", actions, 14) == 1);
+    assert(actionAt("insp", actions, 15) == -1, "past the last chip");
 }
 
 @("ui.inspector.textTargetCarriesGuidesLabelsAndBadges")
