@@ -2320,79 +2320,89 @@ int runGui(GuiArgs guiArgs) @system
                     break;
                 }
             }
+        }
 
-            // ── not keyboard, so not the keymap's business ───────────────
+        // ── not keyboard, so not the keymap's business ───────────────
+        //
+        // …and therefore not the keyboard-FOCUS chain's business either.
+        // Both blocks below used to sit inside the `else` above, so a pane
+        // that took focus — clicking the inspector is enough — silenced the
+        // wheel and the mouse's back/forward buttons for the whole window.
+        // A pointer affordance nested in a focus branch is the bug; the
+        // container already routes the wheel under the pointer regardless of
+        // focus (`DCK7`), and this is where that answer becomes reachable.
+        // `DCK14` removes the nesting for good by making the bars container
+        // state rather than host code.
 
-            // The wheel scrolls the pane under the cursor (tree or document).
-            // High-resolution wheels deliver FRACTIONAL deltas; accumulate to
-            // whole rows so gentle scrolling is never truncated to nothing.
-            // The producer owns BOTH the notch→cells multiplication (INP12)
-            // and the fractional accumulation (M14's `wheelSteps`), so hue's
-            // own accumulator is gone: multiplying again here is precisely the
-            // double-scaling `frame_input`'s wheel test pins.
-            //
-            // The sign also moves with it. `GetMouseWheelMove` is POSITIVE
-            // scrolling up; `WheelEvent.dy` follows the web's `deltaY`, where
-            // up is NEGATIVE. So the two subtractions below become additions —
-            // the same direction, expressed against the other convention.
-            // Ctrl carves the zoom out of that (`FNT3`), the way every
-            // document viewer spells it: up grows, down shrinks. Reading
-            // `mods` — a LEVEL, "as of the last event that carried one" —
-            // is sound here only because hue's producer stamps ONE
-            // `currentMods()` snapshot on every event it emits in a frame
-            // (`RaylibEvents.poll`), so no later key or pointer event can
-            // clobber the wheel's modifiers with a different value.
-            //
-            // The SIGN drives the step, never the magnitude: `fonts.reload`
-            // rebuilds the whole glyph atlas, so a frame gets one ±2 step
-            // however many notches it accumulated — which is also exactly
-            // the step `Ctrl-=` and Android's pinch take.
-            if (inp.fin.wheelCells != 0 && inp.fin.mods.ctrl)
+        // The wheel scrolls the pane under the cursor (tree or document).
+        // High-resolution wheels deliver FRACTIONAL deltas; accumulate to
+        // whole rows so gentle scrolling is never truncated to nothing.
+        // The producer owns BOTH the notch→cells multiplication (INP12)
+        // and the fractional accumulation (M14's `wheelSteps`), so hue's
+        // own accumulator is gone: multiplying again here is precisely the
+        // double-scaling `frame_input`'s wheel test pins.
+        //
+        // The sign also moves with it. `GetMouseWheelMove` is POSITIVE
+        // scrolling up; `WheelEvent.dy` follows the web's `deltaY`, where
+        // up is NEGATIVE. So the two subtractions below become additions —
+        // the same direction, expressed against the other convention.
+        // Ctrl carves the zoom out of that (`FNT3`), the way every
+        // document viewer spells it: up grows, down shrinks. Reading
+        // `mods` — a LEVEL, "as of the last event that carried one" —
+        // is sound here only because hue's producer stamps ONE
+        // `currentMods()` snapshot on every event it emits in a frame
+        // (`RaylibEvents.poll`), so no later key or pointer event can
+        // clobber the wheel's modifiers with a different value.
+        //
+        // The SIGN drives the step, never the magnitude: `fonts.reload`
+        // rebuilds the whole glyph atlas, so a frame gets one ±2 step
+        // however many notches it accumulated — which is also exactly
+        // the step `Ctrl-=` and Android's pinch take.
+        if (inp.fin.wheelCells != 0 && inp.fin.mods.ctrl)
+        {
+            bumpFontSize(inp.fin.wheelCells > 0 ? -2 : 2);
+        }
+        else if (inp.fin.wheelCells != 0)
+        {
+            // WHERE a wheel goes is the container's (DCK7): the pane
+            // under the pointer, regardless of focus, with chrome
+            // falling back to the focused pane so a notch is never
+            // dropped. What scrolling MEANS is still the pane's.
+            const wheelRoute = pn.dock.handle(Event(WheelEvent(
+                dy: inp.fin.wheelCells,
+                pos: pointerFor(inp.fin, cellW, cellH).pos)));
+            if (wheelRoute.kind == RouteKind.pane)
             {
-                bumpFontSize(inp.fin.wheelCells > 0 ? -2 : 2);
-            }
-            else if (inp.fin.wheelCells != 0)
-            {
-                // WHERE a wheel goes is the container's (DCK7): the pane
-                // under the pointer, regardless of focus, with chrome
-                // falling back to the focused pane so a notch is never
-                // dropped. What scrolling MEANS is still the pane's.
-                const wheelRoute = pn.dock.handle(Event(WheelEvent(
-                    dy: inp.fin.wheelCells,
-                    pos: pointerFor(inp.fin, cellW, cellH).pos)));
-                if (wheelRoute.kind == RouteKind.pane)
+                if (wheelRoute.pane == treePane)
+                    pn.tree.scrollBy(inp.fin.wheelCells);
+                else if (wheelRoute.pane == inspPane)
+                    pn.insp.tv.scrollBy(inp.fin.wheelCells);
+                else
                 {
-                    if (wheelRoute.pane == treePane)
-                        pn.tree.scrollBy(inp.fin.wheelCells);
-                    else if (wheelRoute.pane == inspPane)
-                        pn.insp.tv.scrollBy(inp.fin.wheelCells);
-                    else
-                    {
-                        // A vertical notch over a TALL fence scrolls the
-                        // fence until its edge (`COD6`); only then does it
-                        // fall through to the document.
-                        const mpw = inp.fin.pos;
-                        const rowW = vm.top
-                            + cast(long)((mpw.y - docY0) / cellH);
-                        const fb = mpw.y >= docY0
-                            ? vm.fenceBodyAtRow(rowW) : size_t.max;
-                        if (fb == size_t.max
-                            || !vm.scrollFenceV(fb, inp.fin.wheelCells))
-                            vm.top += inp.fin.wheelCells;
-                    }
+                    // A vertical notch over a TALL fence scrolls the
+                    // fence until its edge (`COD6`); only then does it
+                    // fall through to the document.
+                    const mpw = inp.fin.pos;
+                    const rowW = vm.top
+                        + cast(long)((mpw.y - docY0) / cellH);
+                    const fb = mpw.y >= docY0
+                        ? vm.fenceBodyAtRow(rowW) : size_t.max;
+                    if (fb == size_t.max
+                        || !vm.scrollFenceV(fb, inp.fin.wheelCells))
+                        vm.top += inp.fin.wheelCells;
                 }
             }
+        }
 
-            // The mouse back/forward buttons walk the document set regardless
-            // of which pane has focus — the keyboard's `[`/`]` are focus
-            // dependent and go through the keymap above.
-            if (set !is null && !set.empty && loadDoc !is null)
-            {
-                const back = inp.fin.backPressed;
-                const fwd = inp.fin.forwardPressed;
-                if ((back || fwd) && set.move(back ? -1 : 1))
-                    loadSelected();
-            }
+        // The mouse back/forward buttons walk the document set regardless
+        // of which pane has focus — the keyboard's `[`/`]` are focus
+        // dependent and go through the keymap above.
+        if (set !is null && !set.empty && loadDoc !is null)
+        {
+            const back = inp.fin.backPressed;
+            const fwd = inp.fin.forwardPressed;
+            if ((back || fwd) && set.move(back ? -1 : 1))
+                loadSelected();
         }
 
         // The pane divider (STM8): hovering it shows the resize cursor; a
