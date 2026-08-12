@@ -75,7 +75,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 - **[Cutting a Release](./release.md)** — Single-monorepo versioning, pre-1.0 SemVer, annotated-tag changelog format, publishing to code.dlang.org
 - **[Integrating C Libraries (ImportC)](./importc-c-libraries.md)** — Adding a C dependency via ImportC + pkg-config + Nix + dub (`sourceLibrary` gotcha)
 - **[Benchmarking & Profiling](./benchmarking-and-profiling.md)** — Measuring the terminal renderer (`terminal-benchmark`, `perf`, `vtebench`/`termbench`); render- vs parse-bound; the measure→profile→fix loop
-- **[Modern D Language Features](./d-language-features/index.md)** — Changelog-sourced survey (2.060–2.112) of the language features new code should reach for (plus the few still-legal legacy forms to retire)
+- **[Modern D Language Features](./d-language-features/index.md)** — Changelog-sourced survey (2.060–2.112) of the language features new code should reach for (plus the few still-legal legacy forms to retire); agent grounding protocol lives in the unpublished `d-language-features/AGENTS.md` (VitePress-excluded)
 - **[Composable Memory Allocators](./allocators/index.md)** — Survey of `std.experimental.allocator`: the capability-by-presence protocol, `make`/`dispose`, building blocks, combinators, and composition patterns — with CI-verified runnable examples
 - **Idioms** — [Expected Error Handling](./idioms/expected/index.md), [Forcing Named Arguments](./idioms/forced-named-arguments/index.md)
 
