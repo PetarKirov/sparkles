@@ -108,10 +108,13 @@ uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
         const treeCol = b.add(Widget(kind: WidgetKind.column,
             children: [viewSlice(b, data, state, isOpen, glyphs,
                 hitBase: hitBase)],
-            width: SizeSpec.fixed(innerWidth - 1), clipX: true));
+            width: SizeSpec.fixed(innerWidth - 2), clipX: true));
         const bar = scrollbar(b, state.sb.scrolledTo(state.top),
             state.rows.length, state.bodyRows, state.bodyRows,
-            ScrollbarGlyphs('█', '░'));
+            ScrollbarGlyphs('█', '░'),
+            expandPercent: cast(ubyte) state.scroll.vAnim.percent,
+            gutter: 2,
+            trackLit: state.sb.hovered || state.sb.dragging);
         rows ~= b.add(Widget(kind: WidgetKind.row,
             children: [treeCol, bar]));
     }
@@ -459,9 +462,26 @@ version (unittest)
         "inspector", null, null, 28);
     auto wt = b.finish(col);
 
-    // The tree region is a row of [windowed tree, the vertical bar].
-    bool sawBarRow;
+    // The tree region is a row of [windowed tree, one semantic bar].
+    bool sawBarRow, sawBar;
     foreach (ref n; wt.nodes)
+    {
         sawBarRow |= n.kind == WidgetKind.row && n.children.length == 2;
-    assert(sawBarRow, "an overflowing tree grows its scrollbar");
+        sawBar |= n.kind == WidgetKind.scrollbar
+            && n.barContent == cast(long) s.rows.length
+            && n.barViewport == s.bodyRows;
+    }
+    assert(sawBarRow && sawBar, "an overflowing tree grows one semantic scrollbar");
+
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.canvas : OpKind;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.style : defaultTwoslashPalette;
+
+    const ops = buildDisplayList(wt, layout(wt), defaultTwoslashPalette(),
+        RgbColor(255, 255, 255), RgbColor(0, 0, 0));
+    bool emitted;
+    foreach (ref op; ops)
+        emitted |= op.kind == OpKind.scrollbar;
+    assert(emitted, "the inspector bar reaches the backend-specific painter");
 }

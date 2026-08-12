@@ -16,7 +16,7 @@ interleave in the arena.
 module sparkles.ui.widget;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.canvas : LineStyle;
+import sparkles.ui.canvas : LineStyle, RuleEdge;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.style : Decoration, Slot, TextStyle;
 import sparkles.ui.wrap : TextWrap;
@@ -49,6 +49,7 @@ enum WidgetKind : ubyte
     rich,   /// a text run of styled spans (`spans` payload; `WGT6`)
     glyph,  /// a single glyph
     line,   /// a stroked line (connector / underline)
+    scrollbar, /// a semantic scrollbar leaf (content units + expansion)
     row,    /// horizontal container (children left→right, `gap` between)
     column, /// vertical container (children top→bottom, `gap` between)
     stack,  /// overlay container (children share the origin; z = order)
@@ -93,6 +94,19 @@ struct Widget
     dchar glyph;             /// `glyph` payload
     LineStyle lineStyle;     /// `line` stroke style
     Point lineTo;            /// `line` end, relative to the node origin
+
+    // `scrollbar` payload. Its axis is encoded by `barEdge`: left/right/
+    // centerX are vertical, top/bottom/centerY horizontal.
+    long barContent;
+    long barViewport;
+    long barOffset;
+    RuleEdge barEdge = RuleEdge.right;
+    ubyte barExpandPercent;
+    bool barTrackLit;
+    dchar barTrackGlyph = '│';
+    dchar barThumbGlyph = '█';
+    RgbColor barTrackFgOverride;
+    bool hasBarTrackFgOverride;
 
     Decoration decoration;   /// box chrome (border/radius/shadow/arrow) — slot-referencing
     TextStyle textStyle;     /// text chrome (font role/size, bold/italic/underline)

@@ -10,8 +10,9 @@ interpreters are later siblings under `interp/`.
 module sparkles.ui.interp.immediate;
 
 import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind, RuleEdge,
-    ruleEndpoints;
+    ruleEndpoints, scrollbarCell, scrollbarCellCount;
 import sparkles.ui.geometry : Point;
+import sparkles.ui.style : Visual;
 
 /// Replays `ops` onto `canvas`, dispatching each $(REF DrawOp, sparkles,ui,canvas)
 /// to the matching primitive. Backend-neutral: the display list carries resolved
@@ -50,6 +51,15 @@ if (isCanvas!Canvas)
                     canvas.line(rf, rt, op.visual, LineStyle.solid);
                 }
                 break;
+            case scrollbar:
+                // A semantic sub-cell band is optional like `rule`. Pixel
+                // canvases resolve it continuously; cell canvases get the
+                // shared one/two-cell degradation with STM2's thumb.
+                static if (__traits(compiles, canvas.scrollbar(op)))
+                    canvas.scrollbar(op);
+                else
+                    paintScrollbarCells(canvas, op);
+                break;
             case pushClip:
                 // The clipping pair is an optional canvas capability: forward
                 // when present, else paint unclipped (the display list already
@@ -61,6 +71,65 @@ if (isCanvas!Canvas)
                 static if (__traits(compiles, canvas.popClip()))
                     canvas.popClip();
                 break;
+        }
+    }
+}
+
+private void paintScrollbarCells(Canvas)(ref Canvas canvas, in DrawOp op)
+{
+    bool vertical;
+    final switch (op.ruleEdge) with (RuleEdge)
+    {
+        case left: case right: case centerX:
+            vertical = true;
+            break;
+        case top: case bottom: case centerY:
+            vertical = false;
+            break;
+    }
+
+    const track = vertical ? op.rect.height : op.rect.width;
+    const available = vertical ? op.rect.width : op.rect.height;
+    int breadth = scrollbarCellCount(op.expandPercent);
+    if (breadth > available)
+        breadth = available;
+    if (track <= 0 || breadth <= 0)
+        return;
+
+    int cross;
+    final switch (op.ruleEdge) with (RuleEdge)
+    {
+        case left: case top:
+            cross = vertical ? op.rect.x : op.rect.y;
+            break;
+        case right:
+            cross = op.rect.x + op.rect.width - breadth;
+            break;
+        case bottom:
+            cross = op.rect.y + op.rect.height - breadth;
+            break;
+        case centerX:
+            cross = op.rect.x + (op.rect.width - breadth) / 2;
+            break;
+        case centerY:
+            cross = op.rect.y + (op.rect.height - breadth) / 2;
+            break;
+    }
+
+    foreach (at; 0 .. track)
+    {
+        const thumb = scrollbarCell(op.barContent, op.barViewport,
+            op.barOffset, track, at);
+        Visual visual = op.visual;
+        if (!thumb)
+            visual.fg = op.barTrackColor;
+        foreach (across; 0 .. breadth)
+        {
+            const p = vertical
+                ? Point(cross + across, op.rect.y + at)
+                : Point(op.rect.x + at, cross + across);
+            canvas.glyph(p, thumb ? op.barThumbGlyph : op.barTrackGlyph,
+                visual);
         }
     }
 }
@@ -115,6 +184,34 @@ if (isCanvas!Canvas)
     assert(rec.ops[0].kind == OpKind.line);
     assert(rec.ops[0].rect.origin == Point(2, 6));
     assert(rec.ops[0].to == Point(11, 6));
+}
+
+@("ui.interp.immediate.scrollbarFallsBackToCells")
+@safe unittest
+{
+    import sparkles.ui.canvas : DrawOp, OpKind, RecordingCanvas, RuleEdge;
+    import sparkles.ui.geometry : Rect;
+    import sparkles.ui.style : Visual;
+    import sparkles.base.term_color : RgbColor;
+
+    auto rec = RecordingCanvas();
+    DrawOp op = {
+        kind: OpKind.scrollbar,
+        rect: Rect(2, 3, 2, 4),
+        ruleEdge: RuleEdge.right,
+        barContent: 8,
+        barViewport: 4,
+        expandPercent: 50,
+        barTrackColor: RgbColor(1, 2, 3),
+        barTrackGlyph: '│',
+        barThumbGlyph: '█',
+        visual: Visual(fg: RgbColor(4, 5, 6)),
+    };
+    paint(rec, [op]);
+    assert(rec.ops.length == 8); // four rows × two expanded columns
+    assert(rec.ops[0].rect.origin == Point(2, 3));
+    assert(rec.ops[0].glyph == '█' && rec.ops[1].glyph == '█');
+    assert(rec.ops[4].glyph == '│' && rec.ops[4].visual.fg == RgbColor(1, 2, 3));
 }
 
 @("ui.canvas.ruleEndpointsByEdge")

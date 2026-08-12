@@ -25,7 +25,7 @@ import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.base.text.width : codepointWidth;
 
 import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind,
-    ruleEndpoints;
+    ruleEndpoints, RuleEdge, scrollbarCell, scrollbarCellCount;
 import sparkles.ui.geometry : Point, Rect, Size;
 // The glyph decisions are the cell grid's, not this adapter's: two cell
 // canvases each choosing their own box-drawing runs is how they came to
@@ -75,12 +75,74 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 ruleEndpoints(op.rect, op.ruleEdge, rf, rt);
                 canvas.line(rf, rt, op.visual, LineStyle.solid);
                 break;
+            case scrollbar:
+                paintScrollbarCells(canvas, op);
+                break;
             case pushClip:
                 canvas.pushClip(op.rect);
                 break;
             case popClip:
                 canvas.popClip();
                 break;
+        }
+    }
+}
+
+private void paintScrollbarCells(ref scope GridCanvas canvas, in DrawOp op)
+{
+    bool vertical;
+    final switch (op.ruleEdge) with (RuleEdge)
+    {
+        case left: case right: case centerX:
+            vertical = true;
+            break;
+        case top: case bottom: case centerY:
+            vertical = false;
+            break;
+    }
+
+    const track = vertical ? op.rect.height : op.rect.width;
+    const available = vertical ? op.rect.width : op.rect.height;
+    int breadth = scrollbarCellCount(op.expandPercent);
+    if (breadth > available)
+        breadth = available;
+    if (track <= 0 || breadth <= 0)
+        return;
+
+    int cross;
+    final switch (op.ruleEdge) with (RuleEdge)
+    {
+        case left: case top:
+            cross = vertical ? op.rect.x : op.rect.y;
+            break;
+        case right:
+            cross = op.rect.x + op.rect.width - breadth;
+            break;
+        case bottom:
+            cross = op.rect.y + op.rect.height - breadth;
+            break;
+        case centerX:
+            cross = op.rect.x + (op.rect.width - breadth) / 2;
+            break;
+        case centerY:
+            cross = op.rect.y + (op.rect.height - breadth) / 2;
+            break;
+    }
+
+    foreach (at; 0 .. track)
+    {
+        const thumb = scrollbarCell(op.barContent, op.barViewport,
+            op.barOffset, track, at);
+        Visual visual = op.visual;
+        if (!thumb)
+            visual.fg = op.barTrackColor;
+        foreach (across; 0 .. breadth)
+        {
+            const p = vertical
+                ? Point(cross + across, op.rect.y + at)
+                : Point(op.rect.x + at, cross + across);
+            canvas.glyph(p, thumb ? op.barThumbGlyph : op.barTrackGlyph,
+                visual);
         }
     }
 }
@@ -719,4 +781,55 @@ static assert(isCanvas!GridCanvas);
     // And the one-row thematic break, which is a rule rather than an underline.
     agreeOn(Visual(border: BoxBorder(width: Insets(0, 0, 1, 0),
         style: BorderStyle.solid, color: white)), 6, 1);
+}
+
+@("tui_canvas.scrollbarMatchesImmediateCellFallback")
+@safe unittest
+{
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+
+    const white = RgbColor(255, 255, 255);
+    const grey = RgbColor(80, 80, 80);
+    const black = RgbColor(0, 0, 0);
+
+    foreach (edge; [RuleEdge.right, RuleEdge.bottom])
+        foreach (expand; [0, 49, 50, 100])
+            foreach (trackLit; [false, true])
+            {
+                const vertical = edge == RuleEdge.right;
+                DrawOp op = {
+                    kind: OpKind.scrollbar,
+                    rect: vertical ? Rect(1, 1, 2, 8) : Rect(1, 1, 8, 2),
+                    ruleEdge: edge,
+                    barContent: 40,
+                    barViewport: 10,
+                    barOffset: 15,
+                    expandPercent: cast(ubyte) expand,
+                    barTrackLit: trackLit,
+                    barTrackColor: grey,
+                    barTrackGlyph: vertical ? '│' : '─',
+                    barThumbGlyph: vertical ? '█' : '━',
+                    visual: Visual(fg: white),
+                };
+
+                Grid grid;
+                grid.resize(10, 10);
+                paintGrid(grid, black, [op]);
+
+                auto reference = CellGrid(10, 10, white, black);
+                paint(reference, [op]);
+
+                foreach (ushort y; 0 .. 10)
+                    foreach (ushort x; 0 .. 10)
+                    {
+                        const theirs = reference.cells[y * 10 + x].glyph;
+                        char[4] buf;
+                        import std.utf : encode;
+
+                        const n = encode(buf, theirs);
+                        assert(grid[x, y].grapheme == buf[0 .. n],
+                            "the two semantic-scrollbar cell fallbacks disagree");
+                    }
+            }
 }

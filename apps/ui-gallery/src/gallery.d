@@ -546,8 +546,7 @@ struct Gallery
     private void paintTermChrome(H, TV)(ref H h, TV tv, in Rect pane)
     {
         import raylib : Color, DrawRectangle;
-        import sparkles.ui.state : scrollbarThumb;
-        import sparkles.ui_raylib : drawScrollbar, ScrollbarLayout;
+        import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge;
 
         auto c = h.canvas;
         const cw = c.fonts.cellW();
@@ -566,20 +565,18 @@ struct Gallery
 
         if (s.terms.sbTotal <= s.terms.sbLen || s.terms.sbLen <= 0)
             return;
-        const thumb = scrollbarThumb(s.terms.sbTotal, s.terms.sbLen,
-            s.termView.v.offset, pane.height);
-        const t = s.termView.vAnim.width - 1.0f;
-        const px = cast(int)(cw * (1.0f / 3 + t * (1.5f - 1.0f / 3)));
-        const w = px < 2 ? 2 : px;
-        const right = (pane.x + pane.width + gutterCells) * cw;
-        ScrollbarLayout l;
-        l.live = true;
-        l.track = Rect(right - w, pane.y * ch, w, pane.height * ch);
-        l.thumb = Rect(right - w, (pane.y + thumb.start) * ch, w,
-            thumb.extent * ch);
-        drawScrollbar(l, s.termView.v,
-            mixRgb(bg, theme().pageFg, 0.25f),
-            mixRgb(bg, theme().pageFg, 0.55f));
+        c.scrollbar(DrawOp(
+            kind: OpKind.scrollbar,
+            rect: Rect(pane.x + pane.width, pane.y, gutterCells, pane.height),
+            ruleEdge: RuleEdge.right,
+            barContent: cast(int) s.terms.sbTotal,
+            barViewport: cast(int) s.terms.sbLen,
+            barOffset: cast(int) s.termView.v.offset,
+            expandPercent: cast(ubyte) s.termView.vAnim.percent,
+            barTrackLit: s.termView.v.hovered || s.termView.v.dragging,
+            barTrackColor: mixRgb(bg, theme().pageFg, 0.25f),
+            visual: Visual(fg: mixRgb(bg, theme().pageFg, 0.55f)),
+        ));
     }
 
     // ── the Terminal page's frame glue ──────────────────────────────────────
@@ -1766,13 +1763,13 @@ version (unittest)
     auto tree = g.view(h);
     const bar = rectOf(tree, layout(tree, Constraints(maxW: 96, maxH: 24)),
         hitContentBar);
-    const narrow = g.s.contentView.vAnim.width;
+    const narrow = g.s.contentView.vAnim.percent;
 
     auto rec = drive(g, [Event(PointerEvent(action: PointerAction.move,
         pos: Point(bar.x, bar.y + 3)))], 96, 24);
 
     assert(g.s.contentView.v.hovered, "the bar knows the pointer is on it");
-    assert(g.s.contentView.vAnim.width > narrow, "and it is widening");
+    assert(g.s.contentView.vAnim.percent > narrow, "and it is widening");
     assert(rec.frames.length > 2,
         "the run kept framing until the ease finished");
     assert(!rec.frames[$ - 1].requested, "…and then stopped");

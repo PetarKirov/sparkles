@@ -14,6 +14,7 @@ module sparkles.ui.components.chrome;
 import std.conv : text;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.ui.canvas : RuleEdge;
 import sparkles.ui.geometry : cellsOf, Insets, Point, SizeSpec;
 import sparkles.ui.components.dock : DockDrag, dockHintRect;
 import sparkles.ui.state : PressState, ScrollAxis, ScrollbarState, ScrollState,
@@ -51,6 +52,55 @@ struct ScrollbarGlyphs
     dchar track = '│';
 }
 
+/// The widget-level semantic scrollbar payload. Content stays in content
+/// units; backends resolve the thumb in their own track units.
+struct ScrollbarSpec
+{
+    long content;
+    long viewport;
+    long offset;
+    ScrollAxis axis;
+    ubyte expandPercent;
+    int gutter = 1;
+    bool trackLit;
+    ScrollbarGlyphs glyphs;
+    RuleEdge edge;
+    bool hasEdge;
+    size_t hitId;
+    RgbColor trackFg;
+    bool hasTrackFg;
+    RgbColor thumbFg;
+    bool hasThumbFg;
+}
+
+/// Emits one semantic scrollbar leaf, reserving `gutter` across its axis.
+uint scrollbar(ref Builder b, in ScrollbarSpec spec, int track)
+{
+    const vertical = spec.axis == ScrollAxis.vertical;
+    const edge = spec.hasEdge ? spec.edge
+        : vertical ? RuleEdge.right : RuleEdge.bottom;
+    const gutter = spec.gutter > 0 ? spec.gutter : 1;
+    return b.add(Widget(
+        kind: WidgetKind.scrollbar,
+        slot: Slot.thumb,
+        width: SizeSpec.fixed(vertical ? gutter : (track > 0 ? track : 0)),
+        height: SizeSpec.fixed(vertical ? (track > 0 ? track : 0) : gutter),
+        barContent: spec.content,
+        barViewport: spec.viewport,
+        barOffset: spec.offset,
+        barEdge: edge,
+        barExpandPercent: spec.expandPercent,
+        barTrackLit: spec.trackLit,
+        barTrackGlyph: spec.glyphs.track,
+        barThumbGlyph: spec.glyphs.thumb,
+        barTrackFgOverride: spec.trackFg,
+        hasBarTrackFgOverride: spec.hasTrackFg,
+        fgOverride: spec.thumbFg,
+        hasFgOverride: spec.hasThumbFg,
+        hitId: spec.hitId,
+    ));
+}
+
 /**
 A vertical scrollbar (`WGT10`): a one-column track of `track` rows whose thumb
 comes from the $(B one) thumb formula ($(REF scrollbarThumb, sparkles,ui,state))
@@ -59,39 +109,34 @@ comes from the $(B one) thumb formula ($(REF scrollbarThumb, sparkles,ui,state))
 uint scrollbar(ref Builder b, long content, long viewport, long offset,
     int track, in ScrollbarGlyphs glyphs = ScrollbarGlyphs.init)
 {
-    const thumb = scrollbarThumb(content, viewport, offset, track);
-    auto cells = new uint[](track > 0 ? track : 0);
-    foreach (i; 0 .. cells.length)
-    {
-        const inThumb = i >= thumb.start && i < thumb.start + thumb.extent;
-        cells[i] = b.add(Widget(
-            kind: WidgetKind.glyph,
-            glyph: inThumb ? glyphs.thumb : glyphs.track,
-            slot: inThumb ? Slot.thumb : Slot.track,
-        ));
-    }
-    return b.container(WidgetKind.column, cells);
+    return scrollbar(b, ScrollbarSpec(
+        content: content,
+        viewport: viewport,
+        offset: offset,
+        axis: ScrollAxis.vertical,
+        glyphs: glyphs,
+    ), track);
 }
 
 /// ditto — driven by the whole machine (`STM9`/`IXB1`): the state carries
 /// the offset and the axis picks the container (a column for a vertical
 /// bar, a row for a horizontal one; pass row glyphs like `━`/`─` for it).
 uint scrollbar(ref Builder b, in ScrollbarState sb, long content,
-    long viewport, int track, in ScrollbarGlyphs glyphs = ScrollbarGlyphs.init)
+    long viewport, int track, in ScrollbarGlyphs glyphs = ScrollbarGlyphs.init,
+    ubyte expandPercent = 0, int gutter = 1, bool trackLit = false,
+    size_t hitId = 0)
 {
-    const thumb = sb.thumb(content, viewport, track);
-    auto cells = new uint[](track > 0 ? track : 0);
-    foreach (i; 0 .. cells.length)
-    {
-        const inThumb = i >= thumb.start && i < thumb.start + thumb.extent;
-        cells[i] = b.add(Widget(
-            kind: WidgetKind.glyph,
-            glyph: inThumb ? glyphs.thumb : glyphs.track,
-            slot: inThumb ? Slot.thumb : Slot.track,
-        ));
-    }
-    return b.container(sb.axis == ScrollAxis.vertical
-        ? WidgetKind.column : WidgetKind.row, cells);
+    return scrollbar(b, ScrollbarSpec(
+        content: content,
+        viewport: viewport,
+        offset: sb.offset,
+        axis: sb.axis,
+        expandPercent: expandPercent,
+        gutter: gutter,
+        trackLit: trackLit,
+        glyphs: glyphs,
+        hitId: hitId,
+    ), track);
 }
 
 /**
@@ -422,15 +467,10 @@ version (unittest)
 
     auto ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
         RgbColor(0, 0, 0), RgbColor(255, 255, 255));
-    assert(ops.length == 6);
-    size_t thumbCells;
-    foreach (op; ops)
-        if (op.glyph == '█')
-        {
-            thumbCells++;
-            assert(op.slot == Slot.thumb);
-        }
-    assert(thumbCells == 2);
+    assert(ops.length == 1);
+    assert(ops[0].kind == OpKind.scrollbar);
+    assert(ops[0].barContent == 30 && ops[0].barViewport == 10);
+    assert(ops[0].barOffset == 10 && ops[0].slot == Slot.thumb);
 }
 
 @("ui.components.chrome.actionBarHitsMatchPaint")

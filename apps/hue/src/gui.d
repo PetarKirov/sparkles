@@ -92,7 +92,7 @@ import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
     keyAt, keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
-    scrollbarThumb, selectionRects, sourceOffsetAt, wantedPointerShape,
+    selectionRects, sourceOffsetAt, wantedPointerShape,
     SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
 import sparkles.ui.widget : Builder, WidgetTree;
@@ -101,10 +101,8 @@ import sparkles.ui_app.backend : BackendPolicy;
 import sparkles.ui_app.gui_options : GuiOptions;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : run, RunOutcome;
-import sparkles.ui_raylib : drawScrollbar, namedKey, RaylibCanvas,
-    ScrollbarAnim, ScrollbarLayout,
-    traceLevelTag, traceLogTo, Window, WindowRequest,
-    scrollbarLayout, toRaylibCursor;
+import sparkles.ui_raylib : namedKey, RaylibCanvas, traceLevelTag, traceLogTo,
+    Window, WindowRequest, toRaylibCursor;
 
 // Live D types (`PRJ12`-`PRJ16`): the `twoslash-extract --serve` oracle beside
 // the window. A subprocess, never a link-time dependency (`PRJ13`).
@@ -990,6 +988,32 @@ int runGui(GuiArgs guiArgs) @system
         // move it. Chrome that can become a widget should (UIA2); this is the
         // seam for what has not yet.
         auto chrome = RaylibCanvas(fontsP, &buf, cellW, cellH);
+
+        static int barInt(long value) pure nothrow @nogc
+            => value < int.min ? int.min
+                : value > int.max ? int.max : cast(int) value;
+        static ubyte barPercent(float value) pure nothrow @nogc
+            => value <= 0 ? 0 : value >= 100 ? 100 : cast(ubyte) value;
+        void drawBar(in Rect rect, RuleEdge edge, long content, long viewport,
+            long offset, float expand, bool trackLit, in RgbColor trackColor,
+            in RgbColor thumbColor, dchar trackGlyph = '│',
+            dchar thumbGlyph = '█')
+        {
+            chrome.scrollbar(DrawOp(
+                kind: OpKind.scrollbar,
+                rect: rect,
+                ruleEdge: edge,
+                barContent: barInt(content),
+                barViewport: barInt(viewport),
+                barOffset: barInt(offset),
+                expandPercent: barPercent(expand),
+                barTrackLit: trackLit,
+                barTrackColor: trackColor,
+                barTrackGlyph: trackGlyph,
+                barThumbGlyph: thumbGlyph,
+                visual: Visual(fg: thumbColor),
+            ));
+        }
         // GL scissor state is global; a scissor leaked from any earlier path
         // (or left over across the buffer swap) would CLIP the clear below —
         // exactly the "documents ghost over each other" failure. Start every
@@ -1064,7 +1088,6 @@ int runGui(GuiArgs guiArgs) @system
                     (docRight - rightPad - gutterPx) / cellW, docRows));
                 scope (exit)
                     canvas.popClip();
-                const idleW = cellH / 3.0f < 2.0f ? 2.0f : cellH / 3.0f;
                 Rect ownerRect(size_t base)
                 {
                     foreach (ref const t; vm.targets)
@@ -1092,49 +1115,29 @@ int runGui(GuiArgs guiArgs) @system
                 const innerRect = hr.width - 4
                     - (vm.codeLineNumbers ? digits(ext.lines) + 1 : 0);
                 if (hr.width > 2 && innerRect > 0 && ext.widest > innerRect
-                    && hr.y >= vm.top && hr.y < vm.top + docRows
-                    && (vm.fenceSv.h.hovered || vm.fenceSv.h.dragging
-                        || vm.fenceSv.hAnim.width > idleW + 0.5f))
+                    && hr.y >= vm.top && hr.y < vm.top + docRows)
                 {
-                    const w = cast(int) vm.fenceSv.hAnim.width;
-                    // Cell-quantized like the vertical bar: the px thumb is
-                    // the glyph thumb's cells, so the two never drift.
-                    const g = scrollbarThumb(ext.widest, innerRect, cur.x,
-                        hr.width - 2);
-                    const bx = gutterPx + (hr.x + 1 - dhx) * cellW;
-                    const by = docY0 + cast(int)(hr.y - vm.top) * cellH
-                        + cellH / 2 - w / 2;
-                    const ScrollbarLayout l = {live: true,
-                        track: Rect(bx, by, (hr.width - 2) * cellW, w),
-                        thumb: Rect(bx + g.start * cellW, by,
-                            g.extent * cellW, w)};
-                    drawScrollbar(l, vm.fenceSv.h, vm.sbTrack, vm.sbThumb);
+                    const x = gutterPx / cellW + hr.x + 1 - dhx;
+                    const y = docY0 / cellH + cast(int)(hr.y - vm.top);
+                    drawBar(Rect(x, y, hr.width - 2, 1), RuleEdge.centerY,
+                        ext.widest, innerRect, cur.x,
+                        vm.fenceSv.hAnim.percent,
+                        vm.fenceSv.h.hovered || vm.fenceSv.h.dragging,
+                        vm.sbTrack, vm.sbThumb, '─', '━');
                 }
 
                 const vr = ownerRect(vm.fenceVBarHitBase);
                 if (vr.height > 0 && ext.lines > vr.height
                     && vr.y + vr.height > vm.top
-                    && vr.y < vm.top + docRows
-                    && (vm.fenceSv.v.hovered || vm.fenceSv.v.dragging
-                        || vm.fenceSv.vAnim.width > idleW + 0.5f))
+                    && vr.y < vm.top + docRows)
                 {
-                    const w = cast(int) vm.fenceSv.vAnim.width;
-                    // The px thumb is the GLYPH thumb's rows by
-                    // construction — the same formula over the same track
-                    // (the RENDERED viewport height, `vr.height`), cell-
-                    // quantized then scaled to px — so the overlay can
-                    // never drift from the border line's own thumb; only
-                    // the thickness animates.
-                    const g = scrollbarThumb(ext.lines, vr.height, cur.y,
-                        vr.height);
-                    const bx = gutterPx + (vr.x - dhx) * cellW
-                        + cellW / 2 - w / 2;
-                    const by = docY0 + cast(int)(vr.y - vm.top) * cellH;
-                    const ScrollbarLayout l = {live: true,
-                        track: Rect(bx, by, w, vr.height * cellH),
-                        thumb: Rect(bx, by + g.start * cellH, w,
-                            g.extent * cellH)};
-                    drawScrollbar(l, vm.fenceSv.v, vm.sbTrack, vm.sbThumb);
+                    const x = gutterPx / cellW + vr.x - dhx;
+                    const y = docY0 / cellH + cast(int)(vr.y - vm.top);
+                    drawBar(Rect(x, y, 1, vr.height), RuleEdge.centerX,
+                        ext.lines, vr.height, cur.y,
+                        vm.fenceSv.vAnim.percent,
+                        vm.fenceSv.v.hovered || vm.fenceSv.v.dragging,
+                        vm.sbTrack, vm.sbThumb);
                 }
             }
 
@@ -1421,10 +1424,11 @@ int runGui(GuiArgs guiArgs) @system
             // (hidden while the filter line owns the row).
             if (pn.tree.hOverflows() && !pn.tree.searching)
             {
-                const l = scrollbarLayout(pn.tree.hsb, pn.tree.scroll.hAnim,
-                    pn.tree.contentCols, treeCols - 1,
-                    Rect(0, 0, treeCols * cellW, screenH));
-                drawScrollbar(l, pn.tree.hsb, pn.tree.sbTrack, pn.tree.sbThumb);
+                drawBar(Rect(0, 0, treeCols, screenRows), RuleEdge.bottom,
+                    pn.tree.contentCols, treeCols - 1, pn.tree.hsb.offset,
+                    pn.tree.scroll.hAnim.percent,
+                    pn.tree.hsb.hovered || pn.tree.hsb.dragging,
+                    pn.tree.sbTrack, pn.tree.sbThumb, '─', '━');
             }
 
             // The live-filter input line, pinned to the pane's bottom row
@@ -1446,12 +1450,12 @@ int runGui(GuiArgs guiArgs) @system
             if (treeMaxTop > 0 && treePaneRows > 0)
             {
                 const trackTop = (treeTopRows + 1) * cellH;
-                const l = scrollbarLayout(
-                    pn.tree.scroll.v.scrolledTo(pn.tree.top),
-                    pn.tree.scroll.vAnim, pn.tree.rows.length, treePaneRows,
-                    Rect(0, trackTop, treeCols * cellW, screenH - trackTop));
-                drawScrollbar(l, pn.tree.scroll.v, pn.tree.sbTrack,
-                    pn.tree.sbThumb);
+                drawBar(Rect(0, treeTopRows + 1, treeCols,
+                        screenRows - treeTopRows - 1), RuleEdge.right,
+                    pn.tree.rows.length, treePaneRows, pn.tree.top,
+                    pn.tree.scroll.vAnim.percent,
+                    pn.tree.scroll.v.hovered || pn.tree.scroll.v.dragging,
+                    pn.tree.sbTrack, pn.tree.sbThumb);
             }
         }
 
@@ -1497,9 +1501,11 @@ int runGui(GuiArgs guiArgs) @system
         // stopping at the pane's right edge, not the window's.
         if (vm.hOverflows() && inp.mode == Mode.normal)
         {
-            const l = scrollbarLayout(vm.hsb, vm.scroll.hAnim, vm.contentCols,
-                vm.widthCols, Rect(gutterPx, 0, docRight - gutterPx, screenH));
-            drawScrollbar(l, vm.hsb, vm.sbTrack, vm.sbThumb);
+            drawBar(Rect(gutterPx / cellW, 0,
+                    (docRight - gutterPx) / cellW, screenRows), RuleEdge.bottom,
+                vm.contentCols, vm.widthCols, vm.hsb.offset,
+                vm.scroll.hAnim.percent, vm.hsb.hovered || vm.hsb.dragging,
+                vm.sbTrack, vm.sbThumb, '─', '━');
         }
 
         // Scrollbar: an animated-width thumb, plus a faint track while hovered
@@ -1508,10 +1514,11 @@ int runGui(GuiArgs guiArgs) @system
         {
             // Distinct link-tinted chrome (the gutter behind it is empty page
             // bg): a subtle full-height track on hover, a brighter thumb.
-            const l = scrollbarLayout(vm.scroll.v.scrolledTo(vm.top),
-                vm.scroll.vAnim, total, docRows,
-                Rect(0, docY0, docRight, screenH - docY0));
-            drawScrollbar(l, vm.scroll.v, vm.sbTrack, vm.sbThumb);
+            drawBar(Rect(0, docY0 / cellH, docRight / cellW,
+                    screenRows - docY0 / cellH), RuleEdge.right,
+                total, docRows, vm.top, vm.scroll.vAnim.percent,
+                vm.scroll.v.hovered || vm.scroll.v.dragging,
+                vm.sbTrack, vm.sbThumb);
         }
 
         // A header bar when navigating a document set (`GNV2`): the entry name and
@@ -2450,7 +2457,6 @@ int runGui(GuiArgs guiArgs) @system
             // the reserved scrollbar gutter (1.5 cells) so it fills the gutter
             // without overlapping text; the idle rail is a thin ~⅓ cell.
             const float hoverW = cast(float) scrollbarGutter();
-            const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
             const pos = inp.fin.pos;
             const docVLive = maxTop > 0;
             // The pane's right edge, not the window's: with the inspector
@@ -2466,7 +2472,7 @@ int runGui(GuiArgs guiArgs) @system
                     minExtent: 24));
             if (docVLive)
                 vm.top = vm.scroll.v.offset;
-            vm.scroll.easeV(hoverW, idleW, caps, window.frameSeconds);
+            vm.scroll.easeV(caps, window.frameSeconds);
         }
 
         // The tree pane's scrollbar — the SAME hover-expand behavior as the
@@ -2477,7 +2483,6 @@ int runGui(GuiArgs guiArgs) @system
         const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
         {
             const float hoverW = cast(float) scrollbarGutter();
-            const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
             const trackTop = (treeTopRows + 1) * cellH;
             const pos = inp.fin.pos;
             const edge = treeCols * cellW;
@@ -2496,8 +2501,7 @@ int runGui(GuiArgs guiArgs) @system
             {
                 pn.tree.top = pn.tree.scroll.v.offset;
                 pn.tree.scrollBy(0); // clamp
-                pn.tree.scroll.easeV(hoverW, idleW, caps,
-                    window.frameSeconds);
+                pn.tree.scroll.easeV(caps, window.frameSeconds);
             }
         }
 
@@ -2865,11 +2869,11 @@ int runGui(GuiArgs guiArgs) @system
                         trackPos: cast(int)((mp.x - gutterPx) / cellW)),
                     vm.hsb.offset,
                     ScrollExtents(vm.contentCols, vm.widthCols, vm.widthCols));
-                vm.scroll.easeH(hHoverH2, hIdleH2, caps, window.frameSeconds);
+                vm.scroll.easeH(caps, window.frameSeconds);
                 // The fence bars ease with the SAME constants and rate —
                 // their overlay (painted below) reads these widths.
-                vm.fenceSv.easeH(hHoverH2, hIdleH2, caps, window.frameSeconds);
-                vm.fenceSv.easeV(hHoverH2, hIdleH2, caps, window.frameSeconds);
+                vm.fenceSv.easeH(caps, window.frameSeconds);
+                vm.fenceSv.easeV(caps, window.frameSeconds);
             }
 
             // The tree's horizontal bar (IXB2): the pane's bottom edge,
@@ -2889,7 +2893,7 @@ int runGui(GuiArgs guiArgs) @system
                 pn.tree.hsb.offset,
                 ScrollExtents(pn.tree.contentCols, treeCols - 1,
                     treeCols - 1));
-            pn.tree.scroll.easeH(hHoverH, hIdleH, caps, window.frameSeconds);
+            pn.tree.scroll.easeH(caps, window.frameSeconds);
             // A row click is not a drag, so it takes no id — it only needs
             // the pointer to be unowned. Focus is NOT set here: the press
             // already moved it to the pane it landed in, which is the

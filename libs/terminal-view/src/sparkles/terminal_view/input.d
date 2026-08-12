@@ -269,7 +269,7 @@ struct SelectionState {
     }
 }
 
-struct ScrollbarState {
+struct OverlayScrollbar {
     bool isHovered = false;
     bool isDragging = false;
     float currentWidth = 4.0f;
@@ -312,7 +312,7 @@ void handle_mouse(
     int cell_width,
     int cell_height,
     ref SelectionState selState,
-    ref ScrollbarState sbState,
+    ref OverlayScrollbar sbState,
     ref HoverState hoverState)
 {
     ghostty_mouse_encoder_setopt_from_terminal(encoder, terminal);

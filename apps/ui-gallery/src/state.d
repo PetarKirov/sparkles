@@ -287,7 +287,7 @@ struct GalleryState
     of four.
     */
     ScrollView contentView = ScrollView(
-        vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
+        vAnim: ScrollbarAnim(percent: 0), hAnim: ScrollbarAnim(percent: 0));
     /// The page's height at the last measurement, so a key handler — which has
     /// no builder — can clamp against the same number the thumb came from.
     int contentRows;
@@ -313,11 +313,11 @@ struct GalleryState
     /// The Scrolling page's own viewport — a second `ScrollView` over a
     /// second document, so a reader can grab one without the other moving.
     ScrollView demoView = ScrollView(
-        vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
+        vAnim: ScrollbarAnim(percent: 0), hAnim: ScrollbarAnim(percent: 0));
     /// The Components page's live `scrollView` specimen — the third one, for
     /// the same reason the Scrolling page has its own.
     ScrollView chromeView = ScrollView(
-        vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
+        vAnim: ScrollbarAnim(percent: 0), hAnim: ScrollbarAnim(percent: 0));
     /**
     The terminal pane's scrollback bar. The machine gives the bar its grab,
     capture arbitration and hover-expand easing — but ghostty owns the real
@@ -325,11 +325,11 @@ struct GalleryState
     viewport delta and mirrors the truth back (`syncTerminals`).
     */
     ScrollView termView = ScrollView(
-        vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
+        vAnim: ScrollbarAnim(percent: 0), hAnim: ScrollbarAnim(percent: 0));
     /// The inspector panel's own viewport — a dump outruns any surface, and
     /// scrolling it must not move the page it describes.
     ScrollView inspView = ScrollView(
-        vAnim: ScrollbarAnim(1.0f), hAnim: ScrollbarAnim(1.0f));
+        vAnim: ScrollbarAnim(percent: 0), hAnim: ScrollbarAnim(percent: 0));
     /// The panel body's height at the last measurement — `contentRows`'s twin,
     /// for the same reason: the clamp and the thumb must share one number.
     int inspectorRows;

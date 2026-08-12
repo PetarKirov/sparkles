@@ -14,7 +14,23 @@ module sparkles.ui_raylib.events;
 
 import raylib;
 
+import sparkles.base.term_control : PointerShape;
 import sparkles.input;
+
+/// The raylib spelling of a toolkit pointer shape (`IXB4`).
+MouseCursor toRaylibCursor(PointerShape shape) @safe pure nothrow @nogc
+{
+    final switch (shape) with (PointerShape)
+    {
+        case default_: return MouseCursor.MOUSE_CURSOR_DEFAULT;
+        case text:     return MouseCursor.MOUSE_CURSOR_IBEAM;
+        case pointer:  return MouseCursor.MOUSE_CURSOR_POINTING_HAND;
+        case ewResize: return MouseCursor.MOUSE_CURSOR_RESIZE_EW;
+        case nsResize: return MouseCursor.MOUSE_CURSOR_RESIZE_NS;
+        case grab:     return MouseCursor.MOUSE_CURSOR_RESIZE_ALL;
+        case grabbing: return MouseCursor.MOUSE_CURSOR_RESIZE_ALL;
+    }
+}
 
 /**
 Per-frame input synthesis. Construct once; call $(LREF RaylibEvents.poll) each

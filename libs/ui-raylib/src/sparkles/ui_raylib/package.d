@@ -11,5 +11,4 @@ module sparkles.ui_raylib;
 
 public import sparkles.ui_raylib.raylib_canvas;
 public import sparkles.ui_raylib.events;
-public import sparkles.ui_raylib.scrollbar;
 public import sparkles.ui_raylib.window;
