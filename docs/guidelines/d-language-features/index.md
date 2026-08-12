@@ -9,7 +9,7 @@ compiler and catalogued in the official [deprecated features table][deprecate].
 It is a _language_ survey: Phobos changes are out of scope except where a
 library symbol is the designated replacement for a language construct.
 
-**Last reviewed:** June 10, 2026.
+**Last reviewed:** August 12, 2026.
 
 > [!NOTE]
 > This guide gives the one-line rule and the version; the _how_ lives in the
@@ -143,7 +143,7 @@ out (r; r >= lo && r <= hi)
   deprecated ([2.104]). Repo baseline; see the
   [dip1000/Phobos clash warning][agents-preview] before sprinkling `in` on
   parameters that flow into `std.regex` and friends.
-- **Defaulted parameters after template variadics** ([2.078]/[2.079]) —
+- **Defaulted parameters after template variadics** ([2.079]) —
   `string log(T...)(T args, string file = __FILE__, int line = __LINE__)` is
   the canonical pattern; since [2.108] the `__FILE__`-family defaults evaluate
   at the _call site_ even nested inside larger default expressions.
@@ -203,7 +203,7 @@ written to compile cleanly under the repo's `-preview=dip1000` baseline:
 - **`@live`** ([2.092]) — prototype ownership/borrowing checks for pointers;
   experimental, don't build APIs around it.
 - **Misc. `@safe` tightenings** — slicing a static array is `@system`
-  ([2.074]); `arr.ptr` is banned in `@safe` ([2.079], use `&arr[0]`);
+  ([2.073]); `arr.ptr` is banned in `@safe` ([2.079], use `&arr[0]`);
   `debug { }` blocks may call `@system` ([2.082]) and throwing ([2.094]) code,
   so printf-debugging never forces attribute removal.
 
@@ -531,6 +531,7 @@ constructs **still compile silently** but have a strictly better modern form.
 [2.070]: https://dlang.org/changelog/2.070.0.html
 [2.071]: https://dlang.org/changelog/2.071.0.html
 [2.072]: https://dlang.org/changelog/2.072.0.html
+[2.073]: https://dlang.org/changelog/2.073.0.html
 [2.074]: https://dlang.org/changelog/2.074.0.html
 [2.075]: https://dlang.org/changelog/2.075.0.html
 [2.076]: https://dlang.org/changelog/2.076.0.html

@@ -1,0 +1,35 @@
+# Grounding ledger — Functions, parameters & contracts
+
+> Not published. Do not link to it from the guide.
+
+Pin: `351dd6d91bfed604b473c4dedd4b5fdf262c3629`.
+
+| #   | Claim (short)                                                             | Type     | Versions claimed | Source                                                                                                        | Status       |
+| --- | ------------------------------------------------------------------------- | -------- | ---------------- | ------------------------------------------------------------------------------------------------------------- | ------------ |
+| 1   | Expression-based contracts DIP1009                                        | fact     | [2.081]          | `2.081.0.dd` § `expression-based_contract_syntax`                                                             | ✓            |
+| 2   | Body follows contracts directly; no `do`/`body` needed for expr contracts | behavior | [2.081]          | same section (expr contracts)                                                                                 | ≈            |
+| 3   | `do` replaced `body` (DIP1003)                                            | fact     | [2.075]          | Confirmed by `2.078.0.dd` § `body`: “DIP1003 was added in 2.075.0”                                            | ≈            |
+| 4   | `body` keyword deprecated                                                 | fact     | [2.097]          | `2.097.0.dd` § `body-deprecation`                                                                             | ✓            |
+| 5   | House rule Code Style contracts                                           | opinion  | —                | code-style.md                                                                                                 | ◯            |
+| 6   | Shortened function bodies DIP1043 preview                                 | fact     | [2.096]          | `2.096.0.dd` § `shortfunctions`                                                                               | ✓            |
+| 7   | Shortened methods default                                                 | fact     | [2.101]          | `2.101.0.dd` § `dmd.shortenedMethodsEnabled`                                                                  | ✓            |
+| 8   | Shortened methods in constructors                                         | fact     | [2.111]          | `2.111.0.dd` § `dmd.shortened-method-constructor`                                                             | ✓            |
+| 9   | Named arguments implemented                                               | fact     | [2.103]          | dmd git tag `v2.103.0` contains named-arg-resolve; no 2.103 changelog TOC                                     | ≈            |
+| 10  | Named arguments completed & documented                                    | fact     | [2.108]          | `2.108.0.dd` § `dmd.named-arguments` (DIP1030)                                                                | ✓            |
+| 11  | Named template arguments not implemented                                  | fact     | [2.108]          | same section explicitly                                                                                       | ✓            |
+| 12  | House rules named arguments                                               | opinion  | —                | code-style / forced-named idiom                                                                               | ◯            |
+| 13  | `in` = scope const under `-preview=in` intro                              | behavior | [2.092]          | `2.092.0.dd` § `preview-in`                                                                                   | ✓            |
+| 14  | `in` reworked (rvalue, optimal passing)                                   | behavior | [2.094]          | `2.094.0.dd` § `preview-in`                                                                                   | ✓            |
+| 15  | `in ref` deprecated                                                       | fact     | [2.104]          | `2.104.0.dd` § `dmd.in-ref`                                                                                   | ✓            |
+| 16  | Repo baseline `-preview=in`                                               | opinion  | —                | AGENTS                                                                                                        | ◯            |
+| 17  | Defaulted params after template variadics                                 | fact     | [2.078]/[2.079]  | **Only** `2.079.0.dd` § `default_after_variadic` — no 2.078 feature entry; fixed in `index.md` to **[2.079]** | ⚠ R1 → fixed |
+| 18  | `__FILE__`-family defaults evaluate at call site even nested              | fact     | [2.108]          | `2.108.0.dd` § `dmd.default-init`                                                                             | ✓            |
+| 19  | `__traits(parameters)`                                                    | fact     | [2.099]          | `2.099.0.dd` § `TraitsParameters`                                                                             | ✓            |
+| 20  | `throw` is an expression DIP1034                                          | fact     | [2.099]          | `2.099.0.dd` § `throw_expression`                                                                             | ✓            |
+| 21  | `while (auto x = …)`                                                      | fact     | [2.097]          | `2.097.0.dd` § `while-condition-assignment`                                                                   | ✓            |
+| 22  | Function literals return by `ref`                                         | fact     | [2.086]          | `2.086.0.dd` § `funcliteralsbyref`                                                                            | ✓            |
+| 23  | `alias` to function literal                                               | fact     | [2.070]          | `2.070.0.dd` § `alias-funclit`                                                                                | ✓            |
+| 24  | UDAs on parameters                                                        | fact     | [2.082]          | `2.082.0.dd` § `uda-function-parameters`                                                                      | ✓            |
+| 25  | Template-argument UDA forms (basic types after `@`)                       | fact     | [2.104]          | `2.104.0.dd` (UDA basic types prose)                                                                          | ✓            |
+| 26  | UDA symbols camelCase                                                     | opinion  | —                | Code Style                                                                                                    | ◯            |
+| 27  | `with (expression)` keeps temporary alive                                 | fact     | [2.067]          | `2.067.0.dd` § `with-statement-8269`                                                                          | ✓            |
