@@ -519,6 +519,9 @@ int runGui(GuiArgs guiArgs) @system
     {
         pn.inspVisible = !pn.inspVisible;
         pn.inspFocused = pn.inspVisible;
+        // Sync starts one-way — tree→document — and ends with the panel: the
+        // `⌕` chip is what arms the document→tree direction.
+        pn.insp.pick(false);
         if (pn.inspVisible)
         {
             pn.insp.rebuild(vm);
@@ -2774,9 +2777,11 @@ int runGui(GuiArgs guiArgs) @system
             return h;
         }
 
-        // INS6 source→tree: hovering the document drives the inspector's
-        // selection live, while the panel is open and its [sync] toggle on.
-        if (pn.inspVisible && pn.insp.syncHover && inp.mode == Mode.normal)
+        // INS6 source→tree, the picker half (DevTools' semantics): while the
+        // `⌕` chip is armed, hovering the document walks the tree live, and a
+        // left click DISARMS it — the reader has chosen that node, and every
+        // later mouse move must leave it alone.
+        if (pn.inspVisible && pn.insp.picking && inp.mode == Mode.normal)
         {
             const smp = inp.fin.pos;
             if (!(pn.treeVisible && smp.x < treeCols * cellW)
@@ -2790,6 +2795,8 @@ int runGui(GuiArgs guiArgs) @system
                     pn.insp.selectAt(cast(size_t) hit.lo);
                     syncInspectorExtent();
                 }
+                if (clickPressed())
+                    pn.insp.picking = false;
             }
         }
 

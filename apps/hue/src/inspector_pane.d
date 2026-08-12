@@ -11,7 +11,8 @@ $(LIST
     * `h`/`←` is the universal two-step Left, `l`/`→` expands, Enter toggles;
     * `a` toggles anonymous nodes — a $(B rebuild), with the cursor preserved
         on the nearest named node (the reference's own trick);
-    * `s` toggles hover sync (the header shows both toggles' state);
+    * `s` toggles the picker (the header's `⌕` chip; both chips are also
+        clickable);
     * a click selects, a second click on the selected row toggles it.
 )
 
@@ -21,6 +22,21 @@ extent is selected" ($(LREF InspectorPane.selectedExtent)); the hosts feed
 pointer-hover offsets in and paint the extent tint + off-screen-only
 scroll-follow through $(REF ViewerModel.setInspectExtent, viewer_model).
 
+$(H3 The sync model is Chrome DevTools', not a permanent two-way binding)
+
+Opening the panel starts $(B one-way): a selection here highlights its extent
+in the document, and hovering the document changes nothing. The
+document→tree direction is the $(B picker) — DevTools' "inspect element"
+button, here the header's `⌕` chip ($(LREF InspectorPane.picking)) — and it
+is $(I modal on purpose): while it is armed, hovering the document walks the
+tree live, and a left click in the document $(B disarms) it, pinning the node
+the reader just chose. Closing the panel ends all of it.
+
+A permanent bidirectional binding cannot express "I have chosen this node":
+every subsequent mouse move over the document would move the selection off
+it. That is why the picker is a mode with an explicit end, and why the click
+that ends it is the same click a reader would make anyway.
+
 Keys are handled pane-locally for now (like the explorer before `KEY1`); a
 `Scope_.inspector` in the shared table — and with it the lantern guide —
 lands when the pane's set stabilizes.
@@ -28,8 +44,8 @@ lands when the pane's set stabilizes.
 module inspector_pane;
 
 import sparkles.input : Event, EndOfInput, InputKey = Key, KeyEvent, match,
-    Point, PointerEvent;
-import sparkles.ui.components.inspector : DetailRow, InspectorAction,
+    Point, PointerAction, PointerButton, PointerEvent, WheelEvent;
+import sparkles.ui.components.inspector : actionAt, DetailRow, InspectorAction,
     inspectorView;
 import sparkles.ui.components.tree_view : treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep, TreeViewState;
@@ -45,6 +61,10 @@ import viewer_model : ViewerModel;
 /// The pane's hit-id base (its rows live in the hosts' one id space).
 enum uint hitInspectorTree = 200_000;
 
+/// The picker chip's glyph — Uiua's `⌕ find`, so the GUI's default
+/// codepoint map already routes it to a face that has it.
+enum string pickerGlyph = "⌕";
+
 /// ditto
 struct InspectorPane
 {
@@ -53,11 +73,24 @@ struct InspectorPane
     /// The adapter's product for the current document (+ anonymous flag).
     CstInspect ci;
     bool showAnonymous;      ///
-    bool syncHover = true;   /// the header's `[sync]` toggle
+    /**
+    Whether the picker is armed: while it is, hovering the document walks the
+    tree, and the next left click in the document disarms it (the reader has
+    chosen). Off on open — the panel starts one-way, tree→document.
+    */
+    bool picking;
     bool focused;            ///
     /// The last hover offset a host synced from (dedupe: `selectAt` per
     /// pointer $(I move), not per frame).
     size_t lastSyncOffset = size_t.max;
+
+    /// Arms/disarms the picker, forgetting the last synced offset so the very
+    /// next hover re-selects even if the pointer has not moved a byte.
+    void pick(bool on) @nogc nothrow pure
+    {
+        picking = on;
+        lastSyncOffset = size_t.max;
+    }
 
     private const(char)[] builtFor;  // vm.source identity at last rebuild
     private bool builtAnon;
@@ -171,24 +204,37 @@ struct InspectorPane
         tv.clamp();
     }
 
+    /// The header the view paints and the pointer arm hit-tests — one value,
+    /// so a chip cannot drift from its hit zone.
+    private string title() const @nogc nothrow pure
+        => focused ? "inspector·" : "inspector";
+
+    /// ditto
+    private InspectorAction[] actions() const nothrow pure
+        => [
+            InspectorAction(pickerGlyph, picking),
+            InspectorAction("anon", showAnonymous),
+        ];
+
     /// The pane's view: the generic component over the adapter, details for
     /// the selection, both toggles in the header. `chromeRows` is derived
     /// from what the header + details actually take, so the tree window
     /// fills exactly the rest of the pane the host arranged.
+    ///
+    /// The re-clamp is bounds-only ($(REF TreeViewState.clampBounds,
+    /// sparkles,ui,components,tree_view)): painting must not chase the
+    /// cursor, or a scrollbar drag and a wheel notch are both undone before
+    /// they reach the screen.
     uint view(ref Builder b, int innerWidth) @system
     {
         auto details = ci.details(tv.selectedNode);
         tv.chromeRows = 2 + (details.length ? cast(int) details.length + 1 : 0);
-        tv.clamp();
+        tv.clampBounds();
         const open = tv.open;
         auto data = ci.data;
         return inspectorView(b, data, tv,
             (uint n) => open.isOpen(n),
-            focused ? "inspector·" : "inspector",
-            [
-                InspectorAction("sync", syncHover),
-                InspectorAction("anon", showAnonymous),
-            ],
+            title, actions,
             details, innerWidth, TreeGlyphs.init, hitInspectorTree);
     }
 
@@ -199,12 +245,33 @@ struct InspectorPane
         return e.match!(
             (in KeyEvent k) => key(k, vm),
             (in PointerEvent p) {
-                // The component's body window starts one row lower than its
-                // assumption (header + rule): shift into its space.
+                // Row 0 is the header: its chips are buttons, not tree rows.
+                if (p.action == PointerAction.press
+                    && p.button == PointerButton.left && p.pos.y == 0)
+                {
+                    switch (actionAt(title, actions, p.pos.x))
+                    {
+                        case 0: pick(!picking); break;
+                        case 1: toggleAnonymous(vm); break;
+                        default: break;
+                    }
+                    return true;
+                }
+                // The component's body window starts one row lower than the
+                // shared arm's assumption (header + rule): shift into its
+                // space.
                 const q = PointerEvent(action: p.action, button: p.button,
                     pos: Point(p.pos.x, p.pos.y - 1));
                 if (tv.pointer(q) == TreeStep.activated)
                     activateSel();
+                return true;
+            },
+            // The wheel scrolls the pane WITHOUT moving the cursor: the
+            // selection is the node the reader pinned, and scrolling away
+            // from it must not lose it. The producer already converted
+            // notches to rows (`INP12`), in the document's sign.
+            (in WheelEvent w) {
+                tv.scrollBy(w.dy);
                 return true;
             },
             (in EndOfInput _) => false,
@@ -239,7 +306,7 @@ struct InspectorPane
             case 'h': collapseSel(); return true;
             case 'l': expandSel(); return true;
             case 'a': toggleAnonymous(vm); return true;
-            case 's': syncHover = !syncHover; return true;
+            case 's': pick(!picking); return true;
             case 'q': return false;
             default: return true;
         }
@@ -393,11 +460,89 @@ version (unittest)
     assert(pane.handle(Event(KeyEvent(InputKey.char_, 'h')), vm));
     assert(pane.tv.rows.length < rows0, "collapse hid the subtree");
 
-    // s toggles sync; q reports close intent.
-    assert(pane.syncHover);
+    // s arms the picker (off on open); q reports close intent.
+    assert(!pane.picking, "the panel starts one-way, tree→document");
     pane.handle(Event(KeyEvent(InputKey.char_, 's')), vm);
-    assert(!pane.syncHover);
+    assert(pane.picking);
     assert(!pane.handle(Event(KeyEvent(InputKey.char_, 'q')), vm));
+}
+
+@("inspector_pane.headerChipsAreClickable")
+@system unittest
+{
+    import sparkles.ui.geometry : cellsOf;
+
+    // UAT: the picker needs a button, not just a key. The header's chips are
+    // hit-tested through the component's own layout rule.
+    auto vm = vmForTest("json", "{\"a\": 1}\n");
+
+    InspectorPane pane;
+    pane.tv.width = 40;
+    pane.tv.height = 16;
+    pane.rebuild(vm);
+
+    PointerEvent chip(int i) @safe
+    {
+        // "inspector" + " [⌕]" + " [anon]" — the first cell of chip `i`.
+        int x = cast(int) cellsOf("inspector") + 1;
+        if (i == 1)
+            x += 3 + 1;
+        return PointerEvent(action: PointerAction.press,
+            button: PointerButton.left, pos: Point(x, 0));
+    }
+
+    assert(!pane.picking);
+    pane.handle(Event(chip(0)), vm);
+    assert(pane.picking, "the ⌕ chip arms the picker");
+    pane.handle(Event(chip(0)), vm);
+    assert(!pane.picking);
+
+    assert(!pane.showAnonymous);
+    pane.handle(Event(chip(1)), vm);
+    assert(pane.showAnonymous, "the anon chip rebuilds with anonymous nodes");
+
+    // A press on the header is never a row click.
+    const sel = pane.tv.sel;
+    pane.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(0, 0))), vm);
+    assert(pane.tv.sel == sel);
+}
+
+@("inspector_pane.scrollSurvivesTheNextFrame")
+@system unittest
+{
+    import sparkles.input : WheelEvent;
+
+    // UAT: "only the document scrollbar works". The bar and the wheel both
+    // worked — and `view`'s cursor-following re-clamp undid them before the
+    // frame reached the screen.
+    const src = "{\"a\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]}\n";
+    auto vm = vmForTest("json", src);
+
+    InspectorPane pane;
+    pane.tv.width = 30;
+    pane.tv.height = 8;
+    pane.rebuild(vm);
+    assert(cast(long) pane.tv.rows.length > pane.tv.bodyRows, "it overflows");
+
+    // The wheel scrolls, the cursor stays on the pinned node…
+    pane.handle(Event(WheelEvent(dy: 3)), vm);
+    assert(pane.tv.top == 3 && pane.tv.sel == 0);
+    auto b = Builder();
+    b.finish(pane.view(b, 28));
+    assert(pane.tv.top == 3, "painting must not scroll back to the cursor");
+
+    // …and a press on the bar's column jumps the view, not the selection.
+    const bar = PointerEvent(action: PointerAction.press,
+        button: PointerButton.left,
+        pos: Point(pane.tv.width - 1, 2 + pane.tv.bodyRows - 1));
+    pane.handle(Event(bar), vm);
+    assert(pane.tv.sb.dragging && pane.tv.sel == 0);
+    const grabbed = pane.tv.top;
+    assert(grabbed > 0);
+    auto b2 = Builder();
+    b2.finish(pane.view(b2, 28));
+    assert(pane.tv.top == grabbed, "…and the grab survives the repaint");
 }
 
 @("inspector_pane.viewCarriesHeaderTogglesAndDetails")
@@ -415,14 +560,14 @@ version (unittest)
     auto b = Builder();
     auto tree = b.finish(pane.view(b, 28));
 
-    bool sawSync, sawNode;
+    bool sawPicker, sawNode;
     foreach (ref n; tree.nodes)
         foreach (ref sp; n.spans)
         {
-            sawSync |= sp.text == "[sync]";
+            sawPicker |= sp.text == "[" ~ pickerGlyph ~ "]";
             sawNode |= sp.text == "node";
         }
-    assert(sawSync, "the header shows the sync toggle");
+    assert(sawPicker, "the header shows the picker chip");
     assert(sawNode, "the details pane names the selection");
 }
 

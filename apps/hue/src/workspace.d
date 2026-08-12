@@ -224,11 +224,16 @@ struct WorkspaceTui
     /// `<leader>vi` (drained from the viewer's command arm): toggles the
     /// inspector pane; opening seeds the selection from the top visible row
     /// (the viewer has no caret, deliberately) and focuses the pane.
+    ///
+    /// Sync starts one-way — tree→document — either way: the picker is
+    /// disarmed on open (the `⌕` chip arms it) and on close (all sync ends
+    /// with the panel).
     void toggleInspector() @system
     {
         dock.layout.setVisible(inspPane, !inspVisible);
         dock.focused = inspVisible ? inspPane : docPane;
         arrange(width, height);
+        insp.pick(false);
         if (inspVisible)
         {
             insp.rebuild(viewer.vm);
@@ -791,9 +796,11 @@ struct WorkspaceTui
             viewer.inspectorToggleRequested = false;
             toggleInspector();
         }
-        // INS6 source→tree: hovering the document drives the panel's
-        // selection live, while it is open and its [sync] toggle on.
-        if (inspVisible && insp.syncHover)
+        // INS6 source→tree, the picker half (DevTools' semantics): while the
+        // `⌕` chip is armed, hovering the document walks the tree live, and a
+        // left click DISARMS it — the reader has chosen that node, and every
+        // later mouse move must leave it alone.
+        if (inspVisible && insp.picking)
             ev.match!((in PointerEvent p) {
                 const off = viewer.offsetAt(p.pos);
                 if (off >= 0 && cast(size_t) off != insp.lastSyncOffset)
@@ -802,6 +809,9 @@ struct WorkspaceTui
                     insp.selectAt(cast(size_t) off);
                     syncInspectorExtent();
                 }
+                if (p.action == PointerAction.press
+                    && p.button == PointerButton.left)
+                    insp.picking = false;
             }, (_) {});
         return alive;
     }
@@ -2212,10 +2222,107 @@ unittest
     // The document pane narrowed to make room.
     assert(w.viewer.originX == 0, "no tree: the viewer starts at 0");
 
-    // Closing clears the tint and returns the space.
+    // The picker (DevTools' semantics) is OFF on open: the panel starts
+    // one-way, so hovering the document leaves the selection alone.
+    assert(!w.insp.picking);
+    const seeded = w.insp.tv.selectedNode;
+    assert(w.handle(Event(PointerEvent(action: PointerAction.move,
+        pos: Point(w.viewer.originX + 6, 1)))));
+    assert(w.insp.tv.selectedNode == seeded, "no hover sync until it is armed");
+
+    // Arming it (the `⌕` chip's key, `s`) makes a hover walk the tree…
+    w.insp.pick(true);
+    assert(w.handle(Event(PointerEvent(action: PointerAction.move,
+        pos: Point(w.viewer.originX + 6, 1)))));
+    assert(w.insp.lastSyncOffset != size_t.max, "the hover synced");
+
+    // …and a left click in the document disarms it: the reader has chosen.
+    assert(w.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left,
+        pos: Point(w.viewer.originX + 8, 1)))));
+    assert(!w.insp.picking, "a document click pins the node and ends the mode");
+    const pinned = w.insp.tv.selectedNode;
+    assert(w.handle(Event(PointerEvent(action: PointerAction.move,
+        pos: Point(w.viewer.originX + 2, 1)))));
+    assert(w.insp.tv.selectedNode == pinned, "…and later hovers leave it");
+
+    // Closing clears the tint, disarms the picker, and returns the space.
+    w.insp.pick(true);
     w.toggleInspector();
     assert(!w.inspVisible);
+    assert(!w.insp.picking, "sync ends with the panel");
     assert(w.viewer.vm.inspectRects.length == 0, "the tint cleared");
+}
+
+@("workspace.inspectorPane.itsScrollbarIsItsOwnColumnAndItHolds")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.process : environment;
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, Theme;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.syntax.ts.registry : GrammarRegistry;
+    import sparkles.test_runner.skip : skipTest;
+    import gui_preview : PreviewModel;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    static GrammarRegistry registry;
+    registry = GrammarRegistry.fromEnvironment();
+    static TsConfigCache* cache;
+    cache = new TsConfigCache;
+    *cache = TsConfigCache.create(&registry, LabelSet.standard());
+
+    static immutable string[1] names = ["dark"];
+    static immutable Theme[1] themes = [builtinDark];
+
+    WorkspaceTui w;
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = LabelSet.standard();
+    w.viewer.vm.cache = cache;
+    w.treeVisible = false;
+    w.arrange(100, 16);
+
+    const src = "{\"a\": [1, 2, 3, 4, 5, 6, 7, 8], \"b\": {\"c\": true}}\n";
+    w.viewer.setDocument("t.json", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        false, TwoslashReturn.init, "json");
+    w.toggleInspector();
+    assert(cast(long) w.insp.tv.rows.length > w.insp.tv.bodyRows,
+        "the tree overflows its pane");
+
+    Grid g;
+    g.resize(100, 16);
+    w.paint(g);
+
+    // UAT: the two bars must not share a column. The panel's lives in the
+    // LAST column of its own pane; the document's in the last column of its.
+    string col(ushort x)
+    {
+        string s;
+        foreach (y; 0 .. g.rows)
+            s ~= g[x, cast(ushort) y].grapheme;
+        return s;
+    }
+
+    const inspLast = cast(ushort)(g.cols - 1); // the panel is the rightmost pane
+    assert(col(inspLast).canFind("█") || col(inspLast).canFind("░"),
+        "the panel's bar paints in its own last column: " ~ col(inspLast));
+
+    // …and a press on that column scrolls the panel and STAYS scrolled once
+    // the next frame has painted (the cursor-following re-clamp used to undo
+    // it, which is why the bar looked inert). The bar spans the tree window:
+    // header, rule, then `bodyRows` rows — the paint above sized it.
+    const barBottom = 1 + w.insp.tv.bodyRows;
+    assert(w.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(inspLast, barBottom)))));
+    const grabbed = w.insp.tv.top;
+    assert(grabbed > 0, "the track press jumped the view");
+    w.paint(g);
+    assert(w.insp.tv.top == grabbed, "the frame did not scroll it back");
 }
 
 @("workspace.reloadCurrent.preservesTheViewportAndRefreshesTheInspector")
