@@ -23,20 +23,19 @@ predecessors.
 ## Where it stands
 
 Branch **`feat/diagram-mvp`**, rebased on `origin/main`, not yet pushed.
-`dub test :diagram` = **57 passed** on ldc2 and dmd.
+`dub test :diagram` = **63+ passed** on ldc2 and dmd.
 
-| Step     | State                                                                                         |
-| -------- | --------------------------------------------------------------------------------------------- |
-| **D1.1** | shipped — scaffold: `runApp` component, both configurations, three scripted quit sessions     |
-| **D1.2** | shipped — `src/camera.d` (`CAM1`–`CAM5`)                                                      |
-| **D1.3** | shipped — `src/world.d` (`WLD1`–`WLD4`)                                                       |
-| **D1.4** | shipped — `src/systems/input.d` (`IXN1`–`IXN4`): tools, capture, pan/zoom/minimap scrub       |
-| **D1.5** | shipped — `src/systems/render.d` (`RND1`–`RND2`, `RND4`–`RND5`, `DIA5`): board/minimap/chrome |
-| Series 2 | **next** — menus, groups, labels, connectors, fit-all (`D2.1`–`D2.5`)                         |
+| Step          | State                                                                              |
+| ------------- | ---------------------------------------------------------------------------------- |
+| **D1.1–D1.5** | shipped — Series 1 MVP board                                                       |
+| **D2.1**      | shipped — context menu, Delete, full Esc dismissal chain (`IXN5`/`IXN6`)           |
+| **D2.2**      | shipped — Group/Ungroup (menu + `g`/`u`)                                           |
+| **D2.3**      | shipped — label edit over fixed buffer (LineEditState contract)                    |
+| **D2.4**      | shipped — orthogonal box-drawing connectors (`RND3`)                               |
+| **D2.5**      | shipped — fit-all / minimap / keyboard polish already in D1.4; session sweep added |
 
-`src/` today: `app.d` (the entry point, excluded from the test build),
-`diagram_app.d` (the component), `camera.d`, `world.d`, `systems/input.d`,
-`systems/render.d`.
+`src/` today: `app.d`, `diagram_app.d`, `camera.d`, `world.d`, `systems/input.d`,
+`systems/render.d`. Phase 3 Series 1–2 are complete.
 
 ## The five things that will save you a day
 

@@ -1,5 +1,5 @@
 /**
-The input system (`IXN1`–`IXN4`): free functions over $(MREF world) and
+The input system (`IXN1`–`IXN6`): free functions over $(MREF world) and
 $(MREF camera).
 
 Every behaviour the pointer or keyboard can provoke is one of these functions
@@ -13,6 +13,10 @@ is the arbitration; $(LREF World.capture) is the same fact in the board's
 vocabulary. A press that starts a create / marquee / move / pan / minimap scrub
 captures, every subsequent motion and the release go to that owner wherever the
 pointer strays, and the release frees both (`IXN1`).
+
+$(B Context menu) sits above every other layer (`IXN1` / `IXN5`): RMB opens it,
+a click on an item runs it, a click outside or Esc closes it — first step of
+the dismissal chain (`IXN6`).
 */
 module systems.input;
 
@@ -25,7 +29,7 @@ import sparkles.ui_app.backend : Backend;
 
 import camera : Camera, contentBounds, fitContent, scaleBase, minimapDivisor,
     minimapToWorld;
-import world : Capture, liveBounds, noEntity, Tool, World;
+import world : Capture, Entity, liveBounds, noEntity, Tool, World;
 
 /// Toolkit capture ids — one per $(LREF Capture) owner, non-zero (`STM11`).
 enum size_t capCreate = 1;
@@ -111,6 +115,52 @@ Rect toolButton(Tool t, in Size viewport) @safe pure nothrow @nogc
     return Rect(bar.x + 1 + idx * 4, bar.y, 3, 1);
 }
 
+/// Context-menu entries (`IXN5`), top to bottom.
+enum MenuItem : ubyte
+{
+    group,
+    ungroup,
+    label,
+    connect,
+    delete_,
+}
+
+/// ditto
+enum size_t menuItemCount = MenuItem.max + 1;
+/// Width of the menu panel in cells.
+enum int menuWidth = 12;
+/// One row per item.
+enum int menuRowH = 1;
+
+/// The menu's screen-space panel, or empty when closed.
+Rect menuPanel(ref const World w) @safe pure nothrow @nogc
+{
+    if (!w.menuOpen)
+        return Rect.init;
+    return Rect(w.menuAt.x, w.menuAt.y, menuWidth, cast(int) menuItemCount * menuRowH);
+}
+
+/// Hit rect for one menu item, or empty when the menu is closed.
+Rect menuItemRect(ref const World w, MenuItem item) @safe pure nothrow @nogc
+{
+    if (!w.menuOpen)
+        return Rect.init;
+    return Rect(w.menuAt.x, w.menuAt.y + cast(int) item * menuRowH, menuWidth, menuRowH);
+}
+
+/// Label text for a menu item (for render + tests).
+string menuItemLabel(MenuItem item) @safe pure nothrow @nogc
+{
+    final switch (item)
+    {
+        case MenuItem.group: return "Group";
+        case MenuItem.ungroup: return "Ungroup";
+        case MenuItem.label: return "Label…";
+        case MenuItem.connect: return "Connect";
+        case MenuItem.delete_: return "Delete";
+    }
+}
+
 /// Toolkit capture id for a board capture owner, or `0` for none.
 size_t captureIdOf(Capture c) @safe pure nothrow @nogc
 {
@@ -156,6 +206,11 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
             w.spaceDown = false;
         return false;
     }
+
+    // Label edit captures the keyboard (`IXN5`): printable types, backspace
+    // erases, Enter commits, Esc cancels. Nothing else runs until it ends.
+    if (w.isEditing)
+        return onEditKey(w, k);
 
     // Tool switch cancels a pending connect half and any open drag.
     if (k.key == Key.char_)
@@ -224,6 +279,16 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
             cam.panBy(-panStepCells, 0);
             return false;
         }
+        if (k.ch == 'g' || k.ch == 'G')
+        {
+            cast(void) w.groupSelection();
+            return false;
+        }
+        if (k.ch == 'u' || k.ch == 'U')
+        {
+            w.ungroupSelection();
+            return false;
+        }
         if (isSpace(k))
         {
             // Hold where releases exist; sticky toggle where they do not.
@@ -233,6 +298,13 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
                 w.spaceDown = !w.spaceDown;
             return false;
         }
+    }
+
+    if (k.key == Key.delete_ || k.key == Key.backspace)
+    {
+        if (w.selectionCount > 0)
+            w.deleteSelection();
+        return false;
     }
 
     if (k.key == Key.up)
@@ -262,10 +334,45 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
     return false;
 }
 
-/// Esc chain without the menu (`IXN2` cancel + the rest of `IXN6`): pending
-/// connect → active capture → selection → quit.
+/// Keys while a label edit is open (`IXN5`).
+private bool onEditKey(ref World w, in KeyEvent k) @safe pure nothrow @nogc
+{
+    if (k.key == Key.enter)
+    {
+        w.editCommit();
+        return false;
+    }
+    if (isDismiss(k))
+    {
+        w.editCancel();
+        return false; // cancel edit, do not climb the rest of the chain yet
+    }
+    if (k.key == Key.backspace)
+    {
+        w.editErase();
+        return false;
+    }
+    if (k.key == Key.char_)
+        w.editType(k.ch);
+    return false;
+}
+
+/**
+Esc dismissal chain (`IXN6`): menu → label edit → pending connect → capture →
+selection → quit. `q` bypasses the chain and quits directly.
+*/
 private bool dismiss(ref World w, ref CaptureState cap) @safe pure nothrow @nogc
 {
+    if (w.menuOpen)
+    {
+        closeMenu(w);
+        return false;
+    }
+    if (w.isEditing)
+    {
+        w.editCancel();
+        return false;
+    }
     if (w.connectFrom != noEntity)
     {
         w.connectFrom = noEntity;
@@ -289,7 +396,19 @@ private void setTool(ref World w, ref CaptureState cap, Tool t)
 {
     cancelCapture(w, cap);
     w.connectFrom = noEntity;
+    closeMenu(w);
     w.tool = t;
+}
+
+private void closeMenu(ref World w) @safe pure nothrow @nogc
+{
+    w.menuOpen = false;
+}
+
+private void openMenu(ref World w, in Point screen) @safe pure nothrow @nogc
+{
+    w.menuOpen = true;
+    w.menuAt = screen;
 }
 
 // ── pointer (`IXN1`–`IXN3`) ─────────────────────────────────────────────────
@@ -331,13 +450,110 @@ private void onPointer(ref World w, ref Camera cam, ref CaptureState cap,
 private void pressFree(ref World w, ref Camera cam, ref CaptureState cap,
     in PointerEvent p, in InputView view) @safe pure nothrow @nogc
 {
-    // Layered hit order, topmost first (`IXN1`): menu (later) → toolbar →
-    // minimap → board. Menu is Series 2.
+    // Layered hit order, topmost first (`IXN1`): menu → toolbar → minimap →
+    // board. A menu click never falls through.
+    if (hitMenu(w, cam, cap, p, view))
+        return;
+    // RMB opens the context menu on the board (after the menu itself has had
+    // a chance to consume the click when already open).
+    if (p.button == PointerButton.right && p.action == PointerAction.press)
+    {
+        openContextMenu(w, cam, p, view);
+        return;
+    }
     if (hitToolbar(w, cap, p, view))
         return;
     if (w.minimapVisible && hitMinimap(w, cam, cap, p, view))
         return;
     hitBoard(w, cam, cap, p, view);
+}
+
+/// `true` when the event was about the menu (open or closed by the click).
+private bool hitMenu(ref World w, ref Camera cam, ref CaptureState cap,
+    in PointerEvent p, in InputView view) @safe pure nothrow @nogc
+{
+    if (!w.menuOpen)
+        return false;
+    const cell = surfaceCell(p.pos, view);
+    const panel = menuPanel(w);
+    if (p.action != PointerAction.press)
+        return true; // swallow motion over an open menu
+
+    if (!panel.contains(cell))
+    {
+        // Click outside: dismiss, then let the same press fall through only
+        // for non-right buttons so a left click both closes and acts. RMB
+        // reopens at the new place via the caller.
+        closeMenu(w);
+        return p.button == PointerButton.right;
+    }
+
+    if (p.button != PointerButton.left)
+        return true;
+
+    foreach (i; 0 .. menuItemCount)
+    {
+        const item = cast(MenuItem) i;
+        if (menuItemRect(w, item).contains(cell))
+        {
+            runMenuItem(w, cam, cap, item, view);
+            closeMenu(w);
+            return true;
+        }
+    }
+    closeMenu(w);
+    return true;
+}
+
+private void openContextMenu(ref World w, ref Camera cam, in PointerEvent p,
+    in InputView view) @safe pure nothrow @nogc
+{
+    const cell = surfaceCell(p.pos, view);
+    const board = boardArea(view.viewport);
+    if (board.contains(cell))
+    {
+        const local = Point(cell.x - board.x, cell.y - board.y);
+        const world = cam.screenToWorld(local);
+        const hit = w.pick(world);
+        if (hit != noEntity && !w.selected(hit))
+            w.selectOnly(hit);
+    }
+    // Clamp so the panel stays on-screen.
+    int x = cell.x;
+    int y = cell.y;
+    if (x + menuWidth > view.viewport.width)
+        x = view.viewport.width - menuWidth;
+    if (y + cast(int) menuItemCount * menuRowH > view.viewport.height)
+        y = view.viewport.height - cast(int) menuItemCount * menuRowH;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    openMenu(w, Point(x, y));
+}
+
+private void runMenuItem(ref World w, ref Camera, ref CaptureState cap,
+    MenuItem item, in InputView) @safe pure nothrow @nogc
+{
+    final switch (item)
+    {
+        case MenuItem.group:
+            cast(void) w.groupSelection();
+            return;
+        case MenuItem.ungroup:
+            w.ungroupSelection();
+            return;
+        case MenuItem.label:
+            if (w.selectionCount >= 1)
+                w.beginEdit(w.selection[0]);
+            return;
+        case MenuItem.connect:
+            setTool(w, cap, Tool.connect);
+            if (w.selectionCount >= 1)
+                w.connectFrom = w.selection[0];
+            return;
+        case MenuItem.delete_:
+            w.deleteSelection();
+            return;
+    }
 }
 
 private bool hitToolbar(ref World w, ref CaptureState cap, in PointerEvent p,
@@ -1089,11 +1305,21 @@ unittest
     CaptureState cap;
     const view = tuiView();
     cast(void) w.spawn(Rect(2, 2, 2, 2));
+
+    // Menu first (`IXN6`).
+    drive(w, cam, cap, view, [
+        Event(PointerEvent(action: PointerAction.press,
+            button: PointerButton.right, pos: Point(3, 1 + 3))),
+    ]);
+    assert(w.menuOpen);
+    assert(!systemInput(w, cam, cap, keyEvent(Key.escape), view));
+    assert(!w.menuOpen);
+
     cast(void) systemInput(w, cam, cap, charEvent('c'), view);
     drive(w, cam, cap, view, [pressAt(2, 1 + 2), releaseAt(2, 1 + 2)]);
     assert(w.connectFrom != noEntity);
 
-    // 1) cancel connect
+    // Cancel connect
     assert(!systemInput(w, cam, cap, keyEvent(Key.escape), view));
     assert(w.connectFrom == noEntity);
 
@@ -1104,6 +1330,74 @@ unittest
 
     // Empty board: Esc quits.
     assert(systemInput(w, cam, cap, keyEvent(Key.escape), view));
+}
+
+@("diagram.input.contextMenuDelete")
+@safe pure nothrow @nogc
+unittest
+{
+    World w;
+    Camera cam;
+    CaptureState cap;
+    const view = tuiView();
+    const e = w.spawn(Rect(2, 2, 3, 2));
+    w.selectOnly(e);
+
+    // RMB opens; click Delete.
+    drive(w, cam, cap, view, [
+        Event(PointerEvent(action: PointerAction.press,
+            button: PointerButton.right, pos: Point(3, 1 + 3))),
+    ]);
+    assert(w.menuOpen);
+    const del = menuItemRect(w, MenuItem.delete_);
+    drive(w, cam, cap, view, [
+        pressAt(del.x + 1, del.y),
+        releaseAt(del.x + 1, del.y),
+    ]);
+    assert(!w.menuOpen && !w.alive(e) && w.count == 0);
+}
+
+@("diagram.input.groupUngroupFromKeysAndMenu")
+@safe pure nothrow @nogc
+unittest
+{
+    World w;
+    Camera cam;
+    CaptureState cap;
+    const view = tuiView();
+    const a = w.spawn(Rect(0, 0, 2, 2));
+    const b = w.spawn(Rect(4, 0, 2, 2));
+    w.select(a);
+    w.select(b);
+    cast(void) systemInput(w, cam, cap, charEvent('g'), view);
+    assert(w.group[a] != 0 && w.group[a] == w.group[b]);
+    cast(void) systemInput(w, cam, cap, charEvent('u'), view);
+    assert(w.group[a] == 0 && w.group[b] == 0);
+}
+
+@("diagram.input.labelEditFromMenu")
+@safe pure nothrow @nogc
+unittest
+{
+    World w;
+    Camera cam;
+    CaptureState cap;
+    const view = tuiView();
+    const e = w.spawn(Rect(2, 2, 8, 2));
+    w.selectOnly(e);
+
+    drive(w, cam, cap, view, [
+        Event(PointerEvent(action: PointerAction.press,
+            button: PointerButton.right, pos: Point(3, 1 + 3))),
+    ]);
+    const lab = menuItemRect(w, MenuItem.label);
+    drive(w, cam, cap, view, [pressAt(lab.x + 1, lab.y)]);
+    assert(w.isEditing && w.editing == e);
+
+    cast(void) systemInput(w, cam, cap, charEvent('H'), view);
+    cast(void) systemInput(w, cam, cap, charEvent('i'), view);
+    cast(void) systemInput(w, cam, cap, keyEvent(Key.enter), view);
+    assert(!w.isEditing && w.labelOf(e) == "Hi");
 }
 
 @("diagram.input.toolbarPicksTheTool")
