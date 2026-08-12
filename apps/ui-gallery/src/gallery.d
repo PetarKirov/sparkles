@@ -28,6 +28,7 @@ import sparkles.ui.state : hoverTargets, keyedRects, ScrollState,
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle, Visual;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
+import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.run_app : AppTheme;
 import inspector : inspectorActivate, inspectorBody, inspectorInnerWidth;
 import kit;
@@ -118,6 +119,17 @@ struct Gallery
         s.surface = h.size;
         s.backend = h.backend;
         s.caps = h.capabilities;
+        s.guiCellW = 0;
+        s.guiCellH = 0;
+        static if (__traits(compiles, {
+                int cw_ = h.canvas.cellW;
+                int ch_ = h.canvas.cellH;
+            }))
+            if (s.backend == Backend.gui)
+            {
+                s.guiCellW = h.canvas.cellW;
+                s.guiCellH = h.canvas.cellH;
+            }
 
         // The dock arranges the body band before anything reads a width:
         // `contentWidth` is a mirror of what the container tiled, and the
@@ -445,6 +457,12 @@ struct Gallery
     */
     private void syncDock() @safe
     {
+        import sparkles.ui_raylib.raylib_canvas : scrollbarMinExtentPx;
+
+        dock.paintedScrollbarCellW = s.guiCellW;
+        dock.paintedScrollbarCellH = s.guiCellH;
+        dock.paintedScrollbarMinExtent = s.guiCellH > 0
+            ? scrollbarMinExtentPx : 0;
         if (dock.layout.nodes.length == 0)
         {
             const n = dock.layout.addLeaf(paneNav,

@@ -24,8 +24,9 @@ import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer, ScrollView;
-import sparkles.ui.state : CaptureState;
+import sparkles.ui.state : CaptureState, scrollbarThumbIntersectsCell;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
+import sparkles.ui_raylib.raylib_canvas : scrollbarMinExtentPx;
 
 @safe:
 
@@ -133,12 +134,15 @@ bool easing(in ScrollView sv, in InputCapabilities caps) pure nothrow @nogc
 One pointer event, delivered to one bar.
 
 `barRect` comes from the frames the painter used, so the grab zone cannot drift
-from the drawn bar (`IXR27`). Returns `true` iff the bar consumed the event —
-which it does for the whole span of a grab, wherever the pointer strays, since
-the press owns the drag.
+from the drawn bar (`IXR27`). When a pixel painter sits behind cell-position
+input, `paintedCellPixels` also makes every cell intersected by its continuous
+thumb part of the handle. Returns `true` iff the bar consumed the event — which
+it does for the whole span of a grab, wherever the pointer strays, since the
+press owns the drag.
 */
 bool driveVertical(ref ScrollView sv, ref CaptureState capture, size_t capId,
-    in PointerEvent p, in Rect barRect, in BarGeometry g)
+    in PointerEvent p, in Rect barRect, in BarGeometry g,
+    int paintedCellPixels = 0)
 {
     const grabbed = sv.v.dragging;
     const over = barRect.contains(p.pos);
@@ -149,6 +153,10 @@ bool driveVertical(ref ScrollView sv, ref CaptureState capture, size_t capId,
         // context menu everywhere else, and would be a jump here.
         pressed: p.action == PointerAction.press
             && p.button == PointerButton.left,
+        thumb: p.action == PointerAction.press && paintedCellPixels > 0
+            && scrollbarThumbIntersectsCell(g.content, g.viewport,
+                sv.v.offset, g.track, p.pos.y - barRect.y,
+                paintedCellPixels, scrollbarMinExtentPx),
         released: p.action == PointerAction.release,
         // Track-relative, and clamped nowhere: `ScrollState.draggedTo` clamps
         // the resulting offset, so a pointer dragged above the track's top
@@ -240,6 +248,31 @@ version (unittest)
         pos: Point(bar.x, bar.y + thumb.start + 1));
     driveVertical(sv, cap, capContentBar, down, bar, g);
     assert(sv.v.offset > before);
+}
+
+@("ui_gallery.scrollbars.everyPaintedPixelThumbCellGrabsInPlace")
+@safe unittest
+{
+    // The Components offset-47 specimen is the reported failure. Its 24px
+    // handle straddles cells 2 and 3; the cell formula alone names only 2.
+    // Pressing the visible half in cell 3 must capture without track-jumping.
+    enum specimen = BarGeometry(content: 100, viewport: 6, track: 6);
+    enum specimenRect = Rect(40, 1, 2, 6);
+    ScrollView sv;
+    CaptureState cap;
+    sv.v = sv.v.scrolledTo(47);
+
+    auto down = PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(40, 4)); // relative cell 3
+    assert(driveVertical(sv, cap, capContentBar, down, specimenRect,
+        specimen, 24));
+    assert(sv.v.dragging && sv.v.offset == 47,
+        "the painted handle captured the press in place");
+
+    down.action = PointerAction.drag;
+    driveVertical(sv, cap, capContentBar, down, specimenRect, specimen, 24);
+    assert(sv.v.offset == 47,
+        "sub-cell jitter reported in the same cell stays stationary");
 }
 
 @("ui_gallery.scrollbars.aGrabKeepsTheDragWhereverThePointerStrays")

@@ -39,7 +39,8 @@ import sparkles.input.events : Event, match, PointerAction, PointerButton,
 import sparkles.ui.components.scroll_view : AutoScroll, scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.state : CaptureState, PressState, SplitState;
+import sparkles.ui.state : CaptureState, PressState,
+    scrollbarThumbIntersectsCell, SplitState;
 
 @safe:
 
@@ -923,6 +924,13 @@ struct DockContainer
     int cellW = 1;
     /// ditto
     int cellH = 1;
+    /// Pixel metrics of a continuous painter fed by cell-position input.
+    /// Zero keeps the normal exact-unit hit formula (terminal and px input).
+    int paintedScrollbarCellW;
+    /// ditto
+    int paintedScrollbarCellH;
+    /// ditto — the painter's minimum handle length in pixels.
+    int paintedScrollbarMinExtent;
     /// Near-edge selection autoscroll policy (`SCV8`).
     AutoScroll autoScroll;
 
@@ -1643,11 +1651,29 @@ struct DockContainer
             const frame = deviceLayout(b);
             const hWas = view.h.dragging;
             const vWas = view.v.dragging;
-            const hp = frame.hPointer(p);
-            const vp = frame.vPointer(p);
+            auto hp = frame.hPointer(p);
+            auto vp = frame.vPointer(p);
+            if (p.action == PointerAction.press
+                && p.button == PointerButton.left
+                && cellW == 1 && cellH == 1
+                && paintedScrollbarMinExtent > 0)
+            {
+                if (hp.over && paintedScrollbarCellW > 0)
+                    hp.thumb = scrollbarThumbIntersectsCell(
+                        b.hExtents.content, b.hExtents.viewport,
+                        view.h.offset, b.hExtents.track, hp.trackPos,
+                        paintedScrollbarCellW, paintedScrollbarMinExtent);
+                if (vp.over && paintedScrollbarCellH > 0)
+                    vp.thumb = scrollbarThumbIntersectsCell(
+                        b.vExtents.content, b.vExtents.viewport,
+                        view.v.offset, b.vExtents.track, vp.trackPos,
+                        paintedScrollbarCellH, paintedScrollbarMinExtent);
+            }
             const base = scrollCapBase + i * 2;
-            capture = view.stepH(capture, base, p, view.h.offset, frame);
-            capture = view.stepV(capture, base + 1, p, view.v.offset, frame);
+            capture = view.stepH(capture, base, frame.hLive, hp,
+                view.h.offset, frame.hExtents);
+            capture = view.stepV(capture, base + 1, frame.vLive, vp,
+                view.v.offset, frame.vExtents);
             const press = p.action == PointerAction.press
                 && p.button == PointerButton.left && (hp.over || vp.over);
             if (hWas || vWas || view.h.dragging || view.v.dragging || press)
@@ -2149,6 +2175,29 @@ version (unittest)
     assert(c.scrollOf(page).v.dragging);
     assert(first != second,
         "a one-pixel drag must not collapse to one of ten cell positions");
+}
+
+@("ui.dock.cellInputRecognizesTheContinuousPaintedThumb")
+@safe unittest
+{
+    enum PaneId page = 1;
+    DockContainer c;
+    const n = c.layout.addLeaf(page);
+    c.layout.nodes[n].scrollGutterV = 2;
+    c.layout.root = n;
+    c.paintedScrollbarCellH = 24;
+    c.paintedScrollbarMinExtent = 24;
+    c.contentExtent(page, 18, 100);
+    c.arrange(Rect(0, 0, 20, 10));
+    c.scrollTo(page, 0, 47);
+
+    // The px handle crosses the boundary between rows 4 and 5 at this offset.
+    // Row 5 is track to the integer cell formula, but visibly still handle.
+    const before = c.offsetV(page);
+    const r = c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(19, 5))));
+    assert(r.kind == RouteKind.container);
+    assert(c.scrollOf(page).v.dragging && c.offsetV(page) == before);
 }
 
 @("ui.dock.contentCellExcludesTheHeaderAndTheNeighbour")
