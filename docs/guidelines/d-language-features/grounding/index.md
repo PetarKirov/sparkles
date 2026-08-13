@@ -7,7 +7,8 @@ Claim-by-claim source verification of
 changelog tree pinned in [`_sources.md`](./_sources.md).
 
 Primary: `$REPOS/dlang/dlang.org` @ `351dd6d91bfed604b473c4dedd4b5fdf262c3629`
-(reviewed 2026-08-12). Guide ceiling remains **2.112**.
+(reviewed 2026-08-14). Guide ceiling is **2.113** (body from `2.113.0_pre.dd`
+/ 2.113.0 rc.1 at this pin).
 
 ## Status legend
 
