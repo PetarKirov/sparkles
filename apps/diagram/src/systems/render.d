@@ -1,5 +1,5 @@
 /**
-The render systems (`RND1`–`RND5`, `DIA5`): free functions that turn a
+The render systems (`RND1`–`RND5`, `GRD7`, `DIA5`): free functions that turn a
 $(MREF world) + $(MREF camera) into a flat $(REF DrawOp, sparkles,ui,canvas)
 stream.
 
@@ -24,17 +24,19 @@ module systems.render;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : RgbColor;
+import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
 import sparkles.base.text.writers : writeInteger;
-import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge;
+import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge, textRunOp;
+import sparkles.ui.components.grid_backdrop : appendGridBackdrop, GridView;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Palette,
     resolveSlot, Slot, Visual;
 
 import camera : Camera, contentBounds, minimapDivisor, minimapFrustum,
     worldToMinimap;
-import systems.input : boardArea, menuItemCount, menuItemLabel, menuItemRect,
-    menuPanel, MenuItem, minimapPanel, statusRows, toolButton, toolbarArea,
-    toolbarRows;
+import systems.input : boardArea, gridSettingsPanel,
+    menuItemCount, menuItemLabel, menuItemRect, menuPanel, MenuItem,
+    minimapPanel, statusRows, toolButton, toolbarArea, toolbarRows;
 import world : Capture, Entity, GroupId, liveBounds, noEntity, Tool, World,
     entityCap;
 
@@ -67,6 +69,8 @@ void systemRender(ref const World w, ref const Camera cam, in Size viewport,
     renderChrome(w, cam, viewport, pal, pageFg, pageBg, ops);
     if (w.menuOpen)
         renderMenu(w, viewport, pal, pageFg, pageBg, ops);
+    if (w.gridSettingsOpen)
+        renderGridSettings(w, viewport, pal, pageFg, pageBg, ops);
 }
 
 // ── board (`RND2`, `RND4`) ──────────────────────────────────────────────────
@@ -83,7 +87,14 @@ private void renderBoard(ref const World w, ref const Camera cam, in Rect board,
     const boardSize = Size(board.width, board.height);
     const vis = cam.visibleWorldRect(boardSize);
 
-    renderGrid(cam, board, vis, pal, pageFg, pageBg, ops);
+    GridView gv = {
+        screen: board,
+        world: vis,
+        origin: cam.origin,
+        worldPerCell: cam.worldPerCell,
+        cellsPerWorld: cam.cellsPerWorld,
+    };
+    appendGridBackdrop(ops, w.gridConfig, gv, pal, pageFg, pageBg);
 
     // Connectors under nodes so a box covers the stub that enters it (`RND3`).
     renderConnectors(w, cam, board, vis, pal, pageFg, pageBg, ops);
@@ -120,26 +131,18 @@ private void renderBoard(ref const World w, ref const Camera cam, in Rect board,
         fill(ops, r, Slot.surface, withBg(surfaceVis, true));
         outline(ops, r, w.selected(e) ? Slot.chromeAccent : Slot.border,
             w.selected(e) ? accentVis : borderVis);
-        // Labels: one glyph per cell. A `textRun` would borrow a slice of the
-        // world's fixed slot, and dip1000 refuses to park that slice in the
-        // op buffer from a `scope` method — glyphs carry the code point by
-        // value and keep the frame `@safe`. While editing, show the draft.
+        // Labels: owned textRun (DrawOp copies the bytes). While editing,
+        // show the draft from the edit buffer.
         const editing = w.editing == e;
-        const labLen = editing ? w.editLen : w.labelLen[e];
-        if (labLen > 0 && r.height >= 1 && r.width >= 1)
-        {
-            const take = labLen < cast(ubyte) r.width ? labLen : cast(ubyte) r.width;
-            foreach (i; 0 .. take)
-            {
-                const ch = editing ? w.editBuf[i] : w.label[e][i];
-                glyphAt(ops, Point(r.x + cast(int) i, r.y), ch,
-                    Slot.code, codeVis);
-            }
-        }
+        const lab = editing
+            ? w.editBuf[0 .. w.editLen]
+            : w.label[e][0 .. w.labelLen[e]];
+        if (lab.length && r.height >= 1 && r.width >= 1)
+            textAt(ops, Point(r.x, r.y), lab, Slot.code, codeVis, r.width);
         if (editing && r.height >= 1)
         {
-            // Caret after the draft (clamped inside the box).
-            int cx = r.x + cast(int) labLen;
+            // Caret after the draft (clamped inside the box), by cell width.
+            int cx = r.x + cast(int) visibleWidth(lab);
             if (cx >= r.right)
                 cx = r.right - 1;
             if (cx < r.x)
@@ -283,48 +286,7 @@ private void putWorldGlyph(ref const Camera cam, in Rect board, in Point world,
     glyphAt(ops, Point(board.x + s.x, board.y + s.y), g, Slot.chromeAccent, vis);
 }
 
-/// Zoom-aware faint grid (`RND4`). Step is one screen-cell of world, so the
-/// lattice thins as the user zooms out and densifies only as far as a cell
-/// can express when zoomed in. A major line every 8 minor steps gives a
-/// coarser structure without a second density table.
-private void renderGrid(ref const Camera cam, in Rect board, in Rect vis,
-    in Palette pal, in RgbColor pageFg, in RgbColor pageBg, ref FrameOps ops)
-    @safe pure nothrow @nogc
-{
-    const muted = resolveSlot(pal, Slot.muted, pageFg, pageBg);
-    const border = resolveSlot(pal, Slot.border, pageFg, pageBg);
-    const step = cam.worldPerCell; // one screen cell of world
-    const majorEvery = 8;
 
-    // Align the first line to a multiple of `step` at or before vis.origin.
-    int x0 = floorMultiple(vis.x, step);
-    int y0 = floorMultiple(vis.y, step);
-
-    // Verticals.
-    int col = 0;
-    for (int wx = x0; wx < vis.right; wx += step, ++col)
-    {
-        const sx = board.x + cam.worldToScreen(Point(wx, vis.y)).x;
-        if (sx < board.x || sx >= board.right)
-            continue;
-        const major = col % majorEvery == 0
-            || floorMultiple(wx, step * majorEvery) == wx;
-        ruleV(ops, sx, board.y, board.height, major ? Slot.border : Slot.muted,
-            major ? border : muted);
-    }
-    // Horizontals.
-    int row = 0;
-    for (int wy = y0; wy < vis.bottom; wy += step, ++row)
-    {
-        const sy = board.y + cam.worldToScreen(Point(vis.x, wy)).y;
-        if (sy < board.y || sy >= board.bottom)
-            continue;
-        const major = row % majorEvery == 0
-            || floorMultiple(wy, step * majorEvery) == wy;
-        ruleH(ops, board.x, sy, board.width, major ? Slot.border : Slot.muted,
-            major ? border : muted);
-    }
-}
 
 private void renderGroupOutlines(ref const World w, ref const Camera cam,
     in Rect board, in Rect vis, in Palette pal, in RgbColor pageFg,
@@ -522,25 +484,10 @@ private void renderChrome(ref const World w, ref const Camera cam,
         if (w.connectFrom != noEntity)
             put("  connecting…");
 
-        // Copy into a slot that outlives the local: DrawOp borrows. The
-        // caller (paint) must keep `statusScratch` on the component. We emit
-        // a glyph-only status when we cannot borrow — but DiagramApp passes
-        // a persistent scratch via the overload below. Here we only emit
-        // when the buffer is the ops' own concern: use per-cell glyphs for
-        // the status so no borrow escapes.
-        //
-        // Prefer text when the host will paint in the same stack frame. The
-        // component copies `buf` into its scratch before paint; for pure
-        // tests that only inspect ops, text pointing at a dead stack is
-        // fine as long as they read before return — they do not. So emit
-        // glyphs for the status string, one cell each.
-        foreach (i; 0 .. n)
-        {
-            if (cast(int) i >= status.width)
-                break;
-            glyphAt(ops, Point(status.x + cast(int) i, status.y), buf[i],
-                Slot.muted, muted);
-        }
+        // Owned textRun: setText copies buf into the op, so the stack
+        // scratch need not outlive this function.
+        textAt(ops, Point(status.x, status.y), buf[0 .. n], Slot.muted, muted,
+            status.width);
     }
 }
 
@@ -572,13 +519,41 @@ private void renderMenu(ref const World w, in Size viewport, in Palette pal,
     {
         const item = cast(MenuItem) i;
         const row = menuItemRect(w, item);
-        const label = menuItemLabel(item);
-        foreach (j, ch; label)
-        {
-            if (cast(int) j >= row.width)
-                break;
-            glyphAt(ops, Point(row.x + 1 + cast(int) j, row.y), ch, Slot.code, code);
-        }
+        textAt(ops, Point(row.x + 1, row.y), menuItemLabel(item), Slot.code,
+            code, row.width > 1 ? row.width - 1 : 0);
+    }
+}
+
+private void renderGridSettings(ref const World w, in Size viewport,
+    in Palette pal, in RgbColor pageFg, in RgbColor pageBg, ref FrameOps ops)
+    @safe pure nothrow @nogc
+{
+    const panel = gridSettingsPanel(w, viewport);
+    if (panel.empty)
+        return;
+    const surface = resolveSlot(pal, Slot.surface, pageFg, pageBg);
+    const border = resolveSlot(pal, Slot.border, pageFg, pageBg);
+    const accent = resolveSlot(pal, Slot.chromeAccent, pageFg, pageBg);
+    const code = resolveSlot(pal, Slot.code, pageFg, pageBg);
+    fill(ops, panel, Slot.surface, withBg(surface, true));
+    outline(ops, panel, Slot.border, border);
+
+    static immutable string[4] labels = [
+        "Grid",
+        "1  Default lines",
+        "2  Stripe bands",
+        "3  Dot paper",
+    ];
+    foreach (i, label; labels)
+    {
+        const row = Rect(panel.x, panel.y + cast(int) i, panel.width, 1);
+        const selected = i > 0 && cast(ubyte) (i - 1) == w.gridPresetIndex;
+        if (selected)
+            fill(ops, row, Slot.chromeAccent, withBg(accent, true));
+        const slot = i == 0 ? Slot.chromeAccent : Slot.code;
+        const vis = i == 0 ? accent : (selected ? accent : code);
+        textAt(ops, Point(row.x + 1, row.y), label, slot, vis,
+            row.width > 1 ? row.width - 1 : 0);
     }
 }
 
@@ -598,18 +573,6 @@ private Rect worldRectToSurface(ref const Camera cam, in Rect world, in Rect boa
     if (w < 1) w = 1;
     if (h < 1) h = 1;
     return Rect(board.x + tl.x, board.y + tl.y, w, h);
-}
-
-private int floorMultiple(int v, int step) @safe pure nothrow @nogc
-{
-    if (step <= 0)
-        return v;
-    // Toward -∞, matching the camera.
-    const q = v / step;
-    const r = v % step;
-    if (r != 0 && ((v < 0) != (step < 0)))
-        return (q - 1) * step;
-    return q * step;
 }
 
 private void sortByZ(ref const World w, scope Entity[] order)
@@ -660,24 +623,6 @@ private void ruleEdge(ref FrameOps ops, in Rect r, RuleEdge edge, Slot slot,
         visual: vis);
 }
 
-private void ruleV(ref FrameOps ops, int x, int y, int h, Slot slot, in Visual vis)
-    @safe pure nothrow @nogc
-{
-    if (h <= 0 || ops.length >= frameOpCap)
-        return;
-    ops ~= DrawOp(kind: OpKind.rule, rect: Rect(x, y, 1, h),
-        ruleEdge: RuleEdge.left, slot: slot, visual: vis);
-}
-
-private void ruleH(ref FrameOps ops, int x, int y, int w, Slot slot, in Visual vis)
-    @safe pure nothrow @nogc
-{
-    if (w <= 0 || ops.length >= frameOpCap)
-        return;
-    ops ~= DrawOp(kind: OpKind.rule, rect: Rect(x, y, w, 1),
-        ruleEdge: RuleEdge.top, slot: slot, visual: vis);
-}
-
 /// `text` is borrowed into the op — the caller must keep it alive for the
 /// frame (entity labels live in the world's fixed slots; that is enough).
 private void glyphAt(ref FrameOps ops, in Point at, dchar g, Slot slot,
@@ -687,6 +632,45 @@ private void glyphAt(ref FrameOps ops, in Point at, dchar g, Slot slot,
         return;
     ops ~= DrawOp(kind: OpKind.glyph, rect: Rect(at.x, at.y, 1, 1),
         glyph: g, slot: slot, visual: vis);
+}
+
+/**
+Emit `s` as one owned `textRun`, truncated to `maxCells` on a grapheme-cluster
+boundary (ZWJ / CJK / combining marks advance by cluster width, not by byte).
+*/
+private void textAt(ref FrameOps ops, in Point at, scope const(char)[] s,
+    Slot slot, in Visual vis, int maxCells) @safe pure nothrow @nogc
+{
+    if (s.length == 0 || maxCells <= 0 || ops.length >= frameOpCap)
+        return;
+
+    size_t byteEnd;
+    int cells;
+    size_t pos;
+    foreach (c; s.byGraphemeCluster)
+    {
+        if (c.isEscape)
+        {
+            pos += c.slice.length;
+            continue;
+        }
+        if (c.width <= 0)
+        {
+            // Zero-width cluster still consumes bytes (e.g. orphaned marks).
+            pos += c.slice.length;
+            byteEnd = pos;
+            continue;
+        }
+        if (cells + c.width > maxCells)
+            break;
+        cells += c.width;
+        pos += c.slice.length;
+        byteEnd = pos;
+    }
+    if (cells <= 0 || byteEnd == 0)
+        return;
+
+    ops ~= textRunOp(Rect(at.x, at.y, cells, 1), s[0 .. byteEnd], slot, vis);
 }
 
 private void pushClip(ref FrameOps ops, in Rect r) @safe pure nothrow @nogc
@@ -749,28 +733,29 @@ unittest
     // Camera at origin looking at a small viewport-worth of world.
     cam.origin = Point(0, 0);
     cam.zoom = 0;
-    const near = w.spawn(Rect(2, 2, 3, 2));
-    const far = w.spawn(Rect(500, 500, 3, 2));
+    // Wide enough for a 4-letter label at zoom 0 (one cell per world cell).
+    const near = w.spawn(Rect(2, 2, 8, 2));
+    const far = w.spawn(Rect(500, 500, 8, 2));
     w.setLabel(near, "near");
     w.setLabel(far, "far");
 
     FrameOps ops;
     systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
 
-    // Board paints labels as glyphs; minimap paints only fills. "near" is
-    // on-camera so its 'n' glyph appears on the board; "far" does not.
-    size_t nearGlyphs, farGlyphs, entityFills;
+    // Board paints labels as owned textRuns; minimap paints only fills.
+    size_t nearRuns, farRuns, entityFills, codeTextRuns;
     const panel = minimapPanel(Size(80, 24));
-    const board = boardArea(Size(80, 24));
     foreach (ref op; ops[])
     {
-        if (op.kind == OpKind.glyph && op.slot == Slot.code
-            && board.contains(op.rect.origin))
+        if (op.kind == OpKind.textRun)
         {
-            if (op.glyph == 'n')
-                ++nearGlyphs;
-            if (op.glyph == 'f')
-                ++farGlyphs;
+            ++codeTextRuns;
+            // Compare via a temporary slice copy of the owned buffer.
+            const t = op.text;
+            if (t == "near")
+                ++nearRuns;
+            if (t == "far")
+                ++farRuns;
         }
         if (op.kind == OpKind.fillRect && !panel.empty
             && panel.contains(op.rect.origin)
@@ -780,10 +765,11 @@ unittest
             ++entityFills;
         }
     }
-    assert(nearGlyphs >= 1, "on-camera node is labelled on the board");
-    assert(farGlyphs == 0, "off-camera node emits no board glyphs");
+    assert(nearRuns >= 1, "on-camera node is labelled on the board");
+    assert(farRuns == 0, "off-camera node emits no board label");
     // Minimap shows both entities as fills (near + far ≥ 2).
     assert(entityFills >= 2, "minimap paints every live entity");
+    assert(codeTextRuns >= 1, "at least the near label was a textRun");
 }
 
 @("diagram.render.streamsAreBoardThenMinimapThenChrome")
@@ -943,4 +929,24 @@ unittest
         if (op.kind == OpKind.fillRect && op.rect == panel && op.slot == Slot.surface)
             found = true;
     assert(found, "open menu paints a surface panel");
+}
+
+@("diagram.render.menuLabelIsWholeUtf8Run")
+@safe pure nothrow @nogc
+unittest
+{
+    // Regression: "Label…" must not be painted as three garbage glyphs
+    // (UTF-8 code units). Owned textRun keeps the ellipsis intact.
+    World w;
+    Camera cam;
+    w.menuOpen = true;
+    w.menuAt = Point(10, 5);
+    FrameOps ops;
+    systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
+
+    bool sawLabel;
+    foreach (ref op; ops[])
+        if (op.kind == OpKind.textRun && op.text == "Label…")
+            sawLabel = true;
+    assert(sawLabel, "menu item is one textRun containing U+2026");
 }

@@ -266,7 +266,7 @@ mixin template HostState(size_t opCapacity = frameOpCapacity)
         _frameRequested = false;
         _skipFrame = false;
         _wakeIn = Duration.max;
-        _ops.length = 0;
+        _ops.clear();
     }
 }
 
