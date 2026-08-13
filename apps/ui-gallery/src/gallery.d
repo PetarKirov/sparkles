@@ -116,20 +116,7 @@ struct Gallery
     /// One frame.
     WidgetTree view(H)(ref H h)
     {
-        s.surface = h.size;
-        s.backend = h.backend;
-        s.caps = h.capabilities;
-        s.guiCellW = 0;
-        s.guiCellH = 0;
-        static if (__traits(compiles, {
-                int cw_ = h.canvas.cellW;
-                int ch_ = h.canvas.cellH;
-            }))
-            if (s.backend == Backend.gui)
-            {
-                s.guiCellW = h.canvas.cellW;
-                s.guiCellH = h.canvas.cellH;
-            }
+        noteHost(h);
 
         // The dock arranges the body band before anything reads a width:
         // `contentWidth` is a mirror of what the container tiled, and the
@@ -279,13 +266,34 @@ struct Gallery
         return b.finish(root);
     }
 
+    /// Remembers the host's coordinate mapping without advancing a frame.
+    private void noteHost(H)(ref H h)
+    {
+        s.surface = h.size;
+        s.backend = h.backend;
+        s.caps = h.capabilities;
+        s.guiCellW = 0;
+        s.guiCellH = 0;
+        static if (__traits(compiles, {
+                int cw_ = h.canvas.cellW;
+                int ch_ = h.canvas.cellH;
+            }))
+            if (s.backend == Backend.gui)
+            {
+                s.guiCellW = h.canvas.cellW;
+                s.guiCellH = h.canvas.cellH;
+            }
+        dock.cellW = s.guiCellW > 0 ? s.guiCellW : 1;
+        dock.cellH = s.guiCellH > 0 ? s.guiCellH : 1;
+    }
+
     /// One event.
     void handle(H)(ref H h, in Event e)
     {
         e.match!(
             (in KeyEvent k) { onKey(h, k); },
             (in PointerEvent p) { onPointer(h, p); },
-            (in WheelEvent w) { onWheel(w); },
+            (in WheelEvent w) { onWheel(h, w); },
             (in ResizeEvent r) { s.surface = r.size; },
             (in _) {},
         );
@@ -546,10 +554,9 @@ struct Gallery
         * The pane's cells.
         * hue's rail: sub-cell width (⅓ cell idle, 1.5 under the pointer),
             eased by the same machine the cell bar quantizes — but the
-            thumb's $(B geometry) from the same cell formula the grab uses,
-            because pointer events arrive in cells: the pixel formula's
-            24 px minimum drew a thumb a cell longer than the grabbable
-            one, and pressing that extra cell jumped the view.
+            thumb and its grab both resolve on the same pixel track with the
+            same 24 px minimum. Ordinary gallery hits are converted back to
+            cells after scrollbar routing; the bar keeps the raw coordinate.
     )
     */
     private void paintTermChrome(H, TV)(ref H h, TV tv, in Rect pane)
@@ -790,7 +797,7 @@ struct Gallery
 
     // ── pointer ─────────────────────────────────────────────────────────────
 
-    private void onPointer(H)(ref H h, in PointerEvent p)
+    private void onPointer(H)(ref H h, in PointerEvent device)
     {
         // Hit targets come from the frames the painter used, so painted and
         // clickable cannot drift. Rebuilding the tree here costs one extra
@@ -799,13 +806,22 @@ struct Gallery
         auto frames = layout(tree,
             Constraints(maxW: s.surface.width, maxH: s.surface.height));
         const targets = hoverTargets(tree, frames);
+        PointerEvent p = device;
+        if (s.guiCellW > 0 && s.guiCellH > 0)
+        {
+            p.pos = Point(device.pos.x / s.guiCellW,
+                device.pos.y / s.guiCellH);
+            s.guiPointerY = device.pos.y;
+        }
+        else
+            s.guiPointerY = int.min;
 
         // The dock's dividers first (`DCK13`): a press on the seam between
         // two panes starts a resize, and a live resize owns the pointer
         // wherever it strays. Every other event falls straight through —
         // the container's pane routes are ignored, because the gallery's
         // own hover/press machinery below IS the pane handling.
-        const route = dock.handle(Event(p));
+        const route = dock.handle(Event(device));
         if (route.relayout)
             reflexCentre();
         if (route.kind == RouteKind.container)
@@ -926,8 +942,14 @@ struct Gallery
             s.region = Region.content;
     }
 
-    private void onWheel(in WheelEvent w) @safe
+    private void onWheel(H)(ref H h, in WheelEvent device)
     {
+        noteHost(h);
+        WheelEvent w = device;
+        if (s.guiCellW > 0 && s.guiCellH > 0)
+            w.pos = Point(device.pos.x / s.guiCellW,
+                device.pos.y / s.guiCellH);
+
         // Over the terminal pane the wheel belongs to the application when
         // it tracks the mouse (the scroll buttons); otherwise it walks the
         // shell's scrollback — either way, not the gallery's document.
@@ -943,7 +965,7 @@ struct Gallery
         // The producer already multiplied by `linesPerNotch`; multiplying again
         // here is the bug `INP12` names. Geometry comes from the dock's pane
         // frames, including the reserved bar gutters.
-        const route = dock.handle(Event(w));
+        const route = dock.handle(Event(device));
         if (route.kind == RouteKind.pane && route.pane == paneInsp)
             return scrollInspector(w.dy);
         if (route.kind == RouteKind.pane && route.pane == paneNav)

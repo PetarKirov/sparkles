@@ -136,16 +136,26 @@ One pointer event, delivered to one bar.
 `barRect` comes from the frames the painter used, so the grab zone cannot drift
 from the drawn bar (`IXR27`). When a pixel painter sits behind cell-position
 input, `paintedCellPixels` also makes every cell intersected by its continuous
-thumb part of the handle. Returns `true` iff the bar consumed the event — which
-it does for the whole span of a grab, wherever the pointer strays, since the
-press owns the drag.
+thumb part of the handle. When `deviceTrackPos` is supplied, the same argument
+instead scales the track and feeds the GUI's unquantized device coordinate to
+the machine. Returns `true` iff the bar consumed the event — which it does for
+the whole span of a grab, wherever the pointer strays, since the press owns the
+drag.
 */
 bool driveVertical(ref ScrollView sv, ref CaptureState capture, size_t capId,
     in PointerEvent p, in Rect barRect, in BarGeometry g,
-    int paintedCellPixels = 0)
+    int paintedCellPixels = 0, int deviceTrackPos = int.min)
 {
     const grabbed = sv.v.dragging;
     const over = barRect.contains(p.pos);
+    const precise = paintedCellPixels > 0 && deviceTrackPos != int.min;
+    const long pixelTrack_ = cast(long) g.track * paintedCellPixels;
+    const pixelTrack = pixelTrack_ > int.max ? int.max
+        : cast(int) pixelTrack_;
+    const track = precise ? pixelTrack : g.track;
+    const trackPos = precise
+        ? deviceTrackPos - barRect.y * paintedCellPixels
+        : p.pos.y - barRect.y;
 
     const sp = ScrollPointer(
         over: over,
@@ -153,7 +163,8 @@ bool driveVertical(ref ScrollView sv, ref CaptureState capture, size_t capId,
         // context menu everywhere else, and would be a jump here.
         pressed: p.action == PointerAction.press
             && p.button == PointerButton.left,
-        thumb: p.action == PointerAction.press && paintedCellPixels > 0
+        thumb: !precise && p.action == PointerAction.press
+            && paintedCellPixels > 0
             && scrollbarThumbIntersectsCell(g.content, g.viewport,
                 sv.v.offset, g.track, p.pos.y - barRect.y,
                 paintedCellPixels, scrollbarMinExtentPx),
@@ -161,11 +172,12 @@ bool driveVertical(ref ScrollView sv, ref CaptureState capture, size_t capId,
         // Track-relative, and clamped nowhere: `ScrollState.draggedTo` clamps
         // the resulting offset, so a pointer dragged above the track's top
         // pins the thumb there instead of wrapping.
-        trackPos: p.pos.y - barRect.y,
+        trackPos: trackPos,
     );
 
     capture = sv.stepV(capture, capId, g.live, sp, sv.v.offset,
-        ScrollExtents(g.content, g.viewport, g.track));
+        ScrollExtents(g.content, g.viewport, track,
+            precise ? scrollbarMinExtentPx : 1));
 
     // The release frees the pointer for every affordance, not just this one —
     // a per-affordance release is how a capture leaks, and the one that forgets
@@ -174,6 +186,34 @@ bool driveVertical(ref ScrollView sv, ref CaptureState capture, size_t capId,
         capture = capture.released();
 
     return grabbed || sv.v.dragging || (over && sp.pressed);
+}
+
+@("ui_gallery.scrollbars.guiDragKeepsEveryDevicePosition")
+@safe unittest
+{
+    enum pixelGeom = BarGeometry(content: 4_000, viewport: 10, track: 10);
+    enum pixelBar = Rect(40, 1, 2, 10);
+    enum cellPixels = 20;
+    ScrollView sv;
+    CaptureState cap;
+    sv.v = sv.v.scrolledTo(2_000);
+
+    const thumb = sv.v.thumb(pixelGeom.content, pixelGeom.viewport,
+        pixelGeom.track * cellPixels, scrollbarMinExtentPx);
+    const rawY = pixelBar.y * cellPixels + thumb.start + 5;
+    auto p = PointerEvent(action: PointerAction.press,
+        button: PointerButton.left,
+        pos: Point(pixelBar.x, rawY / cellPixels));
+    assert(driveVertical(sv, cap, capContentBar, p, pixelBar, pixelGeom,
+        cellPixels, rawY));
+    assert(sv.v.offset == 2_000 && sv.v.dragging);
+
+    p.action = PointerAction.drag;
+    const before = sv.v.offset;
+    driveVertical(sv, cap, capContentBar, p, pixelBar, pixelGeom,
+        cellPixels, rawY + 1);
+    assert(sv.v.offset != before,
+        "one-pixel motion must not wait for the pointer to enter another row");
 }
 
 /// The painted rect of the node carrying `hitId`, or an empty rect.
