@@ -419,6 +419,7 @@ int runGui(GuiArgs guiArgs) @system
         const ch = fonts.cellH();
         pn.dock.cellW = cw;
         pn.dock.cellH = ch;
+        pn.dock.paintedScrollbarMinExtent = 24;
         auto tn = pn.dock.layout.nodeOf(treePane);
         pn.dock.layout.nodes[tn].maxExtent =
             (window.width / cw) / 2 < 12 ? 12 : (window.width / cw) / 2;

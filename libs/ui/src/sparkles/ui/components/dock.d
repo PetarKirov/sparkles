@@ -924,8 +924,9 @@ struct DockContainer
     int cellW = 1;
     /// ditto
     int cellH = 1;
-    /// Pixel metrics of a continuous painter fed by cell-position input.
-    /// Zero keeps the normal exact-unit hit formula (terminal and px input).
+    /// Pixel metrics of a continuous painter. The cell sizes let cell-position
+    /// input recognize an intersected pixel thumb; the minimum also keeps
+    /// exact pixel input on the same handle geometry as the painter.
     int paintedScrollbarCellW;
     /// ditto
     int paintedScrollbarCellH;
@@ -1698,6 +1699,11 @@ struct DockContainer
         r.hTrack = scaleRect(b.hTrack, cw, ch);
         r.vExtents.track = r.vTrack.height;
         r.hExtents.track = r.hTrack.width;
+        if ((cellW != 1 || cellH != 1) && paintedScrollbarMinExtent > 0)
+        {
+            r.vExtents.minExtent = paintedScrollbarMinExtent;
+            r.hExtents.minExtent = paintedScrollbarMinExtent;
+        }
         return r;
     }
 
@@ -2157,10 +2163,10 @@ version (unittest)
     DockContainer c;
     const n = c.layout.addLeaf(page);
     c.layout.nodes[n].scrollGutterV = 2;
-    c.layout.nodes[n].scrollMinExtentV = 24;
     c.layout.root = n;
     c.cellW = 10;
     c.cellH = 20;
+    c.paintedScrollbarMinExtent = 24;
     c.contentExtent(page, 18, 4_000);
     c.arrange(Rect(0, 0, 20, 10));
 
@@ -2175,6 +2181,31 @@ version (unittest)
     assert(c.scrollOf(page).v.dragging);
     assert(first != second,
         "a one-pixel drag must not collapse to one of ten cell positions");
+}
+
+@("ui.dock.pixelInputUsesThePaintersMinimumThumb")
+@safe unittest
+{
+    enum PaneId page = 1;
+    DockContainer c;
+    const n = c.layout.addLeaf(page);
+    c.layout.nodes[n].scrollGutterV = 2;
+    c.layout.root = n;
+    c.cellW = 10;
+    c.cellH = 20;
+    c.paintedScrollbarMinExtent = 24;
+    c.contentExtent(page, 18, 100);
+    c.arrange(Rect(0, 0, 20, 10));
+    c.scrollTo(page, 0, 47);
+
+    // On a 200px track, the proportional handle is 20px tall but the painter
+    // raises it to 24px. Pixel 92 belongs only to that painted extension.
+    const before = c.offsetV(page);
+    const r = c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(195, 92))));
+    assert(r.kind == RouteKind.container);
+    assert(c.scrollOf(page).v.dragging && c.offsetV(page) == before,
+        "the exact pixel handle and its hit geometry must share the minimum");
 }
 
 @("ui.dock.cellInputRecognizesTheContinuousPaintedThumb")

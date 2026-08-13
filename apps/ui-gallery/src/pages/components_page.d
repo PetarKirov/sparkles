@@ -267,11 +267,12 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     {
         const handled = driveVertical(bar, s.capture, capChromeSamples + i, p,
             rectOf(tree, frames, hitChromeSamples + i), specimenGeom,
-            i == 3 ? 0 : s.guiCellH);
+            i == 3 ? 0 : s.guiCellH, s.guiPointerY);
         consumed = handled || consumed;
     }
     const handled = driveVertical(s.chromeView, s.capture, capChromeBar, p,
-        rectOf(tree, frames, hitChromeBar), chromeGeom, s.guiCellH);
+        rectOf(tree, frames, hitChromeBar), chromeGeom, s.guiCellH,
+        s.guiPointerY);
     return handled || consumed;
 }
 

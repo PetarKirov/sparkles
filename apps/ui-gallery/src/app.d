@@ -12,7 +12,7 @@ import std.traits : isDynamicArray, isSomeString;
 
 import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui_app.gui_options : GuiCliFields, GuiOptions, resolveTheme;
-import sparkles.ui_app.host : RunConfig;
+import sparkles.ui_app.host : PointerUnit, RunConfig;
 
 import sparkles.ui_app.run : RunOutcome;
 import sparkles.ui_app.run_app : runApp;
@@ -129,6 +129,10 @@ int main(string[] args)
         title: "sparkles ui gallery",
         gui: gui,
         targetFps: 60,
+        // Keep the GUI scrollbar track in device pixels. Gallery widgets still
+        // receive cell positions: the component converts ordinary pointer
+        // handling back after the dock has consumed the precise coordinate.
+        pointerUnit: PointerUnit.pixels,
         // The Terminal page: Ctrl+letter never reaches the pty encoder
         // without the terminal-grade keyboard, and a shell's output must
         // appear without a keypress — the timeout is the TUI arm's only
