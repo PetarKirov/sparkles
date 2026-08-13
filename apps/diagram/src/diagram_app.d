@@ -275,20 +275,20 @@ unittest
     // Slots live on the op buffer (`RND5`); the canvas recorder drops them
     // (it only keeps kind/rect/visual). Assert slots on frameOps, geometry
     // on both.
-    bool frameBody, canvasBody, frameGlyph;
+    bool frameBody, canvasBody, frameLabel;
     foreach (ref op; app.frameOps[])
     {
         if (op.kind == OpKind.fillRect && op.slot == Slot.surface
             && op.rect.width >= 6)
             frameBody = true;
-        if (op.kind == OpKind.glyph && op.glyph == 'B' && op.slot == Slot.code)
-            frameGlyph = true;
+        if (op.kind == OpKind.textRun && op.text == "Box" && op.slot == Slot.code)
+            frameLabel = true;
     }
     foreach (ref op; rec.canvas.ops)
         if (op.kind == OpKind.fillRect && op.rect.width >= 6
             && op.rect.height >= 3)
             canvasBody = true;
     assert(frameBody, "frameOps holds the entity body with Slot.surface");
-    assert(frameGlyph, "frameOps holds the label glyph");
+    assert(frameLabel, "frameOps holds the entity label textRun");
     assert(canvasBody, "canvas received the entity body");
 }

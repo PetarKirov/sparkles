@@ -9,7 +9,7 @@ SSG/ANSI backend consumes without ever touching a widget or a palette again.
 */
 module sparkles.ui.display_list;
 
-import sparkles.ui.canvas : DrawOp, OpKind;
+import sparkles.ui.canvas : DrawOp, OpKind, textRunOp;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
 import sparkles.ui.style : Palette, resolveVisual, Slot, Visual;
@@ -44,10 +44,10 @@ works, and a plain `DrawOp[]` still works. Attributes are $(B inferred) from the
 sink: with a `SmallBuffer` this whole path is `@nogc`, which a function
 returning an array can never be.
 
-$(B The operations are borrowed from `ops`.) The sink owns them, and a `DrawOp`
-additionally borrows its `text` from the widget tree — so both the sink and the
-tree must outlive every painter that walks the result. A caller that stores a
-display list past the scope that built it therefore stores the $(I sink), not a
+$(B The operations live in `ops`.) The sink owns them; each `textRun` $(I copies)
+its UTF-8 into the op, so the widget tree need not outlive the list for text
+content. A caller that stores a display list past the scope that built it
+therefore stores the $(I sink), not a
 slice of it. This is the ownership question
 [`UI-O4`](../../../../docs/specs/ui/open-issues.md#ui-o4) records.
 */
@@ -105,10 +105,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             const lines = frames[idx].lines;
             if (lines.length == 0)
             {
-                ops ~= DrawOp(
-                    kind: OpKind.textRun, rect: rect, text: node.text,
-                    slot: node.slot, visual: vis,
-                );
+                ops ~= textRunOp(rect, node.text, node.slot, vis);
                 break;
             }
             // A wrapped run: one op per broken line, stacked down the frame.
@@ -116,11 +113,9 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             // take their advance from the text itself).
             const inner = rect.deflate(node.padding);
             foreach (li, ln; lines)
-                ops ~= DrawOp(
-                    kind: OpKind.textRun,
-                    rect: Rect(inner.x, inner.y + cast(int) li, inner.width, 1),
-                    text: ln, slot: node.slot, visual: vis,
-                );
+                ops ~= textRunOp(
+                    Rect(inner.x, inner.y + cast(int) li, inner.width, 1),
+                    ln, node.slot, vis);
             break;
         case rich:
             // One op per styled span, advancing along the row (one row per
@@ -156,8 +151,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                     if (vis.hasBg)
                         ops ~= DrawOp(kind: OpKind.fillRect, rect: r,
                             slot: slot, visual: vis);
-                    ops ~= DrawOp(kind: OpKind.textRun, rect: r,
-                        text: span.text, slot: slot, visual: vis);
+                    ops ~= textRunOp(r, span.text, slot, vis);
                     x += w;
                 }
             }

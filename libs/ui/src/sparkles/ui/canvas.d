@@ -19,6 +19,18 @@ import sparkles.ui.geometry : Point, Rect, Size, cellsOf;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.ui.style : Slot, Visual;
 
+/**
+Max UTF-8 bytes a `textRun` stores on the op.
+
+Fixed storage (not $(REF SmallBuffer, sparkles,base,smallbuffer)): ops live in
+GC `DrawOp[]` streams (`buildDisplayList`), and a union-backed SBO inside a
+GC object is scanned as pointers — false roots / heap corruption. A plain
+`char[N]` has no indirection. Longer runs are truncated on a byte boundary
+at copy time (callers that need more should split ops). Sized for typical
+code-line / paragraph fragments in display lists; chrome fits easily.
+*/
+enum size_t textRunCap = 512;
+
 /// How a $(LREF DrawOp)'s `line` is stroked.
 enum LineStyle : ubyte
 {
@@ -65,13 +77,21 @@ A single reified drawing command in abstract cell space. `buildDisplayList`
 ($(MREF sparkles,ui,display_list)) emits a `DrawOp[]`; a painter walks it once.
 Carries both the semantic `slot` (for backends that re-resolve, e.g. HTML class
 names) and the already-resolved `visual` (for pixel backends).
+
+$(B Text is owned.) A `textRun`'s payload is copied into a fixed
+$(LREF textRunCap)-byte slot so the op does not borrow a caller slice. That
+keeps frame ops valid after the source string dies (stack status lines,
+temporary formatters) and removes the dip1000 footgun that forced some apps
+to paint one glyph per UTF-8 byte.
 */
 struct DrawOp
 {
     OpKind kind;
     Rect rect;          /// fill area; text/glyph anchor (`rect.width` = cell advance)
     Point to;           /// `line` end point (`rect.origin` is the start)
-    const(char)[] text; /// `textRun` payload (borrowed; must outlive the op)
+    /// Owned UTF-8 for `textRun` (see $(LREF text) / $(LREF setText)).
+    private char[textRunCap] textBuf = void;
+    private ushort textLen; /// bytes of `textBuf` in use
     dchar glyph;        /// `glyph` payload
     LineStyle lineStyle;
     RuleEdge ruleEdge;  /// `rule` / `scrollbar` placement
@@ -85,6 +105,46 @@ struct DrawOp
     dchar barThumbGlyph = '█'; /// cell fallback's thumb glyph
     Slot slot;          /// the semantic role this op was resolved from
     Visual visual;      /// resolved appearance
+
+@safe pure nothrow @nogc:
+
+    /**
+    The text run's bytes.
+
+    Named `text` so existing `op.text == "…"` / `op.text.length` call sites
+    keep working; the storage is no longer a borrowed `const(char)[]`.
+    */
+    const(char)[] text() const return => textBuf[0 .. textLen];
+
+    /**
+    Copies `s` into the owned slot (truncated to $(LREF textRunCap) bytes).
+
+    The copy completes before `s` can expire, so a `scope` source is fine.
+    */
+    void setText(scope const(char)[] s)
+    {
+        const n = s.length > textRunCap ? textRunCap : s.length;
+        if (n)
+            textBuf[0 .. n] = s[0 .. n];
+        textLen = cast(ushort) n;
+    }
+}
+
+/**
+Builds a `textRun` op with owned text. `rect.width` should be the display-cell
+advance (use $(REF cellsOf, sparkles,ui,geometry) or grapheme `visibleWidth`).
+*/
+DrawOp textRunOp(in Rect rect, scope const(char)[] text,
+    Slot slot = Slot.inherit, in Visual visual = Visual.init)
+    @safe pure nothrow @nogc
+{
+    DrawOp op;
+    op.kind = OpKind.textRun;
+    op.rect = rect;
+    op.slot = slot;
+    op.visual = visual;
+    op.setText(text);
+    return op;
 }
 
 /**
@@ -172,10 +232,7 @@ enum bool isCanvas(T) = __traits(compiles, (ref T c) {
 A canvas that records every primitive into a growable `DrawOp[]` instead of
 drawing — the test seam and the reference `isCanvas` implementation. `@safe`, so
 instantiating the interpreter against it proves the pure model path stays
-GL-free. (It uses a GC array rather than a `SmallBuffer`, since a `DrawOp` holds
-a slice and `SmallBuffer`'s `void`-initialized inline storage is unsafe for
-pointer-bearing elements — the same reason `gui_preview.d` keeps a GC
-`PreviewLine[]`.)
+GL-free. Uses a GC array of ops; each op $(I owns) its text payload.
 */
 struct RecordingCanvas
 {
@@ -189,14 +246,10 @@ struct RecordingCanvas
         ops ~= DrawOp(kind: OpKind.fillRect, rect: r, visual: v);
     }
 
-    void textRun(in Point at, const(char)[] text, in Visual v)
+    void textRun(in Point at, scope const(char)[] text, in Visual v)
     {
-        ops ~= DrawOp(
-            kind: OpKind.textRun,
-            rect: Rect(at.x, at.y, cast(int) cellsOf(text), 1),
-            text: text,
-            visual: v,
-        );
+        ops ~= textRunOp(Rect(at.x, at.y, cast(int) cellsOf(text), 1), text,
+            Slot.inherit, v);
     }
 
     void glyph(in Point at, dchar g, in Visual v)
@@ -267,6 +320,7 @@ unittest
     assert(c.ops.length == 4);
     assert(c.ops[0].kind == OpKind.fillRect && c.ops[0].rect == Rect(0, 0, 4, 2));
     assert(c.ops[1].kind == OpKind.textRun && c.ops[1].rect == Rect(1, 1, 2, 1));
+    assert(c.ops[1].text == "hi", "text is owned, not borrowed");
     assert(c.ops[2].kind == OpKind.glyph && c.ops[2].glyph == '^');
     assert(c.ops[3].kind == OpKind.line
         && c.ops[3].to == Point(4, 5) && c.ops[3].lineStyle == LineStyle.wavy);
@@ -289,4 +343,16 @@ unittest
     assert(!scrollbarCell(40, 10, 0, 10, 2));
     assert(scrollbarCell(40, 10, 30, 10, 8));
     assert(scrollbarCell(40, 10, 30, 10, 9));
+}
+
+@("ui.canvas.textRunOwnsUtf8")
+@safe
+unittest
+{
+    // Multi-byte UTF-8 must survive as a whole run, not as three "glyphs".
+    RecordingCanvas c;
+    c.textRun(Point(0, 0), "Label…", Visual.init);
+    assert(c.ops.length == 1);
+    assert(c.ops[0].text == "Label…");
+    assert(c.ops[0].text.length == "Label…".length);
 }

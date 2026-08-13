@@ -36,6 +36,8 @@ if (isCanvas!Canvas)
                 canvas.fillRect(op.rect, op.visual);
                 break;
             case textRun:
+                // op.text is a slice of the op's owned buffer; valid for this
+                // call. Backends take `scope const(char)[]`.
                 canvas.textRun(op.rect.origin, op.text, op.visual);
                 break;
             case glyph:

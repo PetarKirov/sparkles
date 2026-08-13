@@ -50,7 +50,7 @@ int main(string[] args)
 int childMain()
 {
     import sparkles.input : Event, KeyEvent, isEndOfInput, match;
-    import sparkles.ui.canvas : DrawOp, OpKind;
+    import sparkles.ui.canvas : DrawOp, OpKind, textRunOp;
     import sparkles.ui.geometry : Rect;
     import sparkles.ui_app.host : RunConfig;
     import sparkles.ui_app.tui_loop : TuiHost, runTui;
@@ -64,8 +64,7 @@ int childMain()
             ++frames;
             sawAsyncLoop = h.asyncLoop;
             // One textRun per frame: the counter line the parent can see.
-            h.ops() ~= DrawOp(kind: OpKind.textRun,
-                rect: Rect(0, 0, 20, 1), text: "presses");
+            h.ops() ~= textRunOp(Rect(0, 0, 20, 1), "presses");
         },
         (ref TuiHost h, in Event e) {
             e.match!(

@@ -25,7 +25,7 @@ import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.base.text.width : codepointWidth;
 
 import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind,
-    ruleEndpoints, RuleEdge, scrollbarCell, scrollbarCellCount;
+    ruleEndpoints, RuleEdge, scrollbarCell, scrollbarCellCount, textRunOp;
 import sparkles.ui.geometry : Point, Rect, Size;
 // The glyph decisions are the cell grid's, not this adapter's: two cell
 // canvases each choosing their own box-drawing runs is how they came to
@@ -683,9 +683,9 @@ static assert(isCanvas!GridCanvas);
     {
         DrawOp[] ops;
         foreach (i; 0 .. lines)
-            ops ~= DrawOp(kind: OpKind.textRun,
-                rect: Rect(0, cast(int) i, 60, 1),
-                text: "const int some_reasonably_long_identifier = 12345;",
+            ops ~= textRunOp(
+                Rect(0, cast(int) i, 60, 1),
+                "const int some_reasonably_long_identifier = 12345;",
                 visual: Visual(fg: RgbColor(0xcc, 0xcc, 0xcc)));
         return ops;
     }
