@@ -10,19 +10,19 @@ changelog tree. Prefer local `.dd` files over web HTML.
 
 ## Primary pin
 
-| Item          | Value                                                                     |
-| ------------- | ------------------------------------------------------------------------- |
-| Repo          | `$REPOS/dlang/dlang.org`                                                  |
-| Full SHA      | `351dd6d91bfed604b473c4dedd4b5fdf262c3629`                                |
-| As of         | 2026-08-07 (commit: Publish 2.113.0 rc.1)                                 |
-| Reviewed      | 2026-08-12                                                                |
-| Path          | `changelog/`                                                              |
-| Files used    | `2.060.dd` … `2.112.0.dd` (patch `.1` only when a claim is about a patch) |
-| Public mirror | https://dlang.org/changelog/ (reader-facing links in `index.md` only)     |
+| Item          | Value                                                                 |
+| ------------- | --------------------------------------------------------------------- |
+| Repo          | `$REPOS/dlang/dlang.org`                                              |
+| Full SHA      | `351dd6d91bfed604b473c4dedd4b5fdf262c3629`                            |
+| As of         | 2026-08-07 (commit: Publish 2.113.0 rc.1)                             |
+| Reviewed      | 2026-08-14 (2.113 extension)                                          |
+| Path          | `changelog/`                                                          |
+| Files used    | `2.060.dd` … `2.112.0.dd`, plus `2.113.0_pre.dd` for the 2.113 pass   |
+| Public mirror | https://dlang.org/changelog/ (reader-facing links in `index.md` only) |
 
-**Guide ceiling:** published guide stops at **2.112**. This pin also contains
-`2.112.1.dd` and `2.113.0_pre.dd` — do **not** silently extend the guide to 2.113
-without an explicit edit of `index.md`'s upper bound.
+**Guide ceiling:** published guide stops at **2.113**. At this pin the 2.113 body
+lives in `changelog/2.113.0_pre.dd` (2.113.0 rc.1, `$(VERSION Aug 15, 2026`);
+`VER=2.113.0`). Prefer a final `2.113.0.dd` if the pin advances past the RC.
 
 ### Filename quirks
 

@@ -26,5 +26,6 @@ Pin: `351dd6d91bfed604b473c4dedd4b5fdf262c3629`.
 | 15  | Milestones | [2.108] Apr 2024 — IES; named arguments                                               | fact | [2.108]    | `2.108.0.dd` `$(VERSION Apr 01, 2024`; § `dmd.ies`, `dmd.named-arguments`                                                   | ✓      |
 | 16  | Milestones | [2.111] Apr 2025 — `__rvalue`/move/placement; ref locals; `-preview=safer`            | fact | [2.111]    | `2.111.0.dd` `$(VERSION Apr 01, 2025`                                                                                       | ✓      |
 | 17  | Milestones | [2.112] Jan 2026 — Bitfields default; ImportC `__module`; AA/array hooks              | fact | [2.112]    | `2.112.0.dd` `$(VERSION Jan 07, 2026`; § `dmd.bitfields`                                                                    | ✓      |
+| 18  | Milestones | [2.113] Aug 2026 — `T[$]`; `with (auto)`; fastdfa; `needsDestruction`                 | fact | [2.113]    | `2.113.0_pre.dd` `$(VERSION Aug 15, 2026`; major TOC bullets                                                                | ✓      |
 
 All milestone months match `$(VERSION …)` at month granularity. No date discrepancies.

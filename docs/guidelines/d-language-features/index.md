@@ -1,7 +1,7 @@
-# Modern D Language Features (2.060–2.112)
+# Modern D Language Features (2.060–2.113)
 
-What fourteen years of DMD changelogs — [2.060] (August 2012) through [2.112]
-(January 2026) — mean for code written today. This guide lists every notable
+What fourteen years of DMD changelogs — [2.060] (August 2012) through [2.113]
+(August 2026) — mean for code written today. This guide lists every notable
 language feature new Sparkles code should use and the release that introduced
 it. Legacy constructs appear only where something _still legal_ has a strictly
 better modern form — removed and deprecated features are policed by the
@@ -9,7 +9,7 @@ compiler and catalogued in the official [deprecated features table][deprecate].
 It is a _language_ survey: Phobos changes are out of scope except where a
 library symbol is the designated replacement for a language construct.
 
-**Last reviewed:** August 12, 2026.
+**Last reviewed:** August 14, 2026.
 
 > [!NOTE]
 > This guide gives the one-line rule and the version; the _how_ lives in the
@@ -24,7 +24,8 @@ library symbol is the designated replacement for a language construct.
 > `-preview=dip1000` ([AGENTS § Preview flags][agents-preview]), and unittest
 > builds add `-checkaction=context -allinst`. Entries below marked _(preview)_
 > need their named `-preview` switch; everything else is on by default in a
-> 2.112-era frontend (the Nix devshell ships `ldc2` ≥ 2.111 and `dmd` 2.112).
+> 2.113-era frontend (the Nix devshell ships `ldc2` ≥ 2.111 and `dmd` ≥ 2.112;
+> treat [2.113] rows as “available once your frontend is 2.113+”).
 
 ---
 
@@ -57,7 +58,7 @@ below give the rule, the syntax, and the caveats.
 | `__traits(parameters)`                           | [2.099]             | perfect forwarding without variadic wrappers                                                 |
 | `@mustuse` (DIP1038)                             | [2.100]             | result types that cannot be silently discarded (`Expected`)                                  |
 | Static array `.tupleof`                          | [2.100]             | element-wise unpacking and assignment                                                        |
-| Bitfields                                        | [2.101]→[2.112]     | C-compatible packed integer fields                                                           |
+| Bitfields                                        | [2.101]→[2.112]     | C-compatible packed integer fields (default values on fields since [2.113])                  |
 | `scope` array literals                           | [2.102]             | stack-allocated slices in `@nogc` code (under `dip1000`)                                     |
 | `@system` variables (DIP1035)                    | [2.102] _(preview)_ | data that `@safe` code may not touch                                                         |
 | Multi-argument `static assert`                   | [2.102]             | `static assert(cond, "a = ", a)` diagnostics                                                 |
@@ -70,6 +71,13 @@ below give the rule, the syntax, and the caveats.
 | `__rvalue`, move constructors, placement `new`   | [2.111]             | explicit move semantics; in-place construction                                               |
 | `-preview=safer`                                 | [2.111]             | `@safe` checks inside unattributed functions                                                 |
 | ImportC `#pragma attribute(push, nogc, nothrow)` | [2.111]             | wholesale `@nogc nothrow` C bindings                                                         |
+| Static array length inference                    | [2.113]             | `int[$] a = [1, 2, 3];` — `$` from the initializer                                           |
+| `with (auto x = …)`                              | [2.113]             | condition-scoped declaration in `with`, like `if`/`while`                                    |
+| `__traits(needsDestruction)`                     | [2.113]             | value types that need elaborate destruction (DBI / `memset` gates)                           |
+| `__traits(isOverlapped)`                         | [2.113]             | detect union/overlap fields for serialization and dtors                                      |
+| Safer `pragma(printf)` from `@safe`              | [2.113]             | literal format, no `%s`/`%.*s`, callee `@safe`/`@trusted`                                    |
+| `-preview=fastdfa`                               | [2.113] _(preview)_ | experimental nullability / truthiness / uninit-read DFA                                      |
+| `-check=nullderef`                               | [2.113]             | optional runtime null-deref checks (`on` / `safeonly`)                                       |
 
 ---
 
@@ -99,6 +107,10 @@ below give the rule, the syntax, and the caveats.
 - **Bitfields** (preview [2.101], default [2.112]) — C-compatible
   `struct B { int x : 3, y : 2; }`; introspect with `.bitoffsetof`/`.bitwidth`
   ([2.109]) and `__traits(getBitfieldOffset/getBitfieldWidth)` ([2.111]).
+  Since [2.113] fields may carry a default that fits the width:
+  `int a : 4 = 2;` (range-checked at compile time).
+- **Static array length inference** ([2.113]) — `int[$] a = [1, 2, 3];`
+  infers the dimension from the initializer so you stop hand-counting.
 - **`noreturn`** ([2.099], DIP1034) — the bottom type for never-returning
   functions; `main` may return it.
 - **Static initialization of associative arrays** ([2.106]) —
@@ -153,6 +165,9 @@ out (r; r >= lo && r <= hi)
   ternaries: `(string e) => throw new Exception(e)`.
 - **Condition-scoped declarations in `while`** ([2.097]) —
   `while (auto line = nextLine()) { … }`, matching `if (auto x = …)`.
+  Since [2.113] the same assign form works in **`with`**:
+  `with (auto f = File("out.log", "w")) { … }` (qualified `with (expr)`
+  without a declaration remains valid).
 - **Function literals can return by `ref`** ([2.086]); **`alias` to a function
   literal** ([2.070]) — `alias less = (a, b) => a < b;` names a template lambda.
 - **UDAs on parameters** ([2.082]) and **template-argument UDA forms**
@@ -161,12 +176,17 @@ out (r; r >= lo && r <= hi)
   ([Code Style][code-style]).
 - **`with (expression)` keeps its temporary alive** ([2.067]) —
   `with (File("out.log", "w")) { … }` is valid RAII.
+- **Safer `pragma(printf)` calls from `@safe`** ([2.113]) — a
+  `pragma(printf)` function marked `@safe`/`@trusted` may be called from
+  `@safe` when the format is a string **literal** and no string format
+  specifiers (`%s`, …) are used; type checks were already enforced by the
+  pragma.
 
 ---
 
 ## Memory safety: the `@safe`/`scope` arc
 
-The single most consequential thread of 2.067–2.111. New code should be
+The single most consequential thread of 2.067–2.113. New code should be
 written to compile cleanly under the repo's `-preview=dip1000` baseline:
 
 - **DIP25 — `return ref`** (introduced [2.067], deprecations by default
@@ -200,6 +220,16 @@ written to compile cleanly under the repo's `-preview=dip1000` baseline:
   `const(void)[]` → `void[]` copies.
 - **`-preview=safer`** ([2.111]) — applies the easily-fixed `@safe` checks to
   _unattributed_ functions; cheap extra checking for scripts and `main`.
+- **`-preview=fastdfa`** ([2.113]) — experimental data-flow engine for
+  nullability, truthiness, and proven uninitialized reads (including through
+  stack pointers and some float default-init math). Aimed at zero false
+  positives; no attributes yet, and complex cases (separate compilation,
+  function pointers, cycles) are skipped rather than rejected. Opt in for
+  exploratory hardening; do not build public APIs that require it.
+- **`-check=nullderef=on|safeonly`** ([2.113]) — optional runtime null
+  dereference checks before pointer loads (off by default; action follows
+  `-checkaction` / `core.exception`). Prefer `safeonly` when you want coverage
+  limited to `@safe` code; not every deref is instrumented on every backend.
 - **`@live`** ([2.092]) — prototype ownership/borrowing checks for pointers;
   experimental, don't build APIs around it.
 - **Misc. `@safe` tightenings** — slicing a static array is `@system`
@@ -228,6 +258,12 @@ this(this)` when migrating a type that has postblit-bearing fields.
   constructor throws, constructed fields are destructed; a `pure`/`nothrow`/
   `@nogc`/`@safe` constructor therefore requires field destructors at least
   as restrictive.
+- **Destructors / `scope(exit)` always run when an `Error` unwinds**
+  ([2.113]) — the old `nothrow` finally-elision skipped cleanup on `Error`;
+  that elision is gone. Opt back into the 2018 optimization with
+  `-nothrow-optimizations` (BetterC unchanged). Pair with
+  `__traits(needsDestruction, T)` ([2.113]) when writing TypeInfo-free
+  destroy paths.
 - **`destroy`, never `delete`** — `delete` deprecated [2.079], removed
   [2.100]; the word is an ordinary identifier again since [2.111]. Class
   allocators/deallocators (`new(size_t)`/`delete(void*)` members) are gone
@@ -237,16 +273,19 @@ this(this)` when migrating a type that has postblit-bearing fields.
 - **Unrestricted unions** ([2.072]) — fields with postblit/destructor/invariant
   are allowed; calling the right one is your job (`destroy(u.member)`). Only
   the first member may have a default initializer ([2.098]); initialize others
-  via named arguments ([2.108]).
+  via named arguments ([2.108]). Detect overlapping fields with
+  `__traits(isOverlapped, S.field)` ([2.113]).
 
 ---
 
 ## `@nogc`, BetterC & GC-free error handling
 
 - **`@nogc`** ([2.066]) — statically rejects GC allocation; pair with
-  `-vgc`/`-profile=gc` ([2.066]/[2.068]) to find allocation points. The repo's
-  `@nogc` toolkit ([AGENTS § @nogc primitives][agents-nogc]): `SmallBuffer`,
-  the `text` readers/writers, `recycledErrorInstance`.
+  `-vgc`/`-profile=gc` ([2.066]/[2.068]) to find allocation points. Since
+  [2.113] `-vgc` also reports which nested function/variable closes over what
+  (matching `@nogc` error detail). The repo's `@nogc` toolkit
+  ([AGENTS § @nogc primitives][agents-nogc]): `SmallBuffer`, the `text`
+  readers/writers, `recycledErrorInstance`.
 - **`@mustuse` — DIP1038** ([2.100]) — on a `struct`/`union`, makes silently
   discarding a returned value a compile error; designed for "alternative
   error-handling mechanisms for code that cannot use exceptions, including
@@ -330,6 +369,8 @@ this(this)` when migrating a type that has postblit-bearing fields.
 | `classInstanceAlignment`                                    | [2.101]         | in-place class construction                                            |
 | `isVirtualMethod` (use over deprecated `isVirtualFunction`) | [2.103]         | virtual-dispatch introspection                                         |
 | `isBitfield` + `getBitfieldOffset`/`getBitfieldWidth`       | [2.109]/[2.111] | bitfield layout                                                        |
+| `needsDestruction`                                          | [2.113]         | value types needing elaborate destruction (not classes)                |
+| `isOverlapped`                                              | [2.113]         | field shares storage with another (unions)                             |
 | `isModule`/`isPackage` + `is(sym == module/package)`        | [2.087]         | module-aware reflection                                                |
 
 Also: `__traits(getMember/getOverloads)` bypass visibility since [2.086] —
@@ -382,7 +423,8 @@ chains).
   `aa.update(key, create, update)` are single-lookup primitives ([2.082]);
   `byKeyValue` ([2.067]); static initialization ([2.106]).
 - **Static arrays** — instances expose `.tupleof` ([2.100]); known-length
-  slices convert to static array parameters ([2.063]).
+  slices convert to static array parameters ([2.063]); length inference via
+  `$` in the type ([2.113]): `int[$] a = [1, 2, 3];`.
 - **Enums** — members accept UDAs, `deprecated`, `@disable` ([2.082]);
   comparing values of different enum types is an error ([2.081]).
 
@@ -423,7 +465,9 @@ chains).
   ([2.095]); `@gnuAbiTag` ([2.092]) and `__c_wchar_t` ([2.084]) cover ABI
   corners; `-HC` generates C++ headers from D ([2.091]).
 - **`pragma(printf)` / `pragma(scanf)`** ([2.092]) — compiler-checked format
-  strings for your own `extern (C)` variadic functions.
+  strings for your own `extern (C)` variadic functions; since [2.113] some
+  checked calls are `@safe`-callable (literal format, no string specs, callee
+  `@safe`/`@trusted`).
 - **`extern (C)` functions cannot overload** ([2.105], deprecated [2.095]) —
   one name, one signature; `extern (C)` declarations inside template mixins
   mangle as C at module scope ([2.089]).
@@ -449,21 +493,24 @@ Previews that became defaults — the language as it now stands:
 | `bitfields`            | [2.112]       | C-compatible bitfields                       |
 
 Previews worth opting into today: **`in`** and **`dip1000`** (repo baseline),
-`fixImmutableConv`, `systemVariables`, `safer`, `nosharedaccess` (aspirational).
-No language _edition_ shipped through 2.112 — the editions mechanism is only
+`fixImmutableConv`, `systemVariables`, `safer`, `nosharedaccess` (aspirational),
+and the experimental **`fastdfa`** ([2.113]) for nullability/uninit analysis.
+No language _edition_ shipped through 2.113 — the editions mechanism is only
 referenced prospectively (first in [2.109]).
 
 Diagnostics and build switches that pay rent: `-verrors=context` (caret
 diagnostics, [2.085]); `-checkaction=context` (assert prints operand values,
 [2.085] — in the repo's unittest flags); `-verrors=spec` ([2.072]);
-`-check=`/`-checkaction=` fine-grained runtime checks ([2.084]);
-`-boundscheck=safeonly` keeps `@safe` bounds checks in release ([2.066]);
-`-i` include-imports builds ([2.079]); `-vasm` per-function disassembly
-([2.099]); `-ftime-trace` build profiling and `-oq` fully-qualified object
-names ([2.111]); demangled linker errors with fix suggestions ([2.109]);
-`-vgc`/`-profile=gc` allocation hunting ([2.066]/[2.068]); `-lowmem`
-([2.086]); `-nothrow` ([2.106]); `-target=<triple>` cross-compilation
-([2.098]).
+`-check=`/`-checkaction=` fine-grained runtime checks ([2.084]), including
+`-check=nullderef=on|safeonly` ([2.113]); `-boundscheck=safeonly` keeps
+`@safe` bounds checks in release ([2.066]); `-i` include-imports builds
+([2.079]); `-vasm` per-function disassembly ([2.099]); `-ftime-trace` build
+profiling (template args in the trace since [2.113]) and `-oq` fully-qualified
+object names ([2.111]); demangled linker errors with fix suggestions ([2.109]);
+`-vgc`/`-profile=gc` allocation hunting ([2.066]/[2.068]; closure sites since
+[2.113]); `-lowmem` ([2.086]); `-nothrow` ([2.106]); `-nothrow-optimizations`
+to re-skip finally on `Error` in `nothrow` ([2.113]); `-target=<triple>`
+cross-compilation ([2.098]).
 
 ---
 
@@ -506,14 +553,17 @@ constructs **still compile silently** but have a strictly better modern form.
 | [2.108] | Apr 2024 | Interpolated Expression Sequences; named arguments (DIP1030)                  |
 | [2.111] | Apr 2025 | `__rvalue` + move constructors; placement new; `ref` locals; `-preview=safer` |
 | [2.112] | Jan 2026 | Bitfields default; ImportC `__module`; array/AA runtime hooks templatized     |
+| [2.113] | Aug 2026 | `T[$]` length inference; `with (auto x = …)`; fastdfa; `needsDestruction`     |
 
 ---
 
 ## Sources
 
-- DMD changelogs 2.060–2.112 — `dlang/dlang.org` repository,
+- DMD changelogs 2.060–2.113 — `dlang/dlang.org` repository,
   `changelog/*.dd` (published at [dlang.org/changelog][changelog-index]);
   every version link below resolves to the corresponding release page.
+  [2.113] claims were verified against the 2.113.0 release-candidate changelog
+  (`changelog/2.113.0_pre.dd` / public [2.113.0] page once published).
 - [D language specification][spec] — normative for features whose DIP text has
   drifted (notably DIP1000).
 
@@ -571,6 +621,7 @@ constructs **still compile silently** but have a strictly better modern form.
 [2.110]: https://dlang.org/changelog/2.110.0.html
 [2.111]: https://dlang.org/changelog/2.111.0.html
 [2.112]: https://dlang.org/changelog/2.112.0.html
+[2.113]: https://dlang.org/changelog/2.113.0.html
 [agents-attrs]: ../AGENTS.md#safety-attributes--annotate-non-templates-infer-on-templates
 [agents-nogc]: ../AGENTS.md#nogc-primitives-and-what-breaks-nogcnothrow
 [agents-preview]: ../AGENTS.md#preview-flags
