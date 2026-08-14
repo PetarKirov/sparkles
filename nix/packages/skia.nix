@@ -31,33 +31,39 @@
       packages.skia = pkgs.skia.overrideAttrs (old: {
         pname = "skia-sparkles";
 
-        # Upstream bug, hit on the first build of this package: Graphite's
-        # Vulkan bring-up entry point is unreachable from a shared library.
+        # Skia hides almost everything, and that is fatal for how sparkles
+        # binds it. `is_official_build=true` implies `-fvisibility=hidden`, so
+        # only symbols upstream marked `SK_API` reach libskia.so's dynamic
+        # symbol table — 2468 of them in the stock build. The D binding is
+        # `extern(C++)` against real mangled symbols with no C shim (plan
+        # decision 2), so any entry point upstream forgot to mark is simply
+        # unreachable from D.
         #
-        # `src/gpu/graphite/vk/VulkanGraphiteUtils.cpp` DEFINES
-        # `skgpu::graphite::ContextFactory::MakeVulkan`, but never includes
-        # `include/gpu/graphite/vk/VulkanGraphiteContext.h` — the header that
-        # carries the `SK_API` (visibility("default")) declaration. With
-        # `is_official_build=true`, and therefore `-fvisibility=hidden`, the
-        # definition is compiled hidden and never reaches libskia.so's dynamic
-        # symbol table. The shipped header still advertises it, so the failure
-        # is a link error at the consumer, not here.
+        # That set is not empty, and the first thing sparkles needs is in it:
+        # `skgpu::graphite::ContextFactory::MakeVulkan`, the ONLY way to create
+        # a Graphite Vulkan context, is absent from the stock build (verified
+        # by hand with `nm -D | c++filt`). It is declared `SK_API` in the
+        # shipped header `include/gpu/graphite/vk/VulkanGraphiteContext.h` but
+        # defined in `src/gpu/graphite/vk/VulkanGraphiteUtils.cpp`, which never
+        # includes that header — whereas its sibling `VulkanBackendTexture.cpp`
+        # does include its own public header and exports fine. m153 has the
+        # same gap, and its replacement API (`SkContexts::MakeGraphite`) is
+        # still a stub returning nullptr.
         #
-        # Verified absent from all 2468 exported symbols of the stock build and
-        # present in neither m144 nor m153; `src/gpu/graphite/dawn/
-        # DawnGraphiteUtils.cpp` has the identical omission. m153's replacement
-        # API (`SkContexts::MakeGraphite`) is still a stub that returns nullptr,
-        # so this is the only route to a Graphite Vulkan context. Upstreamable
-        # one-liner; drop this when it lands.
-        postPatch = (old.postPatch or "") + ''
-          substituteInPlace src/gpu/graphite/vk/VulkanGraphiteUtils.cpp \
-            --replace-fail \
-              '#include "src/gpu/graphite/vk/VulkanSharedContext.h"' \
-              '#include "src/gpu/graphite/vk/VulkanSharedContext.h"
-          #include "include/gpu/graphite/vk/VulkanGraphiteContext.h"'
-        '';
+        # So a targeted patch (adding that include) would plausibly fix this
+        # one symbol; it is deliberately NOT the approach taken, and was not
+        # measured either way. Exporting everything is the durable answer: it
+        # removes a whole class of "upstream forgot the annotation" failures
+        # that this binding style would otherwise hit one symbol at a time.
+        # Cost: the dynamic symbol table grows 2468 -> 12758 and libskia.so
+        # grows 11.6 MB -> 14.1 MB.
 
         gnFlags = old.gnFlags ++ [
+          # See the note above. `extra_cflags_cc` is additive here: the base
+          # derivation sets `extra_cflags` (the harfbuzz include path) and
+          # never sets this one, so the two do not collide.
+          "extra_cflags_cc=[\"-fvisibility=default\"]"
+
           # The renderer sparkles:ui-skia targets. Graphite has no GL backend
           # at all (include/gpu/graphite/ ships dawn/, mtl/ and vk/ only),
           # which is why the Android and macOS stories in the plan are Vulkan
@@ -93,20 +99,30 @@
         # silently disables it, and `ContextFactory::MakeVulkan` through the
         # visibility bug patched above — and each failed silently, surfacing
         # only as a link error in a consumer much later.
+        # Every capability above is a claim about the dynamic symbol table, so
+        # assert it there. Each has already been observed missing once —
+        # Graphite because the flag was off, SVG because `is_component_build`
+        # silently disables it, `ContextFactory::MakeVulkan` through the
+        # visibility default — and each failed silently, surfacing only as a
+        # link error in a consumer much later.
         postInstall = (old.postInstall or "") + ''
-          syms=$(${pkgs.buildPackages.binutils}/bin/nm -D --defined-only "$out/lib/libskia.so")
+          syms="$NIX_BUILD_TOP/skia-dynsyms.txt"
+          ${pkgs.buildPackages.binutils}/bin/nm -D --defined-only \
+            "$out/lib/libskia.so" > "$syms"
+          echo "skia: $(wc -l < "$syms") exported symbols"
 
           require() {
-            if ! printf '%s\n' "$syms" | grep -q "$1"; then
+            grep -q "$1" "$syms" || {
               echo "skia: expected symbol matching '$1' ($2) is not exported" >&2
               exit 1
-            fi
+            }
           }
 
-          # Graphite's Vulkan context factory — the bring-up entry point.
+          # Graphite's Vulkan context factory — the bring-up entry point, and
+          # the symbol that is hidden without `-fvisibility=default`.
           require '14ContextFactory10MakeVulkan' 'skgpu::graphite::ContextFactory::MakeVulkan'
           # Graphite itself.
-          require '8graphite7Context11makeRecorder' 'skgpu::graphite::Context::makeRecorder'
+          require '8graphite7Context12makeRecorder' 'skgpu::graphite::Context::makeRecorder'
           # The Ganesh escape hatch.
           require 'GrDirectContexts6MakeGL' 'GrDirectContexts::MakeGL'
           # The GPU-free raster target the golden-image tests paint into.
