@@ -135,6 +135,10 @@ jobs:
         run: |
           xvfb-run -a dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/x11/example
           dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/wayland/example
+          # Interactive GUI probe — compile only; running it would sit in a
+          # window loop until the job timed out.
+          dub build --single --compiler=ldc2 \
+            docs/research/window-system-integration/cursor-shapes/cursor-shapes.d
 
   # The test runner's extracted-test modes. `--test` does not cover these: a
   # @betterC test runs as an ordinary unittest there, and only `--better-c`

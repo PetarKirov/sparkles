@@ -3060,6 +3060,10 @@ export default withMermaid(
                           link: '/research/window-system-integration/glfw',
                         },
                         {
+                          text: 'Pointer-shape probe',
+                          link: '/research/window-system-integration/cursor-shapes/',
+                        },
+                        {
                           text: 'sokol_app.h (C)',
                           link: '/research/window-system-integration/sokol',
                         },
