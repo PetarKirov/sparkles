@@ -1,0 +1,54 @@
+# fdroidserver configuration for the self-hosted sparkles F-Droid repository.
+# See docs/specs/hue/fdroid.md.
+#
+# This file is COPIED into a scratch working directory at publish time
+# (`fdroid-publish`), never used in place: `fdroid update` writes `repo/`,
+# `archive/` and `tmp/` beside its config, and `repo/status/*.json` records the
+# working directory's git state — including modified and untracked file lists —
+# so running it inside this checkout would publish them.
+#
+# No secret appears here. `{env: VAR}` is resolved lazily by fdroidserver from
+# the environment, so passphrases live in the CI secret store and never on disk.
+#
+# `repo_url` is NOT among them, and cannot be: `common.read_config` validates it
+# eagerly (`config['repo_url'].endswith('/repo')`) while a `{env: …}` value is
+# still a dict, which fails with a bare AttributeError. It is deployment
+# configuration rather than source anyway, so `fdroid-publish` appends it to its
+# working copy of this file. `archive_url` needs no entry at all — fdroidserver
+# derives it as `repo_url[:-4] + 'archive'`.
+repo_name: sparkles
+repo_description: >-
+  Android builds from the sparkles monorepo (https://github.com/PetarKirov/sparkles).
+  Signed and published by Petar Kirov. Reproducibly built by Nix; no trackers, no ads,
+  and no network permissions in any app served here.
+repo_icon: icon.png
+# Retention. `repo/` keeps the newest 4 versions of each app; `fdroid update`
+# MOVES older ones into `archive/` (it does not delete them). The F-Droid client
+# does not follow an archive automatically — a user adds it as a second
+# repository — so archived versions are cold storage, not a second channel.
+archive_older: 3
+archive_name: sparkles archive
+archive_description: >-
+  Superseded versions of apps from the sparkles repository.
+archive_icon: icon.png
+# The INDEX signing key — distinct from the APK signing key (see fdroid.md
+# "Why nix must not hold the key"). Losing this one is recoverable: users re-add
+# the repository with the new fingerprint. Losing the APK key is not.
+keystore: keystore.p12
+repo_keyalias: { env: SPARKLES_FDROID_REPO_KEY_ALIAS }
+keystorepass: { env: SPARKLES_FDROID_KEYSTORE_PASS }
+keypass: { env: SPARKLES_FDROID_KEY_PASS }
+
+# Deploy target. `fdroid deploy` drives rclone, whose remote is defined purely
+# through RCLONE_CONFIG_* environment variables so no credential file is
+# written. NOTE: this is an `rclone sync` — it DELETES remote files absent
+# locally, which is why the publisher pulls the live repo/ and archive/ down
+# before regenerating the index.
+awsbucket: { env: SPARKLES_FDROID_BUCKET }
+rclone: true
+rclone_config: sparkles
+
+# Left at their defaults deliberately:
+#   make_current_version_link: false  would create a SYMLINK, which object
+#                                     storage cannot represent.
+#   repo_maxage: 0                    no index staleness enforcement.

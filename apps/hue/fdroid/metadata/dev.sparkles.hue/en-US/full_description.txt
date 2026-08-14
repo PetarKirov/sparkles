@@ -1,0 +1,41 @@
+hue reads source files and markdown and renders them the way a good editor
+would, without being one. It is a viewer: open a file, read it properly
+highlighted, and switch themes to see how they look.
+
+Highlighting is tree-sitter based and injection-aware, so a fenced code block
+inside a markdown document is highlighted by that language's own grammar.
+Parsers for 27 languages ship inside the app — bash, C, C++, C#, CSS, D, Go,
+Haskell, HTML, Java, JavaScript, JSON, Kotlin, markdown, Nix, OCaml, Python,
+Rust, Scala, SDLang, TOML, TSX, TypeScript, XML, YAML and Zig.
+
+Markdown is rendered rather than shown as source: headings, callouts, task
+lists, tables, and code blocks with their own line-number gutters. Blocks
+fenced as "ansi" are decoded through a real terminal emulator, so captured
+terminal output keeps its colours.
+
+Around 40 colour themes are built in — Catppuccin, Tokyo Night, Gruvbox, Nord,
+Dracula, Solarized, Rosé Pine, Ayu, GitHub and others — and the toolbar cycles
+through them live over whatever you are reading.
+
+Touch: drag to scroll with a fling, tap to activate, long-press to start a
+selection, pinch to change the font size. A bottom toolbar covers theme
+cycling, raw/preview switching, the file explorer, and line numbers. Selected
+text — including table cells, as TSV or markdown — copies to the system
+clipboard.
+
+Honest about what it is not. There is no soft-keyboard support, so incremental
+search, goto-line and the copy-mode toggles are reachable only from a hardware
+(for example Bluetooth) keyboard; everything else has a touch equivalent. It
+does not edit files.
+
+Privacy: hue requests no Android permissions at all, and has no network access
+of any kind. Nothing is uploaded, and there is no analytics, telemetry, or
+advertising. Every font, grammar and sample document it uses is bundled in the
+package, which is why the download is large (about 64 MB, and roughly the same
+again while installing).
+
+Free software under the Boost Software License 1.0. hue is part of sparkles, a
+monorepo of D libraries and tools; the app is built entirely by Nix — no
+Gradle, no Java, no Dalvik bytecode — as a single native activity, and the
+build is bit-reproducible. Source, issue tracker and the full specification are
+linked below.
