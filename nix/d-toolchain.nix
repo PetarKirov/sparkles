@@ -76,7 +76,28 @@
                     };
                   }
                 else
-                  prev.ldc;
+                  # Official LDC 1.41 still rpaths glibc 2.40. nixpkgs
+                  # elfutils 0.195 needs GLIBC_ABI_GNU2_TLS from this
+                  # stdenv's glibc. Point every host link at that
+                  # interpreter + rpath so `libs "dw"` examples run.
+                  prev.symlinkJoin {
+                    name = "ldc-${prev.ldc.version}";
+                    paths = [ prev.ldc ];
+                    nativeBuildInputs = [ prev.makeWrapper ];
+                    postBuild = ''
+                      for drv in ldc2 ldmd2; do
+                        wrapProgram "$out/bin/$drv" \
+                          --add-flags "-L--dynamic-linker=${prev.stdenv.cc.bintools.dynamicLinker}" \
+                          --add-flags "-L-rpath=${prev.stdenv.cc.libc}/lib"
+                      done
+                    '';
+                    passthru = {
+                      inherit (prev.ldc) include;
+                    };
+                    meta = prev.ldc.meta // {
+                      mainProgram = "ldc2";
+                    };
+                  };
 
               # Build `dtools` (rdmd, dustmite, …) against the *unwrapped* ldc.
               # Its check phase (`test_rdmd`) copies `ldmd2` into a temp dir and
@@ -88,7 +109,28 @@
               # argument has to be overridden back to the plain package.
               dtools = prev.dtools.override { ldc = prev.ldc; };
 
-              dmd = inputs'.dlang-nix.packages.dmd-2_112_1;
+              dmd =
+                let
+                  raw = inputs'.dlang-nix.packages.dmd-2_112_1;
+                in
+                if isDarwin then
+                  raw
+                else
+                  # Same glibc 2.40/2.42 split as LDC: `ci` on x86_64-linux
+                  # shells out to DMD for `--example-files`.
+                  prev.symlinkJoin {
+                    name = raw.name;
+                    paths = [ raw ];
+                    nativeBuildInputs = [ prev.makeWrapper ];
+                    postBuild = ''
+                      wrapProgram "$out/bin/dmd" \
+                        --add-flags "-L--dynamic-linker=${prev.stdenv.cc.bintools.dynamicLinker}" \
+                        --add-flags "-L-rpath=${prev.stdenv.cc.libc}/lib"
+                    '';
+                    meta = raw.meta // {
+                      mainProgram = "dmd";
+                    };
+                  };
 
               dub = inputs'.dlang-nix.packages.dub-1_43_0-alpha-5efed36;
 

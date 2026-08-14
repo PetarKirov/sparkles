@@ -39,8 +39,10 @@
  *
  * Environment recorded: Linux 6.18.26, AMD Ryzen 9 7940HX (Zen 4, x86-64),
  * `/proc/sys/kernel/perf_event_paranoid` = -1, elfutils 0.195 (libdw/libdwfl),
- * LDC 1.41 druntime `core.sys.linux.perf_event`. The perf→DWARF register
- * mapping below is x86-64-specific.
+ * LDC 1.41 druntime `core.sys.linux.perf_event`. Linked with the flake
+ * stdenv dynamic linker (glibc 2.42) so elfutils 0.195 can resolve
+ * `GLIBC_ABI_GNU2_TLS` — see nix/d-toolchain.nix. The perf→DWARF
+ * register mapping below is x86-64-specific.
  *
  * Portability: any missing capability prints a `SKIP:` line and exits 0.
  */
