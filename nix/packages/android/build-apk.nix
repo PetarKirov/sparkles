@@ -87,33 +87,75 @@ in
           resDir ? null,
           # Debug builds get android:debuggable="true"; release builds do not.
           debug ? true,
+          # Whether NIX signs the result. There are exactly three reachable
+          # states, and the assertions below make that literal:
+          #
+          #   signed-debug    debug = true                the checked-in throwaway key
+          #   signed-release  debug = false + keystore    a key from outside this repo
+          #   unsigned        sign  = false               no signature at all
+          #
+          # The third exists because a *distribution* key cannot come near a
+          # derivation: every input one references is copied into /nix/store,
+          # which is world-readable and pushed to a public binary cache, so a
+          # keystore handed to nix is a published private key. The F-Droid path
+          # therefore stops after zipalign and apps/fdroid signs outside the
+          # store — which is also the order apksigner wants, since it preserves
+          # an already-aligned input's alignment. See docs/specs/hue/fdroid.md
+          # (FDR1, FDR2).
+          sign ? true,
           # Signing keystore (storepass/keypass "android"). Defaults to the
-          # checked-in throwaway key for DEBUG builds only — a release build
-          # has no default and must be given a key from outside this
+          # checked-in throwaway key for signed DEBUG builds only — a release
+          # build has no default and must be given a key from outside this
           # repository, so the public one cannot be reached by omission.
-          keystore ? (if debug then inTreeDebugKeystore else null),
+          keystore ? (if debug && sign then inTreeDebugKeystore else null),
           # Overrides the manifest's package id, so two variants of the same
           # app can be installed side by side.
           renamePackage ? null,
           description ? "Android package",
         }:
-        # Two independent guards, because the failure they prevent is
-        # "a distributed APK signed with a public key":
-        #   * omission — a release build has no default keystore at all;
-        #   * explicit passing — refused by name, which (unlike comparing path
-        #     identity) also catches a string built from `self.outPath`.
-        assert lib.assertMsg (keystore != null) ''
+        # Four guards. The first two keep `sign = false` an honest third state
+        # rather than a fourth, overlapping one; the last two are the original
+        # pair, now scoped to builds that actually sign. Together the failure
+        # they prevent is "something distributable that nobody meant to
+        # distribute" — signed with a public key, or unsigned by accident.
+        #
+        # Order matters: the third establishes `keystore != null` before the
+        # fourth calls baseNameOf on it.
+        assert lib.assertMsg (sign || !debug) ''
+          buildAndroidApk: sign = false is only meaningful for a release build
+          (debug = false). An unsigned APK cannot be installed, and a debuggable
+          one must never be published, so the combination has no use.
+        '';
+        assert lib.assertMsg (sign || keystore == null) ''
+          buildAndroidApk: sign = false takes no keystore. Nix must not see the
+          signing key at all — /nix/store is world-readable and is pushed to a
+          public binary cache. Sign the `-unsigned.apk` output outside nix; see
+          apps/fdroid and docs/specs/hue/fdroid.md.
+        '';
+        assert lib.assertMsg (!sign || keystore != null) ''
           buildAndroidApk: a release APK (debug = false) needs a signing key
           from outside this repository. The checked-in key is public — anyone
           could publish an update over the result — so there is no default.
+          To build one for signing elsewhere, pass sign = false instead.
         '';
-        assert lib.assertMsg (debug || builtins.baseNameOf keystore != inTreeDebugKeystoreName) ''
+        # Refused by NAME, which (unlike comparing path identity) also catches a
+        # string built from `self.outPath`.
+        assert lib.assertMsg (!sign || debug || builtins.baseNameOf keystore != inTreeDebugKeystoreName) ''
           buildAndroidApk: a release APK (debug = false) cannot be signed with
           ${inTreeDebugKeystoreName} — that key is checked in, and therefore
           public. Pass a key held outside this repository.
         '';
+        let
+          # An unsigned APK says so in BOTH names it has — the derivation's and
+          # the file's — so nothing on disk can be mistaken for something
+          # installable. (The same complaint the hue-apk-repo comment records:
+          # two derivations that both emit `$out/hue.apk` are indistinguishable
+          # once they reach ./result.)
+          artifactName = pname + lib.optionalString (!sign) "-unsigned";
+        in
         pkgs.stdenv.mkDerivation {
-          inherit pname version;
+          pname = artifactName;
+          inherit version;
 
           dontUnpack = true;
 
@@ -210,18 +252,43 @@ in
             # lib/**/*.so. The APK would then fail to install on 16 KB devices.
             ${sdk.buildTools}/zipalign -p -f 4 base.apk aligned.apk
 
-            ${sdk.buildTools}/apksigner sign \
-              --ks ${keystore} --ks-pass pass:android \
-              --out signed.apk aligned.apk
+            ${
+              if sign then
+                ''
+                  ${sdk.buildTools}/apksigner sign \
+                    --ks ${keystore} --ks-pass pass:android \
+                    --out out.apk aligned.apk
+                ''
+              else
+                ''
+                  # Deliberately no apksigner: see `sign` above. zipalign has
+                  # already run and apksigner preserves an aligned input's
+                  # alignment, so signing this later — outside nix, with a key
+                  # nix never sees — is the documented order, not a shortcut.
+                  mv aligned.apk out.apk
+                ''
+            }
 
             runHook postBuild
           '';
 
           installPhase = ''
             runHook preInstall
-            install -Dm644 signed.apk $out/${pname}.apk
+            install -Dm644 out.apk $out/${artifactName}.apk
             runHook postInstall
           '';
+
+          # What the artifact IS, so consumers (apps/fdroid, CI) read it off the
+          # derivation instead of re-deriving it from a filename.
+          passthru = {
+            inherit
+              versionCode
+              versionName
+              sign
+              debug
+              ;
+            apkFileName = "${artifactName}.apk";
+          };
 
           meta = {
             inherit description;

@@ -116,6 +116,16 @@ third. This also happens to be the order `apksigner` wants: it preserves an
 already-aligned input's alignment, so signing after `zipalign` is correct rather
 than merely convenient.
 
+The publisher signs with **v1 (JAR) signing disabled**. apksigner enables it by
+default even when the APK's own minSdk is 26, and at that floor it is dead
+weight: every Android version that can install this APK understands v2/v3. With
+`--v1-signing-enabled false` the signed artifact carries no `META-INF/` entries
+at all, so it differs from the unsigned one by exactly the appended signing
+block — measured at 4301 bytes on the 64 MB APK, against 20878 bytes and three
+extra archive entries when v1 is left on. That is what makes `FDR8`'s manifest
+meaningful: the only difference between what nix built and what users install is
+the signature.
+
 Losing the two keys has very different costs, which is why they are separate:
 
 | Key   | Signs                                    | If lost                                                                                                                           |
@@ -170,6 +180,11 @@ an empty working directory would unpublish every previous version.
   Android 11+ refuse the install unless it is uncompressed and 4-byte aligned.
   aapt2 only stores it by default at minSdk ≥ 30, so the link needs `-0 arsc`.
   Assert it with `unzip -v` — nothing else in the build would catch this.
+- **apksigner writes a v1 signature even when nothing verifies it.** At minSdk
+  26 `apksigner verify` reports `v1 scheme (JAR signing): false` — and the APK
+  still contains `META-INF/MANIFEST.MF`, `*.SF` and `*.RSA`, because the _signing_
+  default is independent of what verification uses. Pass
+  `--v1-signing-enabled false` explicitly.
 - **`aapt2 dump badging` does not print the minSdk.** It reports
   `targetSdkVersion` and omits `sdkVersion` entirely, so the obvious check looks
   like the floor is missing. `aapt2 dump xmltree --file AndroidManifest.xml`

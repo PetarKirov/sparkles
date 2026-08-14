@@ -53,9 +53,15 @@
       #     works", which is exactly the bisect you want when the emulator
       #     shows a black screen. Cheap once the closure is warm, and
       #     building it is what stops it rotting.
+      #   * `hue-apk-unsigned` — the artifact that actually gets published
+      #     (docs/specs/hue/fdroid.md). It shares the whole closure with
+      #     `hue-apk` and differs only in aapt2's debug flag and the absent
+      #     signature, so covering it costs one more aapt2+zipalign run and
+      #     keeps the release path from rotting between releases.
       packages.all-android = pkgs.linkFarm "sparkles-all-android" {
         hue-apk = config.packages.hue-apk;
         hue-apk-repo = config.packages.hue-apk-repo;
+        hue-apk-unsigned = config.packages.hue-apk-unsigned;
         hello-apk = config.packages.hello-apk;
       };
 
@@ -75,6 +81,7 @@
         "hue-android-assets"
         "hue-apk"
         "hue-apk-repo"
+        "hue-apk-unsigned"
         "hue-icon"
         "libghostty-vt-android"
         "libhello-android"
