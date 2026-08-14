@@ -35,5 +35,5 @@ export SPARKLES_TS_GRAMMAR_PATH
 
 # Clean stale pages (a fixture may have been removed) then render fresh.
 rm -rf "$out"
-"$hue" --twoslash "$repo_root/libs/twoslash/examples/fixtures" --html --out "$out" >&2
+"$hue" gallery --twoslash "$repo_root/libs/twoslash/examples/fixtures" --out "$out" >&2
 echo "build-twoslash-showcase: wrote $(find "$out" -name '*.html' | wc -l) pages to $out_rel" >&2

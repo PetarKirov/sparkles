@@ -170,11 +170,11 @@ feature.
 ### Inspecting the layers (`CFG10`)
 
 Five layers that silently override each other are a debugging problem, not a
-feature. `git` solved this with `--show-origin`, and `hue --show-config` copies
+feature. `git` solved this with `--show-origin`, and `hue config show` copies
 it: every effective setting, prefixed with **where it came from**.
 
 ```console
-$ hue --show-config
+$ hue config show
 default                                     appearance.background=full
 default                                     panes.viewer.codeLineNumbers=true
 file:/home/petar/.config/hue/config.json    appearance.theme=builtin-dark
@@ -192,21 +192,21 @@ environment hook, or a flag is above it. Without this, `CFG2`'s five layers are
 a maintenance liability; with it they are inspectable.
 
 **Every effective setting is listed, including defaults**, so the output is a
-complete picture rather than a diff. `--show-config --changed` can filter to
+complete picture rather than a diff. `hue config show --changed` can filter to
 non-default origins if that proves noisy.
 
-### Three flags, three jobs (`CFG10`, `CFG11`, `CFG13`)
+### Three actions, three jobs (`CFG10`, `CFG11`, `CFG13`)
 
 They are easy to confuse and deliberately distinct:
 
-| Flag             | Job                                                           | Writes a file? |
-| ---------------- | ------------------------------------------------------------- | -------------- |
-| `--show-config`  | report the effective state **and where each value came from** | no             |
-| `--write-config` | emit a **commented starting file** to fill in                 | yes (new)      |
-| `--save-config`  | persist the **runtime toggles** of this session (`CFG11`)     | yes (updates)  |
+| Action             | Job                                                           | Writes a file? |
+| ------------------ | ------------------------------------------------------------- | -------------- |
+| `hue config show`  | report the effective state **and where each value came from** | no             |
+| `hue config write` | emit a **commented starting file** to fill in                 | yes (new)      |
+| `hue config save`  | persist the **runtime toggles** of this session (`CFG11`)     | yes (updates)  |
 
-`--show-config` answers _why is this value what it is_; `--write-config`
-answers _how do I begin_; `--save-config` answers _keep what I just did_. One
+`hue config show` answers _why is this value what it is_; `hue config write`
+answers _how do I begin_; `hue config save` answers _keep what I just did_. One
 diagnoses, one scaffolds, one captures.
 
 All three render from the **same resolved configuration value**, so the file a
@@ -261,10 +261,10 @@ not merely a line number.
 | `CFG7`  | Per-invocation concerns (output format, target, backend choice, test hooks) are **not** configurable.                                                                                                                                                                                                                                                                                            | not started |
 | `CFG8`  | A malformed config reports file/line/column and hue continues with defaults.                                                                                                                                                                                                                                                                                                                     | not started |
 | `CFG9`  | A JSON Schema is **generated** from the same reflection for editor completion — never hand-maintained.                                                                                                                                                                                                                                                                                           | not started |
-| `CFG10` | `hue --show-config` lists every effective setting **with the origin that supplied it** (`default`, a file path, an env var, or the CLI flag) — the layering made observable, after `git config --show-origin --list`. Reports only; writes nothing.                                                                                                                                              | not started |
-| `CFG11` | Runtime toggles (`l`, `c`, `y`, `t`, theme, font size) may be **persisted on request** (`hue --save-config`), so an experiment can become a setting without hand-editing.                                                                                                                                                                                                                        | not started |
+| `CFG10` | `hue config show` (or `hue config --show`) lists every effective setting **with the origin that supplied it** (`default`, a file path, an env var, or the CLI flag) — the layering made observable, after `git config --show-origin --list`. Reports only; writes nothing.                                                                                                                       | not started |
+| `CFG11` | Runtime toggles (`l`, `c`, `y`, `t`, theme, font size) may be **persisted on request** (`hue config save`), so an experiment can become a setting without hand-editing.                                                                                                                                                                                                                          | not started |
 | `CFG12` | Android reads the same file from the app's data dir, which is the only way those preferences are reachable there at all.                                                                                                                                                                                                                                                                         | not started |
-| `CFG13` | `hue --write-config` emits a **commented starting file** — every setting with its default and a one-line description drawn from the same reflection as the schema (`CFG9`). Renders from the same resolved value as `CFG10`, so the two cannot disagree.                                                                                                                                         | not started |
+| `CFG13` | `hue config write` emits a **commented starting file** — every setting with its default and a one-line description drawn from the same reflection as the schema (`CFG9`). Renders from the same resolved value as `CFG10`, so the two cannot disagree.                                                                                                                                           | not started |
 | `CFG14` | `behaviour.grammarPaths[]` adds tree-sitter grammar directories. Search paths **compose** rather than override — configured, then `SPARKLES_TS_GRAMMAR_PATH`, then the built-in default — the one documented exception to `CFG2`'s scalar layering.                                                                                                                                              | not started |
 | `CFG15` | `diff`: default layout, whitespace/noise toggles, structural engagement, preview-diff default, diff-copy mode — the persistent home of the [diff-view.md](./diff-view.md) runtime toggles (`DVL3`/`DVL8`/`DVN1`/`DVN3`); the review-command family joins the `Command` enum under `keys` (`CFG6`).                                                                                               | not started |
 | `CFG16` | `forges`: the **host → adapter map** (self-hosted GitLab/Gitea/Forgejo/Codeberg instances have arbitrary hosts — [`DPR7`](./diff-view.md) requires it user-extendable) plus per-forge token sources. On Android this file is the **only** route ([`CFG12`], [`AND11`](./android.md)) — token storage there is plain-text, documented as such.                                                    | not started |
@@ -274,24 +274,24 @@ not merely a line number.
 
 ## Milestones
 
-| Milestone | Scope                                                                     | Requirements                   |
-| --------- | ------------------------------------------------------------------------- | ------------------------------ |
-| C1        | The struct + wired round-trip + located errors                            | `CFG1`, `CFG8`                 |
-| C2        | Layering and the sparse-overlay merge                                     | `CFG2`                         |
-| C3        | Appearance / panes / behaviour sections wired to their consumers          | `CFG3`–`CFG5`, `CFG7`, `CFG14` |
-| C4        | Configurable keymap over the `Command` enum, plus lantern/picker settings | `CFG6`, `CFG18`, `CFG19`       |
-| C5        | `--show-config`, `--write-config`, `--save-config`, generated JSON Schema | `CFG9`–`CFG11`, `CFG13`        |
-| C6        | Android config path                                                       | `CFG12`                        |
+| Milestone | Scope                                                                           | Requirements                   |
+| --------- | ------------------------------------------------------------------------------- | ------------------------------ |
+| C1        | The struct + wired round-trip + located errors                                  | `CFG1`, `CFG8`                 |
+| C2        | Layering and the sparse-overlay merge                                           | `CFG2`                         |
+| C3        | Appearance / panes / behaviour sections wired to their consumers                | `CFG3`–`CFG5`, `CFG7`, `CFG14` |
+| C4        | Configurable keymap over the `Command` enum, plus lantern/picker settings       | `CFG6`, `CFG18`, `CFG19`       |
+| C5        | `hue config show`, `hue config write`, `hue config save`, generated JSON Schema | `CFG9`–`CFG11`, `CFG13`        |
+| C6        | Android config path                                                             | `CFG12`                        |
 
 ## Open questions
 
 1. **Format.** JSON is the brief, and `sparkles:wired` speaks it natively. But
-   JSON has no comments, and `--write-config` (`CFG13`) exists precisely to
+   JSON has no comments, and `hue config write` (`CFG13`) exists precisely to
    emit an annotated file. Options: accept JSON-with-comments on read (a lexer
-   concession), ship `.jsonc`, or drop the annotations and let `--show-config`
+   concession), ship `.jsonc`, or drop the annotations and let `hue config show`
    carry the explanation instead. **Recommendation: JSONC on read, strict JSON
-   on write.** `--write-config` then emits comments a user keeps, hue never
-   rewrites a file it did not generate, and `--save-config` (`CFG11`) — the one
+   on write.** `hue config write` then emits comments a user keeps, hue never
+   rewrites a file it did not generate, and `hue config save` (`CFG11`) — the one
    command that _does_ rewrite — must therefore preserve unknown text or refuse.
    That last consequence is the part to settle before implementing, not after.
 

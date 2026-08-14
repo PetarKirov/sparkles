@@ -70,17 +70,32 @@ hue-side requirements referencing those areas live in
 | [Open implementation issues](./open-issues.md)                  | concrete hue gaps deferred from the normative specs: GUI-state ownership, app-owned duplicate painters, and the native pointer-grab blocker                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | [Web integration](./web-integration.md) _(planned)_             | the **`@sparkles/hue` npm package** — a Shiki drop-in for JS frameworks (VitePress/Next/Solid Start) via SSG/SSR process shell-out, then a future wasm client-side backend                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
-## Rendering modes
+## CLI & Subcommands
 
-`hue` dispatches to exactly one mode per invocation ([`MOD1`–`MOD7`](./feature-requirements.md#output-mode-dispatch-mod)):
+`hue` provides a clean subcommand hierarchy built on `sparkles:core-cli` with `@Flatten` composition:
 
-| Mode          | When                                                                                                   | Entry code                                | Spec                           |
-| ------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------- | ------------------------------ |
-| **ANSI**      | `stdout` is not a tty, or no key session (piped/redirected)                                            | `app.emitAnsiWholeFile`                   | `ANS*`                         |
-| **HTML**      | `--html`                                                                                               | `app.main` (HTML branch)                  | `HTM*`                         |
-| **Previewer** | interactive tty with no display (e.g. SSH), or `--no-gui`/`--tui`                                      | `previewer.runLoop`                       | [`tui.md`](./tui.md) · `PRV*`  |
-| **GUI**       | default on a GUI-enabled build when a display is detected, or forced with `--gui`                      | `gui.runGui`                              | [`gui.md`](./gui.md)           |
-| **Twoslash**  | `--twoslash <nodes.json>` (ANSI / `--html` / `--gui`) · `--markdown <file.md>` — _planned/branch-only_ | `app.runTwoslashMode` / `runMarkdownMode` | [`twoslash.md`](./twoslash.md) |
+| Subcommand         | Description                                                      | Key Options                                                                     |
+| ------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `view` _(default)_ | View and syntax-highlight a file, directory, or twoslash overlay | `[paths]`, `--markdown`, `--raw`, `--patch`, `@Flatten("Output Sinks")`         |
+| `diff`             | Diff two files or git revisions with structural awareness        | `[targets]`, `--staged`, `@Flatten("Diff Options")`, `@Flatten("Output Sinks")` |
+| `pr`               | Open a GitHub/GitLab pull request as a diff session              | `<pr>`, `@Flatten("Diff Options")`, `@Flatten("Output Sinks")`                  |
+| `gallery`          | Batch render a directory into a static HTML syntax/theme gallery | `[dir]`, `--out`, `--markdown`, `--raw`                                         |
+| `theme`            | Inspect and list built-in color themes                           | `--list`, `[name]`                                                              |
+| `overlay`          | Inspect registered document overlays (twoslash, coverage, trace) | `--list`, `[kind]`                                                              |
+| `config`           | Display resolved configuration, fonts, and theme settings        | `--show`                                                                        |
+
+**Universal options** (`--log-level`, `--theme`, `--background`) live on the root command alongside flattened GUI and overlay options.
+
+## Rendering modes & Sinks
+
+Rendering subcommands (`view`, `diff`, `pr`) resolve to exactly one active backend sink per invocation ([`MOD1`–`MOD7`](./feature-requirements.md#output-mode-dispatch-mod)):
+
+| Mode     | Flag                                   | When                                                           | Entry code        | Spec                          |
+| -------- | -------------------------------------- | -------------------------------------------------------------- | ----------------- | ----------------------------- |
+| **ANSI** | `--backend=ansi`                       | `stdout` is not a tty or piped/redirected                      | `app.runAnsiSink` | `ANS*`                        |
+| **HTML** | `--html` / `--backend=html`            | `--html` passed or html backend requested                      | `app.runHtmlSink` | `HTM*`                        |
+| **TUI**  | `--tui` / `--no-gui` / `--backend=tui` | Interactive tty with no display or explicit terminal request   | `app.runTuiSink`  | [`tui.md`](./tui.md) · `PRV*` |
+| **GUI**  | `--gui` / `--backend=gui`              | Display available on GUI-enabled build, or forced with `--gui` | `app.runGuiSink`  | [`gui.md`](./gui.md)          |
 
 > [!NOTE]
 > For a **markdown** file every sink renders the render-markdown **decorated
