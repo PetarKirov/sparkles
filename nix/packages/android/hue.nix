@@ -414,5 +414,52 @@
         assetsDir = hueAssetsRepo;
         description = "hue — syntax-highlighting viewer with the sparkles repo embedded (Android APK)";
       };
+
+      # The publication artifact (FDR1): a RELEASE APK — no
+      # android:debuggable — that nix deliberately does not sign, because a
+      # distribution key handed to a derivation is a key published to
+      # /nix/store and the binary cache. apps/fdroid signs the result.
+      #
+      # Parameterized on the version because the tag is the only place a
+      # version lives (docs/guidelines/release.md) and nix cannot read a tag
+      # without import-from-derivation. The publisher derives both fields from
+      # the tag through sparkles:versions — versionName is the SemVer string,
+      # versionCode is `Tiny.orderKey` (major:16|minor:8|patch:8), which is
+      # exactly the monotonic ordering key Android wants — and calls this.
+      # See docs/specs/hue/fdroid.md § Version mapping.
+      #
+      # Sample assets, not the repo-embedded ones: hue-apk-repo is a dogfooding
+      # variant with its own package id and is not published.
+      legacyPackages.mkHueApk =
+        {
+          versionName,
+          versionCode,
+        }:
+        config.legacyPackages.buildAndroidApk {
+          pname = "hue";
+          inherit versionName versionCode;
+          version = versionName;
+          manifest = ../../../apps/hue/android/AndroidManifest.xml;
+          resDir = "${config.packages.hue-icon}/res";
+          libs = apkLibs;
+          assetsDir = hueAssets;
+          debug = false;
+          sign = false;
+          description = "hue — release APK, unsigned (signed outside nix for F-Droid)";
+        };
+
+      # The same artifact at the development stamp, so `nix build` and CI can
+      # exercise the unsigned path without a tag. Never published: the
+      # publisher always goes through mkHueApk with a real version.
+      packages.hue-apk-unsigned = config.legacyPackages.buildAndroidApk {
+        pname = "hue";
+        manifest = ../../../apps/hue/android/AndroidManifest.xml;
+        resDir = "${config.packages.hue-icon}/res";
+        libs = apkLibs;
+        assetsDir = hueAssets;
+        debug = false;
+        sign = false;
+        description = "hue — release APK, unsigned (development stamp; see mkHueApk)";
+      };
     };
 }
