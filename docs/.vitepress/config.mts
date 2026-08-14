@@ -2885,6 +2885,212 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Anchored Overlays',
+              link: '/research/anchored-overlays/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts & Vocabulary',
+                  link: '/research/anchored-overlays/concepts',
+                },
+                {
+                  text: 'Comparison (Capstone)',
+                  link: '/research/anchored-overlays/comparison',
+                },
+                {
+                  text: 'Features People Forget',
+                  link: '/research/anchored-overlays/features-people-forget',
+                },
+                {
+                  text: 'Web — Headless Behavior & Positioning',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Floating UI',
+                      link: '/research/anchored-overlays/floating-ui',
+                    },
+                    {
+                      text: 'Radix Primitives',
+                      link: '/research/anchored-overlays/radix',
+                    },
+                    {
+                      text: 'Base UI',
+                      link: '/research/anchored-overlays/base-ui',
+                    },
+                    {
+                      text: 'Ariakit',
+                      link: '/research/anchored-overlays/ariakit',
+                    },
+                    { text: 'Zag.js', link: '/research/anchored-overlays/zag' },
+                    {
+                      text: 'Headless UI',
+                      link: '/research/anchored-overlays/headlessui',
+                    },
+                    {
+                      text: 'Floating Vue',
+                      link: '/research/anchored-overlays/floating-vue',
+                    },
+                    {
+                      text: 'Tippy.js',
+                      link: '/research/anchored-overlays/tippy',
+                    },
+                    {
+                      text: 'Angular CDK Overlay',
+                      link: '/research/anchored-overlays/angular-cdk',
+                    },
+                    {
+                      text: 'React Aria',
+                      link: '/research/anchored-overlays/react-aria',
+                    },
+                  ],
+                },
+                {
+                  text: 'Web Platform',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'HTML Popover API',
+                      link: '/research/anchored-overlays/popover-api',
+                    },
+                    {
+                      text: 'CSS Anchor Positioning',
+                      link: '/research/anchored-overlays/css-anchor',
+                    },
+                    {
+                      text: 'Chromium / Blink',
+                      link: '/research/anchored-overlays/blink',
+                    },
+                    {
+                      text: 'WAI-ARIA APG',
+                      link: '/research/anchored-overlays/aria-apg',
+                    },
+                  ],
+                },
+                {
+                  text: 'Native Desktop',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Qt Quick Controls',
+                      link: '/research/anchored-overlays/qt-quick-controls',
+                    },
+                    {
+                      text: 'Qt Widgets',
+                      link: '/research/anchored-overlays/qt-widgets',
+                    },
+                    { text: 'GTK4', link: '/research/anchored-overlays/gtk4' },
+                    { text: 'WPF', link: '/research/anchored-overlays/wpf' },
+                    {
+                      text: 'WinUI',
+                      link: '/research/anchored-overlays/winui',
+                    },
+                    {
+                      text: 'Uno Platform',
+                      link: '/research/anchored-overlays/uno',
+                    },
+                    {
+                      text: 'Avalonia',
+                      link: '/research/anchored-overlays/avalonia',
+                    },
+                    {
+                      text: 'Slint',
+                      link: '/research/anchored-overlays/slint',
+                    },
+                    {
+                      text: 'Zed / GPUI',
+                      link: '/research/anchored-overlays/gpui',
+                    },
+                    {
+                      text: 'Dear ImGui',
+                      link: '/research/anchored-overlays/imgui',
+                    },
+                  ],
+                },
+                {
+                  text: 'Mobile & Adaptive',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Jetpack Compose',
+                      link: '/research/anchored-overlays/compose',
+                    },
+                    {
+                      text: 'Flutter',
+                      link: '/research/anchored-overlays/flutter',
+                    },
+                    {
+                      text: 'Apple (UIKit / AppKit / SwiftUI / TipKit)',
+                      link: '/research/anchored-overlays/apple',
+                    },
+                  ],
+                },
+                {
+                  text: 'Terminal & Cell Grid',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Helix',
+                      link: '/research/anchored-overlays/helix',
+                    },
+                    {
+                      text: 'Neovim Floating Windows',
+                      link: '/research/anchored-overlays/neovim-floats',
+                    },
+                    {
+                      text: 'Notcurses',
+                      link: '/research/anchored-overlays/notcurses',
+                    },
+                    {
+                      text: 'nui.nvim',
+                      link: '/research/anchored-overlays/nui',
+                    },
+                    {
+                      text: 'nvim-cmp / blink.cmp',
+                      link: '/research/anchored-overlays/nvim-completion',
+                    },
+                    {
+                      text: 'Ratatui',
+                      link: '/research/anchored-overlays/ratatui',
+                    },
+                    {
+                      text: 'Textual',
+                      link: '/research/anchored-overlays/textual',
+                    },
+                    {
+                      text: 'tmux display-popup',
+                      link: '/research/anchored-overlays/tmux-popup',
+                    },
+                    {
+                      text: 'Turbo Vision',
+                      link: '/research/anchored-overlays/turbo-vision',
+                    },
+                    {
+                      text: 'Emacs posframe + company',
+                      link: '/research/anchored-overlays/emacs-posframe',
+                    },
+                  ],
+                },
+                {
+                  text: 'Protocol',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Wayland xdg_positioner',
+                      link: '/research/anchored-overlays/xdg-positioner',
+                    },
+                  ],
+                },
+                {
+                  text: 'Sparkles Baseline',
+                  link: '/research/anchored-overlays/sparkles-baseline',
+                },
+                {
+                  text: 'Proposal',
+                  link: '/research/anchored-overlays/proposal',
+                },
+              ],
+            },
+            {
               text: 'UI Layout',
               collapsed: true,
               items: [
