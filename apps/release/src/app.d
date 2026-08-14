@@ -21,12 +21,12 @@ Usage:
 +/
 module sparkles.release.app;
 
-import std.stdio : writeln, write, stdout;
+import std.stdio : writeln, writefln, write, stdout;
 import std.typecons : Nullable;
 
 import sparkles.base.logger : initLogger, LogLevel, info, warning, error;
 import sparkles.base.term_style : Style, stylize;
-import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
+import sparkles.core_cli.args : Command, HelpInfo, Option, runCli, Subcommands;
 import sparkles.core_cli.process_utils : isInPath, runCaptured;
 import sparkles.base.term_caps : detectTermCaps;
 import sparkles.ui.components.box : drawBox, BoxProps;
@@ -46,6 +46,10 @@ import sparkles.release.notes : openInEditor, seedEditorBuffer, seedReviewBuffer
 import sparkles.release.pr : associatePrs, parseRemoteUrl, PrRef;
 import sparkles.release.preflight : runPreflight, PreflightProgress, PreflightResult;
 import sparkles.release.result : Result;
+import sparkles.release.store.run : applicationId, RunOptions, runPublish;
+import sparkles.release.store.stage : defaultStage, PublishStage, publishStageNames, tryParseStage;
+import sparkles.release.store.version_map : apkVersionForTag, describe;
+import std.sumtype : SumType;
 import sparkles.release.json_utils : parseJsonText;
 import sparkles.release.segment : AgentReply, buildPlan, BumpOrigin, parseSegmentReply, ReleasePlan, SegmentInput, SegmentPlan, stripJsonFence;
 import sparkles.release.stages : Stage, parseStage, stageAtLeast, stageToken;
@@ -53,12 +57,22 @@ import sparkles.release.stats : tallyCommits, typeCounts, ReleaseStats, Commit, 
 
 /// CLI options (validated string fields for the hyphenated/closed vocabularies;
 /// only `--log-level` is a real enum, which getopt binds directly).
+///
+/// `isDefault` keeps bare `release` meaning what it always has — cut a release.
+/// The subcommands are the operations that act on a tag that already exists,
+/// which the cut-a-release flow cannot express: it is built to compute the
+/// *next* version.
+@(Command("release",
+    shortDescription: "Scan tags, summarize commits, suggest a bump, write notes, tag and publish",
+    helpSections: ["description"],
+    isDefault: true,
+))
 struct CliParams
 {
     @(Option(`s|stage`, description:
         "Cumulative stage: create-tag (default), push-tag, "
-        ~ "create-gh-release-draft, publish-gh-release, publish-fdroid. Each implies "
-        ~ "the earlier ones; publish-fdroid needs the signing tokens, so it only runs "
+        ~ "create-gh-release-draft, publish-gh-release, publish-apps. Each implies "
+        ~ "the earlier ones; publish-apps needs the signing tokens, so it only runs "
         ~ "on the workstation."))
     string stage = "create-tag";
 
@@ -89,29 +103,209 @@ struct CliParams
 
     @(Option(`L|log-level`, description: "trace, info, warning, error (default info)."))
     LogLevel logLevel = LogLevel.info;
-}
 
-int main(string[] args)
-{
-    auto parsed = parseCli!CliParams(args, HelpInfo(
-        "release",
-        "Scan tags, summarize commits, suggest a bump, write notes, tag and publish.",
-    ));
-    if (!parsed)
-        return reportCliError(parsed.error);
-    auto cli = parsed.value;
-    initLogger(cli.logLevel);
+    @Subcommands
+    SumType!(PathCmd, PublishCmd, VersionCmd) command;
 
-    try
-        return run(cli);
-    catch (Exception e)
+    int run()
     {
-        error(i"$(e.msg)");
-        return 1;
+        initLogger(logLevel);
+        try
+            return runCut(this);
+        catch (Exception e)
+        {
+            error(i"$(e.msg)");
+            return 1;
+        }
     }
 }
 
-private int run(CliParams cli)
+
+// ---------------------------------------------------------------------------
+// Subcommands — operations on a tag that already exists
+// ---------------------------------------------------------------------------
+
+/// Shared by the tag-taking subcommands.
+private enum tagOption = `t|tag`;
+
+@(Command("version",
+    shortDescription: "Show the app version a release tag maps to",
+    helpSections: ["description"],
+))
+struct VersionCmd
+{
+    @(Option(tagOption, description: "Release tag, with or without the leading v"))
+    string tag;
+
+    int run()
+    {
+        if (!tag.length)
+            return failCmd("--tag is required");
+
+        const mapped = apkVersionForTag(tag);
+        if (!mapped.ok)
+            return failCmd(tag ~ ": " ~ describe(mapped.error));
+
+        writefln("versionName %s", mapped.version_.name);
+        writefln("versionCode %s", mapped.version_.code);
+        return 0;
+    }
+}
+
+@(Command("path",
+    shortDescription: "Print the store path a tag's app artifact resolves to",
+    helpSections: ["description"],
+))
+struct PathCmd
+{
+    @(Option(tagOption, description: "Release tag, with or without the leading v"))
+    string tag;
+
+    @(Option(`f|flake`, description: "Flake reference to evaluate"))
+    string flake = ".";
+
+    /// The handoff between CI and the signing machine: CI prints this after
+    /// pushing to the cache, and the workstation must resolve the same string
+    /// or it is about to sign something other than what was built.
+    int run()
+    {
+        import sparkles.release.store.tools : evalApkPath;
+        import std.path : absolutePath;
+
+        if (!tag.length)
+            return failCmd("--tag is required");
+
+        const mapped = apkVersionForTag(tag);
+        if (!mapped.ok)
+            return failCmd(tag ~ ": " ~ describe(mapped.error));
+
+        auto evaluated = evalApkPath(flake.absolutePath, mapped.version_.name, mapped.version_.code);
+        if (!evaluated.succeeded)
+            return failCmd(evaluated.stderr);
+
+        writeln(lastNonEmptyLine(evaluated.stdout));
+        return 0;
+    }
+}
+
+@(Command("publish",
+    shortDescription: "Sign and publish an existing tag's artifacts to the app stores",
+    helpSections: ["description"],
+))
+struct PublishCmd
+{
+    @(Option(tagOption, description: "Release tag, with or without the leading v"))
+    string tag;
+
+    @(Option(`s|stage`,
+        description: "How far to go; cumulative. One of: build, sign, pull, index, deploy"))
+    string stage = "index";
+
+    @(Option(`n|dry-run`, description: "Report what would happen and stop"))
+    bool dryRun;
+
+    @(Option(`w|workdir`, description: "Scratch directory; must not be the repository checkout"))
+    string workdir;
+
+    @(Option(`m|metadata-dir`, description: "Committed F-Droid configuration"))
+    string metadataDir = "apps/hue/fdroid";
+
+    @(Option(`f|flake`, description: "Flake reference to build the artifact from"))
+    string flake = ".";
+
+    @(Option(`r|rclone-remote`, description: "rclone remote name, as named in config.yml"))
+    string rcloneRemote = "sparkles";
+
+    @(Option(`require-cached`,
+        description: "Require the artifact to come from the binary cache rather than a local build"))
+    bool requireCached = true;
+
+    @(Option(`substituter`, description: "Binary cache CI pushes the unsigned artifact to"))
+    string substituter = "https://sparkles.cachix.org";
+
+    int run()
+    {
+        import std.conv : text;
+        import std.file : exists, tempDir;
+        import std.path : absolutePath, buildPath;
+        import std.process : thisProcessID;
+
+        if (!tag.length)
+            return failCmd("--tag is required");
+
+        PublishStage parsed;
+        if (!tryParseStage(stage, parsed))
+            return failCmd("unknown --stage " ~ stage
+                ~ " (expected one of: " ~ publishStageNames ~ ")");
+
+        auto dir = workdir.length
+            ? workdir
+            : buildPath(tempDir, text("sparkles-publish-", thisProcessID));
+
+        // fdroidserver publishes the working directory's git state in
+        // repo/status/*.json — including untracked and modified files — so
+        // running it inside a checkout leaks it.
+        if (buildPath(dir.absolutePath, ".git").exists)
+            return failCmd(dir ~ " is a git checkout.\n"
+                ~ "  fdroid update records the working directory's git state — commit id,\n"
+                ~ "  dirty flag, and the modified and untracked file lists — in\n"
+                ~ "  repo/status/*.json, which is published. Use a scratch directory.");
+
+        return runPublish(RunOptions(
+            tag: tag,
+            stage: parsed,
+            dryRun: dryRun,
+            workDir: dir,
+            metadataDir: metadataDir,
+            flakeRef: flake.absolutePath,
+            rcloneRemote: rcloneRemote,
+            requireCached: requireCached,
+            substituter: substituter,
+        ));
+    }
+}
+
+/// A scratch directory for the publish stage. Never the checkout: fdroidserver
+/// records the working directory's git state in `repo/status/*.json`, which is
+/// published.
+private string publishWorkDir()
+{
+    import std.conv : text;
+    import std.file : tempDir;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    return buildPath(tempDir, text("sparkles-publish-", thisProcessID));
+}
+
+/// Reports a subcommand usage/precondition failure the same way everywhere.
+///
+/// Straight to stderr rather than through the logger: these are CLI errors, not
+/// log events, and a subcommand has not initialised the logger — routing them
+/// through it swallowed them entirely.
+private int failCmd(string message)
+{
+    import std.stdio : stderr;
+
+    stderr.writeln("error: ", message);
+    return 1;
+}
+
+/// The last non-empty line of a command's output.
+private string lastNonEmptyLine(string s) @safe pure
+{
+    import std.string : lineSplitter, strip;
+
+    string last;
+    foreach (line; s.lineSplitter)
+        if (line.strip.length)
+            last = line.strip;
+    return last;
+}
+
+int main(string[] args) => runCli!CliParams(args);
+
+private int runCut(CliParams cli)
 {
     const theme = makeTheme(detectTermCaps());
 
@@ -120,7 +314,7 @@ private int run(CliParams cli)
     if (stage.isNull)
         return fail("unknown --stage `" ~ cli.stage
             ~ "` (create-tag, push-tag, create-gh-release-draft, publish-gh-release, "
-            ~ "publish-fdroid)");
+            ~ "publish-apps)");
 
     Nullable!BumpKind bumpOverride;
     if (cli.bump.length)
@@ -1002,7 +1196,7 @@ private int executeStages(Stage chosen, string tag, string notesBody, in Theme t
     const pushId = tasks.add("push " ~ tag ~ " to origin");
     const draftId = tasks.add("create draft GitHub release");
     const publishId = tasks.add("publish GitHub release");
-    const fdroidId = tasks.add("publish the Android channel");
+    const fdroidId = tasks.add("publish the app stores");
 
     int failStage(size_t id, string message)
     {
@@ -1060,17 +1254,26 @@ private int executeStages(Stage chosen, string tag, string notesBody, in Theme t
     // It also cannot run immediately after `publish-gh-release` in the same
     // breath as CI: the release workflow has to build and cache the unsigned
     // APK first. `fdroid-publish` reports that clearly rather than rebuilding.
-    if (stageAtLeast(chosen, Stage.publishFdroid))
+    if (stageAtLeast(chosen, Stage.publishApps))
     {
         tasks.start(fdroidId);
-        auto r = runCaptured([
-            "fdroid-publish", "publish", "--tag", tag, "--stage", "deploy",
-        ]);
-        if (r.status != 0)
+        // In-process, not a subprocess: the version mapping and the publish
+        // pipeline are this tool's own modules now, so there is no boundary
+        // across which they could disagree.
+        const rc = runPublish(RunOptions(
+            tag: tag,
+            stage: PublishStage.deploy,
+            workDir: publishWorkDir(),
+            metadataDir: "apps/hue/fdroid",
+            flakeRef: ".",
+            rcloneRemote: "sparkles",
+            requireCached: true,
+            substituter: "https://sparkles.cachix.org",
+        ));
+        if (rc != 0)
             return failStage(fdroidId,
-                "fdroid-publish failed — the source release stands; retry with:\n"
-                ~ "  nix run .#fdroid-publish -- publish --tag " ~ tag ~ " --stage deploy\n\n"
-                ~ r.stdout ~ r.stderr);
+                "publishing the app stores failed — the source release stands; retry with:\n"
+                ~ "  release publish --tag " ~ tag ~ " --stage deploy");
         tasks.succeed(fdroidId);
     }
     else
@@ -1110,16 +1313,11 @@ representation. Shelling out keeps that rule in one tested place.
 */
 private string checkFdroidReady(Stage stage, string tag)
 {
-    if (!stageAtLeast(stage, Stage.publishFdroid))
+    if (!stageAtLeast(stage, Stage.publishApps))
         return null;
-    if (!isInPath("fdroid-publish"))
-        return "stage `" ~ stageToken(stage) ~ "` needs `fdroid-publish`, which is not on PATH"
-            ~ "\n  It signs with a key on a hardware token, so this stage only works on the"
-            ~ "\n  machine holding it — not from CI.";
-    auto mapped = runCaptured(["fdroid-publish", "version", "--tag", tag]);
-    if (mapped.status != 0)
-        return "the Android channel cannot publish " ~ tag ~ ":\n  "
-            ~ (mapped.stdout.length ? mapped.stdout : mapped.stderr);
+    const mapped = apkVersionForTag(tag);
+    if (!mapped.ok)
+        return "the app stores cannot publish " ~ tag ~ ": " ~ describe(mapped.error);
     return null;
 }
 
@@ -1128,16 +1326,15 @@ private string checkFdroidReady(Stage stage, string tag)
 /// independent, but silence here would surface as a failure much later.
 private void warnIfUnpublishableOnAndroid(string tag, Stage stage)
 {
-    if (stageAtLeast(stage, Stage.publishFdroid) || !isInPath("fdroid-publish"))
-        return; // already a hard error, or nothing to check with
-    auto mapped = runCaptured(["fdroid-publish", "version", "--tag", tag]);
-    if (mapped.status == 0)
+    if (stageAtLeast(stage, Stage.publishApps))
+        return; // already a hard error above
+
+    const mapped = apkVersionForTag(tag);
+    if (mapped.ok)
         return;
 
-    import std.string : strip;
-
-    const why = (mapped.stdout.length ? mapped.stdout : mapped.stderr).strip;
-    warning(i`$(tag) cannot be published to the Android channel: $(why)`);
+    const why = describe(mapped.error);
+    warning(i`$(tag) cannot be published to the app stores: $(why)`);
 }
 
 // ---------------------------------------------------------------------------

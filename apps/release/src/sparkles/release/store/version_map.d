@@ -26,7 +26,7 @@ past it. Nothing here has to range-check the result.
 
 See `docs/specs/hue/fdroid.md` § Version mapping (`FDR5`).
 */
-module sparkles.fdroid.version_map;
+module sparkles.release.store.version_map;
 
 import sparkles.versions.schemes.semver : SemVer;
 import sparkles.versions.schemes.tiny : Tiny;
@@ -49,7 +49,7 @@ enum VersionMapError
 {
     /// Not a version at all (`SemVer` rejected it).
     unparseable,
-    /// `1.2.3-rc.1`. A prerelease has no business on a public channel, and
+    /// `1.2.3-rc.1`. A prerelease has no business on a public app channel, and
     /// `Tiny` cannot represent one, so it would silently compare equal to the
     /// release it precedes.
     prerelease,
@@ -112,7 +112,7 @@ string describe(VersionMapError e) pure nothrow @nogc
     case VersionMapError.unparseable:
         return "not a SemVer version (expected vMAJOR.MINOR.PATCH)";
     case VersionMapError.prerelease:
-        return "prereleases are not published to the F-Droid channel";
+        return "prereleases are not published to the app stores";
     case VersionMapError.buildMetadata:
         return "build metadata is ignored in ordering, so it cannot distinguish two releases";
     case VersionMapError.componentTooLarge:
@@ -120,7 +120,7 @@ string describe(VersionMapError e) pure nothrow @nogc
     }
 }
 
-@("fdroid.version_map.tagsFromTheRepo")
+@("store.version_map.tagsFromTheRepo")
 @safe unittest
 {
     // The tags this repository has actually cut, and the next few shapes.
@@ -145,7 +145,7 @@ string describe(VersionMapError e) pure nothrow @nogc
     }
 }
 
-@("fdroid.version_map.isMonotonicInTagOrder")
+@("store.version_map.isMonotonicInTagOrder")
 @safe unittest
 {
     // The property the whole scheme rests on: a later release must never sort
@@ -165,7 +165,7 @@ string describe(VersionMapError e) pure nothrow @nogc
     }
 }
 
-@("fdroid.version_map.staysWithinAndroidsSignedInt32")
+@("store.version_map.staysWithinAndroidsSignedInt32")
 @safe unittest
 {
     // A versionCode is a SIGNED int32. The largest triple this mapping can
@@ -181,7 +181,7 @@ string describe(VersionMapError e) pure nothrow @nogc
     assert(!apkVersionForTag("32768.0.0").ok);
 }
 
-@("fdroid.version_map.refusesWhatCannotBePublished")
+@("store.version_map.refusesWhatCannotBePublished")
 @safe unittest
 {
     static struct Case { string tag; VersionMapError error; }

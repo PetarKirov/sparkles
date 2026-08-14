@@ -18,7 +18,7 @@ $(LI $(I Did the app survive indexing?) — an `AllowedAPKSigningKeys` mismatch
 The DOM is walked directly rather than decoded into a model: only two fields are
 needed, and index-v2 grows new ones between fdroidserver releases.
 */
-module sparkles.fdroid.index;
+module sparkles.release.store.index;
 
 import std.json : JSONValue, JSONType;
 
@@ -154,7 +154,7 @@ version (unittest)
     }`;
 }
 
-@("fdroid.index.readsPublishedVersionCodes")
+@("store.index.readsPublishedVersionCodes")
 @safe unittest
 {
     import std.algorithm : canFind;
@@ -167,7 +167,7 @@ version (unittest)
     assert(app.highestVersionCode == 1025);
 }
 
-@("fdroid.index.emptyRepositoryIsNormal")
+@("store.index.emptyRepositoryIsNormal")
 @safe unittest
 {
     // A first publish, and the shape fdroidserver leaves behind when an
@@ -185,7 +185,7 @@ version (unittest)
     assert(!appFromIndex(parseJSON(`[]`), "dev.sparkles.hue").present);
 }
 
-@("fdroid.index.refusesRepublishAndDowngrade")
+@("store.index.refusesRepublishAndDowngrade")
 @safe unittest
 {
     const app = appFromIndex(parseJSON(sampleIndex), "dev.sparkles.hue");

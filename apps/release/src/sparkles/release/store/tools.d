@@ -9,10 +9,10 @@ The nix wrapper puts `fdroidserver`, a JDK, `rclone` and `apksigner` on `PATH`;
 `missingTools` reports what is absent rather than letting a run fail three
 steps in.
 */
-module sparkles.fdroid.tools;
+module sparkles.release.store.tools;
 
 import sparkles.core_cli.process_utils : CapturedResult, isInPath, runCaptured;
-import sparkles.fdroid.stage : Stage;
+import sparkles.release.store.stage : PublishStage;
 
 @safe:
 
@@ -20,7 +20,7 @@ import sparkles.fdroid.stage : Stage;
 private struct RequiredTool
 {
     string name;
-    Stage from;
+    PublishStage from;
     string why;
 }
 
@@ -29,19 +29,19 @@ private struct RequiredTool
 /// nothing else. Demanding fdroidserver there would fail a job that never
 /// touches it.
 private static immutable RequiredTool[] requiredTools = [
-    RequiredTool("nix", Stage.build, "builds the unsigned release APK"),
-    RequiredTool("apksigner", Stage.sign, "signs it, and reads back the certificate"),
-    RequiredTool("rclone", Stage.pull, "syncs the repository to object storage"),
-    RequiredTool("fdroid", Stage.index, "generates and signs the repository index"),
+    RequiredTool("nix", PublishStage.build, "builds the unsigned release APK"),
+    RequiredTool("apksigner", PublishStage.sign, "signs it, and reads back the certificate"),
+    RequiredTool("rclone", PublishStage.pull, "syncs the repository to object storage"),
+    RequiredTool("fdroid", PublishStage.index, "generates and signs the repository index"),
     // fdroidserver shells out to all three; the nixpkgs fdroidserver package
     // wraps only apksigner onto PATH, so a JDK has to be supplied separately.
-    RequiredTool("keytool", Stage.index, "required unconditionally by fdroid update (JDK)"),
-    RequiredTool("jarsigner", Stage.index, "signs index-v1.jar and index.jar (JDK)"),
-    RequiredTool("jar", Stage.index, "builds the v0 index (JDK)"),
+    RequiredTool("keytool", PublishStage.index, "required unconditionally by fdroid update (JDK)"),
+    RequiredTool("jarsigner", PublishStage.index, "signs index-v1.jar and index.jar (JDK)"),
+    RequiredTool("jar", PublishStage.index, "builds the v0 index (JDK)"),
 ];
 
 /// Names of the programs `stage` needs that are not on `PATH`.
-string[2][] missingTools(Stage stage)
+string[2][] missingTools(PublishStage stage)
 {
     string[2][] missing;
     foreach (t; requiredTools)
@@ -181,7 +181,7 @@ CapturedResult pullSection(string remote, string bucket, string section, string 
         destination,
     ]);
 
-@("fdroid.tools.signApkNeverPutsASecretInArgv")
+@("store.tools.signApkNeverPutsASecretInArgv")
 @safe unittest
 {
     import std.algorithm : canFind, any;
@@ -198,7 +198,7 @@ CapturedResult pullSection(string remote, string bucket, string section, string 
         "a literal passphrase in argv would be world-readable via /proc");
 }
 
-@("fdroid.tools.requirementsGrowWithTheStage")
+@("store.tools.requirementsGrowWithTheStage")
 @safe unittest
 {
     foreach (t; requiredTools)
@@ -210,13 +210,13 @@ CapturedResult pullSection(string remote, string bucket, string section, string 
     // A build-only run (what CI does in the split model) must not demand the
     // publishing toolchain.
     foreach (t; requiredTools)
-        if (t.from == Stage.build)
+        if (t.from == PublishStage.build)
             assert(t.name == "nix");
 
     // …and a full run must demand all of it.
     size_t atDeploy;
     foreach (t; requiredTools)
-        if (Stage.deploy >= t.from)
+        if (PublishStage.deploy >= t.from)
             atDeploy++;
     assert(atDeploy == requiredTools.length);
 }

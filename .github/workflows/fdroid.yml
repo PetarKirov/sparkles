@@ -1,9 +1,14 @@
 name: F-Droid
 
-# Builds the release APK for a tag and pushes it to the binary cache. It does
-# NOT sign or publish: the signing keys live on hardware tokens that a
+# Builds the release artifacts for a tag and pushes them to the binary cache. It
+# does NOT sign or publish: the signing keys live on hardware tokens that a
 # GitHub-hosted runner cannot reach, so signing and publication happen on the
 # maintainer's workstation. See docs/specs/hue/fdroid.md.
+#
+# Uses `.#release` — the LEAN package (~48 MB: the binary alone, taking its
+# tools from PATH). The publishing configuration `.#release-full` pins
+# fdroidserver, a JDK, rclone and bundletool and weighs ~3.2 GiB; none of that
+# is needed to run `nix build`, and CI should not download it.
 #
 # The split is the point, not a workaround. No signing key material — not a
 # passphrase, not a base64 keystore — exists anywhere in this workflow or in
@@ -13,9 +18,9 @@ name: F-Droid
 # What connects the halves is the store path. This job builds a *pure*
 # derivation and pushes it to Cachix; the workstation evaluates the same
 # expression, gets the same path, and substitutes the bytes instead of
-# repeating a ~90-minute cross build. `fdroid-publish` refuses to build the APK
-# locally by default, so an accidental local rebuild cannot quietly replace
-# what CI produced.
+# repeating a ~90-minute cross build. `release publish` refuses to build the
+# artifact locally by default, so an accidental local rebuild cannot quietly
+# replace what CI produced.
 on:
   release:
     types: [published]
@@ -69,15 +74,12 @@ jobs:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
-          ci/with-cachix.sh nix run .#fdroid-publish -- publish \
+          ci/with-cachix.sh nix run .#release -- publish \
             --tag "$TAG" \
             --stage build \
             --no-require-cached \
             --workdir "$RUNNER_TEMP/fdroid-build"
 
-      # The store path is the handoff. Printing it here lets the maintainer
-      # confirm the workstation resolved the same derivation before signing —
-      # if the two differ, the local tree is not what CI built.
       # Pushing is not enough: an unpinned path is garbage-collectable, and the
       # whole point of the split is that this artifact is still substitutable
       # when the maintainer sits down with the signing tokens — which may be
@@ -96,20 +98,23 @@ jobs:
           CI_PIN_ANY_TAG: '1'
         run: |
           set -euo pipefail
-          CI_TAG="$TAG" CI_PIN_PATH=$(nix run .#fdroid-publish -- path --tag "$TAG") \
+          CI_TAG="$TAG" CI_PIN_PATH=$(nix run .#release -- path --tag "$TAG") \
             ci/release-pin.sh
 
+      # The store path is the handoff. Printing it here lets the maintainer
+      # confirm the workstation resolved the same derivation before signing —
+      # if the two differ, the local tree is not what CI built.
       - name: Report the handoff
         env:
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
-          path=$(nix run .#fdroid-publish -- path --tag "$TAG")
+          path=$(nix run .#release -- path --tag "$TAG")
           {
             echo "## Ready to sign"
             echo
             echo '```console'
-            echo "\$ nix run .#fdroid-publish -- publish --tag $TAG --stage deploy"
+            echo "\$ nix run .#release-full -- publish --tag $TAG --stage deploy"
             echo '```'
             echo
             echo "Expected store path — the workstation must resolve the same one,"

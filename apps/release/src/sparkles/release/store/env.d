@@ -11,9 +11,9 @@ Which variables are required depends on how far the run goes, so resolution is
 per-stage rather than all-or-nothing — a `--stage build` dry run must not demand
 a signing key.
 */
-module sparkles.fdroid.env;
+module sparkles.release.store.env;
 
-import sparkles.fdroid.stage : Stage;
+import sparkles.release.store.stage : PublishStage;
 
 @safe:
 
@@ -64,14 +64,14 @@ struct EnvResult
 }
 
 /// The variables `stage` (and everything before it) needs.
-EnvVar[] requiredFor(Stage stage) pure nothrow
+EnvVar[] requiredFor(PublishStage stage) pure nothrow
 {
     EnvVar[] needed;
-    if (stage >= Stage.sign)
+    if (stage >= PublishStage.sign)
         needed ~= [EnvVar.apkKeystore, EnvVar.apkKeyAlias, EnvVar.apkStorePass];
-    if (stage >= Stage.pull)
+    if (stage >= PublishStage.pull)
         needed ~= EnvVar.bucket;
-    if (stage >= Stage.index)
+    if (stage >= PublishStage.index)
         needed ~= [
             EnvVar.repoUrl, EnvVar.indexKeystore, EnvVar.indexKeyAlias,
             EnvVar.indexStorePass, EnvVar.indexKeyPass,
@@ -108,7 +108,7 @@ private string reasonFor(EnvVar v) pure nothrow @nogc
 }
 
 /// Reads the environment for everything `stage` requires.
-EnvResult resolveEnv(Stage stage)
+EnvResult resolveEnv(PublishStage stage)
 {
     import std.process : environment;
 
@@ -134,31 +134,31 @@ EnvResult resolveEnv(Stage stage)
     return result;
 }
 
-@("fdroid.env.requirementsGrowWithTheStage")
+@("store.env.requirementsGrowWithTheStage")
 @safe unittest
 {
     import std.algorithm : canFind;
 
     // A build-only run needs no credentials at all — that is what makes a
     // fork's dry run possible.
-    assert(requiredFor(Stage.build).length == 0);
+    assert(requiredFor(PublishStage.build).length == 0);
 
-    assert(requiredFor(Stage.sign).canFind(EnvVar.apkKeystore));
-    assert(!requiredFor(Stage.sign).canFind(EnvVar.repoUrl));
+    assert(requiredFor(PublishStage.sign).canFind(EnvVar.apkKeystore));
+    assert(!requiredFor(PublishStage.sign).canFind(EnvVar.repoUrl));
 
     // Indexing signs the index, so it needs that key and the address.
-    const idx = requiredFor(Stage.index);
+    const idx = requiredFor(PublishStage.index);
     assert(idx.canFind(EnvVar.repoUrl));
     assert(idx.canFind(EnvVar.indexKeystore));
     assert(idx.canFind(EnvVar.apkKeystore), "cumulative: still needs the earlier stages'");
 
     // Deploying needs everything.
-    const dep = requiredFor(Stage.deploy);
+    const dep = requiredFor(PublishStage.deploy);
     assert(dep.canFind(EnvVar.bucket));
     assert(dep.length >= idx.length);
 }
 
-@("fdroid.env.everyVariableExplainsItself")
+@("store.env.everyVariableExplainsItself")
 @safe unittest
 {
     import std.traits : EnumMembers;

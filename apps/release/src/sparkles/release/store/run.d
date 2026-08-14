@@ -6,16 +6,16 @@ here — `version_map` mapped the tag, `index` decided whether the version may b
 published, `workfiles` produced the edited configuration. This module is the
 sequencing and the I/O.
 */
-module sparkles.fdroid.run;
+module sparkles.release.store.run;
 
-import sparkles.fdroid.certs : signerFingerprints;
-import sparkles.fdroid.env : EnvVar, PublishEnv, resolveEnv;
-import sparkles.fdroid.index : appFromIndex, checkPublishable, describe, IndexedApp, PublishRefusal;
-import sparkles.fdroid.manifest : ReleaseManifest, toJson;
-import sparkles.fdroid.stage : Stage, stageNames;
-import sparkles.fdroid.tools;
-import sparkles.fdroid.version_map : ApkVersion, apkVersionForTag, describe;
-import sparkles.fdroid.workfiles : withCurrentVersion, withRepoUrl;
+import sparkles.release.store.certs : signerFingerprints;
+import sparkles.release.store.env : EnvVar, PublishEnv, resolveEnv;
+import sparkles.release.store.index : appFromIndex, checkPublishable, describe, IndexedApp, PublishRefusal;
+import sparkles.release.store.manifest : ReleaseManifest, toJson;
+import sparkles.release.store.stage : PublishStage, publishStageNames;
+import sparkles.release.store.tools;
+import sparkles.release.store.version_map : ApkVersion, apkVersionForTag, describe;
+import sparkles.release.store.workfiles : withCurrentVersion, withRepoUrl;
 
 import std.stdio : writeln, writefln;
 
@@ -28,7 +28,7 @@ enum applicationId = "dev.sparkles.hue";
 struct RunOptions
 {
     string tag;
-    Stage stage;
+    PublishStage stage;
     bool dryRun;
     string workDir;
     string metadataDir;
@@ -59,7 +59,7 @@ int runPublish(RunOptions opt)
     const apkName = text(applicationId, "_", v.code, ".apk");
 
     writefln("tag %s → versionName %s, versionCode %s", opt.tag, v.name, v.code);
-    writefln("stage: through %s (of %s)", opt.stage, stageNames);
+    writefln("stage: through %s (of %s)", opt.stage, publishStageNames);
     writefln("artifact: repo/%s", apkName);
 
     // ── environment ─────────────────────────────────────────────────────────
@@ -78,9 +78,9 @@ int runPublish(RunOptions opt)
         writeln("dry run — nothing was built, signed, written or uploaded.");
         writefln("  work dir     %s", opt.workDir);
         writefln("  metadata     %s", opt.metadataDir);
-        if (opt.stage >= Stage.index)
+        if (opt.stage >= PublishStage.index)
             writefln("  repo url     %s", env.env.repoUrl);
-        if (opt.stage >= Stage.deploy)
+        if (opt.stage >= PublishStage.deploy)
             writefln("  bucket       %s (rclone remote %s)", env.env.bucket, opt.rcloneRemote);
         return 0;
     }
@@ -157,7 +157,7 @@ int runPublish(RunOptions opt)
         return 1;
     }
     writefln("  %s", unsignedApk);
-    if (opt.stage == Stage.build)
+    if (opt.stage == PublishStage.build)
         return 0;
 
     // ── work directory ──────────────────────────────────────────────────────
@@ -211,7 +211,7 @@ int runPublish(RunOptions opt)
     writefln("  sha256 %s", manifest.sha256);
     writefln("  manifest %s", manifestPath);
 
-    if (opt.stage == Stage.sign)
+    if (opt.stage == PublishStage.sign)
         return 0;
 
     // ── pull ────────────────────────────────────────────────────────────────
@@ -254,7 +254,7 @@ int runPublish(RunOptions opt)
         }
         writefln("  %s/ pulled", section);
     }
-    if (opt.stage == Stage.pull)
+    if (opt.stage == PublishStage.pull)
         return 0;
 
     // ── version guard ───────────────────────────────────────────────────────
@@ -326,7 +326,7 @@ int runPublish(RunOptions opt)
     }
     writefln("  indexed %s version(s), highest %s",
         indexed.versionCodes.length, indexed.highestVersionCode);
-    if (opt.stage == Stage.index)
+    if (opt.stage == PublishStage.index)
     {
         writeln();
         writefln("stopped before deploy. Pass --stage deploy to publish.");
@@ -463,7 +463,7 @@ private void setPrivate(string path)
     }
 }
 
-@("fdroid.run.recognizesAnUnpublishedSection")
+@("store.run.recognizesAnUnpublishedSection")
 @safe unittest
 {
     // `rclone lsf` marks directories with a trailing slash.
@@ -479,7 +479,7 @@ private void setPrivate(string path)
     assert(!"repo-backup/\n".listingHas("repo"));
 }
 
-@("fdroid.run.lastLinePicksTheStorePath")
+@("store.run.lastLinePicksTheStorePath")
 @safe unittest
 {
     // `nix build --print-build-logs --print-out-paths` interleaves logs with
