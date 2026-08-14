@@ -37,7 +37,9 @@
  *
  * Environment recorded: Linux 6.18.26, AMD Ryzen 9 7940HX (Zen 4),
  * `/proc/sys/kernel/perf_event_paranoid` = -1, elfutils 0.195 (libdw/libdwfl),
- * LDC 1.41 druntime `core.sys.linux.perf_event`.
+ * LDC 1.41 druntime `core.sys.linux.perf_event`. Linked with the flake
+ * stdenv dynamic linker (glibc 2.42) so elfutils 0.195 can resolve
+ * `GLIBC_ABI_GNU2_TLS` — see nix/d-toolchain.nix.
  *
  * Portability: any missing capability (`perf_event_open`/`mmap` refused by
  * `perf_event_paranoid`/seccomp, no PMU, non-Linux) prints a `SKIP:` line and
