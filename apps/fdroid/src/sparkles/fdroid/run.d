@@ -11,6 +11,7 @@ module sparkles.fdroid.run;
 import sparkles.fdroid.certs : signerFingerprints;
 import sparkles.fdroid.env : EnvVar, PublishEnv, resolveEnv;
 import sparkles.fdroid.index : appFromIndex, checkPublishable, describe, IndexedApp, PublishRefusal;
+import sparkles.fdroid.manifest : ReleaseManifest, toJson;
 import sparkles.fdroid.stage : Stage, stageNames;
 import sparkles.fdroid.tools;
 import sparkles.fdroid.version_map : ApkVersion, apkVersionForTag, describe;
@@ -40,7 +41,7 @@ int runPublish(RunOptions opt)
 {
     import std.array : join;
     import std.conv : text;
-    import std.file : exists, mkdirRecurse, readText, write;
+    import std.file : exists, getSize, mkdirRecurse, readText, write;
     import std.path : buildPath;
 
     // ── the version, before anything else can fail ──────────────────────────
@@ -138,6 +139,28 @@ int runPublish(RunOptions opt)
         return 1;
     }
     writefln("  signer SHA-256 %s", fingerprints[0]);
+
+    // The manifest is generated from the bytes that will actually be served —
+    // after signing, because signing changes them — rather than restated from
+    // configuration (FDR8). It is what lets the copy in object storage be
+    // matched against the one attached to the GitHub Release, and both against
+    // the tag they claim to be.
+    const manifest = ReleaseManifest(
+        applicationId: applicationId,
+        tag: opt.tag,
+        versionName: v.name,
+        versionCode: v.code,
+        fileName: apkName,
+        size: signedApk.getSize,
+        sha256: sha256Of(signedApk),
+        signerFingerprint: fingerprints[0],
+        unsignedStorePath: outPath,
+    );
+    const manifestPath = buildPath(opt.workDir, "release-manifest.json");
+    write(manifestPath, manifest.toJson);
+    writefln("  sha256 %s", manifest.sha256);
+    writefln("  manifest %s", manifestPath);
+
     if (opt.stage == Stage.sign)
         return 0;
 
@@ -309,6 +332,26 @@ private string lastLine(string s) pure
         if (line.strip.length)
             last = line.strip;
     return last;
+}
+
+/// Lowercase hex SHA-256 of a file, read in chunks — the APK is ~64 MB and
+/// there is no reason to hold it in memory.
+private string sha256Of(string path)
+{
+    import std.digest : toHexString, LetterCase;
+    import std.digest.sha : SHA256;
+    import std.stdio : File;
+
+    SHA256 hash;
+    hash.start();
+    // `byChunk`'s `front` is `@system` — it hands out a buffer it reuses. The
+    // read loop is the only unsafe operation here, so it alone is trusted
+    // rather than the whole function.
+    () @trusted {
+        foreach (ubyte[] chunk; File(path, "rb").byChunk(1 << 20))
+            hash.put(chunk);
+    }();
+    return hash.finish().toHexString!(LetterCase.lower).idup;
 }
 
 /// True when `rclone lsf` output lists `name` as a directory. `lsf` prints one
