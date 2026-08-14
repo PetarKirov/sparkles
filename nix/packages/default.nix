@@ -217,6 +217,55 @@
         };
       });
 
+      # Publishes hue to the self-hosted F-Droid repository
+      # (docs/specs/hue/fdroid.md).
+      #
+      # Deliberately NOT gated to x86_64-linux even though the APK it publishes
+      # is: this tool only shells out, so it builds and its unit tests run on
+      # darwin too — which is what keeps `ci --test` honest about the version
+      # mapping and the index guards.
+      #
+      # The binary is `fdroid-publish`, not `fdroid`: the wrapper below puts
+      # fdroidserver's own `fdroid` on PATH, and the two must not collide.
+      packages.fdroid-publish = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "fdroid-publish";
+        version = "0.1.0";
+
+        # `buildSparklesApp` defaults both of these to `apps/${pname}`. Here the
+        # directory (and the dub sub-package) is `apps/fdroid` while the binary
+        # is `fdroid-publish`, so both have to be said explicitly.
+        sourceDirs = config.legacyPackages.sparklesSources.srcClosure "apps/fdroid";
+        sourceRoot = "${finalAttrs.src.name}/apps/fdroid";
+
+        postFixup =
+          let
+            path = lib.makeBinPath [
+              pkgs.fdroidserver
+              # fdroidserver shells out to keytool, jarsigner and jar, and the
+              # nixpkgs package wraps only apksigner onto PATH — `fdroid update`
+              # fails outright without a JDK.
+              pkgs.jdk_headless
+              pkgs.apksigner
+              pkgs.rclone
+            ];
+          in
+          ''
+            wrapProgram $out/bin/${finalAttrs.pname} \
+              --prefix PATH : ${path}
+          '';
+
+        meta = {
+          description = ''
+            Sign the hue release APK and publish the self-hosted F-Droid repository
+          '';
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
+      apps.fdroid-publish = {
+        type = "app";
+        program = lib.getExe config.packages.fdroid-publish;
+      };
       apps.release = {
         type = "app";
         program = lib.getExe config.packages.release;
