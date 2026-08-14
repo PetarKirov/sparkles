@@ -13,8 +13,25 @@
 # `lib` comes from the flake-level module args (see nix/shells/android.nix).
 { inputs, lib, ... }:
 let
+  # `platformVersion` is the compile SDK (android.jar) *and* the
+  # `--target-sdk-version` aapt2 stamps into every APK, so it is the app's
+  # declared target — the API level whose behaviour changes the app opts into.
+  #
+  # 36 (Android 16) because Google Play stops accepting 35 for new submissions
+  # and updates on 2026-08-31. It costs nothing in reach: targetSdk gates
+  # behaviour, never installation — that is `ndk.minSdk`'s job — so raising it
+  # excludes no device. What it does opt into is Android 16 enforcing
+  # edge-to-edge with no way to decline (Android 15 still allowed
+  # `windowOptOutEdgeToEdgeEnforcement`; 36 ignores it), which is why the
+  # bottom toolbar's insets need checking on a device rather than assumed.
+  #
+  # `buildToolsVersion` deliberately trails at 35.0.0: aapt2, zipalign and
+  # apksigner produce the bytes, and the APK is required to be bit-reproducible
+  # (AND1), so their version is changed on its own evidence rather than dragged
+  # along by a targetSdk bump. Linking against a newer android.jar with older
+  # build-tools is supported and is what we do.
   buildToolsVersion = "35.0.0";
-  platformVersion = "35";
+  platformVersion = "36";
 in
 {
   perSystem =

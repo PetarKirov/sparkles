@@ -57,7 +57,9 @@ struct CliParams
 {
     @(Option(`s|stage`, description:
         "Cumulative stage: create-tag (default), push-tag, "
-        ~ "create-gh-release-draft, publish-gh-release. Each implies the earlier ones."))
+        ~ "create-gh-release-draft, publish-gh-release, publish-fdroid. Each implies "
+        ~ "the earlier ones; publish-fdroid needs the signing tokens, so it only runs "
+        ~ "on the workstation."))
     string stage = "create-tag";
 
     @(Option(`a|auto`, description:
@@ -117,7 +119,8 @@ private int run(CliParams cli)
     auto stage = parseStage(cli.stage);
     if (stage.isNull)
         return fail("unknown --stage `" ~ cli.stage
-            ~ "` (create-tag, push-tag, create-gh-release-draft, publish-gh-release)");
+            ~ "` (create-tag, push-tag, create-gh-release-draft, publish-gh-release, "
+            ~ "publish-fdroid)");
 
     Nullable!BumpKind bumpOverride;
     if (cli.bump.length)
@@ -181,9 +184,14 @@ private int run(CliParams cli)
     writeln("Next version: " ~ stylize(tag, Style.green));
     stdout.flush();
 
-    // ----- fail fast if a GitHub stage is requested but unusable -----
+    // ----- fail fast if a requested stage is unusable -----
     if (auto e = checkGhReady(stage.get))
         return fail(e);
+    // Checked before the tag exists: a version the Android channel cannot
+    // represent is better refused now than discovered after the tag is public.
+    if (auto e = checkFdroidReady(stage.get, tag))
+        return fail(e);
+    warnIfUnpublishableOnAndroid(tag, stage.get);
 
     // ----- pre-flight (before any tag is created) -----
     if (!cli.noVerify)
@@ -994,6 +1002,7 @@ private int executeStages(Stage chosen, string tag, string notesBody, in Theme t
     const pushId = tasks.add("push " ~ tag ~ " to origin");
     const draftId = tasks.add("create draft GitHub release");
     const publishId = tasks.add("publish GitHub release");
+    const fdroidId = tasks.add("publish the Android channel");
 
     int failStage(size_t id, string message)
     {
@@ -1042,6 +1051,31 @@ private int executeStages(Stage chosen, string tag, string notesBody, in Theme t
     else
         tasks.skip(publishId, "beyond --stage");
 
+    // The Android channel. Signing keys live on hardware tokens, so this stage
+    // only works on the machine holding them — reaching it from CI is meant to
+    // fail. The real guards (no reused versionCode, no local rebuild in place
+    // of what CI built, certificate pinned) are inside `fdroid-publish`; this
+    // is only the invocation.
+    //
+    // It also cannot run immediately after `publish-gh-release` in the same
+    // breath as CI: the release workflow has to build and cache the unsigned
+    // APK first. `fdroid-publish` reports that clearly rather than rebuilding.
+    if (stageAtLeast(chosen, Stage.publishFdroid))
+    {
+        tasks.start(fdroidId);
+        auto r = runCaptured([
+            "fdroid-publish", "publish", "--tag", tag, "--stage", "deploy",
+        ]);
+        if (r.status != 0)
+            return failStage(fdroidId,
+                "fdroid-publish failed — the source release stands; retry with:\n"
+                ~ "  nix run .#fdroid-publish -- publish --tag " ~ tag ~ " --stage deploy\n\n"
+                ~ r.stdout ~ r.stderr);
+        tasks.succeed(fdroidId);
+    }
+    else
+        tasks.skip(fdroidId, "beyond --stage");
+
     return 0;
 }
 
@@ -1060,6 +1094,50 @@ private string checkGhReady(Stage stage, bool needGhAnyway = false)
     if (auth.status != 0)
         return "`gh` is not authenticated (run `gh auth login`)";
     return null;
+}
+
+/**
+Returns an error string if the Android channel cannot be published.
+
+Two checks, both run *before* anything is tagged, because a version that cannot
+reach the app channel is better refused than discovered after the tag is
+public.
+
+The version check delegates to `fdroid-publish version`, rather than
+reimplementing the mapping here: `versionCode` is `Tiny.orderKey` of the tag,
+which packs minor and patch into 8 bits each, so `v0.256.0` has no
+representation. Shelling out keeps that rule in one tested place.
+*/
+private string checkFdroidReady(Stage stage, string tag)
+{
+    if (!stageAtLeast(stage, Stage.publishFdroid))
+        return null;
+    if (!isInPath("fdroid-publish"))
+        return "stage `" ~ stageToken(stage) ~ "` needs `fdroid-publish`, which is not on PATH"
+            ~ "\n  It signs with a key on a hardware token, so this stage only works on the"
+            ~ "\n  machine holding it — not from CI.";
+    auto mapped = runCaptured(["fdroid-publish", "version", "--tag", tag]);
+    if (mapped.status != 0)
+        return "the Android channel cannot publish " ~ tag ~ ":\n  "
+            ~ (mapped.stdout.length ? mapped.stdout : mapped.stderr);
+    return null;
+}
+
+/// Warns when a version is fine for the source release but unreachable on the
+/// Android channel — the tag is still allowed, since the two channels are
+/// independent, but silence here would surface as a failure much later.
+private void warnIfUnpublishableOnAndroid(string tag, Stage stage)
+{
+    if (stageAtLeast(stage, Stage.publishFdroid) || !isInPath("fdroid-publish"))
+        return; // already a hard error, or nothing to check with
+    auto mapped = runCaptured(["fdroid-publish", "version", "--tag", tag]);
+    if (mapped.status == 0)
+        return;
+
+    import std.string : strip;
+
+    const why = (mapped.stdout.length ? mapped.stdout : mapped.stderr).strip;
+    warning(i`$(tag) cannot be published to the Android channel: $(why)`);
 }
 
 // ---------------------------------------------------------------------------

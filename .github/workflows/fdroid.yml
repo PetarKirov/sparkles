@@ -78,6 +78,27 @@ jobs:
       # The store path is the handoff. Printing it here lets the maintainer
       # confirm the workstation resolved the same derivation before signing —
       # if the two differ, the local tree is not what CI built.
+      # Pushing is not enough: an unpinned path is garbage-collectable, and the
+      # whole point of the split is that this artifact is still substitutable
+      # when the maintainer sits down with the signing tokens — which may be
+      # hours or days later. A rolling pin keeps the last few releases' APKs and
+      # collects the rest on its own.
+      #
+      # CI_PIN_ANY_TAG, unlike the `latest-*` release pin: `release --split`
+      # creates a chain of tags whose APKs are each signed in turn, so every
+      # release needs retaining, not just the highest.
+      - name: Pin the unsigned APK
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          CI_PIN_NAME: hue-apk-unsigned
+          CI_PIN_ANY_TAG: '1'
+        run: |
+          set -euo pipefail
+          CI_TAG="$TAG" CI_PIN_PATH=$(nix run .#fdroid-publish -- path --tag "$TAG") \
+            ci/release-pin.sh
+
       - name: Report the handoff
         env:
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
