@@ -252,7 +252,17 @@
         # Default configs only — event-horizon's opt-in `libkqueue` path is a
         # devshell `dub -c libkqueue` run.
         nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [ pkgs.tree-sitter ];
+        buildInputs = [
+          pkgs.tree-sitter
+
+          # `libs "vulkan"` in libs/vulkan. `vulkan.pc` lives in the loader's
+          # `.dev` output and points `includedir` at vulkan-headers, so one
+          # entry gives ImportC the header path and the linker its flags.
+          # The dev shell has these; this derivation is a separate closure and
+          # needs them too, or `<vulkan/vulkan.h>` is simply absent.
+          pkgs.vulkan-loader
+          pkgs.vulkan-loader.dev
+        ];
       };
 
       # One bundle per lib, primed by compiling every one of that lib's

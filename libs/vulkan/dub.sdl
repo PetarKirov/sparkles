@@ -1,0 +1,46 @@
+name "vulkan"
+description "Vulkan bindings: ImportC over the real headers, plus branded handles, Expected-typed results and per-device dispatch"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// Resolved through pkg-config: `vulkan.pc` (from vulkan-loader's `.dev`
+// output) supplies both the link flags and — prefixed `-P-I` by dub — the
+// ImportC include path for `<vulkan/vulkan.h>`. vulkan-headers ships no `.pc`
+// of its own, which is why the loader's is the one named here.
+//
+// The link is nearly vestigial: `c.c` defines `VK_NO_PROTOTYPES`, so every
+// entry point is reached through a function pointer and this object file has
+// no undefined `vk*` symbols at all. It stays because dub ties the pkg-config
+// `--cflags` lookup to a `libs` entry, and because `--as-needed` drops the
+// unused DT_NEEDED anyway.
+libs "vulkan"
+
+dependency "expected" version="~>0.4.1"
+
+configuration "library" {
+    // `sourceLibrary`, not `library`: dub skips pkg-config for `library` and
+    // `staticLibrary` targets, so the ImportC include path would never reach
+    // the compiler. See docs/guidelines/importc-c-libraries.md.
+    targetType "sourceLibrary"
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses. Neither `debug` (which compiles those blocks in) nor
+// `release` (which deletes assert *expressions*, side effects included).
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
