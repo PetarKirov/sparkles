@@ -7,7 +7,13 @@ build hue opens the raylib window automatically when a display is available
 tty it opens the full-screen terminal viewer (scrolling, ←/→ theme cycling,
 search, mouse selection).
 
-    hue [--html] [--gui|--no-gui] [--theme <name>] [path]
+    hue [view] [--html] [--gui|--no-gui] [--theme <name>] [path]
+    hue diff <old> <new>
+    hue pr <pr-number-or-url>
+    hue gallery <directory>
+    hue theme [--list] [<name>]
+    hue overlay [--list] [<kind>]
+    hue config [--show]
 
 With no path, `hue` highlights its own source.
 
@@ -22,6 +28,7 @@ import std.file : readText;
 import std.path : baseName, extension;
 import std.stdio : stderr, write;
 import std.string : chompPrefix;
+import std.sumtype : match, SumType;
 
 import sparkles.syntax;
 import sparkles.syntax.md.model : MdDoc;
@@ -44,23 +51,137 @@ import sparkles.diff : WhitespaceMode;
 import source_set : SourceSet;
 import table_select : TableCopyFormat;
 
-struct CliParams
+import sparkles.ui_app.gui_options : defaultGuiFont, defaultGuiFontFamily,
+    defaultTheme, GuiOptions;
+import sparkles.ui_app.backend : Backend, BackendPolicy,
+    hostPickBackend = pickBackend, platformForcedBackend;
+import sparkles.ui_app.display : displayAvailable;
+
+// ── Option Groupings & Subcommands ──────────────────────────────────────────
+
+/// Standalone overlay configuration.
+struct OverlayOptions
 {
-    @(Option("html", description: "Output formatted HTML instead of ANSI terminal escapes."))
+    @(Option("twoslash", description: "Render a TypeScript twoslash JSON payload as type-annotated overlay (compatibility alias for --overlay twoslash=<path>)."))
+    string twoslash;
+
+    @(Option("overlay", description: "Attach an overlay: <kind>[=<artifact>] (e.g. twoslash=nodes.json, coverage=cov.json). Can be specified multiple times."))
+    string[] overlays;
+
+    @(Option("list-overlays", description: "List registered overlay kinds."))
+    bool listOverlays;
+}
+
+/// Standalone diff configuration.
+struct DiffOptions
+{
+    @(Option("diff-ignore-whitespace", description: "Whitespace difference mode: exact | trailing | change | all."))
+    string diffIgnoreWhitespace = "exact";
+
+    @(Option("diff-preview", description: "Diff rendered Markdown documents instead of raw source."))
+    bool diffPreview;
+
+    @(Option("diff-structural", description: "Grammar-aware structural diff: auto | on | off."))
+    string diffStructural = "auto";
+
+    @(Option("diff-commutative", description: "Containers whose child order carries no meaning (e.g. D imports)."))
+    string diffCommutative = "default";
+
+    @(Option("diff-layout", description: "Diff layout: unified (default) or split."))
+    string diffLayout = "unified";
+}
+
+/// Output rendering sink options (mutually exclusive choices for document rendering).
+struct RenderSinkOptions
+{
+    @(Option("backend|sink", description: "Target rendering backend: gui | tui | html | ansi (default: auto-detected)."))
+    string backend = "auto";
+
+    @(Option("html", description: "Output formatted HTML instead of ANSI escapes (shorthand for --backend=html)."))
     bool html;
 
-    // The window/font/theme/backend-force vocabulary is the host's now
-    // (`CLI1`-`CLI3`): one declaration, one set of defaults, one help text.
-    // USER-VISIBLE (`UIAPP-O1`): --font-size 14 -> 18 and --theme
-    // catppuccin-mocha -> tokyo-night; hue gains --font-dir and
-    // --font-codepoint-map (previously Android-internal).
-    mixin GuiCliFields;
+    @(Option("tui", description: "Force terminal output (alias for --no-gui / --backend=tui)."))
+    bool tui;
 
-    @(Option("include", description: "Explorer glob(s) to always show (overrides hidden, git-ignored, and --exclude); matched against the entry name and its root-relative path. Repeatable."))
+    @(Option("ansi", description: "Output formatted ANSI escapes (shorthand for --backend=ansi)."))
+    bool ansi;
+
+    Backend resolveBackend(in GuiOptions guiOpt) const
+    {
+        Backend forced;
+        if (platformForcedBackend(forced))
+            return forced; // Android: the surface IS the app
+
+        if (backend == "gui") return Backend.gui;
+        if (backend == "tui") return Backend.tui;
+        if (backend == "html" || html) return Backend.html;
+        if (backend == "ansi" || ansi) return Backend.ansi;
+
+        bool guiCompiledIn = false;
+        version (HueGui) guiCompiledIn = true;
+
+        const wantGui = (backend == "gui") || guiOpt.gui;
+        const wantNoGui = tui || guiOpt.tui || guiOpt.noGui;
+
+        return hostPickBackend(BackendPolicy(
+            forceGui: wantGui,
+            forceNoGui: wantNoGui,
+            forceTui: tui || guiOpt.tui,
+            forceHtml: html,
+            guiCompiledIn: guiCompiledIn,
+            stdinTty: isTerminal(StdStream.stdin),
+            stdoutTty: isTerminal(StdStream.stdout),
+            displayPresent: displayAvailable(),
+        ));
+    }
+}
+
+/// Render settings passed down to active sinks.
+struct ViewRenderOptions
+{
+    string theme;
+    string background = "full";
+    bool groupThemes = true;
+    int treeWidth = 32;
+    int tabWidth = 4;
+    bool listWhitespace = false;
+    bool lineNumbers = true;
+    bool codeLineNumbers = true;
+    string codeOverflow = "scroll";
+    int codeMaxLines = -1;
+    string ansiCopy = "raw";
+    string tableCopy = "tsv";
     string[] include;
-
-    @(Option("exclude", description: "Explorer glob(s) to hide. Repeatable; --include wins."))
     string[] exclude;
+    bool noLiveTypes = false;
+    string diffLayout = "unified";
+    GuiOptions gui;
+}
+
+// ── Subcommands ─────────────────────────────────────────────────────────────
+
+@(Command("view", isDefault: true,
+    shortDescription: "View and syntax-highlight a file, directory, or twoslash overlay",
+))
+struct View
+{
+    @(Argument("paths", description: "File or directory to view (default: hue's own source).", optional: true))
+    string[] paths;
+
+    @Flatten("Output Sinks")
+    RenderSinkOptions sink;
+
+    @(Option("markdown", description: "Treat the input as Markdown and render the decorated preview."))
+    bool markdown;
+
+    @(Option("language|lang", description: "Override syntax language (e.g. 'd', 'rust', 'markdown', 'json')."))
+    string language;
+
+    @(Option("raw", description: "Render highlighted source instead of markdown preview."))
+    bool raw;
+
+    @(Option("patch", description: "Treat the input as a unified diff."))
+    bool patch;
 
     @(Option("tree-width", description: "Explorer pane width in cells (default 32)."))
     int treeWidth = 32;
@@ -68,89 +189,647 @@ struct CliParams
     @(Option("tab-width", description: "Tab stops in the raw source view: a tab advances to the next multiple of this many columns."))
     int tabWidth = 4;
 
-    @(Option("list-whitespace", description: "Render whitespace visibly in the raw view, vim's 'list' style: tabs as '→', spaces and trailing runs as '·', no-break spaces as '␣'."))
+    @(Option("list-whitespace", description: "Render whitespace visibly in the raw view, vim's 'list' style."))
     bool listWhitespace;
 
-    @(Option("twoslash", description: "Render a TypeScript twoslash JSON payload (its `code` + nodes) as a type-annotated overlay. Compatibility spelling of --overlay twoslash=<path>; a *.twoslash.json target needs no flag."))
-    string twoslash;
-
-    @(Option("overlay", description: "Attach an overlay to the document: <kind>[=<artifact>] (see --list-overlays). E.g. --overlay twoslash=nodes.json."))
-    string overlay;
-
-    @(Option("list-overlays", description: "List the registered overlay kinds and exit."))
-    bool listOverlays;
-
-    @(Option("markdown", description: "Treat the input as Markdown and render the decorated preview (the default for .md files) in the active sink; forces the preview for a non-.md extension or stdin."))
-    bool markdown;
-
-    @(Option("raw", description: "Render highlighted source instead of the markdown preview, in every sink (the preview is the default for .md files)."))
-    bool raw;
-
-    @(Option("diff", description: "Diff the two positional file arguments in-process and render the result in the active sink."))
-    bool diff;
-
-    @(Option("patch", description: "Treat the input (a file target or piped stdin) as a unified diff; piped stdin is also sniffed without the flag."))
-    bool patch;
-
-    @(Option("pr", description: "Open a pull request as a diff session: a number (in this repository), owner/repo#number, or a forge URL. Fetched natively over the forge API; the token comes from $GITHUB_TOKEN, $GH_TOKEN, or gh's config — never a prompt."))
-    string pr;
-
-    @(Option("staged", description: "Diff the index (staged changes) against HEAD or the given revision; implies --diff."))
-    bool staged;
-
-    @(Option("diff-ignore-whitespace", description: "How much whitespace difference counts as the same line: exact (default), trailing (git --ignore-space-at-eol), change (git -b), all (git -w). An ignored difference is never a change, not a change that is hidden."))
-    string diffIgnoreWhitespace = "exact";
-
-    @(Option("diff-preview", description: "With --diff over two markdown files: diff the rendered DOCUMENTS instead of their source — the new document as it now stands, with removed blocks struck through in place and changed words marked. Rewrapping and table re-alignment become invisible, because neither changes a block's content."))
-    bool diffPreview;
-
-    @(Option("diff-structural", description: "Whether the grammar gets asked if a change is real: auto (default, when a grammar exists and the file is under the size ceiling), on (ignore the ceiling), off. Token-stream-identical hunks fold as formatting-only; the parser can only demote a change, never hide one."))
-    string diffStructural = "auto";
-
-    @(Option("diff-commutative", description: "Containers whose child order carries no meaning, as language:node pairs added to the defaults (D imports, markdown reference definitions); off claims no permutation at all. A hunk that only permutes such a container folds as 'reordered'."))
-    string diffCommutative = "default";
-
-    @(Option("diff-layout", description: "Diff layout: unified (default, one column) or split (two aligned panes). A split narrower than 80 columns degrades to unified, where the same diff reads better."))
-    string diffLayout = "unified";
-
-    @(Option("line-numbers", description: "--gui: show the file line-number gutter (default on; disable with =false; toggle at runtime with 'l')."))
+    @(Option("line-numbers", description: "--gui: show the file line-number gutter (default on)."))
     bool lineNumbers = true;
 
-    @(Option("code-line-numbers", description: "--gui: number the lines inside each code block (default on; disable with =false; toggle at runtime with 'c')."))
+    @(Option("code-line-numbers", description: "--gui: number the lines inside each code block (default on)."))
     bool codeLineNumbers = true;
 
-    @(Option("code-overflow", description: "How a code-block line longer than its panel behaves: 'scroll' (per-block horizontal scrolling — a sideways wheel or Shift+wheel over the block; the default) or 'wrap' (in-panel wrapping past the number gutter)."))
+    @(Option("code-overflow", description: "How a code-block line longer than its panel behaves: 'scroll' or 'wrap'."))
     string codeOverflow = "scroll";
 
-    @(Option("code-max-lines", description: "A code block taller than this many lines shows a fixed-height vertical viewport with its own scrollbar (scroll mode). Default -1 = auto: fit the whole block, borders included, in the document pane, so its bottom border stays in view; 0 disables."))
+    @(Option("code-max-lines", description: "A code block taller than this many lines shows a fixed-height vertical viewport (-1 auto, 0 disables)."))
     int codeMaxLines = -1;
 
-    @(Option("group-themes", description: "Group the theme cycle by light/dark (default on; disable with =false): each brightness forms one contiguous run, so rapidly cycling dark themes never flashes a light background."))
+    @(Option("group-themes", description: "Group the theme cycle by light/dark (default on)."))
     bool groupThemes = true;
 
-    @(Option("background", description: "Terminal background mode: no-background (foreground only), spans (only where the theme sets one), or full (fill every line edge-to-edge; the default)."))
-    string background = "full";
-
-    @(Option("ansi-copy", description: "--gui: how a selection over a ```ansi block copies — 'raw' (escape codes) or 'strip' (SGR removed). Default raw; toggle at runtime with 'y'."))
+    @(Option("ansi-copy", description: "--gui: how a selection over a ```ansi block copies: 'raw' or 'strip'."))
     string ansiCopy = "raw";
 
-    @(Option("table-copy", description: "--gui: how a table grid selection copies — 'tsv' (tab-separated) or 'markdown'. Default tsv; toggle at runtime with 't'."))
+    @(Option("table-copy", description: "--gui: how a table grid selection copies: 'tsv' or 'markdown'."))
     string tableCopy = "tsv";
 
-    @(Option("out", description: "Output directory for the static HTML gallery a directory target renders into (with --html); defaults to <target>/html."))
-    string outDir;
+    @(Option("include", description: "Explorer glob(s) to always show. Repeatable."))
+    string[] include;
 
-    @(Option("no-live-types", description: "Disable live D types in the interactive views: opening a .d file normally starts a twoslash-extract oracle beside it, underlines every hover span, and resolves a token's type when you point at it. Needs twoslash-extract on PATH (or $SPARKLES_TWOSLASH_EXTRACT); without it the viewer says so once and carries on."))
+    @(Option("exclude", description: "Explorer glob(s) to hide. Repeatable."))
+    string[] exclude;
+
+    @(Option("no-live-types", description: "Disable live D types in the interactive views."))
     bool noLiveTypes;
 
-    /// Everything that is not an option: the target to view (a file, a
-    /// directory, or nothing — hue then views its own source). `--diff` reads
-    /// two of them as the old/new file, and `--diff`/`--staged` over git
-    /// revisions read the first non-file as the revspec and the rest as path
-    /// filters.
-    @(Argument("path", description: "File or directory to view (default: hue's own source).", optional: true))
-    string[] paths;
+    @Flatten
+    DiffOptions diffOptions;
+
+    int run(Program)(in Program program)
+    {
+        return executeView(program.value, this);
+    }
 }
+
+@(Command("diff",
+    shortDescription: "Diff two files or git revisions with syntax highlighting and structural awareness",
+))
+struct Diff
+{
+    @(Argument("targets", description: "Old and new files to diff, or git revspec and path filters.", optional: true))
+    string[] targets;
+
+    @(Option("staged", description: "Diff the index (staged changes) against HEAD or the given revision."))
+    bool staged;
+
+    @Flatten("Diff Options")
+    DiffOptions diff;
+
+    @Flatten("Output Sinks")
+    RenderSinkOptions sink;
+
+    @(Option("line-numbers", description: "--gui: show line-number gutter."))
+    bool lineNumbers = true;
+
+    @(Option("code-overflow", description: "How code-block lines behave: 'scroll' or 'wrap'."))
+    string codeOverflow = "scroll";
+
+    @(Option("code-max-lines", description: "Max code block lines before vertical scrollbar."))
+    int codeMaxLines = -1;
+
+    int run(Program)(in Program program)
+    {
+        return executeDiff(program.value, this);
+    }
+}
+
+@(Command("pr",
+    shortDescription: "Open a GitHub/GitLab pull request as a diff session with review comments",
+))
+struct Pr
+{
+    @(Argument("pr", description: "Pull request identifier (e.g. 123, owner/repo#123, or forge URL)."))
+    string pr;
+
+    @Flatten("Diff Options")
+    DiffOptions diff;
+
+    @Flatten("Output Sinks")
+    RenderSinkOptions sink;
+
+    @(Option("line-numbers", description: "--gui: show line-number gutter."))
+    bool lineNumbers = true;
+
+    @(Option("code-overflow", description: "How code-block lines behave: 'scroll' or 'wrap'."))
+    string codeOverflow = "scroll";
+
+    @(Option("code-max-lines", description: "Max code block lines before vertical scrollbar."))
+    int codeMaxLines = -1;
+
+    int run(Program)(in Program program)
+    {
+        return executePr(program.value, this);
+    }
+}
+
+@(Command("gallery",
+    shortDescription: "Batch render a directory into a static HTML syntax/theme gallery",
+))
+struct Gallery
+{
+    @(Argument("dir", description: "Directory to render as a gallery (default: current directory).", optional: true))
+    string dir = ".";
+
+    @(Option("out|o", description: "Output directory for the static HTML gallery (defaults to <dir>/html)."))
+    string outDir;
+
+    @(Option("twoslash", description: "Render TypeScript twoslash JSON payloads in the gallery."))
+    bool twoslash;
+
+    @(Option("markdown", description: "Treat input files as Markdown."))
+    bool markdown;
+
+    @(Option("raw", description: "Render raw source without markdown preview."))
+    bool raw;
+
+    int run(Program)(in Program program)
+    {
+        return executeGallery(program.value, this);
+    }
+}
+
+@(Command("theme",
+    shortDescription: "Inspect, list, and preview built-in color themes",
+))
+struct ThemeCmd
+{
+    @(Option("list|l", description: "List all built-in themes."))
+    bool list;
+
+    @(Argument("name", description: "Theme name to inspect.", optional: true))
+    string name;
+
+    int run(Program)(in Program program)
+    {
+        return executeTheme(program.value, this);
+    }
+}
+
+@(Command("overlay",
+    shortDescription: "Inspect available document overlays (twoslash, code coverage, trace)",
+))
+struct OverlayCmd
+{
+    @(Option("list|l", description: "List registered overlay kinds."))
+    bool list;
+
+    @(Argument("kind", description: "Overlay kind to inspect.", optional: true))
+    string kind;
+
+    int run(Program)(in Program program)
+    {
+        return executeOverlay(program.value, this);
+    }
+}
+
+@(Command("config",
+    shortDescription: "Display resolved configuration, fonts, and theme settings",
+))
+struct ConfigCmd
+{
+    @(Argument("action", description: "Config action: show | write | save (default: show).", optional: true))
+    string action = "show";
+
+    @(Option("show", description: "Show resolved configuration."))
+    bool show;
+
+    int run(Program)(in Program program)
+    {
+        return executeConfig(program.value, this);
+    }
+}
+
+// ── Root Command ────────────────────────────────────────────────────────────
+
+@(Command("hue",
+    shortDescription: "Interactive syntax-highlighting file viewer, twoslash overlay renderer, and diff inspector",
+))
+struct HueCli
+{
+    @(Option("log-level", description: "Log level: trace | info | warning | error | critical | off (default: warning)."))
+    LogLevel logLevel = LogLevel.warning;
+
+    @(Option("theme", description: "Colour theme, by name (see sparkles.ui.themes for the built-in set)."))
+    string theme = defaultTheme;
+
+    @(Option("background", description: "Terminal background mode: no-background, spans, or full."))
+    string background = "full";
+
+    @Flatten("Overlay Options")
+    OverlayOptions overlay;
+
+    @Flatten("GUI Options")
+    GuiOptions gui;
+
+    @Subcommands
+    SumType!(View, Diff, Pr, Gallery, ThemeCmd, OverlayCmd, ConfigCmd) command;
+}
+
+// ── Subcommand Handlers ─────────────────────────────────────────────────────
+
+private bool resolveOverlayTarget(in HueCli root, ref bool forceTwoslash, ref string target)
+{
+    if (root.overlay.twoslash.length != 0)
+    {
+        forceTwoslash = true;
+        target = root.overlay.twoslash;
+    }
+    foreach (ovl; root.overlay.overlays)
+    {
+        if (ovl.length == 0)
+            continue;
+        import std.string : indexOf;
+        const eq = ovl.indexOf('=');
+        const kind = eq >= 0 ? ovl[0 .. eq] : ovl;
+        if (kind != "twoslash")
+        {
+            stderr.writeln("hue: unknown overlay kind '", kind, "' (see --list-overlays)");
+            return false;
+        }
+        forceTwoslash = true;
+        if (eq >= 0)
+            target = ovl[eq + 1 .. $];
+    }
+    return true;
+}
+
+private GuiOptions copyGui(in GuiOptions g)
+{
+    GuiOptions res;
+    res.font = g.font;
+    res.fontSize = g.fontSize;
+    res.fontBold = g.fontBold;
+    res.fontItalic = g.fontItalic;
+    res.fontBoldItalic = g.fontBoldItalic;
+    res.fontCodepointMap = g.fontCodepointMap.dup;
+    res.fontDir = g.fontDir.dup;
+    res.theme = g.theme;
+    res.windowWidth = g.windowWidth;
+    res.windowHeight = g.windowHeight;
+    res.noGui = g.noGui;
+    res.gui = g.gui;
+    res.tui = g.tui;
+    return res;
+}
+
+private int executeView(in HueCli root, in View view)
+{
+    import source_set : collectSources, SourceEntry, SourceSet;
+
+    initLogger(root.logLevel);
+
+    if (root.overlay.listOverlays)
+    {
+        import std.stdio : writeln;
+        writeln("twoslash    type annotations from a twoslash JSON payload " ~
+            "(artifact: the payload; or make it the target — *.twoslash.json)");
+        return 0;
+    }
+
+    bool forceTwoslash;
+    string target = view.paths.length ? view.paths[0] : "";
+    if (!resolveOverlayTarget(root, forceTwoslash, target))
+        return 1;
+
+    const labels = LabelSet.standard();
+    const theme = resolveTheme(builtinThemes.get(root.theme, {
+            warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
+            return builtinDark;
+        }()), labels);
+
+    auto registry = defaultRegistry();
+    auto cache = TsConfigCache.create(&registry, labels);
+    auto pipeline = DocumentPipeline(&registry, &cache, view.markdown, view.raw,
+        view.patch, parseWhitespaceMode(view.diffOptions.diffIgnoreWhitespace),
+        parseStructural(view.diffOptions.diffStructural),
+        parseCommutative(view.diffOptions.diffCommutative));
+
+    const backend = view.sink.resolveBackend(root.gui);
+
+    ViewRenderOptions opt;
+    opt.theme = root.theme;
+    opt.background = root.background;
+    opt.groupThemes = view.groupThemes;
+    opt.treeWidth = view.treeWidth;
+    opt.tabWidth = view.tabWidth;
+    opt.listWhitespace = view.listWhitespace;
+    opt.lineNumbers = view.lineNumbers;
+    opt.codeLineNumbers = view.codeLineNumbers;
+    opt.codeOverflow = view.codeOverflow;
+    opt.codeMaxLines = view.codeMaxLines;
+    opt.ansiCopy = view.ansiCopy;
+    opt.tableCopy = view.tableCopy;
+    opt.include = view.include.dup;
+    opt.exclude = view.exclude.dup;
+    opt.noLiveTypes = view.noLiveTypes;
+    opt.diffLayout = view.diffOptions.diffLayout;
+    opt.gui = copyGui(root.gui);
+
+    SourceSet docSet;
+    bool haveSet;
+    string dirTarget;
+    if (isDirectoryPath(target))
+    {
+        version (Android) {}
+        else version (Posix)
+            if (backend == Backend.tui)
+            {
+                import workspace : runWorkspace, WorkspaceDoc;
+
+                auto themeSet = sortedThemes(root.theme, view.groupThemes);
+                auto pl = &pipeline;
+                return runWorkspace(target, isDir: true, WorkspaceDoc.init,
+                    delegate WorkspaceDoc(string path) @system
+                        => pl.load(path),
+                    themeSet.names, themeSet.themes, themeSet.idx, labels,
+                    &cache, view.include.dup, view.exclude.dup, view.treeWidth,
+                    view.tabWidth, view.listWhitespace, liveTypes: !view.noLiveTypes,
+                    codeOverflow: parseCodeOverflow(view.codeOverflow),
+                    codeMaxLines: view.codeMaxLines);
+            }
+        const openSet = backend == Backend.gui
+            || (forceTwoslash && backend == Backend.tui);
+        if (!openSet)
+            return runDirectoryTarget(target, forceTwoslash, root.theme, view.sink.html, "");
+        docSet = collectSources(target, twoslash: forceTwoslash);
+        if (docSet.empty)
+        {
+            stderr.writeln("hue: no renderable files in '", target, "'");
+            return 1;
+        }
+        haveSet = true;
+        dirTarget = target;
+        target = docSet.current.path;
+    }
+
+    Document doc;
+    try
+    {
+        if (target == "-" || (target.length == 0 && !isTerminal(StdStream.stdin)))
+        {
+            const stdinText = readStdinText();
+            import document : looksLikePatch;
+
+            if (stdinText.length && (view.patch || looksLikePatch(stdinText)))
+                doc = pipeline.fromPatchSource("", "stdin", stdinText);
+            else if (stdinText.length)
+            {
+                const string lang = view.language.length
+                    ? canonicalLanguage(view.language)
+                    : (view.markdown ? "markdown" : "");
+                doc = pipeline.fromSource("", "stdin", stdinText, lang);
+            }
+            else
+                doc = pipeline.fromSource("", "app.d", import("app.d"), "d");
+        }
+        else
+            doc = (target.length && target != "-")
+                ? pipeline.load(target, forceTwoslash, view.language)
+                : pipeline.fromSource("", "app.d", import("app.d"),
+                    view.language.length ? canonicalLanguage(view.language) : "d");
+    }
+    catch (Exception e)
+    {
+        stderr.writeln("hue: ", e.msg);
+        return 1;
+    }
+
+    return renderDocument(backend, opt, doc, labels, theme, registry, cache,
+        haveSet ? &docSet : null, &pipeline, dirTarget);
+}
+
+private int executeDiff(in HueCli root, in Diff diff)
+{
+    initLogger(root.logLevel);
+
+    const labels = LabelSet.standard();
+    const theme = resolveTheme(builtinThemes.get(root.theme, {
+            warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
+            return builtinDark;
+        }()), labels);
+
+    auto registry = defaultRegistry();
+    auto cache = TsConfigCache.create(&registry, labels);
+    auto pipeline = DocumentPipeline(&registry, &cache, false, false,
+        false, parseWhitespaceMode(diff.diff.diffIgnoreWhitespace),
+        parseStructural(diff.diff.diffStructural),
+        parseCommutative(diff.diff.diffCommutative));
+
+    const backend = diff.sink.resolveBackend(root.gui);
+
+    ViewRenderOptions opt;
+    opt.theme = root.theme;
+    opt.background = root.background;
+    opt.lineNumbers = diff.lineNumbers;
+    opt.codeOverflow = diff.codeOverflow;
+    opt.codeMaxLines = diff.codeMaxLines;
+    opt.diffLayout = diff.diff.diffLayout;
+    opt.gui = copyGui(root.gui);
+
+    Document doc;
+    try
+    {
+        import std.file : exists, isFile;
+
+        static bool isFilePath(string p) @system
+        {
+            try
+                return p.exists && p.isFile;
+            catch (Exception)
+                return false;
+        }
+
+        if (!diff.staged && diff.targets.length > 1 && isFilePath(diff.targets[0])
+            && isFilePath(diff.targets[1]))
+            doc = diff.diff.diffPreview && isMarkdownPath(diff.targets[0])
+                && isMarkdownPath(diff.targets[1])
+                ? pipeline.loadDiffPreview(diff.targets[0], diff.targets[1])
+                : pipeline.loadDiffPair(diff.targets[0], diff.targets[1]);
+        else
+        {
+            string revspec;
+            string[] filters;
+            foreach (a; diff.targets)
+                if (revspec.length == 0 && !isFilePath(a))
+                    revspec = a;
+                else
+                    filters ~= a;
+            doc = diff.diff.diffPreview
+                ? pipeline.loadGitDiffPreview(revspec, diff.staged, filters)
+                : pipeline.loadGitDiff(revspec, diff.staged, filters);
+        }
+    }
+    catch (Exception e)
+    {
+        stderr.writeln("hue: ", e.msg);
+        return 1;
+    }
+
+    return renderDocument(backend, opt, doc, labels, theme, registry, cache,
+        null, &pipeline, null);
+}
+
+private int executePr(in HueCli root, in Pr pr)
+{
+    initLogger(root.logLevel);
+
+    const labels = LabelSet.standard();
+    const theme = resolveTheme(builtinThemes.get(root.theme, {
+            warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
+            return builtinDark;
+        }()), labels);
+
+    auto registry = defaultRegistry();
+    auto cache = TsConfigCache.create(&registry, labels);
+    auto pipeline = DocumentPipeline(&registry, &cache, false, false,
+        false, parseWhitespaceMode(pr.diff.diffIgnoreWhitespace),
+        parseStructural(pr.diff.diffStructural),
+        parseCommutative(pr.diff.diffCommutative));
+
+    const backend = pr.sink.resolveBackend(root.gui);
+
+    ViewRenderOptions opt;
+    opt.theme = root.theme;
+    opt.background = root.background;
+    opt.lineNumbers = pr.lineNumbers;
+    opt.codeOverflow = pr.codeOverflow;
+    opt.codeMaxLines = pr.codeMaxLines;
+    opt.diffLayout = pr.diff.diffLayout;
+    opt.gui = copyGui(root.gui);
+
+    Document doc;
+    try
+    {
+        import forge_client : fetchPullRequest;
+        import std.conv : text;
+
+        auto fetched = fetchPullRequest(pr.pr);
+        if (fetched.hasError)
+        {
+            stderr.writeln("hue: ", fetched.error.toString());
+            return 1;
+        }
+        const got = fetched.value;
+        doc = pipeline.fromPatchSource(null,
+            text(got.repo.owner, "/", got.repo.name, " #",
+                got.pr.number), got.patch);
+        doc.diffSession.header = prHeader(registry, got.pr);
+        doc.diffSession.threads = prThreads(registry, got.threads);
+        if (got.threadsNote.length)
+            warning(i"review threads unavailable: $(got.threadsNote)");
+    }
+    catch (Exception e)
+    {
+        stderr.writeln("hue: ", e.msg);
+        return 1;
+    }
+
+    return renderDocument(backend, opt, doc, labels, theme, registry, cache,
+        null, &pipeline, null);
+}
+
+private int executeGallery(in HueCli root, in Gallery gallery)
+{
+    initLogger(root.logLevel);
+    import gallery : GalleryOptions, plainFragment, twoslashFragment, writeGallery;
+    import source_set : collectSources, SourceEntry;
+    import std.path : buildPath;
+
+    string dir = gallery.dir.length ? gallery.dir : ".";
+    bool twoslash = gallery.twoslash || root.overlay.twoslash.length != 0;
+    auto set = collectSources(dir, twoslash);
+    if (set.empty)
+        warning(i"no renderable files in '$(dir)' — writing an empty gallery index");
+
+    const labels = LabelSet.standard();
+    const theme = resolveTheme(builtinThemes.get(root.theme, {
+            warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
+            return builtinDark;
+        }()), labels);
+
+    auto registry = defaultRegistry();
+    auto cache = TsConfigCache.create(&registry, labels);
+
+    string renderOne(in SourceEntry e)
+    {
+        SmallBuffer!HighlightEvent ev;
+        if (twoslash)
+        {
+            auto twRes = loadTwoslashFile(e.path);
+            if (twRes.hasError)
+                throw new Exception(twRes.error.toString);
+            const tw = twRes.value;
+            if (highlightInjected(cache, tw.effectiveLanguage, tw.code, ev).hasError)
+                ev ~= HighlightEvent.sourceSpan(0, tw.code.length);
+            return twoslashFragment(tw, ev[], theme, cache);
+        }
+        const src = readText(e.path);
+        const lang = canonicalLanguage(e.path.extension.chompPrefix("."));
+        if (highlightInjected(cache, lang, src, ev).hasError)
+            ev ~= HighlightEvent.sourceSpan(0, src.length);
+        return plainFragment(src, ev[], theme);
+    }
+
+    const outDir = gallery.outDir.length ? gallery.outDir : buildPath(dir, "html");
+    const gopt = twoslash
+        ? GalleryOptions(
+            titlePrefix: "twoslash",
+            heading: "twoslash overlay examples",
+            indexTitle: "twoslash examples",
+            blurb: "Rendered by <code>hue gallery --twoslash</code>. Open one and " ~
+                "hover the underlined tokens to see the popups.")
+        : GalleryOptions(
+            titlePrefix: "hue",
+            heading: "hue gallery",
+            blurb: "Rendered by <code>hue gallery</code>.");
+
+    const n = writeGallery(set, outDir, gopt, &renderOne);
+    stderr.writeln("hue: wrote ", n, " page(s) + index.html to ", outDir);
+    return 0;
+}
+
+private int executeTheme(in HueCli root, in ThemeCmd cmd)
+{
+    initLogger(root.logLevel);
+    import std.stdio : writeln;
+
+    if (cmd.list || cmd.name.length == 0)
+    {
+        writeln("Available themes:");
+        foreach (name; builtinThemes.byKey)
+            writeln("  ", name);
+        return 0;
+    }
+
+    if (auto p = cmd.name in builtinThemes)
+    {
+        writeln("Theme '", cmd.name, "':");
+        writeln("  Foreground: ", p.defaultFg);
+        writeln("  Background: ", p.defaultBg);
+        return 0;
+    }
+
+    stderr.writeln("hue: unknown theme '", cmd.name, "'");
+    return 1;
+}
+
+private int executeOverlay(in HueCli root, in OverlayCmd cmd)
+{
+    initLogger(root.logLevel);
+    import std.stdio : writeln;
+
+    writeln("Available overlays:");
+    writeln("  twoslash    Type annotations and hover queries from TypeScript twoslash JSON payload");
+    return 0;
+}
+
+private int executeConfig(in HueCli root, in ConfigCmd cmd)
+{
+    initLogger(root.logLevel);
+    import std.stdio : writeln;
+
+    writeln("Hue Configuration:");
+    writeln("  Theme:       ", root.theme);
+    writeln("  Background:  ", root.background);
+    writeln("  Log Level:   ", root.logLevel);
+    writeln("  GUI Font:    ", root.gui.font);
+    writeln("  Font Size:   ", root.gui.fontSize);
+    writeln("  Display:     ", displayAvailable() ? "present" : "absent");
+    return 0;
+}
+
+private int renderDocument(Backend backend, in ViewRenderOptions opt, ref Document doc,
+    in LabelSet labels, in ResolvedTheme theme, ref GrammarRegistry registry,
+    ref TsConfigCache cache, scope SourceSet* docSet,
+    scope DocumentPipeline* pipeline, string dirTarget)
+{
+    final switch (backend)
+    {
+        case Backend.gui:
+            return runGuiSink(opt, doc, labels, theme, cache,
+                docSet, pipeline, dirTarget);
+        case Backend.html:
+            return runHtmlSink(doc, theme, registry, cache,
+                parseDiffLayout(opt.diffLayout));
+        case Backend.tui:
+            return runTuiSink(opt, doc, labels, theme, cache,
+                docSet, pipeline);
+        case Backend.ansi:
+            return runAnsiSink(opt, doc, theme, cache);
+    }
+}
+
+// ── Helper Utilities ────────────────────────────────────────────────────────
 
 /// Parses `--code-overflow` into a `CodeOverflow`; unknown → `scroll`.
 private CodeOverflow parseCodeOverflow(string name)
@@ -193,14 +872,8 @@ private bool isDirectoryPath(string path) @trusted nothrow
         return false;
 }
 
-/**
-Renders a directory of documents (`SRC4`) — the static HTML **gallery** under
-`--html` (`HTM6`/`GAL2`): one page per entry plus an `index.html`, into `--out`
-(default `<dir>/html`). Without `--html` a directory degrades to a static listing
-rather than a crash (the interactive index view is `GAL5`).
-*/
-private int runDirectoryTarget(in CliParams cli, string dir, bool twoslash,
-    string themeName) @system
+private int runDirectoryTarget(string dir, bool twoslash, string themeName,
+    bool isHtml, string outDirParam) @system
 {
     import std.path : buildPath;
     import std.stdio : writeln;
@@ -210,10 +883,8 @@ private int runDirectoryTarget(in CliParams cli, string dir, bool twoslash,
 
     auto set = collectSources(dir, twoslash);
 
-    if (!cli.html)
+    if (!isHtml)
     {
-        // A static listing — the `SRC4` degradation for a directory in a mode that
-        // renders one document at a time.
         if (set.empty)
         {
             stderr.writeln("hue: no renderable files in '", dir, "'");
@@ -222,7 +893,7 @@ private int runDirectoryTarget(in CliParams cli, string dir, bool twoslash,
         foreach (ref const e; set.entries)
             writeln(e.name, "  ", e.summary);
         stderr.writeln("hue: ", set.length, " document(s); add --html [--out <dir>] " ~
-            "to render them as a gallery");
+            "or use 'hue gallery " ~ dir ~ "' to render them as a gallery");
         return 0;
     }
 
@@ -238,8 +909,6 @@ private int runDirectoryTarget(in CliParams cli, string dir, bool twoslash,
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
 
-    // One entry → its content fragment. Throwing here is how `writeGallery` learns
-    // to report-and-skip the entry (`GAL9`).
     string renderOne(in SourceEntry e)
     {
         SmallBuffer!HighlightEvent ev;
@@ -260,7 +929,7 @@ private int runDirectoryTarget(in CliParams cli, string dir, bool twoslash,
         return plainFragment(src, ev[], theme);
     }
 
-    const outDir = cli.outDir.length ? cli.outDir : buildPath(dir, "html");
+    const outDir = outDirParam.length ? outDirParam : buildPath(dir, "html");
     const opt = twoslash
         ? GalleryOptions(
             titlePrefix: "twoslash",
@@ -293,18 +962,6 @@ private BackgroundMode parseBackgroundMode(string name)
     }
 }
 
-// The font default is the host's (`CLI3`): the shared cascade already leads
-// with the bundled Maple family, so the Android prepend this file carried is
-// gone — the shared default IS the Android answer now.
-
-
-/// The grammar registry every sink resolves through. Desktop: the nix grammar
-/// bundle via `$SPARKLES_TS_GRAMMAR_PATH`. Android: the soname layout —
-/// parsers are APK native libraries the dynamic linker resolves, queries come
-/// from the extracted assets.
-/// The HTML sink's diff options: the layout the reviewer asked for, at
-/// whatever width the page ends up — a browser is not a fixed-width pane, so
-/// the narrow-pane degradation (`DVL3`) does not apply there.
 private DiffViewOptions htmlDiffOptions(DiffLayout layout) @safe pure nothrow @nogc
 {
     DiffViewOptions opt;
@@ -312,8 +969,6 @@ private DiffViewOptions htmlDiffOptions(DiffLayout layout) @safe pure nothrow @n
     return opt;
 }
 
-/// `DVL3`: the `--diff-layout` spelling. Unknown spellings warn and fall back
-/// to `unified` rather than failing the run.
 private DiffLayout parseDiffLayout(string spelling) @safe
 {
     switch (spelling)
@@ -326,9 +981,6 @@ private DiffLayout parseDiffLayout(string spelling) @safe
     }
 }
 
-/// `DVN1`: the `--diff-ignore-whitespace` spelling as a mode. An unknown
-/// spelling warns and falls back to `exact` rather than failing the run — the
-/// totality law: a bad flag must not cost the reviewer their diff.
 private WhitespaceMode parseWhitespaceMode(string spelling) @safe
 {
     switch (spelling)
@@ -343,9 +995,6 @@ private WhitespaceMode parseWhitespaceMode(string spelling) @safe
     }
 }
 
-/// `DPR2`: the PR's metadata and description as a session header. The
-/// description is parsed as markdown here so the view can render it through
-/// hue's own preview rather than as a wall of raw text.
 private SessionHeader prHeader(ref GrammarRegistry reg, in PullRequest pr) @system
 {
     import sparkles.syntax.md.model : extractMarkdown;
@@ -363,9 +1012,6 @@ private SessionHeader prHeader(ref GrammarRegistry reg, in PullRequest pr) @syst
     return h;
 }
 
-/// `DPR3`: the forge's conversations as the view's own anchored threads —
-/// each comment's markdown parsed here, so the renderer draws a review
-/// comment the way it draws every other piece of markdown hue shows.
 private AnchoredThread[] prThreads(ref GrammarRegistry reg,
     in CommentThread[] threads) @system
 {
@@ -389,8 +1035,6 @@ private AnchoredThread[] prThreads(ref GrammarRegistry reg,
     return out_;
 }
 
-/// An ISO-8601 timestamp trimmed to its date. A review thread wants "when,
-/// roughly"; the clock time is noise beside the comment it labels.
 private string shortDate(string iso) @safe pure nothrow
     => iso.length >= 10 ? iso[0 .. 10] : iso;
 
@@ -416,8 +1060,6 @@ private CommutativeKind[] parseCommutative(string spelling) @safe
     return kinds;
 }
 
-/// `--diff-preview` needs two markdown files: the rendered-preview diff has
-/// no meaning for a document the markdown renderer cannot draw.
 private bool isMarkdownPath(string path) @safe
     => canonicalLanguage(path.extension.chompPrefix(".")) == "markdown";
 
@@ -434,85 +1076,14 @@ private GrammarRegistry defaultRegistry() @safe
         return GrammarRegistry.fromEnvironment();
 }
 
-/// Heuristic for whether a graphical display is available, used to pick the GUI
-/// vs the terminal by default (no `--gui`/`--no-gui`). On Linux/BSD a display is
-// The sink vocabulary and the decision are the host's now (`P2.B2`, `BKD1`/
-// `BKD2` — the library preserved hue's rules verbatim, "--gui wins even
-// uncompiled" included; the Android fact is `BKD4`; the display probe is
-// `BKD3`'s socket-level one rather than the env heuristic this replaced).
-import sparkles.ui_app.gui_options : defaultGuiFont, defaultGuiFontFamily,
-    GuiCliFields;
-import sparkles.ui_app.backend : Backend, BackendPolicy,
-    hostPickBackend = pickBackend, platformForcedBackend;
-import sparkles.ui_app.display : displayAvailable;
-
-/// The one choice, made once: hue's part is only assembling the policy —
-/// which flags were given, what this build compiled in, what the process
-/// sees — and the pure picker answers.
-private Backend pickBackend(in CliParams cli)
-{
-    Backend forced;
-    if (platformForcedBackend(forced))
-        return forced; // Android: the surface IS the app (`BKD4`)
-
-    bool guiCompiledIn = false;
-    version (HueGui) guiCompiledIn = true;
-
-    return hostPickBackend(BackendPolicy(
-        forceGui: cli.gui,
-        forceNoGui: cli.noGui,
-        forceTui: cli.tui,
-        forceHtml: cli.html,
-        guiCompiledIn: guiCompiledIn,
-        stdinTty: isTerminal(StdStream.stdin),
-        stdoutTty: isTerminal(StdStream.stdout),
-        displayPresent: displayAvailable(),
-    ));
-}
-
 int main(string[] args)
 {
-    auto parsed = parseCli!CliParams(
-        args,
-        HelpInfo(
-            "hue",
-            "Highlight a source file in the terminal or as HTML, or browse syntax themes live.",
-            null
-        )
-    );
-    if (!parsed)
-        return reportCliError(parsed.error);
-    const cli = parsed.value;
+    initLogger(LogLevel.warning);
 
-    initLogger(LogLevel.warning); // hue only emits degradation warnings
-
-    int rc; // the sink's status; also what the Android scope(exit) reports
-
-    // The Android boot preamble: reroute logs to logcat (stderr goes nowhere
-    // in a NativeActivity), re-enable the HUE_GUI_* debug hooks from the
-    // on-device env file, and materialize the APK asset bundle (fonts,
-    // grammar queries, sample docs) into the data dir.
     version (Android)
     {
         import android_glue : extractAssetsIfNeeded, installLogcatSink, loadDebugEnv;
         import core.stdc.stdlib : exit;
-
-        // Android recreates an activity (rotation, task eviction) in the SAME
-        // process, calling android_main → main again, and a statically linked
-        // druntime cannot rt_init twice — it crashes on the new glue thread.
-        // So the process must end when main does.
-        //
-        // `scope (exit)` rather than a tail call: main has many early returns
-        // (--list-overlays, the CLI-error paths, a failed document load) and a
-        // tail-position exit silently misses every one of them. It also makes
-        // the JNI thread-attach safe by construction — the glue thread never
-        // unwinds far enough for ART's "exiting without DetachCurrentThread"
-        // check to fire.
-        //
-        // The status itself is not meaningful here: an early return leaves
-        // `rc` at 0, and nothing observes a NativeActivity's exit code anyway
-        // — the requirement is that the process ENDS, on every path.
-        scope (exit) exit(rc);
 
         installLogcatSink(LogLevel.warning);
         loadDebugEnv();
@@ -520,236 +1091,21 @@ int main(string[] args)
             warning(i"hue: asset bundle missing — plain text, built-in document only");
     }
 
-    if (cli.listOverlays)
-    {
-        import std.stdio : writeln;
-
-        // The registry has one kind today; fold ranges, coverage and tracing
-        // overlays register here as they land (`OVL1`).
-        writeln("twoslash    type annotations from a twoslash JSON payload " ~
-            "(artifact: the payload; or make it the target — *.twoslash.json)");
-        return 0;
-    }
-
-    // `--overlay <kind>[=<artifact>]` (`OVL4`); `--twoslash <path>` is the old
-    // spelling of `--overlay twoslash=<path>`. Either only names the target
-    // and forces the kind — a `*.twoslash.json` path needs no flag at all.
-    bool forceTwoslash = cli.twoslash.length != 0;
-    string target = forceTwoslash ? cli.twoslash
-        : (cli.paths.length ? cli.paths[0] : "");
-    if (cli.overlay.length)
-    {
-        import std.string : indexOf;
-
-        const eq = cli.overlay.indexOf('=');
-        const kind = eq >= 0 ? cli.overlay[0 .. eq] : cli.overlay;
-        if (kind != "twoslash")
-        {
-            stderr.writeln("hue: unknown overlay kind '", kind,
-                "' (see --list-overlays)");
-            return 1;
-        }
-        forceTwoslash = true;
-        if (eq >= 0)
-            target = cli.overlay[eq + 1 .. $];
-    }
-
-    const labels = LabelSet.standard();
-    // `.get`'s default is `lazy`, so the warning fires only on a miss.
-    const theme = resolveTheme(builtinThemes.get(cli.theme, {
-            warning(i"theme '$(cli.theme)' not found; falling back to the default dark theme");
-            return builtinDark;
-        }()), labels);
-
-    auto registry = defaultRegistry();
-    auto cache = TsConfigCache.create(&registry, labels);
-    auto pipeline = DocumentPipeline(&registry, &cache, cli.markdown, cli.raw,
-        cli.patch, parseWhitespaceMode(cli.diffIgnoreWhitespace),
-        parseStructural(cli.diffStructural),
-        parseCommutative(cli.diffCommutative));
-
-    const backend = pickBackend(cli);
-
-    // A directory target is a multi-document set (`SRC4`). Interactive sinks
-    // open the set (the GUI index view / `[`-`]` navigation); static sinks
-    // render the gallery (`--html`) or a listing.
-    import source_set : collectSources, SourceSet;
-
-    SourceSet docSet;
-    bool haveSet;
-    string dirTarget;
-    if (isDirectoryPath(target))
-    {
-        // The interactive terminal opens the split-pane workspace (`XPL2`)
-        // with the explorer focused: picking a file fills the viewer pane
-        // beside it — one loop, no full-screen transitions. Android is Posix
-        // but has no terminal: never import the raw-termios workspace there
-        // (the gate also keeps workspace.d out of the Android module graph).
-        version (Android) {}
-        else version (Posix)
-            if (backend == Backend.tui)
-            {
-                import workspace : runWorkspace, WorkspaceDoc;
-
-                auto themeSet = sortedThemes(cli.theme, cli.groupThemes);
-                auto pl = &pipeline;
-                return runWorkspace(target, isDir: true, WorkspaceDoc.init,
-                    delegate WorkspaceDoc(string path) @system
-                        => pl.load(path),
-                    themeSet.names, themeSet.themes, themeSet.idx, labels,
-                    &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
-                    cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes,
-                    codeOverflow: parseCodeOverflow(cli.codeOverflow),
-                    codeMaxLines: cli.codeMaxLines);
-            }
-        const openSet = backend == Backend.gui
-            || (forceTwoslash && backend == Backend.tui);
-        if (!openSet)
-            return runDirectoryTarget(cli, target, forceTwoslash, cli.theme);
-        docSet = collectSources(target, twoslash: forceTwoslash);
-        if (docSet.empty)
-        {
-            stderr.writeln("hue: no renderable files in '", target, "'");
-            return 1;
-        }
-        haveSet = true;
-        dirTarget = target; // the explorer pane roots here (XPL2)
-        target = docSet.current.path;
-    }
-
-    // One loader for every sink. With no target, hue views its own source,
-    // embedded at compile time via `import()` (a released binary has no
-    // build-tree `__FILE_FULL_PATH__` to read). A piped stdin that smells
-    // like a unified diff (or is forced by `--patch`) becomes a diff
-    // document (`DVS2` — the `git diff | hue` pager path).
-    Document doc;
-    try
-    {
-        if (cli.pr.length)
-        {
-            // `DPR1`: a pull request IS a diff session — fetched through the
-            // forge seam, assembled into a patch, and then handed to exactly
-            // the pipeline a local diff uses.
-            import forge_client : fetchPullRequest;
-            import std.conv : text;
-
-            auto fetched = fetchPullRequest(cli.pr);
-            if (fetched.hasError)
-            {
-                stderr.writeln("hue: ", fetched.error.toString());
-                return 1;
-            }
-            const got = fetched.value;
-            doc = pipeline.fromPatchSource(null,
-                text(got.repo.owner, "/", got.repo.name, " #",
-                    got.pr.number), got.patch);
-            doc.diffSession.header = prHeader(registry, got.pr);
-            doc.diffSession.threads = prThreads(registry, got.threads);
-            if (got.threadsNote.length)
-                warning(i"review threads unavailable: $(got.threadsNote)");
-        }
-        else if (cli.diff || cli.staged)
-        {
-            import std.file : exists, isFile;
-
-            static bool isFilePath(string p) @system
-            {
-                try
-                    return p.exists && p.isFile;
-                catch (Exception)
-                    return false;
-            }
-
-            if (!cli.staged && cli.paths.length > 1 && isFilePath(cli.paths[0])
-                && isFilePath(cli.paths[1]))
-                // `hue --diff <old> <new>`: two positional files, diffed
-                // in-process (`DVS1`) — or, for markdown under
-                // `--diff-preview`, diffed as documents (`DVN6`).
-                doc = cli.diffPreview && isMarkdownPath(cli.paths[0])
-                    && isMarkdownPath(cli.paths[1])
-                    ? pipeline.loadDiffPreview(cli.paths[0], cli.paths[1])
-                    : pipeline.loadDiffPair(cli.paths[0], cli.paths[1]);
-            else
-            {
-                // Git revisions (`DVS3`): `hue --diff [<rev>[..<rev>]]
-                // [paths…]` — a positional naming an existing file is a
-                // path filter, the first non-file is the revspec.
-                string revspec;
-                string[] filters;
-                foreach (a; cli.paths)
-                    if (revspec.length == 0 && !isFilePath(a))
-                        revspec = a;
-                    else
-                        filters ~= a;
-                // `DVN6`: the same revision diff, rendered as a document.
-                doc = cli.diffPreview
-                    ? pipeline.loadGitDiffPreview(revspec, cli.staged, filters)
-                    : pipeline.loadGitDiff(revspec, cli.staged, filters);
-            }
-        }
-        else if (target.length == 0 && !isTerminal(StdStream.stdin))
-        {
-            const stdinText = readStdinText();
-            import document : looksLikePatch;
-
-            if (stdinText.length && (cli.patch || looksLikePatch(stdinText)))
-                doc = pipeline.fromPatchSource("", "stdin", stdinText);
-            else if (stdinText.length)
-                doc = pipeline.fromSource("", "stdin", stdinText,
-                    cli.markdown ? "markdown" : "");
-            else
-                doc = pipeline.fromSource("", "app.d", import("app.d"), "d");
-        }
-        else
-            doc = target.length
-                ? pipeline.load(target, forceTwoslash)
-                // The built-in self-view carries NO path — it is not a file. A
-                // synthetic "app.d" here made the explorer's reveal() re-root to
-                // dirname("app.d") == "." at startup (XPF3), clobbering the real
-                // tree root (on Android: the unreadable "/" → an empty tree).
-                : pipeline.fromSource("", "app.d", import("app.d"), "d");
-    }
-    catch (Exception e)
-    {
-        stderr.writeln("hue: ", e.msg);
-        return 1;
-    }
-
-    final switch (backend)
-    {
-        case Backend.gui:
-            rc = runGuiSink(cli, doc, labels, theme, cache,
-                haveSet ? &docSet : null, &pipeline, dirTarget);
-            break;
-        case Backend.html:
-            rc = runHtmlSink(doc, theme, registry, cache,
-                parseDiffLayout(cli.diffLayout));
-            break;
-        case Backend.tui:
-            rc = runTuiSink(cli, doc, labels, theme, cache,
-                haveSet ? &docSet : null, &pipeline);
-            break;
-        case Backend.ansi:
-            rc = runAnsiSink(cli, doc, theme, cache);
-            break;
-    }
-
-    return rc; // on Android the scope(exit) above ends the process first
+    return runCli!HueCli(args);
 }
 
 // ── The four sinks — each a `final switch` over the document's kind ─────────
 
 /// Static ANSI to stdout (piped / redirected / non-tty).
-private int runAnsiSink(in CliParams cli, ref Document doc,
+private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
     in ResolvedTheme theme, ref TsConfigCache cache) @system
 {
-    // The headless TUI-frame capture hook works from a pipe (see runTuiSink).
     if (doc.kind == ContentKind.twoslash && tryTwoslashCapture(doc, theme, cache))
         return 0;
 
     SmallBuffer!char output;
     const depth = detectColorDepth();
-    const bgMode = parseBackgroundMode(cli.background);
+    const bgMode = parseBackgroundMode(opt.background);
     final switch (doc.kind) with (ContentKind)
     {
         case twoslash:
@@ -757,9 +1113,6 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
                 TwoslashAnsiOptions(depth: depth, italics: true, emitBackground: true));
             break;
         case markdown:
-            // The decorated preview (ANS3), rendered through the composable
-            // markdown widget view — the M10 swap: viewMarkdown → layout →
-            // CellGrid → ANSI. One view, every backend.
             import sparkles.syntax.md.render_widgets : MdViewOptions,
                 MdViewTheme, viewMarkdown;
             import sparkles.ui.display_list : buildDisplayList;
@@ -771,18 +1124,15 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
 
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-            MdViewOptions opt = {
+            MdViewOptions mopt = {
                 theme: MdViewTheme.derive(theme, pageFg, pageBg),
-                // The width bound sizes the fence chrome (the layout
-                // constraint below is the same number).
                 maxWidth: previewWidth(),
                 fenceRenderer: hueFenceRenderer(&cache, &theme, pageFg),
-                diffBlocks: doc.preview.decorations, // `DVN6`
-                codeOverflow: parseCodeOverflow(cli.codeOverflow),
-                // A static sink has no pane to fit: `auto` never clips.
-                codeMaxLines: cli.codeMaxLines < 0 ? 0 : cli.codeMaxLines,
+                diffBlocks: doc.preview.decorations,
+                codeOverflow: parseCodeOverflow(opt.codeOverflow),
+                codeMaxLines: opt.codeMaxLines < 0 ? 0 : opt.codeMaxLines,
             };
-            auto tree = viewMarkdown(doc.preview.doc, opt);
+            auto tree = viewMarkdown(doc.preview.doc, mopt);
             auto frames = layout(tree, Constraints(maxW: previewWidth()));
             const r = frames[tree.root].rect;
             auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
@@ -798,9 +1148,6 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
                 bgMode.backgroundOptions(depth, italics: true));
             break;
         case diff:
-            // The diff view (ANS4): the same widget→cells→SGR pipeline as
-            // the markdown arm, over `viewDiffDoc` — the pager path
-            // (`git diff | hue`).
             import diff_view : viewDiffDoc;
             import sparkles.ui.display_list : buildDisplayList;
             import sparkles.ui.geometry : Constraints;
@@ -815,7 +1162,7 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
             DiffViewOptions dopt;
-            dopt.layout = parseDiffLayout(cli.diffLayout);
+            dopt.layout = parseDiffLayout(opt.diffLayout);
             auto tree = viewDiffDoc(doc.diffDoc, dopt,
                 doc.diffSides, highlightedFenceRenderer(&cache, &theme, pageFg),
                 doc.diffSession, null, previewWidth());
@@ -847,17 +1194,13 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             write(twoslashFragment(doc.twoslash, doc.events, theme, cache));
             return 0;
         case markdown:
-            // The rich preview (HTM5); `--raw` loads the document as `code`.
             return emitMarkdownHtml(doc.source, theme, registry, cache);
         case code:
-            // The same builder feeds the gallery, so both emit identical content.
             import gallery : plainFragment;
 
             write(plainFragment(doc.source, doc.events, theme));
             return 0;
         case diff:
-            // The diff view as a self-contained widget-HTML page — the
-            // parity interpreter (`interp/html.d`), no bespoke emitter.
             import diff_view : viewDiffDoc;
             import sparkles.ui.interp.html : writeWidgetHtmlPage;
             import sparkles.ui.style : defaultTwoslashPalette;
@@ -880,41 +1223,32 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
 
 /// The interactive terminal (alt screen). Posix gets the full-screen viewers;
 /// elsewhere the theme-selection previewer (no raw-termios TUI) fills in.
-private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
+private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet labels,
     in ResolvedTheme theme, ref TsConfigCache cache,
     scope SourceSet* docSet, scope DocumentPipeline* pipeline = null) @system
 {
     import source_set : SourceSet;
 
-    // The headless QA capture hook still short-circuits a twoslash target.
     if (doc.kind == ContentKind.twoslash && tryTwoslashCapture(doc, theme, cache))
         return 0;
 
-    auto themeSet = sortedThemes(cli.theme, cli.groupThemes);
+    auto themeSet = sortedThemes(opt.theme, opt.groupThemes);
 
     version (Android)
     {
-        // Unreachable (pickBackend always answers gui on Android), but the
-        // gate keeps the raw-termios workspace out of the module graph.
-        return runAnsiSink(cli, doc, theme, cache);
+        return runAnsiSink(opt, doc, theme, cache);
     }
     else version (Posix)
     {
-        // The split-pane workspace (XPL2): the viewer pane on the document,
-        // the explorer pane hidden until `e` (revealed at this file). One
-        // loop hosts both — no full-screen transitions.
         import workspace : runWorkspace, WorkspaceDoc, WsLoader;
 
         WsLoader loader;
         if (pipeline !is null)
         {
-            auto pl = pipeline; // capture the pointer, not the scope param
+            auto pl = pipeline;
             loader = delegate WorkspaceDoc(string path) @system
                 => pl.load(path);
         }
-        // `DST2`: a stageable worktree diff can be re-read after a patch is
-        // applied — the same invocation, run again, which is exactly what
-        // makes the staged rows leave the view.
         WorkspaceDoc delegate() @system reloadDiff;
         if (pipeline !is null && doc.diffSession.stageable)
         {
@@ -925,24 +1259,22 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         }
         return runWorkspace(doc.path, isDir: false, doc,
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
-            &cache, cli.include.dup, cli.exclude.dup, cli.treeWidth,
-            cli.tabWidth, cli.listWhitespace, liveTypes: !cli.noLiveTypes,
-            diffLayout: parseDiffLayout(cli.diffLayout),
-            codeOverflow: parseCodeOverflow(cli.codeOverflow),
-            codeMaxLines: cli.codeMaxLines,
+            &cache, opt.include.dup, opt.exclude.dup, opt.treeWidth,
+            opt.tabWidth, opt.listWhitespace, liveTypes: !opt.noLiveTypes,
+            diffLayout: parseDiffLayout(opt.diffLayout),
+            codeOverflow: parseCodeOverflow(opt.codeOverflow),
+            codeMaxLines: opt.codeMaxLines,
             reloadDiff: reloadDiff);
     }
     else
     {
-        // Non-Posix: no raw-termios TUI (sparkles:tui's reader is Posix-only) —
-        // degrade to the whole-file ANSI emit (D6 retired the previewer).
-        return runAnsiSink(cli, doc, theme, cache);
+        return runAnsiSink(opt, doc, theme, cache);
     }
 }
 
 /// The raylib window (a build without it reports rather than falls through —
 /// `--gui` is explicit intent).
-private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
+private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet labels,
     in ResolvedTheme theme, ref TsConfigCache cache,
     scope SourceSet* docSet, scope DocumentPipeline* pipeline,
     string treeRoot = null) @system
@@ -954,13 +1286,8 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         import gui : GuiArgs, LoadedDoc, runGui;
         import sparkles.raylib_text : FontSet;
 
-        // A directory target opens in the tree; decided before the Android
-        // default below widens treeRoot (browsing samples is opt-in there —
-        // the built-in document stays the landing view).
         const startInTree = treeRoot.length != 0;
 
-        // Android: with no explicit directory target, the explorer roots at
-        // the extracted sample documents — the app-accessible browse surface.
         version (Android)
         {
             import std.file : exists;
@@ -976,41 +1303,11 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             }
         }
 
-        // The document loader the viewer calls when navigating a set (`GNV1`):
-        // the one pipeline again — the GUI never duplicates it. A twoslash
-        // payload rides along, so mixed sets navigate through one window.
         LoadedDoc loadDoc(string path) @system
             => pipeline.load(path);
 
-        auto themeSet = sortedThemes(cli.theme, cli.groupThemes);
-        // Font selection: Android has no CLI, so the bundled defaults stand
-        // in for the desktop flags — the Maple family for the primary and
-        // all three styled faces (the fontconfig-free override resolution
-        // picks its -Bold/-Italic/-BoldItalic siblings) + the Uiua386
-        // codepoint map.
-        //
-        // `Params` is `mixin GuiCliFields` plus hue's own flags, so the shared
-        // fields are its first N in declaration order and the copy is
-        // structural rather than a list that could fall out of date — which is
-        // how `--font-dir` and `--font-codepoint-map` reach the request at all.
-        // Unpacking six of these by hand is what dropped both.
-        import sparkles.ui_app.gui_options : GuiOptions;
-        import std.traits : isDynamicArray, isSomeString;
-
-        // By NAME, not by position: `GuiCliFields` is not hue's first
-        // declaration (`--html` precedes it), so the two structs' field
-        // indices do not line up. Names do, because both sides are the same
-        // mixin. The array fields are duplicated because the parsed value
-        // arrives `const`.
-        GuiOptions gui;
-        static foreach (i, T; typeof(GuiOptions.tupleof))
-        {{
-            enum name = __traits(identifier, GuiOptions.tupleof[i]);
-            static if (isDynamicArray!T && !isSomeString!T)
-                gui.tupleof[i] = __traits(getMember, cli, name).dup;
-            else
-                gui.tupleof[i] = __traits(getMember, cli, name);
-        }}
+        auto themeSet = sortedThemes(opt.theme, opt.groupThemes);
+        GuiOptions gui = copyGui(opt.gui);
         version (Android)
         {
             gui.font = defaultGuiFont;
@@ -1019,10 +1316,6 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             gui.fontBoldItalic = defaultGuiFontFamily;
         }
 
-        // The deterministic-capture hooks (`CLI6`): the environment is read
-        // HERE, once, and the frame code receives values. Android anchors a
-        // relative screenshot path in the app data dir (CWD is '/', not
-        // writable); pull the PNG with `adb shell run-as`.
         import std.process : environment;
         import gui_state : GuiCapture;
 
@@ -1046,12 +1339,12 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             startIdx: themeSet.idx,
             preview: doc.preview,
             gui: gui,
-            lineNumbers: cli.lineNumbers,
-            codeLineNumbers: cli.codeLineNumbers,
-            ansiCopyStrip: cli.ansiCopy == "strip",
-            tableCopy: parseTableCopy(cli.tableCopy),
-            codeOverflow: parseCodeOverflow(cli.codeOverflow),
-            codeMaxLines: cli.codeMaxLines,
+            lineNumbers: opt.lineNumbers,
+            codeLineNumbers: opt.codeLineNumbers,
+            ansiCopyStrip: opt.ansiCopy == "strip",
+            tableCopy: parseTableCopy(opt.tableCopy),
+            codeOverflow: parseCodeOverflow(opt.codeOverflow),
+            codeMaxLines: opt.codeMaxLines,
             set: docSet,
             loadDoc: &loadDoc,
             tsCache: &cache,
@@ -1060,12 +1353,12 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             startInTree: startInTree,
             treeRoot: treeRoot,
             docLang: doc.lang,
-            includeGlobs: cli.include.dup,
-            excludeGlobs: cli.exclude.dup,
-            treeWidth: cli.treeWidth,
-            tabWidth: cli.tabWidth,
-            listWhitespace: cli.listWhitespace,
-            liveTypes: !cli.noLiveTypes,
+            includeGlobs: opt.include.dup,
+            excludeGlobs: opt.exclude.dup,
+            treeWidth: opt.treeWidth,
+            tabWidth: opt.tabWidth,
+            listWhitespace: opt.listWhitespace,
+            liveTypes: !opt.noLiveTypes,
             initialDiff: doc.diffDoc,
             initialDiffSides: doc.diffSides,
             initialDiffSession: doc.diffSession,

@@ -83,7 +83,7 @@ total = base(fuzzy score)
 
 Every term is returned as a **breakdown**, not just a total, so the ranking is
 inspectable rather than a black box that "feels wrong" — fff's `:FFFDebug` idea,
-and the same instinct as [`--show-config`](./config.md) `CFG10`.
+and the same instinct as [`hue config show`](./config.md) `CFG10`.
 
 ### Interactivity is a budget, not a promise (`PIK5`)
 

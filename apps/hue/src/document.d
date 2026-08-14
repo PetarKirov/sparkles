@@ -188,7 +188,7 @@ struct DocumentPipeline
     }
 
     /// Loads `path`: read → detect → highlight → parse the kind's artifacts.
-    Document load(string path, bool forceTwoslash = false)
+    Document load(string path, bool forceTwoslash = false, string language = null)
     {
         final switch (detect(path, forceTwoslash)) with (ContentKind)
         {
@@ -198,7 +198,7 @@ struct DocumentPipeline
                     throw new Exception(twRes.error.toString);
                 Document doc = {
                     path: path, title: baseName(path), kind: twoslash,
-                    source: twRes.value.code, lang: twRes.value.effectiveLanguage,
+                    source: twRes.value.code, lang: language.length ? canonicalLanguage(language) : twRes.value.effectiveLanguage,
                     twoslash: twRes.value,
                 };
                 doc.events = highlight(doc.lang, doc.source);
@@ -208,7 +208,7 @@ struct DocumentPipeline
             case markdown:
             case code:
                 return fromSource(path, baseName(path), readText(path),
-                    canonicalLanguage(path.extension.chompPrefix(".")));
+                    language.length ? canonicalLanguage(language) : canonicalLanguage(path.extension.chompPrefix(".")));
         }
     }
 
