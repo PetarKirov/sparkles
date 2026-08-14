@@ -172,6 +172,7 @@ unittest
         "none",     // upstream's explicit "do not highlight this"
         "spell",    // a spellchecker hint, not a highlight
         "text",     // literal trailing text (D's `__EOF__` region)
+        "markup",   // XML CharData — document body text, not a highlight
         "embedded", // marks an injected region; the injected grammar colors it
         "label",    // goto labels read as ordinary identifiers in TextMate themes
     ];

@@ -448,6 +448,7 @@ static immutable Theme catppuccin_mocha = Theme(
         ThemeRule("markup.raw", StyleSpec(fg: Color.fromRgb(x"a6e3a1"))),
         ThemeRule("markup.quote", StyleSpec(fg: Color.fromRgb(x"f5c2e7"))),
         ThemeRule("markup.list", StyleSpec(fg: Color.fromRgb(x"94e2d5"))),
+        ThemeRule("error", StyleSpec(fg: Color.fromRgb(x"f38ba8"))),
         ThemeRule("keyword.control", StyleSpec(fg: Color.fromRgb(x"cba6f7"))),
         ThemeRule("string.regexp", StyleSpec(fg: Color.fromRgb(x"cdd6f4"))),
     ]);
