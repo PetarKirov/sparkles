@@ -24,27 +24,24 @@
       sources = config.legacyPackages.sparklesSources;
 
       # The dub-registry dependencies compiled into the closure (same pins as
-      # nix/dub-lock.json; `-i` compiles their modules like the in-tree ones).
+      # nix/dub-lock.json / the `dub-*` flake inputs; `-i` compiles their
+      # modules like the in-tree ones).
       dubDeps = [
         {
           name = "raylib-d";
-          version = "6.0.1";
-          sha256 = "1v2fkdf4lgh055667nkfmwpnkmrvmyiwrqnh4ypsfw8ifyxn3rib";
+          src = inputs.dub-raylib-d;
         }
         {
           name = "expected";
-          version = "0.4.1";
-          sha256 = "1ahr7gbjl6dgw1qs9x5yzcwhbzfg7ygdlsm9gw4hgmm1xrfcpri0";
+          src = inputs.dub-expected;
         }
         {
           name = "optional";
-          version = "1.3.1";
-          sha256 = "1ab3x96ax5jsb4zayfw3akppqp3mg42p2d847p3ahrj1zmn3hid9";
+          src = inputs.dub-optional;
         }
         {
           name = "bolts";
-          version = "1.3.1";
-          sha256 = "1klz02r13r3yq8vcw1gkv39r02vpnv7wlhhb5kkjnybc3s86w1q8";
+          src = inputs.dub-bolts;
         }
         # NOTE: `during` (event-horizon's io_uring binding) is deliberately
         # absent: the uring backend is version-gated OFF the Android triple
@@ -52,14 +49,6 @@
         # kqueue backend over the statically linked libkqueue-android
         # instead — see backend/select.d and libkqueue.nix.
       ];
-
-      dubZip =
-        d:
-        pkgs.fetchurl {
-          name = "dub-${d.name}-${d.version}.zip";
-          url = "mirror://dub/${d.name}/${d.version}.zip";
-          inherit (d) sha256;
-        };
 
       # The version identifiers dub would define for the android configuration
       # (HueGui + the Have_* set of the dependency graph).
@@ -115,7 +104,7 @@
 
           ${lib.concatMapStrings (d: ''
             mkdir -p dub-imports/${d.name}
-            (cd dub-imports/${d.name} && unzip -q ${dubZip d})
+            (cd dub-imports/${d.name} && unzip -q ${d.src})
           '') dubDeps}
 
           ${lib.concatMapStrings (t: ''

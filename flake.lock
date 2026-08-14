@@ -30,6 +30,71 @@
         "type": "github"
       }
     },
+    "dmd-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1785744935,
+        "narHash": "sha256-V5ZmFsn6P/VOPt7m+DeiTrG8qmXSXpyu62SKD5eQSpQ=",
+        "owner": "PetarKirov",
+        "repo": "dmd",
+        "rev": "ea88375142644d2dc7755089357acdfdd69c6620",
+        "type": "github"
+      },
+      "original": {
+        "owner": "PetarKirov",
+        "ref": "dmdserver-dub",
+        "repo": "dmd",
+        "type": "github"
+      }
+    },
+    "dub-bolts": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-nGJOFeReFq+EtBXs6tTRbDg5WXFKMtMKuAEmgp//aAA=",
+        "type": "file",
+        "url": "https://code.dlang.org/packages/bolts/1.3.1.zip"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://code.dlang.org/packages/bolts/1.3.1.zip"
+      }
+    },
+    "dub-expected": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-uSpeNU8FFpvb11alGkSF6E5QH57rpUUf6FR5dEdQmkY=",
+        "type": "file",
+        "url": "https://code.dlang.org/packages/expected/0.4.1.zip"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://code.dlang.org/packages/expected/0.4.1.zip"
+      }
+    },
+    "dub-optional": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-o3HhSf3PndVgQE7wvwiw+68RO0Xah+SByTozADcPRcc=",
+        "type": "file",
+        "url": "https://code.dlang.org/packages/optional/1.3.1.zip"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://code.dlang.org/packages/optional/1.3.1.zip"
+      }
+    },
+    "dub-raylib-d": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-6t4SrmzR/8x1W+1v2EUY9phzlsppMCNkNs+xj0BlzN0=",
+        "type": "file",
+        "url": "https://code.dlang.org/packages/raylib-d/6.0.1.zip"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://code.dlang.org/packages/raylib-d/6.0.1.zip"
+      }
+    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -138,6 +203,23 @@
         "type": "github"
       }
     },
+    "glfw": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786667580,
+        "narHash": "sha256-wTm7e5vr9iE4C+TWUTbEH4NUwDjO7umhiRMEOHH+Ea4=",
+        "owner": "PetarKirov",
+        "repo": "glfw",
+        "rev": "1e59848ba2856c25515a80f52e97c78d5412395e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "PetarKirov",
+        "ref": "wayland-cursor-shape-v1",
+        "repo": "glfw",
+        "type": "github"
+      }
+    },
     "home-manager": {
       "inputs": {
         "nixpkgs": [
@@ -156,6 +238,79 @@
       "original": {
         "owner": "nix-community",
         "repo": "home-manager",
+        "type": "github"
+      }
+    },
+    "json-test-suite": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1732280141,
+        "narHash": "sha256-s2yMgVWq2DwibAjOvLKhGDbEwXm4yke/g4mp7u565H4=",
+        "owner": "nst",
+        "repo": "JSONTestSuite",
+        "rev": "1ef36fa01286573e846ac449e8683f8833c5b26a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nst",
+        "repo": "JSONTestSuite",
+        "type": "github"
+      }
+    },
+    "ldc-windows-x64": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-scvuSRg6Ky+dOKqab/bfXiwCZYD1Cv70KpTe8A141wI=",
+        "type": "file",
+        "url": "https://github.com/ldc-developers/ldc/releases/download/v1.41.0/ldc2-1.41.0-windows-x64.7z"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://github.com/ldc-developers/ldc/releases/download/v1.41.0/ldc2-1.41.0-windows-x64.7z"
+      }
+    },
+    "maple-font": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1764937047,
+        "narHash": "sha256-wsaE54TeI2EI9VO9Q7Czv9soScGomYIfrllhQQHey2E=",
+        "owner": "subframe7536",
+        "repo": "maple-font",
+        "rev": "4d847729cbfc5b5d8cbae5795fd2348c70112648",
+        "type": "github"
+      },
+      "original": {
+        "owner": "subframe7536",
+        "ref": "v7.9",
+        "repo": "maple-font",
+        "type": "github"
+      }
+    },
+    "maple-font-cn-base": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-V1G5/6iT5l6dAyXfK0KtPdMRO8aRDrNkjt+vrfQWQEk=",
+        "type": "file",
+        "url": "https://github.com/subframe7536/maple-font/releases/download/cn-base/cn-base-static.zip"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://github.com/subframe7536/maple-font/releases/download/cn-base/cn-base-static.zip"
+      }
+    },
+    "nativejson-benchmark": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1666949541,
+        "narHash": "sha256-85bfK5pYzVRVDbucksXKYQRWQk5yOwR/wEzoHGm7cdM=",
+        "owner": "miloyip",
+        "repo": "nativejson-benchmark",
+        "rev": "478d5727c2a4048e835a29c65adecc7d795360d5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "miloyip",
+        "repo": "nativejson-benchmark",
         "type": "github"
       }
     },
@@ -208,29 +363,82 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1781607440,
-        "narHash": "sha256-rxO+uc/KFbSJp+pgyXRuAX6QlG9hJdnt0BXpEQRXY+U=",
-        "owner": "NixOS",
+        "lastModified": 1786614733,
+        "narHash": "sha256-1cVzxRB4HJX+VPQP2ZSRYiPufzCanYFFUjQt5XZCbs4=",
+        "owner": "PetarKirov",
         "repo": "nixpkgs",
-        "rev": "3e41b24abd260e8f71dbe2f5737d24122f972158",
+        "rev": "ba6feb57b22c11f3dee40a9fa504a6200327479b",
         "type": "github"
       },
       "original": {
-        "owner": "NixOS",
-        "ref": "nixpkgs-unstable",
+        "owner": "PetarKirov",
+        "ref": "glfw3-3.5.1",
         "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "phobos-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1774279965,
+        "narHash": "sha256-Bx770VvpIjcJ+ZA9mhCAAPu+96sdFGuSxTSZ4LwksoM=",
+        "owner": "dlang",
+        "repo": "phobos",
+        "rev": "8c9d000230f090aa2f552f27d96af7c474198513",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dlang",
+        "ref": "v2.113.0-beta.1",
+        "repo": "phobos",
         "type": "github"
       }
     },
     "root": {
       "inputs": {
         "dlang-nix": "dlang-nix",
+        "dmd-src": "dmd-src",
+        "dub-bolts": "dub-bolts",
+        "dub-expected": "dub-expected",
+        "dub-optional": "dub-optional",
+        "dub-raylib-d": "dub-raylib-d",
         "flake-compat": "flake-compat",
         "flake-parts": "flake-parts",
         "ghostty": "ghostty",
         "git-hooks-nix": "git-hooks-nix",
+        "glfw": "glfw",
+        "json-test-suite": "json-test-suite",
+        "ldc-windows-x64": "ldc-windows-x64",
+        "maple-font": "maple-font",
+        "maple-font-cn-base": "maple-font-cn-base",
+        "nativejson-benchmark": "nativejson-benchmark",
         "nixpkgs": "nixpkgs_2",
-        "systems": "systems"
+        "phobos-src": "phobos-src",
+        "simdjson-src": "simdjson-src",
+        "systems": "systems",
+        "termbench-src": "termbench-src",
+        "tree-sitter-d-src": "tree-sitter-d-src",
+        "tree-sitter-sdl-src": "tree-sitter-sdl-src",
+        "ufo-extractor-wheel": "ufo-extractor-wheel",
+        "vtebench-src": "vtebench-src",
+        "wcwidth-src": "wcwidth-src",
+        "yyjson-src": "yyjson-src"
+      }
+    },
+    "simdjson-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1622812953,
+        "narHash": "sha256-83LuBNftMcx+DrZzh42cyugMWdV9RKe0syLXa8JxiVg=",
+        "owner": "simdjson",
+        "repo": "simdjson",
+        "rev": "19c3b1315a2a6b8ab0a6b7335bb97269cbd0a448",
+        "type": "github"
+      },
+      "original": {
+        "owner": "simdjson",
+        "repo": "simdjson",
+        "type": "github"
       }
     },
     "systems": {
@@ -248,6 +456,84 @@
         "type": "github"
       }
     },
+    "termbench-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1689223254,
+        "narHash": "sha256-t7Pp3rg8h1IXnX1QtZuJF122Pj9EZdTb6LqMQ5dTLlc=",
+        "owner": "cmuratori",
+        "repo": "termbench",
+        "rev": "074fa615069ae4b53382d5f69143ef15fe1a8dc3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cmuratori",
+        "repo": "termbench",
+        "type": "github"
+      }
+    },
+    "tree-sitter-d-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786490166,
+        "narHash": "sha256-Zc0283t4mk/iZbpCpd2BrdIfM+ftSoCZbDnMB08/6O4=",
+        "owner": "PetarKirov",
+        "repo": "tree-sitter-d",
+        "rev": "065bbbf8acfc7e8ed1e2d99957d669837aec6778",
+        "type": "github"
+      },
+      "original": {
+        "owner": "PetarKirov",
+        "ref": "feat/dub-single-file-injections",
+        "repo": "tree-sitter-d",
+        "type": "github"
+      }
+    },
+    "tree-sitter-sdl-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1785965257,
+        "narHash": "sha256-nECo6sACEfqPJf8gxrIu881jNXyuNyuuLQKzGMVY/h0=",
+        "owner": "PetarKirov",
+        "repo": "tree-sitter-sdl",
+        "rev": "a9f54978d4fd3f5be947468fd707b4cddc3bf89f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "PetarKirov",
+        "ref": "v0.1.0",
+        "repo": "tree-sitter-sdl",
+        "type": "github"
+      }
+    },
+    "ufo-extractor-wheel": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-p3YW0h3yHgcbFyrMh/L9g6KUWl559Kd0lDieOGTX7l0=",
+        "type": "file",
+        "url": "https://files.pythonhosted.org/packages/cd/cf/34b74c79439ac47ee16e129b709b1fe61ef20211175ac358a252ae50dd3b/ufo_extractor-0.8.1-py2.py3-none-any.whl"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://files.pythonhosted.org/packages/cd/cf/34b74c79439ac47ee16e129b709b1fe61ef20211175ac358a252ae50dd3b/ufo_extractor-0.8.1-py2.py3-none-any.whl"
+      }
+    },
+    "vtebench-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1736407433,
+        "narHash": "sha256-Ck+ObdRlLrKyMHGaBYuzIQnSwezs1mHpZLOJrM4hc3A=",
+        "owner": "alacritty",
+        "repo": "vtebench",
+        "rev": "ead80032e57dee2e75f0b51f2ea67528647d9944",
+        "type": "github"
+      },
+      "original": {
+        "owner": "alacritty",
+        "repo": "vtebench",
+        "type": "github"
+      }
+    },
     "wasm-component-ld": {
       "flake": false,
       "locked": {
@@ -262,6 +548,36 @@
         "owner": "bytecodealliance",
         "ref": "v0.5.22",
         "repo": "wasm-component-ld",
+        "type": "github"
+      }
+    },
+    "wcwidth-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1580601600,
+        "narHash": "sha256-s/kyDAE0jF53EDylCuhY5Je6Edjjl4pZim9YeoaJKo4=",
+        "type": "tarball",
+        "url": "https://files.pythonhosted.org/packages/source/w/wcwidth/wcwidth-0.8.2.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://files.pythonhosted.org/packages/source/w/wcwidth/wcwidth-0.8.2.tar.gz"
+      }
+    },
+    "yyjson-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1755542654,
+        "narHash": "sha256-1CYnEgUMUc7eqdkv6M/KyL/MdVQBMov9HgLCycF6++w=",
+        "owner": "ibireme",
+        "repo": "yyjson",
+        "rev": "8b4a38dc994a110abaec8a400615567bd996105f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ibireme",
+        "ref": "0.12.0",
+        "repo": "yyjson",
         "type": "github"
       }
     },

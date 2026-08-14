@@ -40,9 +40,9 @@
           # Extra D flags, e.g. the -preview flags of the library being wrapped.
           dflags ? [ ],
           # Dub registry packages whose `source/` dir is put on the import path
-          # (name resolution only — nothing is linked). Fetched from the same
-          # `mirror://dub` coordinates as nix/dub-lock.json:
-          # { name, version, sha256 }.
+          # (name resolution only — nothing is linked). Each entry is
+          # `{ name, src }` where `src` is a flake-input zip (see the
+          # `dub-*` inputs in flake.nix).
           dubImports ? [ ],
         }:
         let
@@ -57,14 +57,6 @@
               ++ [ (root + "/${builtins.dirOf entry}") ]
             );
           };
-
-          dubZip =
-            d:
-            pkgs.fetchurl {
-              name = "dub-${d.name}-${d.version}.zip";
-              url = "mirror://dub/${d.name}/${d.version}.zip";
-              inherit (d) sha256;
-            };
         in
         pkgs.stdenv.mkDerivation {
           inherit pname version src;
@@ -81,7 +73,7 @@
 
             ${lib.concatMapStrings (d: ''
               mkdir -p dub-imports/${d.name}
-              (cd dub-imports/${d.name} && unzip -q ${dubZip d})
+              (cd dub-imports/${d.name} && unzip -q ${d.src})
             '') dubImports}
 
             ldc2 -mtriple=wasm32-wasip1 -O2 ${toString dflags} \

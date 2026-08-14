@@ -22,11 +22,7 @@
       ndk = config.legacyPackages.androidNdk;
       ldcAndroid = inputs.dlang-nix.packages.${system}.ldc-android;
 
-      raylibDZip = pkgs.fetchurl {
-        name = "dub-raylib-d-6.0.1.zip";
-        url = "mirror://dub/raylib-d/6.0.1.zip";
-        sha256 = "1v2fkdf4lgh055667nkfmwpnkmrvmyiwrqnh4ypsfw8ifyxn3rib";
-      };
+      raylibDZip = inputs.dub-raylib-d;
 
       fs = lib.fileset;
       root = ../../..;

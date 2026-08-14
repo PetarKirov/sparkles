@@ -31,7 +31,7 @@
             final: prev:
             let
               inherit (prev) lib;
-              inherit (prev.stdenv) isDarwin;
+              inherit (prev.stdenv.hostPlatform) isDarwin;
 
               cleanLdcConfig = lib.pipe "${prev.ldc}/etc/ldc2.conf" [
                 builtins.readFile
@@ -91,6 +91,14 @@
               dmd = inputs'.dlang-nix.packages.dmd-2_112_1;
 
               dub = inputs'.dlang-nix.packages.dub-1_43_0-alpha-5efed36;
+
+              # GNOME/Adwaita dropped XCursor files. Stock GLFW 3.5.1 still
+              # uploads pixmap cursors, so hue's ew/ns resize shapes fail.
+              # inputs.glfw — glfw#2679 rewritten on 3.5.1.
+              glfw3 = prev.glfw3.overrideAttrs (_old: {
+                src = inputs.glfw;
+              });
+              glfw = final.glfw3;
             }
           )
         ];
@@ -99,7 +107,7 @@
       legacyPackages.d-toolchain =
         let
           inherit (pkgs) lib;
-          inherit (pkgs.stdenv) isDarwin isx86_64;
+          inherit (pkgs.stdenv.hostPlatform) isDarwin isx86_64;
 
           clangUnwrapped = pkgs.clangStdenv.cc.cc;
         in

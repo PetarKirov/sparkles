@@ -14,10 +14,12 @@
 {
   lib,
   stdenvNoCC,
-  fetchFromGitHub,
-  fetchurl,
+  runCommand,
   unzip,
   python3,
+  src,
+  cnBaseStatic,
+  ufoExtractorWheel,
 
   enableNerdFont ? true,
   enableCN ? true,
@@ -65,25 +67,23 @@
 let
   ps = python3.pkgs;
 
-  cnBaseStatic = fetchurl {
-    url = "https://github.com/subframe7536/maple-font/releases/download/cn-base/cn-base-static.zip";
-    hash = "sha256-HkBRGojXBoWnJ3q0ismVaav0GGuZj+hs0vOGbH8XYvs=";
-  };
+  # Flake `type = "file"` inputs land in the store as `…-source` with no
+  # extension. `format = "wheel"` only recognises a `*.whl` path, so rename.
+  ufoExtractorWhl = runCommand "ufo_extractor-0.8.1-py2.py3-none-any.whl" { } ''
+    cp ${ufoExtractorWheel} $out
+  '';
 
-  ufo-extractor = ps.buildPythonPackage (finalAttrs: {
+  ufo-extractor = ps.buildPythonPackage {
     pname = "ufo-extractor";
     version = "0.8.1";
     format = "wheel";
-    src = fetchurl {
-      url = "https://files.pythonhosted.org/packages/cd/cf/34b74c79439ac47ee16e129b709b1fe61ef20211175ac358a252ae50dd3b/ufo_extractor-0.8.1-py2.py3-none-any.whl";
-      hash = "sha256-izsLstgfeAIgPpQIUbB85FWbZ9Yn7zMDTou9j61m1ac=";
-    };
+    src = ufoExtractorWhl;
     dependencies = [
       ps.fonttools
       ps.fontfeatures
     ];
     doCheck = false;
-  });
+  };
 
   foundrytools = ps.buildPythonPackage (finalAttrs: {
     pname = "foundrytools";
@@ -182,12 +182,7 @@ stdenvNoCC.mkDerivation (
     pname = "maple-mono-custom";
     version = "7.9";
 
-    src = fetchFromGitHub {
-      owner = "subframe7536";
-      repo = "maple-font";
-      rev = "v${finalAttrs.version}";
-      hash = "sha256-wsaE54TeI2EI9VO9Q7Czv9soScGomYIfrllhQQHey2E=";
-    };
+    inherit src;
 
     nativeBuildInputs = [
       pythonEnv
