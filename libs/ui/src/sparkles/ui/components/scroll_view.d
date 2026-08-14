@@ -336,7 +336,11 @@ pure nothrow @nogc:
         in ScrollPointer p, long offset, in ScrollExtents e)
     {
         if (!live)
-            return bar.hoveredNow(false).released();
+            // An outer container may own the painted bar while this view still
+            // consumes row pointer events. Keep its shadow machine synced so
+            // the pointer path cannot write a stale pre-scroll offset back.
+            return bar.scrolledTo(clampOffset(offset, e.content, e.viewport))
+                .hoveredNow(false).released();
         // Hover is capture-gated like the press (STM11): while another
         // affordance owns the pointer — a different bar's drag straying
         // over this one — the crossing is not a hover, so no bar lights
