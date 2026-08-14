@@ -38,6 +38,10 @@ private static immutable RequiredTool[] requiredTools = [
     RequiredTool("keytool", PublishStage.index, "required unconditionally by fdroid update (JDK)"),
     RequiredTool("jarsigner", PublishStage.index, "signs index-v1.jar and index.jar (JDK)"),
     RequiredTool("jar", PublishStage.index, "builds the v0 index (JDK)"),
+    // The Play channel: an App Bundle is JAR-signed, and the service-account
+    // assertion is signed with openssl rather than a crypto dependency.
+    RequiredTool("openssl", PublishStage.deploy, "signs the Play service-account assertion"),
+    RequiredTool("curl", PublishStage.deploy, "talks to the Play Developer API"),
 ];
 
 /// Names of the programs `stage` needs that are not on `PATH`.
@@ -98,6 +102,33 @@ CapturedResult buildApk(string flakeRef, string versionName, uint versionCode) =
     runCaptured([
         "nix", "build", "--impure", "--no-link", "--print-out-paths",
         "--print-build-logs", "--expr", apkExpr(flakeRef, versionName, versionCode),
+    ]);
+
+/// The nix expression selecting the versioned unsigned App Bundle — the Play
+/// channel's artifact, built from the same payload as the APK.
+private string aabExpr(string flakeRef, string versionName, uint versionCode)
+{
+    import std.conv : text;
+
+    return text(
+        "let f = builtins.getFlake \"", flakeRef, "\"; in ",
+        "f.legacyPackages.${builtins.currentSystem}.mkHueAab { ",
+        "versionName = \"", versionName, "\"; ",
+        "versionCode = ", versionCode, "; }");
+}
+
+/// Evaluates the store path the bundle build would produce, without building.
+CapturedResult evalAabPath(string flakeRef, string versionName, uint versionCode) =>
+    runCaptured([
+        "nix", "eval", "--impure", "--raw",
+        "--expr", "(" ~ aabExpr(flakeRef, versionName, versionCode) ~ ").outPath",
+    ]);
+
+/// Builds the unsigned App Bundle, returning its path.
+CapturedResult buildAab(string flakeRef, string versionName, uint versionCode) =>
+    runCaptured([
+        "nix", "build", "--impure", "--no-link", "--print-out-paths",
+        "--print-build-logs", "--expr", aabExpr(flakeRef, versionName, versionCode),
     ]);
 
 /// Builds the icon resource derivation, returning its store path.

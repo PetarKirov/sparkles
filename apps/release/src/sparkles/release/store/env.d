@@ -35,6 +35,14 @@ enum EnvVar : string
     indexKeyPass = "SPARKLES_FDROID_KEY_PASS",
 
     bucket = "SPARKLES_FDROID_BUCKET",
+
+    // The Play channel. Its key is the *upload* key, which Google resets on
+    // request — a different risk class from the F-Droid key above.
+    playServiceAccount = "SPARKLES_PLAY_SERVICE_ACCOUNT",
+    playKeystore = "SPARKLES_PLAY_UPLOAD_KEYSTORE",
+    playKeyAlias = "SPARKLES_PLAY_UPLOAD_KEY_ALIAS",
+    playStorePass = "SPARKLES_PLAY_UPLOAD_STORE_PASS",
+    playKeyPass = "SPARKLES_PLAY_UPLOAD_KEY_PASS",
 }
 
 /// Resolved configuration. Passphrase *values* are never stored — only the
@@ -46,6 +54,39 @@ struct PublishEnv
     string apkKeyAlias;
     string indexKeystore;
     string bucket;
+}
+
+/// The Play channel's configuration, resolved separately: the two channels are
+/// peers, so neither's credentials are a precondition for the other's.
+struct PlayEnv
+{
+    string serviceAccountFile;
+    string keystore;
+    string keyAlias;
+    bool ok;
+    MissingVar[] missing;
+}
+
+/// Reads the environment the Play channel needs.
+PlayEnv resolvePlayEnv()
+{
+    import std.process : environment;
+
+    PlayEnv result;
+    string get(EnvVar v) => environment.get(cast(string) v, "");
+
+    foreach (v; [
+        EnvVar.playServiceAccount, EnvVar.playKeystore,
+        EnvVar.playKeyAlias, EnvVar.playStorePass,
+    ])
+        if (get(v).length == 0)
+            result.missing ~= MissingVar(cast(string) v, reasonFor(v));
+
+    result.serviceAccountFile = get(EnvVar.playServiceAccount);
+    result.keystore = get(EnvVar.playKeystore);
+    result.keyAlias = get(EnvVar.playKeyAlias);
+    result.ok = result.missing.length == 0;
+    return result;
 }
 
 /// A missing variable, named so the message can say which.
@@ -104,6 +145,16 @@ private string reasonFor(EnvVar v) pure nothrow @nogc
         return "resolved by fdroidserver from config.yml";
     case EnvVar.bucket:
         return "the object-storage bucket rclone syncs against";
+    case EnvVar.playServiceAccount:
+        return "path to the Play service-account JSON key";
+    case EnvVar.playKeystore:
+        return "the Play upload keystore (not the app signing key — Google holds that)";
+    case EnvVar.playKeyAlias:
+        return "which key in the upload keystore to sign with";
+    case EnvVar.playStorePass:
+        return "read by jarsigner as -storepass:env";
+    case EnvVar.playKeyPass:
+        return "read by jarsigner as -keypass:env";
     }
 }
 

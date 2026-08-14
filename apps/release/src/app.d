@@ -46,7 +46,7 @@ import sparkles.release.notes : openInEditor, seedEditorBuffer, seedReviewBuffer
 import sparkles.release.pr : associatePrs, parseRemoteUrl, PrRef;
 import sparkles.release.preflight : runPreflight, PreflightProgress, PreflightResult;
 import sparkles.release.result : Result;
-import sparkles.release.store.run : applicationId, RunOptions, runPublish;
+import sparkles.release.store.run : applicationId, RunOptions, runPublish, runPublishPlay;
 import sparkles.release.store.stage : defaultStage, PublishStage, publishStageNames, tryParseStage;
 import sparkles.release.store.version_map : apkVersionForTag, describe;
 import std.sumtype : SumType;
@@ -223,6 +223,14 @@ struct PublishCmd
     @(Option(`substituter`, description: "Binary cache CI pushes the unsigned artifact to"))
     string substituter = "https://sparkles.cachix.org";
 
+    @(Option(`c|channels`,
+        description: "Which app channels to publish: fdroid, play, or both (default both)"))
+    string channels = "both";
+
+    @(Option(`track`,
+        description: "Play track: internal (default), alpha, beta, production"))
+    string playTrack = "internal";
+
     int run()
     {
         import std.conv : text;
@@ -251,7 +259,17 @@ struct PublishCmd
                 ~ "  dirty flag, and the modified and untracked file lists — in\n"
                 ~ "  repo/status/*.json, which is published. Use a scratch directory.");
 
-        return runPublish(RunOptions(
+        bool wantFdroid, wantPlay;
+        switch (channels)
+        {
+        case "both":   wantFdroid = true; wantPlay = true; break;
+        case "fdroid": wantFdroid = true; break;
+        case "play":   wantPlay = true; break;
+        default:
+            return failCmd("unknown --channels " ~ channels ~ " (fdroid, play, both)");
+        }
+
+        auto opts = RunOptions(
             tag: tag,
             stage: parsed,
             dryRun: dryRun,
@@ -261,7 +279,25 @@ struct PublishCmd
             rcloneRemote: rcloneRemote,
             requireCached: requireCached,
             substituter: substituter,
-        ));
+            fdroid: wantFdroid,
+            play: wantPlay,
+            playTrack: playTrack,
+        );
+
+        // Peers: a failure in one is reported and the other still runs, since
+        // neither is a precondition for the other. The exit code reflects any
+        // failure so a wrapper cannot mistake a partial publish for success.
+        int rc;
+        if (wantFdroid)
+            rc |= runPublish(opts);
+        // Play only participates once there is something to upload; the
+        // earlier stages are the F-Droid repository's own pipeline.
+        if (wantPlay && parsed == PublishStage.deploy)
+            rc |= runPublishPlay(opts);
+        else if (wantPlay)
+            writeln("Play: skipped — it has no analogue of --stage " ~ stage
+                ~ "; use --stage deploy.");
+        return rc == 0 ? 0 : 1;
     }
 }
 
