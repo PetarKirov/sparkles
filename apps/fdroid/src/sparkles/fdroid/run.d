@@ -34,6 +34,10 @@ struct RunOptions
     string metadataDir;
     string flakeRef;
     string rcloneRemote;
+    /// Refuse to build the APK locally — it must come from the binary cache,
+    /// which is what makes the split model a split rather than a duplication.
+    bool requireCached;
+    string substituter;
 }
 
 /// Runs the publish pipeline. Returns a process exit code.
@@ -81,7 +85,7 @@ int runPublish(RunOptions opt)
         return 0;
     }
 
-    const missing = missingTools();
+    const missing = missingTools(opt.stage);
     if (missing.length)
     {
         writeln("error: required programs not on PATH:");
@@ -91,8 +95,47 @@ int runPublish(RunOptions opt)
     }
 
     // ── build ───────────────────────────────────────────────────────────────
+    //
+    // In the split model this is a *fetch*, not a build: CI produced this exact
+    // store path and pushed it to the binary cache, and the signing machine
+    // substitutes it. Resolving the path first and reporting it is what makes
+    // the two halves comparable by eye — CI prints the same string.
     writeln();
-    writeln("· building the unsigned release APK");
+    auto evaluated = evalApkPath(opt.flakeRef, v.name, v.code);
+    if (!evaluated.succeeded)
+    {
+        writeln("error: could not evaluate the APK derivation.");
+        writeln(evaluated.stderr);
+        return 1;
+    }
+    const expected = evaluated.stdout.lastLine;
+    writefln("· APK store path%s", opt.requireCached ? " (must come from the cache)" : "");
+    writefln("  %s", expected);
+
+    const local = queryLocal(expected).succeeded;
+    const cached = local || querySubstituter(opt.substituter, expected).succeeded;
+
+    if (!cached && opt.requireCached)
+    {
+        writeln();
+        writefln("error: %s is neither in the local store nor on %s.",
+            expected, opt.substituter);
+        writeln("  Building it here would take ~90 minutes and would defeat the point of");
+        writeln("  the split: the artifact you sign should be the one CI built.");
+        writeln();
+        writeln("  Usual causes:");
+        writeln("    * CI has not finished (or has not run) for this tag;");
+        writeln("    * the working tree is dirty, or sits on a different commit than CI");
+        writeln("      built — either changes the derivation, and so the store path;");
+        writeln("    * --flake points somewhere other than what CI evaluated.");
+        writeln();
+        writeln("  Pass --no-require-cached to build locally anyway.");
+        return 1;
+    }
+    writefln("  %s", local ? "already in the local store"
+        : cached ? "substituting from " ~ opt.substituter
+        : "not cached — building locally");
+
     auto built = buildApk(opt.flakeRef, v.name, v.code);
     if (!built.succeeded)
     {
@@ -100,6 +143,13 @@ int runPublish(RunOptions opt)
         return 1;
     }
     const outPath = built.stdout.lastLine;
+    if (outPath != expected)
+    {
+        // Should be impossible — the same expression produced both — but a
+        // mismatch here means signing something other than what was reported.
+        writefln("error: built %s but expected %s", outPath, expected);
+        return 1;
+    }
     const unsignedApk = buildPath(outPath, "hue-unsigned.apk");
     if (!unsignedApk.exists)
     {

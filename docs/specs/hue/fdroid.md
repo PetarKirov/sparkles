@@ -98,15 +98,55 @@ track, never published, and its versions never need to interleave with these.
 
 ## Architecture decisions
 
-| Decision              | Choice                                                                                            | Where                                 |
-| --------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| Who signs             | **Not nix.** The build stops after `zipalign`; `apps/fdroid` signs outside the store              | `build-apk.nix` `sign`, `apps/fdroid` |
-| Key count             | Two, in two keystores: an APK key and a repository-index key                                      | `apps/fdroid/…/keystore.d`            |
-| Version source        | the git tag, mapped through `sparkles:versions` `Tiny.orderKey`                                   | `apps/fdroid/…/plan.d`                |
-| Icon                  | one SVG, rasterized deterministically to density PNGs by `resvg`; no checked-in binaries          | `nix/packages/android/icon.nix`       |
-| Repository generation | `fdroidserver` 2.4.x over a pulled copy of the live repository, then pushed back                  | `apps/fdroid/…/fdroidserver.d`        |
-| Retention             | `archive_older: 3` — `repo/` keeps 4 versions, older ones **move** to `archive/`                  | `apps/hue/fdroid/config.yml`          |
-| Trigger               | `release: published`, matching `release.yml`'s stance that publication (not tag push) is the gate | `.github/workflows/fdroid.yml`        |
+| Decision              | Choice                                                                                               | Where                                 |
+| --------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Who signs             | **Not nix.** The build stops after `zipalign`; `apps/fdroid` signs outside the store                 | `build-apk.nix` `sign`, `apps/fdroid` |
+| Key count             | Two, in two keystores: an APK key and a repository-index key                                         | `apps/fdroid/…/keystore.d`            |
+| Version source        | the git tag, mapped through `sparkles:versions` `Tiny.orderKey`                                      | `apps/fdroid/…/plan.d`                |
+| Icon                  | one SVG, rasterized deterministically to density PNGs by `resvg`; no checked-in binaries             | `nix/packages/android/icon.nix`       |
+| Repository generation | `fdroidserver` 2.4.x over a pulled copy of the live repository, then pushed back                     | `apps/fdroid/…/fdroidserver.d`        |
+| Retention             | `archive_older: 3` — `repo/` keeps 4 versions, older ones **move** to `archive/`                     | `apps/hue/fdroid/config.yml`          |
+| Trigger               | `release: published` builds and caches; signing and publication are run by hand from the workstation | `.github/workflows/fdroid.yml`        |
+
+### The split: CI builds, the workstation signs
+
+Signing keys live on hardware tokens, and a GitHub-hosted runner cannot reach a
+USB device. Rather than weaken that — a self-hosted runner with a token
+permanently plugged in gives back most of what the token bought — the pipeline
+is cut in two at the one place it can be cut cleanly:
+
+```text
+CI (GitHub-hosted)                     workstation (tokens present)
+──────────────────                     ────────────────────────────
+nix build  mkHueApk {version}          nix build  mkHueApk {version}
+     │                                      │  (substitutes; does not rebuild)
+     ├── push to the binary cache ──────────┤
+     └── print the store path               ├── apksigner   → hardware key
+                                            ├── fdroid update → hardware key
+                                            └── rclone sync
+```
+
+**No signing key material exists in CI at all** — not a passphrase, not a
+base64 keystore, not a secret to leak. A compromised runner or a stolen Actions
+token cannot produce anything a user would install. That is a stronger property
+than careful secret handling could give.
+
+What joins the halves is the **store path**. `mkHueApk` is a pure derivation, so
+CI and the workstation evaluate the same expression to the same path; the
+workstation then substitutes ~64 MB instead of repeating a ~90-minute cross
+build. `fdroid-publish` evaluates the path _before_ building, prints it, and
+**refuses to build locally** unless the path is already in the store or on the
+substituter. So the artifact that gets signed is the artifact CI built, and the
+failure mode — a dirty tree, or a different commit, changing the derivation —
+is reported rather than silently producing a local rebuild that nobody
+compared.
+
+Two honest limits. First, the trust anchor is the cache's signing key: nix
+verifies the narinfo signature, so what is really being trusted is whoever holds
+the Cachix push token. Since the APK is bit-reproducible, that can be spot-
+checked by rebuilding locally (`--no-require-cached`) and comparing paths.
+Second, `builtins.getFlake` on a dirty tree hashes the working tree rather than
+the commit, which is exactly why the cache check exists.
 
 ### Why nix must not hold the key
 
@@ -231,9 +271,9 @@ they are, the pipeline runs and stops at `--stage index`.
 
 ## Credentials
 
-Nothing here is committed. GitHub Actions secrets, gated behind the `fdroid`
-environment so a reviewer stands between "CI can build this" and "CI can sign as
-me":
+Nothing here is committed, and — since the split — **nothing signing-related is
+in CI either**. The only secret the workflow uses is the existing Cachix push
+token. Everything below lives on the workstation and on hardware tokens:
 
 | Secret                       | What                               |
 | ---------------------------- | ---------------------------------- |

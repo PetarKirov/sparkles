@@ -1,9 +1,9 @@
 /**
 The `fdroid-publish` command line.
 
-Two subcommands. `publish` is the pipeline; `version` answers the one question
-worth asking on its own — what a tag maps to — without touching anything, which
-is what makes the mapping easy to check from CI or by hand.
+Three subcommands. `publish` is the pipeline; `version` and `path` each answer
+one question without touching anything — what a tag maps to, and which store
+path it resolves to — which is what makes the CI/workstation handoff checkable.
 */
 module sparkles.fdroid.app;
 
@@ -45,6 +45,56 @@ struct VersionCmd
     }
 }
 
+@(Command("path",
+    shortDescription: "Print the store path the release APK for a tag resolves to",
+    helpSections: ["description"],
+))
+struct PathCmd
+{
+    @(Option(`t|tag`, description: "Release tag, with or without the leading v"))
+    string tag;
+
+    @(Option(`f|flake`, description: "Flake reference to evaluate"))
+    string flake = ".";
+
+    // The handoff between CI and the signing machine. CI prints this after
+    // pushing to the cache; the workstation must resolve the same string, or it
+    // is about to sign something other than what was built.
+    int run()
+    {
+        import sparkles.fdroid.tools : evalApkPath;
+        import std.path : absolutePath;
+        import std.string : lineSplitter, strip;
+
+        if (!tag.length)
+        {
+            writeln("error: --tag is required");
+            return 2;
+        }
+
+        const mapped = apkVersionForTag(tag);
+        if (!mapped.ok)
+        {
+            writefln("error: %s: %s", tag, describe(mapped.error));
+            return 1;
+        }
+
+        auto evaluated = evalApkPath(flake.absolutePath, mapped.version_.name, mapped.version_.code);
+        if (!evaluated.succeeded)
+        {
+            writeln(evaluated.stderr);
+            return 1;
+        }
+
+        string last;
+        foreach (line; evaluated.stdout.lineSplitter)
+            if (line.strip.length)
+                last = line.strip;
+        writeln(last);
+        return 0;
+    }
+}
+
 @(Command("publish",
     shortDescription: "Build, sign, index and deploy the release APK",
     helpSections: ["description"],
@@ -72,6 +122,13 @@ struct PublishCmd
 
     @(Option(`r|rclone-remote`, description: "rclone remote name, as named in config.yml"))
     string rcloneRemote = "sparkles";
+
+    @(Option(`require-cached`,
+        description: "Require the APK to come from the binary cache rather than a local build"))
+    bool requireCached = true;
+
+    @(Option(`substituter`, description: "Binary cache CI pushes the unsigned APK to"))
+    string substituter = "https://sparkles.cachix.org";
 
     int run()
     {
@@ -117,6 +174,8 @@ struct PublishCmd
             metadataDir: metadataDir,
             flakeRef: flake.absolutePath,
             rcloneRemote: rcloneRemote,
+            requireCached: requireCached,
+            substituter: substituter,
         ));
     }
 }
@@ -128,5 +187,5 @@ struct PublishCmd
 struct FdroidPublish
 {
     @Subcommands
-    SumType!(PublishCmd, VersionCmd) command;
+    SumType!(PathCmd, PublishCmd, VersionCmd) command;
 }
