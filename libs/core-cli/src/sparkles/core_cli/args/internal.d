@@ -29,11 +29,14 @@ import sparkles.core_cli.args.help_formatting :
 import sparkles.core_cli.args.uda :
     Argument,
     Command,
+    Flatten,
     Option,
     SubCommandRegistration,
     SubCommandRegistrationWithHandler,
     Subcommands,
-    addSubCommand;
+    addSubCommand,
+    getFlatten,
+    hasFlatten;
 import sparkles.core_cli.help_formatting : HelpInfo;
 
 struct CommandNode(Command_)
@@ -355,24 +358,34 @@ private bool isShortOptionBundle(Cli)(string name)
 {
     foreach (c; name)
     {
-        bool matched;
         immutable single = [c];
-        static foreach (field; FieldNameTuple!Cli)
-        {{
-            alias symbol = __traits(getMember, Cli, field);
-            enum options = getUDAs!(symbol, Option);
-            static if (options.length)
-            {{
-                enum optionInfo = options[0];
-                foreach (candidate; optionNames(optionInfo, field))
-                    if (candidate == single)
-                        matched = true;
-            }}
-        }}
-        if (!matched)
+        if (!hasShortOptionMatch!Cli(single))
             return false;
     }
     return true;
+}
+
+private bool hasShortOptionMatch(Cli)(string single)
+{
+    static foreach (field; FieldNameTuple!Cli)
+    {{
+        alias symbol = __traits(getMember, Cli, field);
+        enum options = getUDAs!(symbol, Option);
+        enum isFlattened = hasFlatten!symbol;
+        static if (options.length)
+        {{
+            enum optionInfo = options[0];
+            foreach (candidate; optionNames(optionInfo, field))
+                if (candidate == single)
+                    return true;
+        }}
+        else static if (isFlattened && is(typeof(symbol) == struct))
+        {{
+            if (hasShortOptionMatch!(typeof(symbol))(single))
+                return true;
+        }}
+    }}
+    return false;
 }
 
 /// Split `<name>[=<value>]` at the first `=`, populating the three output
@@ -453,10 +466,26 @@ private CliExpected!bool parseNamedOption(Cli)(
         }
     }
 
+    return applyNamedOption!Cli(receiver, name, isLong, inlineValue, hasInlineValue, args, index, seen, "");
+}
+
+private CliExpected!bool applyNamedOption(Cli)(
+    ref Cli receiver,
+    string name,
+    bool isLong,
+    string inlineValue,
+    bool hasInlineValue,
+    ref string[] args,
+    ref size_t index,
+    ref bool[string] seen,
+    string prefixPath,
+)
+{
     static foreach (field; FieldNameTuple!Cli)
     {{
         alias symbol = __traits(getMember, Cli, field);
         enum options = getUDAs!(symbol, Option);
+        enum isFlattened = hasFlatten!symbol;
         static if (options.length)
         {{
             enum optionInfo = options[0];
@@ -486,9 +515,27 @@ private CliExpected!bool parseNamedOption(Cli)(
                 if (!parsed)
                     return error!bool(parsed.error);
 
-                seen[field] = true;
+                seen[prefixPath ~ field] = true;
                 return ok(true);
             }
+        }}
+        else static if (isFlattened && is(typeof(symbol) == struct))
+        {{
+            auto parsed = applyNamedOption!(typeof(symbol))(
+                __traits(getMember, receiver, field),
+                name,
+                isLong,
+                inlineValue,
+                hasInlineValue,
+                args,
+                index,
+                seen,
+                prefixPath ~ field ~ ".",
+            );
+            if (!parsed)
+                return error!bool(parsed.error);
+            if (parsed.value)
+                return ok(true);
         }}
     }}
 
@@ -643,10 +690,32 @@ private CliExpected!void assignPositionals(Cli)(
 )
 {
     size_t valueIndex;
+    auto res = assignPositionalsRec!Cli(receiver, values, valueIndex, seen, "");
+    if (!res)
+        return res;
+
+    if (valueIndex < values.length)
+        return error(CliError(
+            kind: CliError.Kind.parse,
+            message: "Unexpected positional argument " ~ values[valueIndex],
+        ));
+
+    return ok();
+}
+
+private CliExpected!void assignPositionalsRec(Cli)(
+    ref Cli receiver,
+    string[] values,
+    ref size_t valueIndex,
+    ref bool[string] seen,
+    string prefixPath,
+)
+{
     static foreach (field; FieldNameTuple!Cli)
     {{
         alias symbol = __traits(getMember, Cli, field);
         enum args = getUDAs!(symbol, Argument);
+        enum isFlattened = hasFlatten!symbol;
         static if (args.length)
         {{
             enum argumentInfo = args[0];
@@ -691,33 +760,46 @@ private CliExpected!void assignPositionals(Cli)(
                     __traits(getMember, receiver, field) = parsed.value;
                     valueIndex++;
                 }
-                seen[field] = true;
+                seen[prefixPath ~ field] = true;
             }
         }}
+        else static if (isFlattened && is(typeof(symbol) == struct))
+        {{
+            auto res = assignPositionalsRec!(typeof(symbol))(
+                __traits(getMember, receiver, field),
+                values,
+                valueIndex,
+                seen,
+                prefixPath ~ field ~ ".",
+            );
+            if (!res)
+                return res;
+        }}
     }}
-
-    if (valueIndex < values.length)
-        return error(CliError(
-            kind: CliError.Kind.parse,
-            message: "Unexpected positional argument " ~ values[valueIndex],
-        ));
 
     return ok();
 }
 
-private CliExpected!void validateRequired(Cli)(bool[string] seen)
+private CliExpected!void validateRequired(Cli)(bool[string] seen, string prefixPath = "")
 {
     static foreach (field; FieldNameTuple!Cli)
     {{
         alias symbol = __traits(getMember, Cli, field);
         enum options = getUDAs!(symbol, Option);
+        enum isFlattened = hasFlatten!symbol;
         static if (options.length && options[0].required_)
         {{
-            if (!seen.get(field, false))
+            if (!seen.get(prefixPath ~ field, false))
                 return error(CliError(
                     kind: CliError.Kind.parse,
                     message: "Missing required option " ~ displayOption(options[0], field),
                 ));
+        }}
+        else static if (isFlattened && is(typeof(symbol) == struct))
+        {{
+            auto res = validateRequired!(typeof(symbol))(seen, prefixPath ~ field ~ ".");
+            if (!res)
+                return res;
         }}
     }}
 
@@ -1813,4 +1895,108 @@ unittest
     assert(parsed.error.isHelp);
     assert(parsed.error.exitCode == 0);
     assert(!parsed.error.message.canFind("required"));
+}
+
+@("args.flatten.parseAndHelp")
+@system
+unittest
+{
+    struct CommonOptions
+    {
+        @(Option("theme", description: "Color theme."))
+        string theme = "dark";
+
+        @(Option("verbose|v", description: "Enable verbose output."))
+        bool verbose;
+    }
+
+    struct GuiGroup
+    {
+        @(Option("font", description: "Font family."))
+        string font = "Maple";
+
+        @(Option("font-size", description: "Font size."))
+        int fontSize = 14;
+    }
+
+    @(Command("app", shortDescription: "Test application with flattened options."))
+    struct AppCli
+    {
+        @Flatten
+        CommonOptions common;
+
+        @Flatten("GUI Options")
+        GuiGroup gui;
+
+        @(Argument("target", optional: true))
+        string target;
+    }
+
+    // 1. Default values
+    auto res1 = parseCli!AppCli(["app"]);
+    assert(res1);
+    assert(res1.value.common.theme == "dark");
+    assert(!res1.value.common.verbose);
+    assert(res1.value.gui.font == "Maple");
+    assert(res1.value.gui.fontSize == 14);
+    assert(res1.value.target.length == 0);
+
+    // 2. Parsed arguments populating nested structs directly
+    auto res2 = parseCli!AppCli([
+        "app",
+        "--theme=tokyo-night",
+        "-v",
+        "--font=JetBrains Mono",
+        "--font-size=18",
+        "main.d",
+    ]);
+    assert(res2);
+    assert(res2.value.common.theme == "tokyo-night");
+    assert(res2.value.common.verbose);
+    assert(res2.value.gui.font == "JetBrains Mono");
+    assert(res2.value.gui.fontSize == 18);
+    assert(res2.value.target == "main.d");
+
+    // 3. Boolean negation into flattened struct
+    auto res3 = parseCli!AppCli(["app", "--no-verbose"]);
+    assert(res3);
+    assert(!res3.value.common.verbose);
+
+    // 4. Help output formatting
+    auto helpRes = parseCli!AppCli(["app", "--help"]);
+    assert(!helpRes);
+    assert(helpRes.error.isHelp);
+    auto help = helpRes.error.help;
+    assert(help.canFind("OPTIONS"));
+    assert(help.canFind("--theme"));
+    assert(help.canFind("--verbose"));
+    assert(help.canFind("GUI OPTIONS"));
+    assert(help.canFind("--font"));
+    assert(help.canFind("--font-size"));
+}
+
+@("args.flatten.requiredValidation")
+@system
+unittest
+{
+    struct Auth
+    {
+        @(Option("token", required: true))
+        string token;
+    }
+
+    @(Command("tool"))
+    struct Tool
+    {
+        @Flatten
+        Auth auth;
+    }
+
+    auto missing = parseCli!Tool(["tool"]);
+    assert(!missing);
+    assert(missing.error.message.canFind("Missing required option --token"));
+
+    auto satisfied = parseCli!Tool(["tool", "--token=xyz"]);
+    assert(satisfied);
+    assert(satisfied.value.auth.token == "xyz");
 }

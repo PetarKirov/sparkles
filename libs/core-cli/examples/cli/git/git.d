@@ -216,6 +216,18 @@ struct Status
         styledWriteln(i"Running {bold git status} with params:\n$(prettyPrint(this))");
 }
 
+struct CommitFormatOptions
+{
+    @(Option("oneline", description: "Shorten commit hash and show only the first line of the commit message"))
+    bool oneline;
+
+    @(Option("graph", description: "Show an ASCII graph of the commit history"))
+    bool graph;
+
+    @(Option(`p|patch`))
+    bool patch;
+}
+
 @(Command("log",
     shortDescription: "Show commit logs",
     helpSections: ["description"],
@@ -225,14 +237,8 @@ struct Log
     @(Option(`n|max-count`))
     int maxCount = -1;
 
-    @(Option("oneline", description: "Shorten commit hash and show only the first line of the commit message"))
-    bool oneline;
-
-    @(Option("graph", description: "Show an ASCII graph of the commit history"))
-    bool graph;
-
-    @(Option(`p|patch`))
-    bool patch;
+    @Flatten("Format Options")
+    CommitFormatOptions format;
 
     @(Argument("revision-range", optional: true))
     string revisionRange;
