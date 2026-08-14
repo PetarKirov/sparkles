@@ -224,6 +224,9 @@ jobs:
                     --root=docs/research/window-system-integration/os-apis/x11/example
                   dub run --compiler=ldc2 \
                     --root=docs/research/window-system-integration/os-apis/wayland/example
+                  # Interactive GUI probe — compile only.
+                  dub build --single --compiler=ldc2 \
+                    docs/research/window-system-integration/cursor-shapes/cursor-shapes.d
       - save_dub_cache
       - save_nix_cache:
           cache_suffix: devshell-ci

@@ -231,7 +231,16 @@ The event loop then reads the timerfd and replays the key+text once per expirati
 
 **High-resolution scroll.** Win32 accumulates `WM_MOUSEWHEEL` deltas divided by `WHEEL_DELTA` ([`src/win32_window.c`][src-win32-scroll]). Wayland prefers the high-resolution `axis_value120` event (`pointerHandleAxisValue120` in the `wl_pointer` listener, [`src/wl_window.c`][src-wl-axis]) falling back to the coarse `axis` event. macOS scales precise scrolling deltas by 0.1 in `scrollWheel:` ([`src/cocoa_window.m`][src-cocoa-scroll]); GLFW does **not** expose macOS momentum phases — only the summed delta.
 
-**Cursor handling.** GLFW renders its own cursors from `GLFWimage` and uses the platform's standard-cursor set (`createStandardCursor`). On Wayland it draws cursors client-side via `libwayland-cursor` (`setCursorImage` in [`src/wl_window.c`][src-wl-cursor]) and animates them with a `timerfd`; it does **not** use the newer `wp_cursor_shape_v1` protocol (requested in issue [#2679][glfw-issue-cursorshape]).
+**Cursor handling.** GLFW renders its own cursors from `GLFWimage` and uses the platform's standard-cursor set (`createStandardCursor`). On Wayland it draws cursors client-side via `libwayland-cursor` (`setCursorImage` in [`src/wl_window.c`][src-wl-cursor]) and animates them with a `timerfd`; stock 3.5.1 does **not** use the newer `wp_cursor_shape_v1` protocol (unmerged [PR #2679][glfw-pr-cursorshape]).
+
+> [!NOTE]
+> **Sparkles overlay.** The table below describes upstream GLFW. This repo
+> overlays [`PetarKirov/glfw` at `1e59848ba2856c25515a80f52e97c78d5412395e`][sparkles-glfw-cursorshape]
+> so `glfwCreateStandardCursor` can call `wp_cursor_shape_v1.set_shape` when
+> the compositor advertises the protocol. That is what makes hue's EW/NS
+> resize pointers work on GNOME/Adwaita, which no longer ships an XCursor
+> theme. The [pointer-shape probe](./cursor-shapes/) clicks through every
+> raylib `SetMouseCursor` token.
 
 **Touch & gestures.** GLFW has **no touch or gesture API** — no touch events, no pinch/rotate. This is an explicit scope cut; touchscreens are seen only as emulated pointer input where the OS provides it.
 
@@ -518,6 +527,8 @@ GLFW's history is mostly _addition_ on a stable core; the windowing-layer redesi
 [glfw-issue-libdecor]: https://github.com/glfw/glfw/issues/1639
 [glfw-pr-libdecor]: https://github.com/glfw/glfw/pull/2285
 [glfw-issue-cursorshape]: https://github.com/glfw/glfw/issues/2679
+[glfw-pr-cursorshape]: https://github.com/glfw/glfw/pull/2679
+[sparkles-glfw-cursorshape]: https://github.com/PetarKirov/glfw/tree/1e59848ba2856c25515a80f52e97c78d5412395e
 [glfw-issue-vsync]: https://github.com/glfw/glfw/issues/2049
 [proto-xdg-shell]: https://wayland.app/protocols/xdg-shell
 [proto-xdg-deco]: https://wayland.app/protocols/xdg-decoration-unstable-v1
