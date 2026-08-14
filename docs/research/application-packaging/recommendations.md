@@ -68,14 +68,23 @@ The initial target is deliberately narrow. This table resolves the product × ho
 artifact × channel decisions that later milestones implement; alternatives discussed
 below are evaluation evidence, not undecided outputs.
 
-| Product                | Target                               | Required first artifact                                    | Discovery/channel                                                               | Explicitly deferred                                              |
-| ---------------------- | ------------------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `ci`, `release` CLIs   | `x86_64-linux-gnu`                   | deterministic `.tar.xz` with SHA-256, SBOM, and provenance | immutable GitHub Release asset                                                  | `.deb`/RPM repositories, AppImage, Flatpak, Snap                 |
-| `ci`, `release` CLIs   | `x86_64-pc-windows-msvc`             | signed portable `.zip`                                     | GitHub Release, then WinGet and Scoop manifests generated from the final digest | MSI, MSIX, Chocolatey, embedded updater                          |
-| `ci`, `release` CLIs   | universal macOS (`arm64` + `x86_64`) | signed binaries in a notarization-tested `.zip`            | GitHub Release, then a Homebrew tap Formula                                     | PKG, XIP, embedded updater                                       |
-| `terminal` desktop app | `x86_64-linux-gnu`                   | AppImage built with pinned runtime/tool inputs             | GitHub Release                                                                  | Flatpak and Snap until sandbox/portal/store ownership is staffed |
-| `terminal` desktop app | `x86_64-pc-windows-msvc`             | signed Inno Setup installer `.exe`                         | GitHub Release, then WinGet                                                     | MSI and MSIX until enterprise/store servicing is a requirement   |
-| `terminal` desktop app | universal macOS (`arm64` + `x86_64`) | signed/notarized/stapled `.app` in a DMG                   | GitHub Release, then a Homebrew Cask                                            | PKG and XIP                                                      |
+| Product                | Target                                    | Required first artifact                                                              | Discovery/channel                                                               | Explicitly deferred                                              |
+| ---------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `ci`, `release` CLIs   | `x86_64-linux-gnu`                        | deterministic `.tar.xz` with SHA-256, SBOM, and provenance                           | immutable GitHub Release asset                                                  | `.deb`/RPM repositories, AppImage, Flatpak, Snap                 |
+| `ci`, `release` CLIs   | `x86_64-pc-windows-msvc`                  | signed portable `.zip`                                                               | GitHub Release, then WinGet and Scoop manifests generated from the final digest | MSI, MSIX, Chocolatey, embedded updater                          |
+| `ci`, `release` CLIs   | universal macOS (`arm64` + `x86_64`)      | signed binaries in a notarization-tested `.zip`                                      | GitHub Release, then a Homebrew tap Formula                                     | PKG, XIP, embedded updater                                       |
+| `terminal` desktop app | `x86_64-linux-gnu`                        | AppImage built with pinned runtime/tool inputs                                       | GitHub Release                                                                  | Flatpak and Snap until sandbox/portal/store ownership is staffed |
+| `terminal` desktop app | `x86_64-pc-windows-msvc`                  | signed Inno Setup installer `.exe`                                                   | GitHub Release, then WinGet                                                     | MSI and MSIX until enterprise/store servicing is a requirement   |
+| `terminal` desktop app | universal macOS (`arm64` + `x86_64`)      | signed/notarized/stapled `.app` in a DMG                                             | GitHub Release, then a Homebrew Cask                                            | PKG and XIP                                                      |
+| `hue` viewer           | Android (`arm64-v8a` + `x86_64`, API 26+) | signed dual-ABI NativeActivity APK — built unsigned by Nix, signed outside the store | GitHub Release asset, then a self-hosted F-Droid repository                     | f-droid.org's main repository, per-ABI split APKs, Play Store    |
+
+The Android row was added after the original survey (the `hue` port shipped in
+[`docs/specs/hue/android.md`](../../specs/hue/android.md), and its release contract is
+[`docs/specs/hue/fdroid.md`](../../specs/hue/fdroid.md)). It is the first row to be
+implemented, and it exercises two of the principles above directly: the version derives
+from the tag through `sparkles:versions` rather than a packager-invented scheme, and
+signing is isolated from compilation because a key given to Nix would be published to a
+world-readable store.
 
 `aarch64-linux` and Windows `arm64` remain future targets until the application and its
 native dependency closure are continuously built and smoke-tested there. Native Linux
