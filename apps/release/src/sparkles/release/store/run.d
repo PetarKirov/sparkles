@@ -38,6 +38,12 @@ struct RunOptions
     /// which is what makes the split model a split rather than a duplication.
     bool requireCached;
     string substituter;
+    /// Which channels to publish. They are peers: neither is the primary, and
+    /// selecting one must not require the other's credentials.
+    bool fdroid = true;
+    bool play;
+    /// Play track for this release.
+    string playTrack = "internal";
 }
 
 /// Runs the publish pipeline. Returns a process exit code.
@@ -343,9 +349,114 @@ int runPublish(RunOptions opt)
     }
 
     writeln();
-    writefln("published %s %s (versionCode %s)", applicationId, v.name, v.code);
+    writefln("published %s %s (versionCode %s) to F-Droid", applicationId, v.name, v.code);
     writefln("  %s", env.env.repoUrl);
     return 0;
+}
+
+/// Publishes the Play channel for a tag. Separate entry point from
+/// `runPublish` because the two channels share only the version: different
+/// artifact, different key, different transport.
+int runPublishPlay(RunOptions opt)
+{
+    import sparkles.release.store.env : resolvePlayEnv, EnvVar;
+    import sparkles.release.store.play : PlayTrack, tryParseTrack, trackNames;
+    import sparkles.release.store.play_run : PlayOptions, publishToPlay;
+    import std.file : exists;
+    import std.path : buildPath;
+
+    const mapped = apkVersionForTag(opt.tag);
+    if (!mapped.ok)
+    {
+        writefln("error: cannot publish tag %s: %s", opt.tag, describe(mapped.error));
+        return 1;
+    }
+    const v = mapped.version_;
+
+    PlayTrack track;
+    if (!tryParseTrack(opt.playTrack, track))
+    {
+        writefln("error: unknown Play track %s (expected one of: %s)",
+            opt.playTrack, trackNames);
+        return 1;
+    }
+
+    const env = resolvePlayEnv();
+    if (!env.ok)
+    {
+        writeln("error: missing environment for the Play channel:");
+        foreach (m; env.missing)
+            writefln("  %-38s %s", m.name, m.why);
+        return 1;
+    }
+
+    writeln();
+    writefln("Play: %s %s (versionCode %s) → %s track",
+        applicationId, v.name, v.code, opt.playTrack);
+
+    if (opt.dryRun)
+    {
+        writeln("dry run — nothing was built, signed or uploaded.");
+        return 0;
+    }
+
+    // Same substitution discipline as the APK: the bundle CI built is the one
+    // that gets signed.
+    auto evaluated = evalAabPath(opt.flakeRef, v.name, v.code);
+    if (!evaluated.succeeded)
+    {
+        writeln(evaluated.stderr);
+        return 1;
+    }
+    const expected = evaluated.stdout.lastLine;
+    writefln("· bundle store path\n  %s", expected);
+
+    const cached = queryLocal(expected).succeeded
+        || querySubstituter(opt.substituter, expected).succeeded;
+    if (!cached && opt.requireCached)
+    {
+        writefln("error: %s is not in the local store or on %s.", expected, opt.substituter);
+        writeln("  Pass --no-require-cached to build it locally anyway.");
+        return 1;
+    }
+
+    auto built = buildAab(opt.flakeRef, v.name, v.code);
+    if (!built.succeeded)
+    {
+        writeln(built.stderr);
+        return 1;
+    }
+
+    // jarsigner signs in place, so work on a copy: the store path is read-only
+    // and must stay the pristine build output.
+    const storeAab = buildPath(built.stdout.lastLine, "hue-unsigned.aab");
+    if (!storeAab.exists)
+    {
+        writefln("error: build produced no %s", storeAab);
+        return 1;
+    }
+
+    import std.file : copy, mkdirRecurse, setAttributes;
+    import std.conv : octal;
+
+    mkdirRecurse(opt.workDir);
+    const signable = buildPath(opt.workDir, "hue.aab");
+    copy(storeAab, signable);
+    version (Posix)
+        setAttributes(signable, octal!600);
+
+    return publishToPlay(PlayOptions(
+        applicationId: applicationId,
+        aabPath: signable,
+        versionCode: v.code,
+        releaseNotes: "See " ~ opt.tag ~ " release notes.",
+        track: track,
+        serviceAccountFile: env.serviceAccountFile,
+        keystore: env.keystore,
+        keyAlias: env.keyAlias,
+        storePassVar: cast(string) EnvVar.playStorePass,
+        keyPassVar: cast(string) EnvVar.playKeyPass,
+    ));
 }
 
 /// Reads the app's entry from whichever index sections exist in `workDir`.
