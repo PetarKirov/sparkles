@@ -552,6 +552,34 @@ version (unittest)
     assert(pane.tv.top == grabbed, "…and the grab survives the repaint");
 }
 
+@("inspector_pane.externalScrollKeepsRowSelectionContentRelative")
+@system unittest
+{
+    // The GUI dock owns this pane's bar. After it scrolls the tree, the
+    // component's disabled inner bar must not restore its stale offset before
+    // resolving a click in the visible body.
+    const src = "{\"a\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]}\n";
+    auto vm = vmForTest("json", src);
+
+    InspectorPane pane;
+    pane.externalScroll = true;
+    pane.tv.width = 30;
+    pane.tv.height = 8;
+    pane.rebuild(vm);
+    pane.tv.top = 3; // published by the outer dock after a vertical scroll
+
+    auto b = Builder();
+    b.finish(pane.view(b, 28));
+    const firstVisible = pane.tv.top;
+    assert(firstVisible == 3);
+    pane.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(2, pane.tv.headerRows))), vm);
+    assert(pane.tv.top == firstVisible,
+        "a row click must not undo the dock-owned scroll");
+    assert(pane.tv.sel == firstVisible,
+        "the first painted row must select the first scrolled content row");
+}
+
 @("inspector_pane.viewCarriesHeaderTogglesAndDetails")
 @system unittest
 {
