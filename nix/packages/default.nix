@@ -63,7 +63,7 @@
             # devshell the shellHook exports these paths (nix/shells); carry
             # them in the wrapper too so `nix run .#ci -- --example-files`
             # links them outside any shell.
-            exampleLibPath = lib.optionalString pkgs.stdenv.isLinux (
+            exampleLibPath = lib.optionalString pkgs.stdenv.hostPlatform.isLinux (
               lib.makeSearchPath "lib" [
                 pkgs.elfutils.out
                 pkgs.libpfm

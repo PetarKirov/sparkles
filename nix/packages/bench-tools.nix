@@ -6,8 +6,8 @@
 #     long writing to the terminal blocks (sink throughput).
 #   - termbench (cmuratori): measures how fast a terminal accepts large output.
 #
-# Neither is in nixpkgs, so both are fetched from GitHub at a pinned revision.
-{ ... }:
+# Neither is in nixpkgs, so both are flake inputs pinned in flake.lock.
+{ inputs, ... }:
 {
   perSystem =
     { pkgs, ... }:
@@ -16,12 +16,7 @@
         pname = "vtebench";
         version = "0.3.1-unstable-2025-01-20";
 
-        src = pkgs.fetchFromGitHub {
-          owner = "alacritty";
-          repo = "vtebench";
-          rev = "ead80032e57dee2e75f0b51f2ea67528647d9944";
-          hash = "sha256-Ck+ObdRlLrKyMHGaBYuzIQnSwezs1mHpZLOJrM4hc3A=";
-        };
+        src = inputs.vtebench-src;
 
         # Use the vendored lockfile (fetched per-crate via fetchurl) instead of
         # cargoHash: the cargo-vendor fetcher hits the crates.io API without a
@@ -48,12 +43,7 @@
         pname = "termbench";
         version = "2-unstable-2024-03-19";
 
-        src = pkgs.fetchFromGitHub {
-          owner = "cmuratori";
-          repo = "termbench";
-          rev = "074fa615069ae4b53382d5f69143ef15fe1a8dc3";
-          hash = "sha256-t7Pp3rg8h1IXnX1QtZuJF122Pj9EZdTb6LqMQ5dTLlc=";
-        };
+        src = inputs.termbench-src;
 
         # Single translation unit; the repo's build.sh just invokes the
         # compiler with -O3. -Ofast is upstream's flag but adds nothing for a

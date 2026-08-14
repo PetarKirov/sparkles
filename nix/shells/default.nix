@@ -1,3 +1,4 @@
+{ inputs, ... }:
 {
   perSystem =
     {
@@ -25,10 +26,7 @@
         version = "0.8.2";
         pyproject = true;
 
-        src = pkgs.fetchPypi {
-          inherit pname version;
-          hash = "sha256-kfvvlyBLlqPU1CFgm4A0C3YM8z4m2hI/8kPXax/ajdo=";
-        };
+        src = inputs.wcwidth-src;
 
         build-system = [ pkgs.python311Packages.hatchling ];
         pythonImportsCheck = [ "wcwidth" ];
@@ -127,7 +125,7 @@
       # `libx11`, etc. refuse to evaluate on darwin. pkg-config (above) resolves
       # the headers via the `.dev` outputs (dub#3085 feeds `--cflags` to ImportC);
       # `xvfb-run` lets the X11 example open a real window on a headless runner.
-      ++ lib.optionals pkgs.stdenv.isLinux [
+      ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         pkgs.libx11
         pkgs.libx11.dev
         pkgs.xorgproto
@@ -199,7 +197,7 @@
         config.packages.termbench
         pkgs.cmatrix
       ]
-      ++ lib.optionals pkgs.stdenv.isLinux [
+      ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         # Headless Chromium for the sparkles:twoslash visual-regression check
         # (libs/twoslash/examples/visual-check.mjs): it lays out the rendered
         # HTML overlay and asserts popup geometry. Dev-only ($CHROME_BIN
@@ -239,7 +237,7 @@
         # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
         export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
 
-        ${lib.optionalString pkgs.stdenv.isLinux ''
+        ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
           # libdw/libelf (elfutils), libpfm, libkqueue — for `dub run --single`
           # linking (`libs "dw" "elf"` / `libs "pfm"` / `libs "kqueue"`).
           export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
@@ -269,7 +267,7 @@
         export LD_LIBRARY_PATH="${pythonEnv}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         export PYTHONPATH="${pythonEnv}/${pythonEnv.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
 
-        ${lib.optionalString pkgs.stdenv.isLinux ''
+        ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
           # Browser for the sparkles:twoslash visual-regression check.
           export CHROME_BIN=${pkgs.chromium}/bin/chromium
         ''}

@@ -98,7 +98,6 @@
             "rust"
             "scala"
             "toml"
-            "xml"
             "yaml"
             "zig"
           ]
@@ -130,6 +129,16 @@
           name = "ocaml";
           grammar = g.tree-sitter-ocaml;
           queriesFrom = g.tree-sitter-ocaml.src;
+        };
+        # tree-sitter-xml 0.7 is a multi-language repo (xml + dtd). The
+        # compiled `parser` ships alone; highlights live at
+        # `queries/xml/highlights.scm` in `src`, not `queries/highlights.scm`.
+        xml = entry {
+          name = "xml";
+          grammar = g.tree-sitter-xml;
+          highlightsChain = [
+            "${g.tree-sitter-xml.src}/queries/xml/highlights.scm"
+          ];
         };
         # Not in nixpkgs — ours. The directory name must stay `sdl`: that is
         # what `canonicalLanguage` lowercases a `.sdl` extension to, and the

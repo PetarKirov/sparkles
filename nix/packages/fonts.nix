@@ -11,12 +11,16 @@
 # Uiua386 needs no package of its own: it is `pkgs.uiua386`, already available
 # everywhere. It appears in `fontBundle` so the *set* of fonts sparkles ships
 # is defined once rather than per consumer.
-{ lib, ... }:
+{ inputs, lib, ... }:
 {
   perSystem =
     { config, pkgs, ... }:
     let
-      maple-mono = pkgs.callPackage ./maple-mono { };
+      maple-mono = pkgs.callPackage ./maple-mono {
+        src = inputs.maple-font;
+        cnBaseStatic = inputs.maple-font-cn-base;
+        ufoExtractorWheel = inputs.ufo-extractor-wheel;
+      };
 
       # One directory holding every font sparkles bundles, plus the `.charset`
       # coverage sidecars `FontSet`'s fontconfig-free path reads.

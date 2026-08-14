@@ -13,7 +13,7 @@
 #
 # x86_64-linux only (that is where the `ldc-wasm` toolchain is provided). The
 # result is copied to docs/public/spk-table.wasm (see the docs page).
-{ lib, ... }:
+{ inputs, lib, ... }:
 {
   perSystem =
     { config, system, ... }:
@@ -43,8 +43,7 @@
         dubImports = [
           {
             name = "expected";
-            version = "0.4.1";
-            sha256 = "1ahr7gbjl6dgw1qs9x5yzcwhbzfg7ygdlsm9gw4hgmm1xrfcpri0";
+            src = inputs.dub-expected;
           }
         ];
         description = "sparkles.ui.components.table (drawTable) compiled to wasm (playground backend)";

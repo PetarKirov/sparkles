@@ -70,10 +70,7 @@
       ldcWindowsLibs = pkgs.stdenvNoCC.mkDerivation {
         pname = "ldc-windows-x64-libs";
         version = ldcVersion;
-        src = pkgs.fetchurl {
-          url = "https://github.com/ldc-developers/ldc/releases/download/v${ldcVersion}/ldc2-${ldcVersion}-windows-x64.7z";
-          hash = "sha256-HbEeXu7RAjZynUXN6GH7UZfRzHFrQYZgD8p/xrtIyBA=";
-        };
+        src = inputs.ldc-windows-x64;
         nativeBuildInputs = [ pkgs.p7zip ];
         unpackPhase = "7z x $src";
         installPhase = ''
