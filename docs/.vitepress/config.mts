@@ -670,6 +670,14 @@ export default withMermaid(
                 { text: 'GUI (--gui)', link: '/specs/hue/gui' },
                 { text: 'TUI (planned)', link: '/specs/hue/tui' },
                 {
+                  text: 'Document chrome (design)',
+                  link: '/specs/hue/chrome',
+                },
+                {
+                  text: 'Pager & streaming (design)',
+                  link: '/specs/hue/pager',
+                },
+                {
                   text: 'Android (NativeActivity APK)',
                   link: '/specs/hue/android',
                 },
