@@ -70,15 +70,18 @@
         buildPhase = ''
           runHook preBuild
 
-          # ANDROID_PLATFORM is 23, not minSdk (21): bionic hides sigwaitinfo
-          # below API 23 (__INTRODUCED_IN), and libkqueue's monitor thread
-          # waits on it. The practical floor moves to Android 6.0 — already
-          # implied by the 16 KB-page targetSdk-35 posture (pageAlignFlags).
+          # This library is why the repo-wide floor cannot go below 23: bionic
+          # hides sigwaitinfo before then (__INTRODUCED_IN) and libkqueue's
+          # monitor thread waits on it. ndk.minSdk is higher still (26, for the
+          # Skia/Graphite/Vulkan backend), so derive the platform from it
+          # rather than pinning a literal — a literal 23 here silently
+          # reintroduces the skew that let the APK declare a floor it could not
+          # actually run on.
           ${lib.concatMapStrings (t: ''
             cmake -S . -B build-${t.abi} \
               -DCMAKE_TOOLCHAIN_FILE=${ndk.ndkRoot}/build/cmake/android.toolchain.cmake \
               -DANDROID_ABI=${t.abi} \
-              -DANDROID_PLATFORM=android-23 \
+              -DANDROID_PLATFORM=android-${ndk.minSdk} \
               -DCMAKE_BUILD_TYPE=Release \
               -DSTATIC_KQUEUE=ON \
               -DENABLE_TESTING=OFF
