@@ -49,6 +49,11 @@ jobs:
     # is the gate between "CI can build this" and "CI can sign as me".
     environment: fdroid
 
+    # `contents: write` to attach the APK and its manifest to the Release;
+    # nothing else is needed.
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -119,6 +124,23 @@ jobs:
             --tag "$TAG" \
             --stage "$STAGE" \
             --workdir "$RUNNER_TEMP/fdroid/work"
+
+      # The immutable origin. The channel copy in object storage is mutable by
+      # design — `fdroid update` rewrites the index on every release, and
+      # retention eventually moves an APK into archive/ — so the bytes users
+      # installed stay retrievable from the Release, matched by the manifest's
+      # digest. `--clobber` is deliberately absent: re-running must not replace
+      # a published asset.
+      - name: Attach the APK and manifest to the Release
+        if: github.event_name == 'release' || inputs.stage == 'deploy'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" \
+            "$RUNNER_TEMP"/fdroid/work/repo/dev.sparkles.hue_*.apk \
+            "$RUNNER_TEMP/fdroid/work/release-manifest.json"
 
       # On a rehearsal the generated repository is the artifact worth reading:
       # it carries the index, the fingerprint, and the install link.

@@ -1,8 +1,10 @@
 # hue on F-Droid — the release contract
 
-_**Status:** in progress — the build-side requirements (`FDR1`–`FDR5`) are being
-implemented; publication (`FDR6`–`FDR10`) waits on the out-of-tree signing keys
-and the object-storage bucket. · **Date:** 2026-08-14 · **Scope:** distribution
+_**Status:** implemented, unpublished. The whole pipeline is built and was run
+end to end — build → sign → pull → index → deploy, twice, with an rclone local
+remote standing in for the bucket — but nothing is served yet: it waits on two
+generated keys and a public URL (see § Before the first publish). · **Date:**
+2026-08-14 · **Scope:** distribution
 of the Android port — `nix/packages/android/{build-apk,icon,hue,ndk}.nix`,
 `apps/hue/android/{AndroidManifest.xml,icon/}`, `apps/hue/fdroid/`,
 `apps/fdroid`, `.github/workflows/fdroid.yml`._
@@ -135,18 +137,18 @@ Losing the two keys has very different costs, which is why they are separate:
 
 ## Requirements
 
-| ID    | Requirement                                                                                                                                                                                                                            | Status      | Where                                           |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------- |
-| FDR1  | `buildAndroidApk` has exactly three states — signed-debug, signed-release (external key), unsigned — and the combinations that would leak a debug-signed or accidentally-unsigned artifact are **eval errors**, not conventions        | in progress | `build-apk.nix` `sign` + four assertions        |
-| FDR2  | No signing key or passphrase reaches `/nix/store` or a process's argv (`apksigner --ks-pass env:`, never `pass:`; `/proc` is world-readable)                                                                                           | in progress | `build-apk.nix`, `apps/fdroid/…/keystore.d`     |
-| FDR3  | The APK carries a launcher icon at every density, rasterized deterministically from **one** committed SVG; the F-Droid listing icon (512×512) comes from the same source                                                               | in progress | `icon.nix`, `AndroidManifest.xml`               |
-| FDR4  | The declared minSdk equals the real floor. Set by the Skia/Graphite/Vulkan backend (26), above libkqueue's independent ≥23 (`sigwaitinfo`); the previously declared 21 installed on devices that could not load `libhue.so`            | done        | `ndk.nix`, `libkqueue.nix`                      |
-| FDR5  | `versionName`/`versionCode` derive from the tag through `sparkles:versions` (`Tiny.orderKey`), with the signed-int32 and no-prerelease guards enforced before a build starts                                                           | in progress | `mkHueApk`, `apps/fdroid/…/plan.d`              |
-| FDR6  | The published APK's signing certificate is **pinned** in metadata (`AllowedAPKSigningKeys`), so a swapped CI secret cannot publish under this application id                                                                           | planned     | `apps/hue/fdroid/metadata/dev.sparkles.hue.yml` |
-| FDR7  | Publication is idempotent and never replaces published bytes: re-running may fill a missing asset, but a differing digest for an existing `versionCode` fails closed                                                                   | planned     | `apps/fdroid/…/plan.d`, `deploy.d`              |
-| FDR8  | A release manifest — filename, size, SHA-256, tag, commit, signing status — is generated from the actual bytes **after** signing, and the signed APK is attached to the GitHub Release as the immutable origin before the channel copy | planned     | `apps/fdroid/…/plan.d`, `fdroid.yml`            |
-| FDR9  | The workflow has a non-publishing path: `workflow_dispatch` defaults to a dry run that builds, signs, and indexes into an artifact without deploying, and forks never see the secrets                                                  | planned     | `.github/workflows/fdroid.yml`                  |
-| FDR10 | The install path is documented and trust-anchored: repository URL, SHA-256 fingerprint, and QR, published in the README and the docs site                                                                                              | planned     | `README.md`, docs                               |
+| ID    | Requirement                                                                                                                                                                                                                            | Status                                          | Where                                           |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| FDR1  | `buildAndroidApk` has exactly three states — signed-debug, signed-release (external key), unsigned — and the combinations that would leak a debug-signed or accidentally-unsigned artifact are **eval errors**, not conventions        | full                                            | `build-apk.nix` `sign` + four assertions        |
+| FDR2  | No signing key or passphrase reaches `/nix/store` or a process's argv (`apksigner --ks-pass env:`, never `pass:`; `/proc` is world-readable)                                                                                           | full                                            | `build-apk.nix`, `apps/fdroid/…/keystore.d`     |
+| FDR3  | The APK carries a launcher icon at every density, rasterized deterministically from **one** committed SVG; the F-Droid listing icon (512×512) comes from the same source                                                               | full (placeholder art)                          | `icon.nix`, `AndroidManifest.xml`               |
+| FDR4  | The declared minSdk equals the real floor. Set by the Skia/Graphite/Vulkan backend (26), above libkqueue's independent ≥23 (`sigwaitinfo`); the previously declared 21 installed on devices that could not load `libhue.so`            | full                                            | `ndk.nix`, `libkqueue.nix`                      |
+| FDR5  | `versionName`/`versionCode` derive from the tag through `sparkles:versions` (`Tiny.orderKey`), with the signed-int32 and no-prerelease guards enforced before a build starts                                                           | full                                            | `mkHueApk`, `apps/fdroid/…/plan.d`              |
+| FDR6  | The published APK's signing certificate is **pinned** in metadata (`AllowedAPKSigningKeys`), so a swapped CI secret cannot publish under this application id                                                                           | plumbed; pin empty until the release key exists | `apps/hue/fdroid/metadata/dev.sparkles.hue.yml` |
+| FDR7  | Publication is idempotent and never replaces published bytes: re-running may fill a missing asset, but a differing digest for an existing `versionCode` fails closed                                                                   | full                                            | `apps/fdroid/…/plan.d`, `deploy.d`              |
+| FDR8  | A release manifest — filename, size, SHA-256, tag, commit, signing status — is generated from the actual bytes **after** signing, and the signed APK is attached to the GitHub Release as the immutable origin before the channel copy | full                                            | `apps/fdroid/…/plan.d`, `fdroid.yml`            |
+| FDR9  | The workflow has a non-publishing path: `workflow_dispatch` defaults to a dry run that builds, signs, and indexes into an artifact without deploying, and forks never see the secrets                                                  | full (untriggered)                              | `.github/workflows/fdroid.yml`                  |
+| FDR10 | The install path is documented and trust-anchored: repository URL, SHA-256 fingerprint, and QR, published in the README and the docs site                                                                                              | blocked on the repository URL                   | `README.md`, docs                               |
 
 Deliberately **not** requirements here: SBOM and provenance attestation
 (Milestone 2 of the packaging roadmap, and out of scope for one channel), per-ABI
@@ -196,6 +198,36 @@ carries the app under both categories, the licence, every URL, the fastlane
 summary and icon, `minSdkVersion 26`, both ABIs — and, as intended, an empty
 permission list and **no** `features` entry, because the `<uses-feature>` in the
 manifest carries no `android:name` for fdroidserver to record.
+
+## Before the first publish
+
+Three things exist outside this repository and have to be created once. Until
+they are, the pipeline runs and stops at `--stage index`.
+
+1. **Two keystores**, generated off any CI machine and backed up offline. They
+   are not interchangeable, and the consequences of losing them are not
+   comparable:
+
+   ```console
+   $ keytool -genkeypair -storetype PKCS12 -keyalg RSA -keysize 4096 -validity 10000 \
+       -keystore hue-release.p12 -alias hue-release  -dname 'CN=…'
+   $ keytool -genkeypair -storetype PKCS12 -keyalg RSA -keysize 4096 -validity 10000 \
+       -keystore fdroid-index.p12 -alias sparkles-index -dname 'CN=…'
+   ```
+
+   Then pin the APK certificate in
+   `apps/hue/fdroid/metadata/dev.sparkles.hue.yml` (`FDR6`) — quoted:
+
+   ```console
+   $ apksigner verify --print-certs <a signed apk> | grep 'SHA-256 digest'
+   ```
+
+2. **An object-storage bucket** with an S3-compatible endpoint, and an
+   access-key pair scoped to it.
+
+3. **A public URL** ending in `/repo`. A custom domain is worth having: it puts
+   a cache in front of a ~64 MB download, which matters when several people
+   update at once.
 
 ## Credentials
 
