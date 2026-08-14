@@ -7,14 +7,15 @@ delivery plan, see [PLAN.md](./PLAN.md); for the policy the tool encodes, see
 
 ## 1. Overview
 
-`release` automates the middle of the sparkles release process. It scans git
-tags as SemVer, summarizes the commits since the latest one, suggests a SemVer
-bump from the conventional commits, gathers the release notes (`$EDITOR` or a
-CLI LLM agent), and carries the release as far as `--stage` allows: a local
-annotated tag (default), a pushed tag, a draft GitHub release, or a published
-one.
+`release` automates the sparkles release process end to end. It scans git tags
+as SemVer, summarizes the commits since the latest one, suggests a SemVer bump
+from the conventional commits, gathers the release notes (`$EDITOR` or a CLI
+LLM agent), and carries the release as far as `--stage` allows: a local
+annotated tag (default), a pushed tag, a draft GitHub release, a published one,
+or — last — the app channels.
 
-The tool has two modes:
+The tool has two modes, plus the subcommands (§3.1) that act on a tag which
+already exists:
 
 - **Classic mode** (default) — one release: latest tag → `HEAD`, one bump, one
   annotated tag (§5).
@@ -45,22 +46,23 @@ Release plan (v0.4.0 → v0.7.0, 416 commits)
 | Source root     | `apps/release/src/`                  |
 | Entry point     | `src/app.d` (`sparkles.release.app`) |
 
-| Module                          | Contents                                                                           |
-| ------------------------------- | ---------------------------------------------------------------------------------- |
-| `sparkles.release.app`          | CLI surface (§3), orchestration of both modes, all terminal UI                     |
-| `sparkles.release.git`          | Every `git` invocation, returning parsed D data; pure string→struct parsers        |
-| `sparkles.release.conventional` | Conventional-commit subject/body parsing (`type(scope)!: description`)             |
-| `sparkles.release.bump`         | `BumpKind`, the bump policy (§4), `applyBump`                                      |
-| `sparkles.release.stats`        | `Commit` and stats types; pure tallies feeding the policy and the UI               |
-| `sparkles.release.stages`       | The cumulative `--stage` vocabulary (§5.4)                                         |
-| `sparkles.release.agents`       | CLI LLM-agent registry (PATH-filtered), one-shot invocation, prompt builders       |
-| `sparkles.release.notes`        | `$EDITOR` seeding, comment stripping (§8)                                          |
-| `sparkles.release.preflight`    | Pre-tag gating checks (clean tree, branch, `ci` tests)                             |
-| `sparkles.release.pr`           | Commit→PR association via the GitHub GraphQL API (§6)                              |
-| `sparkles.release.segment`      | Segmentation-plan parsing, validation, bump reconciliation, version chaining (§7)  |
-| `sparkles.release.artifacts`    | Best-effort run-artifact persistence under `.result/` (§9)                         |
-| `sparkles.release.json_utils`   | The string↔typed JSON boundary: `Result`-wrapped `parseJSON` + wired decode/encode |
-| `sparkles.release.result`       | `Result!T = Expected!(T, string)` — the IO-layer error channel (§10)               |
+| Module                          | Contents                                                                                                                            |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `sparkles.release.app`          | CLI surface (§3), orchestration of both modes, all terminal UI                                                                      |
+| `sparkles.release.git`          | Every `git` invocation, returning parsed D data; pure string→struct parsers                                                         |
+| `sparkles.release.conventional` | Conventional-commit subject/body parsing (`type(scope)!: description`)                                                              |
+| `sparkles.release.bump`         | `BumpKind`, the bump policy (§4), `applyBump`                                                                                       |
+| `sparkles.release.stats`        | `Commit` and stats types; pure tallies feeding the policy and the UI                                                                |
+| `sparkles.release.stages`       | The cumulative `--stage` vocabulary (§5.4)                                                                                          |
+| `sparkles.release.agents`       | CLI LLM-agent registry (PATH-filtered), one-shot invocation, prompt builders                                                        |
+| `sparkles.release.notes`        | `$EDITOR` seeding, comment stripping (§8)                                                                                           |
+| `sparkles.release.preflight`    | Pre-tag gating checks (clean tree, branch, `ci` tests)                                                                              |
+| `sparkles.release.pr`           | Commit→PR association via the GitHub GraphQL API (§6)                                                                               |
+| `sparkles.release.segment`      | Segmentation-plan parsing, validation, bump reconciliation, version chaining (§7)                                                   |
+| `sparkles.release.artifacts`    | Best-effort run-artifact persistence under `.result/` (§9)                                                                          |
+| `sparkles.release.json_utils`   | The string↔typed JSON boundary: `Result`-wrapped `parseJSON` + wired decode/encode                                                  |
+| `sparkles.release.result`       | `Result!T = Expected!(T, string)` — the IO-layer error channel (§10)                                                                |
+| `sparkles.release.store.*`      | the app channels (§3.1): the tag→version mapping, artifact staging and signing, F-Droid index generation, and the Play `edits` flow |
 
 Pure logic (parsers, validation, policy) is separated from process execution:
 every string→struct transformation is a standalone `@safe` function unit-tested
@@ -74,7 +76,13 @@ binary. JSON (de)serialization uses `sparkles:wired` (`toJSON`/`fromJSON` over
 release [-s|--stage <stage>] [-a|--auto] [-g|--agent <key>]
         [-b|--bump major|minor|patch] [-n|--notes manual|agent]
         [-S|--split] [-N|--no-verify] [-L|--log-level <level>]
+        [<command>]
 ```
+
+`release` is a command group whose **root is itself runnable** (`isDefault`),
+so the bare form above is the cut-a-release flow it has always been. The
+subcommands exist because that flow is built to compute the _next_ version and
+so structurally cannot express operations on a tag that already exists.
 
 | Flag                | Values / default                                                                    | Meaning                                                                                                              |
 | ------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -94,6 +102,21 @@ Option conflicts (hard errors, before any work):
 - `--notes manual --auto` — manual notes need `$EDITOR`, `--auto` forbids it.
 
 `--notes manual` **is** valid in split mode: `$EDITOR` opens once per segment.
+
+### 3.1 Subcommands
+
+| Command                     | Does                                                                  |
+| --------------------------- | --------------------------------------------------------------------- |
+| `release version --tag <t>` | the `versionName`/`versionCode` a tag maps to (§4.1); touches nothing |
+| `release path --tag <t>`    | the store path the tag's app artifact resolves to — the CI handoff    |
+| `release publish --tag <t>` | sign and publish an existing tag's artifacts to the app channels      |
+
+`publish` carries its own cumulative `--stage` (`build`, `sign`, `pull`,
+`index`, `deploy`), a `--channels` selector (`fdroid`, `play`, `both`), and
+`--track` for Play. It refuses by default to build an artifact locally rather
+than substituting what CI built (`--require-cached`), and refuses to run inside
+a git checkout, because fdroidserver records the working directory's git state
+— including its untracked files — in the index it publishes.
 
 ## 4. Version policy
 
@@ -122,6 +145,21 @@ Option conflicts (hard errors, before any work):
 A pushed tag is immutable: code.dlang.org ingests any pushed `vX.Y.Z` tag on
 its own schedule, so **pushing the tag is the point of no return**, in both
 modes gated by the confirmation in §5.3.
+
+### 4.1 The app-channel version mapping
+
+Android orders builds by an integer `versionCode`, which is exactly what
+[`sparkles:versions`](../versions/SPEC.md) §3.2 calls an _order key_. The
+mapping is therefore composed from two shipped schemes rather than invented:
+`SemVer` parses the tag, and `Tiny.orderKey` packs `major:16 | minor:8 |
+patch:8`.
+
+Two bounds fall out of that composition rather than being asserted: `SemVer`
+caps `major` at 15 bits and `Tiny` caps `minor`/`patch` at 8, so the largest
+representable code is exactly `int.max` — Android's signed ceiling, reached and
+never passed. A tag that cannot be mapped (a prerelease, or `minor`/`patch`
+above 255) is refused **before** the tag is created when an app-channel stage
+is requested, and warned about otherwise.
 
 ## 5. Classic mode (single release)
 
@@ -167,11 +205,17 @@ Ordered, cumulative:
 | `push-tag`                | `git push origin <tag>`                                            |
 | `create-gh-release-draft` | `gh release create <tag> --draft --notes-from-tag`                 |
 | `publish-gh-release`      | `gh release edit <tag> --draft=false` (fires the release workflow) |
+| `publish-apps`            | sign and publish the app channels (F-Droid and Play)               |
 
-Execution renders all four rows up front as a live checklist; rows beyond the
-chosen stage are skipped with "beyond --stage". A failing stage stops the
-pipeline; a tag already created locally survives (the error names the retry
-command).
+Execution renders all rows up front as a live checklist; rows beyond the chosen
+stage are skipped with "beyond --stage". A failing stage stops the pipeline; a
+tag already created locally survives (the error names the retry command).
+
+`publish-apps` is last, and is one stage for both channels rather than one
+each: they are peers, and a linear ladder cannot express "these two, in no
+particular order". It only works where the signing tokens are — reaching it
+from CI is meant to fail — and the default stage remains `create-tag`, so
+nothing drifts into publishing an app by accident.
 
 ## 6. PR association (split mode)
 
