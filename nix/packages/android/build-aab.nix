@@ -47,6 +47,10 @@
           libs,
           assetsDir ? null,
           resDir ? null,
+          # A bundle is only ever a published artifact, so it always strips —
+          # see the note in build-apk.nix for why this is the artifact's
+          # property and not the library's.
+          stripLibs ? true,
           description ? "Android App Bundle",
         }:
         pkgs.stdenv.mkDerivation {
@@ -108,6 +112,7 @@
                 lib.concatStrings (
                   lib.mapAttrsToList (name: path: ''
                     install -Dm644 ${path} module/lib/${abi}/${name}
+                    ${lib.optionalString stripLibs "${config.legacyPackages.androidNdk.strip} --strip-unneeded module/lib/${abi}/${name}"}
                   '') sos
                 )
               ) libs

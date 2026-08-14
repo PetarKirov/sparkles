@@ -87,6 +87,20 @@ in
           resDir ? null,
           # Debug builds get android:debuggable="true"; release builds do not.
           debug ? true,
+          # Strip the native libraries.
+          #
+          # `libhue-android` is built with `dontStrip` so `ndk-stack` can
+          # symbolize a device tombstone against it, and the debug APK keeps
+          # those symbols for exactly that reason. A published APK has no such
+          # use: nobody symbolizes a user's crash from the store copy, and the
+          # symbols are a quarter of the download. Measured on arm64:
+          # libhue.so 24.1 MB → 13.6 MB, the whole native set 62.6 → 52.0 MB.
+          #
+          # Stripping HERE rather than in `libhue-android` keeps one build of
+          # the library — the unstripped store path stays available to
+          # `ndk-stack` — and keeps the choice a property of the artifact
+          # rather than of the code.
+          stripLibs ? !debug,
           # Whether NIX signs the result. There are exactly three reachable
           # states, and the assertions below make that literal:
           #
@@ -174,6 +188,7 @@ in
                 lib.concatStrings (
                   lib.mapAttrsToList (name: path: ''
                     install -Dm644 ${path} apk/lib/${abi}/${name}
+                    ${lib.optionalString stripLibs "${config.legacyPackages.androidNdk.strip} --strip-unneeded apk/lib/${abi}/${name}"}
                   '') sos
                 )
               ) libs
@@ -286,6 +301,7 @@ in
               versionName
               sign
               debug
+              stripLibs
               ;
             apkFileName = "${artifactName}.apk";
           };
