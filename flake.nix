@@ -162,6 +162,7 @@
         ./nix/packages/fonts.nix
         ./nix/packages/hue.nix
         ./nix/packages/libghostty-vt.nix
+        ./nix/packages/skia.nix
         ./nix/packages/text-wasm.nix
         ./nix/packages/table-wasm.nix
         ./nix/packages/tree-sitter-d.nix
