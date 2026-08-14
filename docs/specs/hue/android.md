@@ -137,3 +137,9 @@ SELinux-denied), relaunch, pull the PNG the same way.
   not carry it (and cannot be signed with the checked-in key).
 - The APK is bit-reproducible, but only for a fixed font input: the Maple Mono
   build is not itself reproducible (measured; see nix/packages/maple-mono).
+- Targeting API 36 makes edge-to-edge **mandatory** — Android 15 still honoured
+  `windowOptOutEdgeToEdgeEnforcement`, Android 16 ignores it — and nothing here
+  reads window insets, so the bottom toolbar is expected to sit under the
+  gesture navigation bar. Recorded as
+  [`HUE-O4`](./open-issues.md#hue-o4); it feeds the mobile UI redesign rather
+  than getting a per-surface fudge.

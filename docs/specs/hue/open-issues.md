@@ -52,3 +52,33 @@ The cause and fix belong to the shared window/input backend and also affect
 `apps/terminal`, so [`UI-O3`](../ui/open-issues.md#ui-o3) is the canonical
 technical record. Close this consumer issue when that backend issue is closed and
 hue's end-to-end drag-over-decoration case passes.
+
+## HUE-O4 — Android 16 enforces edge-to-edge, and the toolbar does not handle insets {#hue-o4}
+
+**Status:** open, latent — introduced by targeting API 36, not yet observed on a
+device. **Requirements:** [`AND6`](./android.md) (touch toolbar),
+[`FDR4`](./fdroid.md) (declared API levels). **Feeds:** the planned mobile UI
+redesign.
+
+Targeting API 36 opts hue into Android 16 enforcing edge-to-edge display. Android
+15 still honoured `windowOptOutEdgeToEdgeEnforcement`; Android 16 ignores it, so
+there is no way to decline. The app's surface now extends under the system bars.
+
+hue paints a five-segment toolbar along the bottom edge (`◀ thm`, `thm ▶`,
+`view`, `tree`, `ln №`, plus `copy` while a selection is live). Nothing in the
+GUI reads window insets, so on an Android 16 device with gesture navigation that
+row is expected to sit partly beneath the navigation bar — cosmetically wrong,
+and the hit targets harder or impossible to reach. The top edge has the same
+exposure wherever content runs under the status bar.
+
+This is deliberately **not** fixed by adding an inset fudge to the current
+toolbar. Insets are a layout input the toolkit does not model at all today: they
+belong beside the existing cell geometry as a safe-area the layout pass honours,
+so every Android surface (toolbar, tree pane, future chrome) gets them from one
+place rather than each hand-correcting. That is redesign-shaped work, which is
+why it is recorded here rather than patched.
+
+Close this issue when the toolkit carries a safe-area/inset concept through
+layout, hue's Android surfaces derive their placement from it, and the toolbar
+is confirmed reachable on an Android 16 device with gesture navigation — the
+emulator's default configuration included.
