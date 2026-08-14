@@ -448,6 +448,28 @@
           description = "hue — release APK, unsigned (signed outside nix for F-Droid)";
         };
 
+      # The Play channel's artifact. Same payload, bundle container: Play has
+      # required App Bundles for new apps since 2021, so it cannot take the APK.
+      legacyPackages.mkHueAab =
+        {
+          versionName,
+          versionCode,
+        }:
+        config.legacyPackages.buildAndroidAab {
+          pname = "hue";
+          inherit versionName versionCode;
+          manifest = ../../../apps/hue/android/AndroidManifest.xml;
+          resDir = "${config.packages.hue-icon}/res";
+          libs = apkLibs;
+          assetsDir = hueAssets;
+          description = "hue — release App Bundle, unsigned (signed outside nix for Play)";
+        };
+
+      packages.hue-aab-unsigned = config.legacyPackages.mkHueAab {
+        versionName = "0.0.0";
+        versionCode = 1;
+      };
+
       # The same artifact at the development stamp, so `nix build` and CI can
       # exercise the unsigned path without a tag. Never published: the
       # publisher always goes through mkHueApk with a real version.
