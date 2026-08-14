@@ -1,0 +1,148 @@
+name: F-Droid
+
+# Publishes hue to the self-hosted F-Droid repository. See
+# docs/specs/hue/fdroid.md for the release contract this implements.
+#
+# The pipeline itself lives in `apps/fdroid` (a D tool), not in this file:
+# everything below is credential handling and the choice of how far to go.
+on:
+  # A *published* Release, matching release.yml's stance that publication —
+  # not the tag push — is the point of no return. The tag alone is
+  # revocable; a published Release is the operator saying "ship it".
+  release:
+    types: [published]
+
+  # Rehearsal, and the recovery path when a publish half-failed.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (e.g. v0.4.0)
+        required: true
+        type: string
+      stage:
+        description: How far to go; cumulative
+        required: true
+        default: index
+        type: choice
+        options: [build, sign, pull, index, deploy]
+
+# NOT per-ref. There is exactly one mutable index, and two runs regenerating
+# it concurrently would each sync a tree that does not contain the other's
+# APK — the second to finish silently unpublishing the first.
+concurrency:
+  group: fdroid
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish hue
+    # Forks get no secrets and no bucket; failing loudly there is noise.
+    if: github.repository == 'PetarKirov/sparkles'
+    # x86_64-linux is the only host the NDK and SDK exist for.
+    runs-on: ubuntu-latest
+    # A cold cross closure (dual-ABI druntimes, raylib/tree-sitter/ghostty,
+    # every grammar, the Maple font build) is the same shape as
+    # nix-build-android's, plus a ~64 MB upload.
+    timeout-minutes: 90
+
+    # Holds the signing secrets. An environment can require a reviewer, which
+    # is the gate between "CI can build this" and "CI can sign as me".
+    environment: fdroid
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: true
+          # Share the Android job's cache key: this builds the same closure.
+          nix-cache-key: nix-${{ runner.os }}-nixandroid-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-${{ runner.os }}-nixandroid-
+            nix-${{ runner.os }}-
+
+      # Written under the runner's temp dir, never the workspace: the
+      # publisher refuses to run inside a git checkout (fdroidserver records
+      # the working tree's git state in repo/status/*.json), and a keystore in
+      # the workspace could be picked up by a later step.
+      - name: Materialize the signing keys
+        env:
+          APK_KEYSTORE_B64: ${{ secrets.HUE_RELEASE_KEYSTORE_B64 }}
+          INDEX_KEYSTORE_B64: ${{ secrets.FDROID_INDEX_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          install -d -m 700 "$RUNNER_TEMP/fdroid"
+          printf '%s' "$APK_KEYSTORE_B64"   | base64 -d > "$RUNNER_TEMP/fdroid/apk.p12"
+          printf '%s' "$INDEX_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/fdroid/index.p12"
+
+      - name: Publish
+        env:
+          # The tag: from the Release that triggered this, or the dispatch input.
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          STAGE: ${{ inputs.stage || 'deploy' }}
+
+          SPARKLES_FDROID_APK_KEYSTORE: ${{ runner.temp }}/fdroid/apk.p12
+          SPARKLES_FDROID_APK_KEY_ALIAS: ${{ vars.FDROID_APK_KEY_ALIAS }}
+          SPARKLES_FDROID_APK_STORE_PASS: ${{ secrets.HUE_RELEASE_KEYSTORE_PASS }}
+          SPARKLES_FDROID_APK_KEY_PASS: ${{ secrets.HUE_RELEASE_KEY_PASS }}
+
+          SPARKLES_FDROID_KEYSTORE: ${{ runner.temp }}/fdroid/index.p12
+          SPARKLES_FDROID_REPO_KEY_ALIAS: ${{ vars.FDROID_INDEX_KEY_ALIAS }}
+          SPARKLES_FDROID_KEYSTORE_PASS: ${{ secrets.FDROID_INDEX_KEYSTORE_PASS }}
+          SPARKLES_FDROID_KEY_PASS: ${{ secrets.FDROID_INDEX_KEY_PASS }}
+
+          SPARKLES_FDROID_REPO_URL: ${{ vars.FDROID_REPO_URL }}
+          SPARKLES_FDROID_BUCKET: ${{ vars.FDROID_BUCKET }}
+
+          # rclone's remote is defined entirely through the environment, so no
+          # credential file is ever written to disk.
+          RCLONE_CONFIG_SPARKLES_TYPE: s3
+          RCLONE_CONFIG_SPARKLES_PROVIDER: Cloudflare
+          RCLONE_CONFIG_SPARKLES_REGION: auto
+          RCLONE_CONFIG_SPARKLES_ENDPOINT: ${{ vars.FDROID_S3_ENDPOINT }}
+          RCLONE_CONFIG_SPARKLES_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_SPARKLES_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_SPARKLES_NO_CHECK_BUCKET: 'true'
+
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          ci/with-cachix.sh nix run .#fdroid-publish -- publish \
+            --tag "$TAG" \
+            --stage "$STAGE" \
+            --workdir "$RUNNER_TEMP/fdroid/work"
+
+      # On a rehearsal the generated repository is the artifact worth reading:
+      # it carries the index, the fingerprint, and the install link.
+      #
+      # Ordered BEFORE the shred, which deletes the whole directory this reads
+      # from. Only the index is uploaded: the APKs are ~64 MB each and already
+      # reachable from the Release, and the work directory also holds a copy of
+      # the index keystore.
+      - name: Upload the generated index
+        if: github.event_name == 'workflow_dispatch' && inputs.stage != 'deploy'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fdroid-index
+          path: |
+            ${{ runner.temp }}/fdroid/work/repo/index-v2.json
+            ${{ runner.temp }}/fdroid/work/repo/index.html
+          if-no-files-found: warn
+
+      # `if: always()` — a failed publish must not leave a decrypted key on a
+      # runner that other steps could still read. This covers three copies: the
+      # two materialized above, and the one the publisher places in its working
+      # directory for fdroidserver to sign the index with.
+      - name: Shred the signing keys
+        if: always()
+        run: |
+          find "$RUNNER_TEMP/fdroid" -name '*.p12' -exec shred -u {} + 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/fdroid"
