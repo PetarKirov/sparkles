@@ -292,6 +292,14 @@ Two measured facts shaped the bundle build:
 - **A dex-less bundle is accepted.** hue has `hasCode="false"` and no bytecode
   at all, which was the main risk in the whole Play path. bundletool 1.18.2
   builds it and generates installable splits from it.
+- **Release artifacts are stripped**, debug ones are not. `libhue-android` is
+  built unstripped so `ndk-stack` can symbolize a device tombstone against it,
+  and the debug APK keeps those symbols; nobody symbolizes a user's crash from
+  a store copy. Stripping is therefore a property of the artifact, decided in
+  the assemblers, not of the library. It saves less than the raw sizes suggest —
+  `libhue.so` goes 24.1 MB → 13.6 MB uncompressed, but both containers deflate
+  and debug symbols compress well, so the download saving is 7% (APK) and 5%
+  (per-device bundle).
 - **Native libraries must be stored compressed**, against bundletool's default.
   The default leaves them uncompressed so the loader can mmap them in place;
   these libraries compress unusually well, so per-device download for arm64
