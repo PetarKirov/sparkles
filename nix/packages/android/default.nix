@@ -11,6 +11,7 @@
 { lib, ... }:
 {
   imports = [
+    ./build-aab.nix
     ./build-apk.nix
     ./hello.nix
     ./hue.nix
@@ -53,7 +54,8 @@
       #     works", which is exactly the bisect you want when the emulator
       #     shows a black screen. Cheap once the closure is warm, and
       #     building it is what stops it rotting.
-      #   * `hue-apk-unsigned` — the artifact that actually gets published
+      #   * `hue-apk-unsigned` and `hue-aab-unsigned` — the artifacts that
+      #     actually get published
       #     (docs/specs/hue/fdroid.md). It shares the whole closure with
       #     `hue-apk` and differs only in aapt2's debug flag and the absent
       #     signature, so covering it costs one more aapt2+zipalign run and
@@ -62,6 +64,7 @@
         hue-apk = config.packages.hue-apk;
         hue-apk-repo = config.packages.hue-apk-repo;
         hue-apk-unsigned = config.packages.hue-apk-unsigned;
+        hue-aab-unsigned = config.packages.hue-aab-unsigned;
         hello-apk = config.packages.hello-apk;
       };
 
@@ -78,6 +81,7 @@
       legacyPackages.androidPackageNames = [
         "all-android"
         "hello-apk"
+        "hue-aab-unsigned"
         "hue-android-assets"
         "hue-apk"
         "hue-apk-repo"
