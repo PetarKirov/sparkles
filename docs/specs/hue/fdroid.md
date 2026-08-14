@@ -173,6 +173,30 @@ The pull-modify-push shape is not incidental: the deploy step is an `rclone
 sync`, which **deletes remote files absent locally**. Generating an index from
 an empty working directory would unpublish every previous version.
 
+### The working directory
+
+`fdroid` runs against a scratch tree assembled per publish, never against this
+checkout (`repo/status/*.json` records the working directory's git state,
+including its modified and untracked file lists). The layout below is what
+`fdroid update` was verified to accept:
+
+```text
+<workdir>/
+├── config.yml                  copied from apps/hue/fdroid/, with repo_url appended
+├── config/categories.yml       copied
+├── metadata/…                  copied, with CurrentVersion* rewritten
+├── icon.png                    the 512×512 repo icon — see the trap below
+├── keystore.p12                decoded from the CI secret, mode 600
+├── repo/dev.sparkles.hue_<versionCode>.apk
+└── archive/
+```
+
+Verified end to end against fdroidserver 2.4.2 with a real 64 MB APK: the index
+carries the app under both categories, the licence, every URL, the fastlane
+summary and icon, `minSdkVersion 26`, both ABIs — and, as intended, an empty
+permission list and **no** `features` entry, because the `<uses-feature>` in the
+manifest carries no `android:name` for fdroidserver to record.
+
 ## Traps
 
 - **`resources.arsc` must be stored, not deflated.** The APK had no resource
@@ -180,6 +204,25 @@ an empty working directory would unpublish every previous version.
   Android 11+ refuse the install unless it is uncompressed and 4-byte aligned.
   aapt2 only stores it by default at minSdk ≥ 30, so the link needs `-0 arsc`.
   Assert it with `unzip -v` — nothing else in the build would catch this.
+- **`repo_url` cannot come from `{env:}`.** `common.read_config` validates it
+  eagerly with `config['repo_url'].endswith('/repo')`, while a `{env: …}` value
+  is still a dict at that point — the failure is a bare
+  `AttributeError: 'dict' object has no attribute 'endswith'`. Every other
+  string key, passphrases included, resolves lazily and is fine. `archive_url`
+  needs no entry at all: it defaults to `repo_url[:-4] + 'archive'`.
+- **`repo_icon` resolves against the working directory, not `repo/icons/`.**
+  The warning reads `repo_icon "repo/icons/icon.png" does not exist`, but the
+  code checks `os.path.exists(repo_icon)` — a bare relative path — and _copies_
+  it into `repo/icons/`. Putting the file where the message names it silently
+  gets you a generated placeholder instead.
+- **A signing-key mismatch is a warning, not an error.** With
+  `AllowedAPKSigningKeys` set, an APK signed by anything else is dropped and
+  `fdroid update` still exits 0 — leaving a perfectly valid, signed index with
+  zero packages in it. Assert the app is present in the result; the exit code
+  will not tell you.
+- **Quote the fingerprint.** A 64-character digest of only decimal digits is
+  parsed by YAML as an integer, and the resulting error claims `'0'` failed the
+  `^[a-fA-F0-9]{64}$` check.
 - **apksigner writes a v1 signature even when nothing verifies it.** At minSdk
   26 `apksigner verify` reports `v1 scheme (JAR signing): false` — and the APK
   still contains `META-INF/MANIFEST.MF`, `*.SF` and `*.RSA`, because the _signing_

@@ -1,0 +1,57 @@
+# App metadata for the self-hosted repository. See docs/specs/hue/fdroid.md.
+#
+# There is no `Builds:` section and no `RepoType:`: those exist for apps that
+# fdroidserver compiles itself. This repository indexes a prebuilt APK — Nix
+# builds it, `fdroid-publish` signs it, and `fdroid update` only reads it.
+#
+# Localized text lives in metadata/dev.sparkles.hue/en-US/ (fastlane layout) and
+# OVERRIDES anything set here, so Summary/Description are omitted rather than
+# duplicated where they would silently lose.
+
+Categories:
+  - Development
+  - Reading
+
+License: BSL-1.0
+AuthorName: Petar Kirov
+AuthorEmail: petar.p.kirov@gmail.com
+WebSite: https://sparkles-docs.pages.dev/apps/hue/
+SourceCode: https://github.com/PetarKirov/sparkles
+IssueTracker: https://github.com/PetarKirov/sparkles/issues
+Changelog: https://github.com/PetarKirov/sparkles/releases
+
+Name: hue
+
+# The certificate pin (FDR6). `fdroid update` drops any APK whose signer is not
+# listed — before indexing it — so a swapped or compromised CI secret cannot
+# publish under this application id.
+#
+# Value is the lowercase SHA-256 of the DER certificate:
+#     apksigner verify --print-certs <apk> | grep 'SHA-256 digest'
+#
+# QUOTE IT. A digest that happens to be all decimal digits is parsed by YAML as
+# an integer, and fdroidserver then rejects it against `^[a-fA-F0-9]{64}$` with
+# the unhelpful message that '0' is not valid.
+#
+# A mismatch is a WARNING, not an error: `fdroid update` exits 0 and simply
+# produces an index with no packages in it. `fdroid-publish` therefore asserts
+# the app is present in the generated index rather than trusting the exit code.
+#
+# Filled in when the release key is generated; until then no key is listed and
+# `fdroid update` accepts whatever it is given.
+# AllowedAPKSigningKeys:
+#   - "0000000000000000000000000000000000000000000000000000000000000000"
+
+# Keep 4 versions in repo/, move the rest to archive/ (mirrors archive_older).
+ArchivePolicy: 3
+
+# `fdroid checkupdates` has nothing to scan here — releases are pushed by CI
+# from a tag, not discovered — so say so rather than leaving it implied.
+UpdateCheckMode: Static
+AutoUpdateMode: None
+
+# The suggested version. `fdroid update` uses CurrentVersionCode to pick which
+# build the client offers, and to select the fastlane changelog
+# (changelogs/<code>.txt). `fdroid-publish` rewrites both from the release tag.
+CurrentVersion: 0.0.0
+CurrentVersionCode: 0

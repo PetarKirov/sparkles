@@ -1,0 +1,8 @@
+# A self-hosted F-Droid repository defines its own categories — there is no
+# fixed vocabulary to conform to. These two are the names f-droid.org uses for
+# the same kinds of app, so the listing reads familiarly to anyone who arrives
+# from there.
+Development:
+  name: Development
+Reading:
+  name: Reading

@@ -1,0 +1,4 @@
+First published build.
+
+Syntax-highlighted viewing for 27 languages, markdown preview, ~40 live-switchable
+themes, touch scrolling and selection, and no permissions or network access.
