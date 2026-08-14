@@ -12,31 +12,81 @@ steps in.
 module sparkles.fdroid.tools;
 
 import sparkles.core_cli.process_utils : CapturedResult, isInPath, runCaptured;
+import sparkles.fdroid.stage : Stage;
 
 @safe:
 
-/// Programs a full run needs, with what each is for.
-private static immutable string[2][] requiredTools = [
-    ["nix", "builds the unsigned release APK"],
-    ["apksigner", "signs it, and reads back the certificate"],
-    ["fdroid", "generates and signs the repository index"],
+/// A program the pipeline needs, and the earliest stage that needs it.
+private struct RequiredTool
+{
+    string name;
+    Stage from;
+    string why;
+}
+
+/// Gated by stage for the same reason the environment contract is: in the
+/// split model CI runs only `--stage build`, on a runner that has nix and
+/// nothing else. Demanding fdroidserver there would fail a job that never
+/// touches it.
+private static immutable RequiredTool[] requiredTools = [
+    RequiredTool("nix", Stage.build, "builds the unsigned release APK"),
+    RequiredTool("apksigner", Stage.sign, "signs it, and reads back the certificate"),
+    RequiredTool("rclone", Stage.pull, "syncs the repository to object storage"),
+    RequiredTool("fdroid", Stage.index, "generates and signs the repository index"),
     // fdroidserver shells out to all three; the nixpkgs fdroidserver package
     // wraps only apksigner onto PATH, so a JDK has to be supplied separately.
-    ["keytool", "required unconditionally by fdroid update (JDK)"],
-    ["jarsigner", "signs index-v1.jar and index.jar (JDK)"],
-    ["jar", "builds the v0 index (JDK)"],
-    ["rclone", "syncs the repository to object storage"],
+    RequiredTool("keytool", Stage.index, "required unconditionally by fdroid update (JDK)"),
+    RequiredTool("jarsigner", Stage.index, "signs index-v1.jar and index.jar (JDK)"),
+    RequiredTool("jar", Stage.index, "builds the v0 index (JDK)"),
 ];
 
-/// Names of the required programs not found on `PATH`.
-string[2][] missingTools()
+/// Names of the programs `stage` needs that are not on `PATH`.
+string[2][] missingTools(Stage stage)
 {
     string[2][] missing;
     foreach (t; requiredTools)
-        if (!isInPath(t[0]))
-            missing ~= t;
+        if (stage >= t.from && !isInPath(t.name))
+            missing ~= [t.name, t.why];
     return missing;
 }
+
+/// The nix expression selecting the versioned unsigned APK.
+///
+/// `--impure` with an explicit expression, because the version is an input the
+/// flake cannot obtain: the tag is the only place it lives and nix cannot read
+/// one without import-from-derivation. The value comes from the release event.
+private string apkExpr(string flakeRef, string versionName, uint versionCode)
+{
+    import std.conv : text;
+
+    return text(
+        "let f = builtins.getFlake \"", flakeRef, "\"; in ",
+        "f.legacyPackages.${builtins.currentSystem}.mkHueApk { ",
+        "versionName = \"", versionName, "\"; ",
+        "versionCode = ", versionCode, "; }");
+}
+
+/// Evaluates the store path the APK build *would* produce, without building it.
+///
+/// This is the hinge of the split model: CI builds this exact path and pushes
+/// it to the binary cache, and the signing machine substitutes it instead of
+/// repeating a 90-minute cross build. Printing it also gives a human something
+/// to compare against CI's job summary before signing.
+CapturedResult evalApkPath(string flakeRef, string versionName, uint versionCode) =>
+    runCaptured([
+        "nix", "eval", "--impure", "--raw",
+        // Parenthesized: in nix, attribute selection binds tighter than
+        // function application, so `f { … }.outPath` means `f ({ … }.outPath)`.
+        "--expr", "(" ~ apkExpr(flakeRef, versionName, versionCode) ~ ").outPath",
+    ]);
+
+/// Whether a store path is already local.
+CapturedResult queryLocal(string storePath) =>
+    runCaptured(["nix", "path-info", storePath]);
+
+/// Whether a store path can be fetched from `substituter`.
+CapturedResult querySubstituter(string substituter, string storePath) =>
+    runCaptured(["nix", "path-info", "--store", substituter, storePath]);
 
 /// Builds the unsigned release APK at a given version, returning its path.
 ///
@@ -44,21 +94,11 @@ string[2][] missingTools()
 /// flake cannot obtain: the tag is the only place it lives and nix cannot read
 /// one without import-from-derivation. The value comes from the release event,
 /// and is recorded in the run's output.
-CapturedResult buildApk(string flakeRef, string versionName, uint versionCode)
-{
-    import std.conv : text;
-
-    const expr = text(
-        "let f = builtins.getFlake \"", flakeRef, "\"; in ",
-        "f.legacyPackages.${builtins.currentSystem}.mkHueApk { ",
-        "versionName = \"", versionName, "\"; ",
-        "versionCode = ", versionCode, "; }");
-
-    return runCaptured([
+CapturedResult buildApk(string flakeRef, string versionName, uint versionCode) =>
+    runCaptured([
         "nix", "build", "--impure", "--no-link", "--print-out-paths",
-        "--print-build-logs", "--expr", expr,
+        "--print-build-logs", "--expr", apkExpr(flakeRef, versionName, versionCode),
     ]);
-}
 
 /// Builds the icon resource derivation, returning its store path.
 ///
@@ -158,12 +198,25 @@ CapturedResult pullSection(string remote, string bucket, string section, string 
         "a literal passphrase in argv would be world-readable via /proc");
 }
 
-@("fdroid.tools.everyRequiredToolIsExplained")
+@("fdroid.tools.requirementsGrowWithTheStage")
 @safe unittest
 {
     foreach (t; requiredTools)
     {
-        assert(t[0].length);
-        assert(t[1].length, t[0]);
+        assert(t.name.length);
+        assert(t.why.length, t.name);
     }
+
+    // A build-only run (what CI does in the split model) must not demand the
+    // publishing toolchain.
+    foreach (t; requiredTools)
+        if (t.from == Stage.build)
+            assert(t.name == "nix");
+
+    // …and a full run must demand all of it.
+    size_t atDeploy;
+    foreach (t; requiredTools)
+        if (Stage.deploy >= t.from)
+            atDeploy++;
+    assert(atDeploy == requiredTools.length);
 }
