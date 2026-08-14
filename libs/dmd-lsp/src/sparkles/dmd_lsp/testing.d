@@ -215,3 +215,47 @@ void checkTip(AnalyzedModule m, uint line, uint col, string expected,
     checkErrors(src, ["cannot use `throw` statements with `-betterC`"],
         dflags: ["-betterC"]);
 }
+
+@("dmd_lsp.testing.importCResolvesIncludedHeaders")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.conv : text;
+    import std.exception : collectException;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    import sparkles.dmd_lsp.api : Analyzer, AnalyzerConfig, DiagKind;
+
+    const root = tempDir.buildPath("sparkles-dmd-lsp-importc-" ~ thisProcessID.text);
+    const include = root.buildPath("include");
+    mkdirRecurse(include);
+    scope (exit)
+        collectException(rmdirRecurse(root));
+
+    // The whole point in one file pair: nothing the sample needs is visible
+    // without running the preprocessor, and the header is reachable only
+    // through a `-P-I` switch — the spelling a dub `libs` entry arrives as
+    // (`PRJ18`).
+    write(include.buildPath("probe_header.h"),
+        "typedef int probe_answer_t;\n#define PROBE_ANSWER 42\n");
+    write(root.buildPath("cprobe.c"),
+        "#include <probe_header.h>\nprobe_answer_t probe_value(void);\n");
+
+    auto config = analyzerConfigForTest(["-P-I" ~ include]); // skips if unusable
+    config.importPaths = root ~ AnalyzerConfig().effectiveImportPaths;
+
+    auto analyzer = Analyzer(config);
+    auto result = analyzer.analyze("test.d", "import cprobe;\n"
+        ~ "static assert(PROBE_ANSWER == 42);\n"
+        ~ "probe_answer_t answer;\n");
+
+    string[] errors;
+    foreach (ref d; result.diagnostics)
+        if (d.kind == DiagKind.error)
+            errors ~= d.message;
+    assert(!errors.canFind!(e => e.canFind("#include")),
+        text("the C preprocessor did not run: ", errors));
+    assert(errors.length == 0, errors.text);
+}
