@@ -5,13 +5,20 @@ Dub-project context for real-world source files (spec `PRJ*`,
 `AnalyzerConfig` says $(B how) to analyze a buffer; for a file that belongs to
 a real project the answer lives in that project's build recipe, not in the
 file. This module derives it: walk up from the file to the nearest
-`dub.sdl`/`dub.json`, ask `dub describe` for the exact build settings of the
-selected configuration and build type, and translate the compiler-formatted
-flags back into the analyzer's own knobs — `-I` to import paths, `-J` to
-string-import paths, `-version=`/`-d-version=` to version identifiers, and so
-on. Analyzing `libs/dmd-lsp` itself is the motivating case: its sources only
-make sense with `LanguageServer`, `NoBackend`, `MARS` and the frontend's own
-`-I`/`-J` paths, all of which dub already knows.
+`dub.sdl`/`dub.json` (or stop at the file itself, when it is a single-file
+package carrying its own recipe — `PRJ17`), ask `dub describe` for the exact
+build settings of the selected configuration and build type, and translate the
+compiler-formatted flags back into the analyzer's own knobs — `-I` to import
+paths, `-J` to string-import paths, `-version=`/`-d-version=` to version
+identifiers, and so on. Analyzing `libs/dmd-lsp` itself is the motivating case:
+its sources only make sense with `LanguageServer`, `NoBackend`, `MARS` and the
+frontend's own `-I`/`-J` paths, all of which dub already knows.
+
+One setting dub knows but does not $(I report): a `libs` entry names a
+pkg-config package, and the `-P-I…` preprocessor flags that make its headers
+reachable are produced by dub's generator at build time, never by `describe`.
+An ImportC project is unanalyzable without them, so the same lookup is redone
+here (`PRJ18`).
 
 Results are cached per project (`PRJ8`): discovery costs one `dub describe`
 (half a second for a project with a git dependency), which a viewer should pay
@@ -47,7 +54,8 @@ struct DubProject
     /// Directory holding the recipe; empty when no project encloses the file.
     string root;
 
-    /// Full path of the recipe (`dub.sdl` or `dub.json`).
+    /// Full path of the recipe: a `dub.sdl`/`dub.json`, or the `.d` file
+    /// itself when it is a single-file package (`PRJ17`).
     string recipe;
 
     /// The query that produced `analyzer`.
@@ -68,6 +76,15 @@ struct DubProject
 
     /// A recipe was found: the file is inside a dub project.
     bool found() const @safe pure nothrow @nogc => recipe.length != 0;
+
+    /// The recipe is the analyzed file's own embedded one (`PRJ17`), so dub is
+    /// asked with `--single` and none of the multi-package fallbacks apply.
+    bool singleFile() const @safe pure nothrow
+    {
+        import std.algorithm.searching : endsWith;
+
+        return recipe.endsWith(".d");
+    }
 
     /// A recipe was found $(I and) described successfully.
     bool usable() const @safe pure nothrow @nogc => found && error.length == 0;
@@ -126,6 +143,66 @@ string findDubRecipe(string startPath) @safe
 }
 
 /**
+Whether `path` is a dub $(B single-file package): a `.d` program whose recipe
+rides along in a leading `/+ dub.sdl: … +/` (or `dub.json`) comment (`PRJ17`).
+
+Such a file $(I is) its own project, and the distinction is not academic — a
+`libs/x/examples/*.d` sample routinely depends on several sibling packages that
+`libs/x/dub.sdl` never mentions. Climbing past it (`PRJ1`) would describe the
+enclosing library instead, and every symbol the sample imports from a
+dependency the library does not share would report as `unable to read module`.
+
+Only the head of the file is read: dub requires the comment before any code,
+after an optional shebang.
+*/
+bool isSingleFileDubPackage(string path) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : endsWith, startsWith;
+    import std.stdio : File;
+    import std.string : strip, stripLeft;
+
+    if (!path.endsWith(".d"))
+        return false;
+
+    char[4096] buffer = void;
+    char[] head;
+    try
+    {
+        auto f = File(path, "rb");
+        head = (() @trusted => f.rawRead(buffer[]))();
+    }
+    catch (Exception)
+        return false;
+
+    // The recipe opens the file, so the first line that is neither blank nor
+    // the shebang decides — scanning further would match an unrelated `/+ +/`
+    // comment somewhere down the file.
+    foreach (rawLine; head.splitter('\n'))
+    {
+        const line = rawLine.strip;
+        if (!line.length || line.startsWith("#!"))
+            continue;
+        if (!line.startsWith("/+"))
+            return false;
+        const rest = line[2 .. $].stripLeft;
+        return rest.startsWith("dub.sdl:") || rest.startsWith("dub.json:");
+    }
+    return false;
+}
+
+/// The recipe governing `startPath`: its own, when it is a single-file package
+/// (`PRJ17`), otherwise the nearest enclosing one (`PRJ1`).
+string dubRecipeFor(string startPath) @safe
+{
+    import std.path : absolutePath, buildNormalizedPath;
+
+    return isSingleFileDubPackage(startPath)
+        ? startPath.absolutePath.buildNormalizedPath
+        : findDubRecipe(startPath);
+}
+
+/**
 Translates one line of `dub describe --data=…` output — build settings
 formatted for a compiler command line — into an `AnalyzerConfig` (`PRJ4`).
 
@@ -170,19 +247,25 @@ DubProject describeDubProject(string startPath, DubQuery query = DubQuery.init) 
 
     DubProject proj;
     proj.query = query;
-    proj.recipe = findDubRecipe(startPath);
+    proj.recipe = dubRecipeFor(startPath);
     if (!proj.found)
         return proj;
     proj.root = proj.recipe.dirName;
 
-    auto argv = ["dub", "describe", "--root=" ~ proj.root,
-        "--data=import-paths,string-import-paths,versions,debug-versions,dflags"];
+    // `--single <file>` for a single-file package (`PRJ17`), `--root=<dir>`
+    // for a directory-level recipe; everything after is shared.
+    auto locator = proj.singleFile
+        ? ["--single", proj.recipe]
+        : ["--root=" ~ proj.root];
     if (query.config.length)
-        argv ~= "--config=" ~ query.config;
+        locator ~= "--config=" ~ query.config;
     if (query.buildType.length)
-        argv ~= "--build=" ~ query.buildType;
+        locator ~= "--build=" ~ query.buildType;
     if (query.compiler.length)
-        argv ~= "--compiler=" ~ query.compiler;
+        locator ~= "--compiler=" ~ query.compiler;
+
+    auto argv = ["dub", "describe"] ~ locator
+        ~ "--data=import-paths,string-import-paths,versions,debug-versions,dflags";
 
     try
     {
@@ -204,6 +287,15 @@ DubProject describeDubProject(string startPath, DubQuery query = DubQuery.init) 
 
         if (res.status != 0)
         {
+            // Neither fallback below can apply to a single-file package: it
+            // declares no subpackages and no `unittest` configuration.
+            if (proj.singleFile)
+            {
+                proj.error = text("`dub describe --single` failed (exit ",
+                    res.status, ") for ", proj.recipe);
+                return proj;
+            }
+
             // A root package with `targetType "none"` (dmd) or without any
             // sources (a monorepo umbrella) has no describable target — dub
             // exits nonzero (or asserts). The file still belongs to one of
@@ -228,17 +320,87 @@ DubProject describeDubProject(string startPath, DubQuery query = DubQuery.init) 
                 if (test.status == 0)
                 {
                     proj.analyzer = parseDubBuildSettings(lastNonBlankLine(test.output));
+                    proj.analyzer.dflags ~= describedPkgConfigFlags(
+                        locator ~ ["--config=unittest", "--build=unittest"]);
                     return proj; // no `error` set ⇒ usable
                 }
             }
             return scanned;
         }
         proj.analyzer = parseDubBuildSettings(lastNonBlankLine(res.output));
+        proj.analyzer.dflags ~= describedPkgConfigFlags(locator);
     }
     catch (Exception e)
         proj.error = "cannot run `dub describe`: " ~ e.msg;
 
     return proj;
+}
+
+/**
+The `-P…` preprocessor flags implied by the `libs` the described project pulls
+in (`PRJ18`), or empty when it declares none.
+
+A `libs "vulkan"` entry names a pkg-config package. dub resolves it twice and
+differently: `--libs` becomes linker flags, and `--cflags` becomes one `-P`
+flag per token, which is how an ImportC `#include <vulkan/vulkan.h>` finds its
+header. Only the $(I generator) does the second half, so `dub describe` reports
+neither — `--data=libs` gives the bare names and `--data=dflags` has no `-P` in
+it. Redoing the lookup here is what keeps an ImportC binding from analyzing as
+a few hundred undefined identifiers.
+
+Costs a second `dub describe` (`PRJ9`'s figure again), which is why it is
+memoized with the rest of the project context (`PRJ8`) and skipped outright
+when there is no `pkg-config` to ask.
+*/
+private string[] describedPkgConfigFlags(scope const string[] locator) @safe
+{
+    import std.process : Config, execute;
+
+    if (!toolOnPath("pkg-config"))
+        return null;
+
+    const res = execute(["dub", "describe"] ~ locator.dup
+        ~ ["--data=libs", "--data-list"], null, Config.stderrPassThrough);
+    return res.status == 0 ? pkgConfigPreprocessorFlags(nonBlankLines(res.output)) : null;
+}
+
+/// `pkg-config --cflags` for each package, every token prefixed `-P` exactly
+/// as dub's generator does. A name pkg-config does not know is skipped, not an
+/// error — dub falls back to a plain `-l<name>` for those too.
+string[] pkgConfigPreprocessorFlags(scope const string[] libs) @safe
+{
+    import std.process : execute;
+
+    string[] flags;
+    foreach (lib; libs)
+    {
+        try
+        {
+            const res = execute(["pkg-config", "--cflags", lib]);
+            if (res.status != 0)
+                continue;
+            foreach (token; splitArgs(res.output))
+                flags ~= "-P" ~ token;
+        }
+        catch (Exception)
+        {
+        }
+    }
+    return flags;
+}
+
+/// Whether `tool` resolves on `PATH` (no process spawned).
+private bool toolOnPath(string tool) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.file : exists;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    foreach (dir; environment.get("PATH", "").splitter(':'))
+        if (dir.length && dir.buildPath(tool).exists)
+            return true;
+    return false;
 }
 
 /**
@@ -364,6 +526,9 @@ private void parseDescribeJson(const(char)[] output, ref DubProject sub) @safe
         sub.analyzer.versionIds = strings(bs, "versions");
         sub.analyzer.debugIds = strings(bs, "debugVersions");
         sub.analyzer.dflags = strings(bs, "dflags");
+        // The JSON carries `libs` as the bare pkg-config names, so this path
+        // needs no second describe to resolve them (`PRJ18`).
+        sub.analyzer.dflags ~= pkgConfigPreprocessorFlags(strings(bs, "libs"));
         _subFiles[subFilesKey(sub)] = strings(bs, "sourceFiles");
         return;
     }
@@ -581,7 +746,7 @@ DubProject dubProjectFor(string startPath, DubQuery query = DubQuery.init) @safe
 {
     import std.path : absolutePath, buildNormalizedPath;
 
-    const recipe = findDubRecipe(startPath);
+    const recipe = dubRecipeFor(startPath);
     if (!recipe.length)
         return DubProject.init;
 
@@ -635,6 +800,26 @@ private string lastNonBlankLine(const(char)[] output) @safe pure
         if (line.strip.length)
             last = line.idup;
     return last;
+}
+
+/// Every non-blank line of `--data-list` output. Resolution chatter can share
+/// the stream; a stray line simply fails the `pkg-config` lookup it feeds and
+/// is dropped there.
+private string[] nonBlankLines(const(char)[] output) @safe pure
+{
+    import std.algorithm.iteration : splitter;
+    import std.string : strip;
+
+    string[] lines;
+    foreach (line; output.splitter('\n'))
+    {
+        // `.length`, not truthiness: an empty slice still has a non-null
+        // pointer, so `if (line.strip)` would keep every blank line.
+        const stripped = line.strip;
+        if (stripped.length)
+            lines ~= stripped.idup;
+    }
+    return lines;
 }
 
 /// The value a token carries for one of `prefixes`, or null when it matches
@@ -754,6 +939,97 @@ private string[] splitArgs(scope const(char)[] line) @safe pure
     assert(findDubRecipe("") is null);
 }
 
+@("dmd_lsp.project.isSingleFileDubPackage.recipeForms")
+@system unittest
+{
+    import std.path : buildPath;
+
+    auto t = TempProject.create("single-file");
+    scope (exit) t.cleanup();
+
+    t.put("shebang.d", "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"x\"\n+/\nvoid main() {}\n");
+    t.put("bare.d", "/+dub.json: {\"name\":\"x\"} +/\nvoid main() {}\n");
+    t.put("plain.d", "module plain;\nvoid main() {}\n");
+    // A `/+ +/` comment further down is not a recipe: only the file's opening
+    // comment counts, or an ordinary module with documentation would qualify.
+    t.put("late.d", "module late;\n/+ dub.sdl: no +/\nvoid main() {}\n");
+    t.put("dub.sdl", "name \"not-a-d-file\"\n");
+
+    assert(isSingleFileDubPackage(t.root.buildPath("shebang.d")));
+    assert(isSingleFileDubPackage(t.root.buildPath("bare.d")));
+    assert(!isSingleFileDubPackage(t.root.buildPath("plain.d")));
+    assert(!isSingleFileDubPackage(t.root.buildPath("late.d")));
+    assert(!isSingleFileDubPackage(t.root.buildPath("dub.sdl")));
+    assert(!isSingleFileDubPackage(t.root.buildPath("absent.d")));
+
+    // The recipe of a single-file package is the file; anything else walks up
+    // to the enclosing directory recipe (PRJ1).
+    assert(dubRecipeFor(t.root.buildPath("shebang.d")) == t.root.buildPath("shebang.d"));
+    assert(dubRecipeFor(t.root.buildPath("plain.d")) == t.root.buildPath("dub.sdl"));
+}
+
+@("project.singleFile.ownRecipeBeatsTheEnclosingOne")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.path : buildPath;
+
+    requireDub();
+    auto t = TempProject.create("single-vs-enclosing");
+    scope (exit) t.cleanup();
+
+    // The `libs/x/examples/*.d` shape: a sample whose own recipe pulls in a
+    // package the enclosing library never mentions. Climbing past it (PRJ1)
+    // would lose that import path and report every symbol from it as
+    // `unable to read module`.
+    t.put("dub.sdl", "name \"host\"\ntargetType \"library\"\n"
+        ~ "sourcePaths \"src\"\nimportPaths \"src\"\n");
+    t.put("src/host_mod.d", "module host_mod;\nint h;\n");
+    t.put("aside/dub.sdl", "name \"aside\"\ntargetType \"library\"\n"
+        ~ "sourcePaths \"src\"\nimportPaths \"src\"\n");
+    t.put("aside/src/aside_mod.d", "module aside_mod;\nint a;\n");
+    t.put("examples/sample.d",
+        "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"sample\"\n"
+        ~ "    dependency \"aside\" path=\"../aside\"\n+/\nvoid main() {}\n");
+
+    const sample = t.root.buildPath("examples", "sample.d");
+    DubProject proj;
+    synchronized (dubTestSync)
+    {
+        clearDubProjectCache();
+        scope (exit) clearDubProjectCache();
+        proj = dubProjectFor(sample);
+    }
+    assert(proj.found);
+    assert(proj.usable, proj.error);
+    assert(proj.singleFile, proj.recipe);
+    assert(proj.recipe == sample, proj.recipe);
+    assert(proj.analyzer.importPaths.canFind!(p => p.canFind("aside")),
+        proj.analyzer.importPaths.toDebug);
+}
+
+@("dmd_lsp.project.pkgConfigPreprocessorFlags")
+@system unittest
+{
+    import std.algorithm.searching : all, canFind, startsWith;
+
+    if (!onPath("pkg-config"))
+        skipOrThrow("pkg-config is not on PATH");
+
+    // An unknown package is skipped, never an error: dub falls back to a plain
+    // `-l<name>` for those too.
+    assert(pkgConfigPreprocessorFlags(["definitely-not-a-pkg-config-package"]).length == 0);
+    assert(pkgConfigPreprocessorFlags(null).length == 0);
+
+    // A known one yields `-P`-prefixed cflags, the spelling dub's generator
+    // uses and `applyDflags` routes into the frontend's preprocessor (PRJ18).
+    const flags = pkgConfigPreprocessorFlags(["vulkan"]);
+    if (!flags.length)
+        skipOrThrow("no `vulkan` pkg-config package in this environment");
+    assert(flags.all!(f => f.startsWith("-P")), flags.toDebug);
+    assert(flags.canFind!(f => f.startsWith("-P-I")), flags.toDebug);
+}
+
 @("dmd_lsp.project.describeDubProject.thisPackage")
 @safe unittest
 {
@@ -838,18 +1114,7 @@ version (unittest)
             throw new Exception(reason);
     }
 
-    private bool onPath(string tool) @safe
-    {
-        import std.algorithm.iteration : splitter;
-        import std.file : exists;
-        import std.path : buildPath;
-        import std.process : environment;
-
-        foreach (dir; environment.get("PATH", "").splitter(':'))
-            if (dir.length && dir.buildPath(tool).exists)
-                return true;
-        return false;
-    }
+    private alias onPath = toolOnPath;
 
     private string toDebug(in string[] values) @safe pure
     {

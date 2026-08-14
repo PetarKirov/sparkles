@@ -30,7 +30,7 @@ struct CliParams
     @(Option("dflags", description: "Extra compiler flags (space-separated), merged with the sample's `// @dflags:` directives."))
     string dflags;
 
-    @(Option("dub", description: "Analyze the input in the context of its enclosing dub project: `dub describe` supplies the import paths, string-import paths, version identifiers and dflags of the nearest dub.sdl/dub.json. Off by default, so a standalone sample is never influenced by a project that happens to contain it."))
+    @(Option("dub", description: "Analyze the input in the context of its dub project: `dub describe` supplies the import paths, string-import paths, version identifiers and dflags of the nearest dub.sdl/dub.json — or of the sample's own embedded recipe, when it is a single-file package. Off by default, so a standalone sample is never influenced by a project that happens to contain it."))
     bool dub;
 
     @(Option("dub-config", description: "With --dub: the dub configuration to describe (default: dub's own default configuration)."))
@@ -317,7 +317,8 @@ private bool buildConfig(in CliParams cli, string samplePath,
 }
 
 /**
-Folds the enclosing dub project's build settings into `config` (`PRJ5`).
+Folds the sample's dub project — its own embedded recipe, or the nearest
+enclosing one (`PRJ17`) — into `config` (`PRJ5`).
 
 Project settings are $(I appended): an explicit `--import`/`--dflags` stays
 ahead of them in the search order, and the environment's druntime/phobos tail
@@ -356,7 +357,7 @@ private bool applyDubContext(in CliParams cli, string samplePath,
     config.dflags ~= proj.analyzer.dflags;
 
     if (!cli.quiet)
-        writeln("dub project ", proj.root, ": ",
+        writeln("dub project ", proj.singleFile ? proj.recipe : proj.root, ": ",
             proj.analyzer.importPaths.length, " import paths, ",
             proj.analyzer.versionIds.length, " versions, ",
             proj.analyzer.dflags.length, " dflags");
