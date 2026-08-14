@@ -193,29 +193,20 @@
         pname = "release";
         version = "0.1.0";
 
-        # `release` bundles the flake-built `ci` (pinned pre-flight checks) plus
-        # git and `gh`; LLM agents are user-provided, found on the caller's PATH.
+        # Deliberately UNWRAPPED. `release` shells out to git, `gh`, `ci` and —
+        # for the publishing stages — fdroidserver, a JDK, rclone and
+        # bundletool. Bundling all of that would put a Python and JVM toolchain
+        # into the closure of a tool most often run to create a tag, and CI
+        # would download it just to build an APK.
         #
-        # `fdroid-publish` joins them for the `publish-fdroid` stage — bundled
-        # the same way `ci` is, so the stage runs the version this repository
-        # pins rather than whatever happens to be on the caller's PATH. It
-        # brings fdroidserver, a JDK and rclone with it, which is a real closure
-        # increase; the alternative (leaving it to PATH) would let a release
-        # publish through a publisher nobody pinned.
-        postFixup =
-          let
-            path = lib.makeBinPath [
-              pkgs.gitMinimal
-              pkgs.gh
-              config.packages.ci
-              config.packages.fdroid-publish
-            ];
-          in
-          ''
-            wrapProgram $out/bin/${finalAttrs.pname} \
-              --prefix PATH : ${path}
-          '';
-
+        # So the lean package is the binary alone and takes its tools from
+        # PATH, which the dev shell (and CI's own steps) already provide. When
+        # it needs something it cannot find, the stage-aware check in
+        # `sparkles.release.store.tools` names the missing program and what it
+        # was for, rather than failing three steps in.
+        #
+        # `release-full` below is the same binary with everything pinned, for
+        # the workstation that actually publishes.
         meta = {
           description = ''
             Cut a sparkles release: scan tags, summarize commits, suggest a bump,
@@ -225,58 +216,51 @@
         };
       });
 
-      # Publishes hue to the self-hosted F-Droid repository
-      # (docs/specs/hue/fdroid.md).
+      # The publishing configuration: `release` with every external program it
+      # can invoke pinned by this repository rather than resolved from PATH.
       #
-      # Deliberately NOT gated to x86_64-linux even though the APK it publishes
-      # is: this tool only shells out, so it builds and its unit tests run on
-      # darwin too — which is what keeps `ci --test` honest about the version
-      # mapping and the index guards.
-      #
-      # The binary is `fdroid-publish`, not `fdroid`: the wrapper below puts
-      # fdroidserver's own `fdroid` on PATH, and the two must not collide.
-      packages.fdroid-publish = config.legacyPackages.buildSparklesApp (finalAttrs: {
-        pname = "fdroid-publish";
-        version = "0.1.0";
-
-        # `buildSparklesApp` defaults both of these to `apps/${pname}`. Here the
-        # directory (and the dub sub-package) is `apps/fdroid` while the binary
-        # is `fdroid-publish`, so both have to be said explicitly.
-        sourceDirs = config.legacyPackages.sparklesSources.srcClosure "apps/fdroid";
-        sourceRoot = "${finalAttrs.src.name}/apps/fdroid";
-
-        postFixup =
+      # This is what signs and publishes, so "whatever version happens to be
+      # installed" is the wrong answer for all of them — an fdroidserver or
+      # apksigner picked up from the environment would decide the bytes users
+      # install.
+      packages.release-full = pkgs.symlinkJoin {
+        name = "release-full-${config.packages.release.version}";
+        paths = [ config.packages.release ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postBuild =
           let
             path = lib.makeBinPath [
+              pkgs.gitMinimal
+              pkgs.gh
+              config.packages.ci
               pkgs.fdroidserver
               # fdroidserver shells out to keytool, jarsigner and jar, and the
-              # nixpkgs package wraps only apksigner onto PATH — `fdroid update`
-              # fails outright without a JDK.
+              # nixpkgs package wraps only apksigner onto PATH — `fdroid
+              # update` fails outright without a JDK.
               pkgs.jdk_headless
               pkgs.apksigner
               pkgs.rclone
+              # Builds the App Bundle for the Play channel.
+              pkgs.bundletool
             ];
           in
           ''
-            wrapProgram $out/bin/${finalAttrs.pname} \
-              --prefix PATH : ${path}
+            wrapProgram $out/bin/release --prefix PATH : ${path}
           '';
-
         meta = {
-          description = ''
-            Sign the hue release APK and publish the self-hosted F-Droid repository
-          '';
-          mainProgram = finalAttrs.pname;
+          description = "release, with every publishing tool pinned (signing workstation)";
+          mainProgram = "release";
         };
-      });
-
-      apps.fdroid-publish = {
-        type = "app";
-        program = lib.getExe config.packages.fdroid-publish;
       };
+
       apps.release = {
         type = "app";
         program = lib.getExe config.packages.release;
+      };
+      # `nix run .#release-full` — the publishing configuration.
+      apps.release-full = {
+        type = "app";
+        program = lib.getExe config.packages.release-full;
       };
       apps.terminal = {
         type = "app";

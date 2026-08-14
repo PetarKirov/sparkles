@@ -10,7 +10,7 @@ changed is two keys.
 Kept pure and separate from the filesystem so the transformations are tested on
 strings.
 */
-module sparkles.fdroid.workfiles;
+module sparkles.release.store.workfiles;
 
 @safe:
 
@@ -31,7 +31,7 @@ string withRepoUrl(string configYaml, string repoUrl) pure
 
     const separator = configYaml.length && configYaml[$ - 1] == '\n' ? "" : "\n";
     return configYaml ~ separator
-        ~ "\n# Appended by fdroid-publish; see sparkles.fdroid.workfiles.\n"
+        ~ "\n# Appended by fdroid-publish; see sparkles.release.store.workfiles.\n"
         ~ "repo_url: " ~ repoUrl ~ "\n";
 }
 
@@ -79,7 +79,7 @@ string withCurrentVersion(string metadataYaml, string versionName, uint versionC
     return out_[];
 }
 
-@("fdroid.workfiles.appendsRepoUrl")
+@("store.workfiles.appendsRepoUrl")
 @safe unittest
 {
     import std.algorithm : endsWith, startsWith;
@@ -95,7 +95,7 @@ string withCurrentVersion(string metadataYaml, string versionName, uint versionC
     assert(noTrailing.indexOf("\nrepo_url: ") > 0);
 }
 
-@("fdroid.workfiles.rewritesCurrentVersionInPlace")
+@("store.workfiles.rewritesCurrentVersionInPlace")
 @safe unittest
 {
     import std.string : indexOf;
@@ -119,7 +119,7 @@ string withCurrentVersion(string metadataYaml, string versionName, uint versionC
     assert(after.indexOf("  - Development\n") >= 0);
 }
 
-@("fdroid.workfiles.currentVersionCodePrefixIsNotAmbiguous")
+@("store.workfiles.currentVersionCodePrefixIsNotAmbiguous")
 @safe unittest
 {
     import std.string : indexOf;
@@ -133,7 +133,7 @@ string withCurrentVersion(string metadataYaml, string versionName, uint versionC
     assert(after.indexOf("CurrentVersionCode: 0.4.0") < 0);
 }
 
-@("fdroid.workfiles.appendsWhenAbsent")
+@("store.workfiles.appendsWhenAbsent")
 @safe unittest
 {
     import std.string : indexOf;

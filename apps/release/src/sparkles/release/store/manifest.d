@@ -9,7 +9,7 @@ with which signature.
 It exists so the APK served from object storage can be matched against the one
 attached to the GitHub Release, and both against the tag they claim to be.
 */
-module sparkles.fdroid.manifest;
+module sparkles.release.store.manifest;
 
 @safe:
 
@@ -89,7 +89,7 @@ private string escape(string s) pure
     return w[];
 }
 
-@("fdroid.manifest.rendersParseableJson")
+@("store.manifest.rendersParseableJson")
 @safe unittest
 {
     import std.json : parseJSON;
@@ -115,7 +115,7 @@ private string escape(string s) pure
     assert(parsed["unsignedStorePath"].str == "/nix/store/xxx-hue-unsigned-0.4.0");
 }
 
-@("fdroid.manifest.escapesRatherThanEmittingInvalidJson")
+@("store.manifest.escapesRatherThanEmittingInvalidJson")
 @safe unittest
 {
     import std.json : parseJSON;

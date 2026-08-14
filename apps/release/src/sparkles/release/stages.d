@@ -19,15 +19,15 @@ enum Stage
     pushTag,              /// also `git push origin <tag>`
     createGhReleaseDraft, /// also `gh release create --draft`
     publishGhRelease,     /// also publish the GitHub release (fires the release workflow)
-    publishFdroid,        /// also sign and publish the Android channel (see below)
+    publishApps,          /// also sign and publish the app stores (see below)
 }
 
 /**
 Why the Android channel is a stage and not a separate errand.
 
-`publish-fdroid` shells out to `fdroid-publish`, which signs the release APK
-with a key on a hardware token and publishes the self-hosted F-Droid
-repository. Two consequences follow from that, and both are deliberate:
+`publish-apps` signs the release artifacts with a key on a hardware token and
+publishes every app channel — the self-hosted F-Droid repository and Google
+Play. Two consequences follow from that, and both are deliberate:
 
 $(UL
 $(LI It cannot run where the earlier stages usually do. A GitHub-hosted runner
@@ -38,10 +38,14 @@ $(LI It is last, and the ladder is cumulative, so it is only ever reached when
     app by accident.)
 )
 
-The guards that make this safe live in `fdroid-publish` itself: it refuses to
-reuse a published `versionCode`, refuses to build the APK locally rather than
-substituting what CI built, and verifies the signing certificate against the
-pin in the metadata.
+The guards that make this safe live in `sparkles.release.store`: it refuses to
+reuse a published `versionCode`, refuses to build the artifact locally rather
+than substituting what CI built, and verifies the signing certificate against
+the pin in the metadata.
+
+One stage covers both channels rather than one each, because they are peers:
+neither is the primary, and a linear ladder cannot express "these two, in no
+particular order".
 */
 
 /// Parses a `--stage` token; null on an unknown token.
@@ -53,7 +57,7 @@ Nullable!Stage parseStage(scope const(char)[] s)
         case "push-tag":                return nullable(Stage.pushTag);
         case "create-gh-release-draft": return nullable(Stage.createGhReleaseDraft);
         case "publish-gh-release":      return nullable(Stage.publishGhRelease);
-        case "publish-fdroid":          return nullable(Stage.publishFdroid);
+        case "publish-apps":            return nullable(Stage.publishApps);
         default:                        return Nullable!Stage.init;
     }
 }
@@ -67,7 +71,7 @@ string stageToken(Stage s)
         case Stage.pushTag:              return "push-tag";
         case Stage.createGhReleaseDraft: return "create-gh-release-draft";
         case Stage.publishGhRelease:     return "publish-gh-release";
-        case Stage.publishFdroid:        return "publish-fdroid";
+        case Stage.publishApps:          return "publish-apps";
     }
 }
 
@@ -83,7 +87,7 @@ bool stageAtLeast(Stage chosen, Stage step) => chosen >= step;
 unittest
 {
     static foreach (s; [Stage.createTag, Stage.pushTag,
-            Stage.createGhReleaseDraft, Stage.publishGhRelease, Stage.publishFdroid])
+            Stage.createGhReleaseDraft, Stage.publishGhRelease, Stage.publishApps])
         assert(parseStage(stageToken(s)).get == s);
 
     assert(parseStage("nonsense").isNull);
@@ -101,8 +105,8 @@ unittest
     assert(!stageAtLeast(Stage.createTag, Stage.pushTag));
     assert(!stageAtLeast(Stage.pushTag, Stage.createGhReleaseDraft));
 
-    // The Android channel is last, and publishing the GitHub release does NOT
-    // reach it — the two halves run on different machines.
-    assert(stageAtLeast(Stage.publishFdroid, Stage.publishGhRelease));
-    assert(!stageAtLeast(Stage.publishGhRelease, Stage.publishFdroid));
+    // The app stores are last, and publishing the GitHub release does NOT
+    // reach them — the two halves run on different machines.
+    assert(stageAtLeast(Stage.publishApps, Stage.publishGhRelease));
+    assert(!stageAtLeast(Stage.publishGhRelease, Stage.publishApps));
 }

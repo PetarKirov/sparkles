@@ -7,7 +7,7 @@ of a signed APK to check it against the metadata before publishing. Only the
 parsing lives here, so it can be tested against literal tool output rather than
 by signing something.
 */
-module sparkles.fdroid.certs;
+module sparkles.release.store.certs;
 
 @safe:
 
@@ -63,7 +63,7 @@ Fingerprint[] signerFingerprints(string printCertsOutput) pure
     return found[];
 }
 
-@("fdroid.certs.readsRealApksignerOutput")
+@("store.certs.readsRealApksignerOutput")
 @safe unittest
 {
     // Verbatim from `apksigner verify --print-certs` on a v2/v3-signed APK.
@@ -77,7 +77,7 @@ Fingerprint[] signerFingerprints(string printCertsOutput) pure
     assert(fps[0] == "1a57273081cb21aaa76bd2e3bdd9b111e40fe0f04074b21a6f184dd08e8956ce");
 }
 
-@("fdroid.certs.normalizesCaseAndHandlesMultipleSigners")
+@("store.certs.normalizesCaseAndHandlesMultipleSigners")
 @safe unittest
 {
     enum output = "Signer #1 certificate SHA-256 digest: AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899\n"
@@ -90,7 +90,7 @@ Fingerprint[] signerFingerprints(string printCertsOutput) pure
     assert(fps[1] == "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
 }
 
-@("fdroid.certs.yieldsNothingForUnsignedOrJunk")
+@("store.certs.yieldsNothingForUnsignedOrJunk")
 @safe unittest
 {
     // What an unsigned APK produces.

@@ -6,13 +6,13 @@ stage runs it and everything before it. The default stops short of the one
 irreversible step, so the outward action is always something the operator asked
 for by name.
 */
-module sparkles.fdroid.stage;
+module sparkles.release.store.stage;
 
 @safe:
 
 /// Ordered so `<=` means "at or before"; `requiredFor` and the runner both rely
 /// on the ordering, not just the identity.
-enum Stage
+enum PublishStage
 {
     /// Derive the version from the tag and build the unsigned release APK.
     build,
@@ -30,40 +30,40 @@ enum Stage
 
 /// The default: everything except publishing. A full dress rehearsal, including
 /// signing and index generation, that no user can observe.
-enum Stage defaultStage = Stage.index;
+enum PublishStage defaultStage = PublishStage.index;
 
 /// Parses a `--stage` value.
-bool tryParseStage(string s, out Stage stage) pure nothrow
+bool tryParseStage(string s, out PublishStage stage) pure nothrow
 {
     switch (s)
     {
-    case "build":  stage = Stage.build;  return true;
-    case "sign":   stage = Stage.sign;   return true;
-    case "pull":   stage = Stage.pull;   return true;
-    case "index":  stage = Stage.index;  return true;
-    case "deploy": stage = Stage.deploy; return true;
+    case "build":  stage = PublishStage.build;  return true;
+    case "sign":   stage = PublishStage.sign;   return true;
+    case "pull":   stage = PublishStage.pull;   return true;
+    case "index":  stage = PublishStage.index;  return true;
+    case "deploy": stage = PublishStage.deploy; return true;
     default: return false;
     }
 }
 
 /// The accepted values, for help text and error messages.
-string stageNames() pure nothrow => "build, sign, pull, index, deploy";
+string publishStageNames() pure nothrow => "build, sign, pull, index, deploy";
 
-@("fdroid.stage.parsesAndOrders")
+@("store.stage.parsesAndOrders")
 @safe unittest
 {
-    Stage s;
-    assert(tryParseStage("build", s) && s == Stage.build);
-    assert(tryParseStage("deploy", s) && s == Stage.deploy);
+    PublishStage s;
+    assert(tryParseStage("build", s) && s == PublishStage.build);
+    assert(tryParseStage("deploy", s) && s == PublishStage.deploy);
     assert(!tryParseStage("publish", s));
     assert(!tryParseStage("", s));
 
-    // Cumulative ordering is what `stage >= Stage.x` checks depend on.
-    assert(Stage.build < Stage.sign);
-    assert(Stage.sign < Stage.pull);
-    assert(Stage.pull < Stage.index);
-    assert(Stage.index < Stage.deploy);
+    // Cumulative ordering is what `stage >= PublishStage.x` checks depend on.
+    assert(PublishStage.build < PublishStage.sign);
+    assert(PublishStage.sign < PublishStage.pull);
+    assert(PublishStage.pull < PublishStage.index);
+    assert(PublishStage.index < PublishStage.deploy);
 
     // The default must not be the irreversible one.
-    assert(defaultStage < Stage.deploy);
+    assert(defaultStage < PublishStage.deploy);
 }
