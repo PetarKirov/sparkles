@@ -1,11 +1,33 @@
 # `hue` — Feature Requirements (all rendering modes)
 
-_**Status:** living inventory · **Date:** 2026-07-23 · **Scope:** `apps/hue`
+_**Status:** living inventory · **Date:** 2026-08-08 · **Scope:** `apps/hue`
 features common to every rendering mode — invocation, source acquisition,
-language detection, the highlight engine, themes, color depth, output-mode
-dispatch, the ANSI / HTML / terminal-previewer sinks, degradation, and
+concatenation, line selection, text normalization, language detection, the
+highlight engine, themes, color policy, output-mode dispatch, document chrome,
+paging, the ANSI / HTML / terminal-previewer sinks, degradation, and
 non-functional requirements. The raylib GUI is specified separately in
-[gui.md](./gui.md)._
+[gui.md](./gui.md); document chrome in [chrome.md](./chrome.md) and paging in
+[pager.md](./pager.md)._
+
+> [!NOTE]
+> **The `cat`-citizen areas** — `CAT`, `RNG`, `TXT`, `CHR`, `WID`, `PGR` and the
+> `LNG2`+/`THM4`+/`CLR2`+ extensions — came from a feature-by-feature
+> reading of [bat](https://github.com/sharkdp/bat) (`78951393`). hue is well
+> ahead of bat on interactivity and well behind it on being an ordinary,
+> pipe-friendly `cat` replacement, and those areas close that half.
+>
+> They are scoped by the **Pareto rule**, not by parity: full coverage only
+> where it is cheap, and otherwise the 80% that carries the use cases. Each area
+> states what was deliberately dropped, and three whole clusters are deferred
+> outright (`DEF25`–`DEF27`). Where bat's design is good it is taken as a model
+> (`--style`'s composable component set, the range grammar, the `auto`/`never`/`always`
+> triad); where hue's own abstractions can do better the requirement says so and
+> names the library — chrome as `sparkles:ui` widgets rather than ANSI strings,
+> the change column as `sparkles:diff` rather than a second engine, language
+> resolution in `sparkles:syntax` rather than in the app — and, for light/dark,
+> hue specifying no detection at all, because the
+> [platform-UI-guidelines research](../../research/platform-ui-guidelines/index.md)
+> already owns that question.
 
 See the [overview](./index.md) for the status scheme (`not started` /
 `researched` / `partial` / `full (<sha>)`), the ID scheme, and the rendering-mode
@@ -34,6 +56,29 @@ Parsed by `sparkles.core_cli.args.parseCliArgs!CliParams` in `app.d`.
 | CLI13 | The **`--diff` family** must select and configure the diff content kind: `--diff [<a> <b> \| <rev>[..<rev>]]`, `--patch` (force stdin-patch), `--diff-layout unified\|split`, `--diff-structural=on\|off`, `--diff-preview`, the whitespace/noise toggles, and `--diff-copy=text\|patch` — registered here, specified in [diff-view.md](./diff-view.md). | partial (`a2b634e8`) | `--diff`/`--patch`/`--staged` ship (`DVS1`–`DVS3`); the layout, noise and copy flags await their milestones |
 | CLI14 | `--pr <number\|url>` must open a pull/merge-request session through the forge seam.                                                                                                                                                                                                                                                                      | not started          | [diff-view.md](./diff-view.md) `DPR1`/`DPR7`                                                                |
 
+### The `cat`-citizen options
+
+hue is meant to be aliasable to `cat` and usable as `$PAGER` / `$MANPAGER` /
+`git core.pager`, which is a surface [bat](https://github.com/sharkdp/bat)
+already worked out well. The rows below register the flags; each names the
+section that specifies the behaviour. Short aliases are spelled the way
+`sparkles.core_cli.args` already supports (`@CliOption("r|line-range", …)`), and
+match bat's letters wherever bat has one, so muscle memory transfers.
+
+| ID    | Requirement                                                                                                                                                                                                                                                                         | Status      | Traces to                                    |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------- |
+| CLI15 | `-r`/`--line-range <spec>` (repeatable) and `-H`/`--highlight-line <spec>` (repeatable) must restrict and emphasize the visible lines; a `path:line[:col]` target must be accepted as a third spelling.                                                                             | not started | [`RNG`](#line-ranges--selection-rng)         |
+| CLI16 | `--style <components>`, `--decorations <when>`, `-p`/`--plain`, `-n`/`--number` and `-f`/`--force-colorization` must select the document chrome.                                                                                                                                    | not started | [chrome.md](./chrome.md) `STY1`–`STY5`       |
+| CLI17 | `--changes-only[=<N>]` must restrict the view to git-changed lines plus `N` lines of context. _(bat spells this `-d/--diff`; `--diff` is already hue's two-file diff, so the letter is not reused.)_                                                                                | not started | [chrome.md](./chrome.md) `CHG4`              |
+| CLI18 | Multiple positional targets, a bare `-` for stdin, `--file-name <name>` and `-E`/`--quiet-empty` must give hue `cat`'s concatenation semantics.                                                                                                                                     | not started | [`CAT`](#concatenation--stdin-cat)           |
+| CLI19 | `--paging <when>`, `-P`, `--pager <cmd>`, `--preformatted` and `--set-terminal-title` must configure paging and pre-formatted input.                                                                                                                                                | not started | [pager.md](./pager.md) `PAG1`–`PAG6`, `PIN4` |
+| CLI20 | `--sanitize <when>`, `--strip-ansi <when>`, `-A`/`--show-all`, `--nonprintable-notation <notation>`, `--binary <behavior>`, `-s`/`--squeeze-blank`, `--squeeze-limit <N>` and `--tabs <T>` must configure input normalization. hue's `--tab-width` and `--list-whitespace` fold in. | not started | [`TXT`](#text-normalization--safety-txt)     |
+| CLI21 | `-l`/`--language <lang>`, `--fallback-syntax <lang>`, `-m`/`--map-syntax <glob:lang>` (repeatable), `--ignored-suffix <suffix>` (repeatable) and `-L`/`--list-languages` must drive language resolution.                                                                            | not started | [`LNG`](#language-detection-lng)             |
+| CLI22 | `--theme` must additionally accept `auto`, `dark` and `light`; `--theme-dark <name>`, `--theme-light <name>` and `--list-themes` must complete the pair.                                                                                                                            | not started | [`THM`](#themes-thm)                         |
+| CLI23 | `--color <when>` and `--italic-text <when>` must set the color policy, and `$NO_COLOR` must be honoured.                                                                                                                                                                            | not started | [`CLR`](#color-depth--policy-clr)            |
+| CLI24 | `--wrap <mode>`, `-S`/`--chop-long-lines` and `--terminal-width <width>` (accepting `+N`/`-N` offsets) must set wrapping and the assumed width.                                                                                                                                     | not started | [`WID`](#width--wrapping-wid)                |
+| CLI25 | `-u`/`--unbuffered` must render input incrementally instead of waiting for EOF.                                                                                                                                                                                                     | not started | [pager.md](./pager.md) `STR1`                |
+
 ## Source acquisition (`SRC`)
 
 | ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Status            | Traces to                                                                                             |
@@ -47,11 +92,85 @@ Parsed by `sparkles.core_cli.args.parseCliArgs!CliParams` in `app.d`.
 | SRC7 | **Diff-pair acquisition**: a diff target acquires **pairs** of sources through this same layer — two files ([`DVS1`](./diff-view.md)), a stdin patch plus worktree re-reads (`DVS2`), `git show <rev>:<path>` old sides (`DVS3`) — so source acquisition stays one subsystem. A **rename** pairs sources whose paths (and so `LNG1` languages) differ; the language is resolved per side.                                                                                                                                                                                                                   | full (`a2b634e8`) | all three acquisition shapes ship (`DVS1`–`DVS3`); `DiffSides` carries the per-side language          |
 | SRC8 | **Forge acquisition**: a PR/MR is an acquirable session source — a network fetch through the forge seam ([`DPR7`](./diff-view.md)) sharing `SRC3`'s URL-fetch machinery once that lands, producing a `SRC6`-style multi-document session ([`DVS4`](./diff-view.md)).                                                                                                                                                                                                                                                                                                                                        | not started       | [diff-view.md](./diff-view.md) `DPR1`/`DPR7`; `SRC3`                                                  |
 
+## Concatenation & stdin (`CAT`)
+
+`cat`'s own semantics, which hue does not have today: many inputs are one
+stream, and `-` is one of them. The multi-document machinery this needs already
+exists — `SourceSet` (`SRC5`/`SRC6`) — so concatenation is a **rendering policy
+over an existing session**, not a second acquisition path.
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                 | Status            | Traces to                                        |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------ |
+| CAT1 | Several positional file targets must form one `SourceSet` (`SRC6`) rendered as a **single continuous stream** in the non-interactive sinks — a header per document (`header-filename`) and a `rule` between them ([chrome.md](./chrome.md) `STY1`) — while the interactive sinks open that same set as a navigable session. | not started       | `source_set.SourceSet`; the ANSI/HTML sink loops |
+| CAT2 | A bare `-` target must mean stdin, mixable with paths (`hue a.d - b.d`), and must be readable exactly once. With no target and a non-tty stdin, hue must read stdin — which it already does; `-` makes that explicit and composable.                                                                                        | partial           | `readStdinText` (bare stdin ships; `-` does not) |
+| CAT3 | `--file-name <name>` must name a stdin or URL input for the header (`CHW4`) **and** as the language-detection input (`LNG2`), so `cmd \| hue --file-name x.py` highlights as Python.                                                                                                                                        | not started       | `CliParams.fileName`; `LNG2` cascade             |
+| CAT4 | `-E`/`--quiet-empty` must produce no output at all for empty input, so `git diff \| hue -E` is silent when there is nothing to show.                                                                                                                                                                                        | not started       | `CliParams.quietEmpty`                           |
+| CAT5 | A **directory** target must keep its `SRC4` meaning (explorer / HTML gallery) rather than being concatenated; concatenation is a property of listing files explicitly.                                                                                                                                                      | full (`6d86054e`) | dir detection in `app.main` (already distinct)   |
+
+## Line ranges & selection (`RNG`)
+
+Which lines of a document are visible, and which are emphasized. hue can show
+only whole files today, which is what keeps it out of `fzf`/`ripgrep` preview
+panes and out of compiler-error workflows.
+
+The design decision worth stating: a range is **one `LineSelection` value on the
+`Document`**, applied once in `DocumentPipeline` and honoured by every sink —
+not a truncation each sink performs. That is what lets `--changes-only`
+([chrome.md](./chrome.md) `CHG4`) be a _derived_ selection rather than a mode.
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                     | Status      | Traces to                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------ |
+| RNG1 | `--line-range` must accept `N`, `N:M`, `:M`, `N:`, `-N:` (the last `N` lines) and `N:+K`, plus a trailing context field (`N::C`, `N:M:C`) that widens the range by `C` lines on each side. Repeating the option must union the ranges. The parser must be pure and independently tested.                                                        | not started | proposed `line_range.d` `parseRange` |
+| RNG2 | The resolved ranges must become one **`LineSelection`** carried on the `Document` and applied once by `DocumentPipeline`, so every sink — ANSI, HTML, TUI, GUI — shows the same lines without its own truncation logic.                                                                                                                         | not started | `document.d`; `viewer_model.d`       |
+| RNG3 | `--highlight-line` must take the same grammar and paint a highlight background over those lines, from a theme slot, in every sink. It must compose with `--line-range` rather than imply it.                                                                                                                                                    | not started | `line_range.d`; theme highlight slot |
+| RNG4 | A `path:line[:col]` target must be accepted as a target spelling — `hue app.d:42`, the shape `rg`, `grep -n` and compiler diagnostics emit. In a **non-interactive** sink it must behave as `--line-range 42::<context>`; in an **interactive** sink it must open scrolled to that line with the whole document still reachable, not truncated. | not started | target parsing in `app.main`; `RNG2` |
+| RNG5 | Where a selection elides lines, the sinks must draw a **snip separator** stating how many lines were skipped ([chrome.md](./chrome.md) `CHW6`), so a partial view never reads as a whole file.                                                                                                                                                  | not started | [chrome.md](./chrome.md) `CHW6`      |
+| RNG6 | Line numbers must always be **physical source line numbers**, unaffected by the selection — the invariant `HTM4` already states for the HTML gutter, generalized to every sink.                                                                                                                                                                 | partial     | `HTM4` (HTML only today)             |
+
+## Text normalization & safety (`TXT`)
+
+What happens to the bytes between reading them and highlighting them. hue does
+almost none of this today, and one row here is a genuine hazard rather than a
+missing convenience: hue renders ANSI escapes on purpose (` ```ansi ` fences,
+`ANS2`), so **it currently hands control sequences from an arbitrary file
+straight to the terminal**. Any viewer that might be pointed at untrusted
+content — a file-manager preview pane, a downloaded diff, a fetched URL
+(`SRC3`) — needs a way not to.
+
+The layering follows the answer taken for this cluster: the transforms are
+**pure primitives in `sparkles:base.text`**, and their **order is owned by one
+`DocumentPipeline` stage**. Primitives so `ci`, `terminal` and future consumers
+get them; one stage so the order is written down exactly once, which is where
+this kind of pipeline usually rots.
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Status      | Traces to                                                            |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------- |
+| TXT1 | Normalization must be one ordered stage in `DocumentPipeline`, ahead of highlighting, over `@safe pure nothrow @nogc` primitives in `sparkles:base.text`. The order is fixed and stated once: **decode → sanitize/strip → non-printable → tab expansion → squeeze**. No sink may normalize on its own.                                                                                                                                                                                                                                                                                                                       | not started | proposed `sparkles.base.text.normalize`; `document.DocumentPipeline` |
+| TXT2 | `--sanitize=auto\|always\|never` must substitute U+FFFD for terminal-active control bytes (cursor motion, charset switches, OSC, bell) and for Unicode bidi-override and zero-width formatting characters, leaving tab, LF, FF and CRLF intact. **`auto` is the default and sanitizes everywhere except regions hue is deliberately interpreting as ANSI** — ` ```ansi ` fences (`ANS2`) and a pre-formatted document ([pager.md](./pager.md) `PIN5`). _(bat defaults to `never`; hue can afford `auto` because it knows which regions are intentional, and should, because it is a viewer for content it did not produce.)_ | not started | `sparkles.base.text.sanitize`; `ContentKind` gating                  |
+| TXT3 | `--strip-ansi=auto\|always\|never` must remove SGR sequences without the rest of `TXT2`'s substitution — the weaker sibling, for input that is merely pre-colored rather than hostile. `auto` strips outside the same intentional-ANSI regions.                                                                                                                                                                                                                                                                                                                                                                              | not started | `sparkles.base.text.stripSgr` (exists, to be generalized)            |
+| TXT4 | `-A`/`--show-all` with `--nonprintable-notation=unicode\|caret` must render non-printable characters visibly (`␊`/`^J`, `·` for space, a ruled tab). hue's existing `--list-whitespace` must become the vim-flavoured preset of the same mechanism rather than a parallel one.                                                                                                                                                                                                                                                                                                                                               | partial     | `CliParams.listWhitespace`; `sparkles.base.text` encoder             |
+| TXT5 | Binary content must be **detected** (a NUL in the leading block) and refused with a one-line notice naming the file and its size, rather than emitted; `--binary=as-text` must override. A hex dump view is explicitly out of scope.                                                                                                                                                                                                                                                                                                                                                                                         | not started | `isBinary`; the sink guard                                           |
+| TXT6 | A UTF-16 BOM must be transcoded to UTF-8 and a UTF-8 BOM dropped; invalid UTF-8 must be replaced with U+FFFD rather than throwing or truncating the document. Charset **guessing** for un-BOM'd input is out of scope.                                                                                                                                                                                                                                                                                                                                                                                                       | not started | `sparkles.base.text` decoder                                         |
+| TXT7 | `-s`/`--squeeze-blank` must collapse consecutive blank lines to one, and `--squeeze-limit <N>` must set the kept count. Squeezed lines must not disturb physical line numbering (`RNG6`).                                                                                                                                                                                                                                                                                                                                                                                                                                    | not started | `sparkles.base.text.squeeze`; `RNG6`                                 |
+| TXT8 | `--tabs <T>` must set tab stops with `0` meaning "pass through unexpanded", and expansion must be **escape-aware** — an SGR sequence occupies no columns, so a colored line's tab stops must not drift. hue's `--tab-width` becomes an alias.                                                                                                                                                                                                                                                                                                                                                                                | partial     | `CliParams.tabWidth`; `expandTabs`                                   |
+
 ## Language detection (`LNG`)
 
-| ID   | Requirement                                                                                                    | Status            | Traces to                      |
-| ---- | -------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------ |
-| LNG1 | The grammar language must be derived from the file extension, canonicalized through `sparkles:syntax` aliases. | full (`74d8f6a3`) | `canonicalLanguage(extension)` |
+`LNG1` is the whole of hue's language detection today: one lookup from the file
+extension. The rows below turn it into an ordered **resolution cascade**, which
+belongs in `sparkles:syntax` rather than in hue — `twoslash-extract` and the
+[web integration](./web-integration.md) want the same answer to "what language
+is this?", and there should be one of them.
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                               | Status            | Traces to                                         |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------- |
+| LNG1 | The grammar language must be derived from the file extension, canonicalized through `sparkles:syntax` aliases.                                                                                                                                                                                            | full (`74d8f6a3`) | `canonicalLanguage(extension)`                    |
+| LNG2 | Language resolution must be an ordered cascade, evaluated in `sparkles:syntax` and shared by every consumer: explicit `--language` → `--map-syntax` glob → full file name → extension (`LNG1`) → first-line sniff (`LNG5`) → `--fallback-syntax` → plain text (`DEG2`). The first step that answers wins. | not started       | proposed `sparkles:syntax` `resolveLanguage`      |
+| LNG3 | `-l`/`--language` must accept either a language name or an extension (`-l cpp` and `-l C++` alike), resolved through the same alias table as `LNG1`.                                                                                                                                                      | not started       | `CliParams.language`; `canonicalLanguage`         |
+| LNG4 | `-m`/`--map-syntax <glob>:<lang>` (repeatable) must map a glob to a language, matched against both the full path and the base name, with later rules losing to earlier ones. The matcher must be `sparkles:build-primitives`' existing glob matcher, not a new one.                                       | not started       | `sparkles:build-primitives` `gitignore.d` matcher |
+| LNG5 | First-line detection must cover the cases that pay for themselves — a `#!` shebang (including `env`-dispatched interpreters), a vim or emacs modeline, and an XML/HTML declaration — and nothing more. A full content-classification cascade stays deferred (`DEF6`).                                     | not started       | proposed `firstLineLanguage`; `DEF6`              |
+| LNG6 | `--ignored-suffix <suffix>` (repeatable) must be stripped before extension lookup, so `config.json.dev` highlights as JSON. A small built-in list (`.in`, `.orig`, `.bak`, `.dist`, `.tmpl`) must apply by default.                                                                                       | not started       | `LNG2` cascade; `CliParams.ignoredSuffix`         |
+| LNG7 | `-L`/`--list-languages` must print the resolvable languages with their extensions and note which have a grammar available in the current environment (`ENG2`) — so a missing `$SPARKLES_TS_GRAMMAR_PATH` is diagnosable rather than mysterious.                                                           | not started       | `GrammarRegistry`; `ENG2`/`DEG4`                  |
 
 ## Highlight engine (`ENG`)
 
@@ -73,11 +192,53 @@ specified in [`docs/specs/syntax`](../syntax/index.md).
 | THM2 | The full sorted built-in theme set must be materialized once (names + parallel `Theme` values) for the live previewer and GUI. | full (`74d8f6a3`) | `names`/`themes` in `app.main`    |
 | THM3 | A theme must be resolved against the standard `LabelSet` before rendering (`ResolvedTheme`).                                   | full (`74d8f6a3`) | `resolveTheme(theme, labels)`     |
 
-## Color depth (`CLR`)
+hue ships 36 built-in themes and picks one fixed default, which means a user on
+a light terminal gets a dark theme painted over it. The rows below add the
+light/dark axis to **hue's** surface — the flags, the pair, the listing.
+
+They deliberately specify no detection of their own. Answering "what does the
+user want?" is the subject of the
+[platform-UI-guidelines research](../../research/platform-ui-guidelines/index.md),
+whose proposal is a leaf library, **`sparkles:appearance`**, with a compile-time
+source cascade (explicit config → `SPARKLES_APPEARANCE` → platform source →
+terminal source → compiled default) and a `deriveTheme` step. That work is
+strictly better-informed than anything this area should invent — it uses
+mode 2031 with an OSC 11 fallback rather than OSC 11 alone, it routes the reply
+through `sparkles:input` instead of reading stdin behind the event loop's back,
+and it argues correctly that a D-Bus client has no place in `sparkles:base`. hue
+is therefore a **consumer** of that library, and these rows say only what hue
+does with the answer.
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                | Status      | Traces to                                                                                             |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
+| THM4 | `--theme` must additionally accept `auto` (the new default), `dark` and `light`; `--theme-dark <name>` and `--theme-light <name>` must name the pair `auto` chooses between. An explicitly named theme keeps overriding everything — which is level 1 of the appearance cascade, not a hue-local rule.                                                                     | not started | `CliParams.theme`/`themeDark`/`themeLight`; the cascade's level 1                                     |
+| THM5 | Under `--theme auto`, the scheme must come from **`sparkles:appearance`** and hue must add no detection of its own — no OSC query issued from hue, no `$COLORFGBG` read in `app.d`. Until that library exists, `auto` must resolve to the compiled default, so the flag can ship ahead of the detection without ever growing a throwaway probe.                            | not started | [platform-ui-guidelines](../../research/platform-ui-guidelines/sparkles-proposal.md) milestones P0/P1 |
+| THM6 | A `Theme` must declare its **variant** (dark or light) in `sparkles:syntax`, so the built-in set partitions itself and `--theme-dark`/`--theme-light` can validate their arguments and default sensibly rather than by a hardcoded name list. This is theme **metadata**, distinct from and complementary to `deriveTheme`, which computes a theme rather than labels one. | not started | `sparkles:syntax` `Theme.variant`; `builtinThemes`                                                    |
+| THM7 | Every sink must take its scheme from the same cascade, so a terminal launch follows the terminal and a window launch follows the desktop without hue branching on the backend. `SPARKLES_APPEARANCE` must override both, so golden captures stay deterministic exactly as the `HUE_GUI_*` hooks already do ([`CFG2`](./config.md)).                                        | not started | the cascade's levels 2–4; [config.md](./config.md) `CFG2`                                             |
+| THM8 | `--list-themes` must print the built-in themes grouped by variant (`THM6`), each with a short highlighted sample rendered in that theme, so the list is choosable rather than merely enumerable.                                                                                                                                                                           | not started | `builtinThemes`; the ANSI sink                                                                        |
+
+> [!NOTE]
+> `$HUE_THEME`, `$HUE_THEME_DARK` and `$HUE_THEME_LIGHT` are **not** specified
+> here. Environment overrides are one layer of the general configuration
+> precedence ([config.md](./config.md) `CFG2`), not a per-setting mechanism —
+> which is the one place hue should not copy bat, whose theme, style, pager,
+> width and config path each grew their own `BAT_*` variable.
+
+## Color depth & policy (`CLR`)
 
 | ID   | Requirement                                                                                    | Status            | Traces to            |
 | ---- | ---------------------------------------------------------------------------------------------- | ----------------- | -------------------- |
 | CLR1 | ANSI output (non-interactive and previewer) must adapt to the terminal's detected color depth. | full (`74d8f6a3`) | `detectColorDepth()` |
+
+Whether to colorize at all is currently implied by the sink. These rows make it
+a policy, which is what a program in a pipeline needs.
+
+| ID   | Requirement                                                                                                                                                                                                                          | Status      | Traces to                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | -------------------------------------------- |
+| CLR2 | `--color=auto\|never\|always` must gate colorization independently of the sink: `auto` (default) colors iff stdout is a tty, `always` survives a pipe (the `hue \| less -R` case), `never` emits plain text with decorations intact. | not started | `CliParams.color`; `AnsiOptions`             |
+| CLR3 | A non-empty `$NO_COLOR` must select `--color=never`, and an explicit `--color` must override it. It must suppress **color only** — decorations (`STY4`) are a separate axis, so `NO_COLOR` still leaves line numbers and headers.    | not started | `CLR2` resolution                            |
+| CLR4 | `--italic-text=auto\|always\|never` must gate ANSI italics, which the whole-file emit hardcodes on today (`ANS1`) and many terminals render as inverse video.                                                                        | not started | `CliParams.italicText`; `renderAnsi` options |
+| CLR5 | True-color availability must be detected once in `term_caps` (`$COLORTERM` and the terminfo answer) and consumed by `CLR1`, rather than probed per sink.                                                                             | partial     | `detectColorDepth()`; `term_caps`            |
 
 ## Output-mode dispatch (`MOD`)
 
@@ -135,6 +296,63 @@ The three modes; `full` is the default (the prior fixed behaviour was `spans`).
 | BGM1 | **`no-background`** — emit foreground colors only; the terminal's own background shows through (the theme background is ignored). Useful for piped output over a themed terminal.                                                                                 | full (`d404dc8c`) | `AnsiOptions.emitBackground: false`; previewer chrome bg + backdrop gated   |
 | BGM2 | **`spans`** — emit a background only where the theme sets a span background (today's fixed whole-file behaviour, `AnsiOptions(emitBackground: true)`); selectable via the flag.                                                                                   | full (`d404dc8c`) | `emitAnsiWholeFile`; `backgroundOptions`                                    |
 | BGM3 | **`full`** (the new default) — fill every line with the theme's default background edge-to-edge, matching the previewer's back-color-erase look ([`PRV7`](#interactive-terminal-previewer-prv)). Fills each line via `sparkles:syntax` `renderAnsi`'s `fillLine`. | full (`d404dc8c`) | `renderAnsi` `fillLine` (`3e3d9cb4`); `backgroundOptions`; previewer `PRV7` |
+
+## Document chrome (`CHR`)
+
+The decorations drawn **around** the content — header, grid, rule, snip, the
+line-number gutter and the git change column — selected by one composable
+`--style` set. Specified in **[chrome.md](./chrome.md)**; the rows here are the
+app-wide contract.
+
+The design decision behind the sub-spec: hue paints a line-number gutter three
+times today (GUI [`NUM`](./gui.md), TUI [`TSL`](./tui.md), HTML `HTM4`), and
+adding a second column would mean writing it three more times. bat's
+`Decoration` trait — ordered columns, each a width plus a per-line producer — is
+the right model in the wrong medium, since it can only ever emit ANSI. hue takes
+the model and implements it as **`sparkles:ui` chrome widgets**, so one `--style`
+set renders in all four sinks.
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                           | Status      | Traces to                               |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------- |
+| CHR1 | `--style` must select from `changes`, `numbers`, `grid`, `rule`, `snip`, `header-filename`, `header-filesize` plus the `default`/`full`/`plain`/`auto` presets, with `+`/`-` prefixes modifying the set rather than replacing it, and `--decorations` gating the whole set independently of the sink. | not started | [chrome.md](./chrome.md) `STY1`–`STY5`  |
+| CHR2 | The components must be **`sparkles:ui` widgets**, not per-sink painters, so the same set renders in ANSI, HTML, TUI and GUI — and each backend's private gutter is deleted as it migrates onto them.                                                                                                  | not started | [chrome.md](./chrome.md) `CHW1`–`CHW7`  |
+| CHR3 | Chrome must never be selectable or copyable in any sink, generalizing the HTML-only rule `HTM3` states today.                                                                                                                                                                                         | not started | [chrome.md](./chrome.md) `CHW3`; `HTM3` |
+| CHR4 | The `changes` component must mark lines added / modified / removed against the git index, computed by **`sparkles:diff`** through the existing `git show` acquisition ([`DVS3`](./diff-view.md)) — hue must not grow a second diff engine — off the first-paint path, degrading to an empty column.   | not started | [chrome.md](./chrome.md) `CHG1`–`CHG3`  |
+| CHR5 | `--changes-only[=N]` must express itself as a derived `LineSelection` (`RNG2`) rather than as a mode, so it composes with `--line-range` and shares its snip separators.                                                                                                                              | not started | [chrome.md](./chrome.md) `CHG4`; `RNG2` |
+
+## Width & wrapping (`WID`)
+
+The wrapping _policy_; the wrapped-line render models themselves are
+[`WRP`](./gui.md) in the window and [`TSF`](./tui.md) in the terminal.
+
+| ID   | Requirement                                                                                                                                                                                                                                         | Status      | Traces to                                 |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------------- |
+| WID1 | `--wrap=auto\|never\|character\|word` must select the wrapping mode in every sink. `auto` (default) is word wrapping when a width is known, and no wrapping when it is not.                                                                         | not started | `CliParams.wrap`; `gui_text.d` wrap model |
+| WID2 | `-S`/`--chop-long-lines` must alias `--wrap=never`. In the non-interactive sinks that truncates at the width; in the interactive sinks it must instead enable **horizontal scrolling**, since a viewer that can scroll should not discard the text. | not started | `WID1`; `viewer_model.d`                  |
+| WID3 | `--terminal-width <width>` must set the assumed width, accepting `+N`/`-N` as offsets from the detected width. With no tty and no flag the width must be 80. Detection stays `term_caps`' answer (`ENG`-adjacent, one place).                       | not started | `CliParams.terminalWidth`; `term_caps`    |
+
+## Paging, pre-formatted input & streaming (`PGR`)
+
+Specified in **[pager.md](./pager.md)**; the rows here are the app-wide
+contract.
+
+The design decision behind the sub-spec: bat shells out to `less`, sniffing its
+version to decide which flags are safe. hue already **has** what bat is shelling
+out to acquire — a full-screen terminal viewer with scrolling, search, mouse and
+copy — so paging is a fifth input to the existing backend pick (`MOD6`), not a
+subprocess. The work that is genuinely new is not paging but **rendering input
+that arrives already formatted**, which is what `$MANPAGER` and `git core.pager`
+require, and which `ansi_model.d` already knows how to decode.
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                       | Status      | Traces to                                    |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------- |
+| PGR1 | `--paging=auto\|never\|always` (`-P` = never) must decide whether a terminal launch pages; under `auto` hue pages iff stdout is a tty and the laid-out render exceeds the viewport — short files feel like `cat`, long ones like `less`.                                                                          | not started | [pager.md](./pager.md) `PAG1`/`PAG2`         |
+| PGR2 | Paging must mean **hue's own TUI**, not a spawned process. `--pager=<cmd>` / `$HUE_PAGER` / `$PAGER` must remain available as an escape hatch, and under any pager hue must behave as `--color=always --decorations=always`.                                                                                      | not started | [pager.md](./pager.md) `PAG3`–`PAG5`         |
+| PGR3 | hue must be usable as `$PAGER`, `$MANPAGER` and `git config core.pager`, with the three recipes in the README — which requires only `PGR4`, `CAT2`, `STY5` and `PGR2`.                                                                                                                                            | not started | [pager.md](./pager.md) `PAG7`                |
+| PGR4 | A **pre-formatted** content kind must exist beside code / markdown / twoslash / diff — input that is already styled, rendered by decoding rather than highlighting, through the existing `ansi_model.d` VT plus a `man`-style backspace-overstrike pass. Sniffed, forced by `--preformatted`, overridden by `-l`. | not started | [pager.md](./pager.md) `PIN1`–`PIN4`; `MOD9` |
+| PGR5 | A pre-formatted document must be exempt from `TXT2`/`TXT3` — those bytes are being interpreted on purpose — while every other content kind stays subject to them.                                                                                                                                                 | not started | [pager.md](./pager.md) `PIN5`; `TXT2`        |
+| PGR6 | `-u`/`--unbuffered` must render incrementally instead of waiting for EOF, and the interactive sinks must offer a `less +F`-style **follow** mode released by any navigation key. Appended input rides the event loop's `pollAdd`, never a timer.                                                                  | not started | [pager.md](./pager.md) `STR1`–`STR3`         |
+| PGR7 | Highlighting under streaming may be imperfect at the tail while a construct is incomplete; line numbers, wrapping and search must stay correct regardless. Incremental reparse remains a `sparkles:syntax` roadmap item, not a hue one.                                                                           | not started | [pager.md](./pager.md) `STR4`                |
 
 ## HTML output (`HTM`)
 
@@ -249,6 +467,9 @@ surface as **hue** capabilities.
 | DEF22 | **Lantern** — a which-key-inspired **key guide**: press a prefix, wait a beat, and a panel lists every key that can follow it. Built on hue's **one binding table**, which replaced three divergent copies of the keyboard policy and is what makes the keymap enumerable at all (and so is [`CFG6`](./config.md)'s prerequisite). Includes the `<space>` **leader map**.                                                                                                                                                                                                                                                                           | partial (`c19bb926`)   | [lantern.md](./lantern.md) `KEY*`/`LTN*`/`LMP*`                                               |
 | DEF23 | **Picker** — a fuzzy finder behind `<leader>f` / `<leader>s` / `<leader>g` / `<leader>/`: a query **constraint language** (`git:modified src/**/*.rs !mod.rs name`), frecency-aware **composite ranking**, budgeted cancellable searches over the `sparkles:event-horizon` work-stealing pool, and sources for files, grep, recent, open documents, git, themes, lines and the keymap itself.                                                                                                                                                                                                                                                       | not started            | [picker.md](./picker.md) `PIK*`/`PKQ*`/`PKR*`/`PKS*`/`PKL*`                                   |
 | DEF24 | **`sparkles:fuzzy`** — the matcher the picker drives, as its own library: a typo-resistant scorer with match positions, the query/constraint parser, the composite ranking formula, exponential-decay frecency, and a glob matcher. `100%` `@safe pure nothrow @nogc`, benchmarked from the first commit.                                                                                                                                                                                                                                                                                                                                           | not started            | [picker.md](./picker.md) `PKM*`                                                               |
+| DEF25 | **User assets** — user-supplied grammars and themes discovered from a config directory, with whatever build/cache step tree-sitter grammars need, plus `--no-custom-assets`. Today grammars come only from the nix bundle (`ENG2`) and themes only from `builtinThemes`, which makes a non-nix install of hue unextendable. Subsumes `DEF4` (theme-file parsing) as its theme half. _Deliberately deferred from the bat-parity scope._                                                                                                                                                                                                              | not started            | `ENG2`; `DEF4`; bat's `bat cache --build` as the reference shape                              |
+| DEF26 | **Input preprocessors** — a decoder seam for inputs that are not text: `$LESSOPEN`/`$LESSCLOSE` compatibility so `lesspipe` handles `.gz`/archives/PDFs out of the box, plus native handlers where hue can do better. Composes with [media.md](./media.md) (`MDB*`), which is the same question asked about embedded content rather than whole inputs. _Deliberately deferred._                                                                                                                                                                                                                                                                     | not started            | bat's `lessopen.rs`; [media.md](./media.md) `MDB*`                                            |
+| DEF27 | **Introspection & completions** — shell completion generation (which belongs in `sparkles:core-cli`, so every app in the monorepo gets it from its `@CliOption` table rather than a hand-written script), a `--diagnostic` dump for bug reports, and `--generate-config-file` / `--no-config` once [config.md](./config.md) lands. `--list-languages` (`LNG7`), `--list-themes` (`THM8`) and `--list-overlays` are specified in their own areas and are **not** deferred. _Deliberately deferred._                                                                                                                                                  | not started            | `sparkles:core-cli` `args.d`/`help_formatting.d`; [config.md](./config.md) `CFG*`             |
 
 ## Module coverage (general spec)
 
@@ -263,4 +484,20 @@ Every non-GUI source file maps to the requirements above:
 | `apps/hue/dub.sdl`          | build configurations (`application` [GUI] / `no-gui` / `unittest`)                                | `CLI4`, `MOD1/2`, `BLD1/2/4`, `NFR3`                                           |
 | `nix/packages/hue.nix`      | `packages.hue`, `packages.hue-no-gui`                                                             | `BLD3`                                                                         |
 
-→ [GUI requirements](./gui.md) · [Overview](./index.md)
+Proposed modules for the areas above that have no code yet:
+
+| Source (proposed)                 | Key symbols                                                   | Requirements                            |
+| --------------------------------- | ------------------------------------------------------------- | --------------------------------------- |
+| `apps/hue/src/line_range.d`       | `parseRange`, `LineSelection`                                 | `RNG1`–`RNG4`, `RNG6`, `CHG4`           |
+| `apps/hue/src/style.d`            | `StyleComponents`, `DecorationPolicy`                         | `CHR1`–`CHR3`, [chrome.md](./chrome.md) |
+| `apps/hue/src/git_changes.d`      | `LineChange`, `changeMap` over `sparkles:diff`                | `CHR4`, `CHR5`                          |
+| `apps/hue/src/pager.d`            | `PagingMode`, `shouldPage`, `spawnPager`                      | `PGR1`–`PGR3`                           |
+| `apps/hue/src/overstrike.d`       | `decodeOverstrike`                                            | `PGR4`                                  |
+| `apps/hue/src/stream.d`           | incremental append, follow state                              | `PGR6`, `PGR7`                          |
+| `libs/base/.../text/normalize.d`  | `sanitize`, `stripSgr`, `expandTabs`, `squeeze`, BOM decoding | `TXT1`–`TXT8`                           |
+| `libs/ui/.../components/chrome.d` | `GutterColumn`, `gutter`, `header`, `grid`, `rule`, `snip`    | `CHR2`, [chrome.md](./chrome.md) `CHW*` |
+| `libs/syntax/.../language.d`      | `resolveLanguage` (the cascade), `firstLineLanguage`          | `LNG2`–`LNG7`                           |
+| `libs/base/.../term_caps.d`       | true-color tier and the detected terminal width               | `CLR5`, `WID3`                          |
+| `sparkles:appearance` (proposed)  | the scheme cascade hue consumes — **not** hue's to build      | `THM5`, `THM7`                          |
+
+→ [GUI requirements](./gui.md) · [Document chrome](./chrome.md) · [Pager & streaming](./pager.md) · [Overview](./index.md)
