@@ -82,8 +82,8 @@ if (isCanvas!Canvas)
                 GhosttyPointCoordinate.init, GhosttyPointCoordinate.init,
                 s.selState, s.hoverState);
 
-            RgbColor fg = rc.hasGrapheme ? rgbOf3(rc.fgCol) : rgbOf(colors.foreground);
-            RgbColor bg = rc.hasBg ? rgbOf3(rc.bgCol) : defaultBg;
+            RgbColor fg = rc.hasGrapheme ? rc.fgCol : rgbOf(colors.foreground);
+            RgbColor bg = rc.hasBg ? rc.bgCol : defaultBg;
             bool hasBg = rc.hasBg;
             if (gx == curX && gy == curY)
             {
@@ -122,10 +122,6 @@ if (isCanvas!Canvas)
 
 private RgbColor rgbOf(in GhosttyColorRgb c) @safe pure nothrow @nogc
     => RgbColor(c.r, c.g, c.b);
-
-// raylib's Color, without naming the type (keeps this module raylib-free in
-// spirit — only `ResolvedCell` carries it across).
-private RgbColor rgbOf3(C)(in C c) => RgbColor(c.r, c.g, c.b);
 
 private ushort styleBitsOf(in GhosttyStyle st) @safe pure nothrow @nogc
 {

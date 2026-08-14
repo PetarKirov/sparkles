@@ -12,6 +12,7 @@ import core.sys.posix.sys.types : pid_t;
 import raylib;
 
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.term_color : RgbColor;
 import sparkles.ghostty.c;
 import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid,
     drawBox;
@@ -273,6 +274,12 @@ private void render_kitty_images(GhosttyTerminal terminal, GhosttyKittyGraphics 
     }
 }
 
+// The raylib boundary. `ResolvedCell` carries backend-neutral `RgbColor`;
+// raylib's draw calls want its own `Color`. Every colour the VT resolves is
+// opaque, so alpha is supplied here rather than carried per cell.
+private Color rl(in RgbColor c) @safe pure nothrow @nogc
+    => Color(c.r, c.g, c.b, 255);
+
 // Per-cell render data resolved by `resolveCell` and consumed by both passes of
 // the two-pass renderer (backgrounds first, then glyphs).
 struct ResolvedCell
@@ -281,8 +288,13 @@ struct ResolvedCell
     uint graphemeLen;
     uint[16] codepoints;
     GhosttyStyle style;
-    Color fgCol;
-    Color bgCol;
+    // Backend-neutral on purpose: `resolveCell` is shared with `cell_paint.d`,
+    // which paints through any `isCanvas` target and must not see raylib's
+    // `Color`. The conversion happens at the raylib call sites in `paintFrame`,
+    // where it belongs. Alpha is not carried because every colour the VT
+    // resolves is opaque.
+    RgbColor fgCol;
+    RgbColor bgCol;
     bool hasBg;           // a background rect should be painted for this cell
     bool isHoveredLink;   // cell is under a hovered OSC 8 link (drawn underlined)
 }
@@ -316,7 +328,7 @@ package(sparkles.terminal_view) ResolvedCell resolveCell(
         GhosttyColorRgb bgRgb;
         if (ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bgRgb) == GHOSTTY_SUCCESS)
         {
-            r.bgCol = Color(bgRgb.r, bgRgb.g, bgRgb.b, 255);
+            r.bgCol = RgbColor(bgRgb.r, bgRgb.g, bgRgb.b);
             r.hasBg = true;
         }
         return r;
@@ -334,8 +346,8 @@ package(sparkles.terminal_view) ResolvedCell resolveCell(
     GhosttyColorRgb bgRgb = colors.background;
     bool hasBg = ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bgRgb) == GHOSTTY_SUCCESS;
 
-    Color bgCol = Color(bgRgb.r, bgRgb.g, bgRgb.b, 255);
-    Color fgCol = Color(fgRgb.r, fgRgb.g, fgRgb.b, 255);
+    RgbColor bgCol = RgbColor(bgRgb.r, bgRgb.g, bgRgb.b);
+    RgbColor fgCol = RgbColor(fgRgb.r, fgRgb.g, fgRgb.b);
 
     // Read the cell style for SGR attribute flags. Colors are already resolved
     // above via the FG/BG_COLOR queries.
@@ -346,7 +358,7 @@ package(sparkles.terminal_view) ResolvedCell resolveCell(
     // composes on top of it correctly.
     if (r.style.inverse)
     {
-        Color inv = bgCol;
+        RgbColor inv = bgCol;
         bgCol = fgCol;
         fgCol = inv;
         hasBg = true;
@@ -382,7 +394,7 @@ package(sparkles.terminal_view) ResolvedCell resolveCell(
     // set (swapping per-condition would cancel out when both are true).
     if (isSelected || isHoveredLink)
     {
-        Color tmp = bgCol;
+        RgbColor tmp = bgCol;
         bgCol = fgCol;
         fgCol = tmp;
         hasBg = true;
@@ -605,7 +617,7 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
                 const rc = resolveCell(s.cells, colors, bgX / s.cellWidth, bgY / s.cellHeight,
                     has_selection, sel_start_pt, sel_end_pt, s.selState, s.hoverState);
                 if (rc.hasBg)
-                    drawSolid(s.fonts.whiteFace, bgX, bgY, s.cellWidth, s.cellHeight, rc.bgCol);
+                    drawSolid(s.fonts.whiteFace, bgX, bgY, s.cellWidth, s.cellHeight, rl(rc.bgCol));
                 bgX += s.cellWidth;
             }
 
@@ -639,7 +651,7 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
                     // glyphs leave gaps); everything else goes through the face-
                     // routing + fake-bold/italic glyph path.
                     if (cp_count != 1 || !drawBox(s.fonts.whiteFace, rc.codepoints[0],
-                            cast(float) x, cast(float) y, s.cellWidth, s.cellHeight, rc.fgCol))
+                            cast(float) x, cast(float) y, s.cellWidth, s.cellHeight, rl(rc.fgCol)))
                     {
                         // Route the cell's base codepoint to its face — codepoint-map
                         // override → real bold/italic face → regular/Nerd fallback →
@@ -654,20 +666,20 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
                         // slant; raylib can't shear a glyph).
                         const italic_offset = fakeItalic ? (s.fontSize / 6) : 0;
                         drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
-                            cast(float)(x + italic_offset), cast(float)y, s.fontSize, rc.fgCol);
+                            cast(float)(x + italic_offset), cast(float)y, s.fontSize, rl(rc.fgCol));
 
                         // Fake bold only when no real bold face is in use: redraw 1px
                         // to the right to thicken strokes.
                         if (fakeBold)
                             drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
-                                cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, rc.fgCol);
+                                cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, rl(rc.fgCol));
                     }
 
                     // Underline (any SGR underline style) and strikethrough.
                     if (rc.style.underline != 0)
-                        drawSolid(s.fonts.whiteFace, x, y + s.cellHeight - 2, s.cellWidth, 1, rc.fgCol);
+                        drawSolid(s.fonts.whiteFace, x, y + s.cellHeight - 2, s.cellWidth, 1, rl(rc.fgCol));
                     if (rc.style.strikethrough)
-                        drawSolid(s.fonts.whiteFace, x, y + s.cellHeight / 2, s.cellWidth, 1, rc.fgCol);
+                        drawSolid(s.fonts.whiteFace, x, y + s.cellHeight / 2, s.cellWidth, 1, rl(rc.fgCol));
 
                     GhosttyCell raw_cell;
                     bool has_hyperlink = false;
@@ -677,7 +689,7 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
                     if (has_hyperlink || rc.isHoveredLink)
                     {
                         int thickness = rc.isHoveredLink ? 2 : 1;
-                        drawSolid(s.fonts.whiteFace, x, y + s.cellHeight - thickness, s.cellWidth, thickness, rc.fgCol);
+                        drawSolid(s.fonts.whiteFace, x, y + s.cellHeight - thickness, s.cellWidth, thickness, rl(rc.fgCol));
                     }
                 }
 
