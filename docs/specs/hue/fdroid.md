@@ -269,22 +269,54 @@ they are, the pipeline runs and stops at `--stage index`.
    a cache in front of a ~64 MB download, which matters when several people
    update at once.
 
+## The Play channel
+
+Google Play is a peer, not a fallback, and shares only the version:
+
+|                        | F-Droid                                        | Play                                                                      |
+| ---------------------- | ---------------------------------------------- | ------------------------------------------------------------------------- |
+| Artifact               | APK                                            | App Bundle (mandatory for new apps since 2021)                            |
+| Key                    | the app signing key — irreplaceable            | the _upload_ key; Google holds the app key and resets this one on request |
+| Signer                 | `apksigner` (v2/v3)                            | `jarsigner` (an AAB is a JAR)                                             |
+| Transport              | rclone → object storage, `fdroid update` index | the v3 `edits` API — open, upload, assign a track, commit                 |
+| Review                 | none                                           | Google's, plus the track ladder                                           |
+| Reproducible for users | yes                                            | no — Play repackages and re-signs per device                              |
+
+`release publish --channels play --track internal` publishes it. Both channels
+run by default; neither's credentials are a precondition for the other's, a
+failure in one still lets the other run, and the exit code reflects any
+failure.
+
+Two measured facts shaped the bundle build:
+
+- **A dex-less bundle is accepted.** hue has `hasCode="false"` and no bytecode
+  at all, which was the main risk in the whole Play path. bundletool 1.18.2
+  builds it and generates installable splits from it.
+- **Native libraries must be stored compressed**, against bundletool's default.
+  The default leaves them uncompressed so the loader can mmap them in place;
+  these libraries compress unusually well, so per-device download for arm64
+  goes 54.3 MB → 105 MB with the default — _worse_ than the single fat APK it
+  replaces. `uncompressNativeLibraries: false` is what makes the bundle a win.
+
 ## Credentials
 
 Nothing here is committed, and — since the split — **nothing signing-related is
 in CI either**. The only secret the workflow uses is the existing Cachix push
 token. Everything below lives on the workstation and on hardware tokens:
 
-| Secret                       | What                               |
-| ---------------------------- | ---------------------------------- |
-| `HUE_RELEASE_KEYSTORE_B64`   | the APK signing keystore, base64   |
-| `HUE_RELEASE_KEYSTORE_PASS`  | its store passphrase               |
-| `HUE_RELEASE_KEY_PASS`       | its key passphrase                 |
-| `FDROID_INDEX_KEYSTORE_B64`  | the index signing keystore, base64 |
-| `FDROID_INDEX_KEYSTORE_PASS` | its store passphrase               |
-| `FDROID_INDEX_KEY_PASS`      | its key passphrase                 |
-| `R2_ACCESS_KEY_ID`           | object-storage access key (S3 API) |
-| `R2_SECRET_ACCESS_KEY`       | object-storage secret              |
+| Secret                                                         | What                                                    |
+| -------------------------------------------------------------- | ------------------------------------------------------- |
+| `HUE_RELEASE_KEYSTORE_B64`                                     | the APK signing keystore, base64                        |
+| `HUE_RELEASE_KEYSTORE_PASS`                                    | its store passphrase                                    |
+| `HUE_RELEASE_KEY_PASS`                                         | its key passphrase                                      |
+| `FDROID_INDEX_KEYSTORE_B64`                                    | the index signing keystore, base64                      |
+| `FDROID_INDEX_KEYSTORE_PASS`                                   | its store passphrase                                    |
+| `FDROID_INDEX_KEY_PASS`                                        | its key passphrase                                      |
+| `R2_ACCESS_KEY_ID`                                             | object-storage access key (S3 API)                      |
+| `R2_SECRET_ACCESS_KEY`                                         | object-storage secret                                   |
+| `SPARKLES_PLAY_SERVICE_ACCOUNT`                                | path to the Play service-account JSON key               |
+| `SPARKLES_PLAY_UPLOAD_KEYSTORE`                                | the Play **upload** keystore (Google holds the app key) |
+| `SPARKLES_PLAY_UPLOAD_KEY_ALIAS`, `…_STORE_PASS`, `…_KEY_PASS` | opening it                                              |
 
 Repository variables, which are not secret: `FDROID_APK_KEY_ALIAS`,
 `FDROID_INDEX_KEY_ALIAS`, `FDROID_REPO_URL`, `FDROID_BUCKET`,

@@ -1,9 +1,27 @@
 # Cutting a Release
 
 How to version, tag, and publish `sparkles`. The repo ships as a **single
-monorepo version**: one `vX.Y.Z` tag moves all eight sub-packages together, and
+monorepo version**: one `vX.Y.Z` tag moves all 35 sub-packages together, and
 that tag is the authoritative version — there is no `version` field in any
 `dub.sdl`.
+
+## The four channels
+
+A release fans out to four places, and they do not behave alike. Most of this
+document is about the first two, which are automatic; the last two are the
+half that a human performs.
+
+| Channel                 | Fired by                        | Immutability                                    | Who acts                    |
+| ----------------------- | ------------------------------- | ----------------------------------------------- | --------------------------- |
+| code.dlang.org (source) | the **pushed tag**              | permanent — retagging poisons downstream caches | automatic                   |
+| Cachix closure          | the published Release           | rolling pin, 3 revisions                        | automatic                   |
+| F-Droid (hue)           | the published Release builds it | a published `versionCode` is never reused       | **you**, on the workstation |
+| Google Play (hue)       | as above                        | as above, plus Google's review                  | **you**, on the workstation |
+
+The app channels are last and manual on purpose: their signing keys live on
+hardware tokens, which a GitHub-hosted runner cannot reach. CI builds the
+artifacts and caches them; you sign and publish. See
+[hue on F-Droid](../specs/hue/fdroid.md).
 
 > [!IMPORTANT]
 > A published version is **immutable**. Once you push a `vX.Y.Z` tag,
@@ -39,6 +57,15 @@ that tag is the authoritative version — there is no `version` field in any
   So before 1.0, a breaking change rides a **minor** bump — it does _not_ force a
   major. (Conventional-commit `feat(x)!:` / `fix(x)!:` markers still flag the
   break in history; they just don't imply a major while we're on `0.x`.)
+
+- **The app channels cap `minor` and `patch` at 255.** Android orders builds by
+  an integer `versionCode`, which is derived from the tag by
+  [`sparkles:versions`](../specs/versions/SPEC.md)' `Tiny.orderKey` — it packs
+  `major:16 | minor:8 | patch:8`. A `v0.256.0` would have no representation and
+  could not be published to F-Droid or Play. Distant (we are at `0.4.x`) but
+  real, and `release` refuses such a tag rather than discovering it after the
+  fact. Prereleases are refused for the same reason: `Tiny` cannot express one,
+  and a prerelease has no business on a public app channel.
 
 - **`v` prefix.** Tags are `vX.Y.Z`; dub strips the leading `v`, so `v0.4.0`
   resolves as dub version `0.4.0`. Non-SemVer tags (e.g. the stray
@@ -113,6 +140,27 @@ A checklist. Each step assumes the toolchain from `nix develop` / `direnv`.
    window between pushing the tag and publishing the Release is your last chance
    to delete a mistaken tag — but treat it as best-effort, not a safety net (the
    registry can ingest a pushed tag on its own before you publish).
+
+8. **Publish the app channels.** The release is not finished at step 7: hue's
+   APK and App Bundle are built and cached by CI, but signing them needs the
+   hardware tokens, so this step happens on your workstation. Wait for the
+   F-Droid workflow to finish — its job summary prints the store path — then:
+
+   ```bash
+   nix run .#release-full -- publish --tag v0.5.0 --stage deploy
+   ```
+
+   That covers both channels by default; `--channels fdroid` or `--channels
+play` narrows it, and `--track` picks the Play track (`internal` by
+   default — promote from the Play Console once it has been looked at).
+
+   It refuses to build the artifacts locally: the thing you sign must be the
+   thing CI built, and a dirty tree or a different commit changes the
+   derivation. If it reports the path is not cached, that mismatch is why.
+
+   `nix run .#release` is the **lean** package (~48 MB, tools from `PATH`);
+   `release-full` (~3.2 GiB) is the one with fdroidserver, a JDK, rclone and
+   bundletool pinned. Publishing needs the latter.
 
 ## Catching up with `release --split`
 
@@ -224,12 +272,20 @@ version="~>0.5.0"`).
 ## Pinning the release closure on Cachix
 
 > [!NOTE]
-> The Android closure (`.#all-android`) is deliberately **not** release-pinned.
-> It exists only on `x86_64-linux` — the NDK and SDK ship prebuilt for that
-> host — while the release matrix is `x86_64-linux` + `aarch64-darwin`, so
-> pinning it would need a per-system carve-out. CI still builds and pushes it
-> on every merge via the `nix-build-android` job, so it is cached; it is just
-> not retained against garbage collection the way a release closure is.
+> The Android **closure** (`.#all-android`) is still not release-pinned: it
+> exists only on `x86_64-linux`, while the release matrix is `x86_64-linux` +
+> `aarch64-darwin`, so pinning it would need a per-system carve-out. CI builds
+> and pushes it on every merge, so it is cached but collectable.
+>
+> The **release artifacts** are a different matter and _are_ pinned. The whole
+> point of the split is that the unsigned APK and App Bundle CI built are still
+> substitutable when you sit down with the signing tokens, which may be days
+> later; an unpinned path is garbage-collectable, and losing it means a
+> ~90-minute local rebuild of the thing you were supposed to be verifying. The
+> F-Droid workflow therefore pins them under a rolling `hue-apk-unsigned-*`
+> name. Unlike `latest-*`, that pin does **not** carry the highest-tag guard —
+> a `release --split` chain creates several tags whose artifacts are each
+> signed in turn, so every release needs retaining.
 
 Besides the registry ping, the `release` workflow builds `.#all-desktop` (the
 aggregate from `nix/packages/all.nix`: the full dev shell, every package, and
@@ -256,3 +312,11 @@ pins, so re-publishing an old release (or the racing runs of a `release
 - [ ] Update hardcoded version strings (README status line); badges are live.
 - [ ] Every breaking change has a `BREAKING — <area>` section with a Migration
       block.
+- [ ] The version fits the app channels: no prerelease, `minor` and `patch`
+      each ≤ 255. `release version --tag vX.Y.Z` answers this in isolation.
+- [ ] After publishing the GitHub Release, **publish the app channels** —
+      the release is not done until `release publish` has run.
+- [ ] Sign on the machine with the hardware tokens, using `.#release-full`;
+      the lean package cannot publish and will say so.
+- [ ] Never re-publish a `versionCode`. Android and F-Droid both treat
+      published bytes as immutable; cut a new tag instead.
