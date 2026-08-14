@@ -32,6 +32,62 @@
             let
               inherit (prev) lib;
               inherit (prev.stdenv.hostPlatform) isDarwin;
+              hostCpu = prev.stdenv.hostPlatform.parsed.cpu.name;
+
+              # Official LDC 1.41 still rpaths glibc 2.40. nixpkgs
+              # elfutils 0.195 needs GLIBC_ABI_GNU2_TLS from this
+              # stdenv's glibc. Point host ELF links at that
+              # interpreter + rpath so `libs "dw"` examples run.
+              #
+              # Cannot be wrapProgram --add-flags: those flags are
+              # prepended to every invocation, and wasm-ld rejects
+              # `--dynamic-linker`. Skip them when `-mtriple` is a
+              # non-host target (wasm, WASI, Windows, Darwin, …).
+              linuxHostElfCompilerWrapper =
+                unwrapped:
+                prev.writeShellScript "${builtins.baseNameOf unwrapped}-host-elf" ''
+                  set -eu
+                  use_host_elf=1
+                  consider() {
+                    case "$1" in
+                      wasm*|*-wasi*|*-windows*|*-mingw*|*-darwin*|*-macos*|*-ios*|*-android*|*-none*)
+                        use_host_elf=0
+                        return
+                        ;;
+                    esac
+                    case "$1" in
+                      ${hostCpu}-*|${hostCpu}_*) ;;
+                      *) use_host_elf=0 ;;
+                    esac
+                  }
+                  prev_is_mtriple=0
+                  # Also honor DFLAGS: LDC prepends it, so a wasm
+                  # triple there must suppress the host ELF flags.
+                  # Intentional word-split — same as the compiler.
+                  for arg in ''${DFLAGS-} "$@"; do
+                    if [ "$prev_is_mtriple" -eq 1 ]; then
+                      consider "$arg"
+                      prev_is_mtriple=0
+                      continue
+                    fi
+                    case "$arg" in
+                      -mtriple=*|--mtriple=*)
+                        consider "''${arg#*=}"
+                        ;;
+                      -mtriple|--mtriple)
+                        prev_is_mtriple=1
+                        ;;
+                    esac
+                  done
+                  if [ "$use_host_elf" -eq 1 ]; then
+                    exec "${unwrapped}" \
+                      -L--dynamic-linker=${prev.stdenv.cc.bintools.dynamicLinker} \
+                      -L-rpath=${prev.stdenv.cc.libc}/lib \
+                      "$@"
+                  else
+                    exec "${unwrapped}" "$@"
+                  fi
+                '';
 
               cleanLdcConfig = lib.pipe "${prev.ldc}/etc/ldc2.conf" [
                 builtins.readFile
@@ -76,20 +132,13 @@
                     };
                   }
                 else
-                  # Official LDC 1.41 still rpaths glibc 2.40. nixpkgs
-                  # elfutils 0.195 needs GLIBC_ABI_GNU2_TLS from this
-                  # stdenv's glibc. Point every host link at that
-                  # interpreter + rpath so `libs "dw"` examples run.
                   prev.symlinkJoin {
                     name = "ldc-${prev.ldc.version}";
                     paths = [ prev.ldc ];
-                    nativeBuildInputs = [ prev.makeWrapper ];
                     postBuild = ''
-                      for drv in ldc2 ldmd2; do
-                        wrapProgram "$out/bin/$drv" \
-                          --add-flags "-L--dynamic-linker=${prev.stdenv.cc.bintools.dynamicLinker}" \
-                          --add-flags "-L-rpath=${prev.stdenv.cc.libc}/lib"
-                      done
+                      rm -f "$out/bin/ldc2" "$out/bin/ldmd2"
+                      ln -s ${linuxHostElfCompilerWrapper "${prev.ldc}/bin/ldc2"} "$out/bin/ldc2"
+                      ln -s ${linuxHostElfCompilerWrapper "${prev.ldc}/bin/ldmd2"} "$out/bin/ldmd2"
                     '';
                     passthru = {
                       inherit (prev.ldc) include;

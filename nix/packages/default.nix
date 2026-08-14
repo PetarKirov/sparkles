@@ -17,8 +17,12 @@
 
       # `ci` execs a D compiler at runtime to build the examples, so it lands in
       # ci's runtime closure (and every consumer's — pre-commit devShell, lint
-      # CI). Prefer DMD on x86_64-linux: no LLVM backend, so ~half LDC's closure.
-      # DMD only targets x86_64/i686-linux + x86_64-darwin; keep LDC elsewhere.
+      # CI). Prefer DMD on x86_64-linux for `--example-files` / `--test`: no
+      # LLVM backend, so ~half LDC's closure. DMD only targets
+      # x86_64/i686-linux + x86_64-darwin; keep LDC elsewhere. `--wasm`
+      # (via `--test-extracted --require-toolchain`) still needs LDC +
+      # wasm-ld + a runtime, so those go on PATH even when DMD is the
+      # default compiler.
       ciCompiler = if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
     in
     {
@@ -28,10 +32,14 @@
 
         # Runtime deps subtracted from buildSparklesApp's default scrub set:
         # - `ciCompiler` — shells out via PATH (see postFixup)
+        # - `pkgs.ldc` / `pkgs.lld` / `pkgs.nodejs` — `--test-extracted --wasm`
         # - `pkgs.curl.out` — `--ci-stats` uses std.net.curl; Phobos bakes an
         #   absolute libcurl path
         buildInputs = [
           ciCompiler
+          pkgs.ldc
+          pkgs.lld
+          pkgs.nodejs
           pkgs.curl.out
         ];
 
@@ -42,6 +50,9 @@
           let
             path = lib.makeBinPath [
               ciCompiler
+              pkgs.ldc
+              pkgs.lld
+              pkgs.nodejs
               pkgs.dub
               pkgs.gitMinimal
             ];
