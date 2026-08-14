@@ -19,9 +19,26 @@
       ndkRoot = ldcAndroid.ndkRoot;
       clangBin = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/bin";
 
-      # Android 5.0 — matches the API level ldc-android's runtimes and the
-      # NDK clang wrappers below target.
-      minSdk = "21";
+      # Android 8.0. The single source of truth for the API level: the NDK
+      # clang wrappers below, every native dependency's platform flag, and the
+      # `--min-sdk-version` aapt2 stamps into the APK (build-apk.nix) all read
+      # it, so the declared floor cannot drift from the one the code was built
+      # against.
+      #
+      # Two constraints set it, and the higher one wins:
+      #
+      #   23  libkqueue's monitor thread waits on `sigwaitinfo`, which bionic
+      #       hides below 23 (`__INTRODUCED_IN`) — see libkqueue.nix. This was
+      #       the real floor while minSdk still claimed 21, so the APK
+      #       installed on API 21/22 and then failed to load libhue.so.
+      #   26  the Skia/Graphite/Vulkan GUI backend.
+      #
+      # Raising it is monotone-safe (a higher `__ANDROID_API__` only unhides
+      # declarations), but *lowering* the floor under installed users is not:
+      # a minSdk increase silently drops devices out of the update path and
+      # F-Droid offers no migration for that. So it is set to its intended
+      # long-term value now, before anything is published.
+      minSdk = "26";
 
       mkTarget =
         {

@@ -46,6 +46,11 @@
 
       androidSdk = config.legacyPackages.androidSdk;
 
+      # The same per-ABI cross table the package derivations compile against
+      # (nix/packages/android/ndk.nix), so the shell's ANDROID_CC* cannot
+      # target a different API level than the artifacts do.
+      androidNdk = config.legacyPackages.androidNdk;
+
       # Workflow helpers (thin glue over adb/emulator; anything with real
       # logic belongs in apps/ci per the repo rule).
       hueAdbInstall = pkgs.writeShellApplication {
@@ -103,9 +108,9 @@
           export ANDROID_NDK_ROOT=${ndkRoot}
           export ANDROID_NDK_HOME=${ndkRoot}
           export NDK=${ndkRoot}
-          export ANDROID_CC=${ndkClangBin}/aarch64-linux-android21-clang
-          export ANDROID_CC_ARM64=${ndkClangBin}/aarch64-linux-android21-clang
-          export ANDROID_CC_X86_64=${ndkClangBin}/x86_64-linux-android21-clang
+          export ANDROID_CC=${androidNdk.targets."arm64-v8a".cc}
+          export ANDROID_CC_ARM64=${androidNdk.targets."arm64-v8a".cc}
+          export ANDROID_CC_X86_64=${androidNdk.targets."x86_64".cc}
           export ANDROID_SDK_ROOT=${androidSdk.devSdkRoot}
           export PATH=${ndkClangBin}:${androidSdk.platformTools}:${androidSdk.buildTools}:$PATH
         '';
