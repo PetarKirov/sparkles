@@ -77,6 +77,7 @@
         "libghostty-vt-android"
         "libhello-android"
         "libhue-android"
+        "libkqueue-android"
         "raylib-android"
         "tree-sitter-android"
         "ts-grammars-android"
