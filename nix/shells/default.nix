@@ -119,6 +119,14 @@
 
         # `libs "raylib"` in libs/raylib-text and apps/terminal.
         pkgs.raylib
+
+        # `libs "vulkan"` in libs/vulkan. The `.dev` output carries
+        # `vulkan.pc`, whose `includedir` points at vulkan-headers — so one
+        # pkg-config entry supplies both the ImportC include path and the link
+        # flags. The headers alone would not be discoverable: vulkan-headers
+        # ships no `.pc` of its own.
+        pkgs.vulkan-loader
+        pkgs.vulkan-loader.dev
       ]
       # OS-API research examples (docs/research/.../os-apis): the X11 and Wayland
       # ImportC examples are **Linux-only**, so gate these on Linux — `wayland`,
