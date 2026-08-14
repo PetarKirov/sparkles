@@ -12,6 +12,14 @@ behavior from tool names or future plans.
 > not currently produce `.deb`, RPM, Arch packages, AppImage, Flatpak, Snap, MSI, MSIX,
 > setup EXEs, `.app`, DMG, PKG, or XIP artifacts in its release workflow. Those formats
 > are research targets, not tested current behavior.
+>
+> **One row of the matrix has since been implemented**: `hue` builds as an Android
+> APK and has a full sign-and-publish pipeline behind it
+> ([`docs/specs/hue/fdroid.md`](../../specs/hue/fdroid.md)). It is described in its
+> own sections below, and it is the only place this audit's "no signing, no package
+> index" findings no longer hold. Nothing is served from it yet — the pipeline waits
+> on two keys and a public URL — so the _published_ baseline is still as described
+> here.
 
 ## Current product and version identity
 
@@ -56,6 +64,13 @@ an auditable closure. It does **not** currently define a normalized application 
 tree, platform installer metadata, code signing, SBOM, or an end-user updater feed
 ([release pipeline][pipeline]). A Nix store closure also is not automatically portable to
 non-Nix systems.
+
+The Android outputs (`nix/packages/android/`, x86*64-linux only) are the exception, and
+they are shaped the way [recommendations][recommendations] argues for: nix produces a
+**stage tree** — `hue-apk-unsigned` and `hue-icon` — and a separate tool consumes it.
+Signing is deliberately \_not* a nix step, because every input a derivation references
+lands in `/nix/store`, which is world-readable and pushed to Cachix; `buildAndroidApk`
+therefore has an explicit unsigned state and stops after `zipalign`.
 
 ## CI and host coverage
 
@@ -121,18 +136,18 @@ are emitted by this workflow.
 
 ## Baseline against the ten dimensions
 
-| Dimension                    | Sparkles today                                                         | Evidence / limit                                                                   |
-| ---------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Role and scope               | source release + D registry notification + Nix closure cache           | [release guide][release-guide], [workflow][release-workflow]                       |
-| Input and staging            | tagged git tree; Nix filesets per derivation                           | no common end-user stage-tree contract                                             |
-| Output/install model         | code.dlang.org source package; Nix derivations/closures                | no portable archive or OS-native installer                                         |
-| Dependency/runtime policy    | Nix closure pins runtime/build deps; `dub` lockfiles pin D deps        | no declared non-Nix redistribution boundary                                        |
-| Target/host matrix           | full CI on `x86_64-linux` and `aarch64-darwin`; narrow Windows example | no Windows release matrix; no Linux distro baseline matrix                         |
-| Identity/version/upgrades    | one annotated SemVer tag for all D sub-packages                        | no MSI/MSIX/bundle/repository identity or upgrade policy                           |
-| Signing/notarization         | git/GitHub credentials and Cachix trust only                           | no Authenticode, Developer ID, notarization, or repository signing                 |
-| Publishing/channels          | GitHub Release, code.dlang.org notification, Cachix `latest-*` pins    | no package indexes/stores/community catalog submissions                            |
-| Updater/rollback             | Nix/Cachix consumers may address immutable store paths                 | no application updater/feed contract                                               |
-| Supply chain/reproducibility | Nix pins inputs/closures; CI builds `.#all`                            | no final-artifact checksum manifest, SBOM, provenance, or measured reproducibility |
+| Dimension                    | Sparkles today                                                                                                                      | Evidence / limit                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Role and scope               | source release + D registry notification + Nix closure cache                                                                        | [release guide][release-guide], [workflow][release-workflow]                       |
+| Input and staging            | tagged git tree; Nix filesets per derivation                                                                                        | no common end-user stage-tree contract                                             |
+| Output/install model         | code.dlang.org source package; Nix derivations/closures                                                                             | no portable archive or OS-native installer                                         |
+| Dependency/runtime policy    | Nix closure pins runtime/build deps; `dub` lockfiles pin D deps                                                                     | no declared non-Nix redistribution boundary                                        |
+| Target/host matrix           | full CI on `x86_64-linux` and `aarch64-darwin`; narrow Windows example                                                              | no Windows release matrix; no Linux distro baseline matrix                         |
+| Identity/version/upgrades    | one annotated SemVer tag for all D sub-packages                                                                                     | no MSI/MSIX/bundle/repository identity or upgrade policy                           |
+| Signing/notarization         | git/GitHub credentials and Cachix trust; **Android APK + F-Droid index signing**                                                    | no Authenticode, Developer ID, or notarization                                     |
+| Publishing/channels          | GitHub Release, code.dlang.org notification, Cachix `latest-*` pins; **a self-hosted F-Droid repository, built but not yet served** | no other package indexes/stores/community catalog submissions                      |
+| Updater/rollback             | Nix/Cachix consumers may address immutable store paths                                                                              | no application updater/feed contract                                               |
+| Supply chain/reproducibility | Nix pins inputs/closures; CI builds `.#all`                                                                                         | no final-artifact checksum manifest, SBOM, provenance, or measured reproducibility |
 
 ## The concrete delta
 
