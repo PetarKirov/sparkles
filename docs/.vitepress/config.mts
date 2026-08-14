@@ -665,6 +665,10 @@ export default withMermaid(
                   link: '/specs/hue/android',
                 },
                 {
+                  text: 'F-Droid distribution',
+                  link: '/specs/hue/fdroid',
+                },
+                {
                   text: 'Configuration (design)',
                   link: '/specs/hue/config',
                 },
