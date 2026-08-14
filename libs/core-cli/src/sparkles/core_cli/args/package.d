@@ -24,11 +24,14 @@ public import sparkles.core_cli.args.internal :
 public import sparkles.core_cli.args.uda :
     Argument,
     Command,
+    Flatten,
     Option,
     SubCommandRegistration,
     SubCommandRegistrationWithHandler,
     Subcommands,
     addSubCommand,
+    getFlatten,
+    hasFlatten,
     identifierSafe;
 
 public import sparkles.core_cli.help_formatting :

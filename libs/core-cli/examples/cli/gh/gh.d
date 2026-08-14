@@ -308,15 +308,10 @@ struct PrCreate
     }
 }
 
-@(Command("list",
-    shortDescription: "List pull requests in a repository",
-    helpSections: ["description"],
-))
-struct PrList
-{
-    @(Option(`s|state`, allowedValues: ["open", "closed", "merged", "all"]))
-    string state = "open";
+// ─── shared list filter options ──────────────────────────────────────────
 
+struct ListFilterOptions
+{
     @(Option(`a|assignee`, description: "Filter by assignee"))
     string assignee;
 
@@ -326,8 +321,21 @@ struct PrList
     @(Option(`l|label`, description: "Filter by label. Can be specified multiple times."))
     string[] labels;
 
-    @(Option(`L|limit`, description: "Maximum number of pull requests to fetch"))
+    @(Option(`L|limit`, description: "Maximum number of items to fetch"))
     int limit = 30;
+}
+
+@(Command("list",
+    shortDescription: "List pull requests in a repository",
+    helpSections: ["description"],
+))
+struct PrList
+{
+    @(Option(`s|state`, allowedValues: ["open", "closed", "merged", "all"]))
+    string state = "open";
+
+    @Flatten("Filter Options")
+    ListFilterOptions filters;
 
     @(Option(`B|base`, description: "Filter by base branch"))
     string base;
@@ -493,17 +501,8 @@ struct IssueList
     @(Option(`s|state`, allowedValues: ["open", "closed", "all"]))
     string state = "open";
 
-    @(Option(`a|assignee`, description: "Filter by assignee"))
-    string assignee;
-
-    @(Option(`A|author`, description: "Filter by author"))
-    string author;
-
-    @(Option(`l|label`, description: "Filter by label. Can be specified multiple times."))
-    string[] labels;
-
-    @(Option(`L|limit`, description: "Maximum number of issues to fetch"))
-    int limit = 30;
+    @Flatten("Filter Options")
+    ListFilterOptions filters;
 
     void run(Program)(in Program program) =>
         styledWriteln(i"Running {bold gh issue list} with params:

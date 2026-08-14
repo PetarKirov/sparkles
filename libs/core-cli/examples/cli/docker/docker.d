@@ -21,9 +21,9 @@ private enum string[] restartPolicies = [
     "no", "on-failure", "always", "unless-stopped",
 ];
 
-// ─── shared run-options mixin ────────────────────────────────────────────
+// ─── shared run-options struct ───────────────────────────────────────────
 
-private mixin template ContainerRunFields()
+struct ContainerRunOptions
 {
     @(Option(`d|detach`, description: "Run the container in the background and print its ID"))
     bool detach;
@@ -73,7 +73,8 @@ private mixin template ContainerRunFields()
 ))
 struct ContainerRun
 {
-    mixin ContainerRunFields;
+    @Flatten
+    ContainerRunOptions runOptions;
 
     void run()
     {
@@ -755,7 +756,8 @@ struct System
 ))
 struct Run
 {
-    mixin ContainerRunFields;
+    @Flatten
+    ContainerRunOptions runOptions;
 
     void run(Program)(in Program program) =>
         styledWriteln(i"Running {bold docker run} with params:

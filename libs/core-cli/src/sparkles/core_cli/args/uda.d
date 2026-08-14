@@ -1,5 +1,7 @@
 module sparkles.core_cli.args.uda;
 
+import std.traits : getUDAs, hasUDA;
+
 import sparkles.core_cli.help_formatting : Sections;
 
 private struct NamedOnly {}
@@ -376,4 +378,46 @@ mixin template addSubCommand(T, alias handler)
         ~ "private SubCommandRegistrationWithHandler!(T, handler) "
         ~ fieldName
         ~ ";");
+}
+
+/**
+UDA to flatten a nested struct of CLI options into the parent command struct.
+
+When a struct field is annotated with `@Flatten`, its fields participate in
+option parsing, short-option bundling, positional argument assignment, and
+validation as if they were declared directly on the enclosing command.
+
+Params:
+    groupHeading = Optional heading used to group the flattened options in `--help` output.
+        If `null`, options appear under the main `OPTIONS` section.
+    prefix = Optional prefix prepended to long option names (e.g., `"diff-"` maps `layout` to `--diff-layout`).
+*/
+struct Flatten
+{
+    string groupHeading = null;
+    string prefix = null;
+
+    this(string groupHeading, string prefix = null) @safe pure nothrow @nogc
+    {
+        this.groupHeading = groupHeading;
+        this.prefix = prefix;
+    }
+}
+
+/// Eponymous template checking whether a symbol has the `@Flatten` UDA.
+enum bool hasFlatten(alias symbol) = hasUDA!(symbol, Flatten);
+
+/// Extracts the `Flatten` UDA configuration from a symbol.
+template getFlatten(alias symbol)
+{
+    static if (!hasFlatten!symbol)
+        enum Flatten getFlatten = Flatten.init;
+    else
+    {
+        alias UDAs = getUDAs!(symbol, Flatten);
+        static if (is(UDAs[0] == Flatten))
+            enum Flatten getFlatten = Flatten();
+        else
+            enum Flatten getFlatten = UDAs[0];
+    }
 }

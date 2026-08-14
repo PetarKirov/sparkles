@@ -116,9 +116,9 @@ private template viewsPath(Root, Cli, string kind, string name)
 /// `views/<root>/<chain>/options/<short>.txt`, where `<short>` is the
 /// option's first alias (uppercase short flags get a trailing underscore
 /// in the filename to avoid collisions on case-insensitive filesystems).
-package template optionHelpText(Root, Cli, string field)
+package template optionHelpText(Root, CommandContext, FlatCli, string field)
 {
-    alias symbol = __traits(getMember, Cli, field);
+    alias symbol = __traits(getMember, FlatCli, field);
     enum opt = getUDAs!(symbol, Option)[0];
     static if (opt.description_.length)
         enum optionHelpText = opt.description_;
@@ -126,8 +126,19 @@ package template optionHelpText(Root, Cli, string field)
     {
         enum aliasShort = opt.aliases.split("|")[0];
         enum safeName = isUpperShortFlag(aliasShort) ? aliasShort ~ "_" : aliasShort;
-        enum optionHelpText = tryImport!(viewsPath!(Root, Cli, "options", safeName));
+        enum primaryText = tryImport!(viewsPath!(Root, CommandContext, "options", safeName));
+        static if (primaryText.length > 0)
+            enum optionHelpText = primaryText;
+        else static if (!is(CommandContext == FlatCli))
+            enum optionHelpText = tryImport!(viewsPath!(Root, FlatCli, "options", safeName));
+        else
+            enum string optionHelpText = null;
     }
+}
+
+package template optionHelpText(Root, Cli, string field)
+{
+    enum optionHelpText = optionHelpText!(Root, Cli, Cli, field);
 }
 
 private bool isUpperShortFlag(string flag) @safe pure nothrow @nogc
@@ -205,6 +216,12 @@ package string formatHelp(Root, Cli)(HelpInfo info)
     if (options.length)
         sections ~= formatSection("options", options, 0, "", "\n");
 
+    static foreach (group; formatGroupedOptionSections!(Root, Cli))
+    {
+        if (group.lines.length)
+            sections ~= formatSection(group.heading, group.lines, 0, "", "\n");
+    }
+
     static if (allChildren!Cli.length > 0)
     {
         auto commands = formatSubcommands!(Root, Cli);
@@ -242,24 +259,7 @@ private string helpRow(string head, string body_) @safe
 private string formatUsage(Cli)(string programName)
 {
     string[] parts = [programName];
-    static foreach (field; FieldNameTuple!Cli)
-    {{
-        alias symbol = __traits(getMember, Cli, field);
-        enum options = getUDAs!(symbol, Option);
-        static if (options.length && !options[0].hidden_)
-        {{
-            enum o = options[0];
-            alias FT = typeof(__traits(getMember, Cli.init, field));
-            enum body_ = displayOption(o, field) ~ valuePlaceholder!FT(o, field);
-            parts ~= o.required_ ? body_ : "[" ~ body_ ~ "]";
-        }}
-        enum args = getUDAs!(symbol, Argument);
-        static if (args.length && !args[0].hidden_)
-        {{
-            enum name = positionalName(field, args[0]);
-            parts ~= args[0].optional_ ? "[" ~ name ~ "]" : name;
-        }}
-    }}
+    parts ~= collectUsageParts!Cli();
 
     static if (allChildren!Cli.length > 0)
         parts ~= "<command>";
@@ -267,16 +267,120 @@ private string formatUsage(Cli)(string programName)
     return parts.join(" ");
 }
 
-private string[] formatOptions(Root, Cli)()
+private string[] collectUsageParts(Cli)()
 {
-    string[] lines = [helpRow("-h".sty.bold ~ ", " ~ "--help".sty.bold, "Show this help text.")];
+    string[] parts;
     static foreach (field; FieldNameTuple!Cli)
     {{
         alias symbol = __traits(getMember, Cli, field);
         enum options = getUDAs!(symbol, Option);
+        enum args = getUDAs!(symbol, Argument);
+        enum isFlattened = hasFlatten!symbol;
         static if (options.length && !options[0].hidden_)
-            lines ~= formatOptionLine!(typeof(__traits(getMember, Cli.init, field)))(
-                options[0], field, optionHelpText!(Root, Cli, field));
+        {{
+            enum o = options[0];
+            alias FT = typeof(__traits(getMember, Cli.init, field));
+            enum body_ = displayOption(o, field) ~ valuePlaceholder!FT(o, field);
+            parts ~= o.required_ ? body_ : "[" ~ body_ ~ "]";
+        }}
+        static if (args.length && !args[0].hidden_)
+        {{
+            enum name = positionalName(field, args[0]);
+            parts ~= args[0].optional_ ? "[" ~ name ~ "]" : name;
+        }}
+        else static if (isFlattened && is(typeof(symbol) == struct))
+        {{
+            parts ~= collectUsageParts!(typeof(symbol))();
+        }}
+    }}
+    return parts;
+}
+
+private string[] formatOptions(Root, Cli)()
+{
+    string[] lines = [helpRow("-h".sty.bold ~ ", " ~ "--help".sty.bold, "Show this help text.")];
+    lines ~= collectUngroupedOptions!(Root, Cli)();
+    return lines;
+}
+
+private string[] collectUngroupedOptions(Root, Cli)()
+{
+    return collectUngroupedOptions!(Root, Cli, Cli)();
+}
+
+private string[] collectUngroupedOptions(Root, CommandContext, FlatCli)()
+{
+    string[] lines;
+    static foreach (field; FieldNameTuple!FlatCli)
+    {{
+        alias symbol = __traits(getMember, FlatCli, field);
+        enum options = getUDAs!(symbol, Option);
+        enum isFlattened = hasFlatten!symbol;
+        static if (options.length && !options[0].hidden_)
+            lines ~= formatOptionLine!(typeof(__traits(getMember, FlatCli.init, field)))(
+                options[0], field, optionHelpText!(Root, CommandContext, FlatCli, field));
+        else static if (isFlattened && is(typeof(symbol) == struct))
+        {{
+            enum flattenInfo = getFlatten!symbol;
+            static if (flattenInfo.groupHeading.length == 0)
+            {
+                lines ~= collectUngroupedOptions!(Root, CommandContext, typeof(symbol))();
+            }
+        }}
+    }}
+    return lines;
+}
+
+struct OptionGroup
+{
+    string heading;
+    string[] lines;
+}
+
+private OptionGroup[] formatGroupedOptionSections(Root, Cli)()
+{
+    return formatGroupedOptionSections!(Root, Cli, Cli)();
+}
+
+private OptionGroup[] formatGroupedOptionSections(Root, CommandContext, FlatCli)()
+{
+    OptionGroup[] groups;
+    static foreach (field; FieldNameTuple!FlatCli)
+    {{
+        alias symbol = __traits(getMember, FlatCli, field);
+        enum isFlattened = hasFlatten!symbol;
+        static if (isFlattened && is(typeof(symbol) == struct))
+        {{
+            enum flattenInfo = getFlatten!symbol;
+            static if (flattenInfo.groupHeading.length != 0)
+            {
+                OptionGroup g;
+                g.heading = flattenInfo.groupHeading;
+                g.lines = collectAllOptionsForGroup!(Root, CommandContext, typeof(symbol))();
+                groups ~= g;
+            }
+            else
+            {
+                groups ~= formatGroupedOptionSections!(Root, CommandContext, typeof(symbol))();
+            }
+        }}
+    }}
+    return groups;
+}
+
+private string[] collectAllOptionsForGroup(Root, CommandContext, FlatCli)()
+{
+    string[] lines;
+    static foreach (field; FieldNameTuple!FlatCli)
+    {{
+        alias symbol = __traits(getMember, FlatCli, field);
+        enum options = getUDAs!(symbol, Option);
+        enum isFlattened = hasFlatten!symbol;
+        static if (options.length && !options[0].hidden_)
+            lines ~= formatOptionLine!(typeof(__traits(getMember, FlatCli.init, field)))(
+                options[0], field, optionHelpText!(Root, CommandContext, FlatCli, field));
+        else static if (isFlattened && is(typeof(symbol) == struct))
+            lines ~= collectAllOptionsForGroup!(Root, CommandContext, typeof(symbol))();
     }}
     return lines;
 }
@@ -288,8 +392,11 @@ private string[] formatPositionals(Cli)()
     {{
         alias symbol = __traits(getMember, Cli, field);
         enum args = getUDAs!(symbol, Argument);
+        enum isFlattened = hasFlatten!symbol;
         static if (args.length && !args[0].hidden_)
             lines ~= helpRow(positionalName(field, args[0]).sty.bold, args[0].description_);
+        else static if (isFlattened && is(typeof(symbol) == struct))
+            lines ~= formatPositionals!(typeof(symbol))();
     }}
     return lines;
 }
