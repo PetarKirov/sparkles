@@ -19,7 +19,30 @@ enum Stage
     pushTag,              /// also `git push origin <tag>`
     createGhReleaseDraft, /// also `gh release create --draft`
     publishGhRelease,     /// also publish the GitHub release (fires the release workflow)
+    publishFdroid,        /// also sign and publish the Android channel (see below)
 }
+
+/**
+Why the Android channel is a stage and not a separate errand.
+
+`publish-fdroid` shells out to `fdroid-publish`, which signs the release APK
+with a key on a hardware token and publishes the self-hosted F-Droid
+repository. Two consequences follow from that, and both are deliberate:
+
+$(UL
+$(LI It cannot run where the earlier stages usually do. A GitHub-hosted runner
+    has no USB token, so reaching this stage from CI fails — by design. The
+    stage is meant to be typed on the workstation that holds the tokens.)
+$(LI It is last, and the ladder is cumulative, so it is only ever reached when
+    named. The default remains `create-tag`; nothing drifts into publishing an
+    app by accident.)
+)
+
+The guards that make this safe live in `fdroid-publish` itself: it refuses to
+reuse a published `versionCode`, refuses to build the APK locally rather than
+substituting what CI built, and verifies the signing certificate against the
+pin in the metadata.
+*/
 
 /// Parses a `--stage` token; null on an unknown token.
 Nullable!Stage parseStage(scope const(char)[] s)
@@ -30,6 +53,7 @@ Nullable!Stage parseStage(scope const(char)[] s)
         case "push-tag":                return nullable(Stage.pushTag);
         case "create-gh-release-draft": return nullable(Stage.createGhReleaseDraft);
         case "publish-gh-release":      return nullable(Stage.publishGhRelease);
+        case "publish-fdroid":          return nullable(Stage.publishFdroid);
         default:                        return Nullable!Stage.init;
     }
 }
@@ -43,6 +67,7 @@ string stageToken(Stage s)
         case Stage.pushTag:              return "push-tag";
         case Stage.createGhReleaseDraft: return "create-gh-release-draft";
         case Stage.publishGhRelease:     return "publish-gh-release";
+        case Stage.publishFdroid:        return "publish-fdroid";
     }
 }
 
@@ -58,7 +83,7 @@ bool stageAtLeast(Stage chosen, Stage step) => chosen >= step;
 unittest
 {
     static foreach (s; [Stage.createTag, Stage.pushTag,
-            Stage.createGhReleaseDraft, Stage.publishGhRelease])
+            Stage.createGhReleaseDraft, Stage.publishGhRelease, Stage.publishFdroid])
         assert(parseStage(stageToken(s)).get == s);
 
     assert(parseStage("nonsense").isNull);
@@ -75,4 +100,9 @@ unittest
     assert(stageAtLeast(Stage.createTag, Stage.createTag));
     assert(!stageAtLeast(Stage.createTag, Stage.pushTag));
     assert(!stageAtLeast(Stage.pushTag, Stage.createGhReleaseDraft));
+
+    // The Android channel is last, and publishing the GitHub release does NOT
+    // reach it — the two halves run on different machines.
+    assert(stageAtLeast(Stage.publishFdroid, Stage.publishGhRelease));
+    assert(!stageAtLeast(Stage.publishGhRelease, Stage.publishFdroid));
 }

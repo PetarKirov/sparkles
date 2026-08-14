@@ -195,12 +195,20 @@
 
         # `release` bundles the flake-built `ci` (pinned pre-flight checks) plus
         # git and `gh`; LLM agents are user-provided, found on the caller's PATH.
+        #
+        # `fdroid-publish` joins them for the `publish-fdroid` stage — bundled
+        # the same way `ci` is, so the stage runs the version this repository
+        # pins rather than whatever happens to be on the caller's PATH. It
+        # brings fdroidserver, a JDK and rclone with it, which is a real closure
+        # increase; the alternative (leaving it to PATH) would let a release
+        # publish through a publisher nobody pinned.
         postFixup =
           let
             path = lib.makeBinPath [
               pkgs.gitMinimal
               pkgs.gh
               config.packages.ci
+              config.packages.fdroid-publish
             ];
           in
           ''
