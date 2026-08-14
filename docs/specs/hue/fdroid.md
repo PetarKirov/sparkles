@@ -197,6 +197,37 @@ summary and icon, `minSdkVersion 26`, both ABIs — and, as intended, an empty
 permission list and **no** `features` entry, because the `<uses-feature>` in the
 manifest carries no `android:name` for fdroidserver to record.
 
+## Credentials
+
+Nothing here is committed. GitHub Actions secrets, gated behind the `fdroid`
+environment so a reviewer stands between "CI can build this" and "CI can sign as
+me":
+
+| Secret                       | What                               |
+| ---------------------------- | ---------------------------------- |
+| `HUE_RELEASE_KEYSTORE_B64`   | the APK signing keystore, base64   |
+| `HUE_RELEASE_KEYSTORE_PASS`  | its store passphrase               |
+| `HUE_RELEASE_KEY_PASS`       | its key passphrase                 |
+| `FDROID_INDEX_KEYSTORE_B64`  | the index signing keystore, base64 |
+| `FDROID_INDEX_KEYSTORE_PASS` | its store passphrase               |
+| `FDROID_INDEX_KEY_PASS`      | its key passphrase                 |
+| `R2_ACCESS_KEY_ID`           | object-storage access key (S3 API) |
+| `R2_SECRET_ACCESS_KEY`       | object-storage secret              |
+
+Repository variables, which are not secret: `FDROID_APK_KEY_ALIAS`,
+`FDROID_INDEX_KEY_ALIAS`, `FDROID_REPO_URL`, `FDROID_BUCKET`,
+`FDROID_S3_ENDPOINT`.
+
+The object-storage credential is an **access-key pair for the S3-compatible
+endpoint**, which is a different kind of token from the `CLOUDFLARE_API_TOKEN`
+the docs deployment already uses; one cannot substitute for the other.
+
+Passphrases are never passed as arguments. `apksigner` is told the _name_ of the
+variable (`--ks-pass env:…`) and reads it itself, and fdroidserver resolves its
+own through `{env: …}` in `config.yml`. Both matter because
+`/proc/<pid>/cmdline` is world-readable and fdroidserver publishes `sys.argv`
+verbatim in `repo/status/update.json`.
+
 ## Traps
 
 - **`resources.arsc` must be stored, not deflated.** The APK had no resource
