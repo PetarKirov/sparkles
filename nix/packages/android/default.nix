@@ -14,6 +14,7 @@
     ./build-apk.nix
     ./hello.nix
     ./hue.nix
+    ./icon.nix
     ./libghostty-vt.nix
     ./libkqueue.nix
     ./ndk.nix
@@ -74,6 +75,7 @@
         "hue-android-assets"
         "hue-apk"
         "hue-apk-repo"
+        "hue-icon"
         "libghostty-vt-android"
         "libhello-android"
         "libhue-android"

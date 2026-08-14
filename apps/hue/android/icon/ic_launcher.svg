@@ -1,0 +1,36 @@
+<!--
+    hue's launcher icon — a PLACEHOLDER (see docs/specs/hue/fdroid.md FDR3).
+
+    Stylized syntax-highlighted code: indented rows of rounded bars, coloured
+    from hue's own default theme (`catppuccin-mocha` in
+    libs/ui/src/sparkles/ui/themes.d) — background is its `defaultBg`, and each
+    bar takes the colour that theme assigns to the token class named beside it.
+
+    Deliberately free of text elements: nix rasterizes this with resvg's
+    system-font loading disabled, so a text element would render as nothing and
+    make the output depend on the build host's font set. Pure geometry keeps
+    the density PNGs bit-reproducible.
+
+    (No double hyphen may appear anywhere in an XML comment, which is why the
+    flag names are spelled out in prose here. See nix/packages/android/icon.nix
+    for the actual invocation.)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+    <rect width="1024" height="1024" rx="224" fill="#1e1e2e" />
+    <g>
+        <!-- keyword, function -->
+        <rect x="176" y="198" width="200" height="84" rx="42" fill="#cba6f7" />
+        <rect x="412" y="198" width="320" height="84" rx="42" fill="#89b4fa" />
+        <!-- string, constant.numeric -->
+        <rect x="280" y="334" width="240" height="84" rx="42" fill="#a6e3a1" />
+        <rect x="556" y="334" width="160" height="84" rx="42" fill="#fab387" />
+        <!-- type, variable -->
+        <rect x="280" y="470" width="300" height="84" rx="42" fill="#f9e2af" />
+        <rect x="616" y="470" width="200" height="84" rx="42" fill="#eba0ac" />
+        <!-- string, function -->
+        <rect x="280" y="606" width="180" height="84" rx="42" fill="#a6e3a1" />
+        <rect x="496" y="606" width="290" height="84" rx="42" fill="#89b4fa" />
+        <!-- keyword -->
+        <rect x="176" y="742" width="160" height="84" rx="42" fill="#cba6f7" />
+    </g>
+</svg>

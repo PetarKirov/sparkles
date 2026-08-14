@@ -36,8 +36,14 @@
         device-to-device transfers — pointless for the sample build, and for the
         repo-embedded one ~29 MB that silently exceeds Auto Backup's 25 MB quota
         and is dropped anyway. -->
+    <!-- android:icon resolves against the resource table aapt2 links from the
+        `resDir` it is given (nix/packages/android/icon.nix generates the
+        mipmaps from one SVG). hasCode="false" does not conflict with having
+        resources: resources are data the framework resolves by numeric id, and
+        no R.java or DEX is involved. -->
     <application
         android:label="hue"
+        android:icon="@mipmap/ic_launcher"
         android:hasCode="false"
         android:allowBackup="false"
         android:extractNativeLibs="true">

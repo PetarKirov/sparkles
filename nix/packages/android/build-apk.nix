@@ -81,6 +81,10 @@ in
           libs,
           # Optional assets directory (becomes the APK's assets/ tree).
           assetsDir ? null,
+          # Optional resource directory (a res/ tree: mipmap-*/, values/, …).
+          # Compiled by aapt2 into a resources.arsc — see the buildPhase for the
+          # two traps that come with having one at all.
+          resDir ? null,
           # Debug builds get android:debuggable="true"; release builds do not.
           debug ? true,
           # Signing keystore (storepass/keypass "android"). Defaults to the
@@ -133,10 +137,36 @@ in
               ) libs
             )}
 
+            ${lib.optionalString (resDir != null) ''
+              # NOT `aapt2 compile --dir`: aapt2 assigns resource IDs in input
+              # order, and --dir's order is a filesystem walk. An explicit
+              # LC_ALL=C-sorted list makes the resource table — and so the whole
+              # APK — reproducible.
+              mkdir -p compiled
+              find ${resDir} -type f | LC_ALL=C sort > res-inputs.txt
+              xargs -a res-inputs.txt ${sdk.buildTools}/aapt2 compile --no-crunch -o compiled/
+              LC_ALL=C ls compiled/*.flat | LC_ALL=C sort > res-flats.txt
+            ''}
+
             # --min/--target-sdk-version are *defaults* aapt2 applies only when
             # the manifest declares no <uses-sdk>. Ours deliberately does not,
             # so these are the single source of truth and cannot drift from the
             # API level the native code was actually compiled against.
+            #
+            # Two flags below exist only because we link a res/ tree:
+            #
+            #   -0 arsc   MANDATORY. An app targeting API 30+ must ship an
+            #             UNCOMPRESSED resources.arsc or Android 11+ refuses to
+            #             install it. aapt2 only stores it by default when
+            #             minSdk >= 30, and ours is 26 — so without this the APK
+            #             builds, signs, verifies, and then cannot be installed.
+            #   --no-crunch
+            #             skips aapt2's PNG re-encode. The rasters come from
+            #             resvg already at their final size, so this only
+            #             removes a transform from the reproducibility surface.
+            #
+            # Compiled resources are POSITIONAL arguments; `-R` is the *overlay*
+            # form (last conflicting resource wins), which is not what we want.
             ${sdk.buildTools}/aapt2 link -o base.apk \
               --manifest ${manifest} \
               -I ${sdk.androidJar} \
@@ -145,9 +175,11 @@ in
               --version-code ${toString versionCode} \
               --version-name ${lib.escapeShellArg versionName} \
               --replace-version \
+              --no-compile-sdk-metadata \
               ${lib.optionalString debug "--debug-mode"} \
               ${lib.optionalString (renamePackage != null) "--rename-manifest-package ${renamePackage}"} \
-              ${lib.optionalString (assetsDir != null) "-A ${assetsDir}"}
+              ${lib.optionalString (assetsDir != null) "-A ${assetsDir}"} \
+              ${lib.optionalString (resDir != null) "-0 arsc $(cat res-flats.txt)"}
 
             # `install` without -p stamps the destination with the CURRENT
             # time, and zip records that mtime in every local file header — so

@@ -392,6 +392,7 @@
       packages.hue-apk = config.legacyPackages.buildAndroidApk {
         pname = "hue";
         manifest = ../../../apps/hue/android/AndroidManifest.xml;
+        resDir = "${config.packages.hue-icon}/res";
         libs = apkLibs;
         assetsDir = hueAssets;
         description = "hue — syntax-highlighting viewer (Android NativeActivity APK)";
@@ -408,6 +409,7 @@
         pname = "hue-repo";
         manifest = ../../../apps/hue/android/AndroidManifest.xml;
         renamePackage = "dev.sparkles.hue.repo";
+        resDir = "${config.packages.hue-icon}/res";
         libs = apkLibs;
         assetsDir = hueAssetsRepo;
         description = "hue — syntax-highlighting viewer with the sparkles repo embedded (Android APK)";
