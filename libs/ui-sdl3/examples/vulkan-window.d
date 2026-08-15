@@ -125,8 +125,20 @@ struct SurfaceReport
     string currentExtent;
     uint minImageCount;
     uint maxImageCount;
+    SwapchainReport swapchain;
     string[] formats;
     string[] presentModes;
+}
+
+/// What the four `choose*` policies actually settled on against this driver.
+struct SwapchainReport
+{
+    string created;
+    string extent;
+    string format;
+    string colorSpace;
+    string presentMode;
+    uint imageCount;
 }
 
 SurfaceReport describe(ref VulkanContext vk, ref Window window) @system
@@ -153,6 +165,30 @@ SurfaceReport describe(ref VulkanContext vk, ref Window window) @system
             : format("%dx%d", caps.currentExtent.width, caps.currentExtent.height);
         r.minImageCount = caps.minImageCount;
         r.maxImageCount = caps.maxImageCount;
+    }
+
+    // Creating it is the point: `chooseExtent` and friends are unit-tested,
+    // but only a real driver says whether the combination they pick is one it
+    // will actually accept.
+    auto px2 = window.pixelSize;
+    Swapchain sc;
+    auto made = Swapchain.create(sc, vk,
+        px2.hasError ? PixelSize(0, 0) : px2.value);
+    if (made.hasError)
+    {
+        r.swapchain.created = "failed: " ~ made.error;
+    }
+    else
+    {
+        r.swapchain = SwapchainReport(
+            created: "yes",
+            extent: format("%dx%d", sc.extent.width, sc.extent.height),
+            format: format("%s", sc.format),
+            colorSpace: format("%s", sc.colorSpace),
+            presentMode: presentModeName(sc.presentMode),
+            imageCount: cast(uint) sc.images.length,
+        );
+        sc.destroy(vk);
     }
 
     r.formats = queryVkList!VkSurfaceFormatKHR(
