@@ -14,6 +14,10 @@ vocabulary. A press that starts a create / marquee / move / pan / minimap scrub
 captures, every subsequent motion and the release go to that owner wherever the
 pointer strays, and the release frees both (`IXN1`).
 
+$(B Grid settings) sits above the context menu (`GRD9` / `IXN1`): **Grid…**
+opens it, 1/2/3 and arrows pick a fixture, Esc closes it — first step of the
+dismissal chain (`IXN6`).
+
 $(B Context menu) sits above every other layer (`IXN1` / `IXN5`): RMB opens it,
 a click on an item runs it, a click outside or Esc closes it — first step of
 the dismissal chain (`IXN6`).
@@ -29,6 +33,8 @@ import sparkles.ui_app.backend : Backend;
 
 import camera : Camera, contentBounds, fitContent, scaleBase, minimapDivisor,
     minimapToWorld;
+import sparkles.ui.components.grid_backdrop : GridPreset;
+
 import world : Capture, Entity, liveBounds, noEntity, Tool, World;
 
 /// Toolkit capture ids — one per $(LREF Capture) owner, non-zero (`STM11`).
@@ -123,6 +129,7 @@ enum MenuItem : ubyte
     label,
     connect,
     delete_,
+    grid,
 }
 
 /// ditto
@@ -158,7 +165,40 @@ string menuItemLabel(MenuItem item) @safe pure nothrow @nogc
         case MenuItem.label: return "Label…";
         case MenuItem.connect: return "Connect";
         case MenuItem.delete_: return "Delete";
+        case MenuItem.grid: return "Grid…";
     }
+}
+
+/// Settings-panel size (`GRD9`).
+enum int gridSettingsWidth = 22;
+/// title + 3 presets
+enum int gridSettingsRows = 4;
+
+/// Screen-space rect of the grid settings panel, or empty when closed.
+Rect gridSettingsPanel(ref const World w, in Size viewport)
+    @safe pure nothrow @nogc
+{
+    if (!w.gridSettingsOpen)
+        return Rect.init;
+    int x = 2;
+    int y = toolbarRows + 1;
+    if (x + gridSettingsWidth > viewport.width)
+        x = viewport.width > gridSettingsWidth
+            ? viewport.width - gridSettingsWidth : 0;
+    if (y + gridSettingsRows > viewport.height)
+        y = viewport.height > gridSettingsRows
+            ? viewport.height - gridSettingsRows : 0;
+    return Rect(x, y, gridSettingsWidth, gridSettingsRows);
+}
+
+/// Hit rect for one preset row (0..2), or empty when closed.
+Rect gridSettingsRow(ref const World w, in Size viewport, ubyte row)
+    @safe pure nothrow @nogc
+{
+    const panel = gridSettingsPanel(w, viewport);
+    if (panel.empty || row >= 3)
+        return Rect.init;
+    return Rect(panel.x, panel.y + 1 + row, panel.width, 1);
 }
 
 /// Toolkit capture id for a board capture owner, or `0` for none.
@@ -211,6 +251,10 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
     // erases, Enter commits, Esc cancels. Nothing else runs until it ends.
     if (w.isEditing)
         return onEditKey(w, k);
+
+    // Grid settings captures 1/2/3 and arrows while open (`GRD9`).
+    if (w.gridSettingsOpen && onGridSettingsKey(w, k))
+        return false;
 
     // Tool switch cancels a pending connect half and any open drag.
     if (k.key == Key.char_)
@@ -358,11 +402,16 @@ private bool onEditKey(ref World w, in KeyEvent k) @safe pure nothrow @nogc
 }
 
 /**
-Esc dismissal chain (`IXN6`): menu → label edit → pending connect → capture →
-selection → quit. `q` bypasses the chain and quits directly.
+Esc dismissal chain (`IXN6`): settings → menu → label edit → pending connect →
+capture → selection → quit. `q` bypasses the chain and quits directly.
 */
 private bool dismiss(ref World w, ref CaptureState cap) @safe pure nothrow @nogc
 {
+    if (w.gridSettingsOpen)
+    {
+        w.gridSettingsOpen = false;
+        return false;
+    }
     if (w.menuOpen)
     {
         closeMenu(w);
@@ -450,8 +499,10 @@ private void onPointer(ref World w, ref Camera cam, ref CaptureState cap,
 private void pressFree(ref World w, ref Camera cam, ref CaptureState cap,
     in PointerEvent p, in InputView view) @safe pure nothrow @nogc
 {
-    // Layered hit order, topmost first (`IXN1`): menu → toolbar → minimap →
-    // board. A menu click never falls through.
+    // Layered hit order, topmost first (`IXN1`): settings → menu → toolbar →
+    // minimap → board.
+    if (hitGridSettings(w, p, view))
+        return;
     if (hitMenu(w, cam, cap, p, view))
         return;
     // RMB opens the context menu on the board (after the menu itself has had
@@ -553,7 +604,81 @@ private void runMenuItem(ref World w, ref Camera, ref CaptureState cap,
         case MenuItem.delete_:
             w.deleteSelection();
             return;
+        case MenuItem.grid:
+            w.gridSettingsOpen = true;
+            return;
     }
+}
+
+private bool onGridSettingsKey(ref World w, in KeyEvent k) @safe pure nothrow @nogc
+{
+    if (k.key == Key.char_)
+    {
+        if (k.ch == '1')
+        {
+            w.applyGridPreset(GridPreset.defaultLines);
+            return true;
+        }
+        if (k.ch == '2')
+        {
+            w.applyGridPreset(GridPreset.stripeBands);
+            return true;
+        }
+        if (k.ch == '3')
+        {
+            w.applyGridPreset(GridPreset.dotPaper);
+            return true;
+        }
+    }
+    if (k.key == Key.up)
+    {
+        if (w.gridPresetIndex > 0)
+            w.gridPresetIndex--;
+        else
+            w.gridPresetIndex = 2;
+        w.applyGridPreset(cast(GridPreset) w.gridPresetIndex);
+        return true;
+    }
+    if (k.key == Key.down)
+    {
+        w.gridPresetIndex = cast(ubyte) ((w.gridPresetIndex + 1) % 3);
+        w.applyGridPreset(cast(GridPreset) w.gridPresetIndex);
+        return true;
+    }
+    if (k.key == Key.enter)
+    {
+        w.applyGridPreset(cast(GridPreset) (w.gridPresetIndex % 3));
+        w.gridSettingsOpen = false;
+        return true;
+    }
+    return false;
+}
+
+private bool hitGridSettings(ref World w, in PointerEvent p, in InputView view)
+    @safe pure nothrow @nogc
+{
+    if (!w.gridSettingsOpen)
+        return false;
+    const cell = surfaceCell(p.pos, view);
+    const panel = gridSettingsPanel(w, view.viewport);
+    if (p.action != PointerAction.press)
+        return true;
+    if (!panel.contains(cell))
+    {
+        w.gridSettingsOpen = false;
+        return p.button == PointerButton.right;
+    }
+    if (p.button != PointerButton.left)
+        return true;
+    foreach (ubyte i; 0 .. 3)
+    {
+        if (gridSettingsRow(w, view.viewport, i).contains(cell))
+        {
+            w.applyGridPreset(cast(GridPreset) i);
+            return true;
+        }
+    }
+    return true;
 }
 
 private bool hitToolbar(ref World w, ref CaptureState cap, in PointerEvent p,
@@ -1398,6 +1523,33 @@ unittest
     cast(void) systemInput(w, cam, cap, charEvent('i'), view);
     cast(void) systemInput(w, cam, cap, keyEvent(Key.enter), view);
     assert(!w.isEditing && w.labelOf(e) == "Hi");
+}
+
+@("diagram.input.gridSettingsFromMenuAndKeys")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.components.grid_backdrop : MarkKind;
+
+    World w;
+    Camera cam;
+    CaptureState cap;
+    const view = tuiView();
+
+    drive(w, cam, cap, view, [
+        Event(PointerEvent(action: PointerAction.press,
+            button: PointerButton.right, pos: Point(3, 1 + 3))),
+    ]);
+    const item = menuItemRect(w, MenuItem.grid);
+    drive(w, cam, cap, view, [pressAt(item.x + 1, item.y)]);
+    assert(w.gridSettingsOpen);
+
+    cast(void) systemInput(w, cam, cap, charEvent('3'), view);
+    assert(w.gridConfig.minorStyle.markKind == MarkKind.dots);
+    assert(w.gridPresetIndex == 2);
+
+    cast(void) systemInput(w, cam, cap, keyEvent(Key.escape), view);
+    assert(!w.gridSettingsOpen);
 }
 
 @("diagram.input.toolbarPicksTheTool")

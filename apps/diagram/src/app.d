@@ -8,17 +8,29 @@ module app;
 
 import std.traits : isDynamicArray, isSomeString;
 
-import sparkles.core_cli.args : HelpInfo, parseCli, reportCliError;
-import sparkles.ui_app.gui_options : GuiOptions;
+import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
+import sparkles.ui_app.gui_options : GuiCliFields, GuiOptions;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : RunOutcome;
 import sparkles.ui_app.run_app : appThemeOf, runApp;
 
+import grid_file : loadGridConfigFile;
+
 import diagram_app : DiagramApp;
+
+/// Shared window/font/theme CLI plus `--config-file` (`GRD8`).
+struct DiagramOptions
+{
+    mixin GuiCliFields;
+    @(Option("config-file", description:
+        "Load a grid JSON config at startup. Invalid file aborts.",
+        placeholder: "PATH"))
+    string configFile;
+}
 
 int main(string[] args)
 {
-    auto parsed = parseCli!GuiOptions(args, HelpInfo(
+    auto parsed = parseCli!DiagramOptions(args, HelpInfo(
         "diagram",
         "A draw.io-style diagram board — infinite canvas, camera, minimap.",
         null,
@@ -52,6 +64,18 @@ int main(string[] args)
     // Same theme the host uses for the page fill (`RND5`): board slots resolve
     // against it, so `--theme` reaches the nodes as well as the page.
     app.theme = appThemeOf(gui);
+    if (parsed.value.configFile.length)
+    {
+        import std.stdio : stderr;
+
+        string err;
+        if (!loadGridConfigFile(parsed.value.configFile, app.world.gridConfig,
+                app.theme.palette, err))
+        {
+            stderr.writeln(err);
+            return 1;
+        }
+    }
     final switch (runApp(app, cfg))
     {
         case RunOutcome.ok:

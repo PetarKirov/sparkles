@@ -22,6 +22,7 @@ growing — an infinite canvas is unbounded in coordinates, not in content.
 */
 module world;
 
+import sparkles.ui.components.grid_backdrop : gridPreset, GridConfig, GridPreset;
 import sparkles.ui.geometry : Point, Rect;
 
 /// The board's caps. A few thousand nodes is past what a diagram stays
@@ -123,6 +124,12 @@ struct World
     /// ditto
     ubyte editLen;
     bool minimapVisible = true;      /// `m` toggles it (`IXN4`)
+    /// Board backdrop (`GRD7`). Init is the `RND4` faint line grid.
+    GridConfig gridConfig;
+    /// Settings panel for the grid (`GRD9`).
+    bool gridSettingsOpen;
+    /// Which named fixture the settings list highlights (0..2).
+    ubyte gridPresetIndex;
     /**
     Space is down (or sticky-armed on a target without key releases).
 
@@ -144,6 +151,13 @@ struct World
 
     /// The highest slot ever used — the bound of every column walk.
     uint highWater() const scope => _high;
+
+    /// Applies a named grid fixture (`GRD9`).
+    void applyGridPreset(GridPreset p) scope
+    {
+        gridConfig = gridPreset(p);
+        gridPresetIndex = cast(ubyte) p;
+    }
 
     /// Whether `e` names a live entity. An index alone cannot say: slots are
     /// recycled, so a stale handle points at somebody else's rectangle.
