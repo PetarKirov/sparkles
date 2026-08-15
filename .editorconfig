@@ -69,3 +69,8 @@ indent_size = unset
 # Twoslash fixture JSON files contain upstream twoslash JSON outputs with custom indentation
 [libs/twoslash/examples/fixtures/**]
 indent_size = unset
+
+# The gofmt deep-dive quotes real Go source, and Go is written with literal tabs
+# — so disable indent-style checking for that file.
+[docs/research/code-formatting/gofmt.md]
+indent_style = unset
