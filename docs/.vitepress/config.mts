@@ -127,6 +127,10 @@ export default withMermaid(
               link: '/guidelines/release',
             },
             {
+              text: 'Android Release Runbook',
+              link: '/guidelines/android-release-runbook',
+            },
+            {
               text: 'Move Semantics & __rvalue',
               link: '/guidelines/move-semantics/',
             },

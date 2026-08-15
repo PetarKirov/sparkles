@@ -196,6 +196,11 @@ split APKs, and any reduction in APK size.
 
 ## The pipeline
 
+> [!TIP]
+> This section is the design. For the operational procedure — what to type,
+> what to verify, and what to do when a step fails — see the
+> [Android Release Runbook](../../guidelines/android-release-runbook.md).
+
 ```console
 $ nix build .#hue-apk-unsigned      # release APK, aligned, deliberately unsigned
 $ nix run .#fdroid-publish -- all --tag v0.4.0 --dry-run
