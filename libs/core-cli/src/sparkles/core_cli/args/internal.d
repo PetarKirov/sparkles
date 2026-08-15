@@ -13,6 +13,7 @@ import std.traits : FieldNameTuple, getUDAs, isDynamicArray, isIntegral, isSomeS
 import sparkles.core_cli.args.error :
     CliError,
     CliExpected,
+    Expected,
     error,
     ok;
 import sparkles.core_cli.args.help_formatting :
@@ -1107,16 +1108,54 @@ private int callRun(Parent, T, Program)(ref T value, ref Program program)
             "Terminal CLI struct `" ~ T.stringof ~ "` is missing a runnable "
             ~ "handler. Expected a registered handler, "
             ~ "`int run(Program)(in Program program)`, "
-            ~ "`void run(Program)(in Program program)` "
+            ~ "`void run(Program)(in Program program)`, "
+            ~ "`Expected!(...) run(Program)(in Program program)` "
             ~ "(optionally `static`), "
-            ~ "`int run()`, or `void run()`.");
+            ~ "`int run()`, `void run()`, or `Expected!(...) run()`.");
 }
 
-/// Invoke `call()`, normalising a `void` return to `0`.
+/// Invoke `call()`, normalising `int`, `void`, and `Expected` returns to an exit code.
 private int invokeReturning0(alias call)()
 {
-    static if (is(typeof(call()) == int))
+    alias Ret = typeof(call());
+    static if (is(Ret == int))
         return call();
+    else static if (is(Ret == void))
+    {
+        call();
+        return 0;
+    }
+    else static if (is(Ret : Expected!(V, E, H), V, E, H))
+    {
+        auto res = call();
+        if (res.hasError)
+        {
+            static if (is(E == CliError))
+                return reportCliError(res.error);
+            else static if (is(E == string))
+            {
+                import std.stdio : stderr;
+                stderr.writeln("Error: ", res.error);
+                return 1;
+            }
+            else static if (is(E == int))
+                return res.error;
+            else
+            {
+                import std.conv : to;
+                import std.stdio : stderr;
+                stderr.writeln("Error: ", res.error.to!string);
+                return 1;
+            }
+        }
+        else
+        {
+            static if (is(V == int))
+                return res.value;
+            else
+                return 0;
+        }
+    }
     else
     {
         call();
@@ -1348,6 +1387,73 @@ unittest
     Tool tool;
     static assert(!__traits(compiles, runParsedCli(tool)),
         "runParsedCli should fail to compile when a leaf lacks run()");
+}
+
+@("args.callRun.handlesExpectedReturn")
+@system
+unittest
+{
+    static import expected;
+
+    @(Command("success-void"))
+    static struct SuccessVoid
+    {
+        Expected!(void, string) run()
+        {
+            return expected.ok!string();
+        }
+    }
+
+    @(Command("fail-void"))
+    static struct FailVoid
+    {
+        Expected!(void, string) run()
+        {
+            return expected.err("operation failed");
+        }
+    }
+
+    @(Command("success-int"))
+    static struct SuccessInt
+    {
+        Expected!(int, string) run()
+        {
+            return expected.ok!string(42);
+        }
+    }
+
+    @(Command("fail-int"))
+    static struct FailInt
+    {
+        Expected!(int, string) run()
+        {
+            return expected.err!int("operation failed");
+        }
+    }
+
+    @(Command("cli-error"))
+    static struct FailCliError
+    {
+        CliExpected!void run()
+        {
+            return error(CliError(CliError.Kind.parse, "custom error", "", 5));
+        }
+    }
+
+    SuccessVoid sv;
+    assert(runParsedCli(sv) == 0);
+
+    FailVoid fv;
+    assert(runParsedCli(fv) == 1);
+
+    SuccessInt si;
+    assert(runParsedCli(si) == 42);
+
+    FailInt fi;
+    assert(runParsedCli(fi) == 1);
+
+    FailCliError fc;
+    assert(runParsedCli(fc) == 5);
 }
 
 @("args.parseCli.shortOptionBundleSplitsOnlyWhenAllCharsAreKnownFlags")
