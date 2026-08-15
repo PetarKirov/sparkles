@@ -65,6 +65,7 @@ PR — which gets no secrets — still run the pipeline.
 | `pr-comment.sh`              | Marker-keyed comment upsert, so re-runs edit instead of appending                        |
 | `dub-cache-key.sh`           | Digest of every dub manifest, because `{{ checksum }}` takes one literal path            |
 | `run-batch.sh`               | Wall-clock `timeout` + non-interactive stdout for the long steps                         |
+| `run-all.sh`                 | Local runner for the entire CI pipeline (or individual stages)                           |
 | `install-ldc-windows.sh`     | LDC + bundled dub on a Windows runner (CircleCI has no D orb)                            |
 
 Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
