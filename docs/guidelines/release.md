@@ -143,8 +143,11 @@ A checklist. Each step assumes the toolchain from `nix develop` / `direnv`.
 
 8. **Publish the app channels.** The release is not finished at step 7: hue's
    APK and App Bundle are built and cached by CI, but signing them needs the
-   hardware tokens, so this step happens on your workstation. Wait for the
-   F-Droid workflow to finish — its job summary prints the store path — then:
+   hardware tokens, so this step happens on your workstation. The step-by-step
+   procedure, including what to do when a step fails, is the
+   [Android Release Runbook](./android-release-runbook.md); in short, wait for
+   the F-Droid workflow to finish — its job summary prints the store path —
+   then:
 
    ```bash
    nix run .#release-full -- publish --tag v0.5.0 --stage deploy
