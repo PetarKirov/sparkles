@@ -571,6 +571,15 @@ WallClockHms currentWallClockHms() @safe nothrow @nogc
             return WallClockHms.init;
         return WallClockHms(parts.tm_hour, parts.tm_min, parts.tm_sec);
     }
+    else version (Windows)
+    {
+        import core.stdc.time : tm, localtime;
+
+        auto parts = () @trusted { return localtime(&raw); }();
+        if (parts is null)
+            return WallClockHms.init;
+        return WallClockHms(parts.tm_hour, parts.tm_min, parts.tm_sec);
+    }
     else
     {
         static assert(0, "Unsupported system");
@@ -581,7 +590,7 @@ private struct CFileWriter
 {
     FILE* file;
 
-    static CFileWriter stderr() @safe nothrow @nogc
+    static CFileWriter stderr() @trusted nothrow @nogc
     {
         import core.stdc.stdio : stderr;
 
