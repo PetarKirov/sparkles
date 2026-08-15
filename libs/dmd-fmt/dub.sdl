@@ -1,0 +1,53 @@
+name "dmd-fmt"
+description "D formatter on the DMD-lexer token spine (dmd-fmt proposal M0/M1)"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+importPaths "src"
+
+// The token spine needs only dmd:lexer, and keeping the hot dependency
+// lexer-only is a bet the proposal records under the fork-treadmill failure
+// mode (the lexer churns far less than the AST). M0-S1 finding: that is not
+// possible yet — dmd:lexer's identifier.d references dmd.rootobject, which
+// only dmd:frontend compiles (compiler/src/dmd/rootobject.d is in no other
+// subpackage's source list), so a lexer-only build fails to link. Until the
+// fork adds rootobject.d to dmd:lexer's sourceFiles, depend on dmd:frontend,
+// exactly as libs/dmd-lsp does. Same pin as libs/dmd-lsp — see
+// docs/specs/dmd-lsp/ (BLD1/BLD2) for the pin and upgrade procedure.
+dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
+    version="ea88375142644d2dc7755089357acdfdd69c6620"
+
+// Same linker workaround as libs/dmd-lsp: DMD emits the reference to
+// `Edition`'s TypeInfo initializer into dmd:lexer while the definition lives
+// in dmd:frontend; naming the symbol up front pulls astenums.o out of
+// frontend.a while that archive is still on the table. LDC needs nothing.
+lflags "--undefined=_D3dmd8astenums7Edition6__initZ" platform="linux-dmd"
+
+// Deliberately NO -preview=in / -preview=dip1000 (the repo standard): the
+// dmd.* module interfaces this package imports are not dip1000-clean — the
+// same reasoning as libs/dmd-lsp (BLD4).
+
+// Optimized with assertions kept — the build to use for anything linking the
+// DMD frontend, which relies on its asserts to catch a fork that has drifted.
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
+    // so `dub test` recompiles only this package, not the runner sources.
+    dependency "sparkles:test-runner" path="../.."
+
+    // Same link setup as libs/dmd-lsp's unittest configuration (the frontend
+    // archive is large; no -checkaction=context for the same reason — it
+    // leaks into the dmd:frontend compilation and fails to link).
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
