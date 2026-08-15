@@ -27,6 +27,30 @@
 {
   perSystem =
     { pkgs, ... }:
+    let
+      inherit (pkgs) lib stdenv;
+
+      # `.so` on Linux, `.dylib` on Darwin.
+      soExt = stdenv.hostPlatform.extensions.sharedLibrary;
+
+      # Graphite has no GL backend, so its bring-up entry point differs per
+      # platform — and so does which one exists at all. nixpkgs' skia defaults
+      # `enableVulkan` to `!isDarwin` and sets `skia_use_metal=true` there, so
+      # asserting `MakeVulkan` everywhere would fail the macOS build on a
+      # correctly-built library. Matches the plan: Vulkan on Linux/Android,
+      # Metal on macOS.
+      graphiteEntryPoint =
+        if stdenv.hostPlatform.isDarwin then
+          {
+            mangled = "14ContextFactory9MakeMetal";
+            pretty = "skgpu::graphite::ContextFactory::MakeMetal";
+          }
+        else
+          {
+            mangled = "14ContextFactory10MakeVulkan";
+            pretty = "skgpu::graphite::ContextFactory::MakeVulkan";
+          };
+    in
     {
       packages.skia = pkgs.skia.overrideAttrs (old: {
         pname = "skia-sparkles";
@@ -108,7 +132,7 @@
         postInstall = (old.postInstall or "") + ''
           syms="$NIX_BUILD_TOP/skia-dynsyms.txt"
           ${pkgs.buildPackages.binutils}/bin/nm -D --defined-only \
-            "$out/lib/libskia.so" > "$syms"
+            "$out/lib/libskia${soExt}" > "$syms"
           echo "skia: $(wc -l < "$syms") exported symbols"
 
           require() {
@@ -118,18 +142,22 @@
             }
           }
 
-          # Graphite's Vulkan context factory — the bring-up entry point, and
-          # the symbol that is hidden without `-fvisibility=default`.
-          require '14ContextFactory10MakeVulkan' 'skgpu::graphite::ContextFactory::MakeVulkan'
+          # Graphite's context factory — the bring-up entry point, and the
+          # symbol that is hidden without `-fvisibility=default`. Vulkan on
+          # Linux, Metal on macOS.
+          require '${graphiteEntryPoint.mangled}' '${graphiteEntryPoint.pretty}'
           # Graphite itself.
           require '8graphite7Context12makeRecorder' 'skgpu::graphite::Context::makeRecorder'
-          # The Ganesh escape hatch.
-          require 'GrDirectContexts6MakeGL' 'GrDirectContexts::MakeGL'
+          # The Ganesh escape hatch. GL only where Skia builds a GL backend —
+          # nixpkgs' darwin build is Metal-only.
+          ${lib.optionalString (
+            !stdenv.hostPlatform.isDarwin
+          ) "require 'GrDirectContexts6MakeGL' 'GrDirectContexts::MakeGL'"}
           # The GPU-free raster target the golden-image tests paint into.
           require '10SkSurfaces6Raster' 'SkSurfaces::Raster'
 
-          test -e "$out/lib/libsvg.so" || {
-            echo "skia: skia_enable_svg=true did not produce libsvg.so" >&2
+          test -e "$out/lib/libsvg${soExt}" || {
+            echo "skia: skia_enable_svg=true did not produce libsvg${soExt}" >&2
             exit 1
           }
         '';
