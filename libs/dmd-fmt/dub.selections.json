@@ -1,0 +1,13 @@
+{
+	"fileVersion": 1,
+	"versions": {
+		"bolts": "1.3.1",
+		"dmd": {
+			"repository": "git+https://github.com/PetarKirov/dmd.git",
+			"version": "ea88375142644d2dc7755089357acdfdd69c6620"
+		},
+		"expected": "0.4.1",
+		"optional": "1.3.1",
+		"silly": "1.1.1"
+	}
+}
