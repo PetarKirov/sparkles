@@ -56,6 +56,8 @@ import pages.text_page : textOnCommand = handleCommand, textView = view;
 import pages.tracks_page : tracksOnCommand = handleCommand,
     tracksView = view;
 import pages.welcome : welcomeView = view;
+import pages.grid_page : gridOnCommand = handleCommand,
+    gridView = view;
 
 @safe:
 
@@ -131,6 +133,8 @@ static immutable Page[] pages = [
         onActivate: &themesOnActivate),
     Page("Slots", "the semantic colour vocabulary", &slotsView),
     Page("Decoration", "box and text chrome", &decorationView),
+    Page("Grid", "Cartesian backdrop, lines and dots", &gridView,
+        GalleryScope.pageGrid, &gridOnCommand),
     Page("Components", "the application chrome", &componentsView,
         GalleryScope.pageComponents, &componentsOnCommand,
         &componentsOnActivate, &componentsOnPointer),

@@ -21,6 +21,7 @@ import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.state : CaptureState, DisclosureState, FocusState,
     HoverState, PressState, ScrollAxis, ScrollbarState, Selection, SplitState,
     Timeline;
+import sparkles.ui.components.grid_backdrop : GridPreset;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinThemes;
 import sparkles.ui.widget : Alignment, Visibility;
@@ -135,6 +136,12 @@ struct TableDemo
     bool stubCol;         /// `TableProps.headerCols: 1` — the heavy stub rule
     int scrollX;          /// the framed demo's horizontal offset
     int scrollY;          /// ditto, vertical
+}
+
+/// The Grid page's live fixture.
+struct GridDemo
+{
+    GridPreset preset; /// cycles through the three named fixtures
 }
 
 /// The Tree page's live state: the shared interaction layer
@@ -305,6 +312,7 @@ struct GalleryState
     TextDemo textDemo;       ///
     TracksDemo tracksDemo;   ///
     TableDemo tableDemo;     ///
+    GridDemo gridDemo;       ///
     TreeDemo treeDemo;       ///
     PropertyDemo prop;       /// the Property page's subject + tree + history
     MachinesDemo machines;   ///

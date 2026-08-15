@@ -502,6 +502,7 @@ struct Gallery
             case GalleryCommand.layoutGrow: case GalleryCommand.layoutShrink:
             case GalleryCommand.tracksPreset: case GalleryCommand.tracksGrow:
             case GalleryCommand.tracksShrink:
+            case GalleryCommand.gridPreset:
             case GalleryCommand.textGrow: case GalleryCommand.textShrink:
             case GalleryCommand.textHang:
             case GalleryCommand.compTabPrev: case GalleryCommand.compTabNext:
