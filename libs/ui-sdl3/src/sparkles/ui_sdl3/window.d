@@ -11,7 +11,7 @@ module sparkles.ui_sdl3.window;
 
 import expected : err, ok;
 
-import sparkles.ui_sdl3.c;
+import sparkles.ui_sdl3.sdl3_c;
 import sparkles.ui_sdl3.error;
 
 /**
@@ -38,6 +38,14 @@ enum WindowFlags : ulong
     vulkan = 0x0000_0000_1000_0000,
     metal = 0x0000_0000_2000_0000,
     transparent = 0x0000_0000_4000_0000,
+}
+
+/// A size in device pixels. Named, because `int[2]` at a call site reads as
+/// neither "which is width" nor "pixels or cells".
+struct PixelSize
+{
+    int width;
+    int height;
 }
 
 /// What to open. Named fields rather than a flag soup at the call site.
@@ -150,12 +158,14 @@ struct Window
     reason it is queried rather than remembered: the swapchain must match the
     pixels, not the logical window.
     */
-    SdlExpected!(int[2]) pixelSize() @trusted nothrow
+    SdlExpected!PixelSize pixelSize() @trusted nothrow
     {
         int w, h;
         auto queried = check(SDL_GetWindowSizeInPixels(_handle, &w, &h),
             "SDL_GetWindowSizeInPixels");
-        return queried.hasError ? err!(int[2])(queried.error) : ok!string([w, h]);
+        return queried.hasError
+            ? err!PixelSize(queried.error)
+            : ok!string(PixelSize(w, h));
     }
 
     /// The current `SDL_WINDOW_*` state, which SDL updates as the user acts.
