@@ -4,7 +4,7 @@ The survey's questions all converge on one: **what does a D formatter have to bu
 page inventories the substrate against the pinned `dmd:frontend` fork, and it reports a result that
 changes the design.
 
-**Last reviewed:** August 15, 2026
+**Last reviewed:** August 16, 2026
 
 > [!IMPORTANT]
 > **Headline finding: the token spine is already there.** The pinned DMD fork's lexer can emit
@@ -13,6 +13,8 @@ changes the design.
 > `const(char)* ptr` into the source buffer, and `Loc` exposes **`fileOffset()`**. `dmd.tokens` is
 > already imported by `libs/dmd-lsp`, and `dmd:lexer` is already in the link closure. **A
 > full-fidelity D token stream requires no new dependency, no tree-sitter, and no fork change.**
+> One verified asterisk: the trivia spine and DDoc attachment are **two lexer configurations,
+> not one** — see [the composition finding](#verified-commenttoken-and-dodoccomment-do-not-compose).
 >
 > This inverts the working assumption this survey started from. The earlier reading — "DMD gives
 > you an AST with no trivia and `Loc` without offsets" — was true of the AST, and misleading about
@@ -32,7 +34,7 @@ changes the design.
 | **Whitespace as tokens**     | ✅                             | `bool whitespaceToken; // tokenize whitespaces (only for DMDLIB)`                                 |
 | **Byte offsets per token**   | ✅                             | `Token.ptr` — "pointer to first character of this token within buffer"                            |
 | **Byte offset from a `Loc`** | ✅                             | `Loc.fileOffset()`; `SourceLoc` carries `filename`, `line`, `column`, `fileOffset`, `fileContent` |
-| **DDoc attached to tokens**  | ✅                             | `Token.blockComment` ("doc comment string prior to this token"), `Token.lineComment`              |
+| **DDoc attached to tokens**  | ⚠️ not on the trivia spine     | `Token.blockComment`/`lineComment` — populated **only when `commentToken` is off**; see below     |
 | **Node _end_ positions**     | ❓                             | Not inventoried — see [Q-b](#q-b-node-end-positions)                                              |
 | Trivia in the AST            | ❌                             | DMD's AST discards comments and normalizes literals                                               |
 | A full-fidelity tree         | ❌                             | No CST; the alternative is `libs/tree-sitter` + `tree-sitter-d`                                   |
@@ -81,6 +83,41 @@ linkage.
 
 `TOK.comment` and `TOK.whitespace` are both real enum members.
 
+### Verified: `commentToken` and `doDocComment` do not compose
+
+Read directly from the pinned fork's `lexer.d`: every comment-lexing arm returns the
+`TOK.comment` token **before** the `doDocComment` branch runs —
+
+```d
+if (commentToken)
+{
+    t.loc = startLoc;
+    t.value = TOK.comment;
+    return;
+}
+if (doDocComment && t.ptr[2] == '*' && p - 4 != t.ptr)
+{
+    // if /** but not /**/
+    getDocComment(t, lastLine == startLoc.linnum, startLoc.linnum - lastDocLine > 1);
+```
+
+— [`dmd/compiler/src/dmd/lexer.d`][lexer] @ `ea883751`, lines 732–743; the same shape guards
+the `//` arm (lines 787–803) and the `/+ +/` arm.
+
+So with `commentToken: true`, `getDocComment` is never called and
+`Token.blockComment`/`lineComment` stay null. The trivia spine and DDoc attachment are **two
+lexer configurations, not one**. Consequences:
+
+- The verifier's separate DDoc check ([Q-d](#q-d-the-verification-contract)) cannot read
+  attachment off the spine's tokens. It needs either a **second lex** with
+  `doDocComment: true` — [dfmt][dfmt]'s double-lex precedent, with the two streams kept in
+  offset correspondence — or a reimplementation of `getDocComment`'s same-line/new-paragraph
+  attachment rules, which is precisely the "disagrees with the compiler" drift hazard
+  [ocamlformat][ocamlformat] refuses to risk. Double-lex is the default answer; the proposal's
+  M0-S3 spike confirms it on a corpus.
+- The headline "no fork change" claim survives, but with this asterisk priced in: one extra
+  lex per verified format, not zero.
+
 ---
 
 ## The open questions, re-answered
@@ -105,10 +142,15 @@ token stream; the AST is only an oracle keyed by _start_ offsets, which is exact
 [dfmt's `ASTInformation`][dfmt] works — ~24 sorted `size_t[]` arrays of positions, queried by
 binary search. `Loc.fileOffset()` supplies those positions directly.
 
-End positions would still be needed for a _verbatim-slice_ strategy ("reprint this subtree from the
-original bytes"), which is [de Jonge & Visser's text patching][layout-preserving] and
-[rustfmt's `missed_spans`][rustfmt] fallback. Worth measuring per node kind, but it no longer gates
-the architecture.
+End positions **are** still needed for a _verbatim-slice_ strategy ("reprint this subtree from
+the original bytes") — [de Jonge & Visser's text patching][layout-preserving] and
+[rustfmt's `missed_spans`][rustfmt] fallback — and the proposal's M3 makes that strategy a core
+feature, not a contingency: the do-no-harm valve emits original bytes for any construct the
+printer cannot model. rustfmt has AST spans to do this; a start-offset-only oracle does not.
+Brace-delimited constructs recover their ends by token matching; for the rest of
+[Q-e's hard list](#q-e-the-d-specific-hard-list), end-recoverability must be inventoried per
+construct — the proposal's M0-S4 spike. So Q-b no longer gates the _architecture_, but it does
+gate the _valve's coverage_, which is a weaker claim than this page previously made.
 
 ### Q-c: print from the AST, or format the token stream?
 
@@ -129,7 +171,9 @@ argument against it.
 
 [Token equality modulo whitespace][verification], available essentially for free once the spine
 exists, plus a **separate DDoc check** following [ocamlformat's `moved_docstrings`][ocamlformat] —
-D has OCaml's hazard exactly, and `Token.blockComment`/`lineComment` make the check tractable.
+D has OCaml's hazard exactly. The check's attachment oracle is a **second `doDocComment` lex**,
+not the spine's tokens: `Token.blockComment`/`lineComment` are unpopulated when `commentToken`
+is on ([verified above](#verified-commenttoken-and-dodoccomment-do-not-compose)).
 
 ### Q-e: the D-specific hard list
 
@@ -172,6 +216,12 @@ end up with three layout engines — see [the proposal][proposal].
   [`signature_layout.d`'s injected measurer][sig-layout] is the existing seam, and
   [sdfmt counts graphemes][d-landscape] where dfmt counts bytes.
 - **No `.editorconfig` reader.** dfmt has one (458 lines); migration compatibility needs it.
+- **No stability promise.** The substrate is a personally pinned fork of a frontend that is not
+  maintained as a library-stable API, and `whitespaceToken` is an internal DMDLIB flag. A
+  formatter must track new language syntax promptly, so the fork must be rebased continuously —
+  [swift-format][swift-format]'s substrate-cadence weakness without SwiftSyntax's
+  versioned-library discipline. The mitigating bet, to be verified: the formatter's hot
+  dependency is the _lexer_, which churns far less than the AST.
 
 ---
 
