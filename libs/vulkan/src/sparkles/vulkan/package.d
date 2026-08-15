@@ -21,7 +21,7 @@ $(LI $(MREF sparkles,vulkan,result) — `VkResult` as
     `Expected!(T, VkResult)`, following Vulkan's own rule that negative codes
     are errors and warnings such as `VK_SUBOPTIMAL_KHR` are not.))
 
-Anything not wrapped stays reachable: `sparkles.vulkan.c` is the raw surface,
+Anything not wrapped stays reachable: `sparkles.vulkan.vulkan_c` is the raw surface,
 and every abstraction here is additive over it.
 
 Deliberately absent, for now: memory allocation (VMA is the field's settled
@@ -33,7 +33,7 @@ in the binding
 module sparkles.vulkan;
 
 public import sparkles.vulkan.api;
-public import sparkles.vulkan.c;
+public import sparkles.vulkan.vulkan_c;
 public import sparkles.vulkan.dispatch;
 public import sparkles.vulkan.enumerate;
 public import sparkles.vulkan.result;

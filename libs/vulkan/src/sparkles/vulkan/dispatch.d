@@ -31,7 +31,7 @@ generated from it.
 */
 module sparkles.vulkan.dispatch;
 
-import sparkles.vulkan.c;
+import sparkles.vulkan.vulkan_c;
 
 /// `CreateInstance` → `createInstance`, the field spelling for a command name.
 private string lowerFirst(string s) @safe pure nothrow
