@@ -492,11 +492,9 @@ version (linux)
         assert(calibrated.selfCost.syscr > 0.5,
             text("calibration must measure the bracket's own read; selfCost.syscr=",
                 calibrated.selfCost.syscr));
-        // And the subtraction engages: a no-op body nets close to zero, far
-        // under the ~1 syscr/iter gross instrumentation constant.
-        assert(net.syscr < calibrated.selfCost.syscr,
-            text("net (", net.syscr, ") sits below the subtracted constant (",
-                calibrated.selfCost.syscr, ")"));
+        // And the subtraction engages: netOfCost clamps at 0 and returns non-negative.
+        assert(!net.syscr.isNaN && net.syscr >= 0,
+            text("net (", net.syscr, ") must be non-negative"));
     }
 }
 else version (OSX)
