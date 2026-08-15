@@ -15,6 +15,6 @@ that is ours, built on $(MREF sparkles,vulkan).
 */
 module sparkles.ui_sdl3;
 
-public import sparkles.ui_sdl3.c;
+public import sparkles.ui_sdl3.sdl3_c;
 public import sparkles.ui_sdl3.error;
 public import sparkles.ui_sdl3.window;

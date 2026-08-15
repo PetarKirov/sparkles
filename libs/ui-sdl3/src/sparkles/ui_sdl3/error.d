@@ -14,7 +14,7 @@ module sparkles.ui_sdl3.error;
 
 import expected : Expected, err, ok;
 
-import sparkles.ui_sdl3.c;
+import sparkles.ui_sdl3.sdl3_c;
 
 /// An operation that either produced a `T` or failed with SDL's message.
 alias SdlExpected(T = void) = Expected!(T, string);
