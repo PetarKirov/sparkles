@@ -127,6 +127,12 @@
         # ships no `.pc` of its own.
         pkgs.vulkan-loader
         pkgs.vulkan-loader.dev
+
+        # `libs "sdl3"` in libs/ui-sdl3: the window, the input source, and the
+        # Vulkan surface. `.dev` carries `sdl3.pc`; `.lib` is what the built
+        # binary loads at runtime.
+        pkgs.sdl3
+        pkgs.sdl3.dev
       ]
       # OS-API research examples (docs/research/.../os-apis): the X11 and Wayland
       # ImportC examples are **Linux-only**, so gate these on Linux — `wayland`,

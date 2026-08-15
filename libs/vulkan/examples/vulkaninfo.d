@@ -234,30 +234,6 @@ string stripAffixes(string s, string prefix, string suffix = "") pure @safe
     return s;
 }
 
-/// Generic helper to query 2-call Vulkan enumeration APIs.
-T[] queryVkList(T, Fn, Args...)(scope Fn fn, Args args) @system
-{
-    uint count;
-    static if (is(typeof(fn(args, &count, null)) == void))
-    {
-        fn(args, &count, null);
-        if (count == 0)
-            return null;
-        auto items = new T[count];
-        fn(args, &count, items.ptr);
-        return items;
-    }
-    else
-    {
-        if (fn(args, &count, null) < 0 || count == 0)
-            return null;
-        auto items = new T[count];
-        if (fn(args, &count, items.ptr) < 0)
-            return null;
-        return items;
-    }
-}
-
 /// Extract all enabled features from VkPhysicalDeviceFeatures via compile-time reflection.
 string[] extractFeatures(in VkPhysicalDeviceFeatures feat) pure @safe
 {
