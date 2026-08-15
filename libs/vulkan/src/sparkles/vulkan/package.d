@@ -14,6 +14,9 @@ $(LI $(MREF sparkles,vulkan,dispatch) — the global/instance/device tiers, each
     cannot overwrite the first.)
 $(LI $(MREF sparkles,vulkan,structure_type) — `sType` derived from the struct's
     own name at compile time, so a mistagged create-info is a compile error.)
+$(LI $(MREF sparkles,vulkan,enumerate) — Vulkan's two-call
+    count-then-fill enumeration pattern, written once and specialised at
+    compile time on whether the command returns `VkResult` or `void`.)
 $(LI $(MREF sparkles,vulkan,result) — `VkResult` as
     `Expected!(T, VkResult)`, following Vulkan's own rule that negative codes
     are errors and warnings such as `VK_SUBOPTIMAL_KHR` are not.))
@@ -32,5 +35,6 @@ module sparkles.vulkan;
 public import sparkles.vulkan.api;
 public import sparkles.vulkan.c;
 public import sparkles.vulkan.dispatch;
+public import sparkles.vulkan.enumerate;
 public import sparkles.vulkan.result;
 public import sparkles.vulkan.structure_type;
