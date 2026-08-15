@@ -17,4 +17,5 @@ module sparkles.ui_sdl3;
 
 public import sparkles.ui_sdl3.sdl3_c;
 public import sparkles.ui_sdl3.error;
+public import sparkles.ui_sdl3.vulkan_context;
 public import sparkles.ui_sdl3.window;
