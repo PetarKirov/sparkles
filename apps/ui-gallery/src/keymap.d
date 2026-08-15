@@ -62,6 +62,9 @@ enum GalleryCommand : ubyte
     // The Tracks page.
     tracksPreset, tracksGrow, tracksShrink,
 
+    // The Grid page.
+    gridPreset,
+
     // The Text page.
     textGrow, textShrink, textHang,
 
@@ -116,6 +119,7 @@ enum GalleryScope : ubyte
     @terminalScope @hidesLaterScopes help,
     pageLayout,
     pageTracks,
+    pageGrid,
     pageText,
     pageComponents,
     pageTree,
@@ -201,6 +205,10 @@ immutable Binding[] galleryBindings = [
         "wider"),
     bind(GalleryScope.pageTracks, chord('-'), GalleryCommand.tracksShrink,
         "narrower"),
+
+    // ── the Grid page ────────────────────────────────────────────────────
+    bind(GalleryScope.pageGrid, chord('p'), GalleryCommand.gridPreset,
+        "next preset"),
 
     // ── the Text page ────────────────────────────────────────────────────
     bind(GalleryScope.pageText, chord('+'), GalleryCommand.textGrow, "wider"),
