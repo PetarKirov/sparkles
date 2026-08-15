@@ -262,6 +262,11 @@
           # needs them too, or `<vulkan/vulkan.h>` is simply absent.
           pkgs.vulkan-loader
           pkgs.vulkan-loader.dev
+
+          # `libs "SDL3"` in libs/ui-sdl3, same reasoning: `.dev` carries
+          # `sdl3.pc`, `.lib` is what the built example loads at runtime.
+          pkgs.sdl3
+          pkgs.sdl3.dev
         ];
       };
 
