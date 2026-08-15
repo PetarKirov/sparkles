@@ -252,6 +252,22 @@ DEV_SHELL=full   # opt into the greeting for direnv
 `devPackages` adds the rest on top. Put a tool in `ciPackages` only if a CI job
 actually runs it — everything there is built on every CI run.
 
+### Locating C Headers & System Dependencies
+
+**Never search the entire `/nix/store` for header files or library paths.** Searching `/nix/store` directly is slow, matches unrelated or stale packages, and produces fragile paths.
+
+Instead, query `pkg-config` directly for include flags, C preprocessor flags, and library paths:
+
+```bash
+# Get include flags for C preprocessor / ImportC:
+pkg-config --cflags vulkan
+pkg-config --cflags raylib
+pkg-config --cflags tree-sitter
+
+# Get linker flags:
+pkg-config --libs vulkan
+```
+
 ### Build types: `debug` to test, `checked` to ship, never `release`
 
 Every in-repo `dub.sdl` — and every single-file example's inline recipe —
@@ -974,6 +990,7 @@ A quick scan of the gotchas above plus a few more:
 - [ ] Example output blocks must be ` ```[Output] `, never bare ` ``` `.
 - [ ] Cross-module-but-internal symbols use `package` visibility, not `private`.
 - [ ] Symbols used only as UDAs are camelCase (lowercase first letter).
+- [ ] Don't search `/nix/store` for C headers/libraries — use `pkg-config --cflags <pkg>` / `pkg-config --libs <pkg>`.
 - [ ] Dependency version changes need matching `dub.selections.json` and
       `nix/dub-lock.json` updates.
 
