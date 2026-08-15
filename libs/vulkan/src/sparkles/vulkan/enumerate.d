@@ -16,7 +16,7 @@ swapchain images, so it belongs here rather than in an example.
 */
 module sparkles.vulkan.enumerate;
 
-import sparkles.vulkan.c;
+import sparkles.vulkan.vulkan_c;
 import sparkles.vulkan.result : isSuccess;
 
 /**

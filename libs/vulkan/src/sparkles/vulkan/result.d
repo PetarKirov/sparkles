@@ -21,7 +21,7 @@ module sparkles.vulkan.result;
 
 import expected : Expected, err, ok;
 
-import sparkles.vulkan.c;
+import sparkles.vulkan.vulkan_c;
 
 /// An operation that either produced a `T` or failed with a `VkResult`.
 alias VkExpected(T = void) = Expected!(T, VkResult);

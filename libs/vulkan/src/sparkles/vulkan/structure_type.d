@@ -20,7 +20,7 @@ ergonomic win ErupteD had over both C and raw ImportC, at zero runtime cost
 */
 module sparkles.vulkan.structure_type;
 
-import sparkles.vulkan.c;
+import sparkles.vulkan.vulkan_c;
 
 /**
 The `VK_STRUCTURE_TYPE_*` enumerator belonging to `T`.

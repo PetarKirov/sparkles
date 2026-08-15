@@ -9,7 +9,7 @@ They are re-expressed here as `enum`s over the same packing, checked against
 */
 module sparkles.vulkan.api;
 
-import sparkles.vulkan.c;
+import sparkles.vulkan.vulkan_c;
 
 /// The packed `uint` Vulkan uses for API versions.
 uint makeApiVersion(uint variant, uint major, uint minor, uint patch)
@@ -35,7 +35,7 @@ enum uint apiVersion14 = makeApiVersion(0, 1, 4, 0); /// `VK_API_VERSION_1_4`
 The version of the headers this binding was compiled against.
 
 Worth reporting in diagnostics: it is the one number that identifies which
-`vulkan.h` produced the struct layouts in `sparkles.vulkan.c`.
+`vulkan.h` produced the struct layouts in `sparkles.vulkan.vulkan_c`.
 */
 enum uint headerVersion = VK_HEADER_VERSION;
 
