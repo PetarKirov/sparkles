@@ -20,15 +20,19 @@ string resolveSourcePath(
     string relPath = __FILE__,
 ) @safe pure
 {
-    import std.path : absolutePath;
-
     // Already absolute — return as-is
-    if (path.length > 0 && path[0] == '/')
+    if (path.length > 0 && (path[0] == '/' || path[0] == '\\' || (path.length > 1 && path[1] == ':')))
         return path;
 
     // Derive compiler working directory: strip relative suffix from full path
-    string base = fullPath[0 .. $ - relPath.length];
-    return absolutePath(path, base);
+    if (fullPath.length >= relPath.length)
+    {
+        string base = fullPath[0 .. $ - relPath.length];
+        if (base.length > 0 && (base[$ - 1] == '/' || base[$ - 1] == '\\'))
+            return base ~ path;
+        return base ~ '/' ~ path;
+    }
+    return path;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
