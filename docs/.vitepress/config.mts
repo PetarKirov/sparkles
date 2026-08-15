@@ -1870,6 +1870,144 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Code Formatting',
+              link: '/research/code-formatting/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts & Vocabulary',
+                  link: '/research/code-formatting/concepts',
+                },
+                {
+                  text: 'Foundations (Theory)',
+                  link: '/research/code-formatting/theory/',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: "Oppen's Algorithm",
+                      link: '/research/code-formatting/theory/oppen',
+                    },
+                    {
+                      text: 'Combinators',
+                      link: '/research/code-formatting/theory/combinators',
+                    },
+                    {
+                      text: 'Optimality',
+                      link: '/research/code-formatting/theory/optimality',
+                    },
+                    {
+                      text: 'Cost & Search',
+                      link: '/research/code-formatting/theory/cost-and-search',
+                    },
+                    {
+                      text: 'Layout Preservation',
+                      link: '/research/code-formatting/theory/layout-preserving',
+                    },
+                  ],
+                },
+                {
+                  text: 'Combinator & Greedy',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Prettier',
+                      link: '/research/code-formatting/prettier',
+                    },
+                    {
+                      text: 'swift-format',
+                      link: '/research/code-formatting/swift-format',
+                    },
+                    {
+                      text: 'OCamlFormat',
+                      link: '/research/code-formatting/ocamlformat',
+                    },
+                    {
+                      text: 'The Rust Reimplementation Wave',
+                      link: '/research/code-formatting/rust-reimplementations',
+                    },
+                  ],
+                },
+                {
+                  text: 'Search-Based',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'clang-format',
+                      link: '/research/code-formatting/clang-format',
+                    },
+                    {
+                      text: 'dfmt (D)',
+                      link: '/research/code-formatting/dfmt',
+                    },
+                    {
+                      text: 'dart_style',
+                      link: '/research/code-formatting/dart-style',
+                    },
+                  ],
+                },
+                {
+                  text: 'Structure-Preserving',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'gofmt',
+                      link: '/research/code-formatting/gofmt',
+                    },
+                    {
+                      text: 'zig fmt',
+                      link: '/research/code-formatting/zig-fmt',
+                    },
+                    {
+                      text: 'Roslyn',
+                      link: '/research/code-formatting/roslyn',
+                    },
+                    {
+                      text: 'rustfmt',
+                      link: '/research/code-formatting/rustfmt',
+                    },
+                  ],
+                },
+                {
+                  text: 'Declarative & Long Tail',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Topiary',
+                      link: '/research/code-formatting/topiary',
+                    },
+                    {
+                      text: 'The Long Tail',
+                      link: '/research/code-formatting/long-tail',
+                    },
+                  ],
+                },
+                {
+                  text: 'Verification',
+                  link: '/research/code-formatting/verification',
+                },
+                {
+                  text: 'Readability Evidence',
+                  link: '/research/code-formatting/readability-evidence',
+                },
+                {
+                  text: 'Comparison & Synthesis',
+                  link: '/research/code-formatting/comparison',
+                },
+                {
+                  text: 'The D Landscape',
+                  link: '/research/code-formatting/d-landscape',
+                },
+                {
+                  text: 'The dmd-lsp Substrate',
+                  link: '/research/code-formatting/dmd-lsp-baseline',
+                },
+                {
+                  text: 'A Proposal: sparkles:dmd-fmt',
+                  link: '/research/code-formatting/dmd-fmt-proposal',
+                },
+              ],
+            },
+            {
               text: 'Diff Viewers & PR Review',
               link: '/research/diff-review/',
               collapsed: true,
