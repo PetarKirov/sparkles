@@ -23,6 +23,7 @@ nix run .#ci -- --test-extracted [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-docs-sidebar
+nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
 
@@ -42,6 +43,7 @@ $(LIST
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
     $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
     $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/config.mts` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
+    $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
 )
 
 The script looks for D code blocks starting with:
@@ -123,6 +125,9 @@ import sparkles.ui.components.box : BoxProps, drawBox, TitleOverflow;
 import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 
 // in-app modules
+import blob_paths :
+    BlobPathReport, BlobRef, BlobResult, BlobStatus,
+    parseBlobRefs, resolveClone;
 import docs_sidebar :
     checkDocsSidebarFromConfig,
     defaultVitePressConfig;
@@ -218,6 +223,19 @@ struct CliParams
         ~ "(docs/index.md) is always considered linked."))
     bool checkDocsSidebar;
 
+    @(Option(`check-blob-paths`,
+        description: "Verify that every SHA-pinned GitHub blob citation names a path that "
+        ~ "exists at that commit, using local clones under --clone-root. "
+        ~ "Complements --check-vcs-urls, which only checks the ref. Local only: "
+        ~ "a citation whose repository is not cloned is reported as unchecked, "
+        ~ "never as a failure."))
+    bool checkBlobPaths;
+
+    @(Option(`clone-root`,
+        description: "Root directory holding the upstream clones --check-blob-paths reads. "
+        ~ "Defaults to the REPOS environment variable."))
+    string cloneRoot;
+
     @(Option(`coverage`,
         description: "Measure line coverage: run each sub-package's tests under -cov and "
         ~ "report covered/coverable lines per package, worst first. Reports "
@@ -291,6 +309,7 @@ enum ProgramMode
     checkCommitScope,
     checkVcsUrls,
     checkDocsSidebar,
+    checkBlobPaths,
     ciStats,
     coverage,
 }
@@ -431,6 +450,8 @@ int ciMain(string[] args)
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
         else if (mode == ProgramMode.checkDocsSidebar)
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-docs-sidebar");
+        else if (mode == ProgramMode.checkBlobPaths)
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
         else
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
         return 1;
@@ -447,6 +468,9 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.checkVcsUrls)
         return runCheckVcsUrls(inputFiles);
+
+    if (mode == ProgramMode.checkBlobPaths)
+        return runCheckBlobPaths(inputFiles, cli.cloneRoot);
 
     return runExamplesForFiles(inputFiles, mode, cli.failFast);
 }
@@ -484,17 +508,20 @@ private string validateCliMode(
             || cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test-extracted cannot be combined with other modes";
 
-    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.checkDocsSidebar || cli.ciStats))
+    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
         return "--check-commit-scope cannot be combined with other modes";
 
-    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkDocsSidebar || cli.ciStats))
+    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
         return "--check-vcs-urls cannot be combined with other modes";
 
-    if (cli.checkDocsSidebar && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.ciStats))
+    if (cli.checkBlobPaths && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.ciStats))
+        return "--check-blob-paths cannot be combined with other modes";
+
+    if (cli.checkDocsSidebar && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkBlobPaths || cli.ciStats))
         return "--check-docs-sidebar cannot be combined with other modes";
 
     if (cli.ciStats && (cli.verify || cli.update || cli.exampleFiles || cli.test
-            || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar))
+            || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths))
         return "--ci-stats cannot be combined with other modes";
 
     if (cli.ciStats && cli.limit <= 0)
@@ -565,6 +592,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
 
     if (cli.checkDocsSidebar)
         return ProgramMode.checkDocsSidebar;
+
+    if (cli.checkBlobPaths)
+        return ProgramMode.checkBlobPaths;
 
     return ProgramMode.runExamples;
 }
@@ -926,6 +956,8 @@ private string[] collectInputFiles(
             inputFiles = trackedStandaloneExampleFiles();
         else if (mode == ProgramMode.checkVcsUrls)
             inputFiles = trackedMarkdownFiles();
+        else if (mode == ProgramMode.checkBlobPaths)
+            inputFiles = trackedMarkdownFiles();
     }
 
     const requiredSuffix = mode == ProgramMode.runExampleFiles ? ".d" : ".md";
@@ -1011,6 +1043,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkCommitScope:
             case ProgramMode.checkVcsUrls:
             case ProgramMode.checkDocsSidebar:
+            case ProgramMode.checkBlobPaths:
             case ProgramMode.coverage:
                 rc = 1;
                 break;
@@ -1329,6 +1362,259 @@ private int runCheckVcsUrls(string[] files)
     }
 
     info(i"{green ✓} All checked GitHub URLs refer to specific commit SHAs.");
+    return 0;
+}
+
+/++
+Index the clones under `root`: every directory containing a `.git` becomes a
+lookup entry, keyed both by its own name and by `<parent>/<name>`.
+
+Two keys because the `$REPOS` convention buckets by language or organisation
+rather than by owner — `typescript/floating-ui` holds `floating-ui/floating-ui`,
+while `typescript/radix-ui/primitives` holds `radix-ui/primitives`. The bare
+name resolves the first shape and the qualified one disambiguates the second,
+which is exactly the precedence `resolveClone` applies.
+
+The walk stops at `maxDepth` and does not descend into a repository, so a
+vendored submodule cannot shadow its parent.
++/
+private string[string] indexClones(string root, int maxDepth = 3)
+{
+    import std.file : dirEntries, exists, isDir, SpanMode;
+    import std.path : baseName, buildPath, dirName;
+
+    string[string] index;
+
+    void walk(string dir, int depth)
+    {
+        if (depth > maxDepth)
+            return;
+        foreach (entry; dirEntries(dir, SpanMode.shallow))
+        {
+            if (!entry.isDir)
+                continue;
+            if (buildPath(entry.name, ".git").exists)
+            {
+                const name = entry.name.baseName;
+                const parent = entry.name.dirName.baseName;
+                index[name] = entry.name;
+                index[parent ~ "/" ~ name] = entry.name;
+                continue; // a clone's contents are not more clones
+            }
+            walk(entry.name, depth + 1);
+        }
+    }
+
+    try
+        walk(root, 0);
+    catch (Exception e)
+        warning(i"Could not fully scan clone root $(root): $(e.msg)");
+
+    return index;
+}
+
+/++
+Ask one clone about many objects in a single `git` invocation.
+
+`git cat-file --batch-check` reads revspecs on stdin and writes one line per
+input, in order: `<oid> <type> <size>` when the object resolves, `<spec> missing`
+when it does not. One spawn therefore answers a whole document's worth of
+citations — the difference between a check that runs in seconds and one that
+takes half an hour, since a per-citation `git` costs ~200 ms and a real docs
+tree carries thousands.
+
+Input is chunked because both pipes are drained sequentially: writing every
+revspec before reading any output would deadlock once the replies outgrow the
+pipe buffer. `chunk` keeps a batch's output far below it.
+
+Returns one `bool` per input spec, in order.
++/
+private bool[] batchObjectsExist(string cloneDir, in string[] specs, size_t chunk = 256)
+{
+    import std.algorithm : endsWith;
+    import std.process : pipeProcess, Redirect, wait;
+    import std.string : lineSplitter, strip;
+
+    bool[] found;
+    found.reserve(specs.length);
+
+    for (size_t start = 0; start < specs.length; start += chunk)
+    {
+        const end = start + chunk < specs.length ? start + chunk : specs.length;
+        auto slice = specs[start .. end];
+
+        auto pipes = pipeProcess(
+            ["git", "-C", cloneDir, "cat-file", "--batch-check"],
+            Redirect.stdin | Redirect.stdout | Redirect.stderrToStdout);
+
+        foreach (spec; slice)
+            pipes.stdin.writeln(spec);
+        pipes.stdin.flush();
+        pipes.stdin.close();
+
+        size_t seen;
+        foreach (line; pipes.stdout.byLine)
+        {
+            // "<oid> <type> <size>" resolved; "<spec> missing" (or
+            // "... ambiguous") did not.
+            const text = line.idup.strip;
+            if (text.length == 0)
+                continue;
+            found ~= !(text.endsWith(" missing") || text.endsWith(" ambiguous"));
+            seen++;
+        }
+        wait(pipes.pid);
+
+        // A short reply would silently shift every later verdict onto the wrong
+        // citation, so pad rather than misattribute.
+        while (seen++ < slice.length)
+            found ~= false;
+    }
+    return found;
+}
+
+/++
+Check that every SHA-pinned blob citation names a path present at that commit.
+
+Complements `--check-vcs-urls`, which proves only that a citation carries a
+commit SHA rather than a moving ref. See `blob_paths` for why this is a local
+check and why an unclonable repository is reported rather than failed.
++/
+private int runCheckBlobPaths(string[] files, string cloneRoot)
+{
+    import std.array : array;
+    import std.algorithm : map, sort, uniq;
+    import std.file : exists, isDir, readText;
+    import std.process : environment;
+    import std.stdio : stderr;
+
+    const root = cloneRoot.length ? cloneRoot : environment.get("REPOS", "");
+    if (root.length == 0)
+    {
+        stderr.writeln("✗ No clone root: pass --clone-root DIR or set REPOS.");
+        stderr.writeln("  This check reads the upstream clones the citations were written from;");
+        stderr.writeln("  without them there is nothing to verify against.");
+        return 1;
+    }
+    if (!root.exists || !root.isDir)
+    {
+        stderr.writefln("✗ Clone root is not a directory: %s", root);
+        return 1;
+    }
+
+    "Checking pinned blob citations"
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
+        .writeln("\n");
+
+    const index = indexClones(root);
+    info(i"Indexed $(index.length / 2) clone(s) under $(root)");
+
+    BlobRef[] refs;
+    foreach (filePath; files)
+    {
+        try
+            refs ~= parseBlobRefs(filePath.readText, filePath);
+        catch (Exception e)
+        {
+            // Unreadable input is a failure, not a skip: staying silent here
+            // would report a clean run over a file nobody looked at.
+            stderr.writefln("✗ %s: could not read file (%s)", filePath, e.msg);
+            return 1;
+        }
+    }
+
+    // Deduplicate to distinct (clone, sha, path) work, then group by
+    // (clone, sha) so one `git` invocation answers a whole group.
+    BlobPathReport report;
+    BlobRef[][string] byClone; // clone dir -> its citations, deduplicated
+    bool[string] seen;
+    foreach (r; refs)
+    {
+        const dir = resolveClone(index, r);
+        const key = (dir is null ? r.slug : dir) ~ "\0" ~ r.revSpec;
+        if (key in seen)
+            continue;
+        seen[key] = true;
+
+        if (dir is null)
+            report.unchecked ~= BlobResult(r, BlobStatus.noClone);
+        else
+            byClone[dir] ~= r;
+    }
+    report.uniqueCount = seen.length;
+
+    foreach (dir, group; byClone)
+    {
+        // Ask about each distinct commit alongside the paths, so a shallow or
+        // stale clone is reported as unchecked rather than accused of carrying
+        // a broken citation.
+        bool[string] commitKnown;
+        string[] commitSpecs;
+        foreach (r; group)
+            if (r.sha !in commitKnown)
+            {
+                commitKnown[r.sha] = false;
+                commitSpecs ~= r.sha ~ "^{commit}";
+            }
+        auto commitFound = batchObjectsExist(dir, commitSpecs);
+        foreach (i, spec; commitSpecs)
+            commitKnown[spec[0 .. 40]] = i < commitFound.length && commitFound[i];
+
+        auto resolvable = group.filter!(r => commitKnown[r.sha]).array;
+        foreach (r; group)
+            if (!commitKnown[r.sha])
+                report.unchecked ~= BlobResult(r, BlobStatus.noRevision, dir);
+
+        auto pathFound = batchObjectsExist(dir, resolvable.map!(r => r.revSpec).array);
+        foreach (i, r; resolvable)
+        {
+            if (i < pathFound.length && pathFound[i])
+                report.okCount++;
+            else
+                report.failures ~= BlobResult(r, BlobStatus.missingPath, dir);
+        }
+    }
+
+    info(i"$(refs.length) citation(s), $(report.uniqueCount) distinct (repo, sha, path) triple(s)");
+
+    if (report.unchecked.length != 0)
+    {
+        auto missingRepos = report.unchecked
+            .map!(u => u.status == BlobStatus.noRevision
+                ? u.ref_.slug ~ " (revision not in clone)"
+                : u.ref_.slug)
+            .array
+            .sort
+            .uniq
+            .array;
+        // Header and list share one stream: `warning` goes to stderr, so a
+        // stdout list would detach from its heading whenever the two are
+        // redirected separately.
+        warning(i"$(report.unchecked.length) citation(s) unverified — no local clone at that revision:");
+        foreach (name; missingRepos)
+            stderr.writefln("  %s", name);
+        stderr.writeln;
+    }
+
+    if (!report.ok)
+    {
+        stderr.writefln("✗ %d citation(s) name a path that does not exist at the pinned commit:",
+            report.failures.length);
+        stderr.writeln;
+        foreach (f; report.failures)
+        {
+            stderr.writefln("  %s:%d", f.ref_.file, f.ref_.line);
+            stderr.writefln("    %s", f.ref_.url);
+            stderr.writefln("    %s is not at %s in %s",
+                f.ref_.path, f.ref_.sha[0 .. 12], f.cloneDir);
+            stderr.writeln;
+        }
+        stderr.writeln("These 404 upstream. --check-vcs-urls cannot catch them: it "
+            ~ "verifies the ref, not the path.");
+        return 1;
+    }
+
+    info(i"{green ✓} All $(report.okCount) verifiable blob citation(s) resolve at their pinned commit.");
     return 0;
 }
 

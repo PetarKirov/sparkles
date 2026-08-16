@@ -457,6 +457,23 @@ nix run .#ci -- --check-vcs-urls         # audit all tracked markdown for unpinn
 nix run .#ci -- --check-docs-sidebar     # sidebar ↔ pages consistency (VitePress)
 ```
 
+One further check exists that CI **cannot** run, because it reads the upstream
+clones under `$REPOS`:
+
+```bash
+nix run .#ci -- --check-blob-paths       # do pinned blob citations name paths that exist?
+```
+
+`--check-vcs-urls` proves a GitHub URL carries a commit SHA rather than a moving
+branch; it cannot tell whether the **path** after that SHA resolves. A citation
+pinned to a real commit but naming a file one directory over is a 404 that only
+the link checker sees — i.e. only in CI, and only when the host is not
+rate-limiting. Since every surveyed upstream is already cloned locally at the
+revision it was read at, `git cat-file -e <sha>:<path>` answers offline, for
+thousands of citations, with no network. A citation whose repository is not
+cloned is reported as **unchecked**, never as a failure, which is why this is
+not a hook and not a CI job. Run it before publishing a research catalog.
+
 ### Debugging tips
 
 - `dub test :base -- -v` and `dub test :core-cli -- -v` show full stack traces
