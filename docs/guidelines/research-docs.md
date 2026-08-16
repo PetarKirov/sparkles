@@ -292,6 +292,22 @@ illustrative. Rules:
   to the shared `lychee.exclude` file at the repo root.
 - The `lychee` link checker is slow and flaky on large external sets; it is reasonable
   to `SKIP=lychee` at commit time and let CI run it (see below).
+- **Verify pinned blob paths offline before publishing**, with
+  `nix run .#ci -- --check-blob-paths` (or `dub run :ci -- --check-blob-paths`). The
+  `check-vcs-urls` hook proves a GitHub URL carries a 40-character SHA; it says nothing
+  about whether the **path** after that SHA exists. A citation pinned to a real commit
+  but naming a file one directory over is a 404 that surfaces only under `lychee` — so
+  only in CI, and only when the host is not rate-limiting. Because a survey reads its
+  subjects from clones under `$REPOS` at pinned revisions, that question is answerable
+  locally with `git cat-file`: thousands of citations in seconds, no network, no API
+  budget. Repositories you have not cloned are reported as _unchecked_ rather than
+  failed, so the check is honest about what it did not look at.
+
+> [!TIP]
+> A path-shape mismatch is the characteristic failure of a survey written from working
+> notes: an in-tree layout (`packages/react-aria/src/menu/…`) that differs from the
+> upstream one (`…/src/tooltip/…`). It passes every SHA check and fails only the link
+> checker, so catch it before the tree is committed rather than after CI is red.
 
 ---
 
