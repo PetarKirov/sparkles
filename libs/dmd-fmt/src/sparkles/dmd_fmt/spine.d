@@ -698,3 +698,22 @@ version (unittest)
     assertSingleEntry("auto s = iq{ $(a) t };", "iq{ $(a) t }");
     assertSingleEntry("/+ a /+ b +/ c +/ int x;", "/+ a /+ b +/ c +/");
 }
+
+@("spine.corpus.expressionsem-round-trips")
+@system unittest
+{
+    // The large-real-world-file leg: dmd's expressionsem.d (~20 kLOC), read
+    // from `$SPARKLES_FLAKE_INPUT_DMD_SRC` so the corpus is portable and
+    // grammar-matched.
+    import std.file : exists, read;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    const dmdSrc = environment.get("SPARKLES_FLAKE_INPUT_DMD_SRC", "");
+    assert(dmdSrc.length,
+        "SPARKLES_FLAKE_INPUT_DMD_SRC not set (enter `nix develop`)");
+    const path = buildPath(dmdSrc, "compiler", "src", "dmd", "expressionsem.d");
+    assert(path.exists,
+        "expressionsem.d missing under SPARKLES_FLAKE_INPUT_DMD_SRC: " ~ path);
+    assumeClean(() @trusted { return cast(string) read(path); }());
+}

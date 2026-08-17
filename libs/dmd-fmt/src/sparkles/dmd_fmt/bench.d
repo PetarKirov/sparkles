@@ -81,3 +81,50 @@ private string bigSource() @safe
     auto root = buildGroups(spine, facts);
     assert(root.children.length > 100);
 }
+
+// ---- The large-real-world-file legs: dmd's expressionsem.d (~20 kLOC), ----
+// ---- from `$SPARKLES_FLAKE_INPUT_DMD_SRC`.                             ----
+
+private string expressionsemCached() @safe
+{
+    import std.file : exists, read;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    static string cached;
+    if (cached.length)
+        return cached;
+
+    const dmdSrc = environment.get("SPARKLES_FLAKE_INPUT_DMD_SRC", "");
+    assert(dmdSrc.length,
+        "SPARKLES_FLAKE_INPUT_DMD_SRC not set (enter `nix develop`)");
+    const path = buildPath(dmdSrc, "compiler", "src", "dmd", "expressionsem.d");
+    assert(path.exists,
+        "expressionsem.d missing under SPARKLES_FLAKE_INPUT_DMD_SRC: " ~ path);
+    cached = () @trusted { return cast(string) read(path); }();
+    return cached;
+}
+
+@("bench.spine.lex-expressionsem-20kloc")
+@benchmark @system unittest
+{
+    auto spine = lexSpine(expressionsemCached());
+    assert(spine.entries.length > 100_000);
+}
+
+@("bench.oracle.parse-expressionsem-20kloc")
+@benchmark @system unittest
+{
+    auto facts = collectFacts(expressionsemCached());
+    assert(facts.parsed);
+}
+
+@("bench.groups.full-pipeline-expressionsem-20kloc")
+@benchmark @system unittest
+{
+    const source = expressionsemCached();
+    auto spine = lexSpine(source);
+    auto facts = collectFacts(source);
+    auto root = buildGroups(spine, facts);
+    assert(root.children.length > 100);
+}
