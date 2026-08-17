@@ -156,6 +156,7 @@ _Loop-side_ modules may import anything.
 | `channel`                | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                               |
 | `fs`, `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): file verbs, `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                            |
 | `group`                  | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                     |
+| `raw_pool`               | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                |
 | `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                            |
 | `package`                | —            | public re-exports                                                                                                                    |
 
@@ -1277,6 +1278,73 @@ Cross-worker wakes, cancels, and spawn injection other than this idle
 nudge travel as `MSG_RING` messages to the owner ring; `wake()` asserts
 owner-worker identity.
 
+### 11.1 Persistent fixed-capacity CPU jobs
+
+Interactive hosts need to submit short CPU jobs without allocating a delegate
+closure or rebuilding the batch-scoped work-stealing pool. `RawCpuPool` is the
+additive, ring-independent surface for that use:
+
+```d
+alias RawJobFn = void function(void*) @safe nothrow @nogc;
+alias RawCompletionFn = void function(void*, bool cancelled)
+    @safe nothrow @nogc;
+
+struct RawJob
+{
+    RawJobFn run;
+    RawCompletionFn complete; // null means no completion notification
+    void* context;     // caller-owned through completion/drain
+    ulong generation; // opaque value copied to RawCompletion
+}
+
+enum RawPoolResult : ubyte
+{
+    accepted,
+    noCompletion,
+    notStarted,
+    alreadyStarted,
+    queueFull,
+    completionFull,
+    shuttingDown,
+    invalidJob,
+    startFailed,
+}
+
+struct RawCpuPool(size_t QueueCapacity = 256,
+    size_t CompletionCapacity = QueueCapacity)
+{
+    @disable this(this);
+    static RawPoolResult start(ref RawCpuPool pool, uint workers = 0);
+    RawPoolResult submit(RawJob job) @safe nothrow @nogc;
+    RawPoolResult pollCompletion(out RawCompletion completion)
+        @safe nothrow @nogc;
+    RawPoolResult shutdown(bool drain = true) @safe nothrow @nogc;
+}
+```
+
+`start` performs all allocation and thread creation before publication.
+Submission, execution, completion polling, and shutdown allocate nothing. The
+queues are bounded MPMC rings; a full submission queue returns `queueFull`
+without consuming the job. A worker never drops a completion: before accepting
+a job the pool reserves one completion slot when `complete` is non-null, so
+`completionFull` is a submission outcome rather than a worker-side loss.
+
+The caller keeps `context` alive and at a stable address until its returned
+completion is dispatched. Shutdown joins execution but deliberately leaves
+completion values pollable, so it does not shorten that lifetime when a
+completion callback was requested. `shutdown(true)` rejects new jobs, executes
+accepted jobs, publishes their completions, joins the workers, and is
+idempotent. `shutdown(false)` cancels queued-but-unstarted jobs by publishing
+completions with `cancelled = true`; running jobs still finish. A stopped pool
+may be started again after outstanding completions are handled.
+Function pointers may consult caller-owned atomics, but the pool gives no
+implicit generation or cancellation semantics.
+
+`RawCpuPool` does not change `WorkStealingPool.run`, `submit`, or
+`submitBlocking`. It is available anywhere DRuntime threads are available; it
+does not require `io_uring`, kqueue, or IOCP. A consumer must retain a
+synchronous bounded fallback for thread-start failure and queue saturation.
+
 ## 12. The `Effect!T` veneer (tier C — non-normative sketch)
 
 Lands in M12; recorded here so tiers A/B are built with it in mind.
@@ -1611,7 +1679,7 @@ Re-exported from `sparkles.event_horizon` (`package.d`):
 | Scopes       | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                   |
 | Capabilities | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`   |
 | Schedules    | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                       |
-| Topology     | `LoopGroup`, `LoopGroupConfig`, `Topology`                                                                                                                                                                        |
+| Topology     | `LoopGroup`, `LoopGroupConfig`, `Topology`, `RawJob`, `RawCompletion`, `RawPoolResult`, `RawCpuPool`                                                                                                              |
 | Veneer (M12) | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                |
 
 Memory-management policy (normative): allocating types follow the

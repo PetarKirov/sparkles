@@ -17,6 +17,7 @@ public import sparkles.event_horizon.net;
 public import sparkles.event_horizon.buffer;
 public import sparkles.event_horizon.effect;
 public import sparkles.event_horizon.op;
+public import sparkles.event_horizon.raw_pool;
 
 version (Windows)
 {

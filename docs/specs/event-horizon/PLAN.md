@@ -119,6 +119,19 @@ Gate: all three topologies selectable via loop-group config (done — single +
 thread-per-core via `LoopGroup.runEach` + work-stealing via `WorkStealingPool`);
 the SPEC §1 example unparked and green under `--verify`; benchmarks committed.
 
+## E0 — Persistent raw CPU jobs
+
+`pool.d` gains the SPEC §11.1 `RawCpuPool`: fixed-capacity MPMC submission and
+completion rings, attributed function-pointer jobs over caller-owned contexts,
+persistent DRuntime workers, explicit saturation/start/shutdown outcomes, and
+draining or cancelling shutdown. The existing batch/delegate
+`WorkStealingPool` remains source-compatible and keeps its benchmark history.
+
+Gate: start/stop cycles, queue and completion saturation, exactly-once
+execution/completion, context lifetime, draining/cancelling shutdown, and
+ThreadSanitizer stress tests pass. The picker exercises the documented
+synchronous fallback when start or submit cannot accept work.
+
 ## M10 — kqueue backend (macOS)
 
 `backend/kqueue.d`: the completion-synthesizing proactor over kqueue readiness;
