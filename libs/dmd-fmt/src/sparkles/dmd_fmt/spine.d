@@ -113,12 +113,12 @@ private enum utf8Bom = "\xEF\xBB\xBF";
 // the parallel test runner). Every lexing entry point in this module
 // serializes on this lock. An LSP serving concurrent formatting requests
 // inherits this constraint.
-private __gshared Object dmdLexerLock;
+package __gshared Object dmdGlobalsLock;
 private __gshared bool lexerGlobalsReady;
 
 shared static this()
 {
-    dmdLexerLock = new Object;
+    dmdGlobalsLock = new Object;
 }
 
 // The lexer's special-identifier handling — `__EOF__` → TOK.endOfFile,
@@ -150,7 +150,7 @@ Returns: the spine; call [validateSpine] / [reconstruct] to check it.
 */
 TokenSpine lexSpine(const(char)[] source) @system
 {
-    synchronized (dmdLexerLock)
+    synchronized (dmdGlobalsLock)
     {
         ensureLexerGlobals();
         return lexSpineImpl(source);
@@ -333,7 +333,7 @@ Returns: `null` on success, else a description of the first mismatch.
 */
 string verifyAgainstPlainLex(in TokenSpine spine) @system
 {
-    synchronized (dmdLexerLock)
+    synchronized (dmdGlobalsLock)
     {
         ensureLexerGlobals();
         return verifyAgainstPlainLexImpl(spine);
@@ -386,7 +386,7 @@ Returns: `null` on success, else a description of the first mismatch.
 */
 string verifyDocLexCorrespondence(in TokenSpine spine) @system
 {
-    synchronized (dmdLexerLock)
+    synchronized (dmdGlobalsLock)
     {
         ensureLexerGlobals();
         return verifyDocLexCorrespondenceImpl(spine);
@@ -595,7 +595,7 @@ version (unittest)
     auto buf = new char[](code.length + 1);
     buf[0 .. code.length] = code[];
     buf[code.length] = '\0';
-    synchronized (dmdLexerLock)
+    synchronized (dmdGlobalsLock)
     {
         scope sink = new ErrorSinkNull;
         scope lexer = new Lexer(null, buf.ptr, 0, code.length,
@@ -617,7 +617,7 @@ version (unittest)
     auto buf = new char[](code.length + 1);
     buf[0 .. code.length] = code[];
     buf[code.length] = '\0';
-    synchronized (dmdLexerLock)
+    synchronized (dmdGlobalsLock)
     {
         scope sink = new ErrorSinkNull;
         scope lexer = new Lexer(null, buf.ptr, 0, code.length,
