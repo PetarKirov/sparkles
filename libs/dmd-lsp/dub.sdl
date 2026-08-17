@@ -15,16 +15,13 @@ importPaths "src"
 // package (and its dependents) compile the dmd.* module interfaces with the
 // same declarations the library was built with.
 dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
-    version="ea88375142644d2dc7755089357acdfdd69c6620"
+    version="c562711dbd4685c4e4f7bd5ff46e1a306c932259"
 
-// DMD emits the reference to `Edition`'s TypeInfo initializer into dmd:lexer
-// while the definition lives in dmd:frontend, and dub lists the archives
-// frontend → lexer, so by the time the linker reaches the reference it has
-// already passed the definition. Naming the symbol up front pulls `astenums.o`
-// out of frontend.a while that archive is still on the table. LDC emits both
-// into one object and needs nothing. Without it, no dmd build of this package
-// or its dependents links at all.
-lflags "--undefined=_D3dmd8astenums7Edition6__initZ" platform="linux-dmd"
+// (An `lflags "--undefined=_D3dmd8astenums7Edition6__initZ"` workaround for
+// linux-dmd used to live here: astenums.o sat in frontend.a while dmd:lexer
+// referenced it, an archive-order hazard. The fork's dub packaging now
+// compiles astenums.d/rootobject.d inside dmd:lexer itself — see the fork's
+// PLAN-UPSTREAMING.md — so the reference resolves within one archive.)
 
 // Deliberately NO -preview=in / -preview=dip1000 (the repo standard): the
 // dmd.* frontend sources this package imports (and, under -allinst, template

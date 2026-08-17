@@ -40,29 +40,19 @@ $(LIST
         `Token.blockComment`/`lineComment` stay null on the trivia spine. DDoc
         checks need a second, `doDocComment: true` lex — see
         [verifyDocLexCorrespondence].
-    * Known upstream DMDLIB bug, pinned by a test below: a `//` comment
-        terminated by U+2028/U+2029 leaves the scanner mid-sequence in the
-        `commentToken` path (the non-DMDLIB path advances past the terminator;
-        the DMDLIB path does not), so the trivia lex diverges from the plain
-        lex on such input.
+    * U+2028/U+2029 handling relies on two fork fixes to upstream's DMDLIB
+        paths (tracked in the fork's PLAN-UPSTREAMING.md, aimed at dlang/dmd):
+        a `//` comment terminated by LS/PS used to leave the scanner
+        mid-sequence under `commentToken`, and bare LS/PS never produced a
+        `whitespaceToken`. A regression test below covers both.
 )
 */
 module sparkles.dmd_fmt.spine;
 
 import dmd.errorsink : ErrorSink, ErrorSinkNull;
 import dmd.lexer : Lexer;
-import dmd.rootobject : RootObject;
 import dmd.tokens : TOK, Token;
 import std.format : format;
-
-// dmd.identifier.Identifier (allocated by the lexer) derives from
-// dmd.rootobject.RootObject, whose object file lives in frontend.a — an
-// archive the linker has already passed by the time lexer.a introduces the
-// reference (dmd:lexer's own source list is missing rootobject.d; see this
-// package's dub.sdl). Referencing the ClassInfo from this object file, which
-// is linked first, makes the linker extract rootobject.o from frontend.a
-// while that archive is still on the table.
-private __gshared const(TypeInfo_Class) rootObjectLinkAnchor = typeid(RootObject);
 
 /// What a spine entry is, at the fidelity layer.
 enum SpineClass : ubyte
@@ -503,18 +493,17 @@ version (unittest)
     assumeClean("int äöü = 1;\n");
 }
 
-@("spine.known-upstream-bug.LS-terminated-line-comment-desyncs")
+@("spine.roundtrip.LS-PS-terminated-and-bare")
 @system unittest
 {
-    // Upstream DMDLIB bug (see the module doc): when a // comment is
-    // terminated by U+2028/U+2029, the commentToken return path skips the
-    // advance the non-DMDLIB path performs, leaving the scanner inside the
-    // multi-byte terminator -- so the trivia lex diverges from the plain lex.
-    // This test PINS the divergence; when a fork rebase fixes it, this test
-    // fails and the fixture moves into assumeClean above.
-    auto spine = lexSpine("int a; // comment\u2028int b;\n");
-    assert(verifyAgainstPlainLex(spine) !is null,
-        "upstream LS/PS comment bug appears fixed -- move this fixture to the clean set");
+    // Regression coverage for the fork's DMDLIB LS/PS fix (tracked in the
+    // fork's PLAN-UPSTREAMING.md): a // comment terminated by U+2028/U+2029
+    // used to leave the scanner mid-sequence in the commentToken path, and
+    // bare U+2028/U+2029 were consumed without a whitespace token.
+    assumeClean("int a; // comment\u2028int b;\n");
+    assumeClean("int a; // comment\u2029int b;\n");
+    assumeClean("int a;\u2028int b;\n");
+    assumeClean("int a;\u2029int b;\n");
 }
 
 @("spine.roundtrip.predefined-tokens-rewritten-not-copied")
