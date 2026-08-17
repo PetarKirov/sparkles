@@ -32,6 +32,7 @@ case rather than re-cutting the value.
 module sparkles.ui.components.dock;
 
 import core.time : Duration, msecs;
+import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.capability : InputCapabilities;
 import sparkles.input.events : Event, match, PointerAction, PointerButton,
@@ -39,7 +40,7 @@ import sparkles.input.events : Event, match, PointerAction, PointerButton,
 import sparkles.ui.components.scroll_view : AutoScroll, scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.state : CaptureState, PressState,
+import sparkles.ui.state : CaptureState, FocusState, PressState,
     scrollbarThumbIntersectsCell, SplitState;
 
 @safe:
@@ -80,6 +81,14 @@ struct DockNode
     /// with the other flexing siblings); non-zero is a fixed extent, the
     /// sidebar model every dock framework offers.
     int extent;
+    /// How large a share of the remainder a flexing child takes, relative
+    /// to its flexing siblings (`DCK1`'s weights; ignored when `extent` is
+    /// fixed). Equal weights split evenly, which is why `1` is the default
+    /// and why the field can be added without moving a single existing
+    /// pane. Values below `1` are read as `1`: a child that should take no
+    /// space says so with `visible`, and a zero here would only be a way
+    /// to divide by zero.
+    int weight = 1;
     int minExtent;      /// lower clamp for a divider drag
     int maxExtent;      /// upper clamp; `0` = unbounded
     bool visible = true;
@@ -149,18 +158,19 @@ struct DockLayout
 
     /// Appends a pane leaf and returns its node index.
     uint addLeaf(PaneId pane, int extent = 0, int minExtent = 0,
-        int maxExtent = 0)
+        int maxExtent = 0, int weight = 1)
     {
         nodes ~= DockNode(kind: DockKind.leaf, pane: pane, extent: extent,
-            minExtent: minExtent, maxExtent: maxExtent);
+            minExtent: minExtent, maxExtent: maxExtent, weight: weight);
         return cast(uint)(nodes.length - 1);
     }
 
     /// Appends a split over already-added children and returns its index.
-    uint addSplit(DockAxis axis, uint[] children, int extent = 0)
+    uint addSplit(DockAxis axis, uint[] children, int extent = 0,
+        int weight = 1)
     {
         nodes ~= DockNode(kind: DockKind.split, axis: axis,
-            children: children, extent: extent);
+            children: children, extent: extent, weight: weight);
         return cast(uint)(nodes.length - 1);
     }
 
@@ -618,6 +628,11 @@ void dockFrames(in DockLayout l, in Rect area, ref DockFrames f,
         walk(l, l.root, area, f, focused);
 }
 
+/// A flexing child's share weight, read defensively so an unset or negative
+/// field cannot divide the distribution by zero.
+private int weightOf(in DockNode n) pure nothrow @nogc
+    => n.weight > 1 ? n.weight : 1;
+
 private void walk(in DockLayout l, uint idx, in Rect area,
     ref DockFrames f, PaneId focused)
 {
@@ -696,17 +711,22 @@ private void walk(in DockLayout l, uint idx, in Rect area,
     const total = horiz ? area.width : area.height;
     const gaps = cast(int)(vis.length - 1) * l.dividerExtent;
 
-    // Fixed children take their extent; the rest share what is left. Sizing
-    // is its own pass so the placing pass below knows every extent — which
-    // is what lets a divider carry its own drag range.
+    // Fixed children take their extent; the rest share what is left, in
+    // proportion to their weights (`DCK1`). Sizing is its own pass so the
+    // placing pass below knows every extent — which is what lets a divider
+    // carry its own drag range.
     int fixed;
     int flexCount;
+    int flexWeight;
     foreach (c; vis)
     {
         if (l.nodes[c].extent > 0)
             fixed += l.nodes[c].extent;
         else
+        {
             ++flexCount;
+            flexWeight += weightOf(l.nodes[c]);
+        }
     }
     int remaining = total - gaps - fixed;
     if (remaining < 0)
@@ -717,10 +737,13 @@ private void walk(in DockLayout l, uint idx, in Rect area,
         ext[i] = l.nodes[c].extent;
         if (ext[i] <= 0)
         {
+            const w = weightOf(l.nodes[c]);
             // The last flexing child absorbs the rounding remainder, so the
             // children always tile the area exactly.
-            ext[i] = flexCount > 1 ? remaining / flexCount : remaining;
+            ext[i] = flexCount > 1 ? cast(int)(cast(long) remaining * w / flexWeight)
+                : remaining;
             remaining -= ext[i];
+            flexWeight -= w;
             --flexCount;
         }
     }
@@ -969,9 +992,23 @@ struct DockContainer
     /// ditto — container-owned pane scrollbar frames (`DCK14`).
     ref inout(ScrollFrame[]) bars() inout return @safe pure nothrow @nogc
         => frames.bars;
-    /// The focused pane (`DCK6`); click-to-focus and $(LREF focusNext)
-    /// maintain it.
-    PaneId focused;
+    /**
+    The focused pane (`DCK6`); click-to-focus and $(LREF focusNext)
+    maintain it.
+
+    A property over an `STM7` `FocusState` rather than a bare field: the
+    machine already IS "one focused id plus a wrapping traversal over an
+    order", so keeping a second copy of that here is how the two grow apart
+    — they already had, over what an unknown focus means. Hosts still read
+    and write a `PaneId`, because a pane id is the vocabulary they have.
+    */
+    PaneId focused() const scope pure nothrow @nogc
+        => cast(PaneId) focus.focused;
+    /// ditto
+    void focused(PaneId pane) pure nothrow @nogc
+    {
+        focus = FocusState(pane);
+    }
     /// How far from a divider's rect a press still grabs it: `0` is the
     /// exact cell a terminal offers, a pixel host wants a few px either
     /// side. The divider is drawn thin and grabbed thick, as everywhere.
@@ -994,6 +1031,7 @@ struct DockContainer
     AutoScroll autoScroll;
 
     private Rect area;
+    private FocusState focus;
     private CaptureState capture;
     private PaneScroll[] paneScrolls;
     private PressState tabPress;
@@ -1398,8 +1436,14 @@ struct DockContainer
     The one wanted pointer shape (`DCK9`). The pane shapes are supplied by
     the host — only it knows what its panes' contents want — split into
     the shape a live pane GRAB wants and the one a mere hover wants, so
-    the established precedence holds exactly: any grab (divider or pane)
-    outranks every hover.
+    the established precedence holds exactly: any grab (divider, re-dock or
+    pane) outranks every hover.
+
+    A tab that has become a re-dock asks for `grabbing` for as long as it is
+    in flight, which is the one piece of feedback that distinguishes
+    "carrying a pane" from "clicked a tab and nothing happened". Merely
+    hovering a tab is deliberately left alone: a strip that changes the
+    cursor on approach reads as draggable content rather than as a control.
     */
     PointerShape shape(PointerShape paneGrab = PointerShape.default_,
         PointerShape paneHover = PointerShape.default_) const
@@ -1407,6 +1451,8 @@ struct DockContainer
     {
         if (resizing)
             return dividerShape(dividers[dragDivider].axis);
+        if (redock.active)
+            return PointerShape.grabbing;
         const sg = scrollShape(true);
         if (sg != PointerShape.default_)
             return sg;
@@ -1440,22 +1486,24 @@ struct DockContainer
         => axis == DockAxis.horizontal
             ? PointerShape.ewResize : PointerShape.nsResize;
 
-    /// Moves focus to the next (`+1`) or previous (`-1`) visible pane in
-    /// layout order — the deterministic traversal `DCK6` asks for.
+    /**
+    Moves focus to the next (`+1`) or previous (`-1`) visible pane in layout
+    order — the deterministic traversal `DCK6` asks for, run by `STM7`.
+
+    Only laid-out panes are in the order, which is the right answer rather
+    than an accident: a pane behind an inactive tab is not on screen, so
+    focus cycling must not land on it. $(LREF activateNext) is the route
+    that reaches those.
+    */
     void focusNext(int step = 1) pure nothrow @nogc
     {
-        if (!paneFrames.length)
-            return;
-        size_t at;
-        foreach (i, ref f; paneFrames)
-            if (f.pane == focused)
-            {
-                at = i;
-                break;
-            }
-        const n = paneFrames.length;
-        const next = (at + n + (step >= 0 ? 1 : n - 1)) % n;
-        focused = paneFrames[next].pane;
+        // The order is derived per call, from the frames, so it cannot
+        // describe an arrangement that is no longer on screen. A stack
+        // buffer keeps that free of the heap at any sane pane count.
+        SmallBuffer!(size_t, 32) order;
+        foreach (ref f; paneFrames)
+            order ~= cast(size_t) f.pane;
+        focus = step >= 0 ? focus.next(order[]) : focus.previous(order[]);
     }
 
     /**
@@ -2085,6 +2133,36 @@ version (unittest)
         == PointerShape.text);
 }
 
+@("ui.dock.aRedockInFlightAsksForTheClosedHand")
+@safe unittest
+{
+    // The tab-drag half of `DCK9`: carrying a pane must look different from
+    // having clicked a tab, and it must outrank whatever the pane under the
+    // pointer would otherwise ask for.
+    enum PaneId docA = 1, docB = 2;
+    DockContainer c;
+    const a = c.layout.addLeaf(docA);
+    const b = c.layout.addLeaf(docB);
+    c.layout.root = c.layout.addTabs([a, b]);
+    c.arrange(Rect(0, 0, 100, 40));
+
+    c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(70, 0))));
+    assert(c.shape(PointerShape.default_, PointerShape.text)
+        == PointerShape.text, "an armed tab is not yet a drag");
+
+    c.handle(Event(PointerEvent(action: PointerAction.drag,
+        pos: Point(70, 20))));
+    assert(c.dragHint().active);
+    assert(c.shape(PointerShape.default_, PointerShape.text)
+        == PointerShape.grabbing);
+
+    c.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(70, 20))));
+    assert(c.shape(PointerShape.default_, PointerShape.text)
+        == PointerShape.text, "and the hand lets go on release");
+}
+
 @("ui.dock.focusTraversalIsDeterministic")
 @safe unittest
 {
@@ -2096,6 +2174,24 @@ version (unittest)
     assert(c.focused == tree, "traversal wraps in layout order");
     c.focusNext(-1);
     assert(c.focused == doc);
+
+    // Focus on nothing — a fresh container, or a pane that has just been
+    // closed — enters the order at its end rather than assuming an index,
+    // which is `STM7`'s own answer and the one the hand-rolled walk here
+    // used to get wrong in the backwards direction.
+    c.focused = 0;
+    c.focusNext();
+    assert(c.focused == tree, "forwards from nowhere is the first pane");
+    c.focused = 0;
+    c.focusNext(-1);
+    assert(c.focused == doc, "and backwards is the last");
+
+    // An empty arrangement has nothing to focus and says so, rather than
+    // keeping a pane that is no longer laid out.
+    DockContainer empty;
+    empty.focused = tree;
+    empty.focusNext();
+    assert(empty.focused == 0);
 }
 
 @("ui.dock.verticalSplitsAndThreePanes")
@@ -2451,6 +2547,7 @@ version (unittest)
     DockLayout a;
     const l = a.addLeaf(7, extent: 5, minExtent: 2, maxExtent: 9);
     a.nodes[l].tabExtent = 11;
+    a.nodes[l].weight = 4;
     a.nodes[l].headerExtent = 1;
     a.nodes[l].title = "t";
     a.nodes[l].headerCenter = "c";
@@ -2983,4 +3080,44 @@ version (unittest)
     assert(l.firstPane(l.root) == b);
     l.setVisible(b, false);
     assert(l.firstPane(l.root) == a, "a hidden active tab is not what is shown");
+}
+
+@("ui.dock.flexingChildrenShareByWeight")
+@safe unittest
+{
+    // `DCK1`'s weights: a fixed sidebar, then two flexing panes at 2:1. The
+    // default weight is 1, so this is the same distribution every existing
+    // layout already got — which is what let the field be added without
+    // moving a single pane.
+    enum PaneId side = 1, main_ = 2, aux = 3;
+    DockContainer c;
+    const s = c.layout.addLeaf(side, extent: 20);
+    const m = c.layout.addLeaf(main_, weight: 2);
+    const x = c.layout.addLeaf(aux);
+    c.layout.root = c.layout.addSplit(DockAxis.horizontal, [s, m, x]);
+    c.arrange(Rect(0, 0, 100, 40));
+
+    // 100 - 20 fixed - 2 dividers = 78, split 52/26.
+    assert(c.paneExtent(side) == 20);
+    assert(c.paneExtent(main_) == 52);
+    assert(c.paneExtent(aux) == 26);
+
+    // The children still tile the area exactly: the last flexing child takes
+    // the rounding remainder, so no column is lost to a division.
+    foreach (odd; [99, 100, 101, 137])
+    {
+        c.arrange(Rect(0, 0, odd, 40));
+        int sum = c.dividers.length ? cast(int) c.dividers.length : 0;
+        foreach (ref f; c.paneFrames)
+            sum += f.rect.width;
+        assert(sum == odd, "weights must not leak a column");
+        assert(c.paneExtent(main_) >= c.paneExtent(aux), "and keep the ratio");
+    }
+
+    // An unset or nonsensical weight is read as 1 rather than dividing the
+    // remainder by zero.
+    c.layout.nodes[m].weight = 0;
+    c.layout.nodes[x].weight = -3;
+    c.arrange(Rect(0, 0, 100, 40));
+    assert(c.paneExtent(main_) == 39 && c.paneExtent(aux) == 39);
 }
