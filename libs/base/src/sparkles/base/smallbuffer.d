@@ -16,7 +16,8 @@ import std.range.primitives : ElementType, hasLength, hasSlicing, isInputRange;
 import std.experimental.allocator : makeArray, expandArray, dispose;
 import std.traits : hasIndirections;
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
-import std.experimental.allocator.mallocator : Mallocator;
+
+import sparkles.test_runner.attributes : betterC;
 
 version (unittest) import std.range : iota;
 
@@ -78,7 +79,123 @@ extern (C) private pure nothrow @nogc @system
 }
 
 private struct ControlBlock { size_t refCount; }
-private alias BlockAllocator = AffixAllocator!(Mallocator, ControlBlock);
+
+/*
+`Mallocator`, restated over druntime's `pureMalloc` family.
+
+Phobos' own `Mallocator` is shaped exactly like this, and using it directly is
+what kept this module out of `-betterC` builds: its `instance`, `allocate`,
+`reallocate` and `deallocate` are ordinary (non-template) members, so they are
+emitted once into `libphobos2` and a druntime-free link has nothing to resolve
+them against. Everything else this module borrows from
+`std.experimental.allocator` — `AffixAllocator`, `makeArray`, `expandArray`,
+`dispose` — is a template, and templates are instantiated into the caller's
+object file, so they link fine. Swapping the one leaf that isn't buys the whole
+container a `-betterC` build without changing a line of its allocation,
+initialization or destruction semantics.
+
+`core.memory`'s `pureMalloc`/`pureRealloc`/`pureFree` are `extern (C)`
+forwarders to libc, present with or without druntime, and already the repo's
+sanctioned manual-allocation primitives.
+*/
+private struct PureMallocator
+{
+    import std.experimental.allocator.common : platformAlignment;
+
+    enum uint alignment = platformAlignment;
+
+    @trusted @nogc nothrow pure
+    void[] allocate(size_t bytes) shared const
+    {
+        import core.memory : pureMalloc;
+
+        if (!bytes)
+            return null;
+        auto p = pureMalloc(bytes);
+        return p ? p[0 .. bytes] : null;
+    }
+
+    @system @nogc nothrow pure
+    bool reallocate(ref void[] b, size_t bytes) shared const
+    {
+        import core.memory : pureFree, pureRealloc;
+
+        if (!bytes)
+        {
+            pureFree(b.ptr);
+            b = null;
+            return true;
+        }
+        auto p = pureRealloc(b.ptr, bytes);
+        if (p is null)
+            return false;
+        b = p[0 .. bytes];
+        return true;
+    }
+
+    @system @nogc nothrow pure
+    bool deallocate(void[] b) shared const
+    {
+        import core.memory : pureFree;
+
+        pureFree(b.ptr);
+        return true;
+    }
+
+    static shared PureMallocator instance;
+}
+
+private alias BlockAllocator = AffixAllocator!(PureMallocator, ControlBlock);
+
+/*
+Copies `src` onto `dst`, which must be the same length, without druntime.
+
+D's own `dst[] = src[]` lowers to a call to druntime's `_d_array_slice_copy`,
+which a `-betterC` link has nothing to resolve — one such copy anywhere in the
+buffer costs the whole container its druntime-free build, and it has one on
+every copy, growth and storage-transition path. `memmove` comes from libc and
+links either way.
+
+`memmove` rather than `memcpy`: every caller here copies between provably
+disjoint ranges (the append paths check with `aliasesRegion` first, and the
+storage transitions stage through a separate buffer), but the overlapping case
+is a silent corruption rather than a loud failure, and the ranges are short
+enough that the difference does not show up.
+
+Only plain-old-data takes that path. An element type with a postblit, a copy
+constructor or a destructor keeps per-element assignment, so those run exactly
+as they did when the compiler emitted the copy.
+*/
+private void copyElements(Dst, Src)(scope Dst[] dst, scope Src[] src)
+if (is(typeof(dst[0] = src[0])) && Dst.sizeof == Src.sizeof)
+in (dst.length == src.length, "copyElements: length mismatch")
+{
+    // Deduced separately rather than as one `T`: the copy constructor is
+    // `inout`, so both sides arrive as `inout(T)[]` and neither matches a
+    // `const(T)[]` parameter.
+    static if (__traits(isPOD, Dst))
+    {
+        if (__ctfe)
+        {
+            foreach (i; 0 .. src.length)
+                dst[i] = src[i];
+        }
+        else if (src.length)
+        {
+            (() @trusted {
+                import core.stdc.string : memmove;
+
+                memmove(cast(void*) dst.ptr, cast(const void*) src.ptr,
+                    src.length * Dst.sizeof);
+            })();
+        }
+    }
+    else
+    {
+        foreach (i; 0 .. src.length)
+            dst[i] = src[i];
+    }
+}
 
 // Round a required element count up to the next power of two (saturating: a
 // count whose doubling would overflow is left as-is). Shared by every growth
@@ -234,7 +351,13 @@ pure nothrow @nogc:
                 ++this.ctrl().refCount;
             }
             else
-                this._inline[0 .. rhs._length] = rhs._inline[0 .. rhs._length];
+                // `inout` is assignable only inside an `inout` function, and
+                // `copyElements` is not one — so the qualifier is cast off for
+                // the copy. Sound here for the same reason the `const` overload
+                // below casts: this object is under construction and nothing
+                // else can observe its storage yet.
+                copyElements(cast(T[]) this._inline[0 .. rhs._length],
+                    cast(const(T)[]) rhs._inline[0 .. rhs._length]);
         }
 
         /// Build a mutable working copy from a `const` (e.g. borrowed) buffer.
@@ -247,7 +370,7 @@ pure nothrow @nogc:
                 ++ctrl().refCount;
             }
             else
-                _inline[0 .. rhs._length] = cast(T[]) rhs._inline[0 .. rhs._length];
+                copyElements(_inline[0 .. rhs._length], rhs._inline[0 .. rhs._length]);
         }
 
         /// Copy assignment: release current storage, then share/copy from `rhs`.
@@ -267,7 +390,7 @@ pure nothrow @nogc:
             if (rhs.onHeap)
                 _block = cast(T[]) rhs._block;
             else
-                _inline[0 .. rhs._length] = cast(T[]) rhs._inline[0 .. rhs._length];
+                copyElements(_inline[0 .. rhs._length], rhs._inline[0 .. rhs._length]);
 
             return this;
         }
@@ -283,7 +406,7 @@ pure nothrow @nogc:
         if (rhs.onHeap)
             _block = rhs._block;
         else
-            _inline[0 .. rhs._length] = rhs._inline[0 .. rhs._length];
+            copyElements(_inline[0 .. rhs._length], rhs._inline[0 .. rhs._length]);
         rhs._length = 0; // rhs no longer owns the (possibly heap) block
         return this;
     }
@@ -425,7 +548,7 @@ pure nothrow @nogc:
                 // aliases us lives in `[0 .. oldLen]`, disjoint from the
                 // `[oldLen .. newLen]` destination, so a plain copy is safe.
                 _length = newLen;
-                this.view()[oldLen .. newLen] = elements[];
+                copyElements(this.view()[oldLen .. newLen], elements[]);
                 return;
             }
 
@@ -439,7 +562,7 @@ pure nothrow @nogc:
             const aliasStart = overlaps ? cast(size_t)(elements.ptr - v.ptr) : 0;
 
             T[] tail = ensureUniqueStorage(extraLen: n);
-            tail[] = overlaps ? _block[aliasStart .. aliasStart + n] : elements[];
+            copyElements(tail, overlaps ? _block[aliasStart .. aliasStart + n] : elements[]);
             _length = newLen;
             return;
         }
@@ -456,7 +579,7 @@ pure nothrow @nogc:
             // `ensureUniqueStorage`/refcount work.
             if (newLen <= N && !overlapsInline)
             {
-                _inline[oldLen .. newLen] = elements[];
+                copyElements(_inline[oldLen .. newLen], elements[]);
                 _length = newLen;
                 return;
             }
@@ -467,9 +590,9 @@ pure nothrow @nogc:
                     T[N] tmp;
                 else
                     T[N] tmp = void;
-                tmp[0 .. elements.length] = elements[];
+                copyElements(tmp[0 .. elements.length], elements[]);
                 T[] tail = ensureUniqueStorage(extraLen: elements.length);
-                tail[] = tmp[0 .. elements.length];
+                copyElements(tail, tmp[0 .. elements.length]);
                 _length = newLen;
                 return;
             }
@@ -487,7 +610,7 @@ pure nothrow @nogc:
             }
 
             T[] tail = ensureUniqueStorage(extraLen: elements.length);
-            tail[] = elements[];
+            copyElements(tail, elements[]);
             _length = newLen;
 
             if (retainedBlock !is null)
@@ -550,7 +673,7 @@ pure nothrow @nogc:
                 // the new block, fill it with the inline elements and range elements,
                 // and only then overwrite the union by assigning _block.
                 T[] nb = allocateBlock(roundedCapacity(newLen));
-                nb[0 .. oldLen] = _inline[0 .. oldLen];
+                copyElements(nb[0 .. oldLen], _inline[0 .. oldLen]);
                 size_t i = oldLen;
                 foreach (e; elements)
                     nb[i++] = e;
@@ -603,9 +726,9 @@ pure nothrow @nogc:
             // invariant `length <= N  <=>  inline`.
             T[] b = _block;
             T[N] tmp = void;
-            tmp[0 .. newLength] = b[0 .. newLength];
+            copyElements(tmp[0 .. newLength], b[0 .. newLength]);
             releaseStorage();
-            _inline[0 .. newLength] = tmp[0 .. newLength];
+            copyElements(_inline[0 .. newLength], tmp[0 .. newLength]);
             _length = newLength;
             return;
         }
@@ -622,9 +745,9 @@ pure nothrow @nogc:
             // invariant `length <= N  <=>  inline`. Copy survivors out first.
             T[] b = _block;
             T[N] tmp = void;
-            tmp[] = b[0 .. N];
+            copyElements(tmp[], b[0 .. N]);
             releaseStorage();
-            _inline[0 .. N] = tmp[];
+            copyElements(_inline[0 .. N], tmp[]);
             _length = N;
             return;
         }
@@ -717,7 +840,7 @@ pure nothrow @nogc:
             if (onHeap)
                 result._block = _block; // transfer ownership (refCount already 1)
             else
-                result._inline[0 .. _length] = _inline[0 .. _length];
+                copyElements(result._inline[0 .. _length], _inline[0 .. _length]);
             _block = null; // relinquish: our destructor must not free the block
             _length = 0;
             return result;
@@ -820,7 +943,7 @@ pure nothrow @nogc:
                 // elements into it before the union is repurposed as `_block`.
                 T[] nb = allocateBlock(capacity);
                 () @trusted {
-                    nb[0 .. oldLen] = _inline[0 .. oldLen];
+                    copyElements(nb[0 .. oldLen], _inline[0 .. oldLen]);
                     _block = nb;
                 }();
                 return nb[oldLen .. newLen];
@@ -846,7 +969,7 @@ pure nothrow @nogc:
 
             T[] oldBlock = this.view;
             T[] newBlock = allocateBlock(max(this.capacity, capacity));
-            newBlock[0 .. oldLen] = oldBlock[];
+            copyElements(newBlock[0 .. oldLen], oldBlock[]);
             () @trusted {
                 if (rc > 1) --ctrl().refCount;
                 _block = newBlock;
@@ -1122,35 +1245,93 @@ void checkWriter(alias render, size_t outputBufferSize = 1024,
     assertRendered!errorBufferSize("rendered output mismatch", buf[], expected, file, line);
 }
 
-/// Shared by $(LREF checkToString) and $(LREF checkWriter): compares the
-/// rendered bytes and, on mismatch, throws a recycled `AssertError`
-/// carrying an `<header>:\nExpected:\n…\nActual:\n…` diff.
-private void assertRendered(size_t errorBufferSize)(
+/**
+Compares rendered bytes against expected text and fails with a readable diff.
+
+The comparison helper behind $(LREF checkToString) and $(LREF checkWriter), and
+usable directly whenever a test already has the rendered bytes in hand — a
+grid painted into a cell buffer, a frame captured from a recording backend —
+and only wants the diff-on-mismatch reporting:
+---
+assertRendered("frame mismatch", frame.text, expectedFrame);
+---
+Rendering into a $(LREF SmallBuffer) is what keeps a passing test
+`@safe pure nothrow @nogc`; the failure path allocates nothing either, so the
+attribute set survives into the assertion.
+
+$(B Failure mode follows the build.) With exceptions available this throws a
+recycled `AssertError` carrying the diff, attributed to `file`/`line`. Under
+`-betterC` (`version (D_Exceptions)` is off) `throw` is illegal, so the same
+message goes through `assert(false, …)` — which the test runner compiles with
+`-checkaction=C`, so it reaches C's `assert` and aborts. C's `assert` prints
+its own call site rather than `file`/`line`, so those are folded into the
+message text instead.
+
+Params:
+    errorBufferSize = Inline capacity, in `char`s, of the diff buffer. A
+        message longer than this spills to the heap rather than truncating.
+    header   = Short label for what mismatched, e.g. `"toString mismatch"`.
+    actual   = The rendered bytes.
+    expected = The bytes `actual` should equal.
+    file     = Source file for assertion reporting.
+    line     = Source line for assertion reporting.
+
+Throws: `AssertError` if `actual` differs from `expected`. Under `-betterC`,
+        aborts through C's `assert` instead.
+
+See_Also: $(LREF checkToString), $(LREF checkWriter)
+*/
+void assertRendered(size_t errorBufferSize = 1024)(
     const(char)[] header,
     const(char)[] actual,
     const(char)[] expected,
-    string file,
-    size_t line,
+    string file = __FILE__,
+    size_t line = __LINE__,
 )
 {
-    import core.exception : AssertError;
-    import sparkles.base.lifetime : recycledErrorInstance;
-
     if (actual == expected)
         return;
 
     SmallBuffer!(char, errorBufferSize) errBuf;
+
+    version (D_Exceptions) {}
+    else
+    {
+        // C's `assert` reports the `assert(false, …)` site — this module —
+        // rather than the caller, so carry the caller's location in the text.
+        import sparkles.base.text.writers : writeInteger;
+
+        errBuf.put(file);
+        errBuf.put(':');
+        writeInteger(errBuf, line);
+        errBuf.put(": ");
+    }
+
     errBuf.put(header);
     errBuf.put(":\nExpected:\n");
     errBuf.put(expected);
     errBuf.put("\nActual:\n");
     errBuf.put(actual);
 
-    // @trusted only here: recycledErrorInstance is @system (it parks the
-    // Error object in a static buffer).
-    () @trusted {
-        throw recycledErrorInstance!AssertError(errBuf[], file, line);
-    }();
+    version (D_Exceptions)
+    {
+        import core.exception : AssertError;
+        import sparkles.base.lifetime : recycledErrorInstance;
+
+        // @trusted only here: recycledErrorInstance is @system (it parks the
+        // Error object in a static buffer).
+        () @trusted {
+            throw recycledErrorInstance!AssertError(errBuf[], file, line);
+        }();
+    }
+    else
+    {
+        // C's `assert` takes a `const char*`, so the message must carry its own
+        // terminator — a bare slice leaves the C library reading whatever
+        // follows the buffer into its diagnostic.
+        errBuf.put('\0');
+        assert(false, errBuf[]);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1234,6 +1415,66 @@ unittest
 unittest
 {
     checkWriter!((ref b) => b.put("hi"))("hi");
+}
+
+@("assertRendered.matchingBytesPass")
+@safe pure nothrow @nogc
+unittest
+{
+    // The direct entry point, for a test that already holds rendered bytes.
+    assertRendered("frame mismatch", "abc", "abc");
+}
+
+@("assertRendered.mismatchMessage")
+@system
+unittest
+{
+    import core.exception : AssertError;
+    import std.exception : collectException;
+
+    auto error = collectException!AssertError(
+        assertRendered("frame mismatch", "actual", "expected")
+    );
+    assert(error !is null);
+    assert(error.msg == "frame mismatch:\nExpected:\nexpected\nActual:\nactual");
+}
+
+@("smallbuffer.helpers.betterC")
+@betterC
+@safe pure nothrow @nogc
+unittest
+{
+    // The helpers must survive a druntime-free build: `assertRendered`'s
+    // failure path is a `throw` where exceptions exist and a C `assert`
+    // where they don't, and this test is what keeps the second arm compiling.
+    struct Example
+    {
+        void toString(Writer)(ref Writer w) const
+        {
+            w.put("Example(ok)");
+        }
+    }
+
+    checkToString(Example(), "Example(ok)");
+    checkWriter!((ref b) => b.put("hi"))("hi");
+    assertRendered("frame mismatch", "abc", "abc");
+}
+
+@("SmallBuffer.betterC")
+@betterC
+@safe pure nothrow @nogc
+unittest
+{
+    // The container itself, across the inline -> heap transition, without
+    // druntime: the heap block comes from `Mallocator`, not the GC.
+    SmallBuffer!(char, 8) buf;
+    buf ~= "hello";
+    buf ~= ' ';
+    buf ~= "world";
+    assert(buf.onHeap && buf[] == "hello world");
+
+    buf.clear();
+    assert(buf.empty && !buf.onHeap);
 }
 
 @("SmallBuffer.put.append")

@@ -14,9 +14,13 @@
         pname = "spk-text-wasm";
         wasmName = "spk-text.wasm";
         entry = "libs/base/wasm/spk_text_wasm.d";
-        # base.text imports the runner's attributes (in the impl package).
+        # `sparkles:base` carries the runner's marker UDAs unconditionally
+        # (`@betterC` on `SmallBuffer`'s own tests, and the `base.text` modules),
+        # so the SHIM — which is where `attributes.d` lives — has to be on the
+        # path even though nothing here runs a test.
         sourceDirs = [
           "libs/base/src"
+          "libs/test-runner/src"
           "libs/test-runner-impl/src"
         ];
         exports = [
