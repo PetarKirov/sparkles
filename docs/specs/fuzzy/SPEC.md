@@ -1,542 +1,462 @@
 # `sparkles:fuzzy` — Specification
 
-_Normative at the contract level: it fixes the library's invariants, algorithms,
-constants, and public surface, while leaving code-level layout to
-implementation. Delivery order and per-milestone gates live in
-[PLAN.md](./PLAN.md). The evidence base is the
-[fuzzy-matching research catalog](../../research/fuzzy-matching/index.md); the
-consuming feature is [hue's picker](../hue/picker.md) (`DEF23`/`DEF24`), whose
-`PKQ`/`PKR`/`PKM` requirement rows this document traces inline._
+_**Status:** F0 implemented and verified · **Date:** 2026-08-17_
 
-**The library does not exist yet.** Every section describes a target; the
-**(target — Mn)** markers name the [PLAN](./PLAN.md) milestone that ships it.
+_Normative at the contract level. Delivery order and gates live in
+[PLAN.md](./PLAN.md); hue's host-side lifecycle is specified in
+[picker.md](../hue/picker.md). The evidence base is the
+[fuzzy-matching research catalog](../../research/fuzzy-matching/index.md)._
 
-## 1. Overview
+## 1. Purpose and invariants
 
-`sparkles:fuzzy` is a fuzzy-search engine library: a constraint query
-language, a typo-tolerant matcher, a composite ranking formula, frecency and
-query-history models, and a glob matcher — the compute core behind hue's
-picker (`<leader>ff`, `<leader>/`), usable by any tool that ranks candidates
-against keystrokes.
+`sparkles:fuzzy` is the allocation-free compute core behind interactive
+candidate pickers: it analyzes query and candidate text, parses constraints,
+performs typo-tolerant fuzzy admission and scoring, ranks matches, keeps bounded
+history models, and advances searches in deterministic chunks.
 
-It is a **port of the [fff](../../research/fuzzy-matching/fff.md) engine's
-algorithms** — whose matcher is
-[frizbee](../../research/fuzzy-matching/frizbee.md) (Smith-Waterman with
-substitution, the only design in the surveyed field with native typo
-tolerance) — with the defects recorded in the research catalog fixed rather
-than reproduced, and the host-integration contract informed by
-[nucleo/Helix](../../research/fuzzy-matching/helix-integration.md) and
-[snacks.picker](../../research/fuzzy-matching/snacks-picker.md).
+The library depends only on `sparkles:base` and `expected`. It reads no clock,
+filesystem, git repository, global cancellation flag, or event loop.
 
-Four invariants govern every section below:
+The following invariants are normative:
 
-1. **`@safe pure nothrow @nogc` throughout** (`PKM1`). `SmallBuffer` is the
-   only dynamic container; errors are `Expected`-family values, never
-   exceptions. The single sanctioned impurity is the batch driver's
-   cancellation probe (§8), which is still `@safe nothrow @nogc`. Unittests
-   carry the attributes explicitly, so an accidental allocation is a compile
-   error (`PKM2`).
-2. **The library owns no string** (`PKM3`, `PKQ1`). Queries, candidate paths,
-   and every returned span borrow from caller-owned memory; match positions
-   land in caller-supplied buffers.
-3. **Deterministic and inspectable.** Same inputs ⇒ same ranking, with a
-   per-result score breakdown (`PKR4`) and a total tie-break order — no
-   dependence on iteration order, clocks, or hash seeds. Time enters only as
-   explicit parameters.
-4. **Complexity is part of the contract.** Every public entry point's
-   documentation states its complexity and its hard budget; degradations
-   (greedy fallback, truncation) are explicit, distinguishable outcomes —
-   never a silent `score = 0`.
+1. All shipped fuzzy entry points and both built-in text profiles are
+   `@safe pure nothrow @nogc`. The underlying public base analyzer carries the
+   same attributes; the fuzzy package does not invoke a caller callback.
+2. A hot operation performs no allocation of any kind. Storage comes from
+   fixed-capacity, caller-owned workspaces; `@nogc` is necessary but is not used
+   as proof of allocation freedom.
+3. Input text is borrowed. Output is a value or is written to caller-owned
+   storage. A query or corpus snapshot must outlive every operation borrowing
+   it.
+4. Every public value is either valid by construction or validated by an
+   operation returning an explicit error. Public assertions do not reject
+   caller-controlled data.
+5. Admission and highlighting have one exact authority: the canonical bounded
+   needle-deletion witness. Smith-Waterman contributes ranking quality only.
+6. Every ordering is total and independent of enumeration order, hash seeds,
+   worker scheduling, floating-point behavior, and implicit time.
+7. Compile-time capacities are hard bounds. Runtime limits may reduce, never
+   exceed, them. No input is truncated silently.
 
-Dependencies: `sparkles:base` and `expected` — nothing else. The library
-never touches threads, event loops, or the filesystem; parallel fan-out,
-streaming, and persistence belong to the host (§8, §6.3).
+## 2. Text model and capacities
 
-## 2. Package and module layout
+### 2.1 Analyzed units
 
-**(target — M0)**
-
-```
-libs/fuzzy/
-├── dub.sdl                     # library + unittest configs, `bench` build type
-├── src/sparkles/fuzzy/
-│   ├── query.d                 # §3 — constraint grammar, Query, parseQuery
-│   ├── prefilter.d             # §4.1 — subsequence prefilter, typo budgets
-│   ├── score.d                 # §4.2–4.4 — Scoring, Matcher, kernel, positions
-│   ├── rank.d                  # §5 — composite formula, breakdown, top-K
-│   ├── frecency.d              # §6 — decay curves, combo boost (in-memory)
-│   ├── glob.d                  # §7 — backtracking glob matcher
-│   └── search.d                # §8 — budgeted batch driver, refinement probe
-└── bench/matcher/              # §9 — bench harness package (corpora, foreign shim)
-```
-
-Module boundaries follow the data: `query` produces values `search` consumes;
-`prefilter`/`score` know nothing about ranking; `rank` consumes match results
-plus caller-supplied context and knows nothing about matching internals.
-
-## 3. The query language
-
-**(target — M1)**
-
-One pass splits a query into **constraints plus a fuzzy remainder**, every
-span borrowing the input (`PKQ1`). The grammar is fff's **shape-based
-first-byte dispatch** — no `ext:`/`path:` prefix vocabulary to memorize —
-with the two recorded parser bugs fixed.
-
-### 3.1 Grammar
-
-Tokens split on whitespace (no quoting). Per-token dispatch, first match
-wins:
-
-| Shape                           | Constraint        | Notes                                                                                                                                                           |
-| ------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `\…`                            | none — fuzzy text | backslash bypass; the `\` is retained in the fuzzy text                                                                                                         |
-| `*.X` (no wildcard in `X`)      | extension         | `*.a.b` is extension `a.b`; a wildcard in `X` demotes to glob (`PKQ2`)                                                                                          |
-| `!T`                            | negation of `T`   | `T` re-dispatched; negated _text_ requires ≥ 3 bytes and ≥ 1 alphanumeric, so `!=`/`!!` stay literal (`PKQ3`)                                                   |
-| `/seg` or `seg/`                | path segment      | leading/trailing slashes trimmed; multi-segment (`a/b`) supported                                                                                               |
-| contains `*` `?` `[` `{`        | glob              | evaluated by §7 (`PKQ2`)                                                                                                                                        |
-| `git:V` `status:V` `st:V` `g:V` | git status        | `V` prefix-matches `modified` → `untracked` → `staged` → `clean` in that order; **empty or ambiguous-invalid `V` is a parse error**, not `modified` (fixes fff) |
-| anything else                   | none — fuzzy text |                                                                                                                                                                 |
-
-- **`type:` is not implemented** — in fff it is a silent no-op whose negation
-  filters out everything; this grammar rejects the token shape as a parse
-  error so the mistake is visible, reserving the name.
-- A trailing `:line`, `:line:col`, `:l1:c1-l2:c2`, or `(line,col)` on the
-  last fuzzy token parses as a **location** (`PKQ4`), so pasting
-  `src/app.d:120` from a compiler diagnostic opens where it points.
-- A single token that merely _looks_ like a path stays fuzzy text (fff's
-  `treat_lone_path_as_text`), so `src/app` filters nothing away.
-- Constraint semantics at evaluation time: extension constraints **OR**;
-  all others **AND** in source order with short-circuit; fuzzy parts under
-  2 bytes are dropped.
-
-### 3.2 Types and parsing
-
-Hand-rolled on `sparkles.base.text.readers` primitives in the
-`parseSemVerShaped` style — advance-on-success over `const(char)[]`,
-returning `ParseExpected!Query` (`sparkles.base.text.errors`; codes stay
-mechanical — `unexpectedCharacter` at an offset with a literal context, no
-fuzzy-specific enum members). The
-[`sparkles:parsing` proposal](../parsing/index.md) is deliberately not a
-dependency: a ~10-production flat grammar is the hand-written-RD case its
-own plan defers to, and this parser can later become that proposal's
-first-client evidence.
+Matching operates on `TextUnit`, not UTF-8 bytes:
 
 ```d
-enum ConstraintKind : ubyte { extension, glob, pathSegment, filePath, gitStatus, text }
-enum GitStatusFilter : ubyte { modified, untracked, staged, clean }
-
-struct Constraint
+struct TextUnit
 {
-    ConstraintKind kind;
-    bool negated;
-    GitStatusFilter status;     // meaningful for kind == gitStatus
-    const(char)[] value;        // borrowed from the query source
-}
-
-struct Query
-{
-    SmallBuffer!(Constraint, 8) constraints;
-    SmallBuffer!(const(char)[], 4) fuzzyParts;  // borrowed spans
-    Location location;                          // kind == none when absent
-    // opEquals: value equality over span *contents*, not pointers
-}
-
-ParseExpected!Query parseQuery(return scope const(char)[] source);
-```
-
-`Query` is a **regular value**: copyable (`SmallBuffer` CoW), equality
-compares span contents, `Query.init` is the valid empty query. Because its
-spans borrow `source`, its lifetime is tied to the caller's buffer —
-`dip1000` annotations enforce this; a host that mutates its query line
-reparses (§8). `parseQuery` is the library's single **wide-contract**
-boundary: arbitrary keystrokes in, `Query` or positioned error out; every
-`Query` in existence is well-formed, so all downstream functions assume
-validity via `in`-contracts rather than re-validating.
-
-## 4. The matcher
-
-The two-stage fff/frizbee design: a cheap prefilter that decides the
-schedule, and a Smith-Waterman kernel that runs only on survivors.
-
-### 4.1 The subsequence prefilter
-
-**(target — M2)**
-
-A greedy in-order subsequence scan over case-folded byte pairs: for each
-needle byte, a precomputed `(orig, flipped)` pair; per haystack chunk an
-occurrence mask (`orig == b || flipped == b`), the needle cursor advancing
-_within_ the chunk by clearing consumed low bits
-(`m & !(hit ^ (hit − 1))`) — so cost is per-chunk, not per-needle-byte.
-Output is `(matched, window)` where the window is conservative
-(start = first occurrence of the first needle byte, end = last occurrence
-of the last); the kernel runs only inside it.
-
-**Typo budgets** (`PKQ5`): the typo model is **needle-side deletion** —
-a candidate passes iff an ordered alignment exists after deleting at most
-`maxTypos` needle bytes. Normative oracle, enforced by randomized
-differential tests: `lcs(needle, haystack) + maxTypos >= needle.length`.
-Budgets 0, 1, and 2 get dedicated kernels running `budget + 1` greedy
-cursors in lockstep (cursor _i_ = "has skipped _i_ needle bytes"); larger
-budgets share a generic multi-path variant with reused cursor state. The
-default budget is fff's query-derived formula:
-`(effectiveQuery.length / 4).clamp(2, 6)`, host-overridable. `maxTypos = 0`
-must cost exactly what a no-typo matcher costs — the budget lives here, not
-in the DP.
-
-Frizbee's recorded Unicode-path bug (chunk masks not reloaded per needle
-char, a false-negative contract violation) is fixed by construction: every
-variant computes the char mask fresh per needle position.
-
-### 4.2 The scoring kernel
-
-**(target — M3)**
-
-Affine-gap Smith-Waterman **with substitution** — true local alignment, so
-a wrong or dropped character degrades the score instead of eliminating the
-candidate. Constants are fff/frizbee's, carried in a runtime value so tuning
-is data, not a rebuild:
-
-```d
-struct Scoring
-{
-    ushort matchScore = 12;
-    ushort mismatchPenalty = 6;
-    ushort gapOpenPenalty = 5;
-    ushort gapExtendPenalty = 1;
-    ushort prefixBonus = 12;          // haystack byte 0 only
-    ushort delimiterBonus = 4;        // first byte after a delimiter
-    ushort capitalizationBonus = 4;   // upper after lower (camelCase)
-    ushort matchingCaseBonus = 4;     // needle/haystack case agreement
-    ushort exactMatchBonus = 8;       // whole-string byte equality
+    uint value;          // Unicode scalar, or opaqueByteBase + original byte
+    uint sourceStart;    // inclusive byte offset in the borrowed source
+    uint sourceEnd;      // exclusive byte offset
+    TextUnitFlags flags; // source case, word start, or opaque byte
 }
 ```
 
-There is deliberately **no consecutive-run bonus**: a run pays no gap
-penalties while a scatter pays `open + n·extend` per break, so
-consecutiveness is rewarded emergently — this is what keeps the recurrence
-optimal-substructure-clean (the flaw
-[fzf's chunk bonus introduces](../../research/fuzzy-matching/fzf.md)).
-The substitution transition is branch-free: the diagonal always pays
-`mismatchPenalty` and a match refunds it plus bonuses, all scores saturating
-at zero. Only the final needle row feeds the maximum, so a score always
-means "whole needle consumed (modulo budgeted typos)". Delimiters are
-"not a letter, not a digit, ASCII"; smart-case is fff's **score-only**
-model: matching is always case-insensitive, and a query containing an
-uppercase letter doubles `capitalizationBonus` to 8 and enables
-`matchingCaseBonus`, while an all-lowercase query zeroes both.
+Normalization expansions share their source byte interval. Composition uses
+the union of all contributing intervals. Removed marks and stopwords emit no
+unit. Each malformed UTF-8 byte emits one distinct opaque unit; opaque units
+never case-fold or combine with Unicode scalars.
 
-The scalar kernel keeps frizbee's **log-shift horizontal-gap propagation
-shape** (resolve diagonal/vertical dependencies elementwise, then a
-`log2(width)`-stage shift-and-decay prefix max for the horizontal one)
-rather than a serial left-to-right pass — so SIMD backends drop in behind a
-DbI seam later **without changing output**. Backend parity is a normative
-test obligation from M3 on: every backend must produce bit-identical scores
-on the differential corpus. The fzf/nucleo constant family
-(16/−3/−1, boundary-white 10, camel 5) is the documented alternative — kept
-as a benchmark comparator, not implemented.
+`sparkles.base.text.analysis` supplies streaming decomposition, canonical-order
+sorting, composition, simple and full case folding, mark classification, and
+word segmentation over caller-owned storage. A normalization segment longer
+than its workspace returns `segmentTooLong`.
 
-### 4.3 Memory and budgets
+### 2.2 Profiles
 
-**(target — M3)**
+The first release ships two immutable profile values:
 
-Two matrices — scores and match masks — with a fixed 1024-column stride,
-allocated once at `Matcher` construction into `SmallBuffer` storage and
-**never re-zeroed between candidates** (row 0 and column 0 are structurally
-zero and never written). Candidate paths longer than 1024 bytes take a
-linear greedy fallback; needle length is capped so the maximum possible
-score fits `ushort` (~3,639 bytes at default constants — an error outcome,
-not an assert). Complexity: `O(needleLen × window/width)` vector-shaped
-steps on the prefilter-trimmed window, hard-bounded by the stride; the
-prefilter is `O(window)`.
+- `codePath`: NFC, symbols preserved, no accent or stopword removal, smart
+  case. A lowercase-only cased query uses Unicode simple folding; a query with
+  an uppercase cased scalar compares case-sensitively. Candidate analysis uses
+  the mode chosen by the query.
+- `generalLanguage`: NFKC, Unicode full case fold, accent-mark removal, Unicode
+  word segmentation, and an optional immutable caller-provided stopword
+  lexicon. The default lexicon is empty.
 
-Every outcome is explicit (invariant 4):
+The base analysis API is public so later packages can produce locale-aware ICU
+or CJK/bigram indexes before entering the fuzzy core. Those adapters are not
+dependencies of `sparkles:fuzzy`, and no purity claim is made for them.
 
-```d
-enum MatchKind : ubyte
-{
-    matched,          // scored by the full kernel
-    matchedGreedy,    // haystack > 1024 bytes: linear fallback scored it
-    rejected,         // prefilter: no alignment within the typo budget
-    needleTooLong,    // needle exceeds the score-width cap
-}
+### 2.3 Compile-time and runtime bounds
 
-struct MatchOutcome { MatchKind kind; ushort score; ushort endCol; }
-```
+`DefaultFuzzyCaps` is the compile-time template value used by the default
+instantiation. Callers may provide a compatible capacity type:
 
-`matchedGreedy` replaces frizbee's silent `score = 0`; hosts may rank such
-candidates last or surface the degradation, but the library never conflates
-"long path" with "no match".
+| Capacity                       | Default |
+| ------------------------------ | ------: |
+| analyzed query units           |     256 |
+| query source bytes             |   4,096 |
+| analyzed candidate units       |   4,096 |
+| candidate source bytes         |   4,096 |
+| Smith-Waterman candidate units |   1,024 |
+| fuzzy parts                    |       8 |
+| constraints                    |      16 |
+| glob instructions              |     512 |
+| glob class ranges              |     128 |
+| returned position ranges       |     256 |
 
-### 4.4 Match positions
+`FuzzyLimits` is validated once and may lower these capacities. Emitting more
+analyzed units than a limit returns `queryTooComplex` or
+`candidateTooComplex`; a source exceeding the byte limit returns
+`candidateTooLong`. The default values are tuning parameters: changing them
+requires a benchmark record and a specification change.
 
-**(target — M4)**
+Default `QueryStorage` and `ConstraintWorkspace` values each carry a
+compile-time 128 KiB ceiling; `MatcherWorkspace` carries a one-MiB ceiling.
+Static assertions make a capacity/layout change that crosses those budgets a
+build failure. Value construction itself allocates nothing and therefore has
+no hidden allocation-failure outcome; callers choose where those regular
+values live.
 
-Two tiers, and — the spec decision fixing the fff/frizbee divergence — **one
-verification rule shared by both**:
+## 3. Query language
 
-- **Score tier** (`score`): `MatchOutcome` only. `endCol` (the maximizing
-  final-row column, ties resolved leftmost) is included because ranking's
-  filename placement needs it cheaply.
-- **Positions tier** (`positions`): full traceback into a caller-supplied
-  `SmallBuffer` of byte offsets (`PKQ6`), priority Match → Mismatch → Left →
-  Up, positions merged into ranges by the caller.
+### 3.1 Lexing and escaping
 
-The typo budget is **verified once, on both tiers**: the score tier counts
-typos during a single cheap final-row backwalk (bounded by the window) so
-that `score` and `positions` accept exactly the same candidate set. fff
-ships the divergence (`match_list` never verifies; `match_list_indices`
-rejects) — a documented safe-but-incorrect outcome this port does not
-reproduce.
+ASCII whitespace separates tokens outside double quotes. Quotes may occur
+within a token. Backslash quotes the following byte both inside and outside a
+quoted region; `\\`, `\"`, `\ `, and `\*` therefore decode to one literal
+byte. A trailing backslash or unclosed quote is an error. Query text stores a
+borrowed raw span plus a decoding cursor, so unescaping does not allocate.
 
-Positions are byte offsets into the candidate. Candidates are matched as
-UTF-8 bytes (the fff model — no transcode, no normalization); hosts that
-render cells convert byte offsets through `sparkles:base`'s segmentation.
-A nucleo-style pre-segmented grapheme-proxy tier is recorded as future work
-in [PLAN.md](./PLAN.md), not a v1 obligation — hue's corpus is file paths.
+After lexical decoding, each token uses the first matching rule:
 
-## 5. Ranking
+| Form                                             | Meaning                                                       |
+| ------------------------------------------------ | ------------------------------------------------------------- |
+| `ext:V`                                          | extension constraint                                          |
+| `path:V`                                         | whole-path suffix constraint, beginning on a segment boundary |
+| `seg:V`                                          | path-segment constraint                                       |
+| `glob:V`                                         | compiled glob constraint                                      |
+| `git:V`, `status:V`, `st:V`, `g:V`               | git-status constraint                                         |
+| `*.V` with no glob metacharacter in `V`          | legacy extension constraint                                   |
+| leading or trailing unescaped separator          | legacy segment constraint                                     |
+| token containing an unescaped glob metacharacter | legacy glob constraint                                        |
+| everything else                                  | fuzzy part                                                    |
 
-**(target — M5)**
+An initial unescaped `!` negates a constraint after redispatch. It does not
+negate ordinary fuzzy text; `!!foo` is fuzzy text. `type:` is reserved and is
+always an error.
 
-fff's composite formula (`PKR1`), ported with its constants, over the
-matcher's base score. All inputs arrive in a caller-built context — the
-library reads no git state, no clock, no filesystem:
+Git values are `modified`, `untracked`, `staged`, `ignored`, and `clean`.
+Case-insensitive unique non-empty prefixes are accepted; ambiguous or empty
+values are errors. A candidate may carry multiple status bits.
 
-```d
-struct RankContext
-{
-    const(char)[] currentFile;      // relative path; empty = none
-    int frecencyScore;              // §6, 0 when absent
-    bool gitModified;
-    int comboOpenCount;             // §6.3, 0 when absent
-    int comboMultiplier = 100;
-    int minComboCount = 3;
-}
-```
+The final fuzzy token may end in `:line`, `:line:column`,
+`:l1:c1-l2:c2`, or `(line,column)`. Decimal overflow is an error. A Windows
+drive colon is never a location separator. A single path-shaped fuzzy token
+remains fuzzy unless it has an explicit prefix or legacy leading/trailing
+separator.
+
+### 3.2 Semantics
+
+- Positive extension constraints form one OR bucket.
+- Every negated extension is an independent exclusion.
+- Every other constraint is ANDed, with source-order short-circuiting.
+- Every fuzzy part of at least two analyzed units is required independently;
+  the candidate order of the parts is unrestricted.
+- A shorter part is ignored and counted in `QueryDiagnostics.droppedParts`.
+- An empty or constraint-only query admits every constraint-satisfying
+  candidate and uses history-only ranking.
+- `path:` and segment matching use the selected `PathFlavor`; Unix and Windows
+  separators are not guessed from the host platform.
+
+`QueryStorage!(Caps)` owns fixed arrays of parsed descriptors and one flattened
+compiled-glob arena; its text spans borrow the original query bytes.
+`QueryView` is the read-only API name for that regular by-value storage.
+Parsing returns `FuzzyExpected!(QueryStorage!Caps)`. A malformed or
+combined-arena-overflowing glob is rejected during parse, never recompiled per
+candidate or deferred until evaluation.
+
+`CandidateView` contains a stable 128-bit `CandidateId`, borrowed path,
+validated filename byte offset, `PathFlavor`, git-status bits, and a caller
+supplied recency key. Constraint evaluation returns
+`FuzzyExpected!bool` and never asks a callback for metadata.
+IDs are unique within one candidate snapshot and remain stable when discovery
+or worker order changes.
+
+Query-language extension, segment, and suffix constraints compare ASCII
+letters case-insensitively, treat non-ASCII bytes exactly, and equate `/` with
+`\` only for Windows paths. Query globs normalize Unicode with the code-path
+profile and use Unicode simple folding. Public `compileGlob` additionally lets
+the caller request case-sensitive matching.
+
+## 4. Exact admission and positions
+
+### 4.1 Typo model
+
+Typos are needle-side deletions. For a part with `n >= 2` analyzed units, the
+derived budget is:
 
 ```text
-total = base                                       (matcher score)
-      + base · frecencyScore / 100                 (+1 % per point, PKR2 feeds this)
-      + base · 15 / 100                            when gitModified
-      + distancePenalty                            0 … −20, path-depth walk vs currentFile
-      + filenameBonus                              ladder below
-      − base / 4                                   when the candidate IS currentFile
-      + comboBoost                                 §6.3 (PKR3)
-      + pathAlignmentBonus                         only when the query contains a separator:
-                                                   common case-insensitive suffix > 10 bytes
-                                                   covering ≥ 30 % of the needle ⇒ base · coverage%
+min(configuredMaximum, n - 1, max(1, floor(n / 4)))
 ```
 
-Filename ladder (placement via `endCol`, `matchStart ≈ endCol − needleLen + 1`):
-exact filename (case-insensitive, equal lengths) ⇒ `base/5·2` (40 %); fuzzy
-match landing in the filename ⇒ `min(base/6, 30)`, quality-scaled on the
-fallback pass; an entry-point filename (`mod.rs`, `index.ts`,
-`__init__.py`, `main.go`, `app.d`, …) ⇒ `base·5 %`.
+An explicitly configured zero remains zero. A part is admitted exactly when
+`LCS(part, candidate) + budget >= n`.
 
-Every result carries the breakdown **by value** (`PKR4`):
+### 4.2 Cursor DP
 
-```d
-struct ScoreBreakdown
-{
-    int total, base, filenameBonus, frecencyBoost, gitStatusBoost,
-        distancePenalty, currentFilePenalty, comboBoost, pathAlignmentBonus;
-    MatchKind matchKind;
-}
+The implementation maintains `budget + 1` prefix cursors. For each candidate
+unit it:
+
+1. snapshots all cursors;
+2. closes needle-deletion transitions from lower to higher budgets;
+3. advances a cursor at most once on the candidate unit when its next needle
+   unit matches; and
+4. retains the farthest prefix for dominated states.
+
+The optimized algorithm must be differential-tested against a conventional
+LCS table. Its actual complexity is `O(candidateUnits * (budget + 1))`, plus
+text analysis. No complexity claim may replace `candidateUnits` with the
+smaller returned scoring window.
+
+### 4.3 Canonical witness
+
+An admitted part has one canonical witness, ordered by:
+
+1. fewest needle deletions;
+2. earliest final candidate unit; and
+3. lexicographically earliest candidate source-byte positions.
+
+The cursor pass records one bounded predecessor per candidate/budget state;
+a backward reconstruction produces the witness. It supplies the
+scoring window, first/end positions, filename containment, and highlights.
+Endpoint deletions therefore cannot create a reversed or non-conservative
+window.
+
+`positions` reruns the exact witness pass and emits sorted byte ranges. Ranges
+that overlap or touch are merged. If caller storage is too small it returns
+`outputFull` and the required count; it never emits a partial success.
+
+Multiple-part admission ANDs the parts. Their score is the floor of the
+arithmetic mean of part scores; their positions are the sorted union of
+canonical witness ranges.
+
+## 5. Ranking score
+
+### 5.1 Matcher workspace and arithmetic
+
+`MatcherWorkspace!(Caps)` is caller-owned and exclusive to one invocation at a
+time. Independent workers use independent workspaces. It stores analyzed
+units, cursor/predecessor state, and fixed rolling score rows; it stores no
+full score matrix and no match-mask matrix.
+
+Every candidate reinitializes structural row/column zero. No recurrence reads
+outside the active row range. Score cells are `uint`; recurrence and rank
+intermediates are signed 64-bit. `validateScoring` proves the configured
+worst-case score fits before matching.
+
+### 5.2 Smith-Waterman tier
+
+Candidates within `maxDpUnits` use affine-gap Smith-Waterman with substitution
+over the canonical witness window. Smith-Waterman cannot change admission.
+Default constants are:
+
+```text
+match 12; mismatch 6; gap-open 5; gap-extend 1; prefix 12;
+delimiter 4; camel boundary 8; matching case 4; exact 8
 ```
 
-**Top-K** is partial selection, not a full sort: when
-`offset + limit < matched/2`, select the boundary
-(`topN`-style, Hoare partition over `(score, tieBreak)`), then sort only the
-page. Tie-break order is **total** and normative: score descending, then
-caller-supplied recency key descending, then candidate index ascending —
-so equal-score results are stable across runs and machines.
+Delimiter and camel boundaries are recognized for every query. Matching-case
+points depend on original-case equality. Smart-case affects equality, not
+whether a camel boundary exists. Ties choose the earliest ending unit.
 
-## 6. Frecency and query history
+Candidates above `maxDpUnits` use `matchedFallback`: the canonical witness is
+scored directly with the same match, boundary, case, and affine-gap constants.
+It has exact positions represented as `size_t` byte offsets within the
+validated source-byte capacity. Every admitted
+fuzzy match has a positive base score.
 
-**(target — M6)**
+`MatchOutcome` distinguishes `matched`, `matchedFallback`, `rejected`, and
+`noFuzzyTerms`; the surrounding `FuzzyExpected` carries every capacity or
+configuration error. An error or fallback is never represented by a zero
+score.
 
-In-memory models only — `@nogc`, pure over explicit `now` parameters.
-Persistence is **out of scope** (`PKR5`/`PKR6`): hue's config layer owns the
-state directory and the load/save I/O under its documented startup/shutdown
-GC carve-out; this library defines the table types and their update/read
-functions.
+## 6. Composite ranking and top-K
 
-### 6.1 Access frecency (`PKR2`)
+All percentage terms multiply before division, use signed 64-bit values, and
+round toward zero:
 
-Per file: a chronological buffer of access timestamps, ≤ 128 stamps, 30-day
-retention enforced on insert. Score = `Σ exp(−λ · daysAgo)` over the window,
-`λ = ln 2 / 10` (10-day half-life), newest-first with early exit, then a
-soft knee: linear to 10, `10 + sqrt(excess)` above (practical max ≈ 21). A
-fast profile (`λ = ln 2 / 3`, 7-day window) is selectable per read for
-burst-style usage. snacks.picker's deadline-timestamp encoding
-(store `now + ln(s)/λ`, no rewrite pass) is recorded as the
-considered-and-declined alternative: a single scalar per path cannot feed
-the per-stamp window, the profile switch, or honest retention.
+```text
+total = base
+      + base * frecencyPoints / 100
+      + base * 15 / 100                         when git-modified
+      + directoryDistance                       clamped to [-20, 0]
+      + filenameBonus
+      - base * 25 / 100                         when current file
+      + comboBoost
+      + pathAlignmentBonus
+```
 
-### 6.2 Modification recency
+Filename bonus is the first applicable item:
 
-Gated on `gitModified`; piecewise-linear points over
-`(16, 2 min) (8, 15 min) (4, 1 h) (2, 1 d) (1, 1 w)`, zero past a week.
-Both scores enter ranking as +1 % of base per point via
-`RankContext.frecencyScore`.
+- analyzed filename equals the query: `base * 40 / 100`;
+- every witness range is in the filename: `min(base * 40 / 100, 30)`;
+- filename is one of `mod.rs`, `index.ts`, `index.js`, `__init__.py`,
+  `main.go`, `main.rs`, `main.c`, `main.cpp`, or `app.d`: `base * 5 / 100`.
 
-### 6.3 Query→file combo boost (`PKR3`)
+Path alignment applies only to a query containing a separator. It is
+`base * commonSuffixUnits / queryPathUnits` when the analyzed common suffix is
+longer than ten units and covers at least 30% of the query. Directory distance
+is candidate-directory depth plus current-directory depth minus twice their
+common-prefix depth, negated and clamped; `directoryDistance` implements that
+calculation, including Windows separator and ASCII case behavior.
 
-Keyed by `(project, query)` → exactly one `(file, openCount, lastOpened)`
-entry: re-opening the same file increments the count; a different file
-replaces the entry. Boost: `openCount ≥ minComboCount` ⇒
-`openCount × comboMultiplier`; below ⇒ `openCount × 5`. One table read per
-search (never per candidate). Unlike fff's unbounded LMDB store, the
-in-memory table is **bounded** (LRU over entries; cap host-configured) so
-the host's persisted snapshot cannot grow without limit.
+For an empty or constraint-only query, `base`-scaled terms are replaced by
+`accessPoints + modificationPoints + comboBoost`.
 
-## 7. Glob matching
+Each result contains a by-value `ScoreBreakdown` naming every term and the
+`MatchKind`. The total order is:
 
-**(target — M1, with `query.d`)**
+1. total descending;
+2. recency key descending; and
+3. `CandidateId` ascending.
 
-A backtracking matcher over spans — `*` (within a segment), `**` (across
-segments), `?`, `[…]`/`[!…]` classes, `{a,b}` alternation — iterative
-two-pointer backtracking (no recursion, no allocation), case-sensitivity a
-parameter. Complexity documented as O(pattern × path) worst case with the
-standard single-star linear fast path. Extension constraints compile to a
-suffix test, not a glob.
+`TopK!(Capacity)` is a min-heap retaining checked `offset + limit` best
+results in `O(N log K)`. Finalization deterministically insertion-sorts the
+bounded retained prefix in `O(K²)` and returns the requested page. Overflow or
+capacity excess is an explicit error. Partial searches keep one heap per generation and publish a
+monotonic accumulator revision; visible rows are the globally best rows among
+all candidates examined so far. Revision exhaustion is an explicit arithmetic
+error rather than an unchecked wrap.
 
-## 8. Incremental search support
+## 7. Bounded history models
 
-**(target — M7)**
+History keys are caller-supplied stable IDs, never borrowed strings.
 
-What the library provides for a host's tick/generation loop — the loop
-itself (threads, pools, frames) lives in the application; hue's is specified
-in [picker.md](../hue/picker.md) `PIK4`–`PIK8`.
+`FrecencyTable!(MaxFiles, MaxStamps = 128)` maintains stamps newest-first,
+accepts out-of-order inserts, clamps future ages to zero, prunes expired data,
+and deterministically evicts the least-recently-used file with `CandidateId` as
+the tie-break. The default file capacity is 4,096.
 
-> [!NOTE]
-> **Provenance honesty:** fff's fuzzy path has no budget, abort, or cursor —
-> those exist only in its grep engine (poll every Nth item; honor abort only
-> after ≥ 2 matches). This section is therefore new design informed by that
-> shape and by the nucleo/snacks host contracts, not a port.
+Access decay uses a committed Q16 hourly lookup/interpolation table and integer
+square root, not `libm`. Profiles are ten-day half-life/30-day retention and
+three-day half-life/seven-day retention. The soft knee is linear through ten,
+then `10 + floor(sqrt(excess))`. APIs accepting a profile return
+`FuzzyExpected`; an invalid public enum value is an explicit
+`invalidConfiguration` error.
 
-- **Refinement probe.** `Query.refines(in Query prev)` — true when this
-  query extends `prev` such that the match set can only shrink (every fuzzy
-  part extended or equal, constraints unchanged, and — the guard both
-  nucleo and snacks converged on — **no trailing negated constraint**).
-  Hosts use it to rescore only previous survivors on append instead of the
-  full corpus.
-- **Budgeted batch driver.** One page of work over a caller-supplied
-  candidate range into a caller-owned sink:
+Modification points linearly interpolate the knots `(16, 2 minutes)`,
+`(8, 15 minutes)`, `(4, 1 hour)`, `(2, 1 day)`, `(1, 1 week)`, then zero.
 
-  ```d
-  struct SearchOptions
-  {
-      size_t offset;                  // resume cursor
-      size_t pageLimit;               // max results to emit
-      size_t probeEvery = 64;         // cancellation-check granularity
-      const(shared bool)* abort;      // null = never
-  }
-  struct SearchStatus { size_t nextOffset; size_t matched; bool exhausted; }
-  ```
+`ComboTable!(MaxEntries)` maps `(ProjectId, QueryId)` to one
+`(CandidateId, openCount, lastOpened)` value. Reopening increments a saturating
+counter; a different candidate replaces it. Full tables use deterministic LRU
+eviction. The default capacity is 1,024. Boost is `count * 5` below
+`minComboCount`, otherwise `count * comboMultiplier`, with validated bounds.
 
-  The driver scores candidates `offset..`, probing `*abort` every
-  `probeEvery` items, and returns partial results with a resume cursor —
-  `@safe nothrow @nogc`, the one sanctioned impurity (invariant 1). Time
-  budgets are the host's concern: it sizes pages and checks its own clock
-  between calls, so the library stays clock-free and deterministic.
+Persistence is a hue responsibility. The serialized format is versioned and
+size-bounded, encodes arbitrary path/query bytes, resolves fresh runtime IDs on
+load, ignores malformed or missing entries, and is replaced atomically.
 
-- **Positions at render time.** Following both surveyed hosts, positions are
-  _not_ emitted by the batch driver; hosts call the positions tier (§4.4)
-  per visible row.
+## 8. Glob automaton
 
-## 9. Performance contract
+Globs compile once into a bounded Thompson NFA. Supported syntax is `*` within a
+segment, `**` across segments, `?`, positive/negative classes, and brace
+alternation. Empty alternatives, unclosed constructs, invalid ranges, and a
+program or combined query arena exceeding the instruction/range limits is a
+parse error. Query escaping is preserved into glob compilation, so `\*` is a
+literal asterisk.
 
-**(target — M0 scaffolding; gates per milestone in [PLAN.md](./PLAN.md))**
+Matching uses two fixed state bitsets and costs
+`O(programInstructions * pathUnits)` in the worst case. It neither recurses nor
+expands brace products. Case and path-separator behavior come from the selected
+profile and `PathFlavor`.
 
-Performance-test-driven: the bench harness and corpora land **before** the
-first kernel (M0), every performance-critical component ships `@benchmark`
-coverage in the same milestone as its code (`PKM4`), and findings accumulate
-in a committed `bench-baseline.md` modeled on
-[wired's](../wired/bench-baseline.md).
+## 9. Incremental search
 
-### 9.1 Harness
+`searchChunk` is pure and clock-free. A call is bounded by both
+`maxCandidates` and `maxAnalyzedUnits`, writes through a concrete fixed-capacity
+accumulator, and returns `exhausted` or `workLimit`; invalid configuration,
+capacity, arithmetic, and cursor conditions are explicit errors.
 
-`sparkles:test-runner` `--bench --perf`: `benchIter` for the ns-scale
-kernels, `benchCase` matrices per corpus × engine (varying state captured by
-value — registration is deferred), `blackBox` on inputs and results,
-`--bench-json` snapshots committed under `bench/matcher/results/`.
-Cross-run comparisons anchor on **retired instructions**; wall-clock ratios
-are read within one snapshot only. The `bench` build type follows the repo
-recipe (`unittests releaseMode optimize inline` + `-mcpu=native -O3
--allinst` on LDC).
+`SearchCursor` contains corpus snapshot ID, query generation, next corpus
+offset, sink epoch, and accumulator revision. A mismatched or out-of-range
+cursor is rejected. A candidate snapshot and query arena remain immutable and
+pinned until all operations borrowing them finish.
 
-### 9.2 Corpora
+`QueryView.refines(previous)` is a conservative signal: it is true only when
+profile, path flavor, constraints and part count/order are unchanged, every
+old ASCII part is an exact prefix of the corresponding new part, and no
+effective typo budget increases. A host may rescore a retained survivor set
+and then scan the unexamined tail only when that survivor set is complete. A
+bounded survivor buffer that overflowed—or a host, such as hue P0, that does
+not retain one—must restart from the full corpus. False negatives only cost
+work; they never change results.
 
-Committed or deterministically generated — no network, no host variance:
+Clock deadlines, cancellation atomics, worker submission, and stale-result
+rejection belong to hue. Hue compares a monotonically increasing generation
+between candidate-sized pure calls and uses release publication/acquire reads.
 
-- **`sparkles`** — this repository's tracked-file list (small, real,
-  committed as a fixture).
-- **`synth-deep` / `synth-wide`** — a seeded generator (D single-file tool)
-  producing nixpkgs-scale path corpora (~100 k paths) matching measured
-  depth/length distributions; byte-identical across runs by construction.
-- **Adversarial** — long paths (> 1024 bytes, the greedy cliff), high
-  match-density needles, worst-case backtracking globs, typo-heavy queries.
+## 10. Public surface
 
-Every benchmark row states its **API tier** (score-only vs positions;
-matcher reused) and the corpus **selectivity** as a percentage — the two
-omissions the [benchmark-methodology
-record](../../research/fuzzy-matching/comparison.md) shows invalidate most
-published comparisons.
+The package module re-exports these areas:
 
-### 9.3 Reference engines and targets
+| Area     | Principal symbols                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------ |
+| Analysis | `AnalysisProfile`, `TextUnit`, `AnalysisWorkspace`, `analyzeText`                                      |
+| Query    | `QueryStorage`, `QueryView`, `FuzzyError`, `parseQuery`, `CandidateView`, `evaluateConstraints`        |
+| Glob     | `GlobProgram`, `GlobProgramView`, `GlobMatchWorkspace`, `compileGlob`, `globMatch`                     |
+| Match    | `DefaultFuzzyCaps`, `FuzzyLimits`, `Scoring`, `MatcherWorkspace`, `MatchOutcome`, `match`, `positions` |
+| Rank     | `RankContext`, `ScoreBreakdown`, `RankedResult`, `rank`, `TopK`                                        |
+| History  | `StableId`, `FrecencyTable`, `ComboTable`, `accessScore`, `modificationScore`                          |
+| Search   | `SearchCursor`, `SearchLimits`, `SearchStatus`, `SearchAccumulator`, `searchChunk`                     |
 
-- **telescope-fzf-native** (C, single file) builds into the bench harness
-  via ImportC as the in-process fzf-algorithm proxy, ASCII corpora only.
-  **Exit gate (M3):** the scalar D kernel meets or beats it on score-only
-  throughput at equal-or-better ranking quality on the golden corpus.
-- **fzf** baseline out-of-process via its shipped
-  `--filter <q> --bench 10s --threads 1` (documented procedure; reference
-  point: 139 ms / 1.4 M paths / 12.79 % selectivity, single-threaded).
-- **Published anchors** for orientation, not gates: nucleo-matcher
-  ≈ 78 ns/candidate (95 k × 37-char corpus, 2018 laptop); frizbee
-  ≈ 16 ns/candidate sequential SIMD (1.4 M × 67-char, Zen 5). The scalar
-  target sits between them; SIMD backends are a measured follow-up, and the
-  layout (§4.3) is vectorization-ready from day one.
+The [API reference](../../libs/fuzzy/reference/api.md) documents ownership,
+errors, attributes, complexity, and capacities for these entry points. Public
+functions return values or `Expected`-family results; public caller data is
+never guarded only by an `in` contract.
 
-### 9.4 Quality gates
+## 11. Performance and verification contract
 
-Wall-clock is necessary, not sufficient (`safety composes; correctness does
-not`): a **golden ranking corpus** — fixed paths, queries, and expected
-orderings, including every worked example in the research catalog (the
-`xf foo` optimality case, camel/snake balance, typo cases) — is a normal
-unittest from M3 on, so a "faster" kernel that ranks worse fails CI, not
-review.
+The committed F0 baseline covers parse/analyze/glob compilation,
+fresh-generation setup, workspace-reused score/positions, glob execution, and
+rank/top-K. Every row states profile, API tier, corpus, and whether construction
+is included; the measured rows and exact command live in
+[benchmarks.md](./benchmarks.md). Host cancellation latency and a complete
+multi-candidate picker frame are host benchmarks, not silently inferred from a
+score-only row.
 
-## 10. Public API surface
+Correctness fixtures include Unicode normalization and malformed UTF-8,
+adversarial glob/query inputs, fallback-sized paths, exhaustive short-alphabet
+admission/witness oracles, every pagination/permutation of a bounded set, and
+generation/refinement protocols. Large-corpus performance runs additionally
+identify this repository, deterministic deep/wide corpora, or a real repository
+by generator parameters or revision hash; they are performance evidence, not a
+substitute for the exact small oracles.
 
-**(target — accumulates M1–M7)**
+Snapshots are partitioned by compiler, CPU, and ISA. On the designated runner,
+a regression above 5% is rejected when a 95% confidence interval excludes zero
+for wall time, retired instructions, or cache misses. `-mcpu=native` snapshots
+are evidence, not portable truth.
 
-| Area      | Symbols                                                                                               |
-| --------- | ----------------------------------------------------------------------------------------------------- |
-| Query     | `Query`, `Constraint`, `ConstraintKind`, `GitStatusFilter`, `Location`, `parseQuery`, `Query.refines` |
-| Matching  | `Scoring`, `MatchConfig`, `Matcher`, `MatchOutcome`, `MatchKind`                                      |
-| Positions | `Matcher.positions` (caller-buffer sink)                                                              |
-| Ranking   | `RankContext`, `ScoreBreakdown`, `rank`, `selectTopK`                                                 |
-| Frecency  | `FrecencyTable`, `accessScore`, `modificationScore`, `ComboTable`, `comboBoost`                       |
-| Glob      | `globMatch`                                                                                           |
-| Search    | `SearchOptions`, `SearchStatus`, `searchPage`                                                         |
+The C fzf-algorithm comparator is used only for equal-work ASCII,
+`maxTypos = 0`, score-only measurements and is informational. Correctness gates
+assert exact admitted sets, exact score breakdowns, positions, total order, and
+state transitions.
 
-**Attribute policy (normative).** Every public symbol is
-`@safe pure nothrow @nogc`, with exactly one exception: `searchPage` is
-`@safe nothrow @nogc` (impure — it reads the caller's shared abort flag).
-Templated entry points (sinks, resolvers) let attributes infer, per the repo
-guideline; no public symbol is `@trusted`, and internal `@trusted` blocks
-wrap single operations only.
+Allocation freedom is structural (fixed arrays and no allocator dependency),
+compile-time attributed, and checked by the release allocation gate; `@nogc`
+alone is not treated as proof.
 
-**Memory management (normative).** All owned state lives in `SmallBuffer`
-(matcher matrices `unique`, result sets CoW). Every input is borrowed
-(`scope`/`in`); every output is a value or lands in a caller-supplied
-buffer; `dip1000` enforces the borrows. Construction is the only allocation
-site per object; per-candidate and per-keystroke paths allocate nothing.
+## 12. Review remediation index
 
-**Contracts (normative).** `parseQuery` is the wide boundary; everything
-downstream carries expression-based `in`-contracts (DIP1009) asserting
-validity — live in `checked` builds, so violations surface in shipped
-artifacts too.
+The numbered findings in this directory's `adversarial-review.md` remain the
+reproduction record. Their normative resolutions are:
+
+| Findings                     | Resolution sections                                                   |
+| ---------------------------- | --------------------------------------------------------------------- |
+| 1, 7, 9, 28, 43, 49          | exact admission and canonical witness (§4)                            |
+| 2, 3, 17, 33, 38             | refinement, cursor, and generation protocol (§9)                      |
+| 4, 10, 12–14, 31, 37, 39, 40 | rolling workspace, wide offsets, fallback, and bounds (§2, §5)        |
+| 5, 18, 34, 48                | immutable snapshots and stable bounded IDs (§3, §7, §9)               |
+| 6, 11, 29, 32, 35, 36, 41    | complete arithmetic, ranking, and heap selection (§6–§7)              |
+| 8, 16, 21, 22, 42            | complete grammar and constraint semantics (§3)                        |
+| 15                           | Unicode units and invalid-byte provenance (§2)                        |
+| 19, 20                       | bounded pure chunks plus host scheduler (§9; picker `PIK5`–`PIK8`)    |
+| 23–27                        | concrete validated APIs and conditional attribute policy (§1–§3, §10) |
+| 30                           | bounded NFA glob engine (§8)                                          |
+| 44–47                        | lifecycle, portability, equal-work, and corpus gates (§11)            |
+| 50–51                        | milestone ownership and gates ([PLAN.md](./PLAN.md))                  |

@@ -38,6 +38,7 @@ export default withMermaid(
       '**/research/iroh/prompt.md',
       '**/guidelines/d-language-features/AGENTS.md',
       '**/guidelines/d-language-features/grounding/**',
+      '**/specs/fuzzy/adversarial-review.md',
     ],
 
     markdown: {
