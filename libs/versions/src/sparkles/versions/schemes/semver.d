@@ -441,10 +441,14 @@ if (hasComponents!S && S.components.length >= 3)
     {
         if (prerelease.length)
         {
-            import std.array : appender;
+            import sparkles.base.smallbuffer : SmallBuffer;
             import sparkles.base.text.writers : writeInteger;
 
-            auto w = appender!string;
+            // Staged inline: a version string fits the small buffer, so the
+            // reconstruction itself never allocates. The `idup` below is the
+            // one copy, forced by `parse` taking `string` — an `appender`
+            // would have allocated for the staging as well.
+            SmallBuffer!(char, 64) w;
             writeInteger(w, core[0]);
             w.put('.');
             writeInteger(w, core[1]);
@@ -452,7 +456,7 @@ if (hasComponents!S && S.components.length >= 3)
             writeInteger(w, core[2]);
             w.put('-');
             w.put(prerelease);
-            auto r = S.parse(w[]);
+            auto r = S.parse(w[].idup);
             if (!r.hasValue)
                 return parseErr!S(ParseError(r.error.code, offset));
             return parseOk(r.value);

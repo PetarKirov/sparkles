@@ -189,23 +189,23 @@ unittest
 @safe pure
 unittest
 {
-    import std.array : appender;
+    import sparkles.base.smallbuffer : assertRendered, SmallBuffer;
 
     auto v = AnyVersion(SemVer.parse("1.2.3-rc.1").value);
-    auto w = appender!string;
+    SmallBuffer!(char, 64) w;
     toString(v, w);
-    assert(w[] == "1.2.3-rc.1");
+    assertRendered("AnyVersion.toString", w[], "1.2.3-rc.1");
 }
 
 @("any.toString.rangeEmitsVersConstraint")
 @safe
 unittest
 {
-    import std.array : appender;
+    import sparkles.base.smallbuffer : assertRendered, SmallBuffer;
 
     auto range = SemVer.parseNativeRange("^1.2.0").value;
     auto r = AnyRange(range);
-    auto w = appender!string;
+    SmallBuffer!(char, 64) w;
     toString(r, w);
-    assert(w[] == ">=1.2.0|<2.0.0");
+    assertRendered("AnyRange.toString", w[], ">=1.2.0|<2.0.0");
 }

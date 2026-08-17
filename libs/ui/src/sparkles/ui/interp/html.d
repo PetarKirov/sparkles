@@ -496,9 +496,9 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     import sparkles.ui.geometry : Insets;
     import sparkles.ui.style : BorderStyle, Decoration, defaultTwoslashPalette,
         FontRole, TextStyle;
-    import sparkles.ui.widget : Builder;
-    import std.array : appender;
     import std.algorithm.searching : canFind;
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.ui.widget : Builder;
 
     // A popup surface (border + radius + shadow + arrow) over a docs run (sans, 0.8em).
     auto b = Builder();
@@ -510,7 +510,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
             borderRadius: 4, shadow: true, arrow: true, arrowOffset: 1)));
     auto tree = b.finish(popup);
 
-    auto w = appender!string;
+    SmallBuffer!(char, 2048) w;
     renderWidgetHtml(w, tree, defaultTwoslashPalette(),
         RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
     const s = w[];
@@ -534,8 +534,8 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     import sparkles.ui.geometry : Insets;
     import sparkles.ui.style : BorderStyle, Decoration, defaultTwoslashPalette;
     import sparkles.ui.widget : Builder;
-    import std.array : appender;
     import std.algorithm.searching : canFind;
+    import sparkles.base.smallbuffer : SmallBuffer;
 
     // The `.twoslash-hover` token: a bottom-only dotted border → a dotted bottom edge.
     auto b = Builder();
@@ -544,7 +544,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
             borderStyle: BorderStyle.dotted, borderSlot: Slot.code)));
     auto tree = b.finish(tok);
 
-    auto w = appender!string;
+    SmallBuffer!(char, 4096) w;
     writeWidgetHtmlPage(w, tree, defaultTwoslashPalette(),
         RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff), "hover");
     const s = w[];

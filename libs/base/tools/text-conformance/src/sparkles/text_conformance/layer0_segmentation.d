@@ -13,7 +13,10 @@
  */
 module sparkles.text_conformance.layer0_segmentation;
 
-import std.array : appender, join;
+import sparkles.base.smallbuffer : SmallBuffer;
+import std.range.primitives : put;
+
+import std.array : join;
 import std.algorithm : map, splitter, findSplit;
 import std.conv : to;
 import std.range : walkLength;
@@ -78,9 +81,11 @@ LayerResult runLayer0(in Config cfg)
             continue;
 
         // Build the UTF-8 string the line denotes.
-        auto buf = appender!string;
+        // `std.range.put` does the UTF-8 encoding a `dchar` needs;
+        // `SmallBuffer.put` only takes its own element type.
+        SmallBuffer!(char, 64) buf;
         foreach (cp; c.cps)
-            buf.put(cp);
+            put(buf, cp);
 
         // Cluster lengths (in code points) the library produces.
         size_t[] got;
