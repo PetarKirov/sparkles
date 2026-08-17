@@ -78,6 +78,16 @@ enum Slot : ubyte
     diffEmphRemoved, /// changed word segments within a removed/paired row
     diffHunk,        /// hunk-header line (`@@ … @@`) text + faint band
     diffFill,        /// filler opposite an unmatched row in a split layout
+
+    // Coverage slots (the code-coverage overlay's gutter column — hue
+    // `COV2`/`OVL7`). Foreground only: the column is text, and tinting its
+    // background would fight the diff row tints it can appear beside.
+    // Deliberately the same three hues as the diff and diagnostic slots, so
+    // "ran / never ran / partly ran" reads in the design language a viewer
+    // already knows rather than a fourth private palette.
+    covCovered,      /// a line that executed at least once
+    covUncovered,    /// a line that emitted code and never ran
+    covPartial,      /// a line that ran, but not every branch out of it
 }
 
 private enum slotCount = Slot.max + 1;
@@ -370,6 +380,21 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.bgAlpha[diffHunk] = 0x14;
         p.bg[diffFill] = Color.fromRgb(0x7f, 0x7f, 0x7f);
         p.bgAlpha[diffFill] = 0x14;
+
+        // Coverage gutter, sharing the diff/diagnostic hues: a tint behind
+        // the column so coverage is scannable without reading a single
+        // number, and the count itself on top of it. The alpha matches the
+        // diff row tints — this is the same "a band of colour states what
+        // happened to this line" idea, one column narrower.
+        p.fg[covCovered] = Color.fromRgb(0x1b, 0xa6, 0x73);
+        p.bg[covCovered] = Color.fromRgb(0x1b, 0xa6, 0x73);
+        p.bgAlpha[covCovered] = 0x24;
+        p.fg[covUncovered] = Color.fromRgb(0xd4, 0x56, 0x56);
+        p.bg[covUncovered] = Color.fromRgb(0xd4, 0x56, 0x56);
+        p.bgAlpha[covUncovered] = 0x24;
+        p.fg[covPartial] = Color.fromRgb(0xc3, 0x7d, 0x0d);
+        p.bg[covPartial] = Color.fromRgb(0xc3, 0x7d, 0x0d);
+        p.bgAlpha[covPartial] = 0x24;
     }
     return p;
 }

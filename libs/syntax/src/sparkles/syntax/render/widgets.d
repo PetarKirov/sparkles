@@ -57,6 +57,62 @@ struct CodeViewOptions
     WhitespaceGlyphs glyphs;
     RgbColor whitespaceFg;
     bool hasWhitespaceFg;
+
+    /// Per-line gutter cells, indexed by 0-based source line (`OVL7`). An
+    /// index past the end, or an empty `text`, renders as blank padding, so
+    /// a producer only has to describe the lines it has something to say
+    /// about and the column still lines up.
+    const(GutterCell)[] gutter;
+
+    /// Gutter column width in cells, including the one-cell separator before
+    /// the code. `0` means no gutter column at all — the default, so a view
+    /// that wants none pays nothing.
+    int gutterWidth;
+
+    /// Source byte ranges to tint, for decorations finer than a line
+    /// (`OVL1`'s inline-span channel). Ranges are applied in order, so a
+    /// later one wins where they overlap — which is how a nested,
+    /// more-specific range paints over the broader one containing it.
+    const(TintedRange)[] tintedRanges;
+}
+
+/**
+A source byte range to wash with a slot's background.
+
+The line gutter says what happened to a whole line; this says what happened
+to part of one. V8 block coverage is the case that needs it: a line holding
+both a condition that ran and a block that did not is `partial`, and the
+gutter can only report that much — the range is what locates it.
+*/
+struct TintedRange
+{
+    size_t start;              /// inclusive source byte offset
+    size_t end;                /// exclusive source byte offset
+    Slot slot = Slot.highlight; /// the background to wash with
+}
+
+/**
+One cell of the per-line gutter column.
+
+The column is a decoration channel, not content: its spans carry no source
+identity, so selection, copy and goto-line see the code exactly as they would
+without it. Whoever fills it has already decided the text (a hit count, a
+marker); this only places and colours it.
+*/
+struct GutterCell
+{
+    /// Text to show, right-aligned in the column. Longer than the column
+    /// truncates rather than pushing the code sideways.
+    const(char)[] text;
+
+    /// The slot colouring it — `Slot.covCovered` and friends for coverage,
+    /// `Slot.gutter` for neutral chrome.
+    Slot slot = Slot.gutter;
+
+    /// Fill the cell with the slot's background as well as colouring its
+    /// text, so the column reads as a tinted band at a glance rather than
+    /// only on inspection. Off for chrome, which should stay invisible.
+    bool paintBackground;
 }
 
 /**
@@ -76,6 +132,110 @@ region's identity (selection-copy over a fold yields the folded source) and,
 with a non-zero `foldHitBase`, the unfold hit id `foldHitBase + span.start`
 (the same contract as the markdown view's placeholders).
 */
+/**
+Splits `spans` at `ranges` boundaries, washing the covered parts.
+
+A span is only split by byte offset when its text still corresponds to its
+source range one-for-one. Tab expansion and the `list` whitespace glyphs
+rewrite a span's text without changing its (single-byte) source range, so an
+offset-based split inside one would cut in the wrong place; those are tinted
+whole or not at all.
+*/
+private TextSpan[] applyTints(TextSpan[] spans, const(TintedRange)[] ranges) @safe
+{
+    if (ranges.length == 0 || spans.length == 0)
+        return spans;
+
+    TextSpan[] result;
+    foreach (ref const spConst; spans)
+    {
+        TextSpan sp = spConst;
+        if (sp.srcStart == size_t.max || sp.srcEnd <= sp.srcStart)
+        {
+            result ~= sp;
+            continue;
+        }
+
+        // Last writer wins, so a nested range paints over its container.
+        const(TintedRange)* hit = null;
+        foreach (ref const r; ranges)
+            if (r.start < sp.srcEnd && sp.srcStart < r.end)
+                hit = (() @trusted => &r)();
+        if (hit is null)
+        {
+            result ~= sp;
+            continue;
+        }
+
+        const exact = sp.text.length == sp.srcEnd - sp.srcStart;
+        if (!exact || (hit.start <= sp.srcStart && hit.end >= sp.srcEnd))
+        {
+            // Wholly inside the range, or not splittable: tint it entire.
+            auto whole = sp;
+            whole.slot = hit.slot;
+            whole.paintBackground = true;
+            result ~= whole;
+            continue;
+        }
+
+        // Straddles a boundary: cut into up to three pieces, tinting the
+        // middle one.
+        const lo = hit.start > sp.srcStart ? hit.start : sp.srcStart;
+        const hi = hit.end < sp.srcEnd ? hit.end : sp.srcEnd;
+
+        TextSpan slice(size_t from, size_t to, bool tinted)
+        {
+            auto piece = sp;
+            piece.text = sp.text[from - sp.srcStart .. to - sp.srcStart];
+            piece.srcStart = from;
+            piece.srcEnd = to;
+            if (tinted)
+            {
+                piece.slot = hit.slot;
+                piece.paintBackground = true;
+            }
+            return piece;
+        }
+
+        if (lo > sp.srcStart)
+            result ~= slice(sp.srcStart, lo, false);
+        result ~= slice(lo, hi, true);
+        if (hi < sp.srcEnd)
+            result ~= slice(hi, sp.srcEnd, false);
+    }
+    return result;
+}
+
+/**
+Builds the gutter span for 0-based source line `line`.
+
+Right-aligned with a one-cell separator before the code, `noBreak` so a
+wrapping row keeps it attached to the first visual row, and carrying no
+`srcStart`/`srcEnd` — the column is chrome, and identity-bearing spans are
+what selection and goto-line walk.
+*/
+private TextSpan gutterSpan(in CodeViewOptions opt, size_t line) @safe
+{
+    const cell = line < opt.gutter.length ? opt.gutter[line] : GutterCell.init;
+    const width = cast(size_t) opt.gutterWidth;
+    const avail = width > 1 ? width - 1 : width;
+
+    auto buf = new char[](width);
+    buf[] = ' ';
+    const text = cell.text.length > avail ? cell.text[0 .. avail] : cell.text;
+    if (text.length)
+        buf[avail - text.length .. avail] = text[];
+
+    // `TextSpan.text` is `const(char)[]`, so the freshly allocated buffer
+    // goes in as it is — no cast, and it outlives the tree as the field
+    // requires because nothing else holds it.
+    // A cell with no text still paints its tint: an unbroken band beside a
+    // run of covered lines is the point, and a gap in it would read as a
+    // change of state rather than as a line with no count to show.
+    return TextSpan(buf, cell.slot, noBreak: true,
+        paintBackground: cell.paintBackground);
+}
+
 WidgetTree viewCodeDocument(const(char)[] source,
     const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
     RgbColor pageFg, CodeViewOptions opt = CodeViewOptions())
@@ -282,6 +442,8 @@ WidgetTree viewCodeDocument(const(char)[] source,
                 srcStart: starts[first], srcEnd: clampedEnd);
             ph ~= TextSpan("  ⋯ " ~ cnt[].idup ~ " lines", Slot.gutter,
                 noBreak: true);
+            if (opt.gutterWidth > 0)
+                ph = gutterSpan(opt, first) ~ ph;
             rows ~= b.add(Widget(kind: WidgetKind.rich, spans: ph,
                 slot: Slot.code,
                 hitId: foldHitBase != 0 ? foldHitBase + fr.start : 0));
@@ -320,6 +482,13 @@ WidgetTree viewCodeDocument(const(char)[] source,
                 spans = [head, rest] ~ spans[1 .. $];
             }
         }
+        // After the indentation split (which indexes `spans[0]`), before the
+        // gutter (which is not part of the line's text).
+        spans = applyTints(spans, opt.tintedRanges);
+        // Prepended last: the indentation split above indexes `spans[0]`,
+        // and the gutter is not part of the line's text.
+        if (opt.gutterWidth > 0)
+            spans = gutterSpan(opt, li) ~ spans;
         // A blank row never wraps: the greedy breaker consumes a lone space
         // (a break eats its space), which would drop the row's identity.
         rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
@@ -371,6 +540,150 @@ WidgetTree viewCodeDocument(const(char)[] source,
                 sawKw = true;
             }
     assert(sawKw);
+}
+
+@("render.widgets.viewCodeDocument.gutterColumn")
+@safe unittest
+{
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.theme : resolveTheme;
+    import sparkles.syntax.themes : builtinDark;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : documentRows;
+
+    const src = "a;\nb;\nc;\n";
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+    const ev = [HighlightEvent.sourceSpan(0, src.length)];
+
+    CodeViewOptions opt;
+    opt.gutterWidth = 5;
+    opt.gutter = [
+        GutterCell("12", Slot.covCovered),
+        GutterCell("0", Slot.covUncovered),
+        // Line 3 is deliberately absent: a producer describes only the lines
+        // it knows about, and the column still lines up.
+    ];
+
+    auto tree = viewCodeDocument(src, ev, (() @trusted => &rt)(),
+        RgbColor(0xcc, 0xcc, 0xcc), opt);
+
+    // The gutter is chrome: it must not disturb the rows' source identity,
+    // which is what selection, copy and goto-line walk.
+    // `srcEnd` excludes the newline, as it does without a gutter.
+    auto rows = documentRows(tree, layout(tree));
+    assert(rows.length == 3);
+    assert(rows[0].srcStart == 0 && rows[0].srcEnd == 2);
+    assert(rows[1].srcStart == 3 && rows[1].srcEnd == 5);
+    assert(rows[2].srcStart == 6);
+
+    // The row widgets, in source order, out of the flat arena.
+    TextSpan[][] rowSpans;
+    foreach (ref node; tree.nodes)
+        if (node.kind == WidgetKind.rich)
+            rowSpans ~= node.spans;
+    assert(rowSpans.length == 3);
+
+    // Right-aligned into `gutterWidth - 1`, with the separator cell after.
+    assert(rowSpans[0][0].text == "  12 ");
+    assert(rowSpans[0][0].slot == Slot.covCovered);
+    assert(rowSpans[0][0].noBreak);
+    assert(rowSpans[0][0].srcStart == size_t.max, "the gutter carries no identity");
+
+    assert(rowSpans[1][0].text == "   0 ");
+    assert(rowSpans[1][0].slot == Slot.covUncovered);
+
+    // A line the producer said nothing about is blank padding in neutral
+    // chrome, not a hole that shifts the code left.
+    assert(rowSpans[2][0].text == "     ");
+    assert(rowSpans[2][0].slot == Slot.gutter);
+}
+
+@("render.widgets.viewCodeDocument.tintedRanges")
+@safe unittest
+{
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.theme : resolveTheme;
+    import sparkles.syntax.themes : builtinDark;
+
+    //               0123456789012345678
+    const src = "if (c) { miss(); }\n";
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+    const ev = [HighlightEvent.sourceSpan(0, src.length)];
+
+    CodeViewOptions opt;
+    // The `{ miss(); }` block never ran, though the line did.
+    opt.tintedRanges = [TintedRange(7, 18, Slot.covUncovered)];
+
+    auto tree = viewCodeDocument(src, ev, (() @trusted => &rt)(),
+        RgbColor(0xcc, 0xcc, 0xcc), opt);
+
+    TextSpan[] row;
+    foreach (ref node; tree.nodes)
+        if (node.kind == WidgetKind.rich)
+            row = node.spans;
+
+    // Split at the range boundary: the condition untinted, the block washed.
+    // Reassembled, the row is still exactly the source line — a decoration
+    // must not add or drop a character.
+    string joined;
+    bool sawTint;
+    foreach (ref sp; row)
+    {
+        joined ~= sp.text;
+        if (sp.paintBackground && sp.slot == Slot.covUncovered)
+        {
+            sawTint = true;
+            assert(sp.text == "{ miss(); }", sp.text);
+            assert(sp.srcStart == 7 && sp.srcEnd == 18);
+        }
+    }
+    assert(sawTint, "the range must be tinted");
+    assert(joined == "if (c) { miss(); }", joined);
+}
+
+@("render.widgets.viewCodeDocument.tintedRangesNestLastWins")
+@safe unittest
+{
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.theme : resolveTheme;
+    import sparkles.syntax.themes : builtinDark;
+
+    const src = "abcdefgh\n";
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+    const ev = [HighlightEvent.sourceSpan(0, src.length)];
+
+    CodeViewOptions opt;
+    // A broad range with a narrower one inside it: the nested, more specific
+    // range must show through rather than being painted over.
+    opt.tintedRanges = [
+        TintedRange(0, 8, Slot.covCovered),
+        TintedRange(3, 5, Slot.covUncovered),
+    ];
+
+    auto tree = viewCodeDocument(src, ev, (() @trusted => &rt)(),
+        RgbColor(0xcc, 0xcc, 0xcc), opt);
+
+    TextSpan[] row;
+    foreach (ref node; tree.nodes)
+        if (node.kind == WidgetKind.rich)
+            row = node.spans;
+
+    string joined;
+    foreach (ref sp; row)
+        joined ~= sp.text;
+    assert(joined == "abcdefgh", joined);
+
+    bool sawNested;
+    foreach (ref sp; row)
+        if (sp.slot == Slot.covUncovered)
+        {
+            sawNested = true;
+            assert(sp.text == "de", sp.text);
+        }
+    assert(sawNested, "the nested range wins where they overlap");
 }
 
 @("render.widgets.viewCodeDocument.emptySourceIsEmptyTree")
