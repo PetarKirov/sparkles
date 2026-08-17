@@ -183,7 +183,10 @@ silent skip rather than a saving: the tree-sitter grammar bundle, the JSON
 conformance corpora, the DMD import paths, `valgrind` (three
 `docs/research/sanitizers/examples` probes exec it and print SKIP without it),
 and `elfutils`/`libpfm` (the cpu-pmu examples link `dw`/`elf`/`pfm`, so a
-missing one is a link error).
+missing one is a link error). The flake-input exports
+(`$SPARKLES_FLAKE_INPUT_*`, `$SPARKLES_ALL_FLAKE_INPUTS`) live here too:
+`dmd-fmt` corpus tests **assert** `$SPARKLES_FLAKE_INPUT_DMD_SRC` exists, so
+dropping them fails the suite rather than skipping it.
 
 `devShells.ci` is in the `all-desktop` aggregate, so `nix-build-*` pushes it to
 Cachix and the other jobs restore rather than build it. `devShells.full` is in

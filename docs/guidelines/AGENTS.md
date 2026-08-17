@@ -253,6 +253,28 @@ DEV_SHELL=full   # opt into the greeting for direnv
 `devPackages` adds the rest on top. Put a tool in `ciPackages` only if a CI job
 actually runs it — everything there is built on every CI run.
 
+### Flake-input store paths
+
+The nix dev shell exports every flake input as a `/nix/store` path (minus
+`self`, which would recurse / re-copy the tree):
+
+- `$SPARKLES_FLAKE_INPUT_<NAME>` — one var per input. `<NAME>` is the flake
+  input name, uppercased, `-` → `_`. Example: `dmd-src` →
+  `$SPARKLES_FLAKE_INPUT_DMD_SRC` (= `${inputs.dmd-src}`, the checkout root,
+  not a hand-joined subpath).
+- `$SPARKLES_ALL_FLAKE_INPUTS` — JSON object
+  `{ "dmd-src": "/nix/store/…", … }` keyed by the original flake input names,
+  for discovery. `echo "$SPARKLES_ALL_FLAKE_INPUTS"` / parse JSON; do not
+  scrape `flake.lock`.
+
+Tests that read a pinned third-party checkout **assert** the env var is set
+and the path exists (`enter nix develop`). Do not parse `dub.selections.json`
+or walk `$DUB_HOME`.
+
+Derived-package vars (`$SPARKLES_DMD_IMPORT_PATH`, `$SPARKLES_TS_GRAMMAR_PATH`,
+`$JSON_TEST_SUITE`) are a different contract: they point at linkFarm /
+applyPatches outputs, and their tests still **skip** when unset.
+
 ### Locating C Headers & System Dependencies
 
 **Never search the entire `/nix/store` for header files or library paths.** Searching `/nix/store` directly is slow, matches unrelated or stale packages, and produces fragile paths.
