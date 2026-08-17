@@ -30,26 +30,29 @@
  */
 module sparkles.test_runner.extract;
 
+import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.text.scan : isIdentChar, lineOffset, matchingBrace,
+    putQuotedStringLiteral, skipComment, skipDelimitedString, skipString;
 import sparkles.test_runner.attributes : betterC, wasm;
 import sparkles.test_runner.model : Test;
+
+/// A garbage-collected D/JS string literal for `value`.
+///
+/// The escaping itself lives in `sparkles.base.text.scan` as an
+/// allocation-free writer so that module stays `-betterC`-clean; every caller
+/// here splices the result into a generated program with `format`/`~`/`join`,
+/// which needs a `string` that outlives the buffer. This is that boundary, and
+/// the only place the branch pays for a GC copy.
+private string quotedStringLiteral(scope const(char)[] value) @safe pure nothrow
+{
+    SmallBuffer!(char, 256) buf;
+    buf.putQuotedStringLiteral(value);
+    return buf[].idup;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Body extraction
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// The byte offset where line `line` (1-based) starts in `source`.
-size_t lineOffset(string source, size_t line) @safe pure nothrow @nogc
-{
-    size_t current = 1;
-    foreach (i, c; source)
-    {
-        if (current >= line)
-            return i;
-        if (c == '\n')
-            current++;
-    }
-    return source.length;
-}
 
 /// Extracts the body of the `unittest` block declared at `line` (its
 /// `__traits(getLocation)` line): the text between the block's braces,
@@ -70,190 +73,6 @@ string extractUnittestBody(string source, size_t line) @safe pure
     if (close == size_t.max)
         return null;
     return source[open + 1 .. close];
-}
-
-/// The index of the `}` matching the `{` at `open`, skipping comments and
-/// string/character literals; `size_t.max` when unbalanced.
-size_t matchingBrace(string source, size_t open) @safe pure
-in (source[open] == '{')
-{
-    size_t depth = 0;
-    for (size_t i = open; i < source.length;)
-    {
-        const c = source[i];
-        switch (c)
-        {
-            case '{':
-                depth++;
-                i++;
-                break;
-            case '}':
-                depth--;
-                if (depth == 0)
-                    return i;
-                i++;
-                break;
-            case '/':
-                i = skipComment(source, i);
-                break;
-            case '"':
-                // `q"(…)"`-style delimited strings can contain unescaped quotes
-                // and braces; require the `q` to be its own token (not the tail
-                // of an identifier). Wysiwyg (`r"…"`) and hex (`x"…"`) prefixes
-                // lex the same way from the quote; escapes are only special in
-                // regular strings.
-                if (i > 0 && source[i - 1] == 'q'
-                    && (i < 2 || !isIdentChar(source[i - 2])))
-                    i = skipDelimitedString(source, i);
-                else
-                    i = skipString(source, i, '"',
-                        escapes: !(i > 0 && (source[i - 1] == 'r' || source[i - 1] == 'x')));
-                break;
-            case '`':
-                i = skipString(source, i, '`', escapes: false);
-                break;
-            case '\'':
-                i = skipString(source, i, '\'', escapes: true);
-                break;
-            default:
-                i++;
-        }
-    }
-    return size_t.max;
-}
-
-/// Advances past a comment starting at `i` (which points at `/`), or one
-/// character when it is a lone slash. Handles `//`, `/* */`, and nesting
-/// `/+ +/`.
-private size_t skipComment(string source, size_t i) @safe pure nothrow @nogc
-{
-    if (i + 1 >= source.length)
-        return i + 1;
-    switch (source[i + 1])
-    {
-        case '/':
-            while (i < source.length && source[i] != '\n')
-                i++;
-            return i;
-        case '*':
-            i += 2;
-            while (i + 1 < source.length && !(source[i] == '*' && source[i + 1] == '/'))
-                i++;
-            return i + 2;
-        case '+':
-            i += 2;
-            size_t depth = 1;
-            while (i + 1 < source.length && depth > 0)
-            {
-                if (source[i] == '/' && source[i + 1] == '+')
-                {
-                    depth++;
-                    i += 2;
-                }
-                else if (source[i] == '+' && source[i + 1] == '/')
-                {
-                    depth--;
-                    i += 2;
-                }
-                else
-                    i++;
-            }
-            return i;
-        default:
-            return i + 1;
-    }
-}
-
-/// Advances past a string/character literal starting at `i` (which points at
-/// the opening `quote`).
-private size_t skipString(string source, size_t i, char quote, bool escapes)
-@safe pure nothrow @nogc
-{
-    i++;
-    while (i < source.length)
-    {
-        if (escapes && source[i] == '\\')
-            i += 2;
-        else if (source[i] == quote)
-            return i + 1;
-        else
-            i++;
-    }
-    return i;
-}
-
-private bool isIdentChar(char c) @safe pure nothrow @nogc
-{
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-        || (c >= '0' && c <= '9') || c == '_';
-}
-
-/// Advances past a delimited string literal `q"…"` starting at `i` (which
-/// points at the quote after the `q`). Handles the nesting bracket delimiters
-/// (`()`, `[]`, `{}`, `<>`), identifier (heredoc) delimiters
-/// (`q"EOS … EOS"`), and single-character punctuation delimiters (`q"/…/"`).
-/// Their bodies may contain unescaped quotes and braces, which would derail
-/// `matchingBrace`'s scan.
-private size_t skipDelimitedString(string source, size_t i) @safe pure nothrow @nogc
-{
-    i++; // past the opening quote
-    if (i >= source.length)
-        return i;
-    const d = source[i];
-
-    char closer = 0; // NB: char.init is 0xFF, which is truthy
-    switch (d)
-    {
-        case '(': closer = ')'; break;
-        case '[': closer = ']'; break;
-        case '{': closer = '}'; break;
-        case '<': closer = '>'; break;
-        default: break;
-    }
-    if (closer)
-    {
-        i++;
-        size_t depth = 1;
-        while (i < source.length && depth)
-        {
-            if (source[i] == d)
-                depth++;
-            else if (source[i] == closer)
-                depth--;
-            i++;
-        }
-        // The closing quote directly follows the matching closer.
-        return i < source.length && source[i] == '"' ? i + 1 : i;
-    }
-
-    if (isIdentChar(d) && !(d >= '0' && d <= '9'))
-    {
-        // Heredoc: `q"IDENT` … up to a line starting with `IDENT"`.
-        const start = i;
-        while (i < source.length && isIdentChar(source[i]))
-            i++;
-        const ident = source[start .. i];
-        while (i < source.length)
-        {
-            if (source[i] == '\n'
-                && i + 1 + ident.length < source.length
-                && source[i + 1 .. i + 1 + ident.length] == ident
-                && source[i + 1 + ident.length] == '"')
-                return i + 2 + ident.length;
-            i++;
-        }
-        return source.length;
-    }
-
-    // Single punctuation delimiter: ends at the delimiter followed by `"`.
-    i++;
-    while (i + 1 < source.length)
-    {
-        if (source[i] == d && source[i + 1] == '"')
-            return i + 2;
-        i++;
-    }
-    return source.length;
 }
 
 @("extract.matchingBrace.delimitedStrings")
@@ -500,20 +319,6 @@ struct CtfeTarget
     string file; /// the module's source file, as recorded at discovery
     size_t line; /// `__traits(getLocation)` line of the unittest block
     string name; /// display name
-}
-
-/// A double-quoted string literal with `\` and `"` escaped — valid for both D
-/// and JavaScript (their basic escaping rules coincide here).
-private string quotedStringLiteral(string value) @safe pure nothrow
-{
-    string result = `"`;
-    foreach (c; value)
-    {
-        if (c == '\\' || c == '"')
-            result ~= '\\';
-        result ~= c;
-    }
-    return result ~ `"`;
 }
 
 /// A complete probe program forcing the given `@ctfe` tests through CTFE.
