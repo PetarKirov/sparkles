@@ -89,13 +89,12 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             if (node.wrap != TextWrap.none)
                 put(w, ";white-space:pre-wrap");
             visibilityCss(w, node);
-            // A text widget can be a chip/pill (`paintBackground` + radius, e.g. the
-            // JSDoc `@tag` name) — carry its background, radius, and pill padding.
+            // A background fills the run's own box and nothing more — see the
+            // note in the `rich` arm on why it carries no padding.
             if (node.paintBackground && vis.hasBg)
             {
                 put(w, ";background:");
                 rgba(w, vis.bg, vis.bgAlpha);
-                put(w, ";padding:0.05em 0.4em");
             }
             if (vis.borderRadius > 0)
             {
@@ -109,13 +108,23 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             break;
 
         case rich:
-            // One <span> per styled span; each resolves its own slot/chrome
-            // against the node's as fallback (the browser concatenates them
-            // inline, matching the cell backends' advance). A wrapping run
-            // lets the browser break lines; a `paintBackground` span is an
-            // inline pill (background + the node's radius + pill padding).
+            // One <span> per styled span, all inside one wrapper; each
+            // resolves its own slot/chrome against the node's as fallback (the
+            // browser concatenates them inline, matching the cell backends'
+            // advance). A wrapping run lets the browser break lines.
+            //
+            // The wrapper is what makes the node one *item* rather than N. A
+            // rich node is a run — a line of code, a diff row — and emitting
+            // its spans as bare siblings let the parent's flow direction pull
+            // them apart: inside a `row` they flowed correctly by accident,
+            // but inside a `column` every span became its own flex item, so a
+            // source file rendered one token per line. It is inline, so the
+            // row case is unchanged.
             import sparkles.ui.style : TextStyle;
 
+            put(w, "<span style=\"white-space:pre");
+            visibilityCss(w, node);
+            put(w, "\">");
             foreach (ref span; node.spans)
             {
                 const slot = span.slot == Slot.inherit ? node.slot : span.slot;
@@ -129,11 +138,23 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
                 textStyle(w, sv);
                 if (node.wrap != TextWrap.none)
                     put(w, ";white-space:pre-wrap");
+                // A background fills the span's own box and nothing more. It
+                // used to add `padding:0.05em 0.4em`, treating every
+                // background as a chip — but "has a background" is not "is a
+                // chip", and a diff row sets `paintBackground` on *every*
+                // span to paint its row tint. Each one then bought 0.8em of
+                // advance the cell backends do not have, so a line stretched
+                // and rows carrying different numbers of emphasized spans
+                // drifted out of column with each other.
+                //
+                // This module is the parity oracle the raylib and terminal
+                // rasters are compared against, and a cell backend cannot pad
+                // within a cell: a background there costs zero advance. So
+                // padding is not a style choice here, it is a parity break.
                 if (span.paintBackground && sv.hasBg)
                 {
                     put(w, ";background:");
                     rgba(w, sv.bg, sv.bgAlpha);
-                    put(w, ";padding:0.05em 0.4em");
                     if (sv.borderRadius > 0)
                     {
                         put(w, ";border-radius:");
@@ -141,11 +162,11 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
                         put(w, "px");
                     }
                 }
-                visibilityCss(w, node);
                 put(w, "\">");
                 escape(w, span.text);
                 put(w, "</span>");
             }
+            put(w, "</span>");
             break;
 
         case glyph:
@@ -552,4 +573,76 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     assert(s.canFind("<!doctype html>"));
     assert(s.canFind("border-bottom:1px dotted"));
     assert(s.canFind("<title>hover</title>"));
+}
+
+@("ui.interp.html.richRowIsOneItemInAColumn")
+@safe unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.wrap : TextSpan;
+    import std.algorithm.searching : count;
+
+    // A column of `rich` rows — a source file, a diff. Each row's spans must
+    // stay on one line: the container is a flex column, so a span emitted as a
+    // bare child of it becomes its own flex *item* and every token lands on a
+    // line of its own. That is what a `hue view --html` of a D file looked
+    // like, and a `--diff --html` before that.
+    auto b = Builder();
+    TextSpan[] first = [TextSpan(text: "int"), TextSpan(text: " "),
+        TextSpan(text: "x;")];
+    TextSpan[] second = [TextSpan(text: "return"), TextSpan(text: " "),
+        TextSpan(text: "x;")];
+    const r0 = b.add(Widget(kind: WidgetKind.rich, spans: first));
+    const r1 = b.add(Widget(kind: WidgetKind.rich, spans: second));
+    auto tree = b.finish(b.container(WidgetKind.column, [r0, r1]));
+
+    SmallBuffer!(char, 4096) w;
+    writeWidgetHtmlPage(w, tree, defaultTwoslashPalette(),
+        RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff), "rows");
+    const s = w[];
+
+    // Two rows, so exactly two wrappers — one per `rich` node, not one per
+    // span and not one for the pair.
+    assert(s.count("<span style=\"white-space:pre\">") == 2);
+    // The text still arrives, and nothing was dropped. Matched with the
+    // delimiters: a bare `x;` also occurs inside `border-box;` and `flex;`.
+    assert(s.count(">int<") == 1);
+    assert(s.count(">return<") == 1);
+    assert(s.count(">x;<") == 2);
+}
+
+@("ui.interp.html.backgroundCostsNoAdvance")
+@safe unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.wrap : TextSpan;
+    import std.algorithm.searching : canFind;
+
+    // A `paintBackground` span fills its own box and buys no horizontal
+    // padding. This emitter is the parity oracle for the raylib and terminal
+    // rasters, and neither can pad inside a cell — a background costs zero
+    // advance there. Padding it here used to stretch a line by 0.8em per
+    // emphasized span, so diff rows with different span counts drifted out of
+    // column with each other, and a diff row paints *every* span.
+    auto b = Builder();
+    TextSpan[] spans = [
+        TextSpan(text: "foo("),
+        TextSpan(text: "aaa", slot: Slot.diffEmphAdded, paintBackground: true),
+        TextSpan(text: ");"),
+    ];
+    auto tree = b.finish(b.add(Widget(kind: WidgetKind.rich, spans: spans)));
+
+    // The fragment, not the page: the page wrapper carries its own
+    // `padding:24px` on <body>, which says nothing about a span's advance.
+    SmallBuffer!(char, 4096) w;
+    renderWidgetHtml(w, tree, defaultTwoslashPalette(),
+        RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
+    const s = w[];
+
+    assert(s.canFind("background:"), "the fill itself still happens");
+    assert(!s.canFind("padding:"), "but it must not widen the run");
 }
