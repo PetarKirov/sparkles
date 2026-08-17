@@ -7,23 +7,16 @@ license "BSL-1.0"
 targetPath "build"
 importPaths "src"
 
-// The token spine needs only dmd:lexer, and keeping the hot dependency
+// The token spine needs only dmd:lexer — and keeping the hot dependency
 // lexer-only is a bet the proposal records under the fork-treadmill failure
-// mode (the lexer churns far less than the AST). M0-S1 finding: that is not
-// possible yet — dmd:lexer's identifier.d references dmd.rootobject, which
-// only dmd:frontend compiles (compiler/src/dmd/rootobject.d is in no other
-// subpackage's source list), so a lexer-only build fails to link. Until the
-// fork adds rootobject.d to dmd:lexer's sourceFiles, depend on dmd:frontend,
-// exactly as libs/dmd-lsp does. Same pin as libs/dmd-lsp — see
+// mode (the lexer churns far less than the AST). The fork's dmd:lexer now
+// carries astenums.d and rootobject.d so it links standalone (the M0-S1
+// packaging finding, fixed fork-side; tracked in the fork's
+// PLAN-UPSTREAMING.md). The AST-oracle milestones (S2/S4, M3) will add
+// dmd:frontend when they land. Same pin as libs/dmd-lsp — see
 // docs/specs/dmd-lsp/ (BLD1/BLD2) for the pin and upgrade procedure.
-dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
-    version="ea88375142644d2dc7755089357acdfdd69c6620"
-
-// Same linker workaround as libs/dmd-lsp: DMD emits the reference to
-// `Edition`'s TypeInfo initializer into dmd:lexer while the definition lives
-// in dmd:frontend; naming the symbol up front pulls astenums.o out of
-// frontend.a while that archive is still on the table. LDC needs nothing.
-lflags "--undefined=_D3dmd8astenums7Edition6__initZ" platform="linux-dmd"
+dependency "dmd:lexer" repository="git+https://github.com/PetarKirov/dmd.git" \
+    version="c562711dbd4685c4e4f7bd5ff46e1a306c932259"
 
 // Deliberately NO -preview=in / -preview=dip1000 (the repo standard): the
 // dmd.* module interfaces this package imports are not dip1000-clean — the
