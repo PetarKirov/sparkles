@@ -1,139 +1,184 @@
 # `sparkles:fuzzy` — Delivery Plan
 
-_The milestoned companion to [SPEC.md](./SPEC.md). Each milestone is one
-reviewable unit — code, tests, and its benchmark gate land together
-(performance-test-driven: no kernel merges without its measurement). The
-whole plan is hue's picker milestone `F0`
-([picker.md](../hue/picker.md) `PKM1`–`PKM5`, `PKQ1`–`PKQ6`, `PKR1`–`PKR3`);
-`P0`+ (the picker itself) starts once M3 ships a usable score tier._
+_The reviewable implementation sequence for [SPEC.md](./SPEC.md). Each
+milestone lands code, tests, documentation, and any benchmark needed to make
+its gate evaluable._
 
-## Design invariants (fixed before M0)
+## Dependency graph
 
-1. `@safe pure nothrow @nogc` everywhere; `searchPage`'s abort probe is the
-   single sanctioned impurity (SPEC §1).
-2. Borrowed spans in, values or caller buffers out; `SmallBuffer` is the
-   only container.
-3. Explicit outcomes — `MatchKind` names every degradation; no silent zeros.
-4. The scalar kernel keeps the log-shift propagation shape so SIMD backends
-   are drop-in and parity-testable.
-5. Benchmarks state API tier and corpus selectivity; snapshots anchor on
-   retired instructions.
+```text
+D0 specification repair
+ ├─ U0 sparkles:base Unicode analysis
+ ├─ E0 event-horizon raw CPU jobs
+ └─ M0 fuzzy scaffold
+      └─ M1 query + glob
+           └─ M2 exact witness
+                └─ M3 ranking kernel
+                     └─ M4 ranking + top-K
+                          └─ M5 history
+                               └─ M6 chunked search
+                                    └─ M7 F0 release gate
 
-## Milestone order
+E0 + M7 ──> hue P0 integration
+M5 + P0 ──> hue P3 persistence
+```
 
-M0 (harness) → M1 (query + glob) → M2 (prefilter) → M3 (kernel, score tier)
-→ M4 (positions) → M5 (ranking) → M6 (frecency) → M7 (search driver + docs).
-M1 is independent of M2–M4 and may proceed in parallel; everything else is
-sequential by data dependency.
+`U0`, `E0`, and `M0` may proceed independently after `D0`. The fuzzy library
+does not depend on event-horizon; `E0` gates only the parallel hue host.
 
-## M0 — scaffold and measurement floor
+## Working-tree status (2026-08-17)
 
-The harness before the first kernel:
+`D0`, `U0`, `E0`, and `M0`–`M7` are implemented and verified. Their focused
+unit, differential, capacity, restart, fallback, allocation-audit, benchmark,
+documentation, Nix, and repository tests pass. The five-row lifecycle-aware
+benchmark baseline is recorded in [benchmarks.md](./benchmarks.md). Hue's P0
+state/Finder/files/scheduler seams and the P1 shared widget tree/presets are
+implemented; mounting the view as a live GUI/TUI command remains P1 host work,
+and P2+ remain deferred as listed in `picker.md`.
 
-- `libs/fuzzy/` package: `dub.sdl` (library + unittest configs per the
-  `libs/diff` recipe, `bench` build type), root `dub.sdl` registration,
-  `AGENTS.md` table row, nix fileset registration. New files staged before
-  any flake-based check.
-- `bench/matcher/` package: corpora (the committed `sparkles` listing; the
-  seeded `synth-deep`/`synth-wide` generator as a D single-file tool;
-  adversarial cases), the **telescope-fzf-native ImportC shim** (single C
-  file; the in-process fzf-algorithm reference), `benchCase` matrix over
-  corpus × engine.
-- First committed `--bench-json` snapshot: the C reference's numbers on this
-  hardware — the floor every later gate compares against.
+## D0 — contract repair
 
-**Gate:** harness runs green in CI; baseline snapshot committed;
-`bench-baseline.md` opened with the environment table.
+- Replace the faulty traceback oracle, byte matcher, unbounded containers,
+  incomplete grammar, partial ranking formula, abort pointer, and contradictory
+  ownership with the contracts in SPEC §§1–10.
+- Update hue's `PKQ`/`PKR`/`PKM`/`PIK` rows and event-horizon's CPU-pool
+  contract.
+- Keep `adversarial-review.md` as the reproduction record and map all 51
+  findings in SPEC §12.
 
-## M1 — query language + glob (SPEC §3, §7)
+**Gate:** every finding has exactly one normative resolution and at least one
+owning implementation/test milestone.
 
-`query.d` (shape-dispatch grammar, `ParseExpected!Query`, borrowed spans,
-`Query` regularity + `opEquals`) and `glob.d` (iterative backtracking
-matcher). Tests: grammar cases ported from fff's parser doctests
-(`git:modified`, `!*.rs`, `**/*.rs`, `f.d:12:4`, `\*`-escapes, the
-lone-path-stays-text rule), the two fixed-bug cases (`status:` empty ⇒
-error; `type:` ⇒ error), glob torture set. `@benchmark`: queries/s on a
-mixed corpus; glob worst-case row. Satisfies `PKQ1`–`PKQ4` (parser side).
+## U0 — bounded Unicode analysis in `sparkles:base`
 
-**Gate:** parser allocates nothing (attribute-gated tests); grammar table in
-SPEC §3.1 fully covered by tests.
+- Add source-provenance text units, strict-plus-opaque UTF-8 decoding,
+  canonical/compatibility normalization, simple/full folding, mark removal,
+  word segmentation, and immutable stopword lookup.
+- Extend the Unicode generator and document the pinned UCD inputs.
+- Add reference and how-to documentation.
 
-## M2 — subsequence prefilter (SPEC §4.1)
+**Gate:** Unicode normalization/case-fold conformance samples, malformed-byte
+round trips, provenance expansion/composition cases, capacity failures, and
+explicit `@safe pure nothrow @nogc` tests pass with allocator hooks observing
+zero calls.
 
-`prefilter.d`: 0/1/2-typo lockstep kernels + generic multi-path, window
-trimming, case-pair folding. The LCS oracle as a randomized differential
-test (normative contract). `@benchmark`: reject throughput (bytes/s and
-candidates/s) on non-matching corpora at 0/1/2 typos; window-trim
-effectiveness column.
+## E0 — persistent raw CPU jobs in event-horizon
 
-**Gate:** oracle holds over the fuzzed corpus; 0-typo cost within noise of a
-plain subsequence scan.
+- Add a fixed-capacity persistent CPU pool with attributed function-pointer
+  jobs, caller-owned contexts, a fixed completion queue, and explicit
+  `notStarted`, `queueFull`, `completionFull`, `shuttingDown`, and startup
+  outcomes.
+- Preserve the existing batch/delegate `WorkStealingPool` surface.
+- Specify context lifetime through completion and make shutdown drain or cancel
+  deterministically.
 
-## M3 — scoring kernel, score tier (SPEC §4.2–4.3)
+**Gate:** saturation, start/stop cycles, context-lifetime, exactly-once
+completion, and ThreadSanitizer stress tests pass; the existing pool benchmark
+does not regress beyond its declared threshold.
 
-`score.d`: `Scoring`, `Matcher` (matrices in `unique` `SmallBuffer`s,
-never re-zeroed), the substitution SW kernel in log-shift shape, greedy
-fallback, `MatchOutcome`/`MatchKind`, `endCol`, score-tier typo
-verification. The **golden ranking corpus** lands here and gates every later
-change. `@benchmark`: score-only ns/candidate per corpus (matcher reused),
-`--perf` instruction counts.
+## M0 — package and measurement floor
 
-**Gate (the M3 exit gate):** meets or beats telescope-fzf-native on
-score-only throughput on ASCII corpora at equal-or-better golden-corpus
-ranking; all differential/oracle tests green.
+- Register `libs/fuzzy` in DUB, Nix source sets, and `AGENTS.md`.
+- Land the package module, common IDs/errors/capacities, checked and benchmark
+  configurations, and the `docs/libs/fuzzy/` Diátaxis skeleton immediately.
+- Land deterministic small, large, Unicode, invalid-byte, and adversarial
+  fixtures plus benchmark environment metadata.
 
-## M4 — positions tier (SPEC §4.4)
+**Gate:** an empty library build/test and docs build pass; the fixture generator
+is byte-for-byte reproducible.
 
-Traceback into caller buffers; the shared verification rule (score and
-positions accept identical sets — the fff/frizbee divergence fixed);
-position-merge helpers. Differential test: every `matched` candidate's
-positions re-score to its reported score. `@benchmark`: positions
-ns/candidate; the tier-cost ratio documented (the API-tier trap made
-measurable).
+## M1 — analysis bridge, query, constraints, and glob
 
-## M5 — ranking (SPEC §5)
+- Bind the two base profiles to fuzzy capacities.
+- Implement bounded lexing, quoting/escaping, explicit and legacy constraint
+  dispatch, locations, concrete candidate metadata, and the evaluator.
+- Compile and execute the bounded Thompson NFA.
 
-`rank.d`: composite formula, filename ladder, `ScoreBreakdown` by value,
-`selectTopK` partial selection with the normative tie-break. Golden corpus
-extended with ranking-context cases (frecency/git/distance/combo
-interactions). `@benchmark`: rank+select over 100 k scored candidates.
-Satisfies `PKR1`, `PKR4` (library side).
+**Gate:** every SPEC §3 grammar row and malformed form is covered; randomized
+glob results match a slow test-only oracle; adversarial brace inputs remain
+within the documented state/work bounds.
 
-## M6 — frecency + combo (SPEC §6)
+## M2 — exact admission and positions
 
-`frecency.d`: access curve (soft knee), modification curve, fast profile,
-bounded `ComboTable`. Pure over explicit `now` — property tests pin the
-half-life and retention arithmetic. Satisfies `PKR2`, `PKR3` (in-memory
-side; persistence stays in hue per `PKR5`/`PKR6`).
+- Implement the bounded-deletion cursor DP, canonical witness reconstruction,
+  multi-part semantics, range merging, and sound refinement predicate.
 
-## M7 — search driver, refinement, docs
+**Gate:** exhaustive short-alphabet and randomized cases match a conventional
+LCS/witness oracle; score admission and positions accept identical sets;
+endpoint deletion, two-unit, Unicode expansion, invalid-byte, and incomplete
+refinement scenarios are pinned.
 
-`search.d`: `searchPage` (cursor, abort probe, partial results),
-`Query.refines` with the trailing-negation guard. `@workload` row: one full
-page query over `synth-deep` with cache-regime control. Ships the
-`docs/libs/fuzzy/` Diátaxis tree (`PKM5`) and the consolidated
-`bench-baseline.md` findings.
+## M3 — bounded ranking kernel
 
-**Gate:** `nix run .#ci -- --test` green across the repo; hue's `P0` can
-consume the library without patches.
+- Add validated scoring, rolling Smith-Waterman rows, deterministic direct
+  witness fallback, exact byte/source offsets, and `MatchOutcome`.
+- Establish exact camel/snake/exact score goldens and lifecycle benchmarks.
 
-## Deferred, recorded so they are not re-derived
+**Gate:** no stale-row or capacity edge can affect results; scalar/fallback
+goldens and checked arithmetic pass. Any equal-work C comparison is
+informational and must use the §11 contract; it is not a correctness or merge
+gate.
 
-- **SIMD backends** (SSE/AVX2/NEON behind the parity seam) — after M7, only
-  with M3-style measurements per backend; intra-sequence row-wise only
-  (inter-sequence bucketing is the documented dead end).
-- **Grapheme-proxy pre-segmentation tier** (nucleo's model) — when a
-  consumer needs grapheme-stable positions beyond byte offsets.
-- **Bigram content index** (`PKM6`) — grep-source scale only; it is a
-  content index, not a path prefilter (the catalog corrects the earlier
-  assumption).
-- **`type:` constraint semantics** — reserved as a parse error until a real
-  extension-mapping design exists.
+## M4 — composite rank and global top-K
 
-## Verification
+- Implement every SPEC §6 term, exact filename/path placement, score breakdown,
+  total order, bounded heap, pagination, and accumulator revisions.
 
-Per milestone: `dub test :fuzzy` (attribute-gated), the differential/oracle
-suites, `dub test :fuzzy -b bench -- --bench --perf` with a committed
-snapshot when a gate is claimed, and `nix run .#ci -- --test --fail-fast`
-repo-wide before merge. Docs changes keep `npm run docs:build` and
-`nix run .#ci -- --check-docs-sidebar` green.
+**Gate:** property tests compare every page against a full stable sort under
+random iteration orders, offsets, limits, ties, and overflow edges; ranking
+goldens include camel/snake and directory-vs-filename cases.
+
+## M5 — bounded history models
+
+- Implement deterministic fixed-point access decay, modification interpolation,
+  fixed-capacity frecency/combo tables, stable IDs, and LRU eviction.
+
+**Gate:** half-life/retention knots, out-of-order/future time, saturation,
+eviction, and empty-query ranking are exact and machine-independent.
+
+## M6 — pure chunked search
+
+- Implement concrete search cursor/status/accumulator types, dual work limits,
+  candidate evaluation/match/rank composition, and conservative refinement
+  with survivor-plus-tail only for a complete retained set and an explicit
+  full-rescan fallback otherwise.
+
+**Gate:** arbitrary chunk partitions produce the same final result as one full
+scan; mismatched cursor fields, sink epochs, revisions, capacity exhaustion,
+and every stop reason are covered.
+
+## M7 — F0 release gate
+
+- Complete the Diátaxis tree, public API tables, benchmark report, and
+  requirement trace.
+- Run package, docs, Nix source-registration, and repository tests.
+
+**Gate:** `sparkles:fuzzy` satisfies `PKM1`–`PKM5`, `PKQ*`, `PKR1`–`PKR3`,
+and the library half of `PKR4`; hue P0 consumes it without private patches.
+
+## Hue milestones
+
+- **P0:** picker value state, `Finder`, files source, immutable query/corpus
+  generations, fixed-capacity raw-job scheduling, real duration deadline,
+  generation cancellation, global partial top-K, synchronous fallback, and a
+  visible score-breakdown debug toggle. Owns `PIK1`–`PIK8`, `PKS1`, and the UI
+  half of `PKR4`.
+- **P1/P2:** shared GUI/TUI layouts and existing document-pipeline preview.
+- **P3:** versioned bounded history persistence and recent source. Owns
+  `PKR5`/`PKR6`; it uses the in-memory `PKR2`/`PKR3` model delivered by F0.
+- Later picker milestones remain as listed in `picker.md`.
+
+## Deferred profiles and optimizations
+
+- ICU locale-aware folding/stemming and CJK/bigram analysis are follow-up
+  analyzer packages behind the public seam.
+- SIMD score backends require bit parity and M3-style measurement.
+- A content bigram index remains `PKM6`; it is not a path prefilter.
+
+## Verification commands
+
+Fast iteration uses `dub test :base`, `dub test :event-horizon`,
+`dub test :fuzzy`, and `dub test :hue`. Before a milestone is declared done,
+run its checked/benchmark gates, the Linux allocation audit
+(`dub test :fuzzy --config=allocation-audit`), the docs build/sidebar checks,
+and `nix run .#ci -- --test --fail-fast`.
