@@ -162,14 +162,19 @@ private uint viewWith(ref Builder b, in DockContainer c, in GalleryState s)
             Slot.docs),
         kv(b, "restore", "unknown panes drop; a split of one collapses", 16,
             Slot.docs),
+        kv(b, "keyboard routes", "resize and tab switching, same clamps", 16,
+            Slot.docs),
     ]);
     body_ ~= spacer(b);
     body_ ~= para(b,
-        "Every one of those is reachable from the keyboard as well: w/e/n/s "
-        ~ "re-dock the focused pane against its neighbour, which is the same "
-        ~ "pure layout-to-layout step the drop applies. A container whose "
-        ~ "only route to a feature is a drag has nothing to offer a target "
-        ~ "without a pointer.", w);
+        "Every one of those is reachable from the keyboard as well, and the "
+        ~ "routes belong to the container rather than to this page: h/l ask it "
+        ~ "to resize, [ and ] to switch tabs — through the same clamp and the "
+        ~ "same redistribution a drag runs, so a key cannot reach a size a "
+        ~ "drag refuses. w/e/n/s re-dock the focused pane against its "
+        ~ "neighbour, which is the same pure layout-to-layout step the drop "
+        ~ "applies. A container whose only route to a feature is a drag has "
+        ~ "nothing to offer a target without a pointer.", w);
 
     return column(b, body_);
 }
@@ -334,25 +339,17 @@ bool handleKey(ref GalleryState s, in KeyEvent k)
             switch (k.ch)
             {
                 case 'h', 'l':
-                {
-                    // The keyboard route to the divider, through the same
-                    // clamped drag the pointer runs.
-                    const node = s.dock.layout.nodeOf(sidePane);
-                    auto ext = s.dock.layout.nodes[node].extent
-                        + (k.ch == 'l' ? 2 : -2);
-                    s.dock.layout.nodes[node].extent = ext;
-                    ensure(s); // arrange re-clamps against the constraints
+                    // The keyboard route to the divider is the container's
+                    // own (DCK12): it runs the same clamp and the same
+                    // neighbour redistribution the pointer drag does, so a
+                    // page cannot grow a second opinion about either.
+                    s.dock.resizeBy(sidePane, k.ch == 'l' ? 2 : -2);
                     return true;
-                }
                 case '[', ']':
-                {
-                    // Tab switching without a pointer (DCK12).
-                    const next = s.dock.focused == docPane ? notesPane : docPane;
-                    s.dock.layout.activate(next);
-                    s.dock.focused = next;
-                    ensure(s);
+                    // Tab switching without a pointer, likewise container-
+                    // owned — including handing the shown pane the keyboard.
+                    s.dock.activateNext(k.ch == ']' ? 1 : -1);
                     return true;
-                }
                 case 'f':
                     s.dock.focusNext();
                     return true;
