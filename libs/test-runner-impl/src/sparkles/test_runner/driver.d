@@ -586,8 +586,15 @@ DriverOutcome runBetterCTests(Test[] betterCTests, Test[] allTests, in DriverOpt
     // and not just its templates. Anything beyond that — a sibling module, or
     // a std module such as `--include-import=std.ascii` — is opt-in, and every
     // module compiled in must be betterC-codegen-clean.
+    // `-checkaction=C` states the assert action the tests are written against
+    // rather than inheriting it: a failed `assert` goes to the C library's,
+    // which prints the message and aborts. `-betterC` already implies this
+    // (verified: identical output with and without the flag), but the helpers
+    // in `sparkles.base.smallbuffer` reach for `assert(false, msg)` precisely
+    // *because* `throw` is illegal here, so the pairing should be visible at
+    // the compile site instead of resting on another switch's default.
     const compile = run(
-        [compiler, "-betterC", "-of=" ~ binary]
+        [compiler, "-betterC", "-checkaction=C", "-of=" ~ binary]
             ~ autoIncludeFlags(betterCTests, options) ~ includeFlags(options)
             ~ importFlags ~ [sourceFile],
         options.verbose);
