@@ -26,6 +26,8 @@ dependency "sparkles:fuzzy" path="../.."
 dependency "sparkles:event-horizon" path="../.."
 // The files finder reuses the repository's nested-.gitignore walker (`PKS1`).
 dependency "sparkles:build-primitives" path="../.."
+// Coverage ingestion for the `--overlay coverage` gutter (`COV1`).
+dependency "sparkles:code-instrumentation" path="../.."
 // The terminal UI stack: the interactive viewer (src/tui.d) and the `--twoslash`
 // overlay (src/twoslash_tui.d) both paint into a sparkles:tui cell grid and let
 // the library cell-diff each frame. Pulled by every config (the cell grid is

@@ -30,6 +30,7 @@ import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
 // The shared scroll-step convention: this file is a wheel PRODUCER, so it
 // applies the notch multiplier itself (INP12).
 import sparkles.base.term_control : PointerShape;
+import sparkles.code_instrumentation : CoveragePlan;
 import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
     Mods, PointerAction, PointerButton, PointerEvent, WheelEvent;
 import sparkles.input.frame : InputFrame, foldFrame;
@@ -53,7 +54,7 @@ import gui_text : Match;
 // Markdown-preview model (raylib-free) and the ANSI-fence decoder.
 import diff_session : DiffSession;
 import diff_view : TypeOverlay;
-import document : DiffSides, Document;
+import document : DiffEmphasis, DiffSides, Document;
 import gui_preview : PreviewModel, stripSgr;
 import sparkles.diff.model : DiffDoc;
 import gui_ansi : decodeAnsi;
@@ -240,6 +241,8 @@ struct GuiArgs
     DiffDoc initialDiff = DiffDoc.init;  // diff document payload (ContentKind.diff)
     DiffSides[] initialDiffSides = null; // per-file side texts (DVM5)
     DiffSession initialDiffSession = DiffSession.init; // changed-file session (DVS4)
+    CoveragePlan initialCoverage = CoveragePlan.init; // gutter overlay (COV2)
+    bool initialHasCoverage = false;     // ditto
     GuiCapture capture = GuiCapture.init; // deterministic-capture hooks (CLI6)
 }
 /// The GUI run's whole mutable state (`P2.B4` second slice): every
@@ -759,7 +762,7 @@ int runGui(GuiArgs guiArgs) @system
         vm.widthCols = widthCols();
         vm.setDocument(name, summary, doc.source, doc.events, doc.preview,
             doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides, doc.diffSession,
-            doc.diffEmphasis);
+            doc.diffEmphasis, doc.coverage, doc.hasCoverage);
         vm.docPath = path; // .editorconfig discovery + {path} (format preview)
         dsvCopy = DsvCopy.of(doc.dsvText, doc.dsvInfo);
         cm.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
@@ -1288,8 +1291,11 @@ int runGui(GuiArgs guiArgs) @system
                     TextStyle(0), vm.gutterFg);
             }
 
-            // Source line numbers in the gutter — from the row's source range
-            // (first visual row of each source line only).
+            // Source line numbers in the gutter — from the row's source
+            // range (first visual row of each source line only). Coverage
+            // counts are NOT drawn here: they are a column inside the
+            // document's widget tree, so every backend gets them from one
+            // producer instead of this one painting its own.
             if (gcols > 0)
             {
                 size_t prevLine = size_t.max;
@@ -3335,7 +3341,8 @@ int runGui(GuiArgs guiArgs) @system
         vm.anchorMode = scrollAnchor; // `NAV5`: what a resize re-finds
         vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
             source, events, preview, twoslash, docLang, initialDiff,
-            initialDiffSides, initialDiffSession);
+            initialDiffSides, initialDiffSession, DiffEmphasis.init,
+            initialCoverage, initialHasCoverage);
         vm.docPath = docPath;
         // `FMV8`: --format-preview starts the session on the opening file.
         if (formatPreview)
