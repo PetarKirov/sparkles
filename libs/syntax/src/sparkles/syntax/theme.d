@@ -184,9 +184,9 @@ unittest
     const labels = LabelSet.standard();
     const wrapped = resolveTheme(theme, labels);
 
-    import std.array : appender;
+    import sparkles.base.smallbuffer : SmallBuffer;
 
-    auto buf = appender!(StyleSpec[]);
+    SmallBuffer!StyleSpec buf;
     StyleSpec defaults;
     buf.writeThemeStyles(theme, labels, defaults);
 

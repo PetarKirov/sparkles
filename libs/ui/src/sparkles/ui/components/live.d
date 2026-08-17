@@ -17,6 +17,7 @@ so a thrown exception never leaves the cursor hidden.
 +/
 module sparkles.ui.components.live;
 
+import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_control : CtlSeq, writeCursorUp;
 
 /// See the module documentation. Not copyable — the region owns cursor state.
@@ -138,14 +139,13 @@ struct LiveRegion
     private void paintLines(string[] lines)
     {
         import sparkles.base.text.width : truncateField;
-        import std.array : appender;
 
         const w = _width();
         foreach (line; lines)
         {
             if (w > 0)
             {
-                auto clamped = appender!string;
+                SmallBuffer!(char, 256) clamped;
                 truncateField(clamped, line, w);
                 _sink(clamped[]);
             }

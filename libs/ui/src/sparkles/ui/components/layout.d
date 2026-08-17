@@ -6,6 +6,8 @@ tables next to plain text, ANSI styling and all.
 +/
 module sparkles.ui.components.layout;
 
+import sparkles.base.smallbuffer : SmallBuffer;
+
 /// Join `blocks` (each a rendered multi-line string) side by side with `gap`
 /// spaces between columns. Blocks are top-aligned; a block shorter than the
 /// tallest one contributes blank space below. Trailing whitespace on each
@@ -37,7 +39,7 @@ string hjoin(const(string)[] blocks, size_t gap = 2) @safe
     auto out_ = appender!string;
     foreach (row; 0 .. height)
     {
-        auto line = appender!string;
+        SmallBuffer!(char, 256) line;
         foreach (c, col; columns)
         {
             if (c)
@@ -54,7 +56,7 @@ string hjoin(const(string)[] blocks, size_t gap = 2) @safe
 
 /// Trim trailing spaces (never touching ANSI escapes mid-line: only the plain
 /// right-pad `alignField` appended can trail).
-private string stripTrailing(string s) @safe pure nothrow @nogc
+private const(char)[] stripTrailing(return scope const(char)[] s) @safe pure nothrow @nogc
 {
     size_t end = s.length;
     while (end > 0 && s[end - 1] == ' ')

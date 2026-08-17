@@ -286,10 +286,11 @@ unittest
 @safe pure
 unittest
 {
-    import std.array : appender;
-    auto w = appender!string;
-    FileUriHook.writeSourceUri!("/home/user/project/main.d", size_t(42), size_t(5))(w);
-    assert(w[] == "file:///home/user/project/main.d#L42");
+    import sparkles.base.smallbuffer : checkWriter;
+
+    checkWriter!((ref w) => FileUriHook.writeSourceUri!(
+        "/home/user/project/main.d", size_t(42), size_t(5))(w))(
+        "file:///home/user/project/main.d#L42");
 }
 
 /// SchemeHook!"code" produces vscode:// URIs.
@@ -297,10 +298,11 @@ unittest
 @safe pure
 unittest
 {
-    import std.array : appender;
-    auto w = appender!string;
-    SchemeHook!"code".writeSourceUri!("/home/user/project/main.d", size_t(10), size_t(3))(w);
-    assert(w[] == "vscode://file/home/user/project/main.d:10:3");
+    import sparkles.base.smallbuffer : checkWriter;
+
+    checkWriter!((ref w) => SchemeHook!"code".writeSourceUri!(
+        "/home/user/project/main.d", size_t(10), size_t(3))(w))(
+        "vscode://file/home/user/project/main.d:10:3");
 }
 
 /// CTFE evaluation of uriFun from the table.

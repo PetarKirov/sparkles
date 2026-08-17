@@ -339,11 +339,9 @@ unittest
 @safe
 unittest
 {
-    import std.array : appender;
+    import sparkles.base.smallbuffer : checkToString;
 
-    auto buf = appender!string();
-    Vec3f(1, 2, 3).toString(buf);
-    assert(buf[] == "(x: 1, y: 2, z: 3)");
+    checkToString(Vec3f(1, 2, 3), "(x: 1, y: 2, z: 3)");
 }
 
 /// Swizzle read access supports arbitrary ordering and duplication.

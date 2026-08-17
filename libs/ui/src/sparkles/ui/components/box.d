@@ -7,6 +7,8 @@ import std.range : walkLength, repeat;
 import std.range.primitives : ElementType, empty, front, isInputRange, popFront;
 import std.format : format;
 
+import sparkles.base.smallbuffer : SmallBuffer;
+
 import sparkles.base.text.grapheme : visibleWidth;
 
 /// How a title too wide for `maxWidth` is handled. Only takes effect when
@@ -281,7 +283,7 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
 
     // Derive the pre-rendered top region string from the items (render each at its
     // natural width). `drawBoxLines` / `string drawBox` keep consuming this unchanged.
-    auto topApp = appender!string;
+    SmallBuffer!(char, 512) topApp;
     foreach (it; topItems)
         topApp ~= it.lead ~ it.text ~ renderClose(it.close, it.text.visibleWidth);
 

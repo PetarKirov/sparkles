@@ -771,7 +771,7 @@ unittest
         {
             auto r = parseJsonDocument(doc);
             assert(r.hasValue);
-            auto generic = appender!string;
+            SmallBuffer!(char, 1024) generic;
             writeJson!opts(r.document.root, generic);
             JsonSink sink;
             writeJson!opts(r.document.root, sink);
@@ -830,22 +830,22 @@ unittest
         auto first = parseJsonDocument(doc);
         assert(first.hasValue);
 
-        auto minified = appender!string;
+        SmallBuffer!(char, 1024) minified;
         writeJson(first.document.root, minified);
         auto second = parseJsonDocument(minified[]);
         assert(second.hasValue, minified[]);
 
-        auto again = appender!string;
+        SmallBuffer!(char, 1024) again;
         writeJson(second.document.root, again);
         assert(minified[] == again[]); // minified form is a fixed point
 
         enum opts = JsonWriteOptions(pretty: true);
-        auto pretty = appender!string;
+        SmallBuffer!(char, 1024) pretty;
         writeJson!opts(second.document.root, pretty);
         auto third = parseJsonDocument(pretty[]);
         assert(third.hasValue, pretty[]);
 
-        auto fromPretty = appender!string;
+        SmallBuffer!(char, 1024) fromPretty;
         writeJson(third.document.root, fromPretty);
         assert(minified[] == fromPretty[]);
     }

@@ -578,7 +578,6 @@ static assert(isCanvas!CellGrid);
 @safe unittest
 {
     import std.algorithm.searching : canFind;
-    import std.array : appender;
 
     const fg = RgbColor(0xcc, 0xcc, 0xcc);
     const bg = RgbColor(0, 0, 0);
@@ -588,7 +587,9 @@ static assert(isCanvas!CellGrid);
     // b differs from a in one cell only.
     b.textRun(Point(1, 0), "X", Visual(fg: RgbColor(255, 0, 0)));
 
-    auto w = appender!string;
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 256) w;
     b.diff(w, a);
     const s = w[];
     // Cursor moved to row 1, col 2 (1-based) for the single changed cell.

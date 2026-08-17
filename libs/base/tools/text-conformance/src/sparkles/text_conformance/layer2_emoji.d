@@ -12,7 +12,10 @@
  */
 module sparkles.text_conformance.layer2_emoji;
 
-import std.array : appender, array, join;
+import sparkles.base.smallbuffer : SmallBuffer;
+import std.range.primitives : put;
+
+import std.array : array, join;
 import std.algorithm : map, splitter, filter, findSplit;
 import std.conv : to;
 import std.format : format;
@@ -51,9 +54,11 @@ LayerResult runLayer2(in Config cfg)
         if (cps.length == 0)
             continue;
 
-        auto buf = appender!string;
+        // `std.range.put` does the UTF-8 encoding a `dchar` needs;
+        // `SmallBuffer.put` only takes its own element type.
+        SmallBuffer!(char, 64) buf;
         foreach (cp; cps)
-            buf.put(cp);
+            put(buf, cp);
 
         ClusterMeasure[] clusters;
         foreach (u; buf[].byGraphemeCluster)

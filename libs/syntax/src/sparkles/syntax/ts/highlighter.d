@@ -873,7 +873,7 @@ unittest
     auto events = eventsForTest(config, source);
 
     const resolved = resolveTheme(builtinDark, LabelSet.standard());
-    auto html = appender!string;
+    SmallBuffer!(char, 512) html;
     renderHtml(source, events, resolved, html,
         HtmlOptions(mode: HtmlMode.cssClasses));
     assert(html[].canFind(`<span class="syn-constant-numeric">1</span>`), html[]);
@@ -886,9 +886,7 @@ unittest
 {
     auto config = jsonConfigForTest();
     const(char)[] fake = (cast(const(char)*) null)[0 .. 600UL << 20];
-    import std.array : appender;
-
-    auto sink = appender!(HighlightEvent[]);
+    SmallBuffer!HighlightEvent sink;
     auto result = highlight(config, fake, sink);
     assert(result.hasError);
     assert(result.error.code == TsErrorCode.sourceTooLarge);

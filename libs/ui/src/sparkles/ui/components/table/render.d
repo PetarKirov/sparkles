@@ -1422,11 +1422,11 @@ version (unittest) private void checkRender(string actual, string expected)
 @("drawTable.writer.matchesString")
 @system unittest
 {
-    import std.array : appender;
+    import sparkles.base.smallbuffer : SmallBuffer;
 
     static void checkWriterParity(T)(T cells, TableProps props)
     {
-        auto w = appender!string;
+        SmallBuffer!(char, 1024) w;
         drawTable(w, cells, props);
         assert(w[] == drawTable(cells, props));
     }
@@ -1440,7 +1440,7 @@ version (unittest) private void checkRender(string actual, string expected)
         TableProps.init);
 
     // Returns the writer by ref for chaining.
-    auto w = appender!string;
+    SmallBuffer!(char, 256) w;
     drawTable(w, [["x"]]).put("tail");
     assert(w[] == drawTable([["x"]]) ~ "tail");
 }

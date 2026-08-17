@@ -7,6 +7,8 @@
 /// instead of looping in-process.
 module app;
 
+import sparkles.base.smallbuffer : SmallBuffer;
+
 import std.stdio : stderr, writeln;
 
 import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
@@ -399,7 +401,6 @@ private int writePayload(P)(in CliParams cli, string samplePath, string outPath,
 /// `--verify` (`EXT3`): the payload on disk must match a fresh extraction.
 private int verifyPayload(P)(in CliParams cli, string samplePath, string outPath, P payload)
 {
-    import std.array : appender;
     import std.file : exists, readText;
 
     import sparkles.twoslash_d.emit : declareDPayload, twoslashPayloadLayout;
@@ -417,7 +418,7 @@ private int verifyPayload(P)(in CliParams cli, string samplePath, string outPath
     // silently reformatted every fixture (`e630631d`) without failing. Now the
     // layout is pinned, so the text is the contract too.
     declareDPayload(payload);
-    auto fresh = appender!string;
+    SmallBuffer!(char, 8192) fresh;
     auto enc = writeJSON!twoslashPayloadLayout(payload, fresh);
     if (enc.hasError)
     {

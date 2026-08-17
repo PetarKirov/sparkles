@@ -211,7 +211,6 @@ private int captureWidgetsHtml(string fixture, string outDir, string stem, int h
     import sparkles.ui.widget : WidgetTree;
     import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslash;
     import sparkles.base.term_color : RgbColor;
-    import std.array : appender;
 
     auto twRes = loadTwoslashFile(fixture);
     if (twRes.hasError)
@@ -250,7 +249,7 @@ private int captureWidgetsHtml(string fixture, string outDir, string stem, int h
     else
         tree = viewTwoslash(tw);
 
-    auto w = appender!string;
+    SmallBuffer!(char, 8192) w;
     writeWidgetHtmlPage(w, tree, pal, pageFg, pageBg, stem);
     const htmlPath = buildPath(outDir, stem ~ ".widgets.html");
     write(htmlPath, w[]);

@@ -269,12 +269,12 @@ void writeGridTemplate(Writer)(ref Writer w, in TrackSpec[] tracks)
 @("ui.tracks.gridTemplateEmission")
 @safe pure unittest
 {
-    import std.array : appender;
+    import sparkles.base.smallbuffer : assertRendered, SmallBuffer;
 
-    auto w = appender!string;
+    SmallBuffer!(char, 64) w;
     writeGridTemplate(w, [
         TrackSpec.fixed(12), TrackSpec.auto_, TrackSpec.fr(),
         TrackSpec.minmax(4, 8),
     ]);
-    assert(w[] == "12ch auto 1fr minmax(4ch,8ch)");
+    assertRendered("writeGridTemplate", w[], "12ch auto 1fr minmax(4ch,8ch)");
 }

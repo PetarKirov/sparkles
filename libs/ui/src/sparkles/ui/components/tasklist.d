@@ -71,6 +71,11 @@ string renderTaskLine(in TaskItem item, const Theme theme, size_t spinnerStep = 
     }
     if (item.elapsed > Duration.zero)
     {
+        // `Theme.paint` takes a `string` and hands it back unchanged when
+        // colours are off, so the staged text has to be GC-owned: a buffer
+        // here would only add an `idup` on top of the same allocation.
+        import std.array : appender;
+
         auto t = appender!string;
         t.put(" (");
         writeDuration(t, item.elapsed);

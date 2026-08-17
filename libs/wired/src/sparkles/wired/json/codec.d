@@ -104,11 +104,12 @@ Expected!(void, JsonError) writeJSONFile(
     JsonWriteOptions opts = JsonWriteOptions(pretty: true),
     alias keyLess = lexicalLess, T)(const T value, string path)
 {
-    import std.array : appender;
     import std.file : mkdirRecurse, rename, write;
     import std.path : dirName;
 
-    auto buf = appender!string;
+    // Staged whole, then written in one go — the buffer dies with the call,
+    // so it spills to its own heap block rather than the GC.
+    SmallBuffer!(char, 4096) buf;
     auto enc = writeJSON!(opts, keyLess)(value, buf);
     if (enc.hasError)
     {
@@ -1868,12 +1869,10 @@ version (unittest)
 @("wired.native.fromJSON.textRoundTrip")
 @safe unittest
 {
-    import std.array : appender;
-
     const source = NServer("localhost", 8080, ["web", "edge"], NMode.fastPath,
         Nullable!int(30), 3);
 
-    auto w = appender!string;
+    SmallBuffer!(char, 512) w;
     assert(!writeJSON(source, w).hasError);
     assert(w[] == `{"host":"localhost","port":8080,"tags":["web","edge"],`
             ~ `"mode":"fastPath","timeout":30,"retries":3}`);
@@ -2007,7 +2006,7 @@ version (unittest)
     m.counts = ["zulu": 26, "alpha": 1];
     m.flag = Ternary.unknown;
 
-    auto w = appender!string;
+    SmallBuffer!(char, 512) w;
     assert(!writeJSON(m, w).hasError);
     assert(w[] == `{"counts":{"alpha":1,"zulu":26},"flag":null,"note":null}`);
 }
@@ -2015,7 +2014,6 @@ version (unittest)
 @("wired.native.writeJSON.nanErrorWithPath")
 @safe unittest
 {
-    import std.array : appender;
     import sparkles.base.smallbuffer : checkWriter;
 
     static struct Stats
@@ -2023,7 +2021,7 @@ version (unittest)
         double ratio;
     }
 
-    auto w = appender!string;
+    SmallBuffer!(char, 256) w;
     auto r = writeJSON(Stats(double.nan), w);
     assert(r.hasError);
     checkWriter!((ref b) => r.error.toString(b))(
@@ -2034,18 +2032,16 @@ version (unittest)
 @("wired.native.passthrough.jsonValueBothWays")
 @safe unittest
 {
-    import std.array : appender;
-
     // §4.2: JSONValue decodes as the owned generic escape hatch and
     // streams back with sorted keys; NaN inside is an encode error (O3).
     auto sub = fromJSON!JSONValue(`{"z": 1, "a": [true, "x"]}`);
     assert(sub.hasValue);
 
-    auto w = appender!string;
+    SmallBuffer!(char, 256) w;
     assert(!writeJSON(sub.value, w).hasError);
     assert(w[] == `{"a":[true,"x"],"z":1}`);
 
-    auto bad = appender!string;
+    SmallBuffer!(char, 256) bad;
     auto nanned = JSONValue(["k": JSONValue(double.nan)]);
     assert(writeJSON(nanned, bad).hasError);
 }
