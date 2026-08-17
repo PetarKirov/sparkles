@@ -621,6 +621,11 @@ export default withMermaid(
               ],
             },
             {
+              text: 'DMD-FMT',
+              collapsed: false,
+              items: [{ text: 'M0 Decision Record', link: '/specs/dmd-fmt/' }],
+            },
+            {
               text: 'DMD-LSP',
               collapsed: false,
               items: [
