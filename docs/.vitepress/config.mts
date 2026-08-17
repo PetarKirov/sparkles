@@ -316,6 +316,57 @@ export default withMermaid(
               ],
             },
             {
+              text: 'code-instrumentation',
+              link: '/libs/code-instrumentation/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Tutorial',
+                  collapsed: false,
+                  items: [
+                    {
+                      text: 'Getting started',
+                      link: '/libs/code-instrumentation/tutorial/getting-started',
+                    },
+                  ],
+                },
+                {
+                  text: 'How-to guides',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Handle parse failures',
+                      link: '/libs/code-instrumentation/how-to/handle-parse-failures',
+                    },
+                    {
+                      text: 'Match a report to a source file',
+                      link: '/libs/code-instrumentation/how-to/match-a-source-file',
+                    },
+                  ],
+                },
+                {
+                  text: 'Reference',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'API',
+                      link: '/libs/code-instrumentation/reference/api',
+                    },
+                  ],
+                },
+                {
+                  text: 'Explanation',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Why the parsers look the way they do',
+                      link: '/libs/code-instrumentation/explanation/format-quirks',
+                    },
+                  ],
+                },
+              ],
+            },
+            {
               text: 'core-cli',
               collapsed: false,
               items: [
