@@ -33,3 +33,4 @@ public import sparkles.base.text.width;
 public import sparkles.base.text.grapheme;
 public import sparkles.base.text.wrap;
 public import sparkles.base.text.lineindex;
+public import sparkles.base.text.analysis;

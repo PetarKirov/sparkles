@@ -264,6 +264,10 @@ export default withMermaid(
                       link: '/libs/base/how-to/parse-text-readers',
                     },
                     {
+                      text: 'Analyze Unicode text',
+                      link: '/libs/base/how-to/analyze-unicode-text',
+                    },
+                    {
                       text: 'Own heap values without the collector',
                       link: '/libs/base/how-to/own-heap-values',
                     },
@@ -288,6 +292,10 @@ export default withMermaid(
                     {
                       text: 'Percent-encoding',
                       link: '/libs/base/reference/percent-encoding',
+                    },
+                    {
+                      text: 'Unicode analysis',
+                      link: '/libs/base/reference/unicode-analysis',
                     },
                   ],
                 },
