@@ -193,14 +193,46 @@ private int runParsedCliImpl(Parent, Cli, Program)(ref Cli cli, ref Program prog
 /// Shared parser for a single command level. The receiver is either the
 /// raw user struct (when `Cli` has no subcommand children) or a
 /// `CommandNode!Cli` wrapper (when it has children of either kind).
+/**
+ * Hands an option a subcommand does not recognize back up to its parent.
+ *
+ * A `@Flatten`ed option group on the root command belongs to the whole
+ * program, not to the position it happens to be typed in, so
+ * `tool sub --root-opt` has to reach the root's receiver. The parent supplies
+ * this closure over its own receiver *and its own `seen` map* — the latter
+ * matters, because `validateRequired` runs per command, and a root option
+ * recorded against the subcommand would leave the root reporting it missing.
+ *
+ * Returns `ok(true)` when the parent consumed the token (and advanced
+ * `index` past its value), `ok(false)` when it did not recognize it either.
+ */
+package alias ParentOptionHandler =
+    CliExpected!bool delegate(ref string[] args, ref size_t index);
+
+/// The subcommand names selectable at this point in the parse, used both to
+/// dispatch and to stop a variadic option from swallowing one.
+private string[] childCommandNames(Cli)() @safe
+{
+    string[] names;
+    static foreach (Child; allChildren!Cli)
+        names ~= commandNames!Child();
+    return names;
+}
+
 private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
     ref Receiver receiver,
     string[] args,
     HelpInfo helpInfo,
     bool keepUnknown = false,
+    ParentOptionHandler parentOption = null,
 )
 {
     enum hasChildren = allChildren!Cli.length > 0;
+    // A variadic option must not eat the subcommand that follows its values.
+    static if (hasChildren)
+        const commandBoundary = childCommandNames!Cli();
+    else
+        const string[] commandBoundary = null;
 
     static if (isCommandNode!Receiver)
         ref valueOf() return @trusted => receiver.value;
@@ -238,10 +270,22 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
             if (!namedArgsEnded && !arg.startsWith("-"))
             {
                 auto subArgs = args[index + 1 .. $];
+                // Chains upward: this command tries the token itself, then
+                // defers to its own parent, so depth is not a special case.
+                ParentOptionHandler handOff =
+                    (ref string[] a, ref size_t i)
+                    {
+                        auto here = parseNamedOption(valueOf(), a, i, seen, commandBoundary);
+                        if (!here || here.value)
+                            return here;
+                        if (parentOption !is null)
+                            return parentOption(a, i);
+                        return here;
+                    };
                 auto selected = dispatchChild!(Root, Cli)(
                     receiver.command,
                     receiver.commandSelected,
-                    arg, subArgs, helpInfo, keepUnknown,
+                    arg, subArgs, helpInfo, keepUnknown, handOff,
                 );
 
                 if (selected)
@@ -263,11 +307,23 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
 
         if (!namedArgsEnded && arg.startsWith("-") && arg.length > 1)
         {
-            auto parsed = parseNamedOption(valueOf(), args, index, seen);
+            auto parsed = parseNamedOption(valueOf(), args, index, seen, commandBoundary);
             if (parsed)
             {
                 if (parsed.value)
                     continue;
+
+                // Not ours — offer it to the parent before giving up, so a
+                // root-level option reads the same before and after the
+                // subcommand name.
+                if (parentOption !is null)
+                {
+                    auto viaParent = parentOption(args, index);
+                    if (!viaParent)
+                        return error!(string[])(viaParent.error);
+                    if (viaParent.value)
+                        continue;
+                }
 
                 if (keepUnknown)
                 {
@@ -322,6 +378,7 @@ private CliExpected!(string[]) dispatchChild(Root, Parent)(
     ref string[] args,
     HelpInfo parentHelp,
     bool keepUnknown,
+    ParentOptionHandler parentOption = null,
 )
 {
     static foreach (CommandType; allChildren!Parent)
@@ -330,7 +387,8 @@ private CliExpected!(string[]) dispatchChild(Root, Parent)(
         {
             CommandNode!CommandType command;
             auto info = childHelpInfo!(Root, CommandType)(parentHelp);
-            auto parsed = parseCommandImpl!(Root, CommandType)(command, args, info, keepUnknown);
+            auto parsed = parseCommandImpl!(Root, CommandType)(
+                command, args, info, keepUnknown, parentOption);
             if (!parsed)
                 return parsed;
 
@@ -432,6 +490,7 @@ private CliExpected!bool parseNamedOption(Cli)(
     ref string[] args,
     ref size_t index,
     ref bool[string] seen,
+    const string[] commandBoundary = null,
 )
 {
     auto arg = args[index];
@@ -463,11 +522,12 @@ private CliExpected!bool parseNamedOption(Cli)(
 
             args = args[0 .. index] ~ bundled ~ args[index + 1 .. $];
             // Retry with the first split option
-            return parseNamedOption(receiver, args, index, seen);
+            return parseNamedOption(receiver, args, index, seen, commandBoundary);
         }
     }
 
-    return applyNamedOption!Cli(receiver, name, isLong, inlineValue, hasInlineValue, args, index, seen, "");
+    return applyNamedOption!Cli(receiver, name, isLong, inlineValue, hasInlineValue,
+        args, index, seen, "", commandBoundary);
 }
 
 private CliExpected!bool applyNamedOption(Cli)(
@@ -480,6 +540,7 @@ private CliExpected!bool applyNamedOption(Cli)(
     ref size_t index,
     ref bool[string] seen,
     string prefixPath,
+    const string[] commandBoundary = null,
 )
 {
     static foreach (field; FieldNameTuple!Cli)
@@ -512,6 +573,7 @@ private CliExpected!bool applyNamedOption(Cli)(
                     index,
                     effectiveInlineValue,
                     effectiveHasInlineValue,
+                    commandBoundary,
                 );
                 if (!parsed)
                     return error!bool(parsed.error);
@@ -532,6 +594,7 @@ private CliExpected!bool applyNamedOption(Cli)(
                 index,
                 seen,
                 prefixPath ~ field ~ ".",
+                commandBoundary,
             );
             if (!parsed)
                 return error!bool(parsed.error);
@@ -550,6 +613,7 @@ private CliExpected!void applyOption(string field, T)(
     ref size_t index,
     string inlineValue,
     bool hasInlineValue,
+    const string[] commandBoundary = null,
 )
 {
     import sparkles.core_cli.args.help_formatting : formatOptionValueHelp;
@@ -591,7 +655,8 @@ private CliExpected!void applyOption(string field, T)(
         }
 
         enum isVariadic = isDynamicArray!T && !isSomeString!T;
-        auto values = collectValues(args, index, inlineValue, hasInlineValue, isVariadic);
+        auto values = collectValues(args, index, inlineValue, hasInlineValue,
+            isVariadic, commandBoundary);
         if (values.empty)
             return error(CliError(
                 kind: CliError.Kind.parse,
@@ -648,12 +713,30 @@ private bool isOptionHelpToken(string value) @safe pure nothrow @nogc
     return value == "?" || value == "help";
 }
 
+/**
+ * Collects an option's value(s) from `args` starting at `index`.
+ *
+ * A variadic option keeps taking values until the next `-`-prefixed token —
+ * `--files a.d b.d` is two files, which the CLI contract pins — or until a
+ * token names a subcommand of the command being parsed. Without that second
+ * stop, `tool --files a.d sub` silently swallows `sub` as a third file and
+ * the program then reports a missing subcommand, blaming the user for the
+ * parser's greed.
+ *
+ * The boundary applies to every value, including the first: `--files sub`
+ * reads as a subcommand with no files, and the resulting "Missing value for
+ * --files" names the real problem, where silently eating `sub` would produce
+ * a "Missing subcommand" that points nowhere. A value that genuinely collides
+ * with a subcommand name is still reachable through the inline form,
+ * `--files=a.d,sub`, or after `--`.
+ */
 private string[] collectValues(
     string[] args,
     ref size_t index,
     string inlineValue,
     bool hasInlineValue,
     bool variadic,
+    const string[] commandBoundary = null,
 ) @safe
 {
     if (hasInlineValue)
@@ -667,6 +750,9 @@ private string[] collectValues(
     while (index < args.length)
     {
         if (args[index].startsWith("-"))
+            break;
+
+        if (variadic && commandBoundary.canFind(args[index]))
             break;
 
         result ~= args[index];
@@ -1294,6 +1380,104 @@ unittest
     assert(parsed.error.isHelp);
     assert(parsed.error.help.canFind("NAME"));
     assert(parsed.error.help.canFind("--verbose"));
+}
+
+@("args.parseCli.rootOptionAfterSubcommand")
+@system
+unittest
+{
+    // A `@Flatten`ed group on the root belongs to the program, not to the
+    // position it is typed in: it must parse on either side of the
+    // subcommand name, in both the inline and space-separated forms.
+    struct Shared
+    {
+        @(Option("cov"))
+        string cov;
+
+        @(Option("log-level"))
+        string logLevel = "warning";
+    }
+
+    @(Command("view", isDefault: true))
+    struct View
+    {
+        @(Argument("paths", optional: true))
+        string[] paths;
+    }
+
+    @(Command("tool"))
+    struct Cli
+    {
+        @Flatten
+        Shared shared_;
+
+        @Subcommands
+        SumType!View command;
+    }
+
+    // Before the subcommand — the form that already worked.
+    auto before = parseCli!Cli(["tool", "--cov=c.lst", "view", "m.d"]);
+    assert(before, before.error.message);
+    assert(before.value.shared_.cov == "c.lst");
+
+    // After the subcommand — the form that used to fail "Unknown option".
+    auto after = parseCli!Cli(["tool", "view", "--cov=c.lst", "m.d"]);
+    assert(after, after.error.message);
+    assert(after.value.shared_.cov == "c.lst");
+
+    // Space-separated after the subcommand: the parent consumes the value
+    // too, so it must not be left behind as a positional.
+    auto spaced = parseCli!Cli(["tool", "view", "--cov", "c.lst", "m.d"]);
+    assert(spaced, spaced.error.message);
+    assert(spaced.value.shared_.cov == "c.lst");
+
+    // An option nobody knows is still an error, not silently swallowed.
+    auto bogus = parseCli!Cli(["tool", "view", "--nope"]);
+    assert(!bogus);
+    assert(bogus.error.message == "Unknown option --nope");
+}
+
+@("args.parseCli.variadicStopsAtSubcommand")
+@system
+unittest
+{
+    // A variadic option stays greedy — `--files a.d b.d` is two files — but
+    // must not swallow the subcommand that follows, which used to leave the
+    // parse reporting "Missing subcommand" against a correct command line.
+    @(Command("build"))
+    struct Build
+    {
+        @(Argument("target", optional: true))
+        string target;
+    }
+
+    @(Command("tool"))
+    struct Cli
+    {
+        @(Option("files"))
+        string[] files;
+
+        @Subcommands
+        SumType!Build command;
+    }
+
+    auto parsed = parseCli!Cli(["tool", "--files", "a.d", "b.d", "build", "x"]);
+    assert(parsed, parsed.error.message);
+    assert(parsed.value.files == ["a.d", "b.d"]);
+    assert(parsed.value.commandSelected);
+
+    // The boundary wins even for the first value, so `--files build` reads
+    // as a subcommand with no files rather than silently eating it. The
+    // resulting "Missing value" names the real problem; `--files=build`
+    // is the escape hatch for a value that is genuinely called `build`.
+    auto sole = parseCli!Cli(["tool", "--files", "build"]);
+    assert(!sole);
+    assert(sole.error.message == "Missing value for --files");
+
+    auto inline = parseCli!Cli(["tool", "--files=a.d,build", "build"]);
+    assert(inline, inline.error.message);
+    assert(inline.value.files == ["a.d", "build"]);
+    assert(inline.value.commandSelected);
 }
 
 @("args.parseCli.explicitNoPrefixedOptionWins")
