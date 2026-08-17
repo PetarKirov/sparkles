@@ -37,6 +37,7 @@ _Task-oriented._ Short recipes for common jobs.
 - [Style templates with IES](./how-to/style-text-templates.md)
 - [Pretty-print values](./how-to/prettyprint-values.md)
 - [Parse text with readers](./how-to/parse-text-readers.md)
+- [Analyze Unicode text without allocation](./how-to/analyze-unicode-text.md)
 - [Own a heap value without the collector](./how-to/own-heap-values.md)
 - [Test `@nogc` code with check helpers](./how-to/test-with-check-helpers.md)
 
@@ -47,6 +48,7 @@ _Information-oriented._ Lookup material for modules and symbols.
 - [API index](./reference/api.md)
 - [Base codecs](./reference/base-codecs.md)
 - [Percent-encoding](./reference/percent-encoding.md)
+- [Unicode analysis](./reference/unicode-analysis.md)
 
 ### Explanation
 
