@@ -29,6 +29,14 @@ buildType "checked" {
     buildOptions "optimize" "inline" "debugInfo"
 }
 
+// The optimized unittest/benchmark build — `checked`'s philosophy (asserts
+// alive, never -release) plus the unittest machinery. dub resolves --build
+// against the ROOT package, so run it from this directory:
+//     dub test --build=unittest-checked -- --bench
+buildType "unittest-checked" {
+    buildOptions "unittests" "optimize" "inline" "debugInfo"
+}
+
 configuration "library" {
     targetType "library"
 }

@@ -47,16 +47,30 @@ whole-file latency ever stops holding.
 ### D3 — Latency budget: p95 < 30 ms per 2 kLOC, full pipeline
 
 Adopted as proposed, and it governs the **full** path (lex + parse + oracle +
-groups), not a lexer-only fast path. Measured on a synthetic 2 kLOC module
-(`bench.d`, debug build, LDC, this machine):
+groups), not a lexer-only fast path. Measured (`bench.d`, LDC, this machine)
+on a synthetic 2 kLOC module and on the pinned frontend's own
+`expressionsem.d` — at ~20 kLOC one of the largest real-world D files in
+existence, now a standing corpus member (read from
+`$SPARKLES_FLAKE_INPUT_DMD_SRC`; round-trip and group-well-formedness tests
+cover it too). The optimized build is
+`unittest-checked` (optimize + inline with asserts alive — the repo's
+`checked` philosophy; never `-release`):
 
-| Stage                              | median | max    |
-| ---------------------------------- | ------ | ------ |
-| spine lex (trivia config)          | 1.8 ms | 2.2 ms |
-| parse + oracle facts               | 1.7 ms | 2.8 ms |
-| full pipeline (lex + parse + tree) | 5.0 ms | 9.9 ms |
+| Stage (median)                     | 2 kLOC, debug | 2 kLOC, optimized | 20 kLOC real, optimized |
+| ---------------------------------- | ------------- | ----------------- | ----------------------- |
+| spine lex (trivia config)          | 1.8 ms        | 1.1 ms            | 10.2 ms                 |
+| parse + oracle facts               | 1.7 ms        | 0.87 ms           | 9.6 ms                  |
+| full pipeline (lex + parse + tree) | 5.0 ms        | 2.7 ms            | **25.7 ms** (max 31.6)  |
 
-A 6× margin in a debug build retires the tiered fast-path question for now:
+The optimized 2 kLOC pipeline holds the budget with a ~10× margin, and the
+20 kLOC outlier — whole file, not per-2 kLOC — still lands at ~26 ms: even
+the extreme case of D2's format-everything range model is interactive. Two
+readings worth recording: the spine lex is now the largest single stage on
+big files (so D4's second doc-lex, which runs on the verify path, roughly
+doubles the lexing share there), and per-2 kLOC cost stays flat (~2.6 ms)
+from 2 to 20 kLOC — the pipeline scales linearly as designed.
+
+That margin retires the tiered fast-path question for now:
 no lexer-only keystroke tier is designed in v1. The decision is
 **measurement-contingent** — the benchmarks stay in the suite, and if real
 files or the M2 printer push p95 near the budget, the reserved tier

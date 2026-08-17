@@ -588,3 +588,39 @@ private size_t countKind(const Group g, GroupKind kind) @safe pure nothrow
         n += countKind(child, kind);
     return n;
 }
+
+@("groups.s2.corpus.expressionsem-well-formed")
+@system unittest
+{
+    import core.exception : AssertError;
+
+    import std.file : exists, read;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    import sparkles.dmd_fmt.oracle : collectFacts;
+    import sparkles.dmd_fmt.spine : lexSpine;
+
+    const dmdSrc = environment.get("SPARKLES_FLAKE_INPUT_DMD_SRC", "");
+    assert(dmdSrc.length,
+        "SPARKLES_FLAKE_INPUT_DMD_SRC not set (enter `nix develop`)");
+    const path = buildPath(dmdSrc, "compiler", "src", "dmd", "expressionsem.d");
+    assert(path.exists,
+        "expressionsem.d missing under SPARKLES_FLAKE_INPUT_DMD_SRC: " ~ path);
+    const source = () @trusted { return cast(string) read(path); }();
+
+    auto spine = lexSpine(source);
+    auto facts = collectFacts(source);
+    assert(facts.parsed, "expressionsem.d must parse against its own grammar");
+    auto root = buildGroups(spine, facts);
+    if (const err = validateGroups(root))
+        throw new AssertError("expressionsem.d: " ~ err);
+    import std.conv : to;
+
+    // Observed: 396 declaration groups at the current pin (the file is a
+    // few enormous functions plus helpers). The floor guards against the
+    // oracle silently going blind, not against exact counts.
+    const decls = countKind(root, GroupKind.decl);
+    assert(decls > 300,
+        "implausibly few declarations for a 20 kLOC file: " ~ decls.to!string);
+}
