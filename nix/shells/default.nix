@@ -15,6 +15,22 @@
         lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") d-toolchain.env
       );
 
+      # Every flake input as a `/nix/store` path. `self` is omitted — interpolating
+      # it recurses / re-copies the tree into the shell closure. Name transform:
+      # `dmd-src` → `SPARKLES_FLAKE_INPUT_DMD_SRC`. See AGENTS.md
+      # "Flake-input store paths".
+      flakeInputPaths = lib.mapAttrs (_: v: toString v) (removeAttrs inputs [ "self" ]);
+      flakeInputEnvName =
+        name: "SPARKLES_FLAKE_INPUT_" + lib.toUpper (lib.replaceStrings [ "-" ] [ "_" ] name);
+      flakeInputExports = lib.concatStringsSep "\n" (
+        lib.mapAttrsToList (
+          name: path: "export ${flakeInputEnvName name}=${lib.escapeShellArg path}"
+        ) flakeInputPaths
+        ++ [
+          "export SPARKLES_ALL_FLAKE_INPUTS=${lib.escapeShellArg (builtins.toJSON flakeInputPaths)}"
+        ]
+      );
+
       # Python (3.11, the newest CPython PyD supports) with jquast wcwidth, for
       # the text-conformance harness Layer 10 (PyD-embedded Python wcwidth oracle).
       # PyD is hard-pinned to 3.11 (dub `subConfiguration "pyd" "python311"`), so
@@ -237,6 +253,11 @@
         ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true
 
         ${envExports}
+
+        # Raw flake-input store paths (`SPARKLES_FLAKE_INPUT_*` plus the
+        # `$SPARKLES_ALL_FLAKE_INPUTS` JSON map). dmd-fmt corpus tests assert
+        # `$SPARKLES_FLAKE_INPUT_DMD_SRC` exists — dropping this fails them.
+        ${flakeInputExports}
 
         # tree-sitter grammar bundle for sparkles:syntax (one dir per
         # language: parser + queries/). Tests skip when unset.
