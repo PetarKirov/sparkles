@@ -603,7 +603,8 @@ struct WorkspaceTui
         currentDocPath = path;
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
             startPreview: true, doc.twoslash, doc.lang, doc.diffDoc,
-            doc.diffSides, doc.diffSession, doc.diffEmphasis);
+            doc.diffSides, doc.diffSession, doc.diffEmphasis,
+            doc.coverage, doc.hasCoverage);
         viewer.docNote = doc.dsvNote;
         viewer.vm.docPath = path; // .editorconfig discovery (format preview)
         viewer.dsvCopy = DsvCopy.of(doc.dsvText, doc.dsvInfo);
@@ -1520,7 +1521,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             w.viewer.setDocument(fresh.title, fresh.source, fresh.events,
                 fresh.preview, startPreview: true, fresh.twoslash, fresh.lang,
                 fresh.diffDoc, fresh.diffSides, fresh.diffSession,
-                fresh.diffEmphasis);
+                fresh.diffEmphasis, fresh.coverage, fresh.hasCoverage);
             w.viewer.docNote = fresh.dsvNote;
             w.viewer.dsvCopy = DsvCopy.of(fresh.dsvText, fresh.dsvInfo);
             w.viewer.tableFmt = resolveTableCopy(w.tableCopyFlag,
@@ -1571,7 +1572,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         w.viewer.setDocument(initial.title, initial.source, initial.events,
             initial.preview, startPreview: true, initial.twoslash,
             initial.lang, initial.diffDoc, initial.diffSides,
-            initial.diffSession);
+            initial.diffSession, initial.diffEmphasis,
+            initial.coverage, initial.hasCoverage);
         w.viewer.docNote = initial.dsvNote;
         w.viewer.vm.docPath = isDir ? null : target;
         // `FMV8`: --format-preview starts the session on the opening file.

@@ -17,15 +17,20 @@ import std.file : readText;
 import std.path : baseName, extension;
 import std.string : chompPrefix;
 
-import sparkles.base.logger : warning;
+import sparkles.base.logger : info, warning;
 import sparkles.base.smallbuffer : SmallBuffer;
 import diff_session : buildDiffSession, DiffSession;
 import diff_commutative : CommutativeKind, defaultCommutativeKinds;
 import diff_structural : StructuralPolicy;
+import sparkles.code_instrumentation : CoverageFormat, CoveragePlan,
+    CoverageReport, FileCoverage, formatFromExtension, LineState, loadCoverage,
+    planCoverage;
 import sparkles.diff : DiffDoc, DiffOptions, diffText, emitPatch, FileEntry,
     parsePatch, RowKind, WhitespaceMode;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
     highlightInjected, MdBlock, ResolvedTheme, RgbColor, TsConfigCache;
+import sparkles.syntax.render.widgets : GutterCell, TintedRange;
+import sparkles.ui.style : Slot;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
 import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, dsvStatusNote;
@@ -79,6 +84,9 @@ struct Document
     DsvInfo dsvInfo;
     /// `kind == dsv`: the status-chrome readout (`DSK5`).
     string dsvNote;
+    /// Code coverage overlay plan
+    CoveragePlan coverage;
+    bool hasCoverage;
 }
 
 /**
@@ -163,6 +171,146 @@ The one loader. Owns the policy inputs (`--markdown` forces the markdown kind,
 consumer — the up-front document, set navigation, the gallery — runs the same
 pipeline. Load failures throw; the CLI shell reports them once.
 */
+/**
+Builds the per-line coverage gutter column for a document.
+
+`CoveragePlan.gutterItems` lists the lines the report *described*, not one
+entry per source line: only a DMD `.lst` is dense, while lcov, gcov and
+llvm-cov each describe a subset. Placing them by array position put every
+count on the wrong line for those three — each item carries the line number it
+belongs to, and this is the one place that gets honoured.
+
+Shared by the interactive viewer and the static ANSI writer so the column is
+produced once and every backend paints the same thing (`OVL2`/`OVL7`).
+
+Params:
+    plan = the planned overlay
+    lineCount = the document's source line count
+    width = receives the column width in cells: the widest count actually
+        present plus the separator. Derived rather than fixed, so a file whose
+        counts are all single digits does not pay four columns and a
+        `18446744073G` is not clipped.
+
+Returns: one cell per source line, or `null` when the plan says nothing.
+*/
+GutterCell[] coverageGutterCells(in CoveragePlan plan, size_t lineCount,
+    out int width) @safe
+{
+    if (plan.gutterItems.length == 0 || lineCount == 0)
+        return null;
+
+    auto cells = new GutterCell[](lineCount);
+    size_t widest;
+    foreach (ref item; plan.gutterItems)
+    {
+        if (item.lineNumber == 0 || item.lineNumber > cells.length)
+            continue;   // a report describing lines this file does not have
+        cells[item.lineNumber - 1] = GutterCell(item.countText,
+            coverageSlot(item.state),
+            paintBackground: item.state != LineState.nonCode);
+        if (item.countText.length > widest)
+            widest = item.countText.length;
+    }
+    if (widest == 0)
+        return null;
+    width = cast(int)(widest + 1);   // + the separator cell
+    return cells;
+}
+
+/**
+The sub-line ranges worth washing, from a plan's inline spans.
+
+Only the ranges that never ran are tinted. A covered span carries no
+information a reader does not already have from the gutter — everything on a
+covered line ran unless something says otherwise — so tinting them would wash
+most of the file for nothing. The dead ones are exactly what the line gutter
+cannot express: a `partial` line says part of it did not run, and this says
+which part.
+
+Ranges are emitted widest-first so a nested one paints over its container,
+matching how the parser nests them.
+
+Params:
+    plan = the planned overlay
+
+Returns: the ranges to tint, or `null` when the format carries no sub-line
+    data (every format except V8 today).
+*/
+TintedRange[] coverageTintedRanges(in CoveragePlan plan) @safe
+{
+    import std.algorithm.sorting : sort;
+
+    TintedRange[] ranges;
+    foreach (ref span; plan.inlineSpans)
+    {
+        if (span.executionCount != 0 || !span.span.isValid || span.span.empty)
+            continue;
+        ranges ~= TintedRange(span.span.startOffset, span.span.endOffset,
+            Slot.covUncovered);
+    }
+    // Widest first: `applyTints` lets the last writer win, so the narrowest
+    // range ends up on top.
+    ranges.sort!((a, b) => (a.end - a.start) > (b.end - b.start));
+    return ranges;
+}
+
+/// The palette slot for a line state, so all 36 themes and every backend
+/// resolve the same three colours instead of one backend's own literals.
+Slot coverageSlot(LineState state) @safe pure nothrow @nogc
+{
+    final switch (state)
+    {
+        case LineState.covered:   return Slot.covCovered;
+        case LineState.uncovered: return Slot.covUncovered;
+        case LineState.partial:   return Slot.covPartial;
+        case LineState.nonCode:   return Slot.gutter;
+    }
+}
+
+/**
+Resolves the source path a coverage artifact names, or `null` when it must not
+be opened.
+
+The path comes from the artifact's own contents, so it is untrusted input. It
+is accepted only when it resolves to a real file inside the directory tree the
+artifact itself sits in — the common shapes (`build/cov/math.lst` naming
+`libs/x/src/math.d`, relative to the repository root the listing was written
+from) all resolve within that tree, while `/etc/shadow` and `../../elsewhere`
+do not.
+
+Params:
+    artifactPath = the coverage file the user asked to open
+    namedPath = the source path recorded inside it
+
+Returns: the path to open, or `null` to decline.
+*/
+private string resolveCoveredSource(string artifactPath, string namedPath) @system
+{
+    import std.file : exists, isFile;
+    import std.path : absolutePath, buildNormalizedPath, dirName;
+    import std.algorithm.searching : startsWith;
+
+    if (namedPath.length == 0)
+        return null;
+
+    // The listing's paths are relative to wherever it was produced, which is
+    // some ancestor of the artifact. Walk up looking for a match, so a
+    // repository-root-relative path in `build/cov/*.lst` still resolves —
+    // while never leaving the tree the search started in.
+    const root = artifactPath.dirName.absolutePath.buildNormalizedPath;
+    for (string base = root; base.length > 1; base = base.dirName)
+    {
+        const candidate = buildNormalizedPath(base, namedPath);
+        if (!candidate.startsWith(base))
+            continue;                    // `..` climbed out of the tree
+        if (candidate.exists && candidate.isFile)
+            return candidate;
+        if (base.dirName == base)
+            break;
+    }
+    return null;
+}
+
 struct DocumentPipeline
 {
     GrammarRegistry* registry;
@@ -184,8 +332,65 @@ struct DocumentPipeline
     string dsvDelimiter; /// `--dsv-delimiter` ("" = sniff)
     string dsvQuote;     /// `--dsv-quote` ("" = sniff)
     string dsvHeader = "auto"; /// `--dsv-header` `auto|yes|no`
+    string coverageArtifact; /// `--cov` / `--overlay coverage=<path>`
 
 @system:
+
+    /**
+    Attaches coverage decorations to `doc` from the artifact at `covPath`.
+
+    Every way this can fail warns and leaves `doc` undecorated, which is the
+    overlay degradation contract (`OVL6`): a missing or unreadable artifact
+    renders the plain highlighted file, it never takes the document down with
+    it. That is only expressible now that the parsers report *why* they
+    failed — previously an unreadable artifact and one describing nothing
+    were the same empty report, so neither could be reported.
+    */
+    void attachCoverage(ref Document doc, string covPath)
+    {
+        import std.file : exists, isFile;
+
+        if (!covPath.length)
+            return;
+
+        string contents;
+        try
+        {
+            if (!covPath.exists || !covPath.isFile)
+            {
+                warning(i"coverage artifact not found: $(covPath)");
+                return;
+            }
+            contents = readText(covPath);
+        }
+        catch (Exception ex)
+        {
+            warning(i"coverage artifact unreadable: $(ex.msg)");
+            return;
+        }
+
+        auto parsed = loadCoverage(covPath, contents, doc.source);
+        if (!parsed)
+        {
+            warning(i"coverage artifact $(covPath) did not parse at byte $(parsed.error.offset): $(parsed.error.context)");
+            return;
+        }
+
+        const target = doc.path.length ? doc.path : doc.title;
+        const match = parsed.value.findFile(target);
+        if (match is null)
+        {
+            // Deliberately no "if there is exactly one file, use it" fallback.
+            // That is what silently painted one file's counts onto whatever
+            // else was open, and with the listing's own trailer path no longer
+            // overwritten there is a real path to match on.
+            warning(i"coverage artifact $(covPath) describes no entry for $(target)");
+            return;
+        }
+
+        doc.coverage = planCoverage(*match);
+        doc.hasCoverage = true;
+    }
 
     /// The kind `path` will load as. `forceTwoslash` is the `--twoslash`
     /// compatibility flag; the payload extension needs no flag.
@@ -222,6 +427,8 @@ struct DocumentPipeline
                     twoslash: twRes.value,
                 };
                 doc.events = highlight(doc.lang, doc.source);
+                if (coverageArtifact.length)
+                    attachCoverage(doc, coverageArtifact);
                 return doc;
             case diff:
                 return fromPatchSource(path, baseName(path), readText(path));
@@ -230,8 +437,50 @@ struct DocumentPipeline
                     path.extension.chompPrefix("."));
             case markdown:
             case code:
-                return fromSource(path, baseName(path), readText(path),
-                    language.length ? canonicalLanguage(language) : canonicalLanguage(path.extension.chompPrefix(".")));
+                const ext = path.extension.chompPrefix(".");
+                const contents = readText(path);
+                const lang = language.length ? canonicalLanguage(language)
+                    : canonicalLanguage(ext);
+                // Opening a coverage artifact shows the source it describes,
+                // with its own gutter. That means reading a path out of the
+                // file's *contents*, so it is fenced twice: only an extension
+                // that names a coverage format qualifies (content heuristics
+                // decide what a file *is*, never whether to open another one),
+                // and the path it names must resolve inside the artifact's own
+                // directory tree. Without those, `hue notes.md` on a markdown
+                // page about lcov displayed whatever path the page mentioned.
+                const covFmt = formatFromExtension(path);
+                if (covFmt != CoverageFormat.unknown && !raw && !forceMarkdown)
+                {
+                    auto parsedCov = loadCoverage(path, contents);
+                    if (!parsedCov)
+                        warning(i"coverage artifact $(path) did not parse at byte $(parsedCov.error.offset): $(parsedCov.error.context)");
+                    else if (parsedCov.value.files.length > 0)
+                    {
+                        auto fCov = parsedCov.value.files[0];
+                        const covered = resolveCoveredSource(path, fCov.sourcePath);
+                        if (covered.length)
+                        {
+                            info(i"$(path) describes $(covered); showing it with coverage");
+                            auto realDoc = fromSource(covered, baseName(covered),
+                                readText(covered), language.length ? lang
+                                    : canonicalLanguage(covered.extension.chompPrefix(".")));
+                            realDoc.coverage = planCoverage(fCov);
+                            realDoc.hasCoverage = true;
+                            return realDoc;
+                        }
+                        // Not resolvable, or outside the sandbox: show the
+                        // artifact itself rather than something else entirely.
+                        auto doc = fromSource(path, baseName(path), contents, lang);
+                        doc.coverage = planCoverage(fCov);
+                        doc.hasCoverage = true;
+                        return doc;
+                    }
+                }
+                auto doc = fromSource(path, baseName(path), contents, lang);
+                if (coverageArtifact.length)
+                    attachCoverage(doc, coverageArtifact);
+                return doc;
         }
     }
 
@@ -857,7 +1106,7 @@ struct DocumentPipeline
         bool quietFallback = false)
     {
         SmallBuffer!HighlightEvent ev;
-        if (highlightInjected(*cache, lang, source, ev).hasError)
+        if (cache is null || highlightInjected(*cache, lang, source, ev).hasError)
         {
             // A synthesized language (the diff documents' "diff") degrades
             // silently — the miss is the expected default, not a user's
@@ -1337,4 +1586,74 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
         else if (d.status == MdDiffStatus.added)
             ++added;
     assert(removed == 1 && added == 1);
+}
+
+@("document.coverage.loadsAndAttachesToDocument")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.code_instrumentation : LineState;
+
+    const dir = buildPath(tempDir(), "hue-coverage-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+
+    const srcPath = buildPath(dir, "math.d");
+    const lstPath = buildPath(dir, "math.lst");
+
+    write(srcPath, "module math;\n\nint add(int a, int b)\n{\n    return a + b;\n}\n\nint sub(int a, int b)\n{\n    return a - b;\n}\n");
+    // With the trailer `-cov` actually writes: it names the source the
+    // listing describes, which is what `findFile` matches on now that the
+    // artifact path no longer overwrites it.
+    write(lstPath, "       |module math;\n       |\n       |int add(int a, int b)\n       |{\n      5|    return a + b;\n       |}\n       |\n       |int sub(int a, int b)\n       |{\n0000000|    return a - b;\n       |}\n"
+        ~ "math.d is 50% covered\n");
+
+    import sparkles.syntax : GrammarRegistry, LabelSet;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    auto pipeline = DocumentPipeline(registry: &reg, cache: &cache);
+    pipeline.coverageArtifact = lstPath;
+    auto doc = pipeline.load(srcPath);
+
+    assert(doc.hasCoverage);
+    assert(doc.coverage.gutterItems.length == 11);
+    assert(doc.coverage.coveredLines == 1);
+    assert(doc.coverage.coverableLines == 2);
+    assert(doc.coverage.gutterItems[4].state == LineState.covered);
+    assert(doc.coverage.gutterItems[4].countText == "5");
+    assert(doc.coverage.gutterItems[9].state == LineState.uncovered);
+    assert(doc.coverage.gutterItems[9].countText == "0");
+}
+
+@("document.coverage.artifactForAnotherFileIsRefused")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+
+    // A listing that names a different source must not decorate this one.
+    // The old single-file fallback attached whatever the report held to
+    // whatever was open, so browsing to any other file inherited its counts.
+    const dir = buildPath(tempDir(), "hue-coverage-mismatch");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+
+    const srcPath = buildPath(dir, "other.d");
+    const lstPath = buildPath(dir, "math.lst");
+    write(srcPath, "module other;\nvoid unrelated() {}\n");
+    write(lstPath, "      5|    return a + b;\nmath.d is 100% covered\n");
+
+    import sparkles.syntax : GrammarRegistry, LabelSet;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    auto pipeline = DocumentPipeline(registry: &reg, cache: &cache);
+    pipeline.coverageArtifact = lstPath;
+    auto doc = pipeline.load(srcPath);
+
+    assert(!doc.hasCoverage, "coverage for math.d must not land on other.d");
 }

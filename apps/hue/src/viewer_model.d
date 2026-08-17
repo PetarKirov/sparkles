@@ -8,17 +8,11 @@ module viewer_model;
 
 
 import format_preview : FormatPreviewSession;
-import ansi_model : AnsiLine, Attr;
-import diff_session : DiffSession;
-import diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
-    FileTypes, isDiffGapKey, isDiffHunkKey, viewDiffDoc;
-import document : DiffEmphasis, DiffSides, hueFenceRenderer;
-import sparkles.diff.model : DiffDoc;
-import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
-import gui_text : buildLineStarts, findMatches, lineCount, Match;
 
 import sparkles.base.term_color : mix;
 import sparkles.base.term_style : UnderlineStyle;
+import sparkles.code_instrumentation : CoverageGutterItem, CoveragePlan, LineState;
+import sparkles.diff.model : DiffDoc;
 import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
     RgbColor, Theme, toRgb;
 import sparkles.syntax.md.model : codeLineCount, fenceBody, MdBlock,
@@ -27,12 +21,12 @@ import sparkles.syntax.md.render_widgets : FenceScroll, isWrap, OverflowPolicy,
     TableScroll,
     foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
     viewMarkdown;
-import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
+import sparkles.syntax.render.widgets : CodeViewOptions, GutterCell,
+    viewCodeDocument;
 import sparkles.syntax.ts.highlighter : ParsedLayer;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewTwoslashDocument;
-
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Rect;
@@ -45,6 +39,15 @@ import sparkles.base.term_color : Color;
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
     schemeForBackground, Slot, TextStyle;
 import sparkles.ui.widget : TextSpan, WidgetKind, WidgetTree;
+
+import ansi_model : AnsiLine, Attr;
+import diff_session : DiffSession;
+import diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
+    FileTypes, isDiffGapKey, isDiffHunkKey, viewDiffDoc;
+import document : coverageGutterCells, coverageTintedRanges, DiffEmphasis,
+    DiffSides, Document, hueFenceRenderer;
+import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
+import gui_text : buildLineStarts, findMatches, lineCount, Match;
 
 /// Sane concrete fallbacks when a theme leaves the page fore-/background unset
 /// (a GPU/grid surface has no "terminal default" to defer to).
@@ -354,8 +357,24 @@ struct ViewerModel
     Match[] matches;
     size_t curMatch;
     Rect[][] matchRects;            /// per-match rects via the identity channel
+    CoveragePlan coverage;          /// code coverage overlay plan
+    bool hasCoverage;
+
+    /// Width of the coverage gutter column, in cells: the widest count the
+    /// plan actually contains, plus the separator. Derived rather than
+    /// fixed — a hard-coded width either clipped `18446744073G` or wasted
+    /// four columns on a file whose counts are all single digits.
+    int coverageGutterWidth;
 
 @system:
+
+    /// Overload that loads state directly from a `Document`.
+    void setDocument(Document doc)
+    {
+        setDocument(doc.title, "", doc.source, doc.events, doc.preview,
+            doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides,
+            doc.diffSession, doc.diffEmphasis, doc.coverage, doc.hasCoverage);
+    }
 
     /// Replaces the viewed document: content swaps, scroll/search/folds
     /// reset, the pipeline rebuilds at the current width.
@@ -364,10 +383,12 @@ struct ViewerModel
         TwoslashReturn tw_, string lang_ = null, DiffDoc diff_ = DiffDoc.init,
         const(DiffSides)[] diffSides_ = null,
         DiffSession diffSession_ = DiffSession.init,
-        DiffEmphasis diffEmphasis_ = DiffEmphasis.init)
+        DiffEmphasis diffEmphasis_ = DiffEmphasis.init,
+        CoveragePlan coverage_ = CoveragePlan.init,
+        bool hasCoverage_ = false)
     {
         title = title_;
-        summary = summary_;
+        summary = summary_.length ? summary_ : (hasCoverage_ ? coverage_.summaryBanner : "");
         source = source_;
         lang = lang_;
         events = events_;
@@ -377,6 +398,8 @@ struct ViewerModel
         diffSides = diffSides_;
         diffSession = diffSession_;
         diffEmphasis = diffEmphasis_;
+        coverage = coverage_;
+        hasCoverage = hasCoverage_;
         srcTotal = lineCount(source);
         lineStarts = buildLineStarts(source);
         showPreview = preview.present || tw.code.length != 0
@@ -885,13 +908,19 @@ struct ViewerModel
             // default foreground.
             const(HighlightEvent)[] evs = plainSyntax
                 ? [HighlightEvent.sourceSpan(0, source.length)] : events;
+            const covGutter = hasCoverage
+                ? coverageGutterCells(coverage, srcTotal, coverageGutterWidth)
+                : null;
             tree = viewCodeDocument(source, evs,
                 thisCurrent(), pageFg,
                 CodeViewOptions(foldedRegions: closed,
                     foldHitBase: foldHitBase, tabWidth: tabWidth,
                     listWhitespace: listWhitespace,
                     whitespaceFg: gutterFg, hasWhitespaceFg: true,
-                    inlineFoldMarker: inlineFoldMarker));
+                    inlineFoldMarker: inlineFoldMarker,
+                    gutter: covGutter,
+                    gutterWidth: covGutter.length ? coverageGutterWidth : 0,
+                    tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
                 palette, pageFg, pageBg);

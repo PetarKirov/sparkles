@@ -70,6 +70,9 @@ struct OverlayOptions
     @(Option("overlay", description: "Attach an overlay: <kind>[=<artifact>] (e.g. twoslash=nodes.json, coverage=cov.json). Can be specified multiple times."))
     string[] overlays;
 
+    @(Option("cov", description: "Attach a code coverage artifact (.lst, .gcov, .info, .json) to the document (compatibility alias for --overlay coverage=<artifact>)."))
+    string cov;
+
     @(Option("list-overlays", description: "List registered overlay kinds."))
     bool listOverlays;
 }
@@ -447,13 +450,24 @@ struct HueCli
 
 // ── Subcommand Handlers ─────────────────────────────────────────────────────
 
-private bool resolveOverlayTarget(in HueCli root, ref bool forceTwoslash, ref string target)
+/// Resolves `--twoslash` / `--cov` / `--overlay <kind>[=<artifact>]` into the
+/// document target and the per-kind artifacts.
+///
+/// The two kinds attach differently, which is why `coverage` cannot simply
+/// join the `twoslash` arm: a twoslash payload *is* the document (the overlay
+/// carries its own `code`), whereas a coverage report decorates a document
+/// named separately. So `twoslash` retargets and `coverage` only records its
+/// artifact.
+private bool resolveOverlayTarget(in HueCli root, ref bool forceTwoslash,
+    ref string target, ref string coverageArtifact)
 {
     if (root.overlay.twoslash.length != 0)
     {
         forceTwoslash = true;
         target = root.overlay.twoslash;
     }
+    if (root.overlay.cov.length != 0)
+        coverageArtifact = root.overlay.cov;
     foreach (ovl; root.overlay.overlays)
     {
         if (ovl.length == 0)
@@ -461,14 +475,22 @@ private bool resolveOverlayTarget(in HueCli root, ref bool forceTwoslash, ref st
         import std.string : indexOf;
         const eq = ovl.indexOf('=');
         const kind = eq >= 0 ? ovl[0 .. eq] : ovl;
-        if (kind != "twoslash")
+        const artifact = eq >= 0 ? ovl[eq + 1 .. $] : "";
+        switch (kind)
         {
-            stderr.writeln("hue: unknown overlay kind '", kind, "' (see --list-overlays)");
-            return false;
+            case "twoslash":
+                forceTwoslash = true;
+                if (artifact.length)
+                    target = artifact;
+                break;
+            case "coverage":
+                coverageArtifact = artifact;
+                break;
+            default:
+                stderr.writeln("hue: unknown overlay kind '", kind,
+                    "' (see --list-overlays)");
+                return false;
         }
-        forceTwoslash = true;
-        if (eq >= 0)
-            target = ovl[eq + 1 .. $];
     }
     return true;
 }
@@ -503,12 +525,15 @@ private int executeView(in HueCli root, in View view)
         import std.stdio : writeln;
         writeln("twoslash    type annotations from a twoslash JSON payload " ~
             "(artifact: the payload; or make it the target — *.twoslash.json)");
+        writeln("coverage    code coverage from .lst, .gcov, .info or .json " ~
+            "(artifact: the coverage report; or --cov=<artifact>)");
         return 0;
     }
 
     bool forceTwoslash;
     string target = view.paths.length ? view.paths[0] : "";
-    if (!resolveOverlayTarget(root, forceTwoslash, target))
+    string coverageArtifact;
+    if (!resolveOverlayTarget(root, forceTwoslash, target, coverageArtifact))
         return 1;
 
     const labels = LabelSet.standard();
@@ -527,6 +552,7 @@ private int executeView(in HueCli root, in View view)
     pipeline.dsvDelimiter = view.dsvDelimiter;
     pipeline.dsvQuote = view.dsvQuote;
     pipeline.dsvHeader = view.dsvHeader;
+    pipeline.coverageArtifact = coverageArtifact;
 
     const backend = view.sink.resolveBackend(root.gui);
 
@@ -882,6 +908,7 @@ private int executeOverlay(in HueCli root, in OverlayCmd cmd)
 
     writeln("Available overlays:");
     writeln("  twoslash    Type annotations and hover queries from TypeScript twoslash JSON payload");
+    writeln("  coverage    Per-line execution counts from a DMD .lst, gcov, LCOV or llvm-cov/V8 JSON report");
     return 0;
 }
 
@@ -1264,8 +1291,62 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             output ~= '\n';
             break;
         case code:
-            renderAnsi(doc.source, doc.events, theme, output,
-                bgMode.backgroundOptions(depth, italics: true));
+            // One sink for the `code` kind, overlay or not: the widget tree,
+            // through the same display list → `CellGrid` → `writeAnsi` path
+            // that markdown and diff already take.
+            //
+            // It used to fall back to the event-stream `renderAnsi` when no
+            // overlay was attached, which meant a single flag changed how the
+            // file itself rendered — `--cov` reflowed long lines, expanded
+            // tabs and padded rows, and dropping the flag undid all three.
+            // A viewer's output should not depend on which decorations happen
+            // to be on it.
+            //
+            // The cost is that a plain `hue file.d` now expands tabs and pads
+            // rows to the grid width, as markdown and diff always have.
+            {
+                import document : coverageGutterCells, coverageTintedRanges;
+                import gui_text : lineCount;
+                import sparkles.syntax.render.widgets : CodeViewOptions,
+                    GutterCell, viewCodeDocument;
+                import sparkles.ui.display_list : buildDisplayList;
+                import sparkles.ui.geometry : Constraints;
+                import sparkles.ui.interp.cells : BgEmit, CellGrid;
+                import sparkles.ui.interp.immediate : paint;
+                import sparkles.ui.layout : layout;
+                import sparkles.ui.style : defaultTwoslashPalette;
+                import sparkles.ui.wrap : TextWrap;
+
+                const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
+                const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
+
+                CodeViewOptions copt;
+                if (doc.hasCoverage)
+                {
+                    int gutterWidth;
+                    copt.gutter = coverageGutterCells(doc.coverage,
+                        lineCount(doc.source), gutterWidth);
+                    copt.gutterWidth = gutterWidth;
+                    copt.tintedRanges = coverageTintedRanges(doc.coverage);
+                }
+                // A writer emitting to a stream has no pane to reflow to.
+                copt.wrap = TextWrap.none;
+
+                auto tree = viewCodeDocument(doc.source, doc.events,
+                    (() @trusted => &theme)(), pageFg, copt);
+                // Unconstrained, so the grid is as wide as the longest line.
+                // Constraining it to `previewWidth()` with wrapping off does
+                // not fit a long line — it CLIPS it, losing the tail silently.
+                auto frames = layout(tree, Constraints());
+                const r = frames[tree.root].rect;
+                auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
+                paint(grid, buildDisplayList(tree, frames,
+                    defaultTwoslashPalette(), pageFg, pageBg));
+                grid.writeAnsi(output, depth,
+                    bgMode == BackgroundMode.full ? BgEmit.full
+                    : bgMode == BackgroundMode.spans ? BgEmit.spans : BgEmit.none);
+                output ~= '\n';
+            }
             break;
         case diff:
             import diff_view : viewDiffDoc;
@@ -1316,10 +1397,45 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
         case markdown:
             return emitMarkdownHtml(doc.source, theme, registry, cache);
         case code:
-            import gallery : plainFragment;
+            // One sink, overlay or not — the same widget tree the diff view
+            // writes through. It used to emit a `plainFragment` when no
+            // coverage was attached and a full page when there was, so the
+            // *kind of document* produced depended on an unrelated flag.
+            //
+            // The consequence is that `--html` on code now emits a standalone
+            // page rather than a `<pre>` fragment, which is what `--diff`
+            // already did. The gallery keeps its own fragment writer.
+            {
+                import document : coverageGutterCells, coverageTintedRanges;
+                import gui_text : lineCount;
+                import sparkles.syntax.render.widgets : CodeViewOptions,
+                    GutterCell, viewCodeDocument;
+                import sparkles.ui.interp.html : writeWidgetHtmlPage;
+                import sparkles.ui.style : defaultTwoslashPalette;
+                import sparkles.ui.wrap : TextWrap;
 
-            write(plainFragment(doc.source, doc.events, theme));
-            return 0;
+                const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
+                const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
+
+                CodeViewOptions copt;
+                if (doc.hasCoverage)
+                {
+                    int gutterWidth;
+                    copt.gutter = coverageGutterCells(doc.coverage,
+                        lineCount(doc.source), gutterWidth);
+                    copt.gutterWidth = gutterWidth;
+                    copt.tintedRanges = coverageTintedRanges(doc.coverage);
+                }
+                copt.wrap = TextWrap.none;   // a document, not a pane
+
+                SmallBuffer!char htmlOut;
+                writeWidgetHtmlPage(htmlOut,
+                    viewCodeDocument(doc.source, doc.events,
+                        (() @trusted => &theme)(), pageFg, copt),
+                    defaultTwoslashPalette(), pageFg, pageBg, doc.title);
+                write(htmlOut[]);
+                return 0;
+            }
         case dsv:
         {
             // The markdown arm re-extracts markdown from `doc.source` (the
@@ -1526,6 +1642,8 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             initialDiff: doc.diffDoc,
             initialDiffSides: doc.diffSides,
             initialDiffSession: doc.diffSession,
+            initialCoverage: doc.coverage,
+            initialHasCoverage: doc.hasCoverage,
             capture: capture,
         ));
     }

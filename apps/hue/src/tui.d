@@ -13,6 +13,7 @@ version (Posix):
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : mix;
+import sparkles.code_instrumentation : CoveragePlan;
 import sparkles.diff.model : DiffDoc;
 import diff_session : DiffSession, SessionEntry;
 import diff_view : TypeOverlay;
@@ -521,7 +522,9 @@ struct PreviewTui
         string lang_ = null, DiffDoc diff_ = DiffDoc.init,
         const(DiffSides)[] diffSides_ = null,
         DiffSession diffSession_ = DiffSession.init,
-        DiffEmphasis diffEmphasis_ = DiffEmphasis.init) @system
+        DiffEmphasis diffEmphasis_ = DiffEmphasis.init,
+        CoveragePlan coverage_ = CoveragePlan.init,
+        bool hasCoverage_ = false) @system
     {
         docNote = null;
         dsvCopy = DsvCopy.init;
@@ -536,7 +539,7 @@ struct PreviewTui
         if (vm.current.labels.length == 0 && themes.length)
             vm.applyTheme(themeIdx); // first document: resolve the theme once
         vm.setDocument(title_, null, source_, events_, model_, tw_, lang_,
-            diff_, diffSides_, diffSession_, diffEmphasis_);
+            diff_, diffSides_, diffSession_, diffEmphasis_, coverage_, hasCoverage_);
         if (!startPreview && vm.showPreview)
         {
             vm.showPreview = false;
