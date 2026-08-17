@@ -673,3 +673,28 @@ version (unittest)
         }
     assert(files > 20, "corpus unexpectedly small — path resolution broke?");
 }
+
+@("spine.granularity.verbatim-constructs-are-single-entries")
+@system unittest
+{
+    // The S4 fidelity-layer inventory, pinned: every construct below is ONE
+    // spine entry, so its end — and its verbatim-ness — is the entry span
+    // itself. No oracle, no bracket matching, no lookahead.
+    static void assertSingleEntry(string code, string lexeme) @system
+    {
+        auto spine = lexSpine(code);
+        foreach (t; spine.entries)
+            if (spine.source[t.start .. t.end] == lexeme)
+                return;
+        assert(false, "not lexed as one entry: " ~ lexeme);
+    }
+
+    assertSingleEntry("auto s = q{ int nested; { tokens } };",
+        "q{ int nested; { tokens } }");
+    assertSingleEntry("auto s = q\"EOS\nline\nEOS\";", "q\"EOS\nline\nEOS\"");
+    assertSingleEntry("auto s = q\"(paren (nested))\";", "q\"(paren (nested))\"");
+    assertSingleEntry("auto s = x\"deadbeef\";", "x\"deadbeef\"");
+    assertSingleEntry("auto s = i\"a $(b) c\";", "i\"a $(b) c\"");
+    assertSingleEntry("auto s = iq{ $(a) t };", "iq{ $(a) t }");
+    assertSingleEntry("/+ a /+ b +/ c +/ int x;", "/+ a /+ b +/ c +/");
+}

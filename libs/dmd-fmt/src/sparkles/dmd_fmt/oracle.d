@@ -127,14 +127,23 @@ private __gshared bool frontendGlobalsReady;
 // everything: the oracle's contract on broken input is "return what parsed",
 // not "report". initDMD also runs Id.initialize, so the spine's lexer-state
 // guarantee is subsumed once the oracle has run.
-private void ensureFrontendGlobals() @system
+//
+// `package`: the S4 loc-inventory tests parse through the same globals.
+package void ensureFrontendGlobals() @system
 {
     if (frontendGlobalsReady)
         return;
     import dmd.frontend : initDMD;
+    import dmd.globals : global;
 
     initDMD((const ref loc, headerColor, header, messageFormat, args, p1, p2)
         nothrow => true);
+    // S4 finding: without this flag the parser stores a unittest body as
+    // raw tokens (fbody is null), so every declaration, contract and
+    // statement inside one is invisible to the oracle and the region
+    // degrades to bracket-only structure. A formatter must see unittest
+    // bodies; parse-only use has no codegen cost.
+    global.params.useUnitTests = true;
     frontendGlobalsReady = true;
 }
 
@@ -298,4 +307,22 @@ private extern (C++) final class FactsVisitor : SemanticTimeTransitiveVisitor
     assert(!containsOffsetIn(xs, 4, 9));
     assert(containsOffsetIn(xs, 0, 100));
     assert(!containsOffsetIn(xs, 21, 100));
+}
+
+@("oracle.collectFacts.unittest-bodies-are-parsed")
+@system unittest
+{
+    // S4 finding, pinned: the oracle sets global.params.useUnitTests, so
+    // declarations and contracts inside unittest bodies produce facts.
+    // (Without the flag the parser keeps only the body's tokens and this
+    // fixture yields no markers at all beyond the unittest itself.)
+    enum src = "unittest\n{\n"
+        ~ "    int local(int x)\n"
+        ~ "    in (x > 0)\n"
+        ~ "    {\n        return x;\n    }\n"
+        ~ "}\n";
+    auto facts = collectFacts(src);
+    assert(facts.parsed);
+    assert(facts.inContractMarkers.length == 1);
+    assert(facts.bodyMarkers.length >= 1);
 }
