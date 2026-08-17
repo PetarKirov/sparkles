@@ -1,0 +1,54 @@
+name "fuzzy"
+description "Bounded allocation-free fuzzy query, matching, ranking, and history engine"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+// The marker-only benchmark UDA must remain resolvable when a parent package
+// enables unittests while selecting this package's library configuration.
+importPaths "src" "../test-runner/src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "expected" version="~>0.4.1"
+
+configuration "library" {
+    targetType "library"
+    dependency "sparkles:base" path="../.."
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// Linux release audit: the test module wraps the libc allocation family and
+// compares druntime's per-thread GC counter around one complete keystroke.
+// Keeping this separate avoids imposing GNU ld's --wrap on library consumers.
+configuration "allocation-audit" {
+    targetType "library"
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+
+    versions "FuzzyAllocationAudit"
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+    lflags "--wrap=malloc" "--wrap=calloc" "--wrap=realloc" platform="linux"
+}
+
+buildType "bench" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+}
+
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
