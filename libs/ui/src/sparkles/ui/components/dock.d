@@ -431,6 +431,64 @@ struct DockLayout
         return uint.max;
     }
 
+    /// The node holding `idx` among its children, or `uint.max` when `idx`
+    /// is the root (or absent). The arena stores children, not parents, so
+    /// walking $(I up) — which is how a keyboard route finds the group or
+    /// the divider that governs a pane — is a scan.
+    uint parentOf(uint idx) const scope pure nothrow @nogc
+    {
+        foreach (i, ref n; nodes)
+            if (n.kind != DockKind.leaf)
+                foreach (c; n.children)
+                    if (c == idx)
+                        return cast(uint) i;
+        return uint.max;
+    }
+
+    /**
+    The pane a subtree shows: the leaf itself, a tabbed group's active
+    child, or a split's first visible child. `0` when nothing is visible.
+
+    This is $(I what the reader would be looking at), which is what makes
+    it the right answer when focus must follow a newly-shown tab — the tab
+    may host a whole split rather than a single pane.
+    */
+    PaneId firstPane(uint idx) const scope pure nothrow @nogc
+    {
+        if (idx >= nodes.length)
+            return 0;
+        const n = nodes[idx];
+        if (!n.visible)
+            return 0;
+        if (n.kind == DockKind.leaf)
+            return n.pane;
+        if (n.kind == DockKind.tabs)
+        {
+            if (n.active < n.children.length)
+            {
+                const p = firstPane(n.children[n.active]);
+                if (p)
+                    return p;
+            }
+            // The same fallback the layout walk takes for an `active` that
+            // points at a hidden child: the first visible tab.
+            foreach (c; n.children)
+            {
+                const p = firstPane(c);
+                if (p)
+                    return p;
+            }
+            return 0;
+        }
+        foreach (c; n.children)
+        {
+            const p = firstPane(c);
+            if (p)
+                return p;
+        }
+        return 0;
+    }
+
     /// Shows or hides a pane; a hidden pane takes no space and no divider.
     void setVisible(PaneId pane, bool visible) pure nothrow @nogc
     {
@@ -1401,6 +1459,139 @@ struct DockContainer
     }
 
     /**
+    Shows the next (`+1`) or previous (`-1`) tab of the group holding the
+    focused pane, and gives the newly shown pane the keyboard (`DCK12`) —
+    the keyboard twin of clicking a tab, down to the `focused` write and
+    the re-arrange, so the two routes cannot disagree.
+
+    Returns `false` when the focused pane is not in a tabbed group, or when
+    the group has nothing else visible to show: there is no tab to switch
+    to, which a caller may report rather than pretending it moved.
+    */
+    bool activateNext(int step = 1)
+    {
+        uint child = layout.nodeOf(focused);
+        if (child == uint.max)
+            return false;
+        // Up to the nearest tabbed ancestor: the pane whose tab we want may
+        // sit under a split that is itself one tab of the group.
+        uint group = layout.parentOf(child);
+        while (group != uint.max && layout.nodes[group].kind != DockKind.tabs)
+        {
+            child = group;
+            group = layout.parentOf(group);
+        }
+        if (group == uint.max)
+            return false;
+
+        auto kids = layout.nodes[group].children;
+        size_t at = kids.length;
+        foreach (i, c; kids)
+            if (c == child)
+                at = i;
+        if (at == kids.length)
+            return false;
+
+        // Only visible tabs are reachable, and stepping over a hidden one
+        // must not stall on it — the strip does not draw it either.
+        const n = kids.length;
+        foreach (hop; 1 .. n)
+        {
+            const i = step >= 0
+                ? (at + hop) % n : (at + n - (hop % n)) % n;
+            if (!layout.nodes[kids[i]].visible)
+                continue;
+            layout.nodes[group].active = cast(uint) i;
+            const p = layout.firstPane(kids[i]);
+            if (p)
+                focused = p;
+            arrange(area);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+    Moves the divider that sizes `pane` by `delta` of the container's units
+    (`DCK12`): the keyboard route to a resize, through the same clamp and
+    the same neighbour redistribution a drag runs — so a key cannot reach a
+    size a drag refuses, which is the defect two implementations always
+    grow. A positive `delta` grows the pane whichever side its divider is
+    on. Returns `false` when no divider sizes it (a lone pane, or one whose
+    parent is a tabbed group).
+    */
+    bool resizeBy(PaneId pane, int delta)
+    {
+        int sign;
+        const idx = dividerFor(pane, sign);
+        return idx == uint.max ? false : nudgeDivider(idx, sign * delta);
+    }
+
+    /**
+    Moves divider `idx` by `delta`, clamped to the range the arrangement
+    walk derived for it. Returns `false` when it is already at that bound —
+    a caller that wants to beep on "cannot go further" has its answer.
+    */
+    bool nudgeDivider(uint idx, int delta)
+    {
+        if (idx >= dividers.length || delta == 0)
+            return false;
+        const d = dividers[idx];
+        const at = axisOf(d.axis, Point(d.rect.x, d.rect.y));
+        // Through SplitState, not a hand-written clamp: the grab-relative
+        // machine with the grab at the divider's own position IS a nudge,
+        // and reusing it is what keeps the two routes' bounds identical.
+        const moved = SplitState(at).started(at).draggedTo(at + delta, d.lo, d.hi);
+        if (moved.size == at)
+            return false;
+        resizeAcross(d, moved.size);
+        return true;
+    }
+
+    /// The divider that sizes `pane`, and which way its axis grows the pane
+    /// (`+1` when the pane precedes it). `uint.max` when none does.
+    private uint dividerFor(PaneId pane, out int sign) const pure nothrow @nogc
+    {
+        sign = 1;
+        uint at = layout.nodeOf(pane);
+        while (at != uint.max)
+        {
+            foreach (i, ref d; dividers)
+                if (d.beforeNode == at)
+                {
+                    sign = 1;
+                    return cast(uint) i;
+                }
+            foreach (i, ref d; dividers)
+                if (d.afterNode == at)
+                {
+                    sign = -1;
+                    return cast(uint) i;
+                }
+            at = layout.parentOf(at);
+        }
+        return uint.max;
+    }
+
+    /**
+    Puts divider `d` at axis position `newPos` and re-derives the frames.
+
+    A resize redistributes between ITS TWO NEIGHBOURS — the same pair the
+    clamp range was derived from. The preceding child takes the new extent;
+    a fixed follower gives up exactly what was taken (a flexing one absorbs
+    it by definition), so no third pane moves because two were resized.
+    */
+    private void resizeAcross(in DividerFrame d, int newPos)
+    {
+        const was = axisOf(d.axis, Point(d.rect.x, d.rect.y)) - d.start;
+        const now = newPos - d.start;
+        layout.nodes[d.beforeNode].extent = now;
+        if (layout.nodes[d.afterNode].extent > 0)
+            layout.nodes[d.afterNode].extent -= now - was;
+        arrange(area);
+    }
+
+    /**
     Routes one event (`DCK13`): a live capture first (a drag belongs to
     whoever took the press, wherever the pointer strays), then dividers,
     then the positional query; keys go to the focused pane, and a wheel
@@ -1468,17 +1659,7 @@ struct DockContainer
                 return Route(RouteKind.container, 0, Event(cell));
             }
             drag = drag.draggedTo(axisOf(d.axis, cell.pos), d.lo, d.hi);
-            // A drag redistributes between ITS TWO NEIGHBOURS — the same
-            // pair the clamp range was derived from. The preceding child
-            // takes the new extent; a fixed follower gives up exactly what
-            // was taken (a flexing one absorbs it by definition), so no
-            // third pane moves because two were resized.
-            const was = axisOf(d.axis, Point(d.rect.x, d.rect.y)) - d.start;
-            const now = drag.size - d.start;
-            layout.nodes[d.beforeNode].extent = now;
-            if (layout.nodes[d.afterNode].extent > 0)
-                layout.nodes[d.afterNode].extent -= now - was;
-            arrange(area);
+            resizeAcross(d, drag.size);
             return Route(RouteKind.container, 0, Event(cell), relayout: true);
         }
 
@@ -2607,4 +2788,199 @@ version (unittest)
         button: PointerButton.left, pos: Point(body.right, body.bottom))));
     assert(c.nextTickIn() == Duration.max);
     assert(c.tickScroll(1, mousePointer).kind == RouteKind.none);
+}
+
+// ---------------------------------------------------------------------------
+// The tier-0 audit (`DCK12`): everything below is asserted with no pointer
+// event ever delivered, because that is the whole claim — a target with no
+// pointer at all gets a working dock, not a broken one.
+// ---------------------------------------------------------------------------
+
+@("ui.dock.tier0KeyboardCyclesTabsBothWays")
+@safe unittest
+{
+    enum PaneId side = 1, docA = 2, docB = 3, docC = 4;
+    DockContainer c;
+    const s = c.layout.addLeaf(side, extent: 20, minExtent: 10);
+    const a = c.layout.addLeaf(docA);
+    const b = c.layout.addLeaf(docB);
+    const d = c.layout.addLeaf(docC);
+    const g = c.layout.addTabs([a, b, d]);
+    c.layout.root = c.layout.addSplit(DockAxis.horizontal, [s, g]);
+    c.focused = docA;
+    c.arrange(Rect(0, 0, 100, 40));
+
+    // Forward through the group, wrapping — and each step both shows the
+    // pane and hands it the keyboard, so a reader is never focused on
+    // something they cannot see.
+    foreach (want; [docB, docC, docA])
+    {
+        assert(c.activateNext());
+        assert(c.focused == want);
+        assert(c.paneFrames[1].pane == want, "the shown pane follows the tab");
+    }
+    // And backwards, which a strip drawn left-to-right must also offer.
+    assert(c.activateNext(-1) && c.focused == docC);
+    assert(c.activateNext(-1) && c.focused == docB);
+
+    // A pane outside any group has no tab to switch to, and says so rather
+    // than silently moving something else.
+    c.focused = side;
+    assert(!c.activateNext());
+    assert(c.paneFrames[1].pane == docB, "a refusal changes nothing");
+}
+
+@("ui.dock.tier0TabCyclingSkipsHiddenTabsAndReachesNestedPanes")
+@safe unittest
+{
+    // Two tabs, the middle one hidden and the third a SPLIT rather than a
+    // leaf: stepping must not stall on the hidden tab, and focus must land
+    // on a real pane inside the tab it just showed.
+    enum PaneId docA = 1, hidden = 2, left = 3, right = 4;
+    DockContainer c;
+    const a = c.layout.addLeaf(docA);
+    const h = c.layout.addLeaf(hidden);
+    const l = c.layout.addLeaf(left, extent: 30);
+    const r = c.layout.addLeaf(right);
+    const inner = c.layout.addSplit(DockAxis.horizontal, [l, r]);
+    c.layout.root = c.layout.addTabs([a, h, inner]);
+    c.layout.setVisible(hidden, false);
+    c.focused = docA;
+    c.arrange(Rect(0, 0, 100, 40));
+    assert(c.tabs.length == 2, "a hidden tab is not in the strip");
+
+    assert(c.activateNext());
+    assert(c.focused == left, "focus follows into the tab's own first pane");
+    assert(c.paneFrames.length == 2, "the tab's split is what is shown");
+
+    // Wrapping back skips the hidden tab from the other direction too.
+    assert(c.activateNext());
+    assert(c.focused == docA);
+}
+
+@("ui.dock.tier0KeyboardResizeSharesTheDragsClamp")
+@safe unittest
+{
+    // The defect two implementations grow: a key that reaches a size the
+    // drag refuses. Both routes are driven to their bound here and must
+    // agree exactly.
+    auto byKey = twoPane();
+    foreach (_; 0 .. 200)
+        byKey.resizeBy(tree, -1);
+    const keyFloor = byKey.paneExtent(tree);
+
+    auto byDrag = twoPane();
+    byDrag.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(32, 10))));
+    byDrag.handle(Event(PointerEvent(action: PointerAction.drag,
+        pos: Point(-500, 10))));
+    byDrag.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(-500, 10))));
+    assert(keyFloor == byDrag.paneExtent(tree));
+    assert(keyFloor == 12, "and it is the sidebar's own declared minimum");
+
+    // At the bound the nudge reports that it did not move, so a host can
+    // say so instead of redrawing an unchanged frame.
+    assert(!byKey.resizeBy(tree, -1));
+    assert(byKey.resizeBy(tree, 4) && byKey.paneExtent(tree) == 16);
+
+    // A pane on the FAR side of its divider still grows when asked to
+    // grow: the sign belongs to the container, not to every caller.
+    const wasDoc = byKey.paneExtent(doc);
+    assert(byKey.resizeBy(doc, 3));
+    assert(byKey.paneExtent(doc) == wasDoc + 3);
+    assert(byKey.paneExtent(tree) == 13);
+}
+
+@("ui.dock.tier0KeyboardResizeMovesOnlyTheOnePair")
+@safe unittest
+{
+    // Three panes, the outer two fixed: nudging the first divider must not
+    // move the third pane, the same invariant the drag holds.
+    enum PaneId a = 1, b = 2, e = 3;
+    DockContainer c;
+    const na = c.layout.addLeaf(a, extent: 20, minExtent: 5);
+    const nb = c.layout.addLeaf(b);
+    const ne = c.layout.addLeaf(e, extent: 25, minExtent: 5);
+    c.layout.root = c.layout.addSplit(DockAxis.horizontal, [na, nb, ne]);
+    c.arrange(Rect(0, 0, 100, 40));
+    const endWas = c.paneOrigin(e);
+
+    assert(c.resizeBy(a, 6));
+    assert(c.paneExtent(a) == 26);
+    assert(c.paneExtent(e) == 25, "the far pane keeps its size");
+    assert(c.paneOrigin(e) == endWas, "and its place");
+}
+
+@("ui.dock.tier0LeavesDragOnlyAffordancesAbsentNotBroken")
+@safe unittest
+{
+    auto c = twoPane();
+    const weights = c.paneFrames.dup;
+
+    // Splits render at their stored weights with no pointer in the picture,
+    // and no pointer state is required to answer any of the questions a
+    // painter asks each frame.
+    assert(!c.resizing);
+    assert(!c.dragHint().willDock);
+    assert(c.dragHint() == DockDrag.init);
+    assert(c.shape() == PointerShape.default_);
+    assert(c.nextTickIn() == Duration.max);
+    assert(c.dividerAt(Point(32, 10)) != uint.max, "geometry is still queryable");
+
+    // Every keyboard route works, and none of them wakes a drag.
+    assert(c.resizeBy(tree, 4));
+    c.focusNext();
+    assert(c.focused == tree);
+    c.arrange(Rect(0, 0, 100, 40));
+    assert(!c.resizing && !c.dragHint().willDock);
+    assert(c.shape() == PointerShape.default_, "no hover was ever reported");
+
+    // A re-arrange with no pointer reproduces the stored weights exactly,
+    // rather than depending on some retained pointer position.
+    auto fresh = twoPane();
+    fresh.resizeBy(tree, 4);
+    assert(fresh.paneFrames == c.paneFrames);
+    assert(weights[0].rect.width + 4 == c.paneFrames[0].rect.width);
+}
+
+@("ui.dock.tier0KeyboardRedockUsesTheSameTransformation")
+@safe unittest
+{
+    // Re-docking is drag-DRIVEN, not drag-only: the transformation is a
+    // pure layout step, so a keyboard-only target that offers a command for
+    // it gets the same result the drop would give. What tier 0 lacks is the
+    // gesture, not the feature.
+    auto c = twoPane();
+    const before = c.layout.panes().length;
+    c.layout = c.layout.redocked(tree, doc, DockZone.south);
+    c.layout.activate(tree);
+    c.arrange(Rect(0, 0, 100, 40));
+
+    assert(c.layout.panes().length == before, "no pane was lost");
+    assert(c.dividers.length == 1 && c.dividers[0].axis == DockAxis.vertical);
+    assert(!c.dragHint().willDock, "and no drag was ever in flight");
+}
+
+@("ui.dock.parentAndFirstPaneWalkTheArena")
+@safe unittest
+{
+    enum PaneId a = 1, b = 2;
+    DockLayout l;
+    const na = l.addLeaf(a);
+    const nb = l.addLeaf(b);
+    const g = l.addTabs([na, nb]);
+    l.root = l.addSplit(DockAxis.vertical, [g]);
+
+    assert(l.parentOf(na) == g && l.parentOf(g) == l.root);
+    assert(l.parentOf(l.root) == uint.max, "the root has no parent");
+    assert(l.parentOf(uint.max) == uint.max);
+
+    // A subtree shows its active tab, and falls back past a hidden one the
+    // same way the layout walk does.
+    assert(l.firstPane(l.root) == a);
+    l.nodes[g].active = 1;
+    assert(l.firstPane(l.root) == b);
+    l.setVisible(b, false);
+    assert(l.firstPane(l.root) == a, "a hidden active tab is not what is shown");
 }
