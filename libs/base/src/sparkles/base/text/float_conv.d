@@ -408,20 +408,63 @@ private static immutable Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] pow10Sig1
 
 // --- CTFE big-integer scratch: little-endian base-2^32 limbs -----------------
 
-private uint[] bigMulSmall(const uint[] a, uint m) @safe pure nothrow
+/*
+Limb capacity for the generator's scratch values.
+
+The largest value formed is `5^345` (the second loop multiplies 344 times
+starting from `5`), which is `345 * log2(5) ≈ 802` bits, or 26 limbs; a
+multiply can carry into one more. 32 leaves headroom, and `bigMulSmall`
+asserts rather than truncating if the table bounds ever outgrow it.
+*/
+private enum size_t maxScratchLimbs = 32;
+
+/*
+Fixed-capacity big integer, in place of the `new uint[]` this scratch used to
+allocate.
+
+The generator only ever runs at CTFE, so the allocation cost was never paid at
+runtime — but `new` is rejected during *semantic analysis* under `-betterC`,
+and merely importing this module is enough to trigger it. `text.writers`'
+decimal fast path imports `writeU64Digits` from here, so the `new` denied
+`writeInteger` — and every `-betterC` consumer that reaches it — the whole
+build. A static array costs the CTFE interpreter nothing and keeps the module
+importable without druntime.
+*/
+private struct BigUint
 {
-    auto r = new uint[](a.length + 1);
-    ulong carry = 0;
-    foreach (i, limb; a)
+    uint[maxScratchLimbs] limbs = 0;
+    size_t length = 1; /// significant limbs; the value is 0 while `limbs[0]` is
+
+    /// A single-limb value.
+    static BigUint from(uint value) @safe pure nothrow @nogc
     {
-        const t = cast(ulong) limb * m + carry;
-        r[i] = cast(uint) t;
+        BigUint b;
+        b.limbs[0] = value;
+        return b;
+    }
+
+    /// The significant limbs, little-endian.
+    const(uint)[] opSlice() const @trusted pure nothrow @nogc return scope
+        => limbs[0 .. length];
+}
+
+/// Multiplies `a` by the single limb `m`, in place.
+private void bigMulSmall(ref BigUint a, uint m) @safe pure nothrow @nogc
+{
+    ulong carry = 0;
+    foreach (i; 0 .. a.length)
+    {
+        const t = cast(ulong) a.limbs[i] * m + carry;
+        a.limbs[i] = cast(uint) t;
         carry = t >> 32;
     }
-    r[a.length] = cast(uint) carry;
-    while (r.length > 1 && r[$ - 1] == 0)
-        r = r[0 .. $ - 1];
-    return r;
+    if (carry)
+    {
+        assert(a.length < maxScratchLimbs, "BigUint overflow: raise maxScratchLimbs");
+        a.limbs[a.length++] = cast(uint) carry;
+    }
+    while (a.length > 1 && a.limbs[a.length - 1] == 0)
+        a.length--;
 }
 
 /// Number of significant bits (`a != 0`).
@@ -465,13 +508,18 @@ private Pow10Entry bigTop128(const uint[] a) @safe pure nothrow @nogc
 /// `floor(2^(bitLength(d) + 127) / d)` as 128 normalized bits — restoring
 /// long division producing one quotient bit per step (truncated, per the
 /// table convention).
-private Pow10Entry bigReciprocal128(const uint[] d) @safe pure nothrow
+private Pow10Entry bigReciprocal128(const uint[] d) @safe pure nothrow @nogc
 {
     // After the numerator's top bitLength(d) bits (value 2^(bitLength-1),
     // strictly < d since d is odd and > 1), the remainder is that value
     // and every produced quotient bit so far is 0; the remaining 128
     // numerator bits are zeros and yield exactly the 128 result bits.
-    auto rem = new uint[](d.length + 1);
+    //
+    // `rem` is indexed against `remLen` rather than sliced: slicing a local
+    // static array is `@system`, and the bound is a constant of the loop.
+    uint[maxScratchLimbs + 1] rem = 0;
+    const remLen = d.length + 1;
+    assert(remLen <= rem.length, "BigUint overflow: raise maxScratchLimbs");
     {
         const bits = bigBitLength(d) - 1;
         rem[bits / 32] = 1u << (bits % 32);
@@ -482,7 +530,7 @@ private Pow10Entry bigReciprocal128(const uint[] d) @safe pure nothrow
     {
         // rem <<= 1
         uint carry = 0;
-        foreach (i; 0 .. rem.length)
+        foreach (i; 0 .. remLen)
         {
             const t = (cast(ulong) rem[i] << 1) | carry;
             rem[i] = cast(uint) t;
@@ -491,7 +539,7 @@ private Pow10Entry bigReciprocal128(const uint[] d) @safe pure nothrow
         // rem >= d?
         bool ge = true;
         {
-            size_t rl = rem.length;
+            size_t rl = remLen;
             while (rl > 1 && rem[rl - 1] == 0)
                 rl--;
             if (rl != d.length)
@@ -508,7 +556,7 @@ private Pow10Entry bigReciprocal128(const uint[] d) @safe pure nothrow
         if (ge)
         {
             long borrow = 0;
-            foreach (i; 0 .. rem.length)
+            foreach (i; 0 .. remLen)
             {
                 long t = cast(long) rem[i] - (i < d.length ? d[i] : 0) - borrow;
                 borrow = t < 0 ? 1 : 0;
@@ -528,24 +576,24 @@ private Pow10Entry bigReciprocal128(const uint[] d) @safe pure nothrow
 }
 
 private Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] generatePow10Table()
-    @safe pure nothrow
+    @safe pure nothrow @nogc
 {
     Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] table;
 
     // q ≥ 0: top 128 bits of 5^q (10^q = 5^q × 2^q).
-    uint[] pow5 = [1u];
+    auto pow5 = BigUint.from(1);
     foreach (q; 0 .. tableMaxExp10 + 1)
     {
-        table[q - tableMinExp10] = bigTop128(pow5);
-        pow5 = bigMulSmall(pow5, 5);
+        table[q - tableMinExp10] = bigTop128(pow5[]);
+        bigMulSmall(pow5, 5);
     }
 
     // q < 0: normalized, truncated 128-bit reciprocal of 5^|q|.
-    pow5 = [5u];
+    pow5 = BigUint.from(5);
     foreach (q; 1 .. -tableMinExp10 + 1)
     {
-        table[-q - tableMinExp10] = bigReciprocal128(pow5);
-        pow5 = bigMulSmall(pow5, 5);
+        table[-q - tableMinExp10] = bigReciprocal128(pow5[]);
+        bigMulSmall(pow5, 5);
     }
 
     return table;
@@ -872,17 +920,45 @@ private struct BigDecimal
 // Shortest round-trip formatting (Schubfach, the yyjson formulation)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Digit pairs "00".."99" — the branchlut table shared by the integer and
-/// float writers.
-package static immutable char[200] digitPairs = () {
-    char[200] t;
-    foreach (i; 0 .. 100)
-    {
-        t[i * 2] = cast(char)('0' + i / 10);
-        t[i * 2 + 1] = cast(char)('0' + i % 10);
-    }
-    return t;
-}();
+/**
+Digit pairs "00".."99" — the branchlut table shared by the integer and float
+writers.
+
+Wrapped in a template so each object file that uses it gets its own definition
+(the linker folds them). Module-level `static immutable` data is emitted once,
+into *this* module's object, which a `-betterC` consumer of
+$(REF writeInteger, sparkles,base,text,writers) never links — it compiles only
+its own modules. An `enum` would avoid the symbol too, but every `[i .. i + 2]`
+slice of a manifest constant materializes the whole 200-byte array first, in
+the hottest loop either writer has.
+*/
+package template digitPairs()
+{
+    static immutable char[200] digitPairs = () {
+        char[200] t;
+        foreach (i; 0 .. 100)
+        {
+            t[i * 2] = cast(char)('0' + i / 10);
+            t[i * 2 + 1] = cast(char)('0' + i % 10);
+        }
+        return t;
+    }();
+}
+
+/**
+Writes the two characters of $(LREF digitPairs) at `index` to `buf`.
+
+Two scalar stores rather than `buf[0 .. 2] = digitPairs!()[i .. i + 2]`: a
+slice assignment lowers to druntime's `_d_array_slice_copy`, which a
+`-betterC` consumer of this module's digit writers has nothing to link
+against. The back end merges the pair back into a single two-byte store, so
+the branchlut inner loop is unchanged.
+*/
+private void putDigitPair()(char* buf, size_t index) @system pure nothrow @nogc
+{
+    buf[0] = digitPairs!()[index];
+    buf[1] = digitPairs!()[index + 1];
+}
 
 /// Count of trailing decimal zeros for 0..99 (0 itself counts as 2).
 private static immutable ubyte[100] decTrailingZeros = () {
@@ -1010,13 +1086,13 @@ private void f64ToDecimal(ulong sigRaw, uint expRaw, ulong sigBin, int expBin,
 
 // --- Digit renderers (yyjson's branchlut writers, pointer-based) -------------
 
-private char* putPair(char* buf, uint v) @system pure nothrow @nogc
+private char* putPair()(char* buf, uint v) @system pure nothrow @nogc
 {
-    buf[0 .. 2] = digitPairs[v * 2 .. v * 2 + 2];
+    putDigitPair(buf, v * 2);
     return buf + 2;
 }
 
-private char* writeU32Len8(uint val, char* buf) @system pure nothrow @nogc
+private char* writeU32Len8()(uint val, char* buf) @system pure nothrow @nogc
 {
     const aabb = cast(uint)((cast(ulong) val * 109_951_163) >> 40); // val / 1e4
     const ccdd = val - aabb * 10_000;
@@ -1029,19 +1105,19 @@ private char* writeU32Len8(uint val, char* buf) @system pure nothrow @nogc
     return buf + 8;
 }
 
-private char* writeU32Len1to8(uint val, char* buf) @system pure nothrow @nogc
+private char* writeU32Len1to8()(uint val, char* buf) @system pure nothrow @nogc
 {
     if (val < 100)
     {
         const lz = val < 10;
-        buf[0 .. 2] = digitPairs[val * 2 + lz .. val * 2 + lz + 2];
+        putDigitPair(buf, val * 2 + lz);
         return buf + 2 - lz;
     }
     if (val < 10_000)
     {
         const aa = (val * 5243) >> 19;
         const lz = aa < 10;
-        buf[0 .. 2] = digitPairs[aa * 2 + lz .. aa * 2 + lz + 2];
+        putDigitPair(buf, aa * 2 + lz);
         buf -= lz;
         putPair(buf + 2, val - aa * 100);
         return buf + 4;
@@ -1052,7 +1128,7 @@ private char* writeU32Len1to8(uint val, char* buf) @system pure nothrow @nogc
         const bbcc = val - aa * 10_000;
         const bb = (bbcc * 5243) >> 19;
         const lz = aa < 10;
-        buf[0 .. 2] = digitPairs[aa * 2 + lz .. aa * 2 + lz + 2];
+        putDigitPair(buf, aa * 2 + lz);
         buf -= lz;
         putPair(buf + 2, bb);
         putPair(buf + 4, bbcc - bb * 100);
@@ -1064,7 +1140,7 @@ private char* writeU32Len1to8(uint val, char* buf) @system pure nothrow @nogc
         const aa = (aabb * 5243) >> 19;
         const cc = (ccdd * 5243) >> 19;
         const lz = aa < 10;
-        buf[0 .. 2] = digitPairs[aa * 2 + lz .. aa * 2 + lz + 2];
+        putDigitPair(buf, aa * 2 + lz);
         buf -= lz;
         putPair(buf + 2, aabb - aa * 100);
         putPair(buf + 4, cc);
@@ -1083,7 +1159,7 @@ package char* writeU64Len1to16(ulong val, char* buf) @system pure nothrow @nogc
     return writeU32Len8(low, buf);
 }
 
-private char* writeU32Len4(uint val, char* buf) @system pure nothrow @nogc
+private char* writeU32Len4()(uint val, char* buf) @system pure nothrow @nogc
 {
     const aa = (val * 5243) >> 19; // val / 100
     putPair(buf + 0, aa);
@@ -1091,7 +1167,7 @@ private char* writeU32Len4(uint val, char* buf) @system pure nothrow @nogc
     return buf + 4;
 }
 
-private char* writeU32Len5to8(uint val, char* buf) @system pure nothrow @nogc
+private char* writeU32Len5to8()(uint val, char* buf) @system pure nothrow @nogc
 {
     if (val < 1_000_000)
     {
@@ -1099,7 +1175,7 @@ private char* writeU32Len5to8(uint val, char* buf) @system pure nothrow @nogc
         const bbcc = val - aa * 10_000;
         const bb = (bbcc * 5243) >> 19;
         const lz = aa < 10;
-        buf[0 .. 2] = digitPairs[aa * 2 + lz .. aa * 2 + lz + 2];
+        putDigitPair(buf, aa * 2 + lz);
         buf -= lz;
         putPair(buf + 2, bb);
         putPair(buf + 4, bbcc - bb * 100);
@@ -1110,7 +1186,7 @@ private char* writeU32Len5to8(uint val, char* buf) @system pure nothrow @nogc
     const aa = (aabb * 5243) >> 19;
     const cc = (ccdd * 5243) >> 19;
     const lz = aa < 10;
-    buf[0 .. 2] = digitPairs[aa * 2 + lz .. aa * 2 + lz + 2];
+    putDigitPair(buf, aa * 2 + lz);
     buf -= lz;
     putPair(buf + 2, aabb - aa * 100);
     putPair(buf + 4, cc);
@@ -1120,7 +1196,13 @@ private char* writeU32Len5to8(uint val, char* buf) @system pure nothrow @nogc
 
 /// Any `ulong`, 1..20 digits — the branchlut integer writer (yyjson's
 /// `write_u64`): two digits per lookup, division only at 8-digit strides.
-package char* writeU64Digits(ulong val, char* buf) @system pure nothrow @nogc
+///
+/// An (argument-less) template so that instantiating it emits it into the
+/// caller's object file. `text.writers`' decimal fast path calls this, and a
+/// `-betterC` consumer of `writeInteger` compiles only its own modules — a
+/// plain function here would live solely in this module's object and leave
+/// that link with an undefined symbol.
+package char* writeU64Digits()(ulong val, char* buf) @system pure nothrow @nogc
 {
     if (val < 100_000_000) // 1-8 digits
         return writeU32Len1to8(cast(uint) val, buf);
@@ -1227,7 +1309,7 @@ private char* writeF64Exp(int exp, char* buf) @system pure nothrow @nogc
     if (e < 100)
     {
         const lz = e < 10;
-        buf[0 .. 2] = digitPairs[e * 2 + lz .. e * 2 + lz + 2];
+        putDigitPair(buf, e * 2 + lz);
         return buf + 2 - lz;
     }
     const hi = (e * 656) >> 16; // e / 100
