@@ -18,6 +18,11 @@ dependency "sparkles:syntax" path="../.."
 dependency "sparkles:diff" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:twoslash" path="../.."
+// Picker compute and its closure-free background scheduler (`PIK5`–`PIK8`).
+dependency "sparkles:fuzzy" path="../.."
+dependency "sparkles:event-horizon" path="../.."
+// The files finder reuses the repository's nested-.gitignore walker (`PKS1`).
+dependency "sparkles:build-primitives" path="../.."
 // The terminal UI stack: the interactive viewer (src/tui.d) and the `--twoslash`
 // overlay (src/twoslash_tui.d) both paint into a sparkles:tui cell grid and let
 // the library cell-diff each frame. Pulled by every config (the cell grid is
