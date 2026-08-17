@@ -1,0 +1,45 @@
+name "code-instrumentation"
+description "Code coverage ingestion: data models, a shared record scanner, format parsers (DMD .lst, gcov, LCOV, V8/Vitest, llvm-cov), and overlay planning"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+importPaths "src"
+
+dependency "expected" version="~>0.4.1"
+dependency "sparkles:base" path="../.."
+dependency "sparkles:wired" path="../.."
+
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses. Neither `debug` (which compiles those blocks in) nor
+// `release` (which deletes assert *expressions*, side effects included).
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    targetType "library"
+    // Fast path: depend on the runner shim (which pulls the prebuilt impl
+    // library), so `dub test` recompiles only this package rather than the
+    // runner's sources on top of it. This package is not in the impl's
+    // dependency closure (impl → base, ui), so the cycle-safe
+    // source-inclusion the closure members need does not apply here.
+    //
+    // The `@betterC` markers this package uses still resolve in a plain
+    // (non-unittest) build: `sparkles:base` carries the shim on its own
+    // import path, and dub propagates that to dependents.
+    dependency "sparkles:test-runner" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
