@@ -807,6 +807,63 @@ void main()
 median=20ns/iter min=18 max=22 over 3 samples
 ```
 
+### Code Coverage
+
+`sparkles:code-instrumentation` reads the coverage artifacts five toolchains
+emit — DMD `-cov` listings, `gcov`, LCOV `.info`, V8 block coverage, and
+`llvm-cov export` JSON — into one model. `loadCoverage` picks the parser, so
+you never name a format, and reports failure as a value rather than an empty
+result: "I could not read this" and "this describes nothing" are different
+answers.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_coverage"
+    dependency "sparkles:code-instrumentation" version="*"
++/
+
+import std.stdio : writefln, writeln;
+
+import sparkles.code_instrumentation;
+
+void main()
+{
+    // The shape `dmd -cov` writes: a blank counter for a line that emitted no
+    // code, `0000000` for code that never ran, and a trailer naming the
+    // source — the only place the source path appears.
+    enum listing = "       |module math;\n"
+        ~ "      5|    return a + b;\n"
+        ~ "0000000|    return a - b;\n"
+        ~ "libs/x/src/math.d is 50% covered\n";
+
+    auto report = loadCoverage("build/cov/math.lst", listing);
+    if (!report)
+    {
+        writeln("unreadable at byte ", report.error.offset);
+        return;
+    }
+
+    // Matched by path, not by position: a report may describe many files, and
+    // the artifact's own path is not the source's.
+    const file = report.value.findFile("libs/x/src/math.d");
+    assert(file !is null);
+
+    const plan = planCoverage(*file);
+    writeln(plan.summaryBanner);
+
+    foreach (item; plan.gutterItems)
+        writefln("%4s | line %s", item.countText, item.lineNumber);
+}
+```
+
+```[Output]
+Coverage: 50.0% (1/2 lines covered)
+     | line 1
+   5 | line 2
+   0 | line 3
+```
+
 ## Examples
 
 Runnable examples are in [`libs/base/examples/`](libs/base/examples/),
