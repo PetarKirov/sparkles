@@ -22,6 +22,8 @@
  */
 module sparkles.base.text.lineindex;
 
+import sparkles.base.text.span : TextSpan;
+
 /// A resolved position: 0-based line, 0-based byte column.
 struct LineCol
 {
@@ -93,6 +95,19 @@ struct LineIndex
     in (line >= 1, "DMD lines are 1-based")
     in (column >= 1, "DMD columns are 1-based")
         => LineCol(line - 1, column - 1);
+
+    /// Resolve a `TextSpan` to its 0-based `(startLineCol, endLineCol)` range.
+    LineColRange lineColRange(in TextSpan span) const @safe pure nothrow @nogc
+    in (span.isValid, "cannot resolve an invalid TextSpan")
+    in (span.endOffset <= _length, "TextSpan endOffset past end of text")
+        => LineColRange(lineColAt(span.startOffset), lineColAt(span.endOffset));
+}
+
+/// A resolved text range: 0-based start and end line/column positions.
+struct LineColRange
+{
+    LineCol start;
+    LineCol end;
 }
 
 @("lineindex.LineIndex.empty")
@@ -171,4 +186,16 @@ unittest
     const idx = LineIndex(text);
     foreach (offset; 0 .. text.length + 1)
         assert(idx.offsetAt(idx.lineColAt(offset)) == offset);
+}
+
+@("lineindex.LineIndex.lineColRange")
+@safe pure nothrow
+unittest
+{
+    //                     0123 456 789
+    const idx = LineIndex("ab\nc\nde\n");
+    const span = TextSpan(1, 7); // from 'b' (line 0, col 1) to 'e' (line 2, col 2)
+    const range = idx.lineColRange(span);
+    assert(range.start == LineCol(0, 1));
+    assert(range.end == LineCol(2, 2));
 }
