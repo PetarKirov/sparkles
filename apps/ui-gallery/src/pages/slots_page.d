@@ -48,6 +48,7 @@ private Group[] groups()
             Slot.selection]),
         Group("diff", [Slot.diffAdded, Slot.diffRemoved, Slot.diffEmphAdded,
             Slot.diffEmphRemoved, Slot.diffHunk, Slot.diffFill]),
+        Group("coverage", [Slot.covCovered, Slot.covUncovered, Slot.covPartial]),
     ];
 }
 
