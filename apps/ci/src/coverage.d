@@ -35,6 +35,7 @@
 module coverage;
 
 import std.algorithm : startsWith;
+import sparkles.code_instrumentation.coverage.formats.dmd : parseDmdCoverage;
 
 /// One source file's line coverage, counted from a `.lst` body.
 struct FileCoverage
@@ -66,62 +67,20 @@ struct PackageCoverage
  * Parses one `-cov` listing.
  *
  * Returns: the counted file, or a `FileCoverage` with an empty `path` when the
- *   text is not a listing (no trailer) — a caller skips those rather than
- *   guessing a path for them.
+ *   text is not a listing (no trailer) or does not parse — a caller skips
+ *   those rather than guessing a path for them.
+ *
+ *   A malformed counter column is now a parse error rather than a silently
+ *   miscounted line, and an unreadable listing is skipped the same way a
+ *   trailer-less one always was.
  */
-FileCoverage parseCoverageListing(scope const(char)[] contents) @safe pure
+FileCoverage parseCoverageListing(const(char)[] contents) @safe
 {
-    import std.algorithm : findSplit;
-    import std.string : lineSplitter, strip;
-
-    FileCoverage r;
-    foreach (line; contents.lineSplitter)
-    {
-        auto split = line.findSplit("|");
-        if (!split)
-        {
-            // Not a counted line: the only such line that matters is the
-            // trailer, which names the file this listing describes.
-            if (auto trailer = parseCoverageTrailer(line))
-                r.path = trailer;
-            continue;
-        }
-
-        const count = split[0].strip;
-        if (count.length == 0)
-            continue; // no code emitted for this line
-
-        ++r.coverable;
-        if (!isAllZero(count))
-            ++r.covered;
-    }
-    return r;
-}
-
-/// The source path named by a listing's trailer, or `null` for any other line.
-/// Handles both spellings `-cov` emits: `… is N% covered` and `… has no code`.
-private string parseCoverageTrailer(scope const(char)[] line) @safe pure
-{
-    import std.algorithm : endsWith, findSplit;
-
-    if (line.endsWith("% covered"))
-    {
-        if (auto split = line.findSplit(" is "))
-            return split[0].idup;
-    }
-    else if (line.endsWith(" has no code"))
-        return line[0 .. $ - " has no code".length].idup;
-    return null;
-}
-
-/// Whether a count field is zero. `-cov` writes an uncovered line as `0000000`,
-/// so a plain `== "0"` test would count every uncovered line as covered.
-private bool isAllZero(scope const(char)[] count) @safe pure nothrow @nogc
-{
-    foreach (c; count)
-        if (c != '0')
-            return false;
-    return count.length > 0;
+    auto parsed = parseDmdCoverage(contents);
+    if (!parsed)
+        return FileCoverage.init;
+    const file = parsed.value;
+    return FileCoverage(file.sourcePath, file.coveredLines, file.coverableLines);
 }
 
 /**
@@ -145,7 +104,7 @@ bool ownedBy(scope const(char)[] path, scope const(char)[] pkgDir) @safe pure no
 }
 
 @("ci.coverage.parseCoverageListing")
-@safe pure
+@safe
 unittest
 {
     // The shape `-cov` actually writes: counted lines, an uncovered line as
@@ -163,8 +122,21 @@ unittest
     assert(cov.percent > 66.0 && cov.percent < 67.0);
 }
 
+@("ci.coverage.parseCoverageListing.malformedIsSkipped")
+@safe
+unittest
+{
+    // A counter column that is not a number used to be read as zero and the
+    // line counted as covered. An unreadable listing is now skipped the same
+    // way a trailer-less one always was, rather than contributing a wrong
+    // number to the package total.
+    const junk = parseCoverageListing("   abc|    x();\nlibs/x/src/m.d is 0% covered\n");
+    assert(junk.path is null);
+    assert(junk.coverable == 0 && junk.covered == 0);
+}
+
 @("ci.coverage.parseCoverageListing.noCodeAndNonListings")
-@safe pure
+@safe
 unittest
 {
     // A module with nothing to cover still names itself, and counts as fully

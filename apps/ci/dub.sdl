@@ -12,6 +12,7 @@ mainSourceFile "src/ci_main.d"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
+dependency "sparkles:code-instrumentation" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "expected" version="~>0.4.1"
 dependency "sparkles:wired" path="../.."
