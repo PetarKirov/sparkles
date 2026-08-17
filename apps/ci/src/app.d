@@ -1162,7 +1162,6 @@ private ExecutionResult[] executeExamplesParallel(Example[] examples, string rep
 {
     import core.atomic : atomicLoad, atomicStore;
     import core.thread : Thread;
-    import std.array : appender;
     import std.parallelism : task;
     import std.range : take;
     import sparkles.base.term_caps : detectTermCaps;
@@ -1228,9 +1227,9 @@ private ExecutionResult[] executeExamplesParallel(Example[] examples, string rep
 
         if (region.interactive)
         {
-            auto bar = appender!string;
+            SmallBuffer!(char, 128) bar;
             ProgressBar(done: completed, total: examples.length).toString(bar);
-            string[] frame = ["building examples " ~ bar[]];
+            string[] frame = ["building examples " ~ bar[].idup];
             enum size_t maxShown = 4;
             foreach (name; buildingNames.take(maxShown))
                 frame ~= "  " ~ theme.paint(Semantic.accent, spinnerFrame(spin))
