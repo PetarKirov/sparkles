@@ -85,6 +85,10 @@ if (Capacity > 0 && PromptCapacity > 0)
     size_t selection;
     ScrollState scroll;
     ulong generation;
+    /// Candidates admitted so far this generation (grows while `searching`).
+    size_t matchedTotal;
+    /// The corpus size the generation searched — the `332/2350` denominator.
+    size_t corpusTotal;
     bool active;
     bool searching;
     bool showScoreDebug;
@@ -100,6 +104,8 @@ if (Capacity > 0 && PromptCapacity > 0)
         rowCount_ = 0;
         selection = 0;
         scroll = ScrollState.init;
+        matchedTotal = 0;
+        corpusTotal = 0;
         error = FuzzyError.init;
         active = true;
         searching = false;
@@ -196,6 +202,7 @@ private struct GenerationSlot(Caps, size_t ResultCapacity)
     Scoring scoring;
     Duration budget;
     ulong generation;
+    size_t admittedTotal;
     shared(ulong)* publishedGeneration;
     FuzzyError error;
     bool finished;
@@ -307,6 +314,8 @@ if (ResultCapacity > 0 && SlotCount > 1)
             }
             state.publish(page[0 .. pageResult.value], slot.generation,
                 !slot.finished);
+            state.matchedTotal = slot.admittedTotal;
+            state.corpusTotal = slot.snapshot.candidates.length;
             if (slot.finished)
                 slot.state = GenerationState.idle;
             else
@@ -352,6 +361,7 @@ private:
             slot.fuzzyLimits = fuzzyLimits;
             slot.matchConfig = matchConfig;
             slot.scoring = scoring;
+            slot.admittedTotal = 0;
             slot.error = FuzzyError.init;
             slot.finished = false;
             slot.cancelled = false;
@@ -435,6 +445,7 @@ private void runGeneration(Caps, size_t ResultCapacity)(void* raw)
             return;
         }
         slot.cursor = status.value.cursor;
+        slot.admittedTotal += status.value.admitted;
         if (status.value.stop == SearchStop.exhausted)
         {
             slot.finished = true;
