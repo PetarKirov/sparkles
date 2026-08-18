@@ -269,7 +269,7 @@ struct PreviewTui
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
 
     /// The pane is consuming typed text (the workspace must not steal keys).
-    bool inputActive() const @safe pure nothrow @nogc => searching;
+    bool inputActive() const @safe pure nothrow @nogc => searching || filtering;
 
     /// Selects the theme by index (the workspace initializes the pane; the
     /// first `relayout` resolves it).
@@ -485,6 +485,16 @@ struct PreviewTui
     DsvCopy dsvCopy;
     /// ditto
     TableCopyFormat tableFmt = TableCopyFormat.tsv;
+    /// The data browser's host hooks (`DSB`): the workspace owns the
+    /// `DsvBrowser` and the reprojection; the viewer only reports intent
+    /// (a header click, an applied filter query, a reset).
+    void delegate(uint) @system onDsvSort;
+    /// ditto
+    void delegate(string) @system onDsvFilterApply;
+    /// ditto
+    void delegate() @system onDsvReset;
+    /// The filter prompt's input mode (`DSF1`) — the search prompt's twin.
+    private bool filtering;
 
     void setDocument(string title_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel model_,
@@ -819,11 +829,12 @@ struct PreviewTui
         // preview's formatter · width · error chip (`FMV7`), then the hints.
         const fchip = formatPreviewChip(vm);
         const line = b.add(Widget(kind: WidgetKind.text,
-            text: searching ? text("/", query, "▏")
+            text: filtering ? text("⌕ ", query, "▏")
+                : searching ? text("/", query, "▏")
                 : notice.length ? notice
                 : fchip.length ? fchip
                 : "scroll ↑↓ · ←→ theme · Tab raw/preview · / search · za fold · drag+y copy · q quit",
-            slot: searching || notice.length || fchip.length
+            slot: searching || filtering || notice.length || fchip.length
                 ? Slot.inherit : Slot.gutter));
         paintBar(g, y, [line], null, null, b);
     }
@@ -1195,6 +1206,8 @@ struct PreviewTui
             vm.clearCopied(); // the copy flash lasts until the next event
         if (searching)
             return handleSearch(e);
+        if (filtering)
+            return handleFilterPrompt(e);
         return e.match!(
             (in PointerEvent p) => handlePointer(p),
             (in WheelEvent w) => handleWheel(w),
@@ -1329,6 +1342,11 @@ struct PreviewTui
                 break;
 
             case Command.startSearch: searching = true; qlen = 0; break;
+            case Command.dsvFilter: filtering = true; qlen = 0; break;
+            case Command.dsvReset:
+                if (onDsvReset !is null)
+                    onDsvReset();
+                break;
             case Command.startGoto:   break; // the TUI has no go-to bar yet
             case Command.matchNext:   jumpMatch(top + 1, true); break;
             case Command.matchPrev:   jumpMatch(top - 1, false); break;
@@ -1391,7 +1409,7 @@ struct PreviewTui
     /// than it does in the window.
     private KeyContext keyContext() const @safe pure nothrow @nogc
         => KeyContext(
-            mode: searching ? InputMode.search : InputMode.normal,
+            mode: searching || filtering ? InputMode.search : InputMode.normal,
             // The terminal viewer searches line-by-line rather than
             // materialising a match list, so a live query IS the
             // condition `n`/`N` are gated on.
@@ -1399,6 +1417,7 @@ struct PreviewTui
             hasDiffSession: vm.showPreview && !vm.diffSession.empty,
             showPreview: vm.showPreview,
             formatPreviewActive: formatPreviewActive(vm),
+            hasDsvGrid: vm.showPreview && dsvCopy.info.present,
         );
 
     private bool handlePointer(in PointerEvent e) @system
@@ -1572,12 +1591,58 @@ struct PreviewTui
                         return true;
                     }
                 }
+                // `DSS1`: a press on a DSV grid's header cell cycles that
+                // column as the primary sort key (the workspace reprojects).
+                if (dsvHeaderSortAt(p))
+                    return true;
             }
             sel = e.action == PointerAction.press
                 ? Selection!long.started(line) : sel.extended(line);
             clampSel();
         }
         return true;
+    }
+
+    version (unittest)
+    {
+        /// Test helper: the on-screen x of a header cell whose text is
+        /// `name`, resolved through the keyed rects (−1 = not found).
+        package int headerCellX(string name) @system
+        {
+            foreach (ref const mc; vm.cellList)
+                if (mc.row == 0 && mc.span.end <= vm.source.length
+                    && vm.source[mc.span.start .. mc.span.end] == name)
+                    foreach (ref const kr; vm.cells)
+                        if (kr.key == mc.span.start + ViewerModel.tableKeyBase)
+                            return kr.rect.x + 1;
+            return -1;
+        }
+    }
+
+    /// `DSS1` via the mouse: resolve a document-space point to a table
+    /// cell (the keyed rects the selection machinery already maintains);
+    /// a header-row hit on a data column reports a sort-cycle intent.
+    private bool dsvHeaderSortAt(Point p) @system
+    {
+        if (!dsvCopy.info.present || onDsvSort is null)
+            return false;
+        foreach (ref const kr; vm.cells)
+        {
+            if (!kr.rect.contains(p))
+                continue;
+            foreach (ref const mc; vm.cellList)
+                if (mc.span.start + ViewerModel.tableKeyBase == kr.key)
+                {
+                    if (mc.row == 0 && mc.col > 0)
+                    {
+                        onDsvSort(cast(uint)(mc.col - 1));
+                        return true;
+                    }
+                    return false; // a body cell: fall through to selection
+                }
+            return false;
+        }
+        return false;
     }
 
     // Key handling while typing a search query (`/…`): printable keys extend it,
@@ -1587,6 +1652,37 @@ struct PreviewTui
     {
         return ev.match!((in KeyEvent e) {
             searchKey(e);
+            return true;
+        }, (in EndOfInput _) => false, _ => true);
+    }
+
+    /// The DSV filter prompt (`DSF1`): type, Enter applies through the
+    /// workspace hook (`DSF5` errors surface as a notice there), Esc cancels.
+    private bool handleFilterPrompt(in Event ev) @system
+    {
+        return ev.match!((in KeyEvent e) {
+            switch (e.key)
+            {
+                case Key.char_:
+                    if (qlen < qbuf.length)
+                        qbuf[qlen++] = cast(char) e.ch;
+                    break;
+                case Key.backspace:
+                    if (qlen)
+                        --qlen;
+                    break;
+                case Key.enter:
+                    filtering = false;
+                    if (onDsvFilterApply !is null)
+                        onDsvFilterApply(query.idup);
+                    qlen = 0;
+                    break;
+                case Key.escape:
+                    filtering = false;
+                    qlen = 0;
+                    break;
+                default: break;
+            }
             return true;
         }, (in EndOfInput _) => false, _ => true);
     }
@@ -2338,4 +2434,58 @@ version (HueDmdFmt)
     formatPreviewToggle(t.vm); // off restores
     assert(t.vm.source is src);
     t.vm.fmt.service.shutdown();
+}
+
+@("tui.dsv.headerClickSortsAndFilterPromptApplies")
+@system unittest
+{
+    import dsv_view : adaptDsv, DsvCopy, DsvFlags;
+    import sparkles.syntax : builtinDark, LabelSet, Theme;
+
+    const src = "name,qty\nb,2\na,3\nc,1\n";
+    auto adapted = adaptDsv(src, "csv", DsvFlags());
+    PreviewModel pm = { present: true, doc: adapted.doc,
+        tableExtras: adapted.extras };
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 12;
+    t.relayout();
+    t.setDocument("browse.csv", adapted.text, null, pm, startPreview: true);
+    t.dsvCopy = DsvCopy.of(src, adapted.info);
+
+    uint sorted = uint.max;
+    t.onDsvSort = (uint col) { sorted = col; };
+    string applied;
+    t.onDsvFilterApply = (string q) { applied = q; };
+
+    // The header row is document line 1 (line 0 is the top border): screen
+    // y = 2 with the header bar on y 0. The qty header sits right of the
+    // gutter + name columns.
+    const hx = t.headerCellX("qty");
+    assert(hx >= 0, "qty header cell not found in the keyed rects");
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(hx, 2)))));
+    assert(sorted == 1, "the qty header click should report data column 1");
+
+    // A body-cell press falls through to selection, never a sort.
+    sorted = uint.max;
+    t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(hx, 4))));
+    assert(sorted == uint.max);
+
+    // `/` over the grid opens the filter prompt (hasDsvGrid routes it);
+    // typing + Enter reports the applied query.
+    assert(t.handle(Event(KeyEvent(key: Key.char_, ch: '/'))));
+    assert(t.inputActive, "the filter prompt should own the keyboard");
+    foreach (ch; "qty:>1")
+        t.handle(Event(KeyEvent(key: Key.char_, ch: ch)));
+    t.handle(Event(KeyEvent(key: Key.enter)));
+    assert(applied == "qty:>1");
+    assert(!t.inputActive);
 }
