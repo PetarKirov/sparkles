@@ -903,6 +903,7 @@ struct ExplorerTui
             case Command.toggleFormatPreview: case Command.formatterNext:
             case Command.formatWidthNarrower: case Command.formatWidthWider:
             case Command.startSearch: case Command.startGoto:
+            case Command.dsvFilter: case Command.dsvReset:
             case Command.toggleHoverRegions: case Command.cycleHoverPopup:
             case Command.foldToggle: case Command.foldClose: case Command.foldOpen:
             case Command.foldOpenAll: case Command.foldCloseAll: case Command.foldLevel:

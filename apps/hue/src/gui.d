@@ -2507,6 +2507,9 @@ int runGui(GuiArgs guiArgs) @system
                         ? "table-copy: markdown" : "table-copy: source";
                     flash.toast = Timeline.triggered(toastCfg);
                     break;
+                case Command.dsvFilter:
+                case Command.dsvReset:
+                    break; // the GUI browser wiring is pending (spec DSB)
                 case Command.startSearch:
                     inp.mode = Mode.search;
                     inp.query.clear();

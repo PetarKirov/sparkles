@@ -75,6 +75,8 @@ struct KeyContext
     bool showPreview;    /// the decorated preview is showing (search is raw-only)
     /// the format preview is showing (`<`/`>` nudge its ruler; `FMV`)
     bool formatPreviewActive;
+    /// a DSV grid is showing (`/` filters it, `Shift-R` resets — `DSB`)
+    bool hasDsvGrid;
 }
 
 /**
@@ -137,6 +139,8 @@ enum Command : ubyte
     toggleTableCopy,       /// `t`
     startSearch,           /// `/`
     startGoto,             /// `gl`
+    dsvFilter,             /// `/` over a DSV grid — the filter bar (`DSF1`)
+    dsvReset,              /// `Shift-R` — back to the pristine grid (`DSB2`)
     lanternAll,            /// `<leader>?` — list every binding live here
     pickerFiles,           /// `<leader>ff` — the fuzzy file picker
     quit,                  /// `q` — leave the viewer
@@ -275,6 +279,7 @@ enum CtxFlag : ubyte
     hasDiffSession = 1 << 2,
     showPreview    = 1 << 3,
     formatPreviewActive = 1 << 4,
+    hasDsvGrid     = 1 << 5,
 }
 
 /// `ctx`'s facts as $(LREF CtxFlag) bits.
@@ -286,6 +291,7 @@ ubyte ctxBits(in KeyContext ctx)
     if (ctx.hasDiffSession) b |= CtxFlag.hasDiffSession;
     if (ctx.showPreview)    b |= CtxFlag.showPreview;
     if (ctx.formatPreviewActive) b |= CtxFlag.formatPreviewActive;
+    if (ctx.hasDsvGrid)     b |= CtxFlag.hasDsvGrid;
     return b;
 }
 
@@ -536,9 +542,15 @@ immutable Binding[] hueBindings = [
         "close all folds", forbid: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('z'), chordRange('1', '9'), Command.foldLevel,
         "fold level", forbid: CtxFlag.hasDiffSession, arg: 1),
-    // Search is raw-view only, so `/` is unbound under a preview.
+    // Search is raw-view only, so `/` is unbound under a preview — which
+    // frees it for the DSV grid's filter bar (`DSF1`); `Shift-R` resets the
+    // projection (`DSB2`).
     bind(Scope_.viewer, chord('/'), Command.startSearch, "search",
         forbid: CtxFlag.showPreview),
+    bind(Scope_.viewer, chord('/'), Command.dsvFilter, "filter rows",
+        require: CtxFlag.hasDsvGrid),
+    bind(Scope_.viewer, chord('r', ShiftReq.yes), Command.dsvReset,
+        "reset sort/filter", require: CtxFlag.hasDsvGrid),
     // A diff session claims the bracket pair ahead of a document set: its
     // changed-file list is the set a reviewer is walking (`DVG1`). This pair
     // of rows is the one place order within a scope decides the outcome.

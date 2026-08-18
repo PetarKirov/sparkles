@@ -100,6 +100,16 @@ private void maskPermutation(ref SmallBuffer!(uint, 64) perm,
     perm.length = w;
 }
 
+/// The flags that reproduce an already-resolved dialect exactly — the
+/// reprojection path re-adapts without re-sniffing (`DSB4`'s cheap half).
+DsvFlags flagsOf(in DsvInfo info) @safe pure
+{
+    return DsvFlags(
+        delimiter: [info.dialect.delimiter].idup,
+        quote: [info.dialect.quote].idup,
+        header: info.hasHeader ? "yes" : "no");
+}
+
 /// One flag char from its CLI spelling (`,` · `;` · `\t`/`tab` · …).
 private char flagChar(string s, char fallback) @safe pure nothrow
 {
@@ -325,6 +335,8 @@ string dsvStatusNote(in DsvInfo info) @safe pure
     auto note = text("dsv · ", delim,
         info.dialect.quote == '"' ? "" : text(" · quote ", info.dialect.quote),
         info.hasHeader ? " · header" : " · no header");
+    if (info.projected)
+        note ~= text(" · ", info.visibleRows, "/", info.dataRows, " rows");
     if (info.ragged)
         note ~= text(" · ", info.ragged, " ragged");
     return note;
@@ -383,6 +395,9 @@ struct DsvCopy
     private uint[] rowPerm;  /// view data row → data record (`DSC5`)
     private uint[] viewCols; /// view data col → data column
     private bool projPristine = true;
+    /// Decoded (or synthetic) DATA column names, for filter-name resolution
+    /// and the columns palette.
+    string[] headerNames;
 
     bool present() const @safe pure nothrow @nogc => info.present;
     /// View grid chrome: the gutter column, and the synthetic header row.
@@ -414,6 +429,20 @@ struct DsvCopy
                 if (proj.rowMask !is null)
                     maskPermutation(perm, proj.rowMask);
                 c.rowPerm = perm[].dup;
+                c.headerNames = new string[](c.parsed.columnCount);
+                {
+                    SmallBuffer!(char, 256) nameBuf;
+                    const hasHdr = info.hasHeader && c.parsed.records.length;
+                    foreach (col; 0 .. c.parsed.columnCount)
+                    {
+                        if (hasHdr && col < c.parsed.records[0].cellCount)
+                            c.headerNames[col] = decodeCell(c.parsed,
+                                c.parsed.cells[c.parsed.records[0].cellsStart + col],
+                                nameBuf).idup;
+                        else
+                            c.headerNames[col] = columnName(col);
+                    }
+                }
                 if (proj.columns !is null)
                     c.viewCols = proj.columns.dup;
                 else

@@ -41,7 +41,8 @@ import sparkles.ui.style : Slot;
 import ansi_model : BackgroundMode;
 import diff_view : DiffLayout;
 import document : Document;
-import dsv_view : DsvCopy, resolveTableCopy;
+import dsv_browser : DsvBrowser, fuzzyRowMask;
+import dsv_view : adaptDsv, DsvCopy, dsvStatusNote, flagsOf, resolveTableCopy;
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
 
@@ -76,6 +77,7 @@ struct WorkspaceTui
     PreviewTui viewer;
     WsLoader loadDoc;
     string tableCopyFlag = "auto"; /// `--table-copy` raw flag (`DSC2`)
+    DsvBrowser dsvBrowser; /// the data browser's projection state (`DSB1`)
     /// Live D types (`PRJ12`-`PRJ16`): a `twoslash-extract --dub --serve`
     /// oracle for the open `.d` document. The session belongs to the document
     /// — opening another file ends it — and its stderr is silenced, because
@@ -579,6 +581,8 @@ struct WorkspaceTui
         viewer.vm.docPath = path; // .editorconfig discovery (format preview)
         viewer.dsvCopy = DsvCopy.of(doc.dsvText, doc.dsvInfo);
         viewer.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
+        dsvBrowser = DsvBrowser.init;
+        wireDsvHooks();
         syncTreeSession();
         startDiffTypes();
         tree.reveal(path);
@@ -768,6 +772,61 @@ struct WorkspaceTui
     /// (or back at the filesystem when it is not a diff). Called wherever the
     /// viewer's document changes, so the two panes never disagree about what
     /// is being shown.
+    /// Re-renders the current DSV document under the browser's projection
+    /// (`DSB1`): re-adapt (no re-sniff — the resolved dialect is replayed),
+    /// rebuild the preview, and re-arm the copy state; scroll resets, the
+    /// keymap and format survive.
+    void applyDsvBrowser() @system
+    {
+        import gui_preview : previewOf;
+        import sparkles.syntax : HighlightEvent;
+
+        auto st = viewer.dsvCopy;
+        if (!st.info.present)
+            return;
+        auto proj = dsvBrowser.projection(st.info.columns);
+        proj.rowMask = fuzzyRowMask(st.rawText, st.info, dsvBrowser.fuzzyParts);
+        auto adapted = adaptDsv(st.rawText, "", flagsOf(st.info), proj);
+        auto pm = previewOf(*viewer.cache, adapted.doc);
+        pm.tableExtras = adapted.extras;
+        auto ev = new HighlightEvent[](1);
+        ev[0] = HighlightEvent.sourceSpan(0, adapted.text.length);
+        const fmt = viewer.tableFmt;
+        const path = viewer.vm.docPath;
+        viewer.setDocument(viewer.vm.title, adapted.text, ev, pm,
+            startPreview: true);
+        viewer.vm.docPath = path;
+        const chrome = dsvBrowser.chromeNote;
+        viewer.docNote = dsvStatusNote(adapted.info)
+            ~ (chrome.length ? " · " ~ chrome : "");
+        viewer.dsvCopy = DsvCopy.of(st.rawText, adapted.info, proj);
+        viewer.tableFmt = fmt;
+        wireDsvHooks();
+    }
+
+    /// The viewer reports browser intent; the workspace owns the state and
+    /// the reprojection (`DSB`).
+    void wireDsvHooks() @system
+    {
+        viewer.onDsvSort = (uint col) @system {
+            dsvBrowser.cycleSort(col, append: false);
+            applyDsvBrowser();
+        };
+        viewer.onDsvReset = () @system {
+            dsvBrowser.reset();
+            applyDsvBrowser();
+        };
+        viewer.onDsvFilterApply = (string q) @system {
+            const st = viewer.dsvCopy;
+            if (!st.info.present)
+                return;
+            if (dsvBrowser.setFilter(q, st.headerNames))
+                applyDsvBrowser();
+            else
+                viewer.showNotice("filter: " ~ dsvBrowser.filterError);
+        };
+    }
+
     package void syncTreeSession() @system
     {
         tree.session = viewer.diffEntries();
@@ -1400,6 +1459,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             w.viewer.dsvCopy = DsvCopy.of(fresh.dsvText, fresh.dsvInfo);
             w.viewer.tableFmt = resolveTableCopy(w.tableCopyFlag,
                 fresh.dsvInfo.present);
+            w.dsvBrowser = DsvBrowser.init;
+            w.wireDsvHooks();
         };
     w.liveTypes = liveTypes;
     // `DVL3`: the layout the reviewer asked for on the command line; `s`
@@ -1452,6 +1513,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         w.viewer.dsvCopy = DsvCopy.of(initial.dsvText, initial.dsvInfo);
         w.viewer.tableFmt = resolveTableCopy(tableCopyFlag,
             initial.dsvInfo.present);
+        w.dsvBrowser = DsvBrowser.init;
+        w.wireDsvHooks();
         w.syncTreeSession();
         w.startDiffTypes();
         if (target.length)
