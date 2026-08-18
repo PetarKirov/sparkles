@@ -21,7 +21,7 @@ import sparkles.ui.widget : WidgetTree;
 
 import picker : PickerScheduler, PickerState;
 import picker_sources : collectFilesFinder, FilesFinder;
-import picker_view : PickerLayout, PickerPreview, pickerView, RowHighlight;
+import picker_view : PickerGeometry, PickerLayout, pickerView, RowHighlight;
 
 /// What a modal keystroke did — the host acts on `accepted` (open the file)
 /// and repaints on the rest.
@@ -60,20 +60,17 @@ struct PickerHost
     private bool poolLive;
     private bool poolTried;
 
-    // Render-time decor, refreshed when the rows or the selection change:
-    // fuzzy-match byte ranges per visible row (the positions-on-demand
-    // doctrine — never stored on results) and the selected file's head for
-    // the preview pane.
+    // Render-time decor, refreshed when the rows change: fuzzy-match byte
+    // ranges per visible row (the positions-on-demand doctrine — never
+    // stored on results), and the resolved selected path the hosts feed
+    // their preview document pane with.
     private MatcherWorkspace!DefaultFuzzyCaps positionsWorkspace;
     private TextRange[maxRowRanges][pickerRows] rowRanges;
     private size_t[pickerRows] rowRangeCounts;
-    private string previewTitle;
-    private string[] previewLines;
-    private size_t previewIndex = size_t.max;
+    private size_t selectedIndex_ = size_t.max;
+    private string selectedPath_;
 
     private enum size_t maxRowRanges = 8;
-    private enum size_t previewMaxLines = 24;
-    private enum size_t previewMaxBytes = 64 * 1_024;
 
     /// One duration-bounded search step per request/poll (`PIK5`).
     private enum stepBudget = 4.msecs;
@@ -101,8 +98,9 @@ struct PickerHost
         scheduler.cancel(); // running generations retire against the old corpus
         finder = collectFilesFinder(root, includeGlobs, excludeGlobs);
         state.open();
-        previewIndex = size_t.max;
-        refreshDecor();
+        selectedIndex_ = size_t.max;
+        selectedPath_ = null;
+        refreshHighlights();
         request();
     }
 
@@ -147,25 +145,40 @@ struct PickerHost
         scheduler.poll(state);
         const changed = fingerprint() != before;
         if (changed)
-            refreshDecor();
+            refreshHighlights();
         return changed;
+    }
+
+    /// The selected row's resolved absolute path (null when nothing is
+    /// selected) — what the hosts feed their preview document pane.
+    string selectedPath() @system
+    {
+        const index = state.selectedCorpusIndex;
+        if (index != selectedIndex_)
+        {
+            selectedIndex_ = index;
+            selectedPath_ = finder.resolve(index);
+        }
+        return selectedPath_;
     }
 
     /**
     Build this frame's widget tree — the shared view plus the host-derived
-    decor (match highlights, preview content). Both canvases interpret one
-    tree, so the two backends cannot drift.
+    decor (match highlights, the preview panel's heading). Both canvases
+    interpret one tree, so the two backends cannot drift.
     */
-    WidgetTree buildView(PickerLayout preset = PickerLayout.default_) @system
+    WidgetTree buildView(PickerGeometry geometry,
+        PickerLayout preset = PickerLayout.default_) @system
     {
+        import std.path : baseName;
+
         RowHighlight[pickerRows] highlights;
         foreach (i; 0 .. state.rowCount)
             highlights[i] = RowHighlight(rowRanges[i][0 .. rowRangeCounts[i]]);
-        PickerPreview preview;
-        preview.title = previewTitle;
-        preview.lines = previewLines;
+        const path = selectedPath();
         return pickerView(state, snapshot,
-            highlights[0 .. state.rowCount], preview, preset);
+            highlights[0 .. state.rowCount],
+            path.length ? baseName(path) : null, geometry, preset);
     }
 
     /**
@@ -200,25 +213,21 @@ struct PickerHost
         if (k.key == Key.up)
         {
             state.moveSelection(-1);
-            refreshPreview();
             return PickerAction.consumed;
         }
         if (k.key == Key.down)
         {
             state.moveSelection(1);
-            refreshPreview();
             return PickerAction.consumed;
         }
         if (k.key == Key.pageUp)
         {
             state.moveSelection(-cast(long) pickerRows / 2);
-            refreshPreview();
             return PickerAction.consumed;
         }
         if (k.key == Key.pageDown)
         {
             state.moveSelection(pickerRows / 2);
-            refreshPreview();
             return PickerAction.consumed;
         }
         if (k.key == Key.char_ && k.mods.ctrl)
@@ -237,12 +246,6 @@ struct PickerHost
     }
 
 private:
-    void refreshDecor() @system
-    {
-        refreshHighlights();
-        refreshPreview();
-    }
-
     /**
     Derive each visible row's fuzzy-match byte ranges by re-running the
     positions tier against the same defaults the search admitted with — the
@@ -275,66 +278,6 @@ private:
                 rowRanges[i][k] = buffer[k];
             rowRangeCounts[i] = count;
         }
-    }
-
-    /// Load the selected file's head for the preview pane. IO happens only
-    /// when the selection actually lands on a different file.
-    void refreshPreview() @system
-    {
-        const index = state.selectedCorpusIndex;
-        if (index == previewIndex)
-            return;
-        previewIndex = index;
-        previewTitle = null;
-        previewLines = null;
-        const path = finder.resolve(index);
-        if (path is null)
-            return;
-        import std.path : baseName;
-
-        previewTitle = baseName(path);
-        try
-        {
-            import std.file : read;
-
-            previewLines = previewOf(cast(const(char)[]) read(path,
-                previewMaxBytes));
-        }
-        catch (Exception)
-        {
-            previewLines = ["(unreadable)"];
-        }
-    }
-
-    static string[] previewOf(const(char)[] bytes) @system
-    {
-        foreach (value; bytes.length < 512 ? bytes : bytes[0 .. 512])
-            if (value == '\0')
-                return ["(binary)"];
-        string[] lines;
-        size_t start;
-        foreach (i; 0 .. bytes.length + 1)
-        {
-            if (i != bytes.length && bytes[i] != '\n')
-                continue;
-            char[] cleaned;
-            foreach (value; bytes[start .. i])
-            {
-                if (value == '\t')
-                    cleaned ~= "    ";
-                else if (value == '\r')
-                    continue;
-                else if (cast(ubyte) value < 0x20)
-                    cleaned ~= ' ';
-                else
-                    cleaned ~= value;
-            }
-            lines ~= cast(string) cleaned;
-            start = i + 1;
-            if (lines.length == previewMaxLines || start >= bytes.length)
-                break;
-        }
-        return lines;
     }
 
     void request() @system

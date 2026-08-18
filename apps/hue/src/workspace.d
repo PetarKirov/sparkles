@@ -41,6 +41,8 @@ import document : Document;
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
 import picker_host : PickerAction, PickerHost;
+import picker_preview : PickerDocPane;
+import picker_view : PickerGeometry;
 import gui_preview : PreviewModel;
 import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
@@ -102,6 +104,9 @@ struct WorkspaceTui
     /// action, under `NFR1`'s startup carve-out). `runWorkspace` shuts its
     /// worker pool down on exit.
     package PickerHost* picker;
+    /// The picker's preview: another document pane, fed by the same loader
+    /// and theme as the main viewer (`picker_preview`). Heap with `picker`.
+    package PickerDocPane* pickerDoc;
 
     /// The sidebar's width in cells (incl. its own chrome) — `--tree-width`
     /// seeds it, the divider drag moves it.
@@ -401,14 +406,26 @@ struct WorkspaceTui
         paintPicker(g);
     }
 
+    /// The overlay's frame-stable geometry: two equal panels, sized by the
+    /// terminal alone — never by the rows or the previewed file — so
+    /// switching files cannot move a border (`PKL1`).
+    package PickerGeometry pickerGeometry() const @safe pure nothrow @nogc
+    {
+        import picker_view : pickerGeometryFor;
+
+        return pickerGeometryFor(width, height);
+    }
+
     /**
     The fuzzy picker (`PIK3`), over everything: the shared widget tree
     (`picker_view`), interpreted through the same cell canvas the guide
     uses — so the window and the terminal cannot drift on what it looks
-    like. Centered, one row down, clipped to the terminal.
+    like. The preview panel's framed hole is then filled with the live
+    document pane's own cells (`picker_preview`).
     */
     private void paintPicker(ref Grid g) @system
     {
+        import picker_view : pickerPreviewRect;
         import sparkles.ui.display_list : buildDisplayList;
         import sparkles.ui.geometry : Constraints;
         import sparkles.ui.layout : layout;
@@ -417,15 +434,37 @@ struct WorkspaceTui
 
         if (picker is null || !picker.state.active)
             return;
-        const cols = width > 8 ? (width - 4 > 120 ? 120 : width - 4) : width;
-        auto view = picker.buildView();
-        auto frames = layout(view, Constraints(maxW: cols));
+        const geometry = pickerGeometry();
+        auto view = picker.buildView(geometry);
+        auto frames = layout(view,
+            Constraints(maxW: 2 * geometry.panelCols));
         const panel = frames[view.root].rect;
         const x = (width - panel.width) / 2;
+        const originX_ = x > 0 ? x : 0;
         paintGrid(g, pageBg, buildDisplayList(view, frames,
             defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg,
-            pageBg), x > 0 ? x : 0, 1,
+            pageBg), originX_, 1,
             Rect(0, 0, panel.width, height > 2 ? height - 2 : height));
+
+        // The document pane paints its own grid; its cells land in the hole.
+        const hole = pickerPreviewRect(view, frames);
+        if (pickerDoc is null || hole.width <= 0 || hole.height <= 0)
+            return;
+        auto pane = &pickerDoc.paint(hole.width, hole.height);
+        foreach (y; 0 .. pane.rows)
+        {
+            const dy = 1 + hole.y + y;
+            if (dy < 0 || dy >= height)
+                continue;
+            foreach (px; 0 .. pane.cols)
+            {
+                const dx = originX_ + hole.x + px;
+                if (dx < 0 || dx >= width)
+                    continue;
+                g[cast(ushort) dx, cast(ushort) dy]
+                    = (*pane)[cast(ushort) px, cast(ushort) y];
+            }
+        }
     }
 
     /// Paints the semantic bars the dock routed. The terminal degradation is
@@ -797,6 +836,18 @@ struct WorkspaceTui
     {
         if (picker is null)
             picker = new PickerHost;
+        if (pickerDoc is null)
+            pickerDoc = new PickerDocPane;
+        // The preview pane is wired exactly like the main viewer: the same
+        // loader, themes, labels, grammar cache and ANSI decoder — it IS the
+        // document pane, opened on whatever the selection rests on.
+        pickerDoc.load = loadDoc;
+        pickerDoc.pane.names = viewer.names;
+        pickerDoc.pane.themes = viewer.themes;
+        pickerDoc.pane.labels = viewer.labels;
+        pickerDoc.pane.vm.cache = viewer.vm.cache;
+        pickerDoc.pane.vm.decodeAnsi = viewer.vm.decodeAnsi;
+        pickerDoc.syncTheme(viewer.themeIndex);
         picker.open(tree.root.length ? tree.root : ".",
             tree.includeGlobs, tree.excludeGlobs);
         dirty = true;
@@ -809,12 +860,26 @@ struct WorkspaceTui
         if (picker !is null && picker.state.active)
         {
             e.match!((in KeyEvent k) {
+                // `Ctrl-d`/`Ctrl-u` scroll the preview pane — forwarded as
+                // the page keys its own keymap already binds.
+                if (k.key == Key.char_ && k.mods.ctrl
+                    && (k.ch == 'd' || k.ch == 'u') && pickerDoc !is null)
+                {
+                    cast(void) pickerDoc.pane.handle(Event(KeyEvent(
+                        key: k.ch == 'd' ? Key.pageDown : Key.pageUp)));
+                    return;
+                }
                 final switch (picker.handleKey(k))
                 {
                 case PickerAction.consumed:
+                    break;
                 case PickerAction.closed:
+                    if (pickerDoc !is null)
+                        pickerDoc.close();
                     break;
                 case PickerAction.accepted:
+                    if (pickerDoc !is null)
+                        pickerDoc.close();
                     openDoc(picker.acceptedPath);
                     break;
                 }
@@ -1040,9 +1105,16 @@ struct WorkspaceTui
         changed |= pollDiffTypes();
         // The picker's scheduler publishes its newest partial page here —
         // and, in the synchronous degradation (`PIK8`), takes its next
-        // duration-bounded step.
+        // duration-bounded step. The preview pane's debounce/dwell clocks
+        // advance with it.
         if (picker !is null && picker.poll())
             changed = true;
+        if (picker !is null && picker.state.active && pickerDoc !is null)
+        {
+            pickerDoc.select(picker.selectedPath);
+            pickerDoc.syncTheme(viewer.themeIndex);
+            changed |= pickerDoc.tick();
+        }
         if (tree.git.poll())
         {
             tree.rebuild();
@@ -1287,8 +1359,10 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     WorkspaceDoc delegate() @system reloadDiff = null) @system
 {
     WorkspaceTui w;
-    // The picker's worker pool must stop before the process exits.
+    // The picker's worker pool and the preview's oracle must stop before the
+    // process exits.
     scope (exit) if (w.picker !is null) w.picker.shutdown();
+    scope (exit) if (w.pickerDoc !is null) w.pickerDoc.shutdown();
     w.loadDoc = loadDoc;
     // `DST2`: after a patch is applied the diff on screen is stale — the rows
     // just staged are no longer part of it. Only the host owns the loader
@@ -1542,9 +1616,16 @@ private Duration waitDeadline(ref WorkspaceTui w, bool eventDriven = false)
         deadline = untilScroll;
     // A searching picker progresses through `pollAll` — synchronously in the
     // degraded mode, via completions otherwise — and neither wakes a loop
-    // blocked on input, so cap the wait while one is running (`PIK5`).
+    // blocked on input, so cap the wait while one is running (`PIK5`). The
+    // preview pane's debounce/dwell/oracle clocks ask for their own wake.
     if (w.picker !is null && w.picker.busy && deadline > 16.msecs)
         deadline = 16.msecs;
+    if (w.picker !is null && w.picker.state.active && w.pickerDoc !is null)
+    {
+        const untilPreview = w.pickerDoc.nextDeadline();
+        if (untilPreview < deadline)
+            deadline = untilPreview;
+    }
     return deadline;
 }
 
@@ -1954,11 +2035,16 @@ unittest
     foreach (ch; " ff")
         assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
     assert(w.picker !is null && w.picker.state.active, "the picker opened");
+    // Deterministic preview in a test: no debounce, no oracle subprocess.
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
     settle(w);
     assert(w.picker.state.error.code == 0);
     assert(w.picker.state.rowCount == 2, "the empty prompt ranks the corpus");
+    cast(void) w.pollAll(); // the zero debounce loads the selection now
 
-    // The panel paints over the panes through the shared widget tree.
+    // The panel paints over the panes through the shared widget tree, and
+    // the preview hole holds a REAL document pane fed by the same loader.
     Grid g;
     g.resize(80, 24);
     w.paint(g);
@@ -1969,6 +2055,8 @@ unittest
     assert(all.canFind("›"), "the prompt row is on screen");
     assert(all.canFind("alpha.d"), "the ranked rows are on screen");
     assert(all.canFind(" Files "), "the heading is embedded in the border");
+    assert(all.canFind("╭") && all.canFind("╯"), "rounded box corners");
+    assert(all.canFind("int "), "the preview pane shows the document itself");
 
     // Typing narrows; Enter opens the accepted file in the viewer pane.
     foreach (ch; "beta")
