@@ -6,6 +6,7 @@ import raylib;
 
 import sparkles.ghostty.c;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.text.cstring : writeStringz;
 import sparkles.input : mousePointer, PointerAction, PointerButton,
     PointerEvent;
 import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
@@ -438,8 +439,7 @@ void handle_mouse(
                     if (buf) {
                         if (ghostty_grid_ref_hyperlink_uri(&hoverRef, buf, uri_len, &uri_len) == GHOSTTY_SUCCESS) {
                             hoverState.isHoveringUrl = true;
-                            hoverState.url ~= cast(const(char)[])buf[0 .. uri_len];
-                            hoverState.url ~= '\0';
+                            hoverState.url.writeStringz(cast(const(char)[])buf[0 .. uri_len]);
                             hoverState.y = pt.value.coordinate.y;
 
                             // Scan left to find start of link
@@ -505,8 +505,7 @@ void handle_mouse(
                                             const end_col = start_col + cast(int)utf8Cols(line[i .. j]) - 1;
                                             if (hovered >= start_col && hovered <= end_col) {
                                                 hoverState.isHoveringUrl = true;
-                                                hoverState.url ~= line[i .. j];
-                                                hoverState.url ~= '\0';
+                                                hoverState.url.writeStringz(line[i .. j]);
                                                 hoverState.start_x = start_col;
                                                 hoverState.end_x = end_col;
                                                 hoverState.y = hovered;
@@ -915,8 +914,7 @@ void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, 
                         // ghostty's buffer may not be NUL-terminated; copy it
                         // plus a NUL into a @nogc SmallBuffer for SetClipboardText.
                         SmallBuffer!(char, 4096, true) clip;
-                        clip ~= cast(const(char)[])out_ptr[0 .. out_len];
-                        clip ~= '\0';
+                        clip.writeStringz(cast(const(char)[])out_ptr[0 .. out_len]);
                         SetClipboardText(clip[].ptr);
 
                         // Free the memory ghostty allocated.
