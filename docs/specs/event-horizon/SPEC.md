@@ -1701,3 +1701,39 @@ reserved for functions returning pointer-carrying values (`Buf.opSlice`);
 template inference masks the difference, non-templates do not. Unittests
 static-assert the inferred attributes of
 `EventLoop!UringBackend.submit`/`runOnce` and the `io` verbs.
+
+## 17. The fork server
+
+Process-level isolation with copy-on-write inheritance
+(`sparkles.event_horizon.forkserver`, Posix): a **zygote** child forked while
+the host is still **single-threaded** — the one moment a D process may fork
+safely; druntime installs no GC/malloc atfork handlers on the default GC, so
+a foreign thread holding a lock at fork time would deadlock the child — that
+runs an optional `childInit` once and then serves requests, forking a
+**grandchild** per request. The grandchild inherits everything the zygote
+initialized by CoW (the motivating client: DMD's frontend globals — dmd-fmt
+formatting, dmd-lsp's one-analysis-per-process limit, hue's live-types
+oracle), runs the registered `ForkHandler` over a slot of the shared arena,
+and `_exit`s: its heap, its global mutations and its crashes die with it.
+
+Transport and memory:
+
+- a `SOCK_SEQPACKET` socketpair carries fixed-size request/response frames
+  (message boundaries preserved, so a frame travels whole or not at all);
+  the parent's end doubles as the completion fd for `pollAdd` integration;
+- the arena is one anonymous **shared** mapping (`MAP_SHARED | MAP_ANON`)
+  created before the fork — no name, no fd, no platform split; request and
+  result bytes move zero-copy, untouched slack pages are free;
+- `start` **refuses** (an error, never an assert) in a multi-threaded
+  process, so hosts fall back to a worker-thread backend when started late.
+
+Failure contract: a grandchild crash reports `-signal` in the response
+status (one lost request, never a lost host); a handler that cannot fit its
+result reports the documented overflow exit code; a handler throw reports
+its own exit code. The zygote survives all three and keeps serving.
+
+v1 (M18) is deliberately minimal: one registered handler (`kind` demuxes),
+fixed-size slots, and a **serial** zygote — the shipping client (hue's
+format preview) is single-flight by design. Parallel grandchild fan-out
+(per-process globals mean there is no lock to contend) is recorded
+follow-up, not built.
