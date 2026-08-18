@@ -3158,6 +3158,51 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Property Trees',
+              link: '/research/property-tree/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts & Vocabulary',
+                  link: '/research/property-tree/concepts',
+                },
+                {
+                  text: 'Comparison (Capstone)',
+                  link: '/research/property-tree/comparison',
+                },
+                {
+                  text: 'Subjects',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Qt Property Browser',
+                      link: '/research/property-tree/qt-property-browser',
+                    },
+                    {
+                      text: 'Godot EditorInspector',
+                      link: '/research/property-tree/godot-inspector',
+                    },
+                    {
+                      text: 'WinForms PropertyGrid',
+                      link: '/research/property-tree/winforms-propertygrid',
+                    },
+                    {
+                      text: 'Unreal Details Panel',
+                      link: '/research/property-tree/unreal-details-panel',
+                    },
+                    {
+                      text: 'bevy-inspector-egui',
+                      link: '/research/property-tree/bevy-inspector-egui',
+                    },
+                  ],
+                },
+                {
+                  text: 'Sparkles Baseline',
+                  link: '/research/property-tree/sparkles-baseline',
+                },
+              ],
+            },
+            {
               text: 'Anchored Overlays',
               link: '/research/anchored-overlays/',
               collapsed: true,
