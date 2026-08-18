@@ -1309,10 +1309,11 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             // The cost is that a plain `hue file.d` now expands tabs and pads
             // rows to the grid width, as markdown and diff always have.
             {
-                import document : coverageGutterCells, coverageTintedRanges;
+                import document : coverageChannel, coverageTintedRanges;
                 import gui_text : lineCount;
                 import sparkles.syntax.render.widgets : CodeViewOptions,
-                    GutterCell, viewCodeDocument;
+                    viewCodeDocument;
+                import sparkles.ui.components.gutter : GutterChannel;
                 import sparkles.ui.display_list : buildDisplayList;
                 import sparkles.ui.geometry : Constraints;
                 import sparkles.ui.interp.cells : BgEmit, CellGrid;
@@ -1327,10 +1328,9 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 CodeViewOptions copt;
                 if (doc.hasCoverage)
                 {
-                    int gutterWidth;
-                    copt.gutter = coverageGutterCells(doc.coverage,
-                        lineCount(doc.source), gutterWidth);
-                    copt.gutterWidth = gutterWidth;
+                    auto cov = coverageChannel(doc.coverage, lineCount(doc.source));
+                    if (cov.enabled)
+                        copt.channels = [cov];
                     copt.tintedRanges = coverageTintedRanges(doc.coverage);
                 }
                 // A writer emitting to a stream has no pane to reflow to.
@@ -1410,10 +1410,11 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             // page rather than a `<pre>` fragment, which is what `--diff`
             // already did. The gallery keeps its own fragment writer.
             {
-                import document : coverageGutterCells, coverageTintedRanges;
+                import document : coverageChannel, coverageTintedRanges;
                 import gui_text : lineCount;
                 import sparkles.syntax.render.widgets : CodeViewOptions,
-                    GutterCell, viewCodeDocument;
+                    viewCodeDocument;
+                import sparkles.ui.components.gutter : GutterChannel;
                 import sparkles.ui.interp.html : writeWidgetHtmlPage;
                 import sparkles.ui.style : defaultTwoslashPalette;
                 import sparkles.ui.wrap : TextWrap;
@@ -1424,10 +1425,9 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
                 CodeViewOptions copt;
                 if (doc.hasCoverage)
                 {
-                    int gutterWidth;
-                    copt.gutter = coverageGutterCells(doc.coverage,
-                        lineCount(doc.source), gutterWidth);
-                    copt.gutterWidth = gutterWidth;
+                    auto cov = coverageChannel(doc.coverage, lineCount(doc.source));
+                    if (cov.enabled)
+                        copt.channels = [cov];
                     copt.tintedRanges = coverageTintedRanges(doc.coverage);
                 }
                 copt.wrap = TextWrap.none;   // a document, not a pane

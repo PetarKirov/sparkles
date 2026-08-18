@@ -29,7 +29,8 @@ module sparkles.twoslash.render_widgets;
 
 import sparkles.base.term_color : RgbColor, toRgb;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
-import sparkles.syntax.render.widgets : applyTints, CodeViewOptions, gutterSpan;
+import sparkles.syntax.render.widgets : applyTints, CodeViewOptions;
+import sparkles.ui.components.gutter : withGutter;
 import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
@@ -256,31 +257,28 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
             srcStart: ls.span.start, srcEnd: ls.span.end);
     }
 
-    const gutterCells = decorations.gutterWidth > 0 ? decorations.gutterWidth : 0;
-
     uint[] rows;
     foreach (line; 0 .. total)
     {
         auto spans = spansByLine[line].length ? spansByLine[line]
             : [TextSpan(" ")];
-        // The same order `viewCodeDocument` uses: tint the source spans by
-        // byte range first, then prepend the gutter, which is chrome and
-        // carries no source range of its own.
         spans = applyTints(spans, decorations.tintedRanges);
-        if (decorations.gutterWidth > 0)
-            spans = gutterSpan(decorations, line) ~ spans;
         const code = b.add(Widget(kind: WidgetKind.rich, spans: spans,
             slot: Slot.code));
 
-        // Everything positioned by source column has to be told what the row
-        // carries before the code starts, or it lands that many cells left of
-        // the token it belongs to.
-        rows ~= decorateCodeRow(b, code, tw, plan, line, gutterCells);
+        // Nothing here knows how far the code sits from the left edge, and
+        // nothing needs to: the decorations are `stack` children of the code
+        // row, `withGutter` makes that row a child of a `row`, and the layout
+        // engine places both. A below-line block is its own row and takes a
+        // blank strip of the same width, so its caret stays under the token.
+        rows ~= withGutter(b, decorations.channels, line,
+            decorateCodeRow(b, code, tw, plan, line));
 
         foreach (ref const blk; plan.belowBlocks)
             if (blk.line == line)
-                rows ~= buildBelowBlock(b, tw.nodes[blk.node], blk.node,
-                    sigSpans(tw.nodes[blk.node]), maxWidth, gutterCells);
+                rows ~= withGutter(b, decorations.channels, size_t.max,
+                    buildBelowBlock(b, tw.nodes[blk.node], blk.node,
+                        sigSpans(tw.nodes[blk.node]), maxWidth));
     }
 
     return b.finish(b.container(WidgetKind.column, rows));
@@ -1712,7 +1710,8 @@ version (unittest)
 @safe unittest
 {
     import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, resolveTheme;
-    import sparkles.syntax.render.widgets : GutterCell, TintedRange;
+    import sparkles.syntax.render.widgets : TintedRange;
+    import sparkles.ui.components.gutter : cellOf, GutterChannel;
     import sparkles.ui.style : Slot;
     import std.string : strip;
 
@@ -1727,12 +1726,12 @@ version (unittest)
     const labels = LabelSet.standard();
     const rt = resolveTheme(builtinDark, labels);
 
+    auto cells = [
+        cellOf("5", 1, Slot.covCovered, alignEnd: true, paintBackground: true),
+        cellOf("0", 1, Slot.covUncovered, alignEnd: true, paintBackground: true),
+    ];
     auto opts = CodeViewOptions(
-        gutter: [
-            GutterCell(text: "5", slot: Slot.covCovered, paintBackground: true),
-            GutterCell(text: "0", slot: Slot.covUncovered, paintBackground: true),
-        ],
-        gutterWidth: 2,
+        channels: [GutterChannel(id: "cov", width: 1, cells: cells)],
         tintedRanges: [TintedRange(start: 7, end: 13, slot: Slot.covUncovered)],
     );
     auto tree = viewTwoslashDocument(tw, ev, (() @trusted => &rt)(),
@@ -1741,18 +1740,21 @@ version (unittest)
     bool sawFive, sawZero, sawTint;
     foreach (ref const n; tree.nodes)
     {
+        // The badges are their own widgets beside the code rather than spans
+        // inside it — which is what keeps them out of the row's content and
+        // out of the decorations' coordinate space.
+        if (n.kind == WidgetKind.text)
+        {
+            if (n.text.strip == "5" && n.slot == Slot.covCovered)
+                sawFive = true;
+            if (n.text.strip == "0" && n.slot == Slot.covUncovered)
+                sawZero = true;
+        }
         if (n.kind != WidgetKind.rich)
             continue;
         foreach (ref const sp; n.spans)
         {
-            // The gutter is chrome: right-aligned in its column, and carrying
-            // no source range, so selection and goto-line still walk the code.
-            // The badge is padded to its column width, so compare the text
-            // it carries rather than the cell it fills.
-            if (sp.text.strip == "5" && sp.slot == Slot.covCovered)
-                sawFive = sp.srcStart == size_t.max;
-            if (sp.text.strip == "0" && sp.slot == Slot.covUncovered)
-                sawZero = sp.srcStart == size_t.max;
+            assert(sp.slot != Slot.covCovered, "no badge leaked into the code");
             // The inline channel washes a byte range of the source itself.
             if (sp.slot == Slot.covUncovered && sp.srcStart != size_t.max)
                 sawTint = true;
@@ -1766,24 +1768,30 @@ version (unittest)
     auto plain = viewTwoslashDocument(tw, ev, (() @trusted => &rt)(),
         RgbColor(0xcc, 0xcc, 0xcc));
     foreach (ref const n; plain.nodes)
+    {
+        assert(n.kind != WidgetKind.text || n.slot != Slot.covCovered,
+            "no gutter appears unless one is asked for");
         if (n.kind == WidgetKind.rich)
             foreach (ref const sp; n.spans)
                 assert(sp.slot != Slot.covCovered && sp.slot != Slot.covUncovered,
-                    "no gutter appears unless one is asked for");
+                    "and no tint either");
+    }
 }
 
 @("render_widgets.viewTwoslashDocument.decorationsShiftWithTheGutter")
 @safe unittest
 {
     import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, resolveTheme;
-    import sparkles.syntax.render.widgets : GutterCell;
+    import sparkles.ui.components.gutter : cellOf, GutterChannel, gutterWidth;
     import sparkles.ui.canvas : OpKind;
     import sparkles.ui.style : Slot;
 
-    // A decoration is positioned by *source column*, so a row that carries
-    // chrome before its code must say how much — otherwise the underline lands
-    // that many cells left of the token, which is what a coverage gutter did to
-    // every hover on the file.
+    // A decoration is positioned by *source column*, and a row that carries
+    // chrome before its code has to place it that much further right — which is
+    // what a coverage gutter got wrong for every hover on the file. Nothing in
+    // this module arranges it any more: the chrome is a sibling widget and the
+    // layout engine moves the code, so this asserts the *result* rather than an
+    // argument being threaded correctly.
     const code = "const x = 1\n";
     const tw = TwoslashReturn(code: code, nodes: [
         Node(type: NodeType.hover, start: 6, length: 1, line: 0, character: 6,
@@ -1805,11 +1813,15 @@ version (unittest)
         assert(false, "no hover underline was drawn");
     }
 
-    const bare = underlineX(CodeViewOptions.init);
-    const withGutter = underlineX(CodeViewOptions(
-        gutter: [GutterCell(text: "5", slot: Slot.covCovered)], gutterWidth: 3));
+    auto cells = [cellOf("5", 2, Slot.covCovered)];
+    const chans = [GutterChannel(id: "cov", width: 2, cells: cells)];
+    const chrome = gutterWidth(chans);   // 2 cells and the separator
 
+    const bare = underlineX(CodeViewOptions.init);
+    const gutterd = underlineX(CodeViewOptions(channels: chans));
+
+    assert(chrome == 3);
     assert(bare == 6, "the underline sits at the token's own column");
-    assert(withGutter == bare + 3,
+    assert(gutterd == bare + chrome,
         "and moves right by exactly the chrome the row gained, no more");
 }

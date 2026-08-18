@@ -21,8 +21,8 @@ import sparkles.syntax.md.render_widgets : FenceScroll, isWrap, OverflowPolicy,
     TableScroll,
     foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
     viewMarkdown;
-import sparkles.syntax.render.widgets : CodeViewOptions, GutterCell,
-    viewCodeDocument;
+import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
+import sparkles.ui.components.gutter : GutterChannel;
 import sparkles.syntax.ts.highlighter : ParsedLayer;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
@@ -44,7 +44,7 @@ import ansi_model : AnsiLine, Attr;
 import diff_session : DiffSession;
 import diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
     FileTypes, isDiffGapKey, isDiffHunkKey, viewDiffDoc;
-import document : coverageGutterCells, coverageTintedRanges, DiffEmphasis,
+import document : coverageChannel, coverageTintedRanges, DiffEmphasis,
     DiffSides, Document, hueFenceRenderer;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
 import gui_text : buildLineStarts, findMatches, lineCount, Match;
@@ -360,11 +360,28 @@ struct ViewerModel
     CoveragePlan coverage;          /// code coverage overlay plan
     bool hasCoverage;
 
-    /// Width of the coverage gutter column, in cells: the widest count the
-    /// plan actually contains, plus the separator. Derived rather than
-    /// fixed — a hard-coded width either clipped `18446744073G` or wasted
-    /// four columns on a file whose counts are all single digits.
-    int coverageGutterWidth;
+    /// The document's gutter channels, left to right. Rebuilt with the
+    /// document rather than per frame: a channel's width is a property of the
+    /// file, and recomputing it under the layout is how a gutter oscillates.
+    GutterChannel[] channels;
+
+@system:
+
+    /// Rebuilds the gutter channels for the current document.
+    ///
+    /// Once per document, not per frame: a channel's width comes from the file
+    /// (`NUM3`), and recomputing it under the layout is how a gutter
+    /// oscillates as the pane resizes.
+    void rebuildChannels()
+    {
+        channels = null;
+        if (hasCoverage)
+        {
+            auto cov = coverageChannel(coverage, srcTotal);
+            if (cov.enabled)
+                channels ~= cov;
+        }
+    }
 
 @system:
 
@@ -401,6 +418,7 @@ struct ViewerModel
         coverage = coverage_;
         hasCoverage = hasCoverage_;
         srcTotal = lineCount(source);
+        rebuildChannels();
         lineStarts = buildLineStarts(source);
         showPreview = preview.present || tw.code.length != 0
             || diff.files.length != 0;
@@ -872,16 +890,12 @@ struct ViewerModel
             // A twoslash document: the whole-document widget view (code lines
             // as resolved spans + fused decorations + interleaved blocks).
             // The coverage overlay is attached to the *file*, and this view
-            // renders the same file — so it carries the same decorations. Live
+            // renders the same file — so it carries the same channels. Live
             // types arrive asynchronously and switch to this producer a second
             // or two after open; without this the gutter vanished exactly then.
-            const covGutter = hasCoverage
-                ? coverageGutterCells(coverage, srcTotal, coverageGutterWidth)
-                : null;
             tree = viewTwoslashDocument(tw, events, thisCurrent(), pageFg,
                 cache, widthCols,
-                CodeViewOptions(gutter: covGutter,
-                    gutterWidth: covGutter.length ? coverageGutterWidth : 0,
+                CodeViewOptions(channels: channels,
                     tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
@@ -918,9 +932,7 @@ struct ViewerModel
             // default foreground.
             const(HighlightEvent)[] evs = plainSyntax
                 ? [HighlightEvent.sourceSpan(0, source.length)] : events;
-            const covGutter = hasCoverage
-                ? coverageGutterCells(coverage, srcTotal, coverageGutterWidth)
-                : null;
+
             tree = viewCodeDocument(source, evs,
                 thisCurrent(), pageFg,
                 CodeViewOptions(foldedRegions: closed,
@@ -928,8 +940,7 @@ struct ViewerModel
                     listWhitespace: listWhitespace,
                     whitespaceFg: gutterFg, hasWhitespaceFg: true,
                     inlineFoldMarker: inlineFoldMarker,
-                    gutter: covGutter,
-                    gutterWidth: covGutter.length ? coverageGutterWidth : 0,
+                    channels: channels,
                     tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
