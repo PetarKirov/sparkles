@@ -85,28 +85,12 @@ private size_t[] anchorDecimalPads(in SlotGrid g, in TableProps p) @safe pure
 }
 
 /// One horizontal rule (top border, interior row separator, or bottom border) at
-/// lattice row `i`: junctions interleaved with per-column fills.
+/// lattice row `i`: the core's `ruleGlyphs` joined to UTF-8.
 private string separatorLine(in SlotGrid g, in size_t[] w, in TableProps p, size_t i)
 {
-    // A lattice column is 1 char wide only when its line is drawn: the outer two
-    // follow `border`, the interior ones `sepWidth` (column separators or a stub
-    // rule). A zero-width lattice is skipped in both bands and rules, so the two
-    // always share the same width.
-    const hdrRow = isHeaderRow(p, i, g.numRows);
-    const fillGlyph = hdrRow ? p.glyphs.headerRow.horizontalLine : p.glyphs.horizontalLine;
-    auto line = appender!string;
-    foreach (j; 0 .. g.numCols)
-    {
-        const latticeDrawn = j == 0 ? p.border : sepWidth(p, j, g.numCols) > 0;
-        if (latticeDrawn)
-            line ~= junctionGlyph(g, p, i, j);
-        const fillCh = hSeg(g, p, i, j) ? fillGlyph : ' ';
-        foreach (_; 0 .. w[j] + 2)
-            line ~= fillCh;
-    }
-    if (p.border)
-        line ~= junctionGlyph(g, p, i, g.numCols);
-    return line[];
+    import std.conv : to;
+
+    return ruleGlyphs(g, p, w, i).to!string;
 }
 
 /// Wrap every anchor's content into its `contentField` width, splitting on `\n` and
@@ -584,60 +568,34 @@ private MappedTable buildMappedTable(in TableLayout lay, in TableProps p)
 {
     const g = lay.grid;
     string[] lines;
-    MapField[] fields;
-    size_t outLine;
     foreach (d; lineDescs(lay.grid, lay.props, lay.rowHeights))
-    {
         lines ~= renderLine(lay, d);
-        if (d.kind == LineKind.body)
-            collectRowFields(lay, p, d.r, d.t, outLine, fields);
-        outLine++;
+
+    // The map's fields derive from the core's one body-line walk (the same
+    // placement the widget view positions from), so the recorded `xStart`
+    // matches the emitted line byte-for-byte; only the byte-offset bookkeeping
+    // (`charBase`) is string-view business.
+    auto lineCounts = new size_t[g.anchors.length];
+    foreach (i, cellLines; lay.cellLines)
+        lineCounts[i] = cellLines.length;
+    MapField[] fields;
+    foreach (ref fp; walkBodyLines(g, p, lay.widths, lay.rowHeights, lineCounts).fields)
+    {
+        if (!fp.hasContent)
+            continue;
+        const a = g.anchors[fp.anchor];
+        size_t charBase;
+        foreach (j; 0 .. fp.lineInCell)
+            charBase += lay.cellLines[fp.anchor][j].length;
+        fields ~= MapField(fp.line, a.row, a.col, fp.x, fp.width, charBase,
+            anchorAlign(a, p), lay.cellLines[fp.anchor][fp.lineInCell]);
     }
+
     auto cellText = new string[g.numRows * g.numCols];
     foreach (r; 0 .. g.numRows)
         foreach (c; 0 .. g.numCols)
             cellText[r * g.numCols + c] = g.anchors[owner(g, r, c)].content;
     return MappedTable(lines, TableGridMap(g.numRows, g.numCols, fields, cellText));
-}
-
-// Mirror `bodyLineSegments`' column walk for text line `t` of grid row `r`,
-// recording each visible content field's screen x-range. Uses the same width
-// arithmetic (leading/trailing gutters, `contentField`, interior separators) so
-// the recorded `xStart` matches the emitted line byte-for-byte.
-private void collectRowFields(in TableLayout lay, in TableProps p, size_t r, size_t t,
-    size_t outLine, ref MapField[] fields)
-{
-    const g = lay.grid;
-    size_t x = p.border ? 1 : 0;
-    size_t c = 0;
-    while (c < g.numCols)
-    {
-        const idx = owner(g, r, c);
-        const a = g.anchors[idx];
-        const f = contentField(a, lay.widths, p, g.numCols);
-        x += 1; // leading gutter
-        const fieldX = x;
-        size_t li = t; // the cell's wrapped-line index at this row/text-line
-        foreach (rr; a.row .. r)
-            li += lay.rowHeights[rr];
-        size_t hh = 0;
-        foreach (rr; a.row .. a.row + a.rowSpan)
-            hh += lay.rowHeights[rr];
-        const top = padTop(hh, lay.cellLines[idx].length, anchorVAlign(a, p));
-        if (li >= top && li - top < lay.cellLines[idx].length)
-        {
-            const k = li - top;
-            size_t charBase;
-            foreach (j; 0 .. k)
-                charBase += lay.cellLines[idx][j].length;
-            fields ~= MapField(outLine, a.row, a.col, fieldX, f, charBase,
-                anchorAlign(a, p), lay.cellLines[idx][k]);
-        }
-        x += f + 1; // field + trailing gutter
-        c += a.colSpan;
-        if (c < g.numCols && vSeg(g, p, r, c))
-            x += 1; // interior separator
-    }
 }
 
 
