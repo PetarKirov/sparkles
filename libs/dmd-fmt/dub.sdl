@@ -16,6 +16,7 @@ importPaths "src"
 // see docs/specs/dmd-lsp/ (BLD1/BLD2) for the pin and upgrade procedure.
 dependency "dmd:lexer" repository="git+https://github.com/PetarKirov/dmd.git" \
     version="c562711dbd4685c4e4f7bd5ff46e1a306c932259"
+dependency "sparkles:diff" path="../.."
 dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
     version="c562711dbd4685c4e4f7bd5ff46e1a306c932259"
 
