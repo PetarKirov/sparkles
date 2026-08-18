@@ -2,13 +2,17 @@
 Vulkan for D: the real headers through ImportC, with the ergonomics the C API
 leaves to the caller.
 
-Four pieces, each answering something the raw header does not:
+The pieces, each answering something the raw header does not:
 
 $(UL
 $(LI $(MREF sparkles,vulkan,c) — `vulkan.h` compiled by the D compiler under
     `VK_NO_PROTOTYPES`, so layouts and enum values cannot drift from the pinned
     headers and every entry point is a function pointer rather than a linked
     symbol.)
+$(LI $(MREF sparkles,vulkan,loader) — `vkGetInstanceProcAddr` from the
+    platform loader (`libvulkan.so.1` / `libvulkan.1.dylib` / MoltenVK),
+    so a caller that is not going through SDL does not have to hard-code
+    a soname.)
 $(LI $(MREF sparkles,vulkan,dispatch) — the global/instance/device tiers, each
     table paired with the handle it was resolved from, so a second device
     cannot overwrite the first.)
@@ -36,5 +40,6 @@ public import sparkles.vulkan.api;
 public import sparkles.vulkan.vulkan_c;
 public import sparkles.vulkan.dispatch;
 public import sparkles.vulkan.enumerate;
+public import sparkles.vulkan.loader;
 public import sparkles.vulkan.result;
 public import sparkles.vulkan.structure_type;
