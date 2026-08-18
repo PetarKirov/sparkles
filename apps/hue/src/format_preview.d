@@ -811,6 +811,10 @@ final class FormatPreviewSession
     size_t formatterIndex;
     FormatterInfo[] candidates;
     string error;        /// last provider failure (`FPR8`); empty = healthy
+    /// CLI overrides (`FMV8`): a named formatter (miss → refusal listing
+    /// candidates) and a pinned ruler column (0 = discover).
+    string preferredFormatter;
+    ushort forcedCol;    /// ditto
     long lastFormatMs;   /// status display only — never a throttle
     ushort rulerCol = 120;
 
@@ -842,6 +846,19 @@ final class FormatPreviewSession
                 vm.lang.length ? vm.lang : "plain text", "'");
         if (formatterIndex >= candidates.length)
             formatterIndex = 0;
+        if (preferredFormatter.length)
+        {
+            import std.algorithm.iteration : map;
+            import std.algorithm.searching : countUntil;
+            import std.array : join;
+
+            const idx = candidates.countUntil!(c => c.name == preferredFormatter);
+            if (idx < 0)
+                return text("formatter '", preferredFormatter,
+                    "' not available for '", vm.lang, "' (candidates: ",
+                    candidates.map!(c => c.name).join(", "), ")");
+            formatterIndex = idx;
+        }
 
         originalSource = vm.source;
         originalEvents = vm.events;
@@ -850,12 +867,19 @@ final class FormatPreviewSession
         error = null;
         active = true;
 
-        version (HueDmdFmt)
+        if (forcedCol)
         {
-            import format_dmd : discoveredWidth;
+            rulerCol = clampRulerCol(forcedCol);
+        }
+        else
+        {
+            version (HueDmdFmt)
+            {
+                import format_dmd : discoveredWidth;
 
-            if (formatter.kind == FormatterKind.inProcess)
-                rulerCol = clampRulerCol(discoveredWidth(vm.docPath));
+                if (formatter.kind == FormatterKind.inProcess)
+                    rulerCol = clampRulerCol(discoveredWidth(vm.docPath));
+            }
         }
 
         cache.rekey(FormatterRegistry.fingerprint(formatter), originalSource);
@@ -907,7 +931,7 @@ final class FormatPreviewSession
             const action = flow.completed(c.width);
             if (!c.ok)
             {
-                error = describeError(c.error);
+                error = describeFormatError(c.error);
                 if (action == FlowAction.dispatch && active)
                     dispatch();
                 continue;
@@ -966,6 +990,18 @@ final class FormatPreviewSession
         if (error.length)
             s ~= text(" · ", error);
         return s;
+    }
+
+    /// The viewed document changed under the session (navigation, watcher
+    /// reload): the preview drops to off — the restore pair belongs to the
+    /// old buffer. A late completion still lands in the cache, which the
+    /// next enter re-keys away; an in-flight format re-dispatches with the
+    /// new source when it drains.
+    void documentChanged() @safe pure nothrow @nogc
+    {
+        active = false;
+        rulerDrag = false;
+        error = null;
     }
 
     // ── the ruler interaction machine (RUL2/RUL3/RUL8) ──────────────────
@@ -1032,27 +1068,6 @@ final class FormatPreviewSession
         service.submit(FormatRequest(source: sourceText, path: docPath,
             width: cast(ushort) flow.inFlightCol,
             formatter: candidates[formatterIndex]));
-    }
-
-    private static string describeError(in FormatError e) @safe
-    {
-        import std.conv : text;
-        import std.string : strip;
-
-        final switch (e.kind)
-        {
-        case FormatErrorKind.noFormatter:
-            return "no formatter";
-        case FormatErrorKind.spawnFailed:
-            return "formatter not runnable";
-        case FormatErrorKind.nonZeroExit:
-            const msg = e.message.strip;
-            return msg.length
-                ? text("formatter failed: ", msg)
-                : text("formatter exited ", e.exitCode);
-        case FormatErrorKind.unsupported:
-            return "formatter unavailable in this build";
-        }
     }
 
     private static HighlightEvent[] rehighlight(
@@ -1130,6 +1145,88 @@ bool formatPreviewRulerDragging(ref const ViewerModel vm) @safe pure nothrow @no
 bool formatPreviewRulerPointer(ref ViewerModel vm, PointerAction action,
     double docCol) @system
     => vm.fmt !is null && vm.fmt.rulerPointer(vm, action, docCol);
+
+/// `FMV8`: start `view` already in the preview (the CLI flags). Applies the
+/// width/formatter overrides, then enters; the returned notice reports a
+/// refusal (null = entered quietly).
+string formatPreviewStart(ref ViewerModel vm, int widthCols,
+    string formatterName) @system
+{
+    if (vm.fmt is null)
+        vm.fmt = new FormatPreviewSession();
+    vm.fmt.preferredFormatter = formatterName;
+    vm.fmt.forcedCol = widthCols > 0 ? clampRulerCol(widthCols) : 0;
+    return vm.fmt.active ? null : formatPreviewToggle(vm);
+}
+
+/// `FPR8`'s user-facing text for a provider failure.
+string describeFormatError(in FormatError e) @safe
+{
+    import std.conv : text;
+    import std.string : strip;
+
+    final switch (e.kind)
+    {
+    case FormatErrorKind.noFormatter:
+        return "no formatter";
+    case FormatErrorKind.spawnFailed:
+        return "formatter not runnable";
+    case FormatErrorKind.nonZeroExit:
+        const msg = e.message.strip;
+        return msg.length
+            ? text("formatter failed: ", msg)
+            : text("formatter exited ", e.exitCode);
+    case FormatErrorKind.unsupported:
+        return "formatter unavailable in this build";
+    }
+}
+
+/// `FMV8`: the one-shot ANSI/HTML sinks render the $(B formatted) buffer — a
+/// synchronous format + re-highlight through the standard pipeline. No
+/// session, no worker, no ruler. Returns the error text, or null with `doc`
+/// replaced.
+string formatDocumentForSink(ref imported!"document".DocumentPipeline pipe,
+    ref imported!"document".Document doc, int widthCols,
+    string formatterName) @system
+{
+    import std.algorithm.iteration : map;
+    import std.algorithm.searching : countUntil;
+    import std.array : join;
+    import std.conv : text;
+
+    import document : ContentKind;
+
+    if (doc.kind != ContentKind.code)
+        return "format preview: only for plain code views";
+    auto reg = FormatterRegistry.withExternal(null);
+    auto candidates = reg.candidatesFor(doc.lang);
+    if (candidates.length == 0)
+        return text("no formatter for '",
+            doc.lang.length ? doc.lang : "plain text", "'");
+    size_t idx;
+    if (formatterName.length)
+    {
+        const found = candidates.countUntil!(c => c.name == formatterName);
+        if (found < 0)
+            return text("formatter '", formatterName, "' not available for '",
+                doc.lang, "' (candidates: ",
+                candidates.map!(c => c.name).join(", "), ")");
+        idx = found;
+    }
+    ushort col = widthCols > 0 ? clampRulerCol(widthCols) : 120;
+    version (HueDmdFmt)
+    {
+        import format_dmd : discoveredWidth;
+
+        if (widthCols <= 0 && candidates[idx].kind == FormatterKind.inProcess)
+            col = clampRulerCol(discoveredWidth(doc.path));
+    }
+    auto r = reg.run(candidates[idx], doc.source, doc.path, col);
+    if (r.hasError)
+        return describeFormatError(r.error);
+    doc = pipe.fromSource(doc.path, doc.title, r.value[].idup, doc.lang);
+    return null;
+}
 
 version (HueDmdFmt)
 @("format_preview.toggle.roundTripRestoresOriginal")
@@ -1285,5 +1382,50 @@ version (HueDmdFmt)
     }
     assert(vm.source == "int a;\n");
     formatPreviewToggle(vm);
+    vm.fmt.service.shutdown();
+}
+
+version (HueDmdFmt)
+@("format_preview.start.overridesAndDocumentSwitch")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    import gui_preview : PreviewModel;
+    import sparkles.twoslash.protocol : TwoslashReturn;
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 80;
+    vm.applyTheme(0);
+    enum src = "int  a;\n";
+    vm.setDocument("t.d", "", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        TwoslashReturn.init, "d");
+
+    // FMV8: a named miss refuses listing candidates and stays off.
+    const miss = formatPreviewStart(vm, 0, "nope");
+    assert(miss !is null && miss.length);
+    assert(!formatPreviewActive(vm));
+
+    // A named hit with a pinned width enters at that width (clamped).
+    vm.fmt.preferredFormatter = null;
+    assert(formatPreviewStart(vm, 72, "dmd-fmt") is null);
+    assert(formatPreviewActive(vm));
+    assert(vm.fmt.rulerCol == 72);
+
+    // Switching documents drops the preview: the restore pair belongs to
+    // the old buffer, and exit across documents must be impossible.
+    enum src2 = "int  b;\n";
+    vm.setDocument("u.d", "", src2,
+        [HighlightEvent.sourceSpan(0, src2.length)], PreviewModel.init,
+        TwoslashReturn.init, "d");
+    assert(!formatPreviewActive(vm));
+    assert(vm.source is src2);
     vm.fmt.service.shutdown();
 }

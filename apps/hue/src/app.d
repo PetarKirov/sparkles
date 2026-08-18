@@ -159,6 +159,9 @@ struct ViewRenderOptions
     bool noLiveTypes = false;
     string diffLayout = "unified";
     GuiOptions gui;
+    bool formatPreview = false;  /// `FMV8`: start in the format preview
+    int formatWidth = 0;         /// ruler column (0 = discover)
+    string formatter;            /// preferred formatter name
 }
 
 // ── Subcommands ─────────────────────────────────────────────────────────────
@@ -242,6 +245,15 @@ struct View
 
     @(Option("no-live-types", description: "Disable live D types in the interactive views."))
     bool noLiveTypes;
+
+    @(Option("format-preview", description: "Start in the in-memory format preview: the buffer reformats through the language's formatter; the file is never written."))
+    bool formatPreview;
+
+    @(Option("format-width", description: "Ruler column for the format preview (default: discover from .editorconfig)."))
+    int formatWidth = 0;
+
+    @(Option("formatter", description: "Formatter for the format preview; a miss lists the candidates."))
+    string formatter;
 
     @Flatten
     DiffOptions diffOptions;
@@ -533,6 +545,9 @@ private int executeView(in HueCli root, in View view)
     opt.noLiveTypes = view.noLiveTypes;
     opt.diffLayout = view.diffOptions.diffLayout;
     opt.gui = copyGui(root.gui);
+    opt.formatPreview = view.formatPreview;
+    opt.formatWidth = view.formatWidth;
+    opt.formatter = view.formatter;
 
     SourceSet docSet;
     bool haveSet;
@@ -603,6 +618,20 @@ private int executeView(in HueCli root, in View view)
     {
         stderr.writeln("hue: ", e.msg);
         return 1;
+    }
+
+    // `FMV8`: the one-shot sinks render the FORMATTED buffer — synchronous,
+    // through the standard pipeline, no ruler drawn.
+    if (view.formatPreview && (backend == Backend.ansi || backend == Backend.html))
+    {
+        import format_preview : formatDocumentForSink;
+
+        if (const err = formatDocumentForSink(pipeline, doc,
+                view.formatWidth, view.formatter))
+        {
+            stderr.writeln("hue: ", err);
+            return 1;
+        }
     }
 
     return renderDocument(backend, opt, doc, labels, theme, registry, cache,
@@ -1355,7 +1384,10 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             codeMaxLines: opt.codeMaxLines,
             tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
             tableMaxLines: opt.tableMaxLines,
-            reloadDiff: reloadDiff);
+            reloadDiff: reloadDiff,
+            formatPreview: opt.formatPreview,
+            formatWidth: opt.formatWidth,
+            formatterName: opt.formatter);
     }
     else
     {
@@ -1448,6 +1480,9 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             docLang: doc.lang,
             includeGlobs: opt.include.dup,
             excludeGlobs: opt.exclude.dup,
+            formatPreview: opt.formatPreview,
+            formatWidth: opt.formatWidth,
+            formatterName: opt.formatter,
             treeWidth: opt.treeWidth,
             tabWidth: opt.tabWidth,
             listWhitespace: opt.listWhitespace,
