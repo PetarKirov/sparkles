@@ -616,3 +616,232 @@ size_t leadPad(size_t width, size_t contentW, Align a) @safe pure nothrow @nogc
         case Align.center:  return pad / 2;
     }
 }
+
+// ── shared placement geometry ────────────────────────────────────────────────
+//
+// One body-line walk serves every view: the string renderer's screen↔cell map
+// derives from it, and the widget view positions its cell subtrees from it.
+// Coordinates are output cells from the table's left edge (`x`) and output
+// line indices in `lineDescs` order (`line`), so they line up with the emitted
+// bytes / painted glyphs exactly.
+
+/// The placement of one anchor's field on one body output line: the field
+/// occupies `[x, x + width)`; when `hasContent` is set, wrapped content line
+/// `lineInCell` of the anchor shows here (vertical alignment already applied),
+/// else the field renders blank (an out-of-band rowspan line or an empty cell).
+package(sparkles.ui.components.table)
+struct FieldPlacement
+{
+    size_t line;       /// output line index (in `lineDescs` order)
+    size_t anchor;     /// index into `SlotGrid.anchors`
+    size_t x;          /// field start, cells from the table's left edge
+    size_t width;      /// the `contentField` width
+    size_t lineInCell; /// which wrapped content line shows here (when `hasContent`)
+    bool hasContent;
+}
+
+/// One drawn vertical glyph cell on a body output line (the left/right border
+/// or an interior separator), emphasis-resolved.
+package(sparkles.ui.components.table)
+struct RuleCell
+{
+    size_t line; /// output line index (in `lineDescs` order)
+    size_t x;    /// cells from the table's left edge
+    dchar glyph;
+}
+
+/// ditto
+package(sparkles.ui.components.table)
+struct BodyWalk
+{
+    FieldPlacement[] fields;
+    RuleCell[] rules;
+}
+
+/// Walk every body output line, emitting each covering anchor's field
+/// placement (blank fields included, `hasContent` distinguishing them) and
+/// each drawn vertical rule cell, in line-major column order. `cellLineCounts`
+/// is per-anchor (how many lines each anchor's content wrapped to) — the walk
+/// applies vertical alignment (`padTop`) but never touches the content itself.
+package(sparkles.ui.components.table)
+BodyWalk walkBodyLines(in SlotGrid g, in TableProps p, in size_t[] widths,
+    in size_t[] rowHeights, in size_t[] cellLineCounts) @safe pure
+{
+    BodyWalk walk;
+    size_t outLine;
+    foreach (d; lineDescs(g, p, rowHeights))
+    {
+        scope (exit) outLine++;
+        if (d.kind != LineKind.body)
+            continue;
+        const r = d.r;
+        size_t x = 0;
+        if (p.border)
+        {
+            walk.rules ~= RuleCell(outLine, x, p.glyphs.verticalLine);
+            x++;
+        }
+        size_t c = 0;
+        while (c < g.numCols)
+        {
+            const idx = owner(g, r, c);
+            const a = g.anchors[idx];
+            const f = contentField(a, widths, p, g.numCols);
+            x += 1; // leading gutter
+            // This anchor's line index at row r, text line t: the sum of the
+            // heights of its bands above r, plus t (a rowspan cell's content
+            // flows down across its stacked bands); vertical alignment shifts
+            // the content block down within the anchor's combined height.
+            size_t li = d.t;
+            foreach (rr; a.row .. r)
+                li += rowHeights[rr];
+            size_t hh = 0;
+            foreach (rr; a.row .. a.row + a.rowSpan)
+                hh += rowHeights[rr];
+            const top = padTop(hh, cellLineCounts[idx], anchorVAlign(a, p));
+            const has = li >= top && li - top < cellLineCounts[idx];
+            walk.fields ~= FieldPlacement(outLine, idx, x, f,
+                has ? li - top : 0, has);
+            x += f + 1; // field + trailing gutter
+            c += a.colSpan;
+            if (c < g.numCols && vSeg(g, p, r, c))
+            {
+                walk.rules ~= RuleCell(outLine, x, isHeaderCol(p, c, g.numCols)
+                    ? p.glyphs.headerCol.verticalLine : p.glyphs.verticalLine);
+                x++;
+            }
+        }
+        if (p.border)
+            walk.rules ~= RuleCell(outLine, x, p.glyphs.verticalLine);
+    }
+    return walk;
+}
+
+/// The rendered table's total width in cells: every column with its two
+/// gutters, the interior lattice columns, and the frame.
+package(sparkles.ui.components.table)
+size_t tableWidth(in TableProps p, in size_t[] widths, size_t numCols) @safe pure nothrow @nogc
+{
+    size_t w = p.border ? 2 : 0;
+    foreach (c; 0 .. numCols)
+        w += widths[c] + 2;
+    foreach (j; 1 .. numCols)
+        w += sepWidth(p, j, numCols);
+    return w;
+}
+
+/// The rendered table's total output line count (`lineDescs`' length).
+package(sparkles.ui.components.table)
+size_t tableHeight(in SlotGrid g, in TableProps p, in size_t[] rowHeights) @safe pure
+    => lineDescs(g, p, rowHeights).length;
+
+/// The on-screen rectangle of one anchor, in output cells/lines: the field
+/// plus both gutters wide (borders and separators excluded), and all of the
+/// anchor's bands tall — a rowspan's rect swallows the interior rule lines
+/// between its bands (they render blank inside the cell).
+package(sparkles.ui.components.table)
+struct AnchorRect
+{
+    size_t x, y, w, h;
+}
+
+/// ditto — indexed like `SlotGrid.anchors`.
+package(sparkles.ui.components.table)
+AnchorRect[] anchorRects(in SlotGrid g, in TableProps p, in size_t[] widths,
+    in size_t[] rowHeights) @safe pure
+{
+    // Output-line span of each grid row's body lines.
+    auto firstLine = new size_t[g.numRows];
+    auto lastLine = new size_t[g.numRows];
+    size_t outLine;
+    foreach (d; lineDescs(g, p, rowHeights))
+    {
+        if (d.kind == LineKind.body)
+        {
+            if (d.t == 0)
+                firstLine[d.r] = outLine;
+            lastLine[d.r] = outLine;
+        }
+        outLine++;
+    }
+
+    // Field-start x of each grid column (span-independent: a spanning cell's
+    // field starts where its anchor column's field starts).
+    auto colX = new size_t[g.numCols];
+    size_t x = p.border ? 1 : 0;
+    foreach (c; 0 .. g.numCols)
+    {
+        x += 1; // leading gutter
+        colX[c] = x;
+        x += widths[c] + 1; // field + trailing gutter
+        if (c + 1 < g.numCols)
+            x += sepWidth(p, c + 1, g.numCols);
+    }
+
+    auto rects = new AnchorRect[g.anchors.length];
+    foreach (i, ref a; g.anchors)
+    {
+        const f = contentField(a, widths, p, g.numCols);
+        const y0 = firstLine[a.row];
+        const y1 = lastLine[a.row + a.rowSpan - 1];
+        rects[i] = AnchorRect(colX[a.col] - 1, y0, f + 2, y1 - y0 + 1);
+    }
+    return rects;
+}
+
+/// One horizontal rule (top border, interior row separator, or bottom border)
+/// at lattice row `i`, as one glyph per output cell — the splice-able form of
+/// the string view's `separatorLine` and the widget view's rule runs.
+package(sparkles.ui.components.table)
+dchar[] ruleGlyphs(in SlotGrid g, in TableProps p, in size_t[] widths, size_t i) @safe pure
+{
+    // A lattice column is 1 char wide only when its line is drawn: the outer two
+    // follow `border`, the interior ones `sepWidth` (column separators or a stub
+    // rule). A zero-width lattice is skipped in both bands and rules, so the two
+    // always share the same width.
+    const hdrRow = isHeaderRow(p, i, g.numRows);
+    const fillGlyph = hdrRow ? p.glyphs.headerRow.horizontalLine : p.glyphs.horizontalLine;
+    dchar[] line;
+    foreach (j; 0 .. g.numCols)
+    {
+        const latticeDrawn = j == 0 ? p.border : sepWidth(p, j, g.numCols) > 0;
+        if (latticeDrawn)
+            line ~= junctionGlyph(g, p, i, j);
+        const fillCh = hSeg(g, p, i, j) ? fillGlyph : ' ';
+        foreach (_; 0 .. widths[j] + 2)
+            line ~= fillCh;
+    }
+    if (p.border)
+        line ~= junctionGlyph(g, p, i, g.numCols);
+    return line;
+}
+
+/// A body line's frame at band `r` — borders, gutters and interior separators
+/// with every field blank — as one glyph per output cell. Band-only (`t`-free):
+/// the drawn verticals depend on the band, never on the text line within it.
+package(sparkles.ui.components.table)
+dchar[] frameLineGlyphs(in SlotGrid g, in TableProps p, in size_t[] widths, size_t r) @safe pure
+{
+    auto line = new dchar[](tableWidth(p, widths, g.numCols));
+    line[] = ' ';
+    if (p.border)
+    {
+        line[0] = p.glyphs.verticalLine;
+        line[$ - 1] = p.glyphs.verticalLine;
+    }
+    size_t x = p.border ? 1 : 0;
+    size_t c = 0;
+    while (c < g.numCols)
+    {
+        const a = g.anchors[owner(g, r, c)];
+        x += 1 + contentField(a, widths, p, g.numCols) + 1;
+        c += a.colSpan;
+        if (c < g.numCols && vSeg(g, p, r, c))
+        {
+            line[x] = isHeaderCol(p, c, g.numCols)
+                ? p.glyphs.headerCol.verticalLine : p.glyphs.verticalLine;
+            x++;
+        }
+    }
+    return line;
+}
