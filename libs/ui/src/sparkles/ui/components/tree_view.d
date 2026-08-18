@@ -93,8 +93,14 @@ struct TreeViewState(Key)
     /// The live filter's editor (STM13); `filter.active` IS filter mode.
     LineEditState filter;
     /// Pane geometry: outer size, and rows of pane chrome outside the tree
-    /// (header + status/details; a chromeless pane sets 0).
+    /// (header + status/details; a chromeless pane sets 0). Prefer
+    /// $(LREF resize) over assigning `height`: a pane that GREW must not
+    /// scroll its content up to stay flush with the bottom.
     int width, height;
+    /// True while a pane growth has legitimately parked `top` past the last
+    /// full viewport, so $(LREF clampBounds) leaves it there. Any scroll or
+    /// cursor move that lands back inside the clamp clears it.
+    private bool grewPastClamp;
     /// ditto
     int chromeRows = 2;
     /// Chrome rows above the tree body's track origin. The remaining
@@ -187,12 +193,37 @@ struct TreeViewState(Key)
     /// where it is; the next cursor move re-snaps the view to it.
     void scrollBy(long dy) pure nothrow @nogc
     {
-        top += dy;
         const maxTop = cast(long) rows.length - bodyRows;
-        if (top > maxTop)
-            top = maxTop;
-        if (top < 0)
-            top = 0;
+        auto next = top + dy;
+        // Inside a growth overshoot, down is refused rather than snapped —
+        // the same rule the document view follows (hue issue #299).
+        if (next > maxTop)
+            next = grewPastClamp && top > maxTop
+                ? (next > top ? top : next) : maxTop;
+        if (next < 0)
+            next = 0;
+        top = next;
+        if (top <= maxTop)
+            grewPastClamp = false;
+    }
+
+    /**
+    Sets the pane height (hue issue #299).
+
+    A pane that grew must only reveal more rows $(I below) the first visible
+    one — pulling the view up so the last row stays flush with the bottom
+    edge moves the row the reader is looking at, which is the one thing a
+    resize must not do. Shrinking clamps normally: the offset has to stay
+    addressable.
+    */
+    void resize(int height_) pure nothrow @nogc
+    {
+        const grew = height_ > height;
+        height = height_;
+        if (grew && top > cast(long) rows.length - bodyRows)
+            grewPastClamp = true;
+        else if (!grew)
+            clampBounds();
     }
 
     /// Advances both scrollbar hover-expand animations from one target's
@@ -217,6 +248,9 @@ struct TreeViewState(Key)
         const maxTop = n - bodyRows;
         if (top > maxTop) top = maxTop;
         if (top < 0) top = 0;
+        // A cursor move re-couples the view: whatever the resize parked, the
+        // cursor is now what the viewport follows.
+        grewPastClamp = false;
     }
 
     /**
@@ -237,7 +271,14 @@ struct TreeViewState(Key)
         if (sel >= n) sel = n ? n - 1 : 0;
         if (sel < 0) sel = 0;
         const maxTop = n - bodyRows;
-        if (top > maxTop) top = maxTop;
+        // A growth overshoot is legal (`resize`); `top` must still address a
+        // real row, so the row count remains a hard bound.
+        if (grewPastClamp && top > maxTop)
+        {
+            if (top >= n) top = n ? n - 1 : 0;
+        }
+        else if (top > maxTop)
+            top = maxTop;
         if (top < 0) top = 0;
     }
 
@@ -777,4 +818,37 @@ version (unittest)
     foreach (c; wt.nodes[col].children)
         sawSelection |= wt.nodes[c].slot == Slot.selection;
     assert(sawSelection);
+}
+
+@("tree_view.resize.aTallerPaneRevealsMoreBelow")
+@safe pure nothrow @nogc
+unittest
+{
+    // hue issue #299 for a row-list pane: growing it must only change how
+    // many rows follow the first visible one.
+    FlatTreeRow[12] pool;
+    TreeViewState!size_t s;
+    s.rows = pool[];
+    s.chromeRows = 0;
+    s.height = 4;
+    s.scrollBy(100);
+    const parked = s.top;
+    assert(parked == 12 - s.bodyRows);
+
+    s.resize(20); // the whole tree now fits
+    s.clampBounds();
+    assert(s.top == parked, "a taller pane scrolled the tree up to fill itself");
+
+    // Down is refused inside the overshoot; up works and restores the clamp.
+    s.scrollBy(3);
+    assert(s.top == parked);
+    s.scrollBy(-parked);
+    assert(s.top == 0);
+    s.clampBounds();
+    assert(s.top == 0);
+
+    // Shrinking still clamps: the offset must stay addressable.
+    s.resize(4);
+    s.scrollBy(100);
+    assert(s.top == 12 - s.bodyRows);
 }

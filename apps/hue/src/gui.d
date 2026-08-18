@@ -1515,7 +1515,7 @@ int runGui(GuiArgs guiArgs) @system
             pn.tree.rebuild(); // a finished async git refresh paints this frame
         if (pn.treeVisible)
         {
-            pn.tree.height = visibleRows - treeTopRows - 1; // − the header row
+            pn.tree.resize(visibleRows - treeTopRows - 1); // − the header row
             pn.tree.width = treeCols; // the shared overflow check uses it
             pn.tree.scrollBy(0); // bounds only — never yank the view to the cursor
             chrome.fillPixels(0, 0, treeCols * cellW, screenH, mix(vm.pageBg, vm.pageFg, 0.03));
@@ -1584,7 +1584,7 @@ int runGui(GuiArgs guiArgs) @system
             {
                 pn.insp.ensureFresh(vm); // a document switch rebuilds next frame
                 pn.insp.tv.width = ir.width;
-                pn.insp.tv.height = ir.height;
+                pn.insp.tv.resize(ir.height);
                 pn.insp.focused = pn.inspFocused;
 
                 // The pane's left divider, in the toolkit's vocabulary.
@@ -2230,7 +2230,7 @@ int runGui(GuiArgs guiArgs) @system
             // Set exactly where the original did — the tree arms below read
             // it through `clamp`, and they only fire with the tree focused.
             if (pn.treeFocused && pn.treeVisible)
-                pn.tree.height = visibleRows;
+                pn.tree.resize(visibleRows);
 
             kctx = KeyContext(
                 mode: InputMode.normal,
@@ -2620,7 +2620,7 @@ int runGui(GuiArgs guiArgs) @system
         // every device position inside a cell (DCK14).
         arrangePanes();
         pn.tree.width = treeBodyCols();
-        pn.tree.height = paneContent(treePane).height;
+        pn.tree.resize(paneContent(treePane).height);
         pn.insp.ensureFresh(vm);
         commitDockOffsets();
         bool dockPressConsumed;
