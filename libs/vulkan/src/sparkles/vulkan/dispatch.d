@@ -189,13 +189,13 @@ private enum CommandSet[] deviceSets = [
 enum string khrSurface = "VK_KHR_surface";
 /// ditto
 enum string khrSwapchain = "VK_KHR_swapchain";
-
 /**
 Tier 1: the commands available before any instance exists.
 
 Built from a caller-supplied `vkGetInstanceProcAddr`, never from a linked
 symbol — on the desktop that pointer comes from SDL3
-(`SDL_Vulkan_GetVkGetInstanceProcAddr`), which has already loaded whichever
+(`SDL_Vulkan_GetVkGetInstanceProcAddr`) or from
+$(MREF sparkles,vulkan,loader), which has already loaded whichever
 loader the platform provides.
 */
 struct GlobalCommands

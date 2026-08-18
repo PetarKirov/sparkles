@@ -328,41 +328,15 @@ GpuReport queryGpu(in InstanceCommands inst, size_t index, VkPhysicalDevice gpuD
     return gpu;
 }
 
-version (Windows)
-{
-    import core.sys.windows.winbase : LoadLibraryA, GetProcAddress;
-}
-else version (Posix)
-{
-    import core.sys.posix.dlfcn : dlopen, dlsym, RTLD_NOW;
-}
-
 Expected!(VulkanReport, string) queryVulkan(in VulkanInfo cli) @system
 {
-    version (Windows)
-    {
-        auto lib = LoadLibraryA("vulkan-1.dll");
-        if (lib is null)
-            return err!VulkanReport("Unable to load vulkan-1.dll");
+    auto loaded = loadGetInstanceProcAddr();
+    if (loaded.hasError)
+        return err!VulkanReport(loaded.error);
 
-        auto getProc = cast(PFN_vkGetInstanceProcAddr) GetProcAddress(lib, "vkGetInstanceProcAddr");
-        if (getProc is null)
-            return err!VulkanReport("Loader exports no vkGetInstanceProcAddr");
-    }
-    else
-    {
-        auto lib = dlopen("libvulkan.so.1", RTLD_NOW);
-        if (lib is null)
-            return err!VulkanReport("Unable to load libvulkan.so.1");
-
-        auto getProc = cast(PFN_vkGetInstanceProcAddr) dlsym(lib, "vkGetInstanceProcAddr");
-        if (getProc is null)
-            return err!VulkanReport("Loader exports no vkGetInstanceProcAddr");
-    }
-
-    const global = GlobalCommands.load(getProc);
+    const global = GlobalCommands.load(loaded.value);
     if (!global.complete)
-        return err!VulkanReport("Global commands incomplete");
+        return err!VulkanReport("Global commands incomplete: missing " ~ global.firstMissing);
 
     uint rawLoaderVersion;
     global.enumerateInstanceVersion(&rawLoaderVersion);
