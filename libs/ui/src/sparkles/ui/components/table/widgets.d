@@ -107,12 +107,25 @@ struct TableViewportSpec
     /// Pin the header band (the `TableProps.headerRows` rows plus their
     /// heavy rule) below the top border while the body scrolls behind the
     /// vertical viewport — hue's `DSG2` (a data grid keeps its column names
-    /// in sight). Engages only when the vertical viewport does; ignored
-    /// when `headerRows == 0`, when the band would not fit `maxLines`, or
-    /// when a rowspan crosses the header/body boundary (the band must be
-    /// separable). The scroll range is unchanged: the pinned band shortens
-    /// the body view by exactly the lines it occupies.
+    /// in sight). Sugar for `freezeTopRows = headerRows` (used only when
+    /// `freezeTopRows` is 0).
     bool pinHeader;
+
+    /// Freeze panes (the spreadsheet idiom), generalizing `pinHeader`: the
+    /// first/last N grid rows and/or first/last N grid columns stay at the
+    /// viewport edges while the interior scrolls — frozen rows still scroll
+    /// horizontally, frozen columns still scroll vertically; only the
+    /// corners are fully static. Each band includes its boundary rule when
+    /// one is drawn. Rows engage only with the vertical viewport, columns
+    /// only with the horizontal one; a side is ignored when its band would
+    /// not fit the view, when the frozen counts meet or exceed the grid, or
+    /// when a span crosses its boundary (the band must be separable). The
+    /// scroll ranges are unchanged: a frozen band shortens the scrolling
+    /// view by exactly the extent it occupies, so host clamps stay valid.
+    size_t freezeTopRows;
+    size_t freezeBottomRows;    /// ditto (e.g. a totals row)
+    size_t freezeLeftColumns;   /// ditto (e.g. a record-number gutter)
+    size_t freezeRightColumns;  /// ditto
 }
 
 /// What `buildTableWidgets` produced: the root node, the table's full content
@@ -404,48 +417,145 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     // moves as one offset behind the clip; the side caps (each line's first
     // and last frame glyph) pin at the box edges so the frame stays whole.
 
-    // `vp.pinHeader`: the header band (header rows + their rule) splits off
-    // into its own non-vertically-scrolling strip; `pinLines` is its height
-    // in interior lines, 0 when pinning does not engage.
-    int pinLines = 0;
-    if (vOver && vp.pinHeader && props.headerRows > 0
-        && props.headerRows < g.numRows)
+    // ── Freeze panes (`vp.freeze*` / `pinHeader`) ───────────────────────────
+    // Grid-level freeze counts resolve to interior extents: `topLines`/
+    // `botLines` in interior lines, `leftW`/`rightW` in interior cells; a
+    // band includes its boundary rule (it lies on the band's side of the
+    // first frozen/scrolling row or column). All zero → the plain framed
+    // emission below is byte-identical to the pre-freeze one.
+    size_t fTop = vp.freezeTopRows, fBot = vp.freezeBottomRows;
+    size_t fLeft = vp.freezeLeftColumns, fRight = vp.freezeRightColumns;
+    if (vp.pinHeader && fTop == 0)
+        fTop = props.headerRows;
+    if (!vOver)
+        fTop = fBot = 0;
+    if (!hOver)
+        fLeft = fRight = 0;
+    if (fTop + fBot >= g.numRows)
+        fTop = fBot = 0;
+    if (fLeft + fRight >= g.numCols)
+        fLeft = fRight = 0;
+    // A span crossing a freeze boundary makes that band inseparable.
+    bool rowBoundaryCrossed(size_t boundary)
     {
-        foreach (ref ev; events)
-            if (ev.kind == EmitKind.ruleLine && ev.index == props.headerRows)
-            {
-                pinLines = cast(int) ev.line; // rule's interior li (+1) − 1
-                break;
-            }
-        if (pinLines <= 0 || pinLines >= shownLines)
-            pinLines = 0;
-        else
-            foreach (i; 0 .. authored)
-            {
-                // A rowspan crossing the boundary makes the band inseparable.
-                const iy = cast(int) rects[i].y - 1;
-                const ih = cast(int) rects[i].h;
-                if (iy < pinLines && iy + ih > pinLines)
+        foreach (ref a; g.anchors)
+            if (a.row < boundary && a.row + a.rowSpan > boundary)
+                return true;
+        return false;
+    }
+
+    bool colBoundaryCrossed(size_t boundary)
+    {
+        foreach (ref a; g.anchors)
+            if (a.col < boundary && a.col + a.colSpan > boundary)
+                return true;
+        return false;
+    }
+
+    if (fTop > 0 && rowBoundaryCrossed(fTop))
+        fTop = 0;
+    if (fBot > 0 && rowBoundaryCrossed(g.numRows - fBot))
+        fBot = 0;
+    if (fLeft > 0 && colBoundaryCrossed(fLeft))
+        fLeft = 0;
+    if (fRight > 0 && colBoundaryCrossed(g.numCols - fRight))
+        fRight = 0;
+
+    // The first interior line of grid row `row` (its band's top — any rule
+    // at the boundary lies above it and lands in the band above).
+    int interiorTopLine(size_t row)
+    {
+        size_t best = size_t.max;
+        foreach (i, ref a; g.anchors)
+            if (a.row == row && i < rects.length && rects[i].y < best)
+                best = rects[i].y;
+        return best == size_t.max ? -1 : cast(int) best - 1;
+    }
+
+    // Interior x of grid column `c`'s content field (after its lead gutter).
+    int colContentX(size_t c)
+    {
+        int x = 1;
+        foreach (j; 0 .. c)
+            x += cast(int) widths[j] + 2 + cast(int) sepWidth(props, j + 1, g.numCols);
+        return x;
+    }
+
+    int topLines = 0, botStart = interiorLines;
+    if (fTop > 0)
+    {
+        topLines = interiorTopLine(fTop);
+        if (topLines <= 0)
+            topLines = 0;
+    }
+    if (fBot > 0)
+    {
+        const rowTop = interiorTopLine(g.numRows - fBot);
+        if (rowTop > 0)
+        {
+            botStart = rowTop;
+            // Pull the boundary rule (drawn just above the band) inside it.
+            foreach (ref ev; events)
+                if (ev.kind == EmitKind.ruleLine && ev.index == g.numRows - fBot)
                 {
-                    pinLines = 0;
+                    botStart = cast(int) ev.line - 1;
                     break;
                 }
-            }
+        }
     }
-    const pin = pinLines > 0;
-    const bodyShown = shownLines - pinLines;
+    if (topLines + (interiorLines - botStart) >= shownLines)
+    {
+        topLines = 0;
+        botStart = interiorLines;
+    }
+    const botLines = interiorLines - botStart;
+    const midShown = shownLines - topLines - botLines;
+    const midContentLines = interiorLines - topLines - botLines;
 
-    uint[] interiorParts;
-    uint[] pinnedParts, bodyParts;
+    int leftW = 0, rightStart = interiorW;
+    if (fLeft > 0)
+        leftW = colContentX(fLeft) - 1;
+    if (fRight > 0)
+        rightStart = colContentX(g.numCols - fRight) - 1
+            - cast(int) sepWidth(props, g.numCols - fRight, g.numCols);
+    if (leftW + (interiorW - rightStart) >= viewInnerW)
+    {
+        leftW = 0;
+        rightStart = interiorW;
+    }
+    const rightW = interiorW - rightStart;
+    const centerViewW = viewInnerW - leftW - rightW;
+    const centerContentW = interiorW - leftW - rightW;
+
+    // ── Partition the interior into the 3×3 panes ───────────────────────────
+    // paneParts[rowBand][colBand]; a full-width rule run splits at the
+    // column-band edges, point items assign by position, cells by their rect
+    // (the crossing guards made bands cell-aligned).
+    uint[][3][3] paneParts;
+    int rowBandOf(int li) => li < topLines ? 0 : li < botStart ? 1 : 2;
+    int colBandOf(int x) => x < leftW ? 0 : x < rightStart ? 1 : 2;
+    int rowBandY0(int rb) => rb == 0 ? 0 : rb == 1 ? topLines : botStart;
+    int colBandX0(int cb) => cb == 0 ? 0 : cb == 1 ? leftW : rightStart;
+
     void addInterior(int x, int li, uint id)
     {
-        if (!pin)
-            interiorParts ~= positioned(x, li, id);
-        else if (li < pinLines)
-            pinnedParts ~= positioned(x, li, id);
-        else
-            bodyParts ~= positioned(x, li - pinLines, id);
+        const rb = rowBandOf(li), cb = colBandOf(x);
+        paneParts[rb][cb] ~= positioned(x - colBandX0(cb), li - rowBandY0(rb), id);
     }
+
+    void addRuleLine(int li, in dchar[] run) // `run` = interior glyphs
+    {
+        const rb = rowBandOf(li);
+        const y = li - rowBandY0(rb);
+        if (leftW > 0)
+            paneParts[rb][0] ~= positioned(0, y, ruleRun(run[0 .. leftW].to!string));
+        paneParts[rb][1] ~= positioned(0, y,
+            ruleRun(run[leftW .. rightStart].to!string));
+        if (rightW > 0)
+            paneParts[rb][2] ~= positioned(0, y,
+                ruleRun(run[rightStart .. $].to!string));
+    }
+
     auto leftCapGlyph = new dchar[](interiorLines);
     auto rightCapGlyph = new dchar[](interiorLines);
     leftCapGlyph[] = props.glyphs.verticalLine;
@@ -467,7 +577,7 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
                     const li = cast(int) ev.line - 1;
                     leftCapGlyph[li] = glyphs[0];
                     rightCapGlyph[li] = glyphs[$ - 1];
-                    addInterior(0, li, ruleRun(glyphs[1 .. $ - 1].to!string));
+                    addRuleLine(li, glyphs[1 .. $ - 1]);
                 }
                 break;
             case EmitKind.ruleCell:
@@ -507,23 +617,33 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
         return b.add(col);
     }
 
-    uint capColumn(in dchar[] caps) => capSegment(caps, vOver, shownLines);
-
-    // Top border: pinned corners (and the pinned TBL6 cutout) around the
-    // junction run, which scrolls behind a one-line viewport when hOver.
+    // A top/bottom border: static segments over frozen columns (junctions
+    // kept — those columns never move), the center segment scrolling behind
+    // a one-line clip when hOver. The `TBL6` cutout pins before the
+    // top-right corner, carved from whichever segment owns that edge.
     uint borderRow(in dchar[] glyphs, bool withCutout)
     {
-        const mid = ruleRun(glyphs[1 .. $ - 1].to!string);
-        uint midPart = mid;
+        const run = glyphs[1 .. $ - 1];
+        uint[] parts = [ruleRun(glyphs[0 .. 1].to!string)];
+        if (leftW > 0)
+            parts ~= ruleRun(run[0 .. leftW].to!string);
+        auto centerRun = run[leftW .. rightStart];
+        auto rightRun = run[rightStart .. $];
+        const carve = withCutout ? iconW : 0;
         if (hOver)
         {
+            const window = centerViewW - (rightW > 0 ? 0 : carve);
+            const mid = ruleRun(centerRun.to!string);
             Widget clip = Widget(kind: WidgetKind.column, children: [mid],
                 clipX: true, childOffset: Point(sx, 0),
-                width: SizeSpec.fixed(viewInnerW - (withCutout ? iconW : 0)),
+                width: SizeSpec.fixed(window),
                 height: SizeSpec.fixed(1));
-            midPart = b.add(clip);
+            parts ~= b.add(clip);
         }
-        uint[] parts = [ruleRun(glyphs[0 .. 1].to!string), midPart];
+        else
+            parts ~= ruleRun(centerRun.to!string);
+        if (rightW > 0)
+            parts ~= ruleRun(rightRun[0 .. $ - carve].to!string);
         if (withCutout)
             parts ~= cutoutIcon();
         parts ~= ruleRun(glyphs[$ - 1 .. $].to!string);
@@ -536,12 +656,14 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     if (hOver)
     {
         // The fence idiom: the bottom border IS the horizontal scrollbar —
-        // a plain fill under one semantic leaf, junctions dropped.
+        // a plain fill under one semantic leaf spanning the scrolling
+        // center; frozen-column segments keep their real junction glyphs.
+        const run = bottomGlyphs[1 .. $ - 1];
         const fill = ruleRun(repeatGlyph(props.glyphs.horizontalLine,
-            viewInnerW));
+            centerViewW));
         const bar = scrollbar(b, ScrollbarSpec(
-            content: interiorW,
-            viewport: viewInnerW,
+            content: centerContentW,
+            viewport: centerViewW,
             offset: sx,
             axis: ScrollAxis.horizontal,
             glyphs: ScrollbarGlyphs('━', props.glyphs.horizontalLine),
@@ -552,19 +674,23 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             hasTrackFg: style.hasRuleFg,
             thumbFg: vp.hThumbFg,
             hasThumbFg: vp.hasHThumbFg,
-        ), viewInnerW);
+        ), centerViewW);
         const track = b.add(Widget(kind: WidgetKind.stack,
-            children: [fill, bar], width: SizeSpec.fixed(viewInnerW),
+            children: [fill, bar], width: SizeSpec.fixed(centerViewW),
             height: SizeSpec.fixed(1)));
-        bottom = b.container(WidgetKind.row, [
-            ruleRun(bottomGlyphs[0 .. 1].to!string), track,
-            ruleRun(bottomGlyphs[$ - 1 .. $].to!string),
-        ]);
+        uint[] parts = [ruleRun(bottomGlyphs[0 .. 1].to!string)];
+        if (leftW > 0)
+            parts ~= ruleRun(run[0 .. leftW].to!string);
+        parts ~= track;
+        if (rightW > 0)
+            parts ~= ruleRun(run[rightStart .. $].to!string);
+        parts ~= ruleRun(bottomGlyphs[$ - 1 .. $].to!string);
+        bottom = b.container(WidgetKind.row, parts);
     }
     else
         bottom = borderRow(bottomGlyphs, false);
 
-    // The vertical track for the scrolling region (fenceVTrack's shape).
+    // The vertical track for the scrolling strip (fenceVTrack's shape).
     uint vTrack(int contentLines, int shown)
     {
         auto trackCells = new uint[](0);
@@ -591,55 +717,44 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             height: SizeSpec.fixed(shown)));
     }
 
-    uint[] frameRows;
-    if (pin)
+    // ── Assemble the strips: each row band is [left cap, panes, right edge];
+    // the middle strip scrolls vertically (its caps clip with `sy`, its right
+    // edge is the track when vOver), the frozen strips never do. A pane
+    // clips horizontally only in the center column band.
+    uint pane(int rb, int cb)
     {
-        // The pinned band: header rows + their rule, horizontal-only clip;
-        // its caps never scroll. The body below carries the vertical
-        // viewport, its cap/track heights shortened by the band.
-        const pinInner = b.add(Widget(kind: WidgetKind.stack,
-            children: pinnedParts, width: SizeSpec.fixed(interiorW),
-            height: SizeSpec.fixed(pinLines)));
-        const pinClip = b.add(Widget(kind: WidgetKind.column,
-            children: [pinInner], clipX: hOver,
-            childOffset: Point(hOver ? sx : 0, 0),
-            width: SizeSpec.fixed(viewInnerW),
-            height: SizeSpec.fixed(pinLines)));
-        frameRows ~= b.container(WidgetKind.row, [
-            capSegment(leftCapGlyph[0 .. pinLines], false, 0), pinClip,
-            capSegment(rightCapGlyph[0 .. pinLines], false, 0),
-        ]);
-
-        const bodyInner = b.add(Widget(kind: WidgetKind.stack,
-            children: bodyParts, width: SizeSpec.fixed(interiorW),
-            height: SizeSpec.fixed(interiorLines - pinLines)));
-        const bodyClip = b.add(Widget(kind: WidgetKind.column,
-            children: [bodyInner], clipX: hOver, clipY: true,
-            childOffset: Point(hOver ? sx : 0, sy),
-            width: SizeSpec.fixed(viewInnerW),
-            height: SizeSpec.fixed(bodyShown)));
-        frameRows ~= b.container(WidgetKind.row, [
-            capSegment(leftCapGlyph[pinLines .. $], true, bodyShown), bodyClip,
-            vTrack(interiorLines - pinLines, bodyShown),
-        ]);
-    }
-    else
-    {
-        // The interior viewport plus its pinned caps (or the vertical track).
+        const w0 = cb == 0 ? leftW : cb == 1 ? centerContentW : rightW;
+        const h0 = rb == 0 ? topLines : rb == 1 ? midContentLines : botLines;
+        const boxW = cb == 1 ? centerViewW : w0;
+        const boxH = rb == 1 ? midShown : h0;
         const inner = b.add(Widget(kind: WidgetKind.stack,
-            children: interiorParts, width: SizeSpec.fixed(interiorW),
-            height: SizeSpec.fixed(interiorLines)));
-        Widget clipW = Widget(kind: WidgetKind.column, children: [inner],
-            clipX: hOver, clipY: vOver,
-            childOffset: Point(hOver ? sx : 0, vOver ? sy : 0),
-            width: SizeSpec.fixed(viewInnerW),
-            height: SizeSpec.fixed(shownLines));
-        const clip = b.add(clipW);
+            children: paneParts[rb][cb], width: SizeSpec.fixed(w0),
+            height: SizeSpec.fixed(h0)));
+        const cx = cb == 1 && hOver, cy = rb == 1 && vOver;
+        return b.add(Widget(kind: WidgetKind.column, children: [inner],
+            clipX: cx, clipY: cy,
+            childOffset: Point(cx ? sx : 0, cy ? sy : 0),
+            width: SizeSpec.fixed(boxW), height: SizeSpec.fixed(boxH)));
+    }
 
-        const rightSide = vOver ? vTrack(interiorLines, shownLines)
-            : capColumn(rightCapGlyph);
-        frameRows ~= b.container(WidgetKind.row,
-            [capColumn(leftCapGlyph), clip, rightSide]);
+    uint[] frameRows;
+    foreach (rb; 0 .. 3)
+    {
+        const h0 = rb == 0 ? topLines : rb == 1 ? midContentLines : botLines;
+        if (h0 <= 0)
+            continue;
+        const y0 = rowBandY0(rb);
+        const y1 = rb == 0 ? topLines : rb == 1 ? botStart : interiorLines;
+        uint[] parts = [capSegment(leftCapGlyph[y0 .. y1], rb == 1 && vOver,
+            midShown)];
+        if (leftW > 0)
+            parts ~= pane(rb, 0);
+        parts ~= pane(rb, 1);
+        if (rightW > 0)
+            parts ~= pane(rb, 2);
+        parts ~= rb == 1 && vOver ? vTrack(midContentLines, midShown)
+            : capSegment(rightCapGlyph[y0 .. y1], false, 0);
+        frameRows ~= b.container(WidgetKind.row, parts);
     }
 
     Widget root = Widget(kind: WidgetKind.column,
@@ -1031,6 +1146,84 @@ version (unittest)
         }
     }
     assert(sawClip && sawIcon);
+}
+
+@("table.widgets.viewport.freezePanes")
+@safe unittest
+{
+    // Freeze one row top and bottom and the first column, with both
+    // viewports engaged and offsets: the 3x3 pane grid — corners static,
+    // frozen rows scrolling only horizontally, frozen columns only
+    // vertically, the center both ways; the h-bar spans the scrolling
+    // center segment only.
+    auto rows = new string[][](8);
+    rows[0] = ["id", "alpha column head", "beta column head", "gamma column"];
+    foreach (r; 1 .. 7)
+        rows[r] = ["r" ~ cast(char)('0' + r), "aaaaaaaaaaaa", "bbbbbbbbbbbb",
+            "cccccccccccc"];
+    rows[7] = ["Σ", "totals-a", "totals-b", "totals-c"];
+    auto b = Builder();
+    const res = buildTableWidgets(b, plainCells(rows),
+        TableProps(headerRows: 1), TableWidgetStyle(),
+        TableViewportSpec(availWidth: 30, maxLines: 6, x: 4, y: 1,
+            freezeTopRows: 1, freezeBottomRows: 1, freezeLeftColumns: 1));
+    assert(res.hBar && res.vBar);
+    assert(res.viewWidth == 30 && res.viewHeight == 8);
+
+    auto tree = b.finish(res.root);
+    auto frames = layout(tree, Constraints(maxW: 30));
+    assert(frames[res.root].rect.width == 30);
+    assert(frames[res.root].rect.height == 8);
+
+    bool sawCenter, sawHeadPane, sawGutterPane, sawTotalsText, sawGutterText;
+    int clipXOnly, clipYOnly;
+    foreach (i, ref n; tree.nodes)
+    {
+        if (n.clipX && n.clipY)
+        {
+            sawCenter = true;
+            assert(n.childOffset == Point(4, 1));
+        }
+        else if (n.clipX && n.childOffset.x == 4)
+            clipXOnly++; // top border seg + top/bottom center panes
+        else if (n.clipY && n.childOffset.y == 1)
+            clipYOnly++; // middle caps + middle left pane
+        foreach (ref sp; n.spans)
+        {
+            if (sp.text == "id")
+                sawHeadPane = true;
+            if (sp.text == "r3")
+                sawGutterText = true;
+            if (sp.text == "totals-a")
+                sawTotalsText = true;
+        }
+    }
+    assert(sawCenter && sawHeadPane && sawGutterText && sawTotalsText);
+    assert(clipXOnly == 3 && clipYOnly == 2);
+
+    // The frozen corner cell ("id") lays out statically under the border.
+    foreach (i, ref n; tree.nodes)
+        foreach (ref sp; n.spans)
+            if (sp.text == "id")
+                assert(frames[i].rect.y == 1 && frames[i].rect.x <= 2);
+
+    // A rowspan crossing the top freeze boundary disengages that band:
+    // identical emission shape to the unfrozen run.
+    auto spanCells = new SpanCell[][](4);
+    spanCells[0] = [SpanCell([TextSpan("tall", Slot.inherit)], rowSpan: 2),
+        SpanCell([TextSpan("b", Slot.inherit)])];
+    spanCells[1] = [SpanCell([TextSpan("c", Slot.inherit)])];
+    foreach (r; 2 .. 4)
+        spanCells[r] = [SpanCell([TextSpan("x", Slot.inherit)]),
+            SpanCell([TextSpan("y", Slot.inherit)])];
+    auto b4 = Builder();
+    const frozen = buildTableWidgets(b4, spanCells, TableProps(),
+        TableWidgetStyle(), TableViewportSpec(maxLines: 3, freezeTopRows: 1));
+    auto b5 = Builder();
+    const plain = buildTableWidgets(b5, spanCells, TableProps(),
+        TableWidgetStyle(), TableViewportSpec(maxLines: 3));
+    assert(b4.finish(frozen.root).nodes.length
+        == b5.finish(plain.root).nodes.length);
 }
 
 @("table.widgets.viewport.pinnedHeaderBand")

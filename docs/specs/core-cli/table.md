@@ -164,7 +164,14 @@ SpanCell[][], TableProps, TableWidgetStyle)` materializes the same layout as
   express a rowspan's bands or content flowing across a vanished rule line.
   It measures with `cellsOf` and wraps with `sparkles.ui.wrap`, matching the
   display list's hard-wired measure; the CJK/emoji divergence from the string
-  view is deliberate.
+  view is deliberate. Its framed viewport supports **freeze panes**
+  (`TableViewportSpec.freezeTopRows`/`freezeBottomRows`/`freezeLeftColumns`/
+  `freezeRightColumns`, with `pinHeader` as header-rows sugar): a 3×3 pane
+  emission where frozen rows still scroll horizontally, frozen columns still
+  scroll vertically, only the corners are fully static, each band takes its
+  boundary rule with it, and the scroll ranges are unchanged (a frozen band
+  shortens the scrolling view by exactly its own extent). A band disengages
+  when a span crosses its boundary or it would not fit the view.
 
 hue's markdown table (`MDP10`) is a thin adapter over the widget view: the md
 arm assembles diff-decorated cell spans and passes `headerRows: 1`,
