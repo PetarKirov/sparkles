@@ -170,7 +170,7 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= section(b, "overflow — the framed viewport", framedRows);
     body_ ~= spacer(b);
     body_ ~= para(b,
-        "Scroll with [ and ] (columns) and , and . (rows). The frame and the "
+        "Scroll with < and > (columns) and , and . (rows). The frame and the "
         ~ "copy-cutout stay pinned while cells, inner rules and the border "
         ~ "junctions move as one — the same TBL7/TBL8 box hue wraps around a "
         ~ "wide markdown table, where the bars are also mouse targets.", w);
@@ -280,10 +280,10 @@ private int clampScroll(int n) pure nothrow @nogc
 {
     GalleryState s;
     foreach (_; 0 .. 50)
-        handleKey(s, KeyEvent(Key.char_, ']'));
+        handleKey(s, KeyEvent(Key.char_, '>'));
     assert(s.tableDemo.scrollX == 80);
     foreach (_; 0 .. 50)
-        handleKey(s, KeyEvent(Key.char_, '['));
+        handleKey(s, KeyEvent(Key.char_, '<'));
     assert(s.tableDemo.scrollX == 0);
     handleKey(s, KeyEvent(Key.char_, 'g'));
     assert(s.tableDemo.preset == 1);
