@@ -108,7 +108,7 @@ import std.path : baseName, buildPath, globMatch;
 import std.process : environment, execute;
 import std.range : iota;
 import std.regex : ctRegex, matchFirst;
-import std.stdio : stderr, writeln;
+import std.stdio : stderr, stdout, writeln;
 import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight, toLower;
 
 // sparkles packages
@@ -237,10 +237,11 @@ struct CliParams
     string cloneRoot;
 
     @(Option(`coverage`,
-        description: "Measure line coverage: run each sub-package's tests under -cov and "
-        ~ "report covered/coverable lines per package, worst first. Reports "
+        description: "With --test, build each sub-package's tests under -cov and merge their "
+        ~ "listings into build/coverage, then report covered/coverable lines per package, "
+        ~ "worst first. On by default; pass --no-coverage for a plain test run. Reports "
         ~ "only; nothing fails on a low number."))
-    bool coverage;
+    bool coverage = true;
 
     @(Option(`C|ci-stats`,
         description: "Compute GitHub Actions CI job timing statistics and runner-type aggregates. "
@@ -311,7 +312,6 @@ enum ProgramMode
     checkDocsSidebar,
     checkBlobPaths,
     ciStats,
-    coverage,
 }
 
 struct Example
@@ -419,7 +419,7 @@ int ciMain(string[] args)
         return runCheckDocsSidebar();
 
     if (mode == ProgramMode.runDubTests)
-        return runDubTestsMode(cli.failFast);
+        return runDubTestsMode(cli.failFast, cli.coverage);
 
     if (mode == ProgramMode.runExtractedTests)
         return runExtractedTestsMode(cli.failFast);
@@ -427,8 +427,6 @@ int ciMain(string[] args)
     if (mode == ProgramMode.ciStats)
         return runCiStatsMode(cli);
 
-    if (mode == ProgramMode.coverage)
-        return runCoverageMode();
 
     auto inputFiles = collectInputFiles(cli, mode);
 
@@ -557,8 +555,6 @@ private string validateCliMode(
 
 private ProgramMode resolveProgramMode(in CliParams cli)
 {
-    if (cli.coverage)
-        return ProgramMode.coverage;
 
     if (cli.ciStats)
         return ProgramMode.ciStats;
@@ -1046,7 +1042,6 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkVcsUrls:
             case ProgramMode.checkDocsSidebar:
             case ProgramMode.checkBlobPaths:
-            case ProgramMode.coverage:
                 rc = 1;
                 break;
             case ProgramMode.ciStats:
@@ -1944,7 +1939,8 @@ private MonitoredResult noteIfTimedOut(MonitoredResult result, Duration timeout)
 }
 
 private MonitoredResult executeLogged(
-    const(string)[] args, string label, Duration timeout = Duration.zero)
+    const(string)[] args, string label, Duration timeout = Duration.zero,
+    const string[string] env = null)
 {
     import std.array : join;
     import std.logger : globalLogLevel;
@@ -1953,7 +1949,7 @@ private MonitoredResult executeLogged(
 
     if (globalLogLevel > LogLevel.trace)
         return noteIfTimedOut(
-            executeMonitored(args, 5.seconds, null, ChildStdin.empty, timeout),
+            executeMonitored(args, 5.seconds, null, ChildStdin.empty, timeout, env),
             timeout);
 
     const cmd = args.join(" ");
@@ -1972,7 +1968,7 @@ private MonitoredResult executeLogged(
             writeDuration(cpu, u.cpuTime);
             trace(i"{dim   $(label)} rss=$(rss[]) cpu=$(cpu[])");
         }
-    }, ChildStdin.empty, timeout);
+    }, ChildStdin.empty, timeout, env);
 
     if (res.usage.sampled)
     {
@@ -2110,7 +2106,164 @@ private ExecutionResult executeStandaloneExampleFile(
     );
 }
 
-private int runDubTestsMode(bool failFast)
+/// One package's test outcome, and whether coverage came with it.
+private struct PackageRun
+{
+    int status;
+    string output;
+    bool coverageCollected;
+}
+
+/**
+Runs one package's tests, retrying without coverage if that is what broke.
+
+`-cov` changes how a package links, and some cannot take it: under DMD the
+`sparkles:dmd-lsp` family fails to resolve `dmd.backend.*` in a coverage build
+while linking and passing perfectly without one. That is a build incompatibility,
+not a failing test, and `--test`'s job is to report whether the tests pass — so a
+package that only fails *with* coverage is run again without it and reported on
+its own merits, with its absence from the table noted rather than hidden.
+
+Params:
+    baseCmd = the `dub test` invocation, without coverage arguments
+    cov = the run's coverage settings
+    exec = runs a command with an environment and reports status plus output
+
+Returns: the outcome, with `coverageCollected` false when the fallback was used.
+*/
+private PackageRun runPackageTests(const(string)[] baseCmd, in CoverageRun cov,
+    scope PackageRun delegate(const(string)[] cmd, const string[string] env) exec)
+{
+    if (!cov.enabled)
+        return exec(baseCmd, null);
+
+    auto result = exec(baseCmd ~ cov.dubArgs ~ cov.runtimeArgs, cov.env);
+    if (result.status == 0)
+    {
+        result.coverageCollected = true;
+        return result;
+    }
+
+    auto plain = exec(baseCmd, null);
+    plain.coverageCollected = false;
+    // Only the coverage build was at fault if the plain one passes; otherwise
+    // report the original failure, which is the one the reader needs to see.
+    return plain.status == 0 ? plain : result;
+}
+
+/**
+How a test run collects coverage, or that it does not.
+
+`-cov` is not free — every counted line becomes an atomic increment — so this
+is one value threaded through both test paths rather than a flag each of them
+re-interprets.
+
+The listings all land in **one** directory and are merged (`merge:1`), which is
+what makes them usable afterwards. A run scoped to a single package also emits
+listings for every module it compiled, and those read `0% covered` because that
+package's tests never exercised them; merging every package's run into one set
+replaces those zeroes with the coverage some other package's tests did provide.
+`hue --cov` then has a single directory holding one truthful answer per file.
+*/
+private struct CoverageRun
+{
+    bool enabled;
+    string dir;       /// merged destination, `build/coverage`
+    string dflags;    /// extra `$DFLAGS` for the child, empty when none apply
+
+    /// The `dub test` arguments that turn coverage on.
+    string[] dubArgs() const @safe pure nothrow
+        => enabled ? ["-b", "unittest-cov"] : null;
+
+    /// The runtime arguments, after `--`.
+    string[] runtimeArgs() const @safe pure nothrow
+        => enabled ? ["--", "--DRT-covopt=merge:1 dstpath:" ~ dir] : null;
+
+    /// The environment additions for the child.
+    const(string[string]) env() const @safe pure nothrow
+        => enabled && dflags.length ? ["DFLAGS": dflags] : null;
+}
+
+/**
+Prepares `build/coverage` for a run, clearing whatever a previous one left.
+
+Clearing is not optional: `merge:1` accumulates, so a second `ci --test` over a
+stale directory would report hit counts summed across both runs. Percentages
+would survive that, but the per-line counts a viewer shows would not.
+
+Params:
+    repoRoot = the repository root
+    wanted = whether the caller asked for coverage at all
+    subPackages = used only to pick a package to resolve the compiler against
+
+Returns: the descriptor; `enabled` is false when `wanted` is false.
+*/
+private CoverageRun prepareCoverage(string repoRoot, bool wanted, in string[] subPackages)
+{
+    import std.file : rmdirRecurse;
+
+    if (!wanted)
+        return CoverageRun.init;
+
+    CoverageRun run = {enabled: true, dir: buildPath(repoRoot, "build", "coverage")};
+    if (run.dir.exists)
+        run.dir.rmdirRecurse;
+    run.dir.mkdirRecurse;   // `dstpath` must exist; druntime will not create it
+
+    // LDC's `--cov-increment` picks how a counter is bumped, and `boolean`
+    // stores a 1 instead of counting — so every covered line reports `1` and a
+    // viewer's hit-count badge becomes noise. `atomic` is already LDC's
+    // default; passing it pins the contract against an inherited `$DFLAGS` or
+    // a future default, and it is the mode whose counts are true under the
+    // parallel test runner. DMD has no equivalent switch and rejects this one,
+    // hence the compiler check.
+    if (resolvedCompiler(repoRoot, subPackages) == "ldc")
+        run.dflags = "--cov-increment=atomic";
+    return run;
+}
+
+/**
+The compiler dub will actually use, as dub itself reports it (`"ldc"`, `"dmd"`,
+`"gdc"`), or empty when that cannot be determined.
+
+Asked rather than guessed. `$DC` decides it when set, but otherwise the choice
+falls out of `$PATH` order — the dev shell resolves to `ldc2` while the Nix-built
+`ci` closure resolves to `dmd` — so neither the environment nor a hardcoded
+default answers this. `dub describe` reports the resolved compiler and honours
+the same `--compiler=` this run passes, which makes it the one source that
+cannot disagree with the build.
+*/
+private string resolvedCompiler(string repoRoot, in string[] subPackages)
+{
+    import std.json : JSONException, parseJSON;
+    import sparkles.core_cli.process_utils : runCaptured;
+
+    if (subPackages.length == 0)
+        return null;
+
+    auto cmd = ["dub", "describe", "--root", repoRoot, ":" ~ subPackages[0].baseName];
+    const dc = environment.get("DC", "");
+    if (dc.length)
+        cmd ~= "--compiler=" ~ dc;
+
+    const result = runCaptured(cmd);
+    if (!result.succeeded)
+        return null;
+    try
+    {
+        auto doc = parseJSON(result.stdout);
+        if (const c = "compiler" in doc.object)
+            return c.str;
+    }
+    catch (JSONException)
+    {
+        // A describe that does not parse is not worth failing a test run over;
+        // the flag it would have decided is a no-op on LDC's default anyway.
+    }
+    return null;
+}
+
+private int runDubTestsMode(bool failFast, bool coverage)
 {
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
@@ -2126,6 +2279,8 @@ private int runDubTestsMode(bool failFast)
         return 1;
     }
 
+    const cov = prepareCoverage(repoRoot, coverage, subPackages);
+
     i"Testing $(subPackages.length) sub-package(s)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
@@ -2137,11 +2292,12 @@ private int runDubTestsMode(bool failFast)
         import sparkles.base.term_caps : isTerminal;
 
         if (isTerminal())
-            return runDubTestsChecklist(repoRoot, subPackages, failFast);
+            return runDubTestsChecklist(repoRoot, subPackages, failFast, cov);
     }
 
     int failures = 0;
     size_t processed = 0;
+    string[] failedPackages, uncovered;
     FailureReplay failureReplay;
     bool stoppedEarly = false;
 
@@ -2159,7 +2315,14 @@ private int runDubTestsMode(bool failFast)
         const dc = environment.get("DC", "");
         if (dc.length)
             testCmd ~= "--compiler=" ~ dc;
-        auto result = executeLogged(testCmd, "test " ~ pkgName);
+        auto result = runPackageTests(testCmd, cov,
+            (const(string)[] cmd, const string[string] env)
+            {
+                auto r = executeLogged(cmd, "test " ~ pkgName, Duration.zero, env);
+                return PackageRun(r.status, r.output);
+            });
+        if (cov.enabled && !result.coverageCollected && result.status == 0)
+            uncovered ~= pkgName;
 
         auto outputLines = result.output.lineSplitter
             .map!(l => l.to!string)
@@ -2170,6 +2333,7 @@ private int runDubTestsMode(bool failFast)
         if (result.status != 0)
         {
             failures++;
+            failedPackages ~= pkgName;
             if (failFast)
             {
                 failureReplay = FailureReplay(
@@ -2189,90 +2353,46 @@ private int runDubTestsMode(bool failFast)
     }
 
     displaySummary(stoppedEarly ? processed : subPackages.length, failures);
+    reportCoverage(subPackages, cov, failedPackages, uncovered);
     if (stoppedEarly)
         displayFailureReplay(failureReplay);
     return failures > 0 ? 1 : 0;
 }
 
 /**
-Runs every sub-package's tests under `-cov` and reports line coverage.
+Reports line coverage from the listings a `--test` run merged into `cov.dir`.
 
 Reports only. There is no threshold and nothing fails on a low number: D's
 `-cov` counts template instantiations per instantiation and emits listings for
 imported modules too, so the figure is a trend indicator rather than a contract.
 Gating on it would buy noise.
 
-Two mechanics the listings force (see $(MREF coverage)): the destination is
-redirected with druntime's own `--DRT-covopt`, because otherwise every run
-scatters its `.lst` files across the repository root; and a package's number
-counts only files beneath its own directory, because a run also writes listings
-for every dependency it compiled.
+A package's row counts only files beneath its own directory
+($(REF ownedBy, coverage)), because the merged set describes the whole
+repository — every module any package compiled. What merging changes is the
+*number*: a file now carries the coverage every package's tests gave it, not
+just its own package's, which is both the more useful figure and the one a
+viewer shows.
+
+Params:
+    subPackages = repository-relative sub-package directories
+    cov = the run that produced the listings
+    failedPackages = packages whose tests did not pass, whose rows cannot be read
+        as coverage
 */
-private int runCoverageMode()
+private void reportCoverage(in string[] subPackages, in CoverageRun cov,
+    in string[] failedPackages, in string[] uncovered)
 {
     import std.algorithm : sort;
-    import std.file : mkdirRecurse, rmdirRecurse;
     import std.format : format;
     import sparkles.ui.components.table : drawTable, TableProps;
 
-    const repoRoot = detectRepoRoot();
-    if (repoRoot is null)
-    {
-        error(i"Could not detect repository root");
-        return 1;
-    }
-
-    auto subPackages = parseSubPackages(repoRoot);
-    if (subPackages.length == 0)
-    {
-        error(i"No sub-packages found in dub.sdl");
-        return 1;
-    }
-
-    const covRoot = buildPath(repoRoot, "build", "coverage");
-    if (covRoot.exists)
-        covRoot.rmdirRecurse;
-    covRoot.mkdirRecurse;
-
-    i"Measuring coverage for $(subPackages.length) sub-package(s)".text
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
-        .writeln("\n");
+    if (!cov.enabled || !cov.dir.exists)
+        return;
 
     PackageCoverage[] results;
-    string[] failed;
-    foreach (i, pkg; subPackages)
-    {
-        const pkgName = pkg.baseName;
-        const dest = buildPath(covRoot, pkgName);
-        dest.mkdirRecurse;
-        mkdirRecurse(buildPath(repoRoot, pkg, "build"));
-
-        auto cmd = ["dub", "--root", repoRoot, "test", ":" ~ pkgName, "-b", "unittest-cov"];
-        const dc = environment.get("DC", "");
-        if (dc.length)
-            cmd ~= "--compiler=" ~ dc;
-        cmd ~= ["--", "--DRT-covopt=dstpath:" ~ dest];
-
-        styledText(i"{dim [$(i + 1)/$(subPackages.length)]} $(pkgName)").writeln;
-        auto result = executeLogged(cmd, "coverage " ~ pkgName);
-        if (result.status != 0)
-        {
-            failed ~= pkgName;
-            // Show WHY, next to the package that failed. Naming it and stopping
-            // leaves the reader to reproduce the run by hand for information
-            // this one already had — the defect `02b254dc` fixed for the result
-            // boxes, which a new mode is just as able to reintroduce.
-            result.output.lineSplitter
-                .map!(l => l.to!string)
-                .array
-                .formatOutputLines(14, keepTail: true)
-                .drawBox(styledText(i"{red ✗ $(pkgName)} {dim › coverage run failed}"))
-                .writeln;
-        }
-
-        results ~= collectCoverage(dest, pkgName, pkg);
-    }
-
+    foreach (pkg; subPackages)
+        results ~= collectCoverage(cov.dir, pkg.baseName, pkg);
     results.sort!((a, b) => a.percent < b.percent);
 
     string[][] rows = [["package", "files", "covered", "coverable", "%"]];
@@ -2296,14 +2416,21 @@ private int runCoverageMode()
 
     writeln();
     drawTable(rows, TableProps(headerRows: 1)).writeln;
-    styledText(i"{dim listings kept in} $(covRoot)").writeln;
+    styledText(i"{dim listings in} $(cov.dir) {dim — open one with} hue --cov").writeln;
+
+    // The notes below go to stderr, which is unbuffered; without this the
+    // first one lands in the middle of the table stdout has not flushed yet.
+    stdout.flush();
 
     // A package whose tests did not run has no coverage to report, and a zero
     // that means "did not build" must not read as a zero that means "untested".
-    if (failed.length)
-        warning(i"{yellow tests failed} for $(failed.length) package(s): $(failed.join(", ")) — their rows are not meaningful");
+    if (failedPackages.length)
+        warning(i"{yellow tests failed} for $(failedPackages.length) package(s): $(failedPackages.join(", ")) — their rows are not meaningful");
 
-    return 0;
+    // A package that only builds without `-cov` is tested but unmeasured, and
+    // a row of zeroes would read as untested rather than as unmeasured.
+    if (uncovered.length)
+        warning(i"{yellow no coverage} for $(uncovered.length) package(s): $(uncovered.join(", ")) — they do not link under -cov, and were tested without it");
 }
 
 /// Which of the test runner's extracted-test modes a sub-package opts into.
@@ -2508,7 +2635,8 @@ private int runExtractedTestsMode(bool failFast)
 /// The tty variant of `--test`: one checklist row per sub-package, the running
 /// package's dub output streaming through the bounded tail pane, failures
 /// graduating with their output tail, and fail-fast marking the rest skipped.
-private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool failFast)
+private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool failFast,
+    in CoverageRun cov)
 {
     import sparkles.core_cli.process_utils : runStreaming;
     import sparkles.base.term_caps : detectTermCaps;
@@ -2534,6 +2662,7 @@ private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool fai
 
     int failures = 0;
     size_t processed = 0;
+    string[] failed, uncovered;
     foreach (i, pkg; subPackages)
     {
         const pkgName = pkg.baseName;
@@ -2542,10 +2671,17 @@ private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool fai
         const dc = environment.get("DC", "");
         if (dc.length)
             testCmd ~= "--compiler=" ~ dc;
-
         tasks.start(ids[i]);
-        auto result = runStreaming(testCmd,
-            (scope const(char)[] line) { tasks.output(ids[i], line); });
+        auto result = runPackageTests(testCmd, cov,
+            (const(string)[] cmd, const string[string] env)
+            {
+                auto r = runStreaming(cmd,
+                    (scope const(char)[] line) { tasks.output(ids[i], line); },
+                    null, env);
+                return PackageRun(r.status, r.stdout);
+            });
+        if (cov.enabled && !result.coverageCollected && result.status == 0)
+            uncovered ~= pkgName;
         processed = i + 1;
 
         if (result.status == 0)
@@ -2554,7 +2690,8 @@ private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool fai
             continue;
         }
         failures++;
-        tasks.fail(ids[i], lastLines(result.stdout, 12));
+        failed ~= pkgName;
+        tasks.fail(ids[i], lastLines(result.output, 12));
         if (failFast)
         {
             foreach (j; i + 1 .. subPackages.length)
@@ -2565,6 +2702,7 @@ private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool fai
 
     region.finish();
     displaySummary(processed, failures);
+    reportCoverage(subPackages, cov, failed, uncovered);
     return failures > 0 ? 1 : 0;
 }
 

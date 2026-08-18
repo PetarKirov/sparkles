@@ -47,9 +47,10 @@ package.
 
 ### P0.1 — coverage baseline
 
-Nothing in the repository measures coverage today. `apps/ci` gains a `--coverage`
-mode: per sub-package `unittest-cov` runs into a scratch directory, the `.lst`
-trailers parsed into a covered/total summary sorted worst-first. It is **measured,
+Nothing in the repository measures coverage today. `apps/ci --test` gains
+coverage collection (on by default, `--no-coverage` to skip): every sub-package's
+tests build under `unittest-cov` and merge their listings into one directory, the
+`.lst` trailers parsed into a covered/total summary sorted worst-first. It is **measured,
 not gated** — no threshold blocks a build. Record the baseline, including the
 excluded-module line counts that coverage cannot see, in
 [open issues](./open-issues.md#uiapp-o4).
@@ -451,7 +452,7 @@ The backend-isolation check stays a **manual grep**, deliberately not automated.
 
 | Phase | Command                                                                                      |
 | ----- | -------------------------------------------------------------------------------------------- |
-| P0    | `dub test :base :input :ui`; `dub run :ci -- --coverage` (baseline, then delta)              |
+| P0    | `dub test :base :input :ui`; `dub run :ci -- --test` (baseline, then delta)                  |
 | P1    | `dub test :ui-app`; `dub build :ui-app -c tui -c gui -c full`                                |
 | P2    | `dub test :terminal :hue`; the benchmark gate; the screenshot capture; `nix build .#hue-apk` |
 | P3    | `dub test :diagram`; both configurations built and run; the manual isolation grep            |
