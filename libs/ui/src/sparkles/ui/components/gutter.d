@@ -483,3 +483,108 @@ uint withGutterCells(ref Builder b, const(GutterChannel)[] channels,
 {
     return joinStrip(b, gutterRowOf(b, channels, cells), content, separator);
 }
+
+/**
+`document` with `channels` beside it as sibling columns, one cell per $(I visual
+row).
+
+The post-layout form, and the one a file's line-number gutter needs. A document
+whose rows are one per source line can place its chrome as it builds
+($(LREF withGutter)); most cannot. A wrapped paragraph is two visual rows, a
+heading is one, a blank source line is none at all — so there is nothing to
+index by line, and the only way to know which row carries which line is to lay
+the document out and read $(REF DocRow, sparkles,ui,state)`.srcStart` back.
+
+That makes the composition a pair of passes: lay out the document, build the
+cells from its rows, wrap it in this, lay out again. Sibling columns are
+correct here for the same reason they are wrong before layout — the rows
+already exist, so nothing can drift.
+
+Params:
+    b = the builder the document was added to, still usable after `finish`
+    channels = the strips, in left-to-right order; `cells` indexed by visual row
+    rowCount = the document's height in visual rows
+    document = the laid-out document's root
+
+Returns: the composed root, or `document` unchanged when no channel is enabled.
+*/
+uint withGutterColumns(ref Builder b, const(GutterChannel)[] channels,
+    size_t rowCount, uint document)
+{
+    uint[] columns;
+    foreach (ch; channels.enabledOf)
+    {
+        uint[] cells;
+        foreach (row; 0 .. rowCount)
+            cells ~= cellWidget(b, ch, row < ch.cells.length ? &ch.cells[row] : null);
+        auto w = SizeSpec.fixed(ch.width);
+        w.min = w.value;   // chrome does not shrink; see `stripOf`
+        columns ~= b.add(Widget(
+            kind: WidgetKind.column,
+            children: cells,
+            width: w,
+        ));
+    }
+    if (columns.length == 0)
+        return document;
+    return b.add(Widget(
+        kind: WidgetKind.row,
+        children: columns ~ document,
+        gap: 1,
+    ));
+}
+
+@("ui.components.gutter.postLayoutColumnsAlignToVisualRows")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : documentRows;
+    import sparkles.ui.widget : Builder, TextSpan;
+    import sparkles.ui.wrap : TextWrap;
+
+    // A document whose rows are *not* one per source line: the first line
+    // wraps into two visual rows. This is the case a per-line channel cannot
+    // serve, and the reason this form exists.
+    auto b = Builder();
+    TextSpan[] a = [TextSpan("aaaa bbbb cccc", srcStart: 0, srcEnd: 14)];
+    TextSpan[] c = [TextSpan("short", srcStart: 15, srcEnd: 20)];
+    uint[] rows = [
+        b.add(Widget(kind: WidgetKind.rich, spans: a, wrap: TextWrap.greedy)),
+        b.add(Widget(kind: WidgetKind.rich, spans: c, wrap: TextWrap.greedy)),
+    ];
+    const docRoot = b.container(WidgetKind.column, rows);
+
+    // Pass one: how many visual rows, and what does each carry?
+    auto pass1 = b.finish(docRoot);
+    const dr = documentRows(pass1, layout(pass1, Constraints(maxW: 10)));
+    assert(dr.length == 3, "the first line wrapped");
+
+    // One cell per visual row, numbered by source line, blank on a
+    // continuation — `NUM1`, which is a property of the rows and not of the
+    // source.
+    auto cells = new GutterCell[](dr.length);
+    size_t prev = size_t.max;
+    foreach (i, r; dr)
+    {
+        const line = r.srcStart == size_t.max ? size_t.max
+            : (r.srcStart < 15 ? 0 : 1);
+        cells[i] = line == prev || line == size_t.max
+            ? blankCell(2) : cellOf(line == 0 ? "1" : "2", 2);
+        prev = line;
+    }
+
+    // Pass two: the same builder, re-rooted around the document.
+    auto tree = b.finish(withGutterColumns(b,
+        [GutterChannel(id: "line", width: 2, cells: cells)], dr.length, docRoot));
+    auto frames = layout(tree, Constraints(maxW: 13));
+
+    const out_ = documentRows(tree, frames);
+    assert(out_.length == 3);
+    assert(out_[0].text == " 1aaaa bbbb");
+    assert(out_[1].text == "  cccc", "the continuation row is unnumbered");
+    assert(out_[2].text == " 2short");
+    // And the chrome still never reaches the content.
+    assert(out_[0].sourceText == "aaaa bbbb");
+    assert(out_[1].sourceText == "cccc");
+}
