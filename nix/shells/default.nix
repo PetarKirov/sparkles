@@ -185,6 +185,13 @@
         # (`libs "kqueue"`; fiber-echo `-c libkqueue`). Same package the
         # Android build cross-compiles the source of.
         pkgs.libkqueue
+      ]
+      ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+        # MoltenVK is Darwin's Vulkan ICD (Vulkan-on-Metal). The loader
+        # above is only dispatch; without this, vkCreateInstance fails
+        # with VK_ERROR_INCOMPATIBLE_DRIVER / an empty device list.
+        # `VK_DRIVER_FILES` in the hook points the loader at the ICD json.
+        pkgs.moltenvk
       ];
 
       devPackages = [
@@ -277,6 +284,21 @@
           # linking (`libs "dw" "elf"` / `libs "pfm"` / `libs "kqueue"`).
           export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
           export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        ''}
+
+        ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+          # Khronos loader looks here for ICDs. The json's library_path is
+          # already the absolute nix store path of libMoltenVK.dylib.
+          #
+          # Defaulted rather than assigned: every other export in this hook is
+          # a store path a developer has no reason to override, but this one
+          # they do — testing against a locally built MoltenVK is the whole
+          # reason someone would set it before entering the shell.
+          export VK_DRIVER_FILES="''${VK_DRIVER_FILES:-${pkgs.moltenvk}/share/vulkan/icd.d/MoltenVK_icd.json}"
+
+          # The pre-1.3.207 spelling of the same variable, kept for a system
+          # loader older than the rename; the nixpkgs one reads VK_DRIVER_FILES.
+          export VK_ICD_FILENAMES="$VK_DRIVER_FILES"
         ''}
       '';
 
