@@ -313,6 +313,44 @@ export default withMermaid(
               ],
             },
             {
+              text: 'fuzzy',
+              link: '/libs/fuzzy/',
+              collapsed: false,
+              items: [
+                {
+                  text: 'Tutorial',
+                  items: [
+                    {
+                      text: 'Getting started',
+                      link: '/libs/fuzzy/tutorial/getting-started',
+                    },
+                  ],
+                },
+                {
+                  text: 'How-to guides',
+                  items: [
+                    {
+                      text: 'Chunked search',
+                      link: '/libs/fuzzy/how-to/chunked-search',
+                    },
+                  ],
+                },
+                {
+                  text: 'Reference',
+                  items: [{ text: 'API', link: '/libs/fuzzy/reference/api' }],
+                },
+                {
+                  text: 'Explanation',
+                  items: [
+                    {
+                      text: 'Admission and ranking',
+                      link: '/libs/fuzzy/explanation/design',
+                    },
+                  ],
+                },
+              ],
+            },
+            {
               text: 'syntax',
               link: '/libs/syntax/',
               collapsed: true,
@@ -664,6 +702,7 @@ export default withMermaid(
               items: [
                 { text: 'Specification', link: '/specs/fuzzy/SPEC' },
                 { text: 'Delivery Plan', link: '/specs/fuzzy/PLAN' },
+                { text: 'Benchmarks', link: '/specs/fuzzy/benchmarks' },
               ],
             },
             {
