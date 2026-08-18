@@ -31,8 +31,8 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.run_app : AppTheme;
 import inspector : inspectorActivate, inspectorBody, inspectorInnerWidth;
-import keymap : bindingsAt, Binding, Chord, commandFor, GalleryCommand,
-    GalleryContext, GalleryScope, normaliseGrabKey, ShiftReq,
+import keymap : acceptsTyped, bindingsAt, Binding, Chord, commandFor,
+    GalleryCommand, GalleryContext, GalleryScope, normaliseGrabKey, ShiftReq,
     terminalGrabPolicy;
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
@@ -1334,6 +1334,40 @@ struct Gallery
     private Binding[] reachableBindings() const @safe
         => listedBindings(true);
 
+    /**
+    The nav fallback's cut (`pageDeclinedFromNav`): the showing page's rows
+    that still fire from the page list — those no shell row claims first.
+    Empty in the content region, where the main listing already carries the
+    page's rows; listed $(B after) the shell's, which is their resolution
+    order there.
+    */
+    private Binding[] navFallbackRows() const @safe
+    {
+        Binding[] extra;
+        if (s.region == Region.content)
+            return extra;
+        const first = listedBindings(false);
+        foreach (ref bnd; listedBindings(true))
+        {
+            if (bnd.scope_ != pages[s.page].scope_
+                || bnd.scope_ == GalleryScope.always)
+                continue;
+            bool shadowed;
+            foreach (ref seen; first)
+                // `acceptsTyped`-shaped: a shift-agnostic shell row claims
+                // both spellings, so the page's row is dead in the nav
+                // region whichever shift it names.
+                if (acceptsTyped(seen.path[0], bnd.path[0]))
+                {
+                    shadowed = true;
+                    break;
+                }
+            if (!shadowed)
+                extra ~= bnd;
+        }
+        return extra;
+    }
+
     private uint helpOverlay(ref Builder b) @safe
     {
         uint[] lines;
@@ -1349,6 +1383,11 @@ struct Gallery
         // resolution order, so the overlay cannot describe a key the shell
         // would resolve differently.
         foreach (ref bnd; listedBindings(s.region == Region.content))
+            lines ~= keyHint(b, chordText(bnd.path[0]), bnd.desc);
+        // From the page list, the showing page's unshadowed keys still fire
+        // (the fallback rung) — so the overlay lists them too, after the
+        // shell's, which is their resolution order there.
+        foreach (ref bnd; navFallbackRows())
             lines ~= keyHint(b, chordText(bnd.path[0]), bnd.desc);
         // …plus the terminal grab's policy, which routes before the table.
         lines ~= keyHint(b,
@@ -2059,6 +2098,35 @@ version (unittest)
     auto rec = drive(g, [charEvent('`', Mods(ctrl: true)), charEvent('q')]);
     assert(!g.s.terms.focused);
     assert(rec.quitRequested, "the q after the chord reached the shell");
+}
+
+@("ui_gallery.gallery.theOverlayListsTheNavFallback")
+@safe unittest
+{
+    import registry : pageIndexOf;
+
+    // From the page list, the overlay must list exactly the page keys the
+    // fallback makes live — and none the shell would take first, or the
+    // overlay advertises a key that does something else.
+    Gallery g;
+    g.s.page = pageIndexOf("components");
+    assert(g.s.region == Region.nav);
+
+    bool sawLive, sawArrow, sawRange;
+    foreach (ref bnd; g.navFallbackRows())
+    {
+        sawLive |= bnd.cmd == GalleryCommand.compScrollDown; // 'n' — unclaimed
+        sawArrow |= bnd.cmd == GalleryCommand.compTabNext;   // → is the shell's
+        sawRange |= bnd.cmd == GalleryCommand.compAction;    // 1-4 inside 1-9
+    }
+    assert(sawLive, "an unclaimed page key is listed — it fires from here");
+    assert(!sawArrow, "a shell-claimed arrow is not — the shell takes it");
+    assert(!sawRange, "…nor a range the shell's own range covers");
+
+    // In the content region the main listing already carries the page's
+    // rows, so the fallback cut is empty rather than a duplicate.
+    g.s.region = Region.content;
+    assert(g.navFallbackRows().length == 0);
 }
 
 @("ui_gallery.gallery.captureReleaseChordSpellings")
