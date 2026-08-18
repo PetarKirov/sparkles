@@ -547,3 +547,91 @@ version (unittest)
         }
     assert(sawV && sawX);
 }
+
+@("table.widgets.rowspanKeyedRectSpansRuleLine")
+@safe unittest
+{
+    // A rowspan cell's keyed rect covers all its bands including the interior
+    // rule line that vanishes inside it — one rect, one key, the whole area.
+    auto cells = [
+        [SpanCell([TextSpan("A")], rowSpan: 2, key: 1),
+            SpanCell([TextSpan("B")], key: 2)],
+        [SpanCell([TextSpan("C")], key: 3)],
+    ];
+    auto b = Builder();
+    const res = buildTableWidgets(b, cells, TableProps(rowSeparators: true));
+    auto tree = b.finish(res.root);
+    auto frames = layout(tree, Constraints(maxW: res.width));
+    const rects = keyedRects(tree, frames);
+    assert(rects.length == 3);
+    assert(rects[0].key == 1);
+    assert(rects[0].rect == Rect(1, 1, 3, 3)); // body + rule + body
+    assert(rects[1].rect == Rect(5, 1, 3, 1));
+    assert(rects[2].rect == Rect(5, 3, 3, 1)); // the cursor skips A's band
+}
+
+@("table.widgets.valignMiddlePlacesTheRun")
+@safe unittest
+{
+    // A(middle) spans two rows whose right neighbours are 1 + 2 lines tall:
+    // A's single line lands on the middle output line of its 3-line extent.
+    auto cells = [
+        [SpanCell([TextSpan("A")], rowSpan: 2, valign: VAlign.middle),
+            SpanCell([TextSpan("B")])],
+        [SpanCell([TextSpan("line one\nline two")])],
+    ];
+    auto b = Builder();
+    const res = buildTableWidgets(b, cells);
+    auto tree = b.finish(res.root);
+    auto frames = layout(tree, Constraints(maxW: res.width));
+    foreach (i, ref n; tree.nodes)
+        if (n.kind == WidgetKind.rich && n.spans.length == 1
+            && n.spans[0].text == "A")
+            assert(frames[i].rect.y == 2); // top(0) body(1) body(2) body(3)
+}
+
+@("table.widgets.decimalParityWithDrawTable")
+@system unittest
+{
+    const rows = [
+        ["item", "value"],
+        ["a", "1.5"],
+        ["b", "23.25"],
+        ["c", "7"],
+    ];
+    checkGlyphParity(rows, TableProps(headerRows: 1,
+        columnAligns: [Align.left, Align.decimal]));
+}
+
+@("table.widgets.cutoutPinsIconInTopBorder")
+@safe unittest
+{
+    auto cells = plainCells([["alpha", "beta"], ["a", "b"]]);
+    TableWidgetStyle style = {
+        cutout: TableCutout(present: true, hitId: 999,
+            icon: TextSpan(" + ", Slot.gutter, noBreak: true)),
+    };
+    auto b = Builder();
+    const res = buildTableWidgets(b, cells, TableProps(), style);
+    auto tree = b.finish(res.root);
+    auto frames = layout(tree, Constraints(maxW: res.width));
+
+    // The icon is its own hit target riding in the top border, 3 cells, ending
+    // just before the pinned corner.
+    bool sawIcon;
+    foreach (i, ref n; tree.nodes)
+        if (n.hitId == 999)
+        {
+            sawIcon = true;
+            assert(frames[i].rect == Rect(res.width - 4, 0, 3, 1));
+        }
+    assert(sawIcon);
+
+    // Too narrow for the icon (a zero-width last column's field is 2 cells):
+    // the plain border comes back whole.
+    auto b2 = Builder();
+    const res2 = buildTableWidgets(b2, plainCells([[""]]), TableProps(), style);
+    auto tree2 = b2.finish(res2.root);
+    foreach (ref n; tree2.nodes)
+        assert(n.hitId != 999);
+}
