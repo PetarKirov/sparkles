@@ -754,7 +754,7 @@ export default withMermaid(
                   link: '/specs/hue/folding',
                 },
                 {
-                  text: 'Format preview (planned)',
+                  text: 'Format preview (shipped v1)',
                   link: '/specs/hue/format-preview',
                 },
                 {
