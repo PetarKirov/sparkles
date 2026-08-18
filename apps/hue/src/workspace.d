@@ -1358,6 +1358,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     DiffLayout diffLayout = DiffLayout.unified,
     OverflowPolicy codeOverflow = OverflowPolicy.init,
     int codeMaxLines = -1,
+    OverflowPolicy tableOverflow = OverflowPolicy.init,
+    int tableMaxLines = -1,
     WorkspaceDoc delegate() @system reloadDiff = null) @system
 {
     WorkspaceTui w;
@@ -1383,6 +1385,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     w.viewer.vm.diffLayout = diffLayout;
     w.viewer.vm.codeOverflow = codeOverflow;
     w.viewer.vm.codeMaxLines = codeMaxLines;
+    w.viewer.vm.tableOverflow = tableOverflow;
+    w.viewer.vm.tableMaxLines = tableMaxLines;
     w.buildLayout(treeWidth);
     w.viewer.tabWidth = tabWidth < 1 ? 1 : tabWidth;
     w.viewer.listWhitespace = listWhitespace;

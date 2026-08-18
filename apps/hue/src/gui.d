@@ -207,6 +207,8 @@ struct GuiArgs
     TableCopyFormat tableCopy = TableCopyFormat.tsv; // --table-copy (TBL2/CLI11)
     OverflowPolicy codeOverflow; // --code-overflow
     int codeMaxLines = -1;               // --code-max-lines (COD6; -1 = auto)
+    OverflowPolicy tableOverflow;        // --table-overflow (TBL7)
+    int tableMaxLines = -1;              // --table-max-lines (TBL8; -1 = auto)
     SourceSet* set = null;               // the document set to navigate (GNV1)
     DocLoader loadDoc = null;            // loads a set entry (supplied by app.d)
     TsConfigCache* tsCache = null;       // fence highlighting for the widget view
@@ -379,6 +381,8 @@ int runGui(GuiArgs guiArgs) @system
     vm.codeLineNumbers = codeLineNumbers;
     vm.codeOverflow = codeOverflow;
     vm.codeMaxLines = codeMaxLines;
+    vm.tableOverflow = tableOverflow;
+    vm.tableMaxLines = tableMaxLines;
     vm.fenceHotGlyphs = true; // resolves the semantic bar's hot thumb color
 
 

@@ -73,7 +73,7 @@ hue view file.d --find "struct Foo"      # jump to search match
 
 - **Language / Syntax**: `--language <lang>` / `--lang <lang>` to specify syntax language (e.g. `d`, `rust`, `python`, `json`, `c`), essential when reading from stdin (`-`).
 - **Navigation**: `--line <n>`, `--column <c>`, `--find <pattern>`, `--search <pattern>`.
-- **Display**: `--line-numbers` / `--no-line-numbers`, `--tab-width <n>`, `--code-overflow <scroll|wrap|wrap-at:N>`, `--code-max-lines <n>`.
+- **Display**: `--line-numbers` / `--no-line-numbers`, `--tab-width <n>`, `--code-overflow <scroll|wrap|wrap-at:N>`, `--code-max-lines <n>`, `--table-overflow <scroll|wrap|wrap-at:N>`, `--table-max-lines <n>`.
 - **Markdown**: `--markdown` (force markdown rendering) or `--raw` (force raw source view).
 - **Directory Explorer**: `--tree-width <cols>`, `--tree-depth <n>`, `--tree-hidden`, `--tree-exclude <glob>`.
 
