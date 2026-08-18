@@ -16,3 +16,4 @@ public import sparkles.base.term_caps;
 public import sparkles.base.term_color;
 public import sparkles.base.term_style;
 public import sparkles.base.text;
+public import sparkles.base.unique;
