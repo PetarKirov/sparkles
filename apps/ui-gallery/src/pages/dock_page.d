@@ -480,3 +480,81 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     handleKey(s, KeyEvent(Key.char_, 'w'));
     assert(panesDrawn(s) == 3);
 }
+
+@("ui_gallery.pages.dockTabDragsAndDrops")
+@safe unittest
+{
+    // Drag-and-drop end to end through the page's own pointer route: press a
+    // tab, carry it past the threshold into another pane, release. The page
+    // translates into the container's space and the container does the rest,
+    // so this is the same path a real pointer takes.
+    import sparkles.input : PointerAction, PointerButton;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+
+    GalleryState s;
+    s.surface = Size(100, 40);
+    ensure(s);
+
+    // The arrangement's origin, found the way the handler finds it.
+    auto b = Builder();
+    const root = view(b, s);
+    auto tree = b.finish(root);
+    auto frames = layout(tree, Constraints(maxW: s.surface.width,
+        maxH: s.surface.height));
+    const area = rectOf(tree, frames, hitDock);
+    assert(area.width > 0, "the demo has an origin to translate against");
+
+    // A tab to carry, and a pane to carry it to, both from the container's
+    // own frames rather than from a guess about the layout.
+    Rect tabRect, sideRect;
+    foreach (ref t; s.dock.tabs)
+        if (t.pane == notesPane)
+            tabRect = t.rect;
+    foreach (ref f; s.dock.paneFrames)
+        if (f.pane == sidePane)
+            sideRect = f.rect;
+    assert(tabRect.width > 0 && sideRect.width > 0);
+
+    static PointerEvent at(PointerAction a, in Rect origin, int x, int y)
+        => PointerEvent(action: a, button: PointerButton.left,
+            pos: Point(origin.x + x, origin.y + y));
+
+    const grab = Point(tabRect.x + tabRect.width / 2, tabRect.y);
+    assert(handlePointer(s, at(PointerAction.press, area, grab.x, grab.y),
+        tree, frames));
+    assert(!s.dock.dragHint().active, "a press alone is not a drag");
+
+    // Into the sidebar's west band, far enough to pass the threshold.
+    const drop = Point(sideRect.x + 1, sideRect.y + sideRect.height / 2);
+    assert(handlePointer(s, at(PointerAction.drag, area, drop.x, drop.y),
+        tree, frames));
+    const hint = s.dock.dragHint();
+    assert(hint.active && hint.pane == notesPane && hint.target == sidePane,
+        "the carried pane and its target are both known mid-drag");
+    assert(hint.willDock, "and the drop would land somewhere");
+
+    // Mid-drag, the page's own view must show the hint — the readout and the
+    // preview both come from this same `DockDrag`.
+    {
+        auto mid = Builder();
+        const midRoot = view(mid, s);
+        auto midTree = mid.finish(midRoot);
+        bool sawSection;
+        foreach (ref node; midTree.nodes)
+            if (node.kind == WidgetKind.text && node.text == "drag in flight")
+                sawSection = true;
+        assert(sawSection, "the view shows the drag while it is in flight");
+    }
+
+    const before = s.dock.layout.panes().length;
+    assert(handlePointer(s, at(PointerAction.release, area, drop.x, drop.y),
+        tree, frames));
+    assert(!s.dock.dragHint().active, "the drag ends on release");
+    assert(s.dock.layout.panes().length == before, "no pane was lost");
+
+    // The proof it moved: notes is no longer behind a tab, so all three
+    // panes are laid out at once.
+    assert(s.dock.paneFrames.length == 3);
+    assert(s.dock.tabs.length == 0, "the group it left is gone");
+}
