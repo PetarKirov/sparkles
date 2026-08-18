@@ -277,3 +277,19 @@ Gate: hue TUI runs with **zero** polling timeouts on an idle document
 (strace-verifiable: the loop makes one blocking ring wait, no 33/150 ms
 tick wakeups); the `apps/terminal` render-CPU benchmark's idle scenario
 stays at its near-zero baseline after the port.
+
+## M18 — Fork + shared-memory server (SPEC §17)
+
+The zygote/grandchild `ForkServer` (`forkserver.d`): single-threaded-start
+gate (refusal, not assert), `SOCK_SEQPACKET` frames + anonymous shared-arena
+slots, serial serve loop, crash/overflow/throw status contract, blocking and
+non-blocking takes, the completion fd for `pollAdd`. Tested single-threaded
+(`dub test :event-horizon -- -t 1 -i forkserver`; the suite's default
+multi-threaded run skips them): echo round-trip, crash → `-SIGSEGV` with
+continued service, slot backpressure (`EAGAIN`) and input size guard
+(`EMSGSIZE`), non-blocking take. First consumer: hue's format preview
+(`FPR10` in docs/specs/hue/format-preview.md) — the in-process dmd-fmt
+provider's execution backend, with `initDMD` as `childInit` so every format
+inherits initialized frontend globals by CoW. Follow-up (not built): parallel
+grandchild fan-out; dmd-lsp fork-per-analysis (`PRJ13` lifted); the
+live-types oracle.
