@@ -42,6 +42,16 @@ configuration "library" {
     targetType "library"
 }
 
+// The dmd-fmt command (cli.d is version(DmdFmtCli)-gated, so the library
+// and unittest configurations compile it as empty):
+//     dub build :dmd-fmt --config=cli
+//     ./libs/dmd-fmt/build/dmd-fmt --check FILE...   # exit 1 = unformatted
+configuration "cli" {
+    targetType "executable"
+    targetName "dmd-fmt"
+    versions "DmdFmtCli"
+}
+
 configuration "unittest" {
     // Fast path: depend on the runner shim (pulls the prebuilt impl library),
     // so `dub test` recompiles only this package, not the runner sources.
