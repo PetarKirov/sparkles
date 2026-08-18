@@ -147,6 +147,14 @@ struct PreviewTui
     /// the loader are the workspace's, so the pane reports the intent.
     bool pickerRequested;
 
+    /// ditto — the `toggleExplorer` arm (`e`, `<leader>e`): the pane split is
+    /// the workspace's, so the pane reports the intent. This is what retired
+    /// the workspace's hand-rolled `'e'` interception (its fourth copy of the
+    /// policy) — and what makes `<leader>e` actually work in the terminal,
+    /// which the interception never saw because the leader lives in the
+    /// pane's own lantern.
+    bool explorerToggleRequested;
+
     /// The source byte at pane-local `p`, else `-1` — the inspector's
     /// hover-sync feed. Char-precise through the identity channel where the
     /// point carries one; else the row's whole span (the TUI's granularity).
@@ -215,6 +223,11 @@ struct PreviewTui
     {
         ltnTick(lantern, elapsed);
     }
+
+    /// Whether a key sequence is in flight (`LTN1`): the workspace must not
+    /// intercept a key that is the tail of one.
+    bool lanternPending() const @safe pure nothrow @nogc
+        => lantern.active;
     /// The guide's label arena, reused across frames (`NFR2`).
     private LabelArena ltnLabels;
 
@@ -1284,7 +1297,14 @@ struct PreviewTui
             case Command.treeParent: case Command.treeNextChange:
             case Command.treePrevChange: case Command.treeCloseAll:
             case Command.treeToggleHidden: case Command.treeCollapseOrUp:
-            case Command.treeFilter: case Command.toggleExplorer:
+            case Command.treeFilter:
+                break;
+
+            case Command.toggleExplorer:
+                // The pane split is the workspace's; report the intent — the
+                // `pickerRequested` shape. Standalone (no workspace), nothing
+                // drains it, and there is no explorer to toggle anyway.
+                explorerToggleRequested = true;
                 break;
 
             case Command.toggleInspector:
