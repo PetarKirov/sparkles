@@ -35,6 +35,9 @@ import sparkles.syntax : HighlightEvent;
 
 import viewer_model : ViewerModel;
 
+import sparkles.base.term_control : PointerShape;
+import sparkles.input.events : PointerAction;
+
 // ── the provider seam (FPR1–FPR8) ───────────────────────────────────────────
 
 /// How a formatter runs: linked into hue, or spawned per request.
@@ -965,6 +968,65 @@ final class FormatPreviewSession
         return s;
     }
 
+    // ── the ruler interaction machine (RUL2/RUL3/RUL8) ──────────────────
+    // Cell-space and backend-neutral: adapters convert device coordinates to
+    // fractional document columns and plumb capture/shape/paint; every
+    // decision — tolerance, drag state, clamp, retarget — is made here.
+
+    /// The pointer is being dragged along the ruler.
+    bool rulerDrag;
+
+    /// Hover tolerance in document columns — the one definition (`RUL8`).
+    enum double rulerHoverTol = 0.6;
+
+    /// `RUL2`: does a pointer at fractional document column `docCol` arm the
+    /// ruler?
+    bool rulerHits(double docCol) const @safe pure nothrow @nogc
+    {
+        if (!active)
+            return false;
+        const d = docCol - cast(double) rulerCol;
+        return d < rulerHoverTol && -d < rulerHoverTol;
+    }
+
+    /// `RUL3`: the shape this affordance contributes to the frame's one
+    /// composed pointer shape (`DCK9`).
+    PointerShape rulerShape(double docCol) const @safe pure nothrow @nogc
+        => rulerDrag || rulerHits(docCol)
+            ? PointerShape.ewResize : PointerShape.default_;
+
+    /// The one pointer entry (`RUL2`/`RUL4`): press arms the drag when it
+    /// lands on the ruler, drag retargets the width live (coalesced by the
+    /// flow), release ends it. `true` when the ruler consumed the event.
+    bool rulerPointer(ref ViewerModel vm, PointerAction action, double docCol) @system
+    {
+        import std.math : lround;
+
+        final switch (action)
+        {
+        case PointerAction.press:
+            if (!rulerHits(docCol))
+                return false;
+            rulerDrag = true;
+            return true;
+        case PointerAction.drag:
+        case PointerAction.move:
+            if (!rulerDrag)
+                return false;
+            requestWidth(vm, lround(docCol));
+            return true;
+        case PointerAction.release:
+            if (!rulerDrag)
+                return false;
+            rulerDrag = false;
+            requestWidth(vm, lround(docCol));
+            return true;
+        case PointerAction.leave:
+            rulerDrag = false;
+            return false;
+        }
+    }
+
     private void dispatch() @system
     {
         service.submit(FormatRequest(source: sourceText, path: docPath,
@@ -1051,6 +1113,24 @@ string formatPreviewCycle(ref ViewerModel vm) @system
 string formatPreviewChip(ref const ViewerModel vm) @safe
     => vm.fmt is null ? null : vm.fmt.chip();
 
+/// The ruler's document column, or −1 when the preview is off (`RUL1`: the
+/// paint anchor — each backend converts to its device coordinates).
+int formatPreviewRulerCol(ref const ViewerModel vm) @safe pure nothrow @nogc
+    => formatPreviewActive(vm) ? vm.fmt.rulerCol : -1;
+
+/// `RUL2`: hover test at a fractional document column.
+bool formatPreviewRulerHits(ref const ViewerModel vm, double docCol) @safe pure nothrow @nogc
+    => vm.fmt !is null && vm.fmt.rulerHits(docCol);
+
+/// `RUL2`: `true` while the ruler drag owns the pointer.
+bool formatPreviewRulerDragging(ref const ViewerModel vm) @safe pure nothrow @nogc
+    => vm.fmt !is null && vm.fmt.rulerDrag;
+
+/// The one pointer entry (`RUL2`); `true` when the ruler consumed the event.
+bool formatPreviewRulerPointer(ref ViewerModel vm, PointerAction action,
+    double docCol) @system
+    => vm.fmt !is null && vm.fmt.rulerPointer(vm, action, docCol);
+
 version (HueDmdFmt)
 @("format_preview.toggle.roundTripRestoresOriginal")
 @system unittest
@@ -1128,4 +1208,82 @@ version (HueDmdFmt)
     assert(msg !is null && msg.length);
     assert(!formatPreviewActive(vm));
     assert(vm.source == "no formatter here\n");
+}
+
+@("format_preview.ruler.hoverToleranceAndShape")
+@safe
+unittest
+{
+    auto s = new FormatPreviewSession(null);
+    s.rulerCol = 100;
+
+    // Inactive: never hits, never reshapes.
+    assert(!s.rulerHits(100.0));
+    assert(s.rulerShape(100.0) == PointerShape.default_);
+
+    s.active = true;
+    // The one tolerance (RUL8): just inside on both sides hits, outside not.
+    assert(s.rulerHits(100.0));
+    assert(s.rulerHits(100.5));
+    assert(s.rulerHits(99.5));
+    assert(!s.rulerHits(100.7));
+    assert(!s.rulerHits(99.3));
+    assert(s.rulerShape(100.2) == PointerShape.ewResize);
+    assert(s.rulerShape(97.0) == PointerShape.default_);
+
+    // Dragging reshapes everywhere (RUL3).
+    s.rulerDrag = true;
+    assert(s.rulerShape(50.0) == PointerShape.ewResize);
+}
+
+version (HueDmdFmt)
+@("format_preview.ruler.dragReformatsThroughTheClamp")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    import gui_preview : PreviewModel;
+    import sparkles.twoslash.protocol : TwoslashReturn;
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 80;
+    vm.applyTheme(0);
+    enum src = "int  a;\n";
+    vm.setDocument("t.d", "", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        TwoslashReturn.init, "d");
+
+    assert(formatPreviewToggle(vm) is null);
+    const startCol = vm.fmt.rulerCol;
+
+    // A press away from the ruler is not the ruler's (the selection arm may
+    // have it); a press on it captures.
+    assert(!formatPreviewRulerPointer(vm, PointerAction.press, startCol - 10.0));
+    assert(formatPreviewRulerPointer(vm, PointerAction.press, startCol + 0.2));
+    assert(formatPreviewRulerDragging(vm));
+
+    // Drag far left: the width request passes the shared clamp (RUL5).
+    assert(formatPreviewRulerPointer(vm, PointerAction.drag, 1.0));
+    assert(vm.fmt.rulerCol == minRulerCol);
+
+    // Release ends the drag and pins the final width.
+    assert(formatPreviewRulerPointer(vm, PointerAction.release, 1.0));
+    assert(!formatPreviewRulerDragging(vm));
+
+    // The final format lands via pump.
+    foreach (_; 0 .. 2500)
+    {
+        if (formatPreviewPump(vm) && vm.fmt.flow.shownCol == minRulerCol)
+            break;
+        Thread.sleep(2.msecs);
+    }
+    assert(vm.source == "int a;\n");
+    formatPreviewToggle(vm);
+    vm.fmt.service.shutdown();
 }

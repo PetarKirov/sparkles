@@ -59,7 +59,8 @@ import gui_ansi : decodeAnsi;
 import viewer_model : Dims, MdCell, MdFence, ViewerModel;
 import format_preview : formatPreviewActive, formatPreviewChip,
     formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
-    formatPreviewToggle;
+    formatPreviewRulerCol, formatPreviewRulerDragging, formatPreviewRulerHits,
+    formatPreviewRulerPointer, formatPreviewToggle;
 
 // The composable markdown view (M10): the preview is one widget tree; the
 
@@ -929,7 +930,7 @@ int runGui(GuiArgs guiArgs) @system
     // ownership (which pane the pointer is in, the divider between them)
     // is the container's own capture — the same two levels the terminal
     // host has, where a pane's grabs live inside its `handle`.
-    enum size_t capSelection = 1, capFenceSb = 2;
+    enum size_t capSelection = 1, capFenceSb = 2, capFormatRuler = 3;
 
     pop.forceHover = capture.forceHover;
 
@@ -1194,10 +1195,12 @@ int runGui(GuiArgs guiArgs) @system
         {
             import std.conv : text;
 
+            const fchip = formatPreviewChip(vm);
             drawChromeBar(treePx(), hdrY, (docRight - treePx()) / cellW,
                 vm.title,
                 text(names[vm.themeIdx], " · ",
-                    vm.showPreview ? "preview"
+                    fchip.length ? fchip
+                    : vm.showPreview ? "preview"
                     : vm.plainSyntax ? "plain" : "raw"),
                 text(vm.top + 1, "/", total),
                 focused: !pn.treeFocused || !pn.treeVisible);
@@ -1380,6 +1383,15 @@ int runGui(GuiArgs guiArgs) @system
                     Visual(bg: inspectTint.rgb, bgAlpha: inspectTint.alpha,
                         hasBg: true));
             }
+
+        // The format-preview ruler (`RUL1`): a one-device-pixel hairline at
+        // the soft-max column, over the text it constrains.
+        if (formatPreviewActive(vm))
+        {
+            const rpx = gutterPx + (formatPreviewRulerCol(vm) - dhx) * cellW;
+            if (rpx >= gutterPx && rpx < docRight)
+                chrome.fillPixels(rpx, docY0, 1, screenH - docY0, vm.gutterFg);
+        }
 
         // Twoslash hover: pointer → byte (the identity channel) → hover node;
         // the token's dotted underline fades in and the popup (the shared
@@ -2662,10 +2674,31 @@ int runGui(GuiArgs guiArgs) @system
                 syncInspectorExtent();
             }
         }
+        // One-cell background padding on the left, the scrollbar gutter on the
+        // right, plus the optional line-number gutter; text starts at `contentX`.
+        const padX = cellW;
+        const rightPad = scrollGutterColsV * cellW;
+        const gcols = gutterCols();
+        // Text starts after the tree pane (when visible), the 1-cell left
+        // padding, and the line-number gutter.
+        const gutterPx = treePx() + padX + gcols * cellW;
+
+        // The format-preview ruler's shape contribution (`RUL3`): pixel →
+        // fractional document column is the only GUI-side arithmetic; hover
+        // tolerance and drag state are the session's (`RUL8`). Composed into
+        // the frame's ONE pointer-shape call (`DCK9`).
+        double rulerColF() => (cast(double) inp.fin.pos.x - gutterPx) / cellW + dhx;
+        const rulerGrabbing = inp.capture.ownedBy(capFormatRuler)
+            && formatPreviewRulerDragging(vm);
+        const rulerHovering = rulerGrabbing
+            || (inp.capture.isFree && inp.fin.pos.x >= gutterPx
+                && formatPreviewRulerHits(vm, rulerColF()));
+
         const fenceShape = vm.barShape();
         window.pointerShape(pn.dock.shape(
-            vm.barGrabbing ? fenceShape : PointerShape.default_,
-            fenceShape));
+            rulerGrabbing ? PointerShape.ewResize
+            : vm.barGrabbing ? fenceShape : PointerShape.default_,
+            rulerHovering ? PointerShape.ewResize : fenceShape));
 
         const treePaneRows = pn.tree.bodyRows;
         const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
@@ -2676,14 +2709,6 @@ int runGui(GuiArgs guiArgs) @system
         // M16: every input block runs BEFORE the frame draws — the
         // painter renders the post-input state (one frame less input
         // latency, and the M17 event drain slots in here wholesale).
-        // One-cell background padding on the left, the scrollbar gutter on the
-        // right, plus the optional line-number gutter; text starts at `contentX`.
-        const padX = cellW;
-        const rightPad = scrollGutterColsV * cellW;
-        const gcols = gutterCols();
-        // Text starts after the tree pane (when visible), the 1-cell left
-        // padding, and the line-number gutter.
-        const gutterPx = treePx() + padX + gcols * cellW;
 
 
         // The ✔ glyph lives in the widget tree: rebuild when the flash ends so
@@ -3102,6 +3127,20 @@ int runGui(GuiArgs guiArgs) @system
             // host takes each frame, not something folded from `evBuf`.
             const shiftMod = h.modifiers.shift;
             const altMod = h.modifiers.alt;
+            // The format-preview ruler drag (`RUL2`/`RUL4`): a press on the
+            // ruler captures the pointer under its own id (`STM11`); the
+            // drag retargets the width live (the session's machine coalesces
+            // and clamps); the release is the central one every affordance
+            // shares. Claimed BEFORE the selection arm, so a ruler press can
+            // never also start a selection.
+            if (clickPressed() && dockPressPane == docPane && !dockPressConsumed
+                && inp.capture.available(capFormatRuler)
+                && formatPreviewRulerPointer(vm, PointerAction.press, rulerColF()))
+                inp.capture = inp.capture.capturedBy(capFormatRuler);
+            else if (formatPreviewRulerDragging(vm))
+                formatPreviewRulerPointer(vm,
+                    inp.fin.leftReleased ? PointerAction.release : PointerAction.drag,
+                    rulerColF());
             // The five-term negation chain this replaces was the clearest
             // instance of the allow-list defect: every new draggable had to be
             // added here, and to every other affordance's condition. A popup
