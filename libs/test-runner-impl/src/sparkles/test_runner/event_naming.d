@@ -223,14 +223,30 @@ version (linux)
             return false;
         }
 
+        // Out of band for libpfm, whose own codes run to about -20. Surfaces
+        // through `errorText`'s numeric fallback rather than a wrong message.
+        private enum encodeNameTooLong = -1000;
+
         private int encode(string name, ref perf_event_attr attr) @trusted
         {
+            import sparkles.base.text.cstring : CString, tryToCString;
+
             attr = perf_event_attr.init;
             attr.size = perf_event_attr.sizeof;
             pfm_perf_encode_arg_t arg;
             arg.attr = &attr;
             arg.size = pfm_perf_encode_arg_t.sizeof;
-            return pfmGetOsEventEncoding((name ~ '\0').ptr,
+
+            // `(name ~ '\0').ptr` handed libpfm the only reference to a fresh
+            // GC array and dropped it in the same expression. `name` reaches
+            // here from `--metrics=pfm:<name>`, so its length is not ours to
+            // assume; a named local both roots the bytes and drops the
+            // allocation this made on every lookup.
+            CString!256 nameZ;
+            if (!tryToCString(nameZ, [name]))
+                return encodeNameTooLong;
+
+            return pfmGetOsEventEncoding(nameZ.ptr,
                 PFM_PLM0 | PFM_PLM3, PFM_OS_PERF_EVENT, &arg);
         }
 
