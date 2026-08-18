@@ -32,6 +32,43 @@ enum uint apiVersion13 = makeApiVersion(0, 1, 3, 0); /// `VK_API_VERSION_1_3`
 enum uint apiVersion14 = makeApiVersion(0, 1, 4, 0); /// `VK_API_VERSION_1_4`
 
 /**
+A packed API version as `"major.minor.patch"`.
+
+The variant field is dropped: it is 0 for every Vulkan implementation and
+non-zero only for a differently-specified API sharing the encoding, which this
+binding does not target.
+
+$(B Not for `VkPhysicalDeviceProperties.driverVersion`.) Only `apiVersion` is
+guaranteed to use this packing. Vendors encode their driver version how they
+like — NVIDIA and Intel both differ — so rendering one through here produces a
+plausible and wrong three-part number. Decoding those needs a per-vendor table
+keyed on `vendorID`, which this binding does not carry.
+*/
+string formatApiVersion(uint packed) @safe pure nothrow
+{
+    import std.conv : text;
+
+    return text(apiVersionMajor(packed), ".", apiVersionMinor(packed),
+        ".", apiVersionPatch(packed));
+}
+
+@("vulkan.api.formatApiVersionRendersTheThreeParts")
+@safe pure nothrow unittest
+{
+    assert(formatApiVersion(apiVersion10) == "1.0.0");
+    assert(formatApiVersion(apiVersion13) == "1.3.0");
+    assert(formatApiVersion(makeApiVersion(0, 1, 3, 290)) == "1.3.290");
+
+    // Round-trips against the accessors it is built from, including the patch
+    // field's full 12-bit range.
+    const v = makeApiVersion(0, 1, 4, 4095);
+    assert(formatApiVersion(v) == "1.4.4095");
+
+    // The variant is deliberately absent from the rendering.
+    assert(formatApiVersion(makeApiVersion(1, 1, 0, 0)) == "1.0.0");
+}
+
+/**
 The version of the headers this binding was compiled against.
 
 Worth reporting in diagnostics: it is the one number that identifies which
