@@ -57,6 +57,9 @@ import gui_preview : PreviewModel, stripSgr;
 import sparkles.diff.model : DiffDoc;
 import gui_ansi : decodeAnsi;
 import viewer_model : Dims, MdCell, MdFence, ViewerModel;
+import format_preview : formatPreviewActive, formatPreviewChip,
+    formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
+    formatPreviewToggle;
 
 // The composable markdown view (M10): the preview is one widget tree; the
 
@@ -743,6 +746,7 @@ int runGui(GuiArgs guiArgs) @system
         vm.setDocument(name, summary, doc.source, doc.events, doc.preview,
             doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides, doc.diffSession,
             doc.diffEmphasis);
+        vm.docPath = path; // .editorconfig discovery + {path} (format preview)
         inp.query.clear();
         inp.mode = Mode.normal;
         window.title(("hue — " ~ name).toStringz);
@@ -1810,6 +1814,10 @@ int runGui(GuiArgs guiArgs) @system
         // span gets its underline); each tip answer fills one node in place —
         // the popup is rebuilt from `vm.tw` every frame, so a resolved hover
         // simply appears, with no relayout.
+        // Format preview (`FPR9`): drain the worker's completions. An applied
+        // buffer already rebuilt the model; this frame paints it below.
+        formatPreviewPump(vm);
+
         if (liveSession !is null)
         {
             liveSession.poll();
@@ -2207,6 +2215,7 @@ int runGui(GuiArgs guiArgs) @system
                 // the raw patch text, where files are not a navigable unit.
                 hasDiffSession: vm.showPreview && !vm.diffSession.empty,
                 showPreview: vm.showPreview,
+                formatPreviewActive: formatPreviewActive(vm),
             );
 
             // The key sequence's delay runs on wall time, not a frame count:
@@ -2436,6 +2445,26 @@ int runGui(GuiArgs guiArgs) @system
                     vm.codeLineNumbers = codeLineNumbers;
                     vm.widthCols = -1;
                     relayout();
+                    break;
+                case Command.toggleFormatPreview:
+                    if (const msg = formatPreviewToggle(vm))
+                    {
+                        flash.copyModeMsg = msg;
+                        flash.toast = Timeline.triggered(toastCfg);
+                    }
+                    break;
+                case Command.formatterNext:
+                    if (const msg = formatPreviewCycle(vm))
+                    {
+                        flash.copyModeMsg = msg;
+                        flash.toast = Timeline.triggered(toastCfg);
+                    }
+                    break;
+                case Command.formatWidthNarrower:
+                    formatPreviewNudge(vm, -2);
+                    break;
+                case Command.formatWidthWider:
+                    formatPreviewNudge(vm, +2);
                     break;
                 case Command.toggleAnsiCopy:
                     cm.ansiStrip = !cm.ansiStrip;
@@ -3146,6 +3175,7 @@ int runGui(GuiArgs guiArgs) @system
         vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
             source, events, preview, twoslash, docLang, initialDiff,
             initialDiffSides, initialDiffSession);
+        vm.docPath = docPath;
         // A markdown file opens in preview by default; Tab toggles to the raw
         // highlighted-source view. The capture's preview pin ("0") fixes the
         // initial mode for deterministic goldens.

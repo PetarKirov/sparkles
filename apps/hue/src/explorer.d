@@ -900,6 +900,8 @@ struct ExplorerTui
             case Command.toggleView: case Command.copySelection:
             case Command.toggleLineNumbers: case Command.toggleCodeLineNumbers:
             case Command.toggleAnsiCopy: case Command.toggleTableCopy:
+            case Command.toggleFormatPreview: case Command.formatterNext:
+            case Command.formatWidthNarrower: case Command.formatWidthWider:
             case Command.startSearch: case Command.startGoto:
             case Command.toggleHoverRegions: case Command.cycleHoverPopup:
             case Command.foldToggle: case Command.foldClose: case Command.foldOpen:

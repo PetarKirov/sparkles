@@ -6,6 +6,8 @@
 // in gui.d (`HUE-O1`), beside windowing, native-input translation and painting.
 module viewer_model;
 
+
+import format_preview : FormatPreviewSession;
 import ansi_model : AnsiLine, Attr;
 import diff_session : DiffSession;
 import diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
@@ -143,6 +145,14 @@ struct ViewerModel
     // ── the document ────────────────────────────────────────────────────────
     string title;
     string summary;
+    /// Filesystem path of the viewed document when it has one (`.editorconfig`
+    /// discovery and external formatters' `{path}` — the format preview).
+    /// Empty for stdin/synthetic documents; hosts set it beside `setDocument`.
+    string docPath;
+    /// The format-preview session (`FMV`), lazily created on first toggle.
+    /// Lives here — the one document model both backends drive — so the
+    /// preview has exactly one owner and no per-backend state split (`RUL8`).
+    FormatPreviewSession fmt;
     const(char)[] source;
     string lang;                    /// canonical language (CST fold provider)
     /// The document's retained parse (`TSI`): the root tree + injected layer
@@ -338,6 +348,32 @@ struct ViewerModel
         barSvActive = size_t.max;
         folds = DisclosureState!size_t(true);
         rebuild();
+    }
+
+    /**
+    `FMV3`/`FMV4`: replaces only the displayed text and its highlight stream
+    (the format preview's buffer swap), keeping the document identity and the
+    diff/preview state. The viewport survives clamped (`FMV5`); search and
+    folds reset so they recompute against the new buffer (`FMV6`). The
+    retained parse re-keys automatically: `ensureParsed` compares by slice
+    identity, and every formatted buffer is a fresh allocation.
+    */
+    void swapContent(const(char)[] source_, const(HighlightEvent)[] events_)
+    {
+        source = source_;
+        events = events_;
+        srcTotal = lineCount(source);
+        lineStarts = buildLineStarts(source);
+        matches = null;
+        matchRects = null;
+        curMatch = 0;
+        folds = DisclosureState!size_t(true);
+        rebuild();
+        const last = rows.length ? cast(long) rows.length - 1 : 0;
+        if (top > last)
+            top = last;
+        if (top < 0)
+            top = 0;
     }
 
     /**

@@ -33,6 +33,8 @@ import expected : Expected, err, ok;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.syntax : HighlightEvent;
 
+import viewer_model : ViewerModel;
+
 // ── the provider seam (FPR1–FPR8) ───────────────────────────────────────────
 
 /// How a formatter runs: linked into hue, or spawned per request.
@@ -110,7 +112,7 @@ struct FormatterRegistry
     /// The registry with the built-in in-process provider (when this build
     /// carries one) plus the config-declared external allowlist (`FPR4` —
     /// callers pass only user-approved entries).
-    static FormatterRegistry withExternal(FormatterInfo[] externalAllowlist)
+    static FormatterRegistry withExternal(FormatterInfo[] externalAllowlist) @safe
         => FormatterRegistry(external_: externalAllowlist);
 
     /// Every available formatter for `lang`, deterministic order (`FPR6`).
@@ -327,7 +329,9 @@ struct FormatCache
     }
 
     /// The cached output for `width`, or `null`. A hit refreshes LRU.
-    const(CachedFormat)* lookup(ushort width) @safe
+    /// Mutable: a hit whose highlights were never computed memoizes them in
+    /// place on first display.
+    CachedFormat* lookup(ushort width) @safe
     {
         const digest = width in widthToDigest;
         if (digest is null)
@@ -769,4 +773,359 @@ unittest
     }
     assert(c.ok, "worker never completed: " ~ c.error.message);
     assert(c.text == "int a;\n");
+}
+
+// ── the session: the one owner of preview state (FMV / RUL8) ────────────────
+
+/// The ruler's sane range (`RUL5`); drag, nudge and CLI all pass through it.
+enum ushort minRulerCol = 40;
+/// ditto
+enum ushort maxRulerCol = 300;
+
+/// ditto
+ushort clampRulerCol(long col) @safe pure nothrow @nogc
+    => col < minRulerCol ? minRulerCol
+        : col > maxRulerCol ? maxRulerCol : cast(ushort) col;
+
+/**
+The per-document format-preview session (`FMV1`–`FMV7`) — every decision
+lives here, owned by the `ViewerModel` both backends share (`RUL8`). A class:
+the `FormatService` worker keeps the registry's address, so the state must
+not move.
+
+Backends interact only through the free functions below (`formatPreview*`) —
+their command arms are one-liners, and anything decision-shaped that tries to
+grow in an adapter belongs here instead.
+*/
+final class FormatPreviewSession
+{
+    FormatterRegistry registry;
+    FormatService service;
+    FormatFlow flow;
+    FormatCache cache;
+
+    bool active;
+    size_t formatterIndex;
+    FormatterInfo[] candidates;
+    string error;        /// last provider failure (`FPR8`); empty = healthy
+    long lastFormatMs;   /// status display only — never a throttle
+    ushort rulerCol = 120;
+
+    private string sourceText;                    // the original, as the formatter input
+    private string docPath;                       // for configFor / argv {path}
+    private const(char)[] originalSource;         // the FMV4 instant-restore pair
+    private const(HighlightEvent)[] originalEvents;
+
+    this(FormatterInfo[] externalAllowlist = null) @safe
+    {
+        registry = FormatterRegistry.withExternal(externalAllowlist);
+        service = new FormatService((() @trusted => &registry)());
+    }
+
+    private ref const(FormatterInfo) formatter() const return @safe pure nothrow @nogc
+        => candidates[formatterIndex];
+
+    /// Enter the preview (`FMV2`/`FMV3`). Empty return = entered; otherwise
+    /// the reason it stayed off.
+    private string enter(ref ViewerModel vm) @system
+    {
+        import std.conv : text;
+
+        if (vm.diff.files.length || vm.tw.code.length || vm.preview.present)
+            return "format preview: only for plain code views";
+        candidates = registry.candidatesFor(vm.lang);
+        if (candidates.length == 0)
+            return text("no formatter for '",
+                vm.lang.length ? vm.lang : "plain text", "'");
+        if (formatterIndex >= candidates.length)
+            formatterIndex = 0;
+
+        originalSource = vm.source;
+        originalEvents = vm.events;
+        sourceText = vm.source.idup;
+        docPath = vm.docPath;
+        error = null;
+        active = true;
+
+        version (HueDmdFmt)
+        {
+            import format_dmd : discoveredWidth;
+
+            if (formatter.kind == FormatterKind.inProcess)
+                rulerCol = clampRulerCol(discoveredWidth(vm.docPath));
+        }
+
+        cache.rekey(FormatterRegistry.fingerprint(formatter), originalSource);
+        requestWidth(vm, rulerCol);
+        return null;
+    }
+
+    /// Exit: the `FMV4` instant restore — a swap, never a reformat. The
+    /// cache and any in-flight format survive for re-entry.
+    private void exit_(ref ViewerModel vm) @system
+    {
+        active = false;
+        error = null;
+        vm.swapContent(originalSource, originalEvents);
+    }
+
+    /// The drag/nudge/CLI width entry point (`RUL4`/`RUL5`): clamp, try the
+    /// cache (a hit applies synchronously and skips the worker, `FPR11`),
+    /// else run the single-flight flow.
+    void requestWidth(ref ViewerModel vm, long col) @system
+    {
+        const clamped = clampRulerCol(col);
+        rulerCol = clamped;
+        if (!active)
+            return;
+        if (auto hit = cache.lookup(clamped))
+        {
+            if (hit.events is null)
+                hit.events = rehighlight(vm, hit.text);
+            flow.shownFromCache(clamped);
+            vm.swapContent(hit.text, hit.events);
+            return;
+        }
+        if (flow.request(clamped) == FlowAction.dispatch)
+            dispatch();
+    }
+
+    /// Drain worker completions and act on them (`FPR9`): cache every result
+    /// (stale ones included — `FPR11`), apply the one still wanted, chain the
+    /// next dispatch when the target moved. Runs every frame/tick; `true`
+    /// when the visible buffer changed.
+    bool pump(ref ViewerModel vm) @system
+    {
+        bool changed;
+        FormatCompletion c;
+        while (service.tryTake(c))
+        {
+            lastFormatMs = c.durMs;
+            const action = flow.completed(c.width);
+            if (!c.ok)
+            {
+                error = describeError(c.error);
+                if (action == FlowAction.dispatch && active)
+                    dispatch();
+                continue;
+            }
+            error = null;
+            cache.insert(c.width, c.text, null);
+            final switch (action)
+            {
+            case FlowAction.apply:
+                if (active)
+                {
+                    auto hit = cache.lookup(c.width);
+                    if (hit.events is null)
+                        hit.events = rehighlight(vm, hit.text);
+                    vm.swapContent(hit.text, hit.events);
+                    changed = true;
+                }
+                break;
+            case FlowAction.dispatch:
+                if (active)
+                    dispatch();
+                break;
+            case FlowAction.none:
+                break;
+            }
+        }
+        return changed;
+    }
+
+    /// `FPR6`: the next available formatter, reformatting the current width
+    /// under the new provider (its own cache key).
+    private string cycle(ref ViewerModel vm) @system
+    {
+        import std.conv : text;
+
+        if (!active || candidates.length == 0)
+            return null;
+        if (candidates.length == 1)
+            return text(formatter.name, " is the only formatter for '",
+                vm.lang, "'");
+        formatterIndex = (formatterIndex + 1) % candidates.length;
+        cache.rekey(FormatterRegistry.fingerprint(formatter), originalSource);
+        flow.shownCol = -1; // force a fresh format under the new provider
+        requestWidth(vm, rulerCol);
+        return null;
+    }
+
+    /// The status chip both backends render (`FMV7`).
+    string chip() const @safe
+    {
+        import std.conv : text;
+
+        if (!active)
+            return null;
+        auto s = text("fmt: ", formatter.name, " · ", rulerCol);
+        if (error.length)
+            s ~= text(" · ", error);
+        return s;
+    }
+
+    private void dispatch() @system
+    {
+        service.submit(FormatRequest(source: sourceText, path: docPath,
+            width: cast(ushort) flow.inFlightCol,
+            formatter: candidates[formatterIndex]));
+    }
+
+    private static string describeError(in FormatError e) @safe
+    {
+        import std.conv : text;
+        import std.string : strip;
+
+        final switch (e.kind)
+        {
+        case FormatErrorKind.noFormatter:
+            return "no formatter";
+        case FormatErrorKind.spawnFailed:
+            return "formatter not runnable";
+        case FormatErrorKind.nonZeroExit:
+            const msg = e.message.strip;
+            return msg.length
+                ? text("formatter failed: ", msg)
+                : text("formatter exited ", e.exitCode);
+        case FormatErrorKind.unsupported:
+            return "formatter unavailable in this build";
+        }
+    }
+
+    private static HighlightEvent[] rehighlight(
+        ref ViewerModel vm, string source) @system
+    {
+        import sparkles.syntax : highlightInjected;
+        import sparkles.base.smallbuffer : SmallBuffer;
+
+        SmallBuffer!HighlightEvent ev;
+        if (vm.cache is null || vm.lang.length == 0
+            || highlightInjected(*vm.cache, vm.lang, source, ev).hasError)
+        {
+            ev.clear();
+            ev ~= HighlightEvent.sourceSpan(0, source.length);
+        }
+        return ev[].dup;
+    }
+}
+
+// ── the shared backend surface: every arm is one of these calls ─────────────
+
+/// `true` while the preview shows (drives `CtxFlag.formatPreviewActive` and
+/// the ruler paint in both backends).
+bool formatPreviewActive(ref const ViewerModel vm) @safe pure nothrow @nogc
+    => vm.fmt !is null && vm.fmt.active;
+
+/// Toggle (`FMV1`). Returns the user-facing notice ("format preview off",
+/// "no formatter for 'x'"), or null when entering succeeded quietly.
+string formatPreviewToggle(ref ViewerModel vm) @system
+{
+    if (vm.fmt is null)
+        vm.fmt = new FormatPreviewSession();
+    if (vm.fmt.active)
+    {
+        vm.fmt.exit_(vm);
+        return "format preview off";
+    }
+    return vm.fmt.enter(vm);
+}
+
+/// Per-frame/tick drain (`FPR9`); `true` when the visible buffer changed
+/// (the caller repaints).
+bool formatPreviewPump(ref ViewerModel vm) @system
+    => vm.fmt !is null && vm.fmt.pump(vm);
+
+/// `<`/`>`: nudge the ruler through the same clamp as the drag (`RUL5`).
+void formatPreviewNudge(ref ViewerModel vm, int delta) @system
+{
+    if (formatPreviewActive(vm))
+        vm.fmt.requestWidth(vm, cast(long) vm.fmt.rulerCol + delta);
+}
+
+/// Cycle the formatter (`FPR6`); the notice, or null.
+string formatPreviewCycle(ref ViewerModel vm) @system
+    => vm.fmt is null ? null : vm.fmt.cycle(vm);
+
+/// The status chip, or null when the preview is off (`FMV7`).
+string formatPreviewChip(ref const ViewerModel vm) @safe
+    => vm.fmt is null ? null : vm.fmt.chip();
+
+version (HueDmdFmt)
+@("format_preview.toggle.roundTripRestoresOriginal")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    import gui_preview : PreviewModel;
+    import sparkles.twoslash.protocol : TwoslashReturn;
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 80;
+    vm.applyTheme(0);
+
+    enum src = "int  answer   = 42;\nint  more  =  1;\n";
+    vm.setDocument("t.d", "", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        TwoslashReturn.init, "d");
+
+    // Enter: quiet, active, and the format applies once pumped (FMV1/FMV3).
+    assert(formatPreviewToggle(vm) is null);
+    assert(formatPreviewActive(vm));
+    bool applied;
+    foreach (_; 0 .. 2500)
+    {
+        if (formatPreviewPump(vm))
+        {
+            applied = true;
+            break;
+        }
+        Thread.sleep(2.msecs);
+    }
+    assert(applied, "the preview never applied");
+    assert(vm.source == "int answer = 42;\nint more = 1;\n");
+    assert(formatPreviewChip(vm) !is null);
+
+    // Exit: the FMV4 instant restore — the original slice, by identity.
+    assert(formatPreviewToggle(vm) == "format preview off");
+    assert(!formatPreviewActive(vm));
+    assert(vm.source is src);
+
+    // Re-enter: the cache still holds this width (FPR11) — the formatted
+    // buffer shows synchronously, no worker round-trip.
+    assert(formatPreviewToggle(vm) is null);
+    assert(vm.source == "int answer = 42;\nint more = 1;\n");
+    formatPreviewToggle(vm);
+    vm.fmt.service.shutdown();
+}
+
+@("format_preview.toggle.refusesWithoutFormatter")
+@system unittest
+{
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    import gui_preview : PreviewModel;
+    import sparkles.twoslash.protocol : TwoslashReturn;
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 80;
+    vm.applyTheme(0);
+    vm.setDocument("t.xyz", "", "no formatter here\n",
+        [HighlightEvent.sourceSpan(0, 18)], PreviewModel.init,
+        TwoslashReturn.init, "xyz");
+
+    // FMV2: reports why, stays off, view untouched.
+    const msg = formatPreviewToggle(vm);
+    assert(msg !is null && msg.length);
+    assert(!formatPreviewActive(vm));
+    assert(vm.source == "no formatter here\n");
 }

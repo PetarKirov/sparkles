@@ -77,3 +77,9 @@ SRC";
     t.join();
     assert(got == "int a;\n");
 }
+
+/// The ruler's starting column for `path` (`FPR7`): the discovered
+/// `.editorconfig` soft max (dfmt keys honored). Total — no config files
+/// found means the formatter's default.
+ushort discoveredWidth(string path) @system
+    => cast(ushort) configFor(path, FormatConfig()).softMaxLineLength;
