@@ -1372,6 +1372,18 @@ struct PreviewTui
             case Command.diffStage:   applyStaging(StageAction.stage); break;
             case Command.diffUnstage: applyStaging(StageAction.unstage); break;
             case Command.diffDiscard: applyStaging(StageAction.discard); break;
+
+            // The picker's modal surface answers these; its scopes are
+            // unreachable while a pane dispatches.
+            case Command.pickerClose: case Command.pickerAccept:
+            case Command.pickerErase:
+            case Command.pickerUp: case Command.pickerDown:
+            case Command.pickerPageUp: case Command.pickerPageDown:
+            case Command.pickerTop: case Command.pickerBottom:
+            case Command.pickerFocusNext: case Command.pickerFocusPrev:
+            case Command.pickerToggleScore:
+            case Command.pickerPreviewDown: case Command.pickerPreviewUp:
+                break;
             case Command.diffToggleContext:    toggleDiffContext(); break;
             case Command.diffToggleFormatting: toggleFormattingHunks(); break;
             case Command.diffToggleStructural: vm.diffToggleStructural(); break;

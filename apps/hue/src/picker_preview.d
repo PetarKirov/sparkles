@@ -25,6 +25,7 @@ module picker_preview;
 import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.searching : endsWith;
 
+import sparkles.input.events : Event, KeyEvent;
 import sparkles.ui_tui : Grid;
 
 import document : Document;
@@ -171,6 +172,20 @@ struct PickerDocPane
     }
 
     private int colsShown, rowsShown;
+
+    /**
+    A key the picker's preview scope forwarded (`PKL7`): the document pane's
+    whole keymap applies — scrolling, search, wrap, the `z` folds — but
+    host-level intents must not escape a preview. `quit` is swallowed (the
+    return value is dropped) and the pane's intent flags are cleared, so a
+    `<leader>ff` typed $(I into the preview) cannot re-open the picker.
+    */
+    void forwardKey(in KeyEvent k) @system
+    {
+        cast(void) pane.handle(Event(k));
+        pane.pickerRequested = false;
+        pane.inspectorToggleRequested = false;
+    }
 
     /// The picker closed: stop the oracle, keep the document (a reopen on
     /// the same selection shows instantly).

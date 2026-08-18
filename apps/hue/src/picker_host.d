@@ -18,19 +18,23 @@ import sparkles.event_horizon.raw_pool : RawPoolResult;
 import sparkles.fuzzy : CandidateSnapshot, DefaultFuzzyCaps, FuzzyLimits,
     MatchConfig, MatcherWorkspace, parseQuery, positions, TextRange;
 import sparkles.input.events : Key, KeyEvent;
+import sparkles.ui.focus : ScopeFocus;
 import sparkles.ui.widget : WidgetTree;
 
+import keymap : Command, commandFor, KeyContext, Scope_;
 import picker : PickerScheduler, PickerState;
 import picker_sources : collectFilesFinder, FilesFinder;
 import picker_view : PickerGeometry, PickerLayout, pickerView, RowHighlight;
 
-/// What a modal keystroke did — the host acts on `accepted` (open the file)
-/// and repaints on the rest.
+/// What a modal keystroke did — the host acts on `accepted` (open the file),
+/// hands `previewKey` to the preview document pane on `preview`, and repaints
+/// on the rest.
 enum PickerAction : ubyte
 {
     consumed, /// state changed (or the key was swallowed); still open
     closed,   /// the picker dismissed itself
     accepted, /// a row was accepted — `acceptedPath` names the file
+    preview,  /// forward `previewKey` to the preview document pane
 }
 
 /// Ranked rows the hosts show and select through. Deliberately small: the
@@ -68,6 +72,16 @@ struct PickerHost
     FilesFinder finder;
     /// Set by `handleKey` when it returns `PickerAction.accepted`.
     string acceptedPath;
+    /// Which picker pane owns the keyboard (`FOC2`/`PKL7`) — the value
+    /// `KeyContext.pickerFocus` carries into resolution, and the view reads
+    /// for its chrome. Reset to the prompt on every open.
+    ScopeFocus!Scope_ focus = ScopeFocus!Scope_(Scope_.pickerInput);
+    /// Set by `handleKey` when it returns `PickerAction.preview`.
+    KeyEvent previewKey;
+
+    /// The pane order `Tab` cycles (`pickerFocusNext`/`Prev`).
+    static immutable Scope_[3] paneOrder =
+        [Scope_.pickerInput, Scope_.pickerList, Scope_.pickerPreview];
 
     private alias Pool = typeof(scheduler).Pool;
     private Pool pool;
@@ -112,6 +126,7 @@ struct PickerHost
         scheduler.cancel(); // running generations retire against the old corpus
         finder = collectFilesFinder(root, includeGlobs, excludeGlobs);
         state.open();
+        focus = ScopeFocus!Scope_(Scope_.pickerInput);
         selectedIndex_ = size_t.max;
         selectedPath_ = null;
         refreshHighlights();
@@ -192,24 +207,36 @@ struct PickerHost
         const path = selectedPath();
         return pickerView(state, snapshot,
             highlights[0 .. state.rowCount],
-            path.length ? baseName(path) : null, geometry, preset);
+            path.length ? baseName(path) : null, geometry, preset,
+            focus.focused);
     }
 
+    /// The resolution context the picker's keys live in: the modal flag plus
+    /// the focused pane (`FOC4` — modality is context gating).
+    KeyContext keyContext() const @safe pure nothrow @nogc
+        => KeyContext(pickerActive: true, pickerFocus: focus.focused);
+
     /**
-    The modal key policy, identical in both hosts: typing edits the prompt,
-    `↑`/`↓` and `PgUp`/`PgDn` move the selection, `Enter` accepts, `Escape`
-    closes, `Ctrl-S` toggles the score breakdown (`PKR4`'s debug view).
-    Every key is consumed while the picker is open — it is a modal surface.
+    The modal key policy, identical in both hosts — and, since `PKL7`, table
+    rows rather than a hand-written waterfall: the `picker*` scopes of
+    `hueBindings` resolve the chords, the focused pane selects which rows are
+    reachable, and this dispatch only answers the picker's own commands.
+
+    The fallback rung (`FOC4`) is what an $(I unbound) key means per pane:
+    prompt text in the input pane, a refocus-and-type from the list (a
+    printable is always a query edit — snacks.picker's affordance), and a
+    forwarded key in the preview, where the document pane's whole keymap
+    (scrolling, search, wrap) applies unmodified. Every key is consumed
+    while the picker is open — it is a modal surface (`PIK1`).
     */
     PickerAction handleKey(in KeyEvent k) @system
     {
-        if (k.key == Key.escape || k.key == Key.back)
+        switch (commandFor(k, keyContext()).cmd)
         {
+        case Command.pickerClose:
             close();
             return PickerAction.closed;
-        }
-        if (k.key == Key.enter)
-        {
+        case Command.pickerAccept:
             const index = state.selectedCorpusIndex;
             const path = finder.resolve(index);
             if (path is null)
@@ -217,44 +244,58 @@ struct PickerHost
             acceptedPath = path;
             close();
             return PickerAction.accepted;
-        }
-        if (k.key == Key.backspace)
-        {
+        case Command.pickerErase:
             if (state.prompt.erase())
                 request();
             return PickerAction.consumed;
-        }
-        if (k.key == Key.up)
-        {
+        case Command.pickerUp:
             state.moveSelection(-1);
             return PickerAction.consumed;
-        }
-        if (k.key == Key.down)
-        {
+        case Command.pickerDown:
             state.moveSelection(1);
             return PickerAction.consumed;
-        }
-        if (k.key == Key.pageUp)
-        {
+        case Command.pickerPageUp:
             state.moveSelection(-cast(long) pickerRows / 2);
             return PickerAction.consumed;
-        }
-        if (k.key == Key.pageDown)
-        {
+        case Command.pickerPageDown:
             state.moveSelection(pickerRows / 2);
             return PickerAction.consumed;
-        }
-        if (k.key == Key.char_ && k.mods.ctrl)
-        {
-            if (k.ch == 's' || k.ch == 'S')
-                state.toggleScoreDebug();
+        case Command.pickerTop:
+            state.moveSelection(-cast(long) state.rowCount);
             return PickerAction.consumed;
+        case Command.pickerBottom:
+            state.moveSelection(state.rowCount);
+            return PickerAction.consumed;
+        case Command.pickerFocusNext:
+            focus = focus.cycled(paneOrder[], 1);
+            return PickerAction.consumed;
+        case Command.pickerFocusPrev:
+            focus = focus.cycled(paneOrder[], -1);
+            return PickerAction.consumed;
+        case Command.pickerToggleScore:
+            state.toggleScoreDebug();
+            return PickerAction.consumed;
+        case Command.pickerPreviewDown:
+            previewKey = KeyEvent(key: Key.pageDown);
+            return PickerAction.preview;
+        case Command.pickerPreviewUp:
+            previewKey = KeyEvent(key: Key.pageUp);
+            return PickerAction.preview;
+        default:
+            break; // unbound here — the pane fallback below
         }
-        if (k.key == Key.char_ && !k.mods.alt && k.ch >= 0x20)
+        if (focus.isFocused(Scope_.pickerPreview))
         {
+            previewKey = k;
+            return PickerAction.preview;
+        }
+        if (k.key == Key.char_ && !k.mods.ctrl && !k.mods.alt && k.ch >= 0x20)
+        {
+            // A printable refocuses the prompt (the list never swallows a
+            // query edit) and types.
+            focus = ScopeFocus!Scope_(Scope_.pickerInput);
             if (state.prompt.type(k.ch))
                 request();
-            return PickerAction.consumed;
         }
         return PickerAction.consumed;
     }
@@ -423,4 +464,64 @@ unittest
     assert(host.state.rowCount == 0);
     assert(host.handleKey(KeyEvent(Key.enter)) == PickerAction.consumed);
     assert(host.state.active);
+}
+
+@("picker.host.focusCyclesAndRoutesKeys")
+@system
+unittest
+{
+    import std.file : rmdirRecurse;
+
+    const root = pickerFixture("hue-picker-host-focus");
+    scope (exit) rmdirRecurse(root);
+
+    auto owner = makeUnique!PickerHost();
+    auto host = &owner.get();
+    scope (exit) host.shutdown();
+    host.open(root);
+    drain(*host);
+    assert(host.focus.isFocused(Scope_.pickerInput), "the prompt opens focused");
+
+    // Tab cycles input → list → preview → input; Shift-Tab reverses.
+    assert(host.handleKey(KeyEvent(Key.tab)) == PickerAction.consumed);
+    assert(host.focus.isFocused(Scope_.pickerList));
+    assert(host.handleKey(KeyEvent(Key.tab)) == PickerAction.consumed);
+    assert(host.focus.isFocused(Scope_.pickerPreview));
+    assert(host.handleKey(KeyEvent(Key.tab)) == PickerAction.consumed);
+    assert(host.focus.isFocused(Scope_.pickerInput));
+    import sparkles.input.events : Mods;
+
+    assert(host.handleKey(KeyEvent(Key.tab, 0, Mods(shift: true)))
+        == PickerAction.consumed);
+    assert(host.focus.isFocused(Scope_.pickerPreview), "Shift-Tab reverses");
+
+    // While the preview holds focus, an unbound key forwards to the pane…
+    auto r = host.handleKey(KeyEvent(Key.char_, 'j'));
+    assert(r == PickerAction.preview && host.previewKey.ch == 'j',
+        "preview keys belong to the document pane");
+    // …the shared picker keys still resolve…
+    assert(host.handleKey(KeyEvent(Key.escape)) == PickerAction.closed);
+    assert(!host.state.active);
+
+    // Reopening resets the focus to the prompt.
+    host.open(root);
+    drain(*host);
+    assert(host.focus.isFocused(Scope_.pickerInput));
+
+    // The focused list navigates with letters, and a printable refocuses the
+    // prompt and types instead of being swallowed.
+    cast(void) host.handleKey(KeyEvent(Key.tab));
+    assert(host.handleKey(KeyEvent(Key.char_, 'j')) == PickerAction.consumed);
+    assert(host.state.selection == 1 && host.focus.isFocused(Scope_.pickerList));
+    assert(host.handleKey(KeyEvent(Key.char_, 'G', Mods(shift: true)))
+        == PickerAction.consumed);
+    assert(host.state.selection + 1 == host.state.rowCount, "G hits the last row");
+    assert(host.handleKey(KeyEvent(Key.char_, 'l')) == PickerAction.consumed);
+    assert(host.focus.isFocused(Scope_.pickerInput),
+        "a printable is a query edit, never list chrome");
+    assert(host.state.prompt.text == "l");
+
+    // Ctrl-D scrolls the preview from any pane — the translated page key.
+    r = host.handleKey(KeyEvent(Key.char_, 'd', Mods(ctrl: true)));
+    assert(r == PickerAction.preview && host.previewKey.key == Key.pageDown);
 }

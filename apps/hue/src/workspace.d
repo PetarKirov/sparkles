@@ -937,18 +937,16 @@ struct WorkspaceTui
         if (!picker.empty && picker.get.state.active)
         {
             e.match!((in KeyEvent k) {
-                // `Ctrl-d`/`Ctrl-u` scroll the preview pane — forwarded as
-                // the page keys its own keymap already binds.
-                if (k.key == Key.char_ && k.mods.ctrl
-                    && (k.ch == 'd' || k.ch == 'u') && pickerDoc !is null)
-                {
-                    cast(void) pickerDoc.pane.handle(Event(KeyEvent(
-                        key: k.ch == 'd' ? Key.pageDown : Key.pageUp)));
-                    return;
-                }
                 final switch (picker.get.handleKey(k))
                 {
                 case PickerAction.consumed:
+                    break;
+                case PickerAction.preview:
+                    // The preview scope's keys (`Ctrl-d`/`Ctrl-u` from any
+                    // pane, everything while the preview holds focus) go to
+                    // the document pane, whose own keymap applies.
+                    if (pickerDoc !is null)
+                        pickerDoc.forwardKey(picker.get.previewKey);
                     break;
                 case PickerAction.closed:
                     if (pickerDoc !is null)
@@ -2126,6 +2124,18 @@ unittest
     scope (exit) rmdirRecurse(root);
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
 
+    // Long enough that the preview pane can actually scroll (the forwarded-
+    // key check below moves its viewport).
+    {
+        import std.file : write;
+
+        string src;
+        foreach (i; 0 .. 40)
+            src ~= "int line;\n";
+        write(buildPath(root, "alpha.d"), src);
+        write(buildPath(root, "beta.d"), src);
+    }
+
     static void settle(ref WorkspaceTui w) @system
     {
         foreach (_; 0 .. 100_000)
@@ -2164,6 +2174,25 @@ unittest
     assert(all.canFind(" Files "), "the heading is embedded in the border");
     assert(all.canFind("╭") && all.canFind("╯"), "rounded box corners");
     assert(all.canFind("int "), "the preview pane shows the document itself");
+
+    // `Tab`·`Tab` walks the pane focus to the preview (`PKL7`), and a `j`
+    // forwarded there scrolls the DOCUMENT — the pane's own keymap applies.
+    {
+        import keymap : Scope_;
+
+        assert(w.handle(Event(KeyEvent(key: Key.tab))));
+        assert(w.picker.get.focus.isFocused(Scope_.pickerList));
+        assert(w.handle(Event(KeyEvent(key: Key.tab))));
+        assert(w.picker.get.focus.isFocused(Scope_.pickerPreview));
+        const before = w.pickerDoc.pane.vm.top;
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: 'j'))));
+        assert(w.pickerDoc.pane.vm.top == before + 1,
+            "a forwarded j scrolls the preview document");
+        // The focused preview panel carries the accent chrome; back to the
+        // prompt for the typing below.
+        assert(w.handle(Event(KeyEvent(key: Key.tab))));
+        assert(w.picker.get.focus.isFocused(Scope_.pickerInput));
+    }
 
     // Typing narrows; Enter opens the accepted file in the viewer pane.
     foreach (ch; "beta")
