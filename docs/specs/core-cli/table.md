@@ -11,19 +11,20 @@ Successor design for `drawTable`, driven by the survey in
 
 ## Decision ledger
 
-| Area              | Decision                                                                                                                                                                      |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Authoring API     | Dense `Cell[][]` + `string[][]` sugar **and** sparse `Placement[]`; both lower to one HTML slot grid + shared renderer                                                        |
-| Config type       | New `TableProps` (replaces the `BoxProps` param — no caller passes it today)                                                                                                  |
-| Glyphs            | A `TableGlyphs` struct embedded in `TableProps`, plus a mutable `TableGlyphs[string] stylePresets` registry (rounded/square/ascii/double/heavy, caller-extensible)            |
-| Horizontal align  | Per-column (`TableProps.columnAligns`), `Align{inherit,left,center,right}`                                                                                                    |
-| Vertical align    | Per-column (`TableProps.columnVAligns`), `VAlign{inherit,top,middle,bottom}`, built now                                                                                       |
-| Separators        | Independent toggles: `border`, `columnSeparators`, `rowSeparators`; plus `headerRows` / `headerCols` counts for a distinct rule after the header rows / stub columns          |
-| Wrapping / fit    | Per-column max content width **+** total-table `maxWidth` (separators & borders included); cells wrap on `\n` and width via `sparkles.base.text.wrap`; rows become multi-line |
-| Default rendering | Byte-identical to the pre-overhaul output (`maxWidth == 0` ⇒ expand to fit)                                                                                                   |
-| Overlap / OOB     | Detected as a "table model error"; render is always deterministic; `validateTable` surfaces errors as `Expected`                                                              |
-| Shared helper     | `alignField` + `Align` added to `sparkles.base.text.width`                                                                                                                    |
-| Consumers         | Bench tables (`test-runner-impl/reporting.d`) right-align numeric columns                                                                                                     |
+| Area                | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authoring API       | Dense `Cell[][]` + `string[][]` sugar **and** sparse `Placement[]`; both lower to one HTML slot grid + shared renderer                                                                                                                                                                                                                                                                                                                                                             |
+| Config type         | New `TableProps` (replaces the `BoxProps` param — no caller passes it today)                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Glyphs              | A `TableGlyphs` struct embedded in `TableProps`, plus a mutable `TableGlyphs[string] stylePresets` registry (rounded/square/ascii/double/heavy, caller-extensible)                                                                                                                                                                                                                                                                                                                 |
+| Horizontal align    | Per-column (`TableProps.columnAligns`), `Align{inherit,left,center,right}`                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Vertical align      | Per-column (`TableProps.columnVAligns`), `VAlign{inherit,top,middle,bottom}`, built now                                                                                                                                                                                                                                                                                                                                                                                            |
+| Separators          | Independent toggles: `border`, `columnSeparators`, `rowSeparators`; plus `headerRows` / `headerCols` counts for a distinct rule after the header rows / stub columns                                                                                                                                                                                                                                                                                                               |
+| Wrapping / fit      | Per-column max content width **+** total-table `maxWidth` (separators & borders included); cells wrap on `\n` and width via `sparkles.base.text.wrap`; rows become multi-line                                                                                                                                                                                                                                                                                                      |
+| Default rendering   | Byte-identical to the pre-overhaul output (`maxWidth == 0` ⇒ expand to fit)                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Overlap / OOB       | Detected as a "table model error"; render is always deterministic; `validateTable` surfaces errors as `Expected`                                                                                                                                                                                                                                                                                                                                                                   |
+| Shared helper       | `alignField` + `Align` added to `sparkles.base.text.width`                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Consumers           | Bench tables (`test-runner-impl/reporting.d`) right-align numeric columns                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Two views, one core | The layout core (`table/layout.d`: `TableProps`/glyphs, width/height solvers over per-anchor measure arrays, junction logic, `lineDescs`, `walkBodyLines`/`anchorRects`) is content-agnostic; `render.d` is the string view (`visibleWidth` + `base.text.wrap`) and `widgets.d` the widget view (`buildTableWidgets`: styled `TextSpan` cells, per-cell keys, cutout; `cellsOf` + `ui.wrap` — the display list's measure). hue's markdown table is an adapter over the widget view |
 
 ## 1. Motivation
 
@@ -130,6 +131,44 @@ algorithms from data" principle).
 | horizontal align         | `alignField(content, F, Align)` — **from `sparkles.base.text.width`**                  | pad content in field per column align                                                                      |
 | line builders            | `bodyBand(...)`, `separatorLine(...)`                                                  | one text line each                                                                                         |
 | top-level                | `string drawTable(string[][] / Cell[][] / Placement[], TableProps = init)`             | interleave borders/bands/rules into a GC string (`Appender!string`, mirroring `drawBox`)                   |
+
+### 3.0 Two views over one core (post-unification layout)
+
+The pipeline above now spans three sibling modules behind the
+`sparkles.ui.components.table` package module:
+
+- **`layout.d` — the content-agnostic core.** Configuration
+  (`TableProps`/`TableGlyphs`/`EmphasisGlyphs`, `presetGlyphs`, `stylePresets`),
+  alignment/emphasis resolution, the junction logic, the line ordering
+  (`lineDescs`), and the solvers — which take **per-anchor measure arrays**
+  instead of measuring content: `resolveColumnWidths(g, p, naturalWidths,
+decimalPads)`, `resolveRowHeights(g, cellLineCounts)`, `decimalPadsFor(g, p,
+tailWidths)`. It also owns the shared placement geometry: `walkBodyLines`
+  (each covering anchor's field per body output line + every drawn vertical
+  rule cell), `anchorRects` (a cell's on-screen rect; a rowspan swallows the
+  rule lines between its bands), `ruleGlyphs`/`frameLineGlyphs`,
+  `tableWidth`/`tableHeight`.
+- **`render.d` — the string view.** Measures with the grapheme-aware
+  `visibleWidth`, wraps with `sparkles.base.text.wrap`, emits ANSI-transparent
+  text lines (`drawTable`/`drawTableLines`/`drawTableChunks`/
+  `drawTableMapped`). Byte-identical to the pre-split renderer; the grid map's
+  fields derive from `walkBodyLines`.
+- **`widgets.d` — the widget view.** `buildTableWidgets(ref Builder,
+SpanCell[][], TableProps, TableWidgetStyle)` materializes the same layout as
+  a `sparkles:ui` widget subtree: styled `TextSpan` cell content (the
+  `srcStart`/`srcEnd` identity channel survives wrapping), one keyed wrapper
+  per authored cell sized to its `anchorRects` rect, semantic slots + resolved
+  rule-color overrides, and an optional top-border cutout (hue's `TBL6` copy
+  button). The tree is core-geometry-driven — a fixed-size `stack` of
+  absolutely positioned runs in reading order — because box-flow cannot
+  express a rowspan's bands or content flowing across a vanished rule line.
+  It measures with `cellsOf` and wraps with `sparkles.ui.wrap`, matching the
+  display list's hard-wired measure; the CJK/emoji divergence from the string
+  view is deliberate.
+
+hue's markdown table (`MDP10`) is a thin adapter over the widget view: the md
+arm assembles diff-decorated cell spans and passes `headerRows: 1`,
+`rowSeparators: tableRowRules`, per-cell keys and the cutout parameters.
 
 ### 3.1 Grid resolution — HTML "forming a table"
 
