@@ -405,9 +405,10 @@ struct Gallery
             return;
         }
 
-        // With the keyboard in the content region the page gets first refusal —
+        // With the keyboard in the content region the page gets FIRST refusal —
         // which is what lets a tree own the arrow keys without the page list
-        // losing them. In the nav region the shell keeps everything.
+        // losing them. In the nav region it gets the LAST (below), so the
+        // shell's own keys still drive the list.
         if (s.region == Region.content
             && pages[s.page].onKey !is null && pages[s.page].onKey(s, k))
             return;
@@ -449,6 +450,16 @@ struct Gallery
             return setPage(k.ch - '1');
         if (k.ch == '0')
             return setPage(9);
+
+        // The page's own bindings work from EITHER half. The status bar has
+        // always listed them unconditionally, and until this fallback existed
+        // that was a promise the nav region could not keep: a reader who had
+        // not yet discovered Tab pressed the advertised `f` or `w` and nothing
+        // at all happened. The shell's keys are tried first here, so the list
+        // keeps its arrows — the ordering, not the page's absence, is what
+        // makes the two halves different.
+        if (s.region == Region.nav && pages[s.page].onKey !is null)
+            cast(void) pages[s.page].onKey(s, k);
     }
 
     /// Whether the keyboard belongs to the shell inside the pane.
@@ -1347,6 +1358,52 @@ version (unittest)
     assert(drive(g2, [keyEvent(Key.escape)]).quitRequested);
 }
 
+@("ui_gallery.gallery.aPageKeyWorksFromEitherRegion")
+@safe unittest
+{
+    import registry : pageIndexOf;
+    import pages.dock_page : docPane, notesPane, sidePane;
+
+    // The reported defect: the status bar lists a page's keys unconditionally,
+    // but in the nav region the page was never asked, so every advertised key
+    // was inert until the reader happened to discover Tab.
+    Gallery g;
+    g.s.page = pageIndexOf("dock");
+    assert(g.s.region == Region.nav, "the shell starts on the page list");
+
+    drive(g, [charEvent('f')]);        // focus the next pane: doc -> sidebar
+    assert(g.s.dock.focused == sidePane, "a page key reaches the page from nav");
+
+    drive(g, [charEvent('f')]);        // and back onto the tabbed group
+    assert(g.s.dock.focused == docPane);
+
+    drive(g, [charEvent('.')]);        // the tab route, from the nav region
+    assert(g.s.dock.focused == notesPane);
+
+    const wide = g.s.dock.paneExtent(sidePane);
+    drive(g, [charEvent('h')]);
+    assert(g.s.dock.paneExtent(sidePane) < wide, "and the resize route");
+}
+
+@("ui_gallery.gallery.theNavRegionKeepsItsOwnKeysFromThePage")
+@safe unittest
+{
+    import registry : pageIndexOf;
+
+    // The other half of the rule: the page is asked LAST in the nav region, so
+    // a page that binds a key the shell uses cannot take the list's keys away.
+    // The tree page owns the arrows in the content region; from the nav region
+    // they must still move between pages.
+    Gallery g;
+    g.s.page = pageIndexOf("tree");
+    const was = g.s.page;
+    drive(g, [keyEvent(Key.right)]);
+    assert(g.s.page != was, "the arrows still walk the page list");
+
+    drive(g, [keyEvent(Key.down)]);
+    assert(g.s.region == Region.nav, "and down moves the selection, not focus");
+}
+
 @("ui_gallery.gallery.tabSwitchesTheFocusedRegion")
 @safe unittest
 {
@@ -1807,24 +1864,36 @@ version (unittest)
     assert(!rec.frames[$ - 1].requested, "…and then stopped");
 }
 
-@("ui_gallery.gallery.pageKeysAreGatedOnTheContentRegion")
+@("ui_gallery.gallery.theRegionDecidesTheORDEROfRefusal")
 @safe unittest
 {
     import registry : pageIndexOf;
 
-    // A page owns its keys only while the keyboard is in it. In the page list
-    // the same keystroke is the shell's — which is what keeps `j`/`k` moving
-    // between pages on a page whose own bindings include them.
+    // This test used to assert the opposite — that a page owns its keys ONLY
+    // while the keyboard is in it — and that rule was reported as a bug,
+    // correctly: the status bar lists a page's keys in both regions, so a
+    // reader on the page list pressed an advertised key and nothing happened.
+    // The region now decides the ORDER of refusal, not whether the page is
+    // asked at all. Its original guard is kept below, because that part was
+    // right: a page must not take the list's own keys.
     Gallery g;
     g.s.page = pageIndexOf("layout");
     g.s.region = Region.nav;
 
     drive(g, [charEvent('w')]);
-    assert(g.s.layoutDemo.widthMode == 0, "the page did not see the key");
+    assert(g.s.layoutDemo.widthMode == 1,
+        "a key the shell does not claim reaches the page from the list");
 
     drive(g, [keyEvent(Key.tab), charEvent('w')]);
     assert(g.s.region == Region.content);
-    assert(g.s.layoutDemo.widthMode == 1, "…and now it does");
+    assert(g.s.layoutDemo.widthMode == 2, "…and from the page itself");
+
+    // The guard: `j`/`k` walk the page list even on a page that binds them,
+    // because in the nav region the shell is asked first.
+    g.s.region = Region.nav;
+    const was = g.s.page;
+    drive(g, [charEvent('j')]);
+    assert(g.s.page != was, "the shell keeps its own keys in the list");
 }
 
 @("ui_gallery.gallery.aFocusedTerminalOwnsTheKeyboard")
