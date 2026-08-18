@@ -1,10 +1,12 @@
 # `hue` lantern — Feature Requirements (the key guide, all interactive backends)
 
 _**Status:** partial — the binding table, the prefix machine, the panel and both
-backends shipped (`c19bb926`…`8ec10bee`) · **Date:** 2026-08-07 · **Scope:**
-hue's **key guide** — the panel that lights up after a prefix and lists every key
-that can follow it — together with the **binding table** it enumerates and the
-**leader map** it navigates._
+backends shipped (`c19bb926`…`8ec10bee`); the machinery and its `KEY*`/`LTN*`
+requirement rows have since **moved to
+[`docs/specs/ui/keymap.md`](../ui/keymap.md)** with the extraction into
+`sparkles:ui` · **Date:** 2026-08-18 · **Scope:** hue's **key guide** — now the
+policy this application feeds the framework's guide: the **binding table**
+(`hueBindings`) and the **leader map** it navigates._
 
 > [!NOTE]
 > Inspired by [`folke/which-key.nvim`](https://github.com/folke/which-key.nvim).
@@ -103,44 +105,17 @@ has learnt it. The letters the [picker](./picker.md) will claim are therefore
 **reserved now** and listed below as `not started`, rather than being assigned to
 whatever is convenient today and moved when the picker lands.
 
-## The binding table (`KEY`)
+## The binding table & the guide (`KEY`, `LTN`) — moved
 
-| ID      | Requirement                                                                                                                                                                                                                    | Status            | Traces to                                                    |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ------------------------------------------------------------ |
-| `KEY1`  | hue's keyboard policy must be **one `immutable` table** (`hueBindings`), and every backend must resolve keys through it. No backend may carry a key `switch` of its own.                                                       | full (`e71a9417`) | `keymap.hueBindings`; `gui.d`/`tui.d`/`explorer.d` dispatch  |
-| `KEY2`  | `commandFor`/`resolve` must be a **lookup** over that table, walking `Scope_` in declaration order; that order is the resolution precedence, and an active `terminal` scope ends the search whether or not it matched.         | full (`c19bb926`) | `keymap.resolve`; `Scope_`; `terminal`                       |
-| `KEY3`  | `bindingsAt` must **enumerate** the bindings reachable in a context under a prefix, in resolution order, with a shadowed duplicate dropped rather than listed twice. Whatever it lists, `resolve` must do.                     | full (`c19bb926`) | `keymap.bindingsAt`; `bindingsAtEnumeratesWhatWouldFire`     |
-| `KEY4`  | A binding must state its own **context gate** (`require`/`forbid` over `CtxFlag`) and its **input-mode** requirement, so a caller never post-filters the table.                                                                | full (`c19bb926`) | `Binding.require`/`forbid`/`mode`; `gated`                   |
-| `KEY5`  | A chord must carry a three-valued **Shift requirement**. `j` scrolls whether or not Shift is held; `r` refreshes only unshifted and `R` re-roots only shifted. A two-state encoding would depend on table order.               | full (`c19bb926`) | `ShiftReq`; `keymap.shiftIsPartOfTheBinding`                 |
-| `KEY6`  | A chord may span a **contiguous code-point range**, so `z1`–`z9` is one row (and one guide item) whose argument is derived from which key landed — the spelling `CFG6` proposes (`"1-9": "foldLevel"`).                        | full (`c19bb926`) | `Chord.chEnd`; `lantern.foldLevelsCarryTheirArgument`        |
-| `KEY7`  | Key events must be **normalised once** — a shifted letter arrives as the shifted character from raylib, as a bare capital from a terminal, or as lowercase + Shift from a synthesised event, and all three mean one keystroke. | full (`c19bb926`) | `keymap.normalise`; `shiftedLettersNormaliseAcrossProducers` |
-| `KEY8`  | A row must be **spelled in normalised form** — never an uppercase letter, which `normalise` can never produce, so such a row is unreachable. This must be checked, not remembered.                                             | full (`cbec2dbb`) | `keymap.tableIsSpelledInNormalisedForm`                      |
-| `KEY9`  | A modifier a chord does **not** name must be ignored, not required absent — `Ctrl-Up` scrolls because `Up` binds scrolling and says nothing about Ctrl. Safe because the `ctrl` scope is terminal.                             | full (`c19bb926`) | `keymap.matches`                                             |
-| `KEY10` | Prefix comparison must accept a shift-agnostic row (`acceptsTyped`), while de-duplication stays exact (`sameKey`) — `g` opens a group and `Shift-G` jumps to the bottom, and both must be listed and both reachable.           | full (`8e4b0250`) | `keymap.acceptsTyped`; `lantern.chordOf`                     |
-| `KEY11` | Every backend's dispatch must be a **`final switch`** over `Command` with explicit arms — including empty ones — so a new command is a compile error until each backend decides whether it answers it.                         | full (`e71a9417`) | `gui.d`, `tui.handleKey`, `explorer.handleCommand`           |
-| `KEY12` | The table must be **overlayable by configuration** (`CFG6`): a user table rebinds individual rows without replacing the rest, and `null` unbinds.                                                                              | not started       | [config.md](./config.md) `CFG6`                              |
-
-## The guide (`LTN`)
-
-| ID      | Requirement                                                                                                                                                                                                                             | Status            | Traces to                                                          |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------ |
-| `LTN1`  | A **pure state machine** must own the pending key path and whether the panel is showing — no window, no timer, no frame loop — so the whole guide is checkable in a unittest.                                                           | full (`cbec2dbb`) | `lantern.LanternState`/`step`                                      |
-| `LTN2`  | A prefix must **descend** rather than execute, and a leaf must execute and end the sequence. A key that names nothing under the prefix must end the sequence **without running** — the "an unrecognised key disarms" rule, stated once. | full (`cbec2dbb`) | `lantern.step`; `unrecognisedKeyEndsTheSequenceWithoutRunning`     |
-| `LTN3`  | The machine must distinguish **`unbound`** from **`consumed`**, so a host can tell "the guide declined this" from "the guide handled it"; collapsing them would silently eat every key hue has not bound.                               | full (`cbec2dbb`) | `lantern.StepKind`; `unboundKeysStaySeparateFromConsumedOnes`      |
-| `LTN4`  | The panel must appear after a **delay measured in wall time** (default 200 ms), and the machine must report how long remains, so a terminal can use it as a poll timeout and open the panel with no keystroke to wake it.               | full (`8ec10bee`) | `lantern.tick`/`untilShown`; `workspace.d` loop deadline           |
-| `LTN5`  | The panel must be a **`sparkles:ui` widget tree**, painted by every interactive backend from one definition (`UIA2`), and must sit over everything else — it is a transient answer, not part of the document.                           | full (`8ec10bee`) | `lantern_view.viewLantern`; `gui.d`, `tui.paintLantern`            |
-| `LTN6`  | Items must be packed into as many **side-by-side columns** as the width affords, reflowing on resize; a set larger than the panel must **scroll**, never be silently truncated.                                                         | full (`91054510`) | `lantern_view.packBoxes`/`BoxLayout.capacity`; `boxesFillTheWidth` |
-| `LTN7`  | Panel text must be **borrowed from a caller-owned arena**, written in full before any of it is sliced — a growing buffer moves, and a stale slice renders another item's text with nothing to assert against.                           | full (`91054510`) | `lantern_view.LabelArena`; `everyLabelSurvivesTheArenaGrowing`     |
-| `LTN8`  | A **prefix node must be visibly marked** (`+name`) so a reader can tell "this runs something" from "this opens a menu" before pressing it.                                                                                              | full (`91054510`) | `lantern_view` group marker; `groupsAreMarkedAndCommandsAreNot`    |
-| `LTN9`  | The panel's own keys must be live **only while a sequence is pending**: Escape abandons it, Backspace steps back one level, `Ctrl-D`/`Ctrl-U` scroll. Backspace at rest belongs to the host.                                            | full (`cbec2dbb`) | `lantern.step`; `escapeAndBackspaceNavigateTheSequence`            |
-| `LTN10` | **Always-available** bindings must outrank a pending prefix, so a half-typed sequence can never trap the reader in a fullscreen window.                                                                                                 | full (`cbec2dbb`) | `lantern.resolveAlways`; `alwaysBindingsOutrankAPendingPrefix`     |
-| `LTN11` | `<leader>?` must show **every binding live in this context** immediately, with no delay — the "I don't know what I'm looking for" door.                                                                                                 | full (`cbec2dbb`) | `Command.lanternAll`; `explicitRequestOpensImmediately`            |
-| `LTN12` | The guide must be **inert while a line editor owns the keyboard** — the leader must not open a menu in the middle of a search query.                                                                                                    | full (`cbec2dbb`) | `Scope_.input` terminal; `inputModeKeepsTheGuideOutOfTheWay`       |
-| `LTN13` | Panel rows must be **tappable**: a tap activates a binding, a tap on a group drills down, and the platform Back key pops one level — the only way the command surface is reachable on Android, where there is no keyboard.              | not started       | `hitId` plumbing exists; [android.md](./android.md) `AND13`        |
-| `LTN14` | **Placement must be configurable** — `classic` (full width, bottom) and `helix` (bordered, bottom-right) — defaulting to `classic`.                                                                                                     | partial           | `lantern_view.Placement` (both defined; only `classic` wired)      |
-| `LTN15` | The delay, the leader key, and whether the guide is enabled at all must be **configuration** (`CFG`), not constants.                                                                                                                    | not started       | [config.md](./config.md) `lantern` section                         |
-| `LTN16` | An **icon** may be attached to a binding or a group, as which-key does, so a dense panel is scannable by shape as well as by text.                                                                                                      | not started       | proposed `Binding.icon`                                            |
-| `LTN17` | The guide must render as a **static HTML cheat sheet** — the same tree through the HTML interpreter — so the keymap is documentable without a screenshot.                                                                               | not started       | `sparkles.ui.interp.html`; `LTN5`                                  |
+The `KEY1`–`KEY13` and `LTN1`–`LTN17` requirement rows live in
+[`docs/specs/ui/keymap.md`](../ui/keymap.md), beside the machinery they
+specify (`sparkles.ui.keymap`, `sparkles.ui.lantern`,
+`sparkles.ui.components.lantern_view`). Their statuses and shipping history
+are preserved there; hue remains the first consumer, and the hue-side
+obligations trace back to this application's modules: `hueBindings` is the
+one table (`KEY1`), its rows are spelled in normalised form (`KEY8`,
+`keymap.tableIsSpelledInNormalisedForm`), and every backend dispatch is a
+`final switch` over `Command` (`KEY11`).
 
 ## The map (`LMP`)
 
@@ -174,20 +149,23 @@ The reviewable source of truth for what hue binds. Non-leader prefixes: `z`
 
 ## Module coverage (lantern)
 
-| Source                        | Key symbols                                                               | Requirements                  |
-| ----------------------------- | ------------------------------------------------------------------------- | ----------------------------- |
-| `apps/hue/src/keymap.d`       | `Binding`, `hueBindings`, `Scope_`, `resolve`, `commandFor`, `bindingsAt` | `KEY*`, `LMP*`                |
-| `apps/hue/src/lantern.d`      | `LanternState`, `step`, `tick`, `untilShown`, `StepKind`                  | `LTN1`–`LTN4`, `LTN9`–`LTN12` |
-| `apps/hue/src/lantern_view.d` | `viewLantern`, `packBoxes`, `BoxLayout`, `LabelArena`, `Placement`        | `LTN5`–`LTN8`, `LTN14`        |
-| `apps/hue/src/gui.d`          | the `final switch` dispatch; the panel paint; `HUE_GUI_LANTERN`           | `KEY11`, `LTN5`               |
-| `apps/hue/src/tui.d`          | `handleKey`, `keyContext`, `paintLantern`, `untilLanternShown`            | `KEY11`, `LTN4`, `LTN5`       |
-| `apps/hue/src/explorer.d`     | `handleKey`, `handleCommand`, `collapseOrUp`                              | `KEY11`, `LMP6`               |
-| `apps/hue/src/workspace.d`    | the loop's second deadline; `tickLantern`                                 | `LTN4`                        |
+The machinery's rows (`sparkles.ui.keymap`/`lantern`/`components.lantern_view`)
+are covered in [`../ui/keymap.md`](../ui/keymap.md); this table keeps hue's own.
+
+| Source                     | Key symbols                                                                  | Requirements            |
+| -------------------------- | ---------------------------------------------------------------------------- | ----------------------- |
+| `apps/hue/src/keymap.d`    | `Command`, `Scope_`, `KeyContext` (the hooks), `hueBindings`, bound wrappers | `KEY1`, `KEY8`, `LMP*`  |
+| `apps/hue/src/lantern.d`   | `step` bound to `hueBindings`; hue's policy tests through the machine        | `KEY1`                  |
+| `apps/hue/src/gui.d`       | the `final switch` dispatch; the panel paint; `HUE_GUI_LANTERN`              | `KEY11`, `LTN5`         |
+| `apps/hue/src/tui.d`       | `handleKey`, `keyContext`, `paintLantern`, `untilLanternShown`               | `KEY11`, `LTN4`, `LTN5` |
+| `apps/hue/src/explorer.d`  | `handleKey`, `handleCommand`, `collapseOrUp`                                 | `KEY11`, `LMP6`         |
+| `apps/hue/src/workspace.d` | the loop's second deadline; `tickLantern`                                    | `LTN4`                  |
 
 ## Relationship to existing specs
 
 | Piece                                             | Role                                                            |
 | ------------------------------------------------- | --------------------------------------------------------------- |
+| [../ui/keymap.md](../ui/keymap.md)                | the machinery and its `KEY*`/`LTN*` rows, extracted from here   |
 | [config.md](./config.md) `CFG6`                   | the rebindable keymap this table finally makes possible         |
 | [picker.md](./picker.md)                          | what `<leader>f` / `<leader>/` / `<leader>s` / `<leader>g` open |
 | [ui-architecture.md](./ui-architecture.md) `UIA2` | the one-definition-per-visual contract the panel is held to     |
