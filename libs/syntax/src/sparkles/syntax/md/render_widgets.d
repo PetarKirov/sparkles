@@ -1459,6 +1459,17 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         cellOpt.emph);
                     fillDiffTints(spans); // the cell path is not a prose row
                     trimCellEdges(spans); // measured text sizes the track
+                    // Stub columns are chrome (`DSG5`): unkeyed — a drag
+                    // cannot anchor a grid selection there — and stripped of
+                    // source identity, so text-regime selection skips them
+                    // (`SEL2`) and copies never include them.
+                    const isStub = ci < opt.tableExtras.headerCols;
+                    if (isStub)
+                        foreach (ref sp; spans)
+                        {
+                            sp.srcStart = size_t.max;
+                            sp.srcEnd = size_t.max;
+                        }
                     // An extras entry owns the column: the cell defers to
                     // `TableProps.columnAligns` (which is how `decimal`
                     // reaches the core's pad solver); otherwise markdown's
@@ -1473,8 +1484,8 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                             : a == ColAlign.center ? Align.center
                             : Align.left,
                         // Source-anchored cell identity for interactive
-                        // backends.
-                        key: opt.tableKeyBase != 0
+                        // backends; stub cells stay anonymous (`DSG5`).
+                        key: opt.tableKeyBase != 0 && !isStub
                             ? opt.tableKeyBase + cell.span.start : 0);
                 }
             }

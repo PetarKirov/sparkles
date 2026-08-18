@@ -71,6 +71,7 @@ import sparkles.ui.components.tree_view : viewSlice;
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
 import sparkles.ui.components.table : GridHit;
 import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
+import dsv_view : DsvCopy, DsvInfo, resolveTableCopy, serializeGridCopy;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
@@ -209,7 +210,10 @@ struct GuiArgs
     bool lineNumbers = true;
     bool codeLineNumbers = true;
     bool ansiCopyStrip = false;          // --ansi-copy=strip (SEL7/CLI10); default raw
-    TableCopyFormat tableCopy = TableCopyFormat.tsv; // --table-copy (TBL2/CLI11)
+    TableCopyFormat tableCopy = TableCopyFormat.tsv; // --table-copy (TBL2/CLI11), resolved
+    string tableCopyFlag = "auto";       // the raw flag, re-resolved on doc swap (DSC2)
+    string dsvText;                      // DSV: the original bytes (DSC2/DSC4)
+    DsvInfo dsvInfo;                     // DSV: dialect/header/chrome facts
     OverflowPolicy codeOverflow; // --code-overflow
     int codeMaxLines = -1;               // --code-max-lines (COD6; -1 = auto)
     OverflowPolicy tableOverflow;        // --table-overflow (TBL7)
@@ -314,6 +318,7 @@ int runGui(GuiArgs guiArgs) @system
     // the fields the component will own; the body reads the old local names
     // through `with`.
     GuiRunState gs;
+    DsvCopy dsvCopy; // the current document's grid-copy state (DSC2/DSC4)
     with (gs)
     {
     import std.string : toStringz;
@@ -751,6 +756,8 @@ int runGui(GuiArgs guiArgs) @system
             doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides, doc.diffSession,
             doc.diffEmphasis);
         vm.docPath = path; // .editorconfig discovery + {path} (format preview)
+        dsvCopy = DsvCopy.of(doc.dsvText, doc.dsvInfo);
+        cm.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
         inp.query.clear();
         inp.mode = Mode.normal;
         window.title(("hue — " ~ name).toStringz);
@@ -944,6 +951,7 @@ int runGui(GuiArgs guiArgs) @system
     //    head cells (from the table map) under Shift/Alt.
 
     cm = CopyModes(ansiStrip: ansiCopyStrip, tableFmt: tableCopy);
+    dsvCopy = DsvCopy.of(dsvText, dsvInfo);
 
     // The text-regime selection as a source range [drag.selMin, drag.selMax) — the union of
     // the anchor and head spans (a char point is a zero-width span).
@@ -996,7 +1004,8 @@ int runGui(GuiArgs guiArgs) @system
                         return vm.source[mc.span.start .. mc.span.end];
                 return "";
             }
-            const txt = serializeTable(reg, &cellText, cm.tableFmt);
+            const txt = serializeGridCopy(dsvCopy, reg, dims.rows, dims.cols,
+                &cellText, cm.tableFmt);
             if (txt.length)
                 copyToClipboard(txt);
         }
@@ -2487,10 +2496,15 @@ int runGui(GuiArgs guiArgs) @system
                     flash.toast = Timeline.triggered(toastCfg);
                     break;
                 case Command.toggleTableCopy:
+                    // DSV documents cycle through their own dialect too.
                     cm.tableFmt = cm.tableFmt == TableCopyFormat.tsv
-                        ? TableCopyFormat.markdown : TableCopyFormat.tsv;
+                        ? TableCopyFormat.markdown
+                        : cm.tableFmt == TableCopyFormat.markdown && dsvCopy.present
+                        ? TableCopyFormat.source : TableCopyFormat.tsv;
                     flash.copyModeMsg = cm.tableFmt == TableCopyFormat.tsv
-                        ? "table-copy: tsv" : "table-copy: markdown";
+                        ? "table-copy: tsv"
+                        : cm.tableFmt == TableCopyFormat.markdown
+                        ? "table-copy: markdown" : "table-copy: source";
                     flash.toast = Timeline.triggered(toastCfg);
                     break;
                 case Command.startSearch:
@@ -2984,8 +2998,8 @@ int runGui(GuiArgs guiArgs) @system
                                             .. mc.span.end];
                                 return "";
                             }
-                            const txt = serializeTable(reg, &cellText,
-                                cm.tableFmt);
+                            const txt = serializeGridCopy(dsvCopy, reg,
+                                dims.rows, dims.cols, &cellText, cm.tableFmt);
                             if (txt.length)
                                 copyToClipboard(txt);
                             flash.copiedFlash = Timeline.triggered(copiedCfg);

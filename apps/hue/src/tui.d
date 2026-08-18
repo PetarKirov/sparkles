@@ -18,6 +18,7 @@ import diff_session : DiffSession, SessionEntry;
 import diff_view : TypeOverlay;
 import sparkles.syntax.md.render_widgets : FenceScroll, TableScroll;
 import table_select : serializeTable, TableCopyFormat, TableRegion;
+import dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
 import lantern : LanternState, ltnStep = step, ltnTick = tick,
@@ -479,6 +480,11 @@ struct PreviewTui
     /// `DSK5`: a per-document chrome note (the DSV dialect readout);
     /// cleared on every document swap, set by the host after `setDocument`.
     string docNote;
+    /// `DSC2`: the DSV grid-copy state and the resolved `--table-copy`
+    /// format — same lifecycle as `docNote`.
+    DsvCopy dsvCopy;
+    /// ditto
+    TableCopyFormat tableFmt = TableCopyFormat.tsv;
 
     void setDocument(string title_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel model_,
@@ -489,6 +495,8 @@ struct PreviewTui
         DiffEmphasis diffEmphasis_ = DiffEmphasis.init) @system
     {
         docNote = null;
+        dsvCopy = DsvCopy.init;
+        tableFmt = TableCopyFormat.tsv;
         hoverSel = -1;
         sel = Selection!long.cleared;
         searching = false;
@@ -878,7 +886,8 @@ struct PreviewTui
             return "";
         }
 
-        const txt = serializeTable(reg, &cellText, TableCopyFormat.tsv);
+        const txt = serializeGridCopy(dsvCopy, reg, dims.rows, dims.cols,
+            &cellText, tableFmt);
         if (txt.length)
             writeClipboard(txt);
         vm.markTableCopied(spanStart);
