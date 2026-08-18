@@ -1,5 +1,6 @@
 // Dev-only VISUAL-regression check for the twoslash HTML overlay. Renders each
-// fixture through `hue --twoslash --html`, lays it out in headless Chrome, and
+// fixture through `hue --twoslash <payload> view --html`, lays it out in
+// headless Chrome, and
 // asserts geometry invariants that plain markup/CSS diffs (compare-shiki.mjs)
 // cannot see — the popup positioning bugs that were only visible once rendered:
 //
@@ -171,7 +172,9 @@ console.log('Visual-regression geometry (headless Chrome):\n');
 for (const name of names) {
   const fixture = join(fixturesDir, `${name}.twoslash.json`);
   if (!existsSync(fixture)) continue;
-  const html = execFileSync(hue, ['--twoslash', '--html', fixture], {
+  // `--twoslash <payload>` is a global overlay option, so it precedes the
+  // subcommand; `view --html` is what `--html` alone used to mean.
+  const html = execFileSync(hue, ['--twoslash', fixture, 'view', '--html'], {
     encoding: 'utf8',
   });
   const m = measure(html);
