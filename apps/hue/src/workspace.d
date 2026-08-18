@@ -942,20 +942,22 @@ struct WorkspaceTui
     bool handle(in Event e) @system
     {
         // The fuzzy picker is a modal surface (`PIK1`): while it is open it
-        // owns the whole keyboard, and everything else waits behind it.
+        // owns the whole keyboard AND the pointer — keys route by pane
+        // focus, wheel and presses by position (`DCK7` inside the modal:
+        // the element under the cursor, never a pane beneath the overlay).
         if (!picker.empty && picker.get.state.active)
         {
-            e.match!((in KeyEvent k) {
-                final switch (picker.get.handleKey(k))
+            void apply(PickerAction a) @system
+            {
+                final switch (a)
                 {
                 case PickerAction.consumed:
                     break;
                 case PickerAction.preview:
-                    // The preview scope's keys (`Ctrl-d`/`Ctrl-u` from any
-                    // pane, everything while the preview holds focus) go to
-                    // the document pane, whose own keymap applies.
+                    // Forwarded to the document pane, whose own input
+                    // surface applies — keys, wheel, scrollbar grabs alike.
                     if (pickerDoc !is null)
-                        pickerDoc.forwardKey(picker.get.previewKey);
+                        pickerDoc.forward(picker.get.previewEvent);
                     break;
                 case PickerAction.closed:
                     if (pickerDoc !is null)
@@ -967,7 +969,27 @@ struct WorkspaceTui
                     openDoc(picker.get.acceptedPath);
                     break;
                 }
-            }, (_) {});
+            }
+
+            // Overlay-local translation: `paintPicker` centers the overlay
+            // at row 1, and events route against the same arithmetic — the
+            // panel is frame-stable, so both derive one origin.
+            const pkGeometry = pickerGeometry();
+            const pkX = (width - 2 * pkGeometry.panelCols) / 2;
+            const overlayX = pkX > 0 ? pkX : 0;
+            e.match!(
+                (in KeyEvent k) { apply(picker.get.handleKey(k)); },
+                (in PointerEvent p) {
+                    PointerEvent local = p;
+                    local.pos = Point(p.pos.x - overlayX, p.pos.y - 1);
+                    apply(picker.get.handleOverlay(Event(local), pkGeometry));
+                },
+                (in WheelEvent w) {
+                    WheelEvent local = w;
+                    local.pos = Point(w.pos.x - overlayX, w.pos.y - 1);
+                    apply(picker.get.handleOverlay(Event(local), pkGeometry));
+                },
+                (_) {});
             return true;
         }
 
@@ -2235,6 +2257,34 @@ unittest
         // prompt for the typing below.
         assert(w.handle(Event(KeyEvent(key: Key.tab))));
         assert(w.picker.get.focus.isFocused(Scope_.pickerInput));
+    }
+
+    // The wheel scrolls the element under the cursor (`DCK7` inside the
+    // modal), never a pane beneath the overlay: over the preview hole it
+    // scrolls the DOCUMENT, over the list it moves the selection.
+    {
+        import picker_view : pickerPreviewRect;
+        import sparkles.ui.geometry : Constraints;
+        import sparkles.ui.layout : layout;
+
+        const geometry = w.pickerGeometry();
+        const pkX = (w.width - 2 * geometry.panelCols) / 2;
+        const ox = pkX > 0 ? pkX : 0;
+        auto view = w.picker.get.buildView(geometry);
+        auto frames = layout(view, Constraints(maxW: 2 * geometry.panelCols));
+        const hole = pickerPreviewRect(view, frames);
+
+        const before = w.pickerDoc.pane.vm.top;
+        assert(w.handle(Event(WheelEvent(dy: 2,
+            pos: Point(ox + hole.x + 2, 1 + hole.y + 2)))));
+        assert(w.pickerDoc.pane.vm.top == before + 2,
+            "wheel over the preview scrolls the document");
+
+        const sel = w.picker.get.state.selection;
+        assert(w.handle(Event(WheelEvent(dy: 1, pos: Point(ox + 3, 4)))));
+        assert(w.picker.get.state.selection == sel + 1,
+            "wheel over the list moves the selection");
+        assert(w.handle(Event(KeyEvent(key: Key.up)))); // back for the typing
     }
 
     // Typing narrows; Enter opens the accepted file in the viewer pane.

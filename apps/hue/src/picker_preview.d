@@ -174,17 +174,26 @@ struct PickerDocPane
     private int colsShown, rowsShown;
 
     /**
-    A key the picker's preview scope forwarded (`PKL7`): the document pane's
-    whole keymap applies — scrolling, search, wrap, the `z` folds — but
-    host-level intents must not escape a preview. `quit` is swallowed (the
-    return value is dropped) and the pane's intent flags are cleared, so a
-    `<leader>ff` typed $(I into the preview) cannot re-open the picker.
+    An event the picker's routing forwarded (`PKL7`) — a key while the
+    preview holds the focus, or a pointer/wheel event over the hole with its
+    position already pane-local. The document pane's whole input surface
+    applies — scrolling, search, wrap, the `z` folds, its own scrollbar
+    grabs — but host-level intents must not escape a preview. `quit` is
+    swallowed (the return value is dropped) and the pane's intent flags are
+    cleared, so a `<leader>ff` typed $(I into the preview) cannot re-open
+    the picker.
     */
-    void forwardKey(in KeyEvent k) @system
+    void forward(in Event e) @system
     {
-        cast(void) pane.handle(Event(k));
+        cast(void) pane.handle(e);
         pane.pickerRequested = false;
         pane.inspectorToggleRequested = false;
+    }
+
+    /// ditto
+    void forwardKey(in KeyEvent k) @system
+    {
+        forward(Event(k));
     }
 
     /// The picker closed: stop the oracle, keep the document (a reopen on
