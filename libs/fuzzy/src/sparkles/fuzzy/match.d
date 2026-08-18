@@ -138,6 +138,23 @@ struct MatcherWorkspace(Caps = DefaultFuzzyCaps)
     private TextRange[Caps.maxQueryUnits] ranges = void;
     private size_t rangeCount;
 
+    // The prepared-query cache: the raw fuzzy-part texts (content, not
+    // addresses — a reparsed query can reuse the same storage) plus the
+    // limits the preparation depended on. While the key matches, the
+    // decoded/analyzed query state above is reused instead of re-running
+    // the smart-case probe and Unicode analysis once per candidate. The
+    // `= void` payloads are guarded by `queryPrepared_`, which is
+    // deliberately default-initialized.
+    private char[Caps.maxQueryBytes] cachedQueryRaw = void;
+    private size_t[Caps.maxFuzzyParts] cachedRawLength = void;
+    private size_t[Caps.maxFuzzyParts] cachedSkipFront = void;
+    private size_t[Caps.maxFuzzyParts] cachedSkipBack = void;
+    private size_t cachedPartCount;
+    private size_t cachedLimitFuzzyParts;
+    private size_t cachedLimitQueryUnits;
+    private AnalysisOptions candidateOptions;
+    private bool queryPrepared_;
+
     /// Canonical merged ranges from the last successful `match` call.
     const(TextRange)[] lastRanges() const return scope
         @safe pure nothrow @nogc
@@ -294,6 +311,37 @@ private FuzzyExpected!void prepareText(Caps)(in QueryStorage!Caps query,
     in CandidateView candidate, in FuzzyLimits limits,
     ref MatcherWorkspace!Caps workspace) @safe pure nothrow @nogc
 {
+    // The query is immutable across a whole generation of candidates, so its
+    // decode + smart-case probe + Unicode analysis run once per query, not
+    // once per match call.
+    if (!queryPreparationReusable(query, limits, workspace))
+    {
+        auto prepared = prepareQuery(query, limits, workspace);
+        if (prepared.hasError)
+            return prepared;
+    }
+
+    // The stored options never carry borrowed slices; the general-language
+    // stopword lexicon is re-attached from the query per call.
+    AnalysisOptions options = workspace.candidateOptions;
+    if (query.profile.kind == AnalysisProfileKind.generalLanguage)
+        options.stopwords = query.profile.stopwords;
+    auto candidateResult = analyzeText(candidate.path, options,
+        workspace.candidateAnalysis);
+    if (!candidateResult.succeeded)
+        return analysisFailure(false, candidateResult.error,
+            candidateResult.sourceOffset);
+    if (workspace.candidateAnalysis.output.length > limits.maxCandidateUnits)
+        return fuzzyErr!void(FuzzyErrorCode.candidateTooComplex,
+            workspace.candidateAnalysis.output.length);
+    return fuzzyOk();
+}
+
+private FuzzyExpected!void prepareQuery(Caps)(in QueryStorage!Caps query,
+    in FuzzyLimits limits, ref MatcherWorkspace!Caps workspace)
+    @safe pure nothrow @nogc
+{
+    workspace.queryPrepared_ = false;
     workspace.queryUnitCount = 0;
     workspace.partCount = 0;
 
@@ -349,15 +397,70 @@ private FuzzyExpected!void prepareText(Caps)(in QueryStorage!Caps query,
             workspace.queryAnalysis.output.length);
     }
 
-    auto candidateResult = analyzeText(candidate.path, options,
-        workspace.candidateAnalysis);
-    if (!candidateResult.succeeded)
-        return analysisFailure(false, candidateResult.error,
-            candidateResult.sourceOffset);
-    if (workspace.candidateAnalysis.output.length > limits.maxCandidateUnits)
-        return fuzzyErr!void(FuzzyErrorCode.candidateTooComplex,
-            workspace.candidateAnalysis.output.length);
+    // Store a slice-free copy of the resolved options (`prepareText`
+    // re-attaches the borrowed stopword lexicon). Only the code-path profile
+    // is remembered by the cache: general-language options depend on lexicon
+    // contents this cache cannot cheaply fingerprint, so that profile
+    // re-prepares per call.
+    final switch (query.profile.kind)
+    {
+    case AnalysisProfileKind.codePath:
+        workspace.candidateOptions = AnalysisOptions.codePath(sensitive
+            ? AnalysisCase.sensitive : AnalysisCase.simpleFold);
+        rememberPreparedQuery(query, limits, workspace);
+        break;
+    case AnalysisProfileKind.generalLanguage:
+        workspace.candidateOptions = AnalysisOptions.generalLanguage();
+        break;
+    }
     return fuzzyOk();
+}
+
+private bool queryPreparationReusable(Caps)(in QueryStorage!Caps query,
+    in FuzzyLimits limits, ref const MatcherWorkspace!Caps workspace)
+    @safe pure nothrow @nogc
+{
+    if (!workspace.queryPrepared_
+        || query.profile.kind != AnalysisProfileKind.codePath
+        || query.fuzzyParts.length != workspace.cachedPartCount
+        || limits.maxFuzzyParts != workspace.cachedLimitFuzzyParts
+        || limits.maxQueryUnits != workspace.cachedLimitQueryUnits)
+        return false;
+    size_t at;
+    foreach (i, text; query.fuzzyParts)
+    {
+        // Compare content, never addresses: a keystroke's reparse typically
+        // reuses the same query storage, so identical spans can hold a
+        // different query.
+        if (text.raw.length != workspace.cachedRawLength[i]
+            || text.skipFront != workspace.cachedSkipFront[i]
+            || text.skipBack != workspace.cachedSkipBack[i]
+            || text.raw != workspace.cachedQueryRaw[at .. at + text.raw.length])
+            return false;
+        at += text.raw.length;
+    }
+    return true;
+}
+
+private void rememberPreparedQuery(Caps)(in QueryStorage!Caps query,
+    in FuzzyLimits limits, ref MatcherWorkspace!Caps workspace)
+    @safe pure nothrow @nogc
+{
+    size_t at;
+    foreach (i, text; query.fuzzyParts)
+    {
+        if (text.raw.length > workspace.cachedQueryRaw.length - at)
+            return; // does not fit; leave the cache invalid
+        workspace.cachedRawLength[i] = text.raw.length;
+        workspace.cachedSkipFront[i] = text.skipFront;
+        workspace.cachedSkipBack[i] = text.skipBack;
+        workspace.cachedQueryRaw[at .. at + text.raw.length] = text.raw;
+        at += text.raw.length;
+    }
+    workspace.cachedPartCount = query.fuzzyParts.length;
+    workspace.cachedLimitFuzzyParts = limits.maxFuzzyParts;
+    workspace.cachedLimitQueryUnits = limits.maxQueryUnits;
+    workspace.queryPrepared_ = true;
 }
 
 private FuzzyExpected!void analysisFailure(bool query, AnalysisError error,
@@ -778,6 +881,46 @@ unittest
     assert(snake == 41);
     assert(camel == 42);
     assert(exact == 52);
+}
+
+@("fuzzy.match.queryPreparationCacheTracksContentNotAddresses")
+@safe pure nothrow @nogc
+unittest
+{
+    CandidateView candidate;
+    candidate.path = "src/Abc.d";
+    candidate.filenameOffset = 4;
+
+    // Reparsing into the same storage reuses the same span addresses with
+    // different content — the cache must key on content.
+    MatcherWorkspace!() shared_;
+    char[3] prompt = "abc";
+    auto query = parseQuery(prompt[]);
+    const first = match(query.value, candidate, shared_).value;
+    prompt = "Abc"; // smart-case flips to sensitive
+    query = parseQuery(prompt[]);
+    const second = match(query.value, candidate, shared_).value;
+    prompt = "abc";
+    query = parseQuery(prompt[]);
+    const third = match(query.value, candidate, shared_).value;
+
+    MatcherWorkspace!() freshLower;
+    auto lower = parseQuery("abc");
+    const expectedLower = match(lower.value, candidate, freshLower).value;
+    MatcherWorkspace!() freshUpper;
+    auto upper = parseQuery("Abc");
+    const expectedUpper = match(upper.value, candidate, freshUpper).value;
+
+    assert(first.kind == expectedLower.kind
+        && first.score == expectedLower.score);
+    assert(second.kind == expectedUpper.kind
+        && second.score == expectedUpper.score);
+    assert(third.kind == expectedLower.kind
+        && third.score == expectedLower.score);
+    // The insensitive and sensitive preparations must actually differ, or
+    // the assertions above prove nothing.
+    assert(expectedLower.score != expectedUpper.score
+        || expectedLower.kind != expectedUpper.kind);
 }
 
 @("fuzzy.match.cursorDpMatchesExhaustiveLcsOracle")
