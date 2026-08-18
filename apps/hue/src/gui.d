@@ -41,7 +41,8 @@ import picker_view : pickerGeometryFor, pickerPreviewRect;
 import sparkles.ui_tui : Cell, Grid;
 import lantern : LanternState, ltnStep = step, ltnTick = tick,
     LtnStepKind = StepKind;
-import lantern_view : BoxLayout, LabelArena, LanternStyle, Placement,
+import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
+    LanternStyle, Placement,
     viewLantern;
 import sparkles.input.capability : InputCapabilities, mousePointer,
     touchPointer;
