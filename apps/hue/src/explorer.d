@@ -219,6 +219,9 @@ struct ExplorerTui
     string[] excludeGlobs;
 
     string picked;  // the chosen file (empty = none yet)
+    /// Set by the `pickerFiles` command arm (`<leader>ff`); the workspace
+    /// drains it and opens the fuzzy picker (the `picked` handoff pattern).
+    bool pickerRequested;
     /// `TVU6`: the session index of the chosen row, or `-1` when the pick was
     /// an ordinary filesystem row (so the host loads it as a document).
     int pickedSession = -1;
@@ -854,6 +857,13 @@ struct ExplorerTui
                 break;
 
             case Command.quit: return false;
+
+            case Command.pickerFiles:
+                // The workspace owns the picker; the pane reports the intent
+                // (the `picked` handoff pattern), so `<leader>ff` works with
+                // the tree focused too.
+                pickerRequested = true;
+                break;
 
             case Command.treeDown:  moveSel(1); break;
             case Command.treeUp:    moveSel(-1); break;

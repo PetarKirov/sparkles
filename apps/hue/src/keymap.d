@@ -132,6 +132,7 @@ enum Command : ubyte
     startSearch,           /// `/`
     startGoto,             /// `gl`
     lanternAll,            /// `<leader>?` — list every binding live here
+    pickerFiles,           /// `<leader>ff` — the fuzzy file picker
     quit,                  /// `q` — leave the viewer
     viewTop, viewBottom,   /// `gg` / `G`
     toggleHoverRegions,    /// Enter — open a twoslash signature's collapsed runs
@@ -599,14 +600,20 @@ immutable Binding[] hueBindings = [
 
     // ── the leader tree (`LMP`) ──────────────────────────────────────────
     // Only commands that already exist are bound here. The map's remaining
-    // branches (`f` find, `s` search, `g` git, `/` grep) are specced and land
-    // with the picker; reserving their letters now is what keeps the map from
-    // being rearranged under users later.
+    // branches (`s` search, `g` git, `/` grep) are specced and land with the
+    // picker's later sources; reserving their letters now is what keeps the
+    // map from being rearranged under users later.
     group(Scope_.shared_, chord(leader), "leader"),
     bind(Scope_.shared_, chord(leader), chord('e'), Command.toggleExplorer,
         "toggle explorer"),
     bind(Scope_.shared_, chord(leader), chord('?'), Command.lanternAll,
         "all bindings"),
+
+    // `LMP7`: the find branch. `ff` opens the fuzzy file picker (`PKS1`);
+    // its siblings (`fr` recent, `fg` git files) land with their sources.
+    group(Scope_.shared_, chord(leader), chord('f'), "file/find"),
+    bind(Scope_.shared_, chord(leader), chord('f'), chord('f'),
+        Command.pickerFiles, "find files"),
 
     group(Scope_.shared_, chord(leader), chord('v'), "view"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('r'),
@@ -1170,6 +1177,26 @@ unittest
     // And `c` outside the sequence still means what it always did — the
     // precedence the frame loop encoded by ordering, now by path.
     assert(ch('c').cmd == Command.toggleCodeLineNumbers);
+}
+
+@("keymap.leaderFindFilesOpensThePicker")
+@safe pure nothrow @nogc
+unittest
+{
+    // `<leader>` and `<leader>f` are prefix nodes; `<leader>ff` is the
+    // picker command (`LMP7`/`PKS1`) — from either pane, both being
+    // `shared_` rows.
+    const Chord[1] l = [chord(leader)];
+    const Chord[2] lf = [chord(leader), chord('f')];
+    assert(resolve(null, KeyEvent(Key.char_, leader), KeyContext.init).kind
+        == ResolveKind.group);
+    assert(resolve(l, KeyEvent(Key.char_, 'f'), KeyContext.init).kind
+        == ResolveKind.group);
+    assert(resolve(lf, KeyEvent(Key.char_, 'f'), KeyContext.init)
+        == Resolution(ResolveKind.command, Command.pickerFiles));
+    const tree = KeyContext(treeFocused: true, treeVisible: true);
+    assert(resolve(lf, KeyEvent(Key.char_, 'f'), tree)
+        == Resolution(ResolveKind.command, Command.pickerFiles));
 }
 
 @("keymap.contextGatesTheOptionalBindings")

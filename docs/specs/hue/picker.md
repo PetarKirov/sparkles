@@ -8,10 +8,9 @@ ranking, and the `sparkles:fuzzy` engine underneath._
 
 > [!NOTE]
 > The bounded engine, files finder, presentation-free state, raw-pool scheduler,
-> and shared widget tree now exist in this working tree. Mounting that tree in
-> the two live hosts, document-pipeline preview, persistence, actions, and the
-> later sources remain milestone work. The [lantern](./lantern.md) map already
-> reserves the letters this claims. Status legend and ID conventions: see the
+> and shared widget tree exist, and `<leader>ff` mounts the picker in both live
+> hosts. Document-pipeline preview, persistence, actions, and the later sources
+> remain milestone work. Status legend and ID conventions: see the
 > [overview](./index.md).
 
 ## Design & rationale
@@ -112,17 +111,17 @@ has already been measured against the best in the field.
 
 ## The component (`PIK`)
 
-| ID     | Requirement                                                                                                                                                                                                               | Status              | Traces to                                             |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------- |
-| `PIK1` | A **picker** must present a prompt, a ranked result list, and an optional preview, over any source — one component, many sources, in the shape fzf-lua and snacks.picker share.                                           | partial             | `picker.d` + `picker_view.d`; live-host mount pending |
-| `PIK2` | Its state must be a **presentation-free value** — a fixed-capacity prompt editor, the scored items, selection and scroll offset — testable with no canvas, like every other `STM` machine.                                | full (working tree) | `PickerPrompt`, `PickerState`, `ScrollState`          |
-| `PIK3` | The view must be a **`sparkles:ui` widget tree**, painted by GUI and TUI from one definition (`UIA2`) — the contract [lantern `LTN5`](./lantern.md) is already held to.                                                   | partial             | shared `picker_view.d` exists; host mounting pending  |
-| `PIK4` | A **source** must be a DbI seam: anything that can produce items incrementally is a source, and adding one must not touch the component.                                                                                  | full (working tree) | `isFinder`, `finderSnapshot`, `FilesFinder`           |
-| `PIK5` | Every search must take a real monotonic **duration budget** and return partial globally-ranked results plus a cursor bound to generation, corpus snapshot, sink epoch, and accumulator revision.                          | full (working tree) | `searchChunk`; `PickerScheduler`                      |
-| `PIK6` | Query/corpus arenas and result accumulators are caller-owned, fixed-capacity, immutable while borrowed, and pinned until all generation jobs complete; the search-scheduling path for a keystroke performs no allocation. | full (working tree) | fixed query/glob arena, generation slots, `TopK`      |
-| `PIK7` | Re-running a query must cancel in-flight work with a monotonic atomic generation (release publication/acquire read); stale jobs cannot append to a new sink epoch.                                                        | full (working tree) | `PickerScheduler` + stale-generation tests            |
-| `PIK8` | The picker must **degrade** to a synchronous budget-stepped walk when the raw CPU pool cannot start or accept a job, rather than being unavailable.                                                                       | full (working tree) | `RawCpuPool` submission + synchronous fallback        |
-| `PIK9` | `resume` must reopen the last picker with its query and selection intact.                                                                                                                                                 | not started         | proposed session store                                |
+| ID     | Requirement                                                                                                                                                                                                               | Status              | Traces to                                                                                    |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------- |
+| `PIK1` | A **picker** must present a prompt, a ranked result list, and an optional preview, over any source — one component, many sources, in the shape fzf-lua and snacks.picker share.                                           | partial             | mounted in both hosts (`picker_host.d`); the preview is a path label until `P2`              |
+| `PIK2` | Its state must be a **presentation-free value** — a fixed-capacity prompt editor, the scored items, selection and scroll offset — testable with no canvas, like every other `STM` machine.                                | full (working tree) | `PickerPrompt`, `PickerState`, `ScrollState`                                                 |
+| `PIK3` | The view must be a **`sparkles:ui` widget tree**, painted by GUI and TUI from one definition (`UIA2`) — the contract [lantern `LTN5`](./lantern.md) is already held to.                                                   | full                | `picker_view.d`, painted by both hosts; grid readback in `workspace.leaderFfMountsThePicker` |
+| `PIK4` | A **source** must be a DbI seam: anything that can produce items incrementally is a source, and adding one must not touch the component.                                                                                  | full (working tree) | `isFinder`, `finderSnapshot`, `FilesFinder`                                                  |
+| `PIK5` | Every search must take a real monotonic **duration budget** and return partial globally-ranked results plus a cursor bound to generation, corpus snapshot, sink epoch, and accumulator revision.                          | full (working tree) | `searchChunk`; `PickerScheduler`                                                             |
+| `PIK6` | Query/corpus arenas and result accumulators are caller-owned, fixed-capacity, immutable while borrowed, and pinned until all generation jobs complete; the search-scheduling path for a keystroke performs no allocation. | full (working tree) | fixed query/glob arena, generation slots, `TopK`                                             |
+| `PIK7` | Re-running a query must cancel in-flight work with a monotonic atomic generation (release publication/acquire read); stale jobs cannot append to a new sink epoch.                                                        | full (working tree) | `PickerScheduler` + stale-generation tests                                                   |
+| `PIK8` | The picker must **degrade** to a synchronous budget-stepped walk when the raw CPU pool cannot start or accept a job, rather than being unavailable.                                                                       | full (working tree) | `RawCpuPool` submission + synchronous fallback                                               |
+| `PIK9` | `resume` must reopen the last picker with its query and selection intact.                                                                                                                                                 | not started         | proposed session store                                                                       |
 
 ## The query language (`PKQ`)
 
@@ -150,18 +149,18 @@ has already been measured against the best in the field.
 
 Each row is one `<leader>` binding. The map reserves them all today.
 
-| ID      | Source         | Key          | Requirement                                                                                                         | Status                                                                      |
-| ------- | -------------- | ------------ | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `PKS1`  | files          | `<leader>ff` | The `.gitignore`-aware walk, searched on the raw CPU pool, honouring the tree pane's include/exclude globs.         | partial — corpus walk is synchronous; search fan-out ships; binding pending |
-| `PKS2`  | grep           | `<leader>/`  | Content search in three modes — plain, regex, fuzzy — auto-detected, falling back to fuzzy on zero hits.            | not started                                                                 |
-| `PKS3`  | recent         | `<leader>fr` | Frecency-ordered previously opened documents (`PKR2`).                                                              | not started                                                                 |
-| `PKS4`  | open documents | `<leader>,`  | The current `SourceSet` ([`SRC6`](./feature-requirements.md)) — the substrate the [tab view](./tab-view.md) shares. | not started                                                                 |
-| `PKS5`  | git status     | `<leader>gs` | Changed files, from the existing cache rather than a new `git` invocation.                                          | not started                                                                 |
-| `PKS6`  | git commits    | `<leader>gc` | Commits, opening the revision as a [diff session](./diff-view.md).                                                  | not started                                                                 |
-| `PKS7`  | themes         | `<leader>st` | The built-in theme list ([`THM2`](./feature-requirements.md)), applying live as the selection moves.                | not started                                                                 |
-| `PKS8`  | lines          | `<leader>sl` | Lines of the current document — the in-document search, as a picker.                                                | not started                                                                 |
-| `PKS9`  | keymaps        | `<leader>sk` | `hueBindings` itself. Free once the table exists ([`KEY3`](./lantern.md)), and the honest test of `PIK4`.           | not started                                                                 |
-| `PKS10` | git files      | `<leader>fg` | Tracked files only, skipping the walk where a repository can answer faster.                                         | not started                                                                 |
+| ID      | Source         | Key          | Requirement                                                                                                         | Status                                                                |
+| ------- | -------------- | ------------ | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `PKS1`  | files          | `<leader>ff` | The `.gitignore`-aware walk, searched on the raw CPU pool, honouring the tree pane's include/exclude globs.         | partial — bound and mounted in both hosts; corpus walk is synchronous |
+| `PKS2`  | grep           | `<leader>/`  | Content search in three modes — plain, regex, fuzzy — auto-detected, falling back to fuzzy on zero hits.            | not started                                                           |
+| `PKS3`  | recent         | `<leader>fr` | Frecency-ordered previously opened documents (`PKR2`).                                                              | not started                                                           |
+| `PKS4`  | open documents | `<leader>,`  | The current `SourceSet` ([`SRC6`](./feature-requirements.md)) — the substrate the [tab view](./tab-view.md) shares. | not started                                                           |
+| `PKS5`  | git status     | `<leader>gs` | Changed files, from the existing cache rather than a new `git` invocation.                                          | not started                                                           |
+| `PKS6`  | git commits    | `<leader>gc` | Commits, opening the revision as a [diff session](./diff-view.md).                                                  | not started                                                           |
+| `PKS7`  | themes         | `<leader>st` | The built-in theme list ([`THM2`](./feature-requirements.md)), applying live as the selection moves.                | not started                                                           |
+| `PKS8`  | lines          | `<leader>sl` | Lines of the current document — the in-document search, as a picker.                                                | not started                                                           |
+| `PKS9`  | keymaps        | `<leader>sk` | `hueBindings` itself. Free once the table exists ([`KEY3`](./lantern.md)), and the honest test of `PIK4`.           | not started                                                           |
+| `PKS10` | git files      | `<leader>fg` | Tracked files only, skipping the walk where a repository can answer faster.                                         | not started                                                           |
 
 ## Layout & actions (`PKL`)
 
@@ -195,29 +194,30 @@ the rows below are hue's requirements on it, traced there.
 
 ## Milestones
 
-| Milestone | Scope                                                                                                                                   | Status                                                      | Requirements                                         |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------- |
-| `F0`      | `sparkles:fuzzy` — analyzers, query/glob, exact matching, ranking, bounded history, and chunked search ([PLAN M0–M7](../fuzzy/PLAN.md)) | implemented and verified                                    | `PKM1`–`PKM5`, `PKQ*`, `PKR1`–`PKR3`, library `PKR4` |
-| `P0`      | Picker state/Finder/files source, generation scheduler, synchronous fallback, and visible ranking debug toggle                          | partial — seams implemented, host command pending           | `PIK1`–`PIK8`, `PKS1`, UI `PKR4`                     |
-| `P1`      | The view, both backends, and the layouts                                                                                                | partial — shared tree/presets implemented, mounting pending | `PIK3`, `PKL1`                                       |
-| `P2`      | The preview pane                                                                                                                        | not started                                                 | `PKL2`                                               |
-| `P3`      | Versioned bounded frecency/query-history persistence and the **recent** source                                                          | not started                                                 | `PKR5`, `PKR6`, `PKS3`                               |
-| `P4`      | The **grep** source: three modes, the definition classifier                                                                             | not started                                                 | `PKS2`, `PKL5`, `PKL6`                               |
-| `P5`      | The remaining sources, actions, and `resume`                                                                                            | not started                                                 | `PKS4`–`PKS10`, `PKL3`, `PIK9`                       |
-| `P6`      | Touch: tappable rows and the soft keyboard                                                                                              | not started                                                 | `PKL4`                                               |
+| Milestone | Scope                                                                                                                                   | Status                                                                   | Requirements                                         |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `F0`      | `sparkles:fuzzy` — analyzers, query/glob, exact matching, ranking, bounded history, and chunked search ([PLAN M0–M7](../fuzzy/PLAN.md)) | implemented and verified                                                 | `PKM1`–`PKM5`, `PKQ*`, `PKR1`–`PKR3`, library `PKR4` |
+| `P0`      | Picker state/Finder/files source, generation scheduler, synchronous fallback, and visible ranking debug toggle                          | full — `<leader>ff` opens it in both hosts; `Ctrl-S` shows the breakdown | `PIK1`–`PIK8`, `PKS1`, UI `PKR4`                     |
+| `P1`      | The view, both backends, and the layouts                                                                                                | partial — mounted in both backends; preset switching pending             | `PIK3`, `PKL1`                                       |
+| `P2`      | The preview pane                                                                                                                        | not started                                                              | `PKL2`                                               |
+| `P3`      | Versioned bounded frecency/query-history persistence and the **recent** source                                                          | not started                                                              | `PKR5`, `PKR6`, `PKS3`                               |
+| `P4`      | The **grep** source: three modes, the definition classifier                                                                             | not started                                                              | `PKS2`, `PKL5`, `PKL6`                               |
+| `P5`      | The remaining sources, actions, and `resume`                                                                                            | not started                                                              | `PKS4`–`PKS10`, `PKL3`, `PIK9`                       |
+| `P6`      | Touch: tappable rows and the soft keyboard                                                                                              | not started                                                              | `PKL4`                                               |
 
 ## Module coverage (proposed)
 
 The rows name the intended ownership; implementation status is tracked by the
 milestone tables above.
 
-| Source (proposed)                | Requirements                   |
-| -------------------------------- | ------------------------------ |
-| `libs/fuzzy/src/sparkles/fuzzy/` | `PKM*`, `PKQ*`, `PKR1`–`PKR3`  |
-| `apps/hue/src/picker.d`          | `PIK1`, `PIK2`, `PIK5`–`PIK9`  |
-| `apps/hue/src/picker_sources.d`  | `PIK4`, `PKS*`                 |
-| `apps/hue/src/picker_view.d`     | `PIK3`, `PKL1`, `PKL4`         |
-| `apps/hue/src/keymap.d`          | `PKL3` (the picker's bindings) |
+| Source (proposed)                | Requirements                               |
+| -------------------------------- | ------------------------------------------ |
+| `libs/fuzzy/src/sparkles/fuzzy/` | `PKM*`, `PKQ*`, `PKR1`–`PKR3`              |
+| `apps/hue/src/picker.d`          | `PIK1`, `PIK2`, `PIK5`–`PIK9`              |
+| `apps/hue/src/picker_host.d`     | the host glue both backends share (`PIK1`) |
+| `apps/hue/src/picker_sources.d`  | `PIK4`, `PKS*`                             |
+| `apps/hue/src/picker_view.d`     | `PIK3`, `PKL1`, `PKL4`                     |
+| `apps/hue/src/keymap.d`          | `PKL3` (the picker's bindings)             |
 
 ## Relationship to existing specs
 

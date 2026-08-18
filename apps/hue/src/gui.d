@@ -35,6 +35,7 @@ import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
 import sparkles.input.frame : InputFrame, foldFrame;
 import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
     KeyContext;
+import picker_host : PickerAction, PickerHost;
 import lantern : LanternState, ltnStep = step, ltnTick = tick,
     LtnStepKind = StepKind;
 import lantern_view : BoxLayout, LabelArena, LanternStyle, Placement,
@@ -755,6 +756,21 @@ int runGui(GuiArgs guiArgs) @system
                 pn.treeFocused = false;
         }
     }
+
+    // The fuzzy file picker (`<leader>ff`, `PKS1`) — heap because the host
+    // is non-copyable (address-stable scheduler slots), allocated on first
+    // open (a user action, under `NFR1`'s startup carve-out). Reopening
+    // re-walks the corpus over the explorer's root and globs.
+    PickerHost* filePicker;
+    void openFilePicker()
+    {
+        if (filePicker is null)
+            filePicker = new PickerHost;
+        filePicker.open(pn.tree.root.length ? pn.tree.root : ".",
+            pn.tree.includeGlobs, pn.tree.excludeGlobs);
+    }
+
+    scope (exit) if (filePicker !is null) filePicker.shutdown();
 
     /// ditto — the set's currently-selected entry (`GNV1`).
     bool loadSelected()
@@ -1574,6 +1590,29 @@ int runGui(GuiArgs guiArgs) @system
             }
         }
 
+        // The fuzzy picker (`PIK3`), over everything: the same shared widget
+        // tree the terminal paints, centered and one row down.
+        if (filePicker !is null && filePicker.state.active)
+        {
+            import picker_view : pickerView;
+
+            const cellsW = screenW / cellW;
+            const pkCols = cellsW > 8
+                ? (cellsW - 4 > 100 ? 100 : cellsW - 4) : cellsW;
+            auto pkTree = pickerView(filePicker.state, filePicker.snapshot);
+            auto pkFrames = layout(pkTree, Constraints(maxW: pkCols));
+            const pkPanel = pkFrames[pkTree.root].rect;
+            const pkX = (cellsW - pkPanel.width) / 2;
+            window.resetClip();
+            ltnOps.clear(); // sequential reuse of the guide's sink (`NFR2`)
+            buildDisplayListInto(pkTree, pkFrames,
+                themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
+                ltnOps);
+            auto pkCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
+                cast(float)((pkX > 0 ? pkX : 0) * cellW), cast(float) cellH);
+            paint(pkCanvas, ltnOps[]);
+        }
+
         window.resetClip(); // never let a scissor survive the frame
         }
         painted = true;
@@ -1911,7 +1950,33 @@ int runGui(GuiArgs guiArgs) @system
         // a press would do.
         KeyContext kctx;
 
-        if (pn.inspVisible && pn.inspFocused)
+        // The picker's scheduler publishes its newest partial page each
+        // frame — and, in the synchronous degradation (`PIK8`), takes its
+        // next duration-bounded step here on the frame's own budget.
+        if (filePicker !is null)
+            cast(void) filePicker.poll();
+
+        if (filePicker !is null && filePicker.state.active)
+        {
+            // The fuzzy picker is a modal surface (`PIK1`): while it is
+            // open it owns the whole keyboard.
+            import std.path : baseName;
+
+            foreach (k; keyBuf)
+            {
+                final switch (filePicker.handleKey(k))
+                {
+                case PickerAction.consumed:
+                case PickerAction.closed:
+                    break;
+                case PickerAction.accepted:
+                    cast(void) openPath(filePicker.acceptedPath,
+                        baseName(filePicker.acceptedPath), "");
+                    break;
+                }
+            }
+        }
+        else if (pn.inspVisible && pn.inspFocused)
         {
             // The inspector pane owns the keys while focused (its own
             // neovim-parity set); q/Escape close it and return the focus.
@@ -2268,6 +2333,9 @@ int runGui(GuiArgs guiArgs) @system
                 case Command.lanternAll:
                     // `lantern` shows the panel itself and never hands this
                     // one out as a command to run.
+                    break;
+                case Command.pickerFiles:
+                    openFilePicker();
                     break;
 
                 // ── the `z` fold sequence (FLD5) ─────────────────────────
@@ -2915,6 +2983,16 @@ int runGui(GuiArgs guiArgs) @system
             foreach (ch; capture.lantern)
                 pn.lantern.pending ~= Chord(key: Key.char_, ch: ch);
             pn.lantern.shown = true;
+        }
+
+        // Debug/CI: the picker seed opens the fuzzy file picker with a typed
+        // prompt, for the same reason — a golden capture cannot press
+        // `<leader>ff`. An empty (but set) value ranks the whole corpus.
+        if (capture.pickerSet)
+        {
+            openFilePicker();
+            foreach (ch; capture.picker)
+                cast(void) filePicker.handleKey(KeyEvent(Key.char_, ch));
         }
     }
 

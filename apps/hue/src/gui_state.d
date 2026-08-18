@@ -439,6 +439,8 @@ struct GuiCapture
     string search;            /// `HUE_GUI_SEARCH`: preselected query
     string lantern;           /// `HUE_GUI_LANTERN`: seeded guide keys
     bool lanternSet;          /// ...present at all (empty shows the root listing)
+    string picker;            /// `HUE_GUI_PICKER`: open the file picker, typed prompt
+    bool pickerSet;           /// ...present at all (empty ranks the whole corpus)
     int forceHover = -1;      /// `HUE_GUI_HOVER`: force the Nth popup
     PointF pointer;           /// `HUE_GUI_POINTER=<x>,<y>` in device pixels
     bool pointerSet;          /// ditto; distinguishes an unset hook from `(0, 0)`
@@ -481,6 +483,9 @@ struct GuiCapture
         const l = get("HUE_GUI_LANTERN", null);
         c.lanternSet = l !is null;
         c.lantern = l;
+        const p = get("HUE_GUI_PICKER", null);
+        c.pickerSet = p !is null;
+        c.picker = p;
         try
             c.forceHover = get("HUE_GUI_HOVER", null).length
                 ? get("HUE_GUI_HOVER", null).to!int : -1;
