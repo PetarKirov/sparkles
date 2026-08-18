@@ -141,7 +141,7 @@ rewrite a span's text without changing its (single-byte) source range, so an
 offset-based split inside one would cut in the wrong place; those are tinted
 whole or not at all.
 */
-private TextSpan[] applyTints(TextSpan[] spans, const(TintedRange)[] ranges) @safe
+TextSpan[] applyTints(TextSpan[] spans, const(TintedRange)[] ranges) @safe
 {
     if (ranges.length == 0 || spans.length == 0)
         return spans;
@@ -213,8 +213,13 @@ Right-aligned with a one-cell separator before the code, `noBreak` so a
 wrapping row keeps it attached to the first visual row, and carrying no
 `srcStart`/`srcEnd` — the column is chrome, and identity-bearing spans are
 what selection and goto-line walk.
+
+Public because $(LREF viewCodeDocument) is not the only document producer: the
+twoslash view renders the same source with the same per-line rows, and a reader
+who turned an overlay on does not expect it to vanish because a second one
+arrived. One channel, one implementation, however many producers.
 */
-private TextSpan gutterSpan(in CodeViewOptions opt, size_t line) @safe
+TextSpan gutterSpan(in CodeViewOptions opt, size_t line) @safe
 {
     const cell = line < opt.gutter.length ? opt.gutter[line] : GutterCell.init;
     const width = cast(size_t) opt.gutterWidth;
