@@ -20,3 +20,5 @@ public import sparkles.dsv.model : CellFlags, classifyValue, ColumnType,
     decodeCell, Dialect, DsvCell, DsvDoc, DsvRecord, HeaderMode,
     inferColumnTypes, inferColumnTypesFrom, Span, Terminator, ValueKind;
 public import sparkles.dsv.parse : parseDsv;
+public import sparkles.dsv.project : applyProjection, compareTyped, Constraint,
+    ConstraintOp, ProjectionSpec, SortKey;
