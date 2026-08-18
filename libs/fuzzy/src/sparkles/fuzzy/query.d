@@ -73,11 +73,11 @@ struct QueryText
     FuzzyExpected!size_t decodeGlobInto(size_t N)(ref char[N] output) const
         scope @safe pure nothrow @nogc
     {
+        auto input = cursor();
         size_t length;
-        foreach (i; 0 .. decodedLength)
+        while (!input.empty)
         {
-            const info = decodedInfoAt(this, i);
-            if (info.escaped)
+            if (input.escaped)
             {
                 if (length == N)
                     return fuzzyErr!size_t(FuzzyErrorCode.queryTooComplex,
@@ -87,7 +87,8 @@ struct QueryText
             if (length == N)
                 return fuzzyErr!size_t(FuzzyErrorCode.queryTooComplex,
                     raw.length);
-            output[length++] = cast(char) info.value;
+            output[length++] = cast(char) input.front;
+            input.popFront();
         }
         return fuzzyOk(length);
     }
@@ -101,6 +102,7 @@ struct DecodedQueryCursor
     private size_t skip_;
     private size_t remaining_;
     private ubyte front_;
+    private bool frontEscaped_;
     private bool empty_ = true;
 
 private:
@@ -118,6 +120,9 @@ private:
     bool empty() const scope @safe pure nothrow @nogc => empty_;
     ubyte front() const scope @safe pure nothrow @nogc => front_;
 
+    /// Whether the current byte was quoted by a query backslash.
+    bool escaped() const scope @safe pure nothrow @nogc => frontEscaped_;
+
     void popFront() scope @safe pure nothrow @nogc
     {
         if (!empty_)
@@ -133,8 +138,12 @@ private:
             ubyte value = cast(ubyte) raw_[at_++];
             if (value == '"')
                 continue;
+            bool escaped;
             if (value == '\\' && at_ < raw_.length)
+            {
+                escaped = true;
                 value = cast(ubyte) raw_[at_++];
+            }
             if (skip_ != 0)
             {
                 --skip_;
@@ -144,6 +153,7 @@ private:
                 return;
             --remaining_;
             front_ = value;
+            frontEscaped_ = escaped;
             empty_ = false;
             return;
         }
@@ -441,8 +451,10 @@ private FuzzyExpected!(QueryStorage!Caps) parseQueryImpl(Caps)(
         ref last = query.fuzzyParts_[query.fuzzyPartCount_ - 1];
         Location location;
         size_t suffixBytes;
+        ubyte[Caps.maxQueryBytes] locationValues = void;
+        bool[Caps.maxQueryBytes] locationEscaped = void;
         auto parsed = parseLocationSuffix(last, options.pathFlavor,
-            location, suffixBytes);
+            locationValues[], locationEscaped[], location, suffixBytes);
         if (parsed.hasError)
             return fuzzyErr!(QueryStorage!Caps)(parsed.error.code,
                 parsed.error.offset, parsed.error.context);
@@ -867,8 +879,12 @@ private bool bytesEqual(scope const(char)[] left, scope const(char)[] right,
 }
 
 private FuzzyExpected!bool parseLocationSuffix(QueryText text,
-    PathFlavor pathFlavor, out Location location, out size_t suffixBytes)
-    @safe pure nothrow @nogc
+    PathFlavor pathFlavor, scope ubyte[] valueScratch,
+    scope bool[] escapedScratch, out Location location,
+    out size_t suffixBytes) @safe pure nothrow @nogc
+in (text.decodedLength <= valueScratch.length
+    && text.decodedLength <= escapedScratch.length,
+    "location scratch must cover the token's decoded length")
 {
     location = Location.init;
     suffixBytes = 0;
@@ -876,17 +892,32 @@ private FuzzyExpected!bool parseLocationSuffix(QueryText text,
     if (length == 0)
         return fuzzyOk(false);
 
+    // Decode the token once; every helper below indexes the scratch in O(1),
+    // keeping the whole suffix parse linear in the token length.
+    {
+        auto input = text.cursor();
+        size_t at;
+        while (!input.empty)
+        {
+            valueScratch[at] = input.front;
+            escapedScratch[at] = input.escaped;
+            ++at;
+            input.popFront();
+        }
+    }
+    const values = valueScratch[0 .. length];
+    const escaped = escapedScratch[0 .. length];
+
     // Parenthesized `(line,column)` form.
-    if (decodedByteAt(text, length - 1) == ')'
-        && !decodedEscapedAt(text, length - 1))
+    if (values[length - 1] == ')' && !escaped[length - 1])
     {
         size_t open = length;
         foreach (i; 0 .. length)
-            if (decodedByteAt(text, i) == '(' && !decodedEscapedAt(text, i))
+            if (values[i] == '(' && !escaped[i])
                 open = i;
         if (open < length)
         {
-            auto parsed = parseLocationBody(text, open + 1, length - 1,
+            auto parsed = parseLocationBody(values, open + 1, length - 1,
                 ',', location);
             if (parsed.hasError)
                 return parsed;
@@ -900,16 +931,35 @@ private FuzzyExpected!bool parseLocationSuffix(QueryText text,
 
     // Try each colon whose complete tail is one accepted numeric grammar. The
     // first success preserves the largest location (`:line:column` rather than
-    // treating only the final `:column` as a line).
+    // treating only the final `:column` as a line). Only the last few colons
+    // can begin a valid tail: a successful tail contains at most two further
+    // colons by value (`line:column-line:column`), and parseLocationBody
+    // rejects a third before ever reaching a digit — so a colon with more
+    // than three colons after it is guaranteed to fail with no observable
+    // side effect. Keeping the last four candidates preserves the
+    // earliest-colon-wins rule while bounding the attempts to a constant.
+    size_t[4] colonAt = void;
+    size_t colonCount;
     foreach (i; 0 .. length)
     {
-        if (decodedByteAt(text, i) != ':' || decodedEscapedAt(text, i))
+        if (values[i] != ':' || escaped[i])
             continue;
         if (pathFlavor == PathFlavor.windows && i == 1
-            && isAsciiLetter(decodedByteAt(text, 0)))
+            && isAsciiLetter(values[0]))
             continue;
+        if (colonCount == colonAt.length)
+        {
+            foreach (k; 1 .. colonAt.length)
+                colonAt[k - 1] = colonAt[k];
+            --colonCount;
+        }
+        colonAt[colonCount++] = i;
+    }
+    foreach (k; 0 .. colonCount)
+    {
+        const i = colonAt[k];
         Location candidate;
-        auto parsed = parseColonLocation(text, i + 1, length, candidate);
+        auto parsed = parseColonLocation(values, i + 1, length, candidate);
         if (parsed.hasError)
             return parsed;
         if (parsed.value)
@@ -922,19 +972,19 @@ private FuzzyExpected!bool parseLocationSuffix(QueryText text,
     return fuzzyOk(false);
 }
 
-private FuzzyExpected!bool parseColonLocation(QueryText text, size_t start,
-    size_t end, out Location location) @safe pure nothrow @nogc
+private FuzzyExpected!bool parseColonLocation(scope const(ubyte)[] values,
+    size_t start, size_t end, out Location location) @safe pure nothrow @nogc
 {
     size_t dash = end;
     foreach (i; start .. end)
-        if (decodedByteAt(text, i) == '-')
+        if (values[i] == '-')
             dash = i;
     if (dash < end)
     {
         Location left;
         Location right;
-        auto first = parseLocationBody(text, start, dash, ':', left);
-        auto second = parseLocationBody(text, dash + 1, end, ':', right);
+        auto first = parseLocationBody(values, start, dash, ':', left);
+        auto second = parseLocationBody(values, dash + 1, end, ':', right);
         if (first.hasError)
             return first;
         if (second.hasError)
@@ -947,11 +997,11 @@ private FuzzyExpected!bool parseColonLocation(QueryText text, size_t start,
         location.hasEnd = true;
         return fuzzyOk(true);
     }
-    return parseLocationBody(text, start, end, ':', location);
+    return parseLocationBody(values, start, end, ':', location);
 }
 
-private FuzzyExpected!bool parseLocationBody(QueryText text, size_t start,
-    size_t end, ubyte separator, out Location location)
+private FuzzyExpected!bool parseLocationBody(scope const(ubyte)[] values,
+    size_t start, size_t end, ubyte separator, out Location location)
     @safe pure nothrow @nogc
 {
     location = Location.init;
@@ -959,13 +1009,13 @@ private FuzzyExpected!bool parseLocationBody(QueryText text, size_t start,
         return fuzzyOk(false);
     size_t split = end;
     foreach (i; start .. end)
-        if (decodedByteAt(text, i) == separator)
+        if (values[i] == separator)
         {
             if (split != end)
                 return fuzzyOk(false);
             split = i;
         }
-    auto line = parseUint(text, start, split);
+    auto line = parseUint(values, start, split);
     if (line.hasError)
         return line.error.code == FuzzyErrorCode.numericOverflow
             ? fuzzyErr!bool(line.error.code, line.error.offset)
@@ -975,7 +1025,7 @@ private FuzzyExpected!bool parseLocationBody(QueryText text, size_t start,
     location.startLine = line.value;
     if (split != end)
     {
-        auto column = parseUint(text, split + 1, end);
+        auto column = parseUint(values, split + 1, end);
         if (column.hasError)
             return column.error.code == FuzzyErrorCode.numericOverflow
                 ? fuzzyErr!bool(column.error.code, column.error.offset)
@@ -988,15 +1038,15 @@ private FuzzyExpected!bool parseLocationBody(QueryText text, size_t start,
     return fuzzyOk(true);
 }
 
-private FuzzyExpected!uint parseUint(QueryText text, size_t start, size_t end)
-    @safe pure nothrow @nogc
+private FuzzyExpected!uint parseUint(scope const(ubyte)[] values, size_t start,
+    size_t end) @safe pure nothrow @nogc
 {
     if (start >= end)
         return fuzzyErr!uint(FuzzyErrorCode.unexpectedCharacter, start);
     uint value;
     foreach (i; start .. end)
     {
-        const c = decodedByteAt(text, i);
+        const c = values[i];
         if (c < '0' || c > '9')
             return fuzzyErr!uint(FuzzyErrorCode.unexpectedCharacter, i);
         const digit = c - '0';
@@ -1111,12 +1161,13 @@ private bool decodedIsAsciiPrefixOf(QueryText text, scope const(char)[] word)
 private bool decodedContainsUnescapedMeta(QueryText text)
     @safe pure nothrow @nogc
 {
-    foreach (i; 0 .. text.decodedLength)
+    auto input = text.cursor();
+    while (!input.empty)
     {
-        const info = decodedInfoAt(text, i);
-        if (!info.escaped && (info.value == '*' || info.value == '?'
-                || info.value == '[' || info.value == '{'))
+        if (!input.escaped && (input.front == '*' || input.front == '?'
+                || input.front == '[' || input.front == '{'))
             return true;
+        input.popFront();
     }
     return false;
 }
@@ -1143,12 +1194,14 @@ private bool decodedGlobEqual(QueryText left, QueryText right)
 {
     if (left.decodedLength != right.decodedLength)
         return false;
-    foreach (i; 0 .. left.decodedLength)
+    auto a = left.cursor();
+    auto b = right.cursor();
+    while (!a.empty)
     {
-        const a = decodedInfoAt(left, i);
-        const b = decodedInfoAt(right, i);
-        if (a.value != b.value || a.escaped != b.escaped)
+        if (a.front != b.front || a.escaped != b.escaped)
             return false;
+        a.popFront();
+        b.popFront();
     }
     return true;
 }
@@ -1225,6 +1278,23 @@ unittest
     assert(parsed.value.location.startLine == 120);
     assert(parsed.value.location.startColumn == 7);
     assert(parsed.value.fuzzyParts[0].decodedLength == "src/app.d".length);
+
+    auto range = parseQuery(`f:12:4-14:20`);
+    assert(range.hasValue && range.value.location.hasEnd);
+    assert(range.value.location.startLine == 12
+        && range.value.location.startColumn == 4
+        && range.value.location.endLine == 14
+        && range.value.location.endColumn == 20);
+
+    // Earliest-colon-wins survives the bounded candidate window: colons whose
+    // tails hold more separators than any location grammar admits are
+    // guaranteed failures, so skipping all but the last few changes nothing.
+    auto manyColons = parseQuery(`a:1:2:3:4:5`);
+    assert(manyColons.hasValue);
+    assert(manyColons.value.location.startLine == 4
+        && manyColons.value.location.startColumn == 5);
+    assert(manyColons.value.fuzzyParts[0].decodedLength
+        == "a:1:2:3".length);
 
     assert(parseQuery(`git:`).error.code == FuzzyErrorCode.emptyValue);
     assert(parseQuery(`git:m`).hasValue);
