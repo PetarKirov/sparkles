@@ -32,6 +32,7 @@ import expected : Expected, err, ok;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.syntax : HighlightEvent;
+import sparkles.syntax.ts.highlighter : ParsedLayer;
 
 import viewer_model : ViewerModel;
 
@@ -284,6 +285,9 @@ struct CachedFormat
 {
     string text;
     HighlightEvent[] events;
+    /// The parse `text` was highlighted with, when the cache still holds it
+    /// (`FormatCache.maxParsed`). Null means a re-display re-parses.
+    ParsedLayer*[] layers;
 }
 
 /**
@@ -296,6 +300,17 @@ struct FormatCache
 {
     size_t maxBytes = 32 * 1024 * 1024;
     size_t maxEntries = 64;
+
+    /**
+    How many distinct outputs keep their parse.
+
+    Text and events are small and worth holding by the dozen; a tree-sitter
+    parse is neither, so it gets its own much tighter budget — enough that a
+    drag reversing over the last few widths still avoids re-parsing, far
+    short of holding a tree per cached output. Dropping a parse costs one
+    re-parse on redisplay, never correctness.
+    */
+    size_t maxParsed = 4;
 
     private static struct Entry
     {
@@ -361,6 +376,44 @@ struct FormatCache
         widthToDigest[width] = digest;
         totalBytes += bytes;
         evictOver();
+    }
+
+    /**
+    Keep the parse that produced `width`'s cached output, so redisplaying it
+    is a swap rather than a re-parse. Only the `maxParsed` most recently used
+    outputs keep theirs; the rest are dropped for the GC.
+    */
+    void retainParse(ushort width, ParsedLayer*[] layers) @safe
+    {
+        if (layers is null || maxParsed == 0)
+            return;
+        auto hit = lookup(width);
+        if (hit is null)
+            return;
+        hit.layers = layers;
+
+        // Small map (bounded by `maxEntries`): pick off the least recently
+        // used parse-holders one at a time rather than sorting.
+        for (;;)
+        {
+            size_t held;
+            ulong oldestDigest;
+            ulong oldestUse = ulong.max;
+            foreach (digest, ref entry; byDigest)
+            {
+                if (entry.payload.layers is null)
+                    continue;
+                ++held;
+                if (entry.lastUse < oldestUse)
+                {
+                    oldestUse = entry.lastUse;
+                    oldestDigest = digest;
+                }
+            }
+            if (held <= maxParsed)
+                return;
+            byDigest[oldestDigest].payload.layers = null;
+        }
     }
 
     /// Distinct outputs currently held.
@@ -703,6 +756,33 @@ unittest
     assert(cache.lookup(3) !is null);
 }
 
+@("format_preview.cache.retainedParsesAreCappedIndependently")
+@system
+unittest
+{
+    import std.conv : to;
+
+    // Parses are far heavier than text+events, so they get their own, much
+    // smaller budget: a redisplay past it re-parses instead of hoarding trees.
+    FormatCache cache;
+    cache.maxEntries = 8;
+    cache.maxParsed = 2;
+    foreach (ushort w; 0 .. 4)
+    {
+        cache.insert(w, "text-" ~ w.to!string, null);
+        cache.retainParse(w, [new ParsedLayer]);
+    }
+    assert(cache.entryCount == 4, "every output is still cached");
+
+    size_t withParse;
+    foreach (ushort w; 0 .. 4)
+        if (cache.lookup(w).layers !is null)
+            ++withParse;
+    assert(withParse == 2, "only the two most recent parses are kept");
+    assert(cache.lookup(3).layers !is null);
+    assert(cache.lookup(0).layers is null, "the oldest parse was dropped");
+}
+
 @("format_preview.cache.byteCapEvicts")
 @safe
 unittest
@@ -1002,9 +1082,14 @@ final class FormatPreviewSession
         if (auto hit = cache.lookup(clamped))
         {
             if (hit.events is null)
-                hit.events = rehighlight(vm, hit.text);
+            {
+                ParsedLayer*[] fresh;
+                hit.events = rehighlight(vm, hit.text, fresh);
+                cache.retainParse(clamped, fresh);
+                hit = cache.lookup(clamped);
+            }
             flow.shownFromCache(clamped);
-            vm.swapContent(hit.text, hit.events);
+            vm.swapContent(hit.text, hit.events, hit.layers);
             return;
         }
         if (flow.request(clamped) == FlowAction.dispatch)
@@ -1039,8 +1124,13 @@ final class FormatPreviewSession
                 {
                     auto hit = cache.lookup(c.width);
                     if (hit.events is null)
-                        hit.events = rehighlight(vm, hit.text);
-                    vm.swapContent(hit.text, hit.events);
+                    {
+                        ParsedLayer*[] fresh;
+                        hit.events = rehighlight(vm, hit.text, fresh);
+                        cache.retainParse(c.width, fresh);
+                        hit = cache.lookup(c.width);
+                    }
+                    vm.swapContent(hit.text, hit.events, hit.layers);
                     changed = true;
                 }
                 break;
@@ -1164,16 +1254,27 @@ final class FormatPreviewSession
             formatter: candidates[formatterIndex]));
     }
 
+    /**
+    Colors a formatted buffer, keeping the parse it took to do so.
+
+    The layers go straight back into the model with the text (`swapContent`'s
+    third argument), because the rebuild that follows needs a parse of exactly
+    these bytes for the fold scan — and parsing them twice is the single
+    largest cost on the drag's UI-thread path. `layers` is null when the
+    document has no grammar or highlighting failed, which is also when the
+    model must fall back to re-parsing (it won't find anything either).
+    */
     private static HighlightEvent[] rehighlight(
-        ref ViewerModel vm, string source) @system
+        ref ViewerModel vm, string source, out ParsedLayer*[] layers) @system
     {
         import sparkles.syntax : highlightInjected;
         import sparkles.base.smallbuffer : SmallBuffer;
 
         SmallBuffer!HighlightEvent ev;
         if (vm.cache is null || vm.lang.length == 0
-            || highlightInjected(*vm.cache, vm.lang, source, ev).hasError)
+            || highlightInjected(*vm.cache, vm.lang, source, ev, layers).hasError)
         {
+            layers = null;
             ev.clear();
             ev ~= HighlightEvent.sourceSpan(0, source.length);
         }
