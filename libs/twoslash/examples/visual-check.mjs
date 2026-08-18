@@ -91,25 +91,45 @@ addEventListener('load', () => setTimeout(() => {
   const one = (sel) => { const el = [...document.querySelectorAll(sel)]
     .find(e => !e.closest('.twoslash-crowded-row')); return el && {
     gap: gapAbove(el), col: leftCol(el), arrow: !!el.querySelector(':scope > .twoslash-popup-arrow') }; };
+  // A connector stroke, in page pixels, so continuity can be checked ACROSS
+  // rows: a guide segment that fills its own row still leaves a visible break
+  // if the next row starts below where it ended.
+  const seg = (el, kind, row) => {
+    const r = el.getBoundingClientRect();
+    return { kind, row, col: leftCol(el),
+      top: +r.top.toFixed(2), bottom: +r.bottom.toFixed(2) };
+  };
   // A crowded line: the connected layout's rows, in document (top-to-bottom)
   // order, each with its label's column, its elbow's column, and the columns
-  // and heights of the guides still running through it.
-  const crowded = [...document.querySelectorAll('.twoslash-crowded')].map(box => ({
-    markers: box.querySelector('.twoslash-crowded-markers').textContent,
-    rows: [...box.querySelectorAll('.twoslash-crowded-row')].map(row => {
+  // and heights of the guides still running through it — plus every stroke as
+  // a page-pixel segment, for the continuity check.
+  const crowded = [...document.querySelectorAll('.twoslash-crowded')].map(box => {
+    const markers = box.querySelector('.twoslash-crowded-markers');
+    const segments = [];
+    const rows = [...box.querySelectorAll('.twoslash-crowded-row')].map((row, i) => {
       const rh = row.getBoundingClientRect().height;
       const label = row.querySelector('.twoslash-query-line, .twoslash-completion-list, .twoslash-error-line');
       const elbow = row.querySelector('.twoslash-crowded-elbow');
+      if (elbow) segments.push(seg(elbow, 'elbow', i));
       return {
         label: label ? leftCol(label) : null,
         elbow: elbow ? leftCol(elbow) : null,
-        guides: [...row.querySelectorAll('.twoslash-crowded-guide')].map(g => ({
-          col: leftCol(g),
-          fill: +(g.getBoundingClientRect().height / rh).toFixed(3),
-        })),
+        guides: [...row.querySelectorAll('.twoslash-crowded-guide')].map(g => {
+          segments.push(seg(g, 'guide', i));
+          return {
+            col: leftCol(g),
+            fill: +(g.getBoundingClientRect().height / rh).toFixed(3),
+          };
+        }),
       };
-    }),
-  }));
+    });
+    return {
+      markers: markers.textContent,
+      markersBottom: +markers.getBoundingClientRect().bottom.toFixed(2),
+      rows,
+      segments,
+    };
+  });
   document.getElementById('__vc__').textContent = JSON.stringify({
     charW: +charW.toFixed(2),
     query: one('.twoslash-query-line'),
@@ -153,6 +173,7 @@ const GAP_MIN = 2,
   GAP_MAX = 14; // ~1ch (≈7.8px); the old line-box bug was ~22px
 const GAP_SKEW = 5; // query vs completion may differ by at most this
 const COL_TOL = 0.6; // completion column tolerance (fraction of a column)
+const CONNECT_TOL = 0.5; // px a connector column may break between two strokes
 
 const fixturesDir = join(here, 'fixtures');
 const names = [
@@ -180,6 +201,7 @@ for (const name of names) {
   const m = measure(html);
   const problems = [];
   const crowdedRows = (m.crowded ?? []).reduce((n, b) => n + b.rows.length, 0);
+  let maxBreak = 0;
 
   for (const kind of ['query', 'completion']) {
     const p = m[kind];
@@ -230,6 +252,29 @@ for (const name of names) {
           );
       }
     }
+
+    // CON3 continuity. `fill` above only says a segment spans its OWN row; a
+    // column still reads as a dashed line if the next row starts below where
+    // the last one ended (the card's `margin-top` falling between the rows).
+    // Every stroke at one column — guides, then the elbow that ends it — must
+    // form one unbroken rule.
+    const byCol = new Map();
+    for (const s of box.segments) {
+      const key = s.col.toFixed(1);
+      if (!byCol.has(key)) byCol.set(key, []);
+      byCol.get(key).push(s);
+    }
+    for (const [col, segs] of byCol) {
+      segs.sort((a, b) => a.top - b.top);
+      for (let i = 1; i < segs.length; i++) {
+        const gap = +(segs[i].top - segs[i - 1].bottom).toFixed(2);
+        maxBreak = Math.max(maxBreak, gap);
+        if (gap > CONNECT_TOL)
+          problems.push(
+            `crowded column ${col}: ${gap}px break above the ${segs[i].kind} in row ${segs[i].row}`,
+          );
+      }
+    }
   }
 
   const expectCol = completionExpectation(fixture);
@@ -244,7 +289,9 @@ for (const name of names) {
 
   const parts = [];
   if (crowdedRows)
-    parts.push(`crowded{lines:${m.crowded.length} rows:${crowdedRows}}`);
+    parts.push(
+      `crowded{lines:${m.crowded.length} rows:${crowdedRows} maxBreak:${maxBreak}px}`,
+    );
   if (m.query) parts.push(`query{gap:${m.query.gap} arrow:${m.query.arrow}}`);
   if (m.completion)
     parts.push(
