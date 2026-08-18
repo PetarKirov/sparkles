@@ -525,6 +525,17 @@ private int executeView(in HueCli root, in View view)
 
     const backend = view.sink.resolveBackend(root.gui);
 
+    // `FPR10`: fork the format zygote for the interactive views while the
+    // process is still single-threaded (the fork-safety window). A refusal
+    // is quiet — the preview falls back to its worker-thread backend.
+    version (HueDmdFmt)
+        if (backend == Backend.gui || backend == Backend.tui)
+        {
+            import format_dmd : startFormatForkServer;
+
+            cast(void) startFormatForkServer();
+        }
+
     ViewRenderOptions opt;
     opt.theme = root.theme;
     opt.background = root.background;

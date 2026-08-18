@@ -74,6 +74,9 @@ configuration "application" {
     // bionic; format_dmd.d is version-gated to an empty module there).
     dependency "sparkles:dmd-fmt" path="../.."
     versions "HueDmdFmt"
+    // The fork+shared-memory execution backend for the in-process
+    // formatter (FPR10 — event-horizon's ForkServer, M18).
+    dependency "sparkles:event-horizon" path="../.."
 }
 
 // Android build (BLD5): the same GUI closure as `application`, but emitted as
@@ -126,6 +129,9 @@ configuration "no-gui" {
     // archive in this closure too.
     dependency "sparkles:dmd-fmt" path="../.."
     versions "HueDmdFmt"
+    // The fork+shared-memory execution backend for the in-process
+    // formatter (FPR10 — event-horizon's ForkServer, M18).
+    dependency "sparkles:event-horizon" path="../.."
 
     excludedSourceFiles "src/gui.d" "src/gui_ansi.d"
 }
@@ -154,6 +160,9 @@ configuration "unittest" {
     // (FPR2/FP0's repeat-format spike).
     dependency "sparkles:dmd-fmt" path="../.."
     versions "HueDmdFmt"
+    // The fork+shared-memory execution backend for the in-process
+    // formatter (FPR10 — event-horizon's ForkServer, M18).
+    dependency "sparkles:event-horizon" path="../.."
 
     // hue has no unittests of its own, but `dub test` still compiles its
     // dependency sources with -unittest — and sparkles:syntax / sparkles:
