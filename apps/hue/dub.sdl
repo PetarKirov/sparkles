@@ -16,6 +16,7 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:syntax" path="../.."
 dependency "sparkles:diff" path="../.."
+dependency "sparkles:dsv" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:twoslash" path="../.."
 // Picker compute and its closure-free background scheduler (`PIK5`–`PIK8`).

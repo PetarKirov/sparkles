@@ -186,6 +186,18 @@ struct View
     @(Option("patch", description: "Treat the input as a unified diff."))
     bool patch;
 
+    @(Option("dsv", description: "Treat the input as delimiter-separated values and render the grid preview."))
+    bool dsv;
+
+    @(Option("dsv-delimiter", description: "Force the DSV delimiter (a char, tab, or \\t; default: sniffed from the content)."))
+    string dsvDelimiter;
+
+    @(Option("dsv-quote", description: "Force the DSV quote character (default: sniffed)."))
+    string dsvQuote;
+
+    @(Option("dsv-header", description: "Whether the first DSV record is a header: auto, yes or no."))
+    string dsvHeader = "auto";
+
     @(Option("tree-width", description: "Explorer pane width in cells (default 32)."))
     int treeWidth = 32;
 
@@ -494,6 +506,10 @@ private int executeView(in HueCli root, in View view)
         view.patch, parseWhitespaceMode(view.diffOptions.diffIgnoreWhitespace),
         parseStructural(view.diffOptions.diffStructural),
         parseCommutative(view.diffOptions.diffCommutative));
+    pipeline.forceDsv = view.dsv;
+    pipeline.dsvDelimiter = view.dsvDelimiter;
+    pipeline.dsvQuote = view.dsvQuote;
+    pipeline.dsvHeader = view.dsvHeader;
 
     const backend = view.sink.resolveBackend(root.gui);
 
@@ -1159,6 +1175,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 TwoslashAnsiOptions(depth: depth, italics: true, emitBackground: true));
             break;
         case markdown:
+        case dsv:
             import sparkles.syntax.md.render_widgets : MdViewOptions,
                 MdViewTheme, viewMarkdown;
             import sparkles.ui.display_list : buildDisplayList;
@@ -1248,6 +1265,28 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
 
             write(plainFragment(doc.source, doc.events, theme));
             return 0;
+        case dsv:
+        {
+            import sparkles.syntax.md.render_widgets : MdViewOptions,
+                MdViewTheme, viewMarkdown;
+            import sparkles.ui.interp.html : writeWidgetHtmlPage;
+            import sparkles.ui.style : defaultTwoslashPalette;
+
+            // The markdown arm re-extracts markdown from `doc.source`, which
+            // for DSV is the adapter's decoded buffer — render the already
+            // built widget tree instead (the diff arm's route, `DSG6`).
+            const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
+            const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
+            MdViewOptions mopt = {
+                theme: MdViewTheme.derive(theme, pageFg, pageBg),
+                maxWidth: previewWidth(),
+            };
+            SmallBuffer!char htmlOut;
+            writeWidgetHtmlPage(htmlOut, viewMarkdown(doc.preview.doc, mopt),
+                defaultTwoslashPalette(), pageFg, pageBg, doc.title);
+            write(htmlOut[]);
+            return 0;
+        }
         case diff:
             import diff_view : viewDiffDoc;
             import sparkles.ui.interp.html : writeWidgetHtmlPage;

@@ -571,6 +571,7 @@ struct WorkspaceTui
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
             startPreview: true, doc.twoslash, doc.lang, doc.diffDoc,
             doc.diffSides, doc.diffSession, doc.diffEmphasis);
+        viewer.docNote = doc.dsvNote;
         syncTreeSession();
         startDiffTypes();
         tree.reveal(path);
@@ -1378,6 +1379,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
                 fresh.preview, startPreview: true, fresh.twoslash, fresh.lang,
                 fresh.diffDoc, fresh.diffSides, fresh.diffSession,
                 fresh.diffEmphasis);
+            w.viewer.docNote = fresh.dsvNote;
         };
     w.liveTypes = liveTypes;
     // `DVL3`: the layout the reviewer asked for on the command line; `s`
@@ -1421,6 +1423,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             initial.preview, startPreview: true, initial.twoslash,
             initial.lang, initial.diffDoc, initial.diffSides,
             initial.diffSession);
+        w.viewer.docNote = initial.dsvNote;
         w.syncTreeSession();
         w.startDiffTypes();
         if (target.length)

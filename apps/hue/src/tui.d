@@ -472,6 +472,10 @@ struct PreviewTui
 
     /// Replaces the viewed document (the workspace's pane reuses the session):
     /// content swaps, scroll/search/selection/folds reset, layout rebuilds.
+    /// `DSK5`: a per-document chrome note (the DSV dialect readout);
+    /// cleared on every document swap, set by the host after `setDocument`.
+    string docNote;
+
     void setDocument(string title_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel model_,
         bool startPreview, TwoslashReturn tw_ = TwoslashReturn.init,
@@ -480,6 +484,7 @@ struct PreviewTui
         DiffSession diffSession_ = DiffSession.init,
         DiffEmphasis diffEmphasis_ = DiffEmphasis.init) @system
     {
+        docNote = null;
         hoverSel = -1;
         sel = Selection!long.cleared;
         searching = false;
@@ -739,7 +744,8 @@ struct PreviewTui
         const mid = b.add(Widget(kind: WidgetKind.text, text: text(
             names[themeIdx], " (", themeIdx + 1, "/", names.length, ")  ·  ",
             (showPreview && model.present) ? "preview"
-            : vm.plainSyntax ? "plain" : "raw")));
+            : vm.plainSyntax ? "plain" : "raw",
+            docNote.length ? "  ·  " : "", docNote)));
         const pos = b.add(Widget(kind: WidgetKind.text,
             text: text(top + 1, "/", lineCount), slot: Slot.gutter));
         paintBar(g, 0, [name], [mid], [pos], b, focused);
