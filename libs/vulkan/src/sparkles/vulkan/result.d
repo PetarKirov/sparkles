@@ -19,6 +19,8 @@ so the caller decides what a warning means rather than the binding guessing.
 */
 module sparkles.vulkan.result;
 
+import std.algorithm : canFind;
+
 import expected : Expected, err, ok;
 
 import sparkles.vulkan.vulkan_c;
@@ -95,6 +97,49 @@ string resultName(VkResult r) @safe pure nothrow @nogc
     }
 }
 
+/**
+Why a code happened, for the ones whose name does not say.
+
+`VK_ERROR_INCOMPATIBLE_DRIVER` is the motivating case: the name suggests a
+version mismatch, but on a developer machine it almost always means the loader
+found no ICD at all — and on Darwin that is a `VK_DRIVER_FILES` that was never
+set. Returns `null` when the enumerator speaks for itself.
+
+The text is platform-specific because the remedy is: telling a Linux user to
+point `VK_DRIVER_FILES` at MoltenVK is worse than saying nothing.
+*/
+string resultHint(VkResult r) @safe pure nothrow @nogc
+{
+    with (VkResult) switch (r)
+    {
+        case VK_ERROR_INCOMPATIBLE_DRIVER:
+            version (OSX)
+                return "no ICD found — set VK_DRIVER_FILES to MoltenVK_icd.json";
+            else
+                return "no ICD found — is a Vulkan driver installed?";
+        case VK_ERROR_LAYER_NOT_PRESENT:
+            return "the requested layer is not installed; the Vulkan SDK ships it";
+        default:
+            return null;
+    }
+}
+
+/**
+`resultName`, plus `resultHint` in parentheses when there is one.
+
+The form every diagnostic wants, in one place, so that two call sites reporting
+the same failure cannot word it differently — which is exactly what
+`sparkles:ui-sdl3` and `vulkaninfo` had started doing.
+
+Allocates, unlike the rest of this module: it is for the error path, where a
+`string` is being built anyway.
+*/
+string describeResult(VkResult r) @safe pure nothrow
+{
+    const hint = resultHint(r);
+    return hint is null ? resultName(r) : resultName(r) ~ " (" ~ hint ~ ")";
+}
+
 @("vulkan.result.successRuleFollowsVulkan")
 @safe pure nothrow @nogc unittest
 {
@@ -146,5 +191,31 @@ string resultName(VkResult r) @safe pure nothrow @nogc
         assert(resultName(VK_ERROR_OUT_OF_DATE_KHR) == "VK_ERROR_OUT_OF_DATE_KHR");
         assert(resultName(VK_SUBOPTIMAL_KHR) == "VK_SUBOPTIMAL_KHR");
         assert(resultName(cast(VkResult) -424242) == "VK_ERROR_<unknown>");
+    }
+}
+
+@("vulkan.result.describeResultAddsTheHintOnlyWhenThereIsOne")
+@safe pure nothrow unittest
+{
+    with (VkResult)
+    {
+        // A code that explains itself is passed through untouched, so the
+        // common case does not grow a trailing empty parenthesis.
+        assert(resultHint(VK_SUCCESS) is null);
+        assert(describeResult(VK_SUCCESS) == "VK_SUCCESS");
+        assert(describeResult(VK_ERROR_DEVICE_LOST) == "VK_ERROR_DEVICE_LOST");
+
+        // The one every macOS bring-up hits first.
+        assert(resultHint(VK_ERROR_INCOMPATIBLE_DRIVER) !is null);
+        const described = describeResult(VK_ERROR_INCOMPATIBLE_DRIVER);
+        assert(described[0 .. resultName(VK_ERROR_INCOMPATIBLE_DRIVER).length]
+            == resultName(VK_ERROR_INCOMPATIBLE_DRIVER));
+        assert(described[$ - 1] == ')');
+
+        version (OSX)
+            assert(described.canFind("VK_DRIVER_FILES"));
+        else
+            assert(!described.canFind("VK_DRIVER_FILES"),
+                "the MoltenVK remedy must not be offered off Darwin");
     }
 }

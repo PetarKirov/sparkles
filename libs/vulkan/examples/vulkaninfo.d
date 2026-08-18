@@ -21,7 +21,7 @@
  */
 module vulkaninfo_example;
 
-import std.algorithm : canFind, endsWith, filter, map, startsWith;
+import std.algorithm : endsWith, filter, map, startsWith;
 import std.array : appender, array;
 import std.conv : to;
 import std.format : format;
@@ -122,6 +122,7 @@ enum VendorId : uint
     @WireName("Intel") intel = 0x8086,
     @WireName("ARM") arm = 0x13B5,
     @WireName("Qualcomm") qualcomm = 0x5143,
+    @WireName("Apple") apple = 0x106B,
     @WireName("Mesa/llvmpipe") mesaLlvmpipe = 0x10005,
 }
 
@@ -314,7 +315,7 @@ GpuReport queryGpu(in InstanceCommands inst, size_t index, VkPhysicalDevice gpuD
     if (showAll || cli.extensions)
     {
         gpu.extensions = queryVkList!VkExtensionProperties(inst.enumerateDeviceExtensionProperties, gpuDev, null)
-            .map!(e => format("%s (v%d)", e.extensionName.ptr.fromStringz, e.specVersion))
+            .map!(e => format("%s (v%d)", e.extensionName.fromStringz, e.specVersion))
             .array;
     }
 
@@ -349,12 +350,24 @@ Expected!(VulkanReport, string) queryVulkan(in VulkanInfo cli) @system
         applicationVersion: makeApiVersion(0, 1, 0, 0),
         apiVersion: rawLoaderVersion ? rawLoaderVersion : apiVersion11,
     ));
-    auto createInfo = vkInfo(VkInstanceCreateInfo(pApplicationInfo: &appInfo));
+
+    // MoltenVK is a portability ICD, and this is the whole handshake — on a
+    // regular desktop loader the answer is "nothing to enable", which matters
+    // because asking for an unadvertised extension fails instance creation.
+    const portability = instancePortability(instExtProps, null);
+    const(char)*[1] portabilityExts = [khrPortabilityEnumeration.ptr];
+
+    auto createInfo = vkInfo(VkInstanceCreateInfo(
+        flags: portability.flags,
+        pApplicationInfo: &appInfo,
+        enabledExtensionCount: portability.addExtension ? 1 : 0,
+        ppEnabledExtensionNames: portabilityExts.ptr,
+    ));
 
     VkInstance instance;
     const createRes = global.createInstance(&createInfo, null, &instance).check;
     if (createRes.hasError)
-        return err!VulkanReport(format("vkCreateInstance failed (%s)", resultName(createRes.error)));
+        return err!VulkanReport("vkCreateInstance: " ~ describeResult(createRes.error));
 
     const inst = InstanceCommands.load(global, instance);
     scope (exit)
@@ -369,7 +382,7 @@ Expected!(VulkanReport, string) queryVulkan(in VulkanInfo cli) @system
         loaderVersion: formatApiVersion(rawLoaderVersion),
         extensions: (cli.summary && !cli.extensions)
             ? [format("%d extensions available (run with --extensions to list)", instExtProps.length)]
-            : instExtProps.map!(e => format("%s (v%d)", e.extensionName.ptr.fromStringz, e.specVersion)).array,
+            : instExtProps.map!(e => format("%s (v%d)", e.extensionName.fromStringz, e.specVersion)).array,
     );
 
     if (cli.layers || (!cli.summary && !cli.features && !cli.memory && !cli.queues && !cli.extensions))
