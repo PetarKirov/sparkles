@@ -279,6 +279,7 @@ struct DocumentPipeline
         import gui_preview : previewOf;
 
         doc.preview = previewOf(*cache, adapted.doc);
+        doc.preview.tableExtras = adapted.extras;
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
     }

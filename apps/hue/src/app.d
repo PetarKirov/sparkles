@@ -1196,6 +1196,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 codeMaxLines: opt.codeMaxLines < 0 ? 0 : opt.codeMaxLines,
                 tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
                 tableMaxLines: opt.tableMaxLines < 0 ? 0 : opt.tableMaxLines,
+                tableExtras: doc.preview.tableExtras,
             };
             auto tree = viewMarkdown(doc.preview.doc, mopt);
             auto frames = layout(tree, Constraints(maxW: previewWidth()));
@@ -1280,6 +1281,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             MdViewOptions mopt = {
                 theme: MdViewTheme.derive(theme, pageFg, pageBg),
                 maxWidth: previewWidth(),
+                tableExtras: doc.preview.tableExtras,
             };
             SmallBuffer!char htmlOut;
             writeWidgetHtmlPage(htmlOut, viewMarkdown(doc.preview.doc, mopt),
