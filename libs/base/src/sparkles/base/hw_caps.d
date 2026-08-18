@@ -172,10 +172,9 @@ uint quotaCpuCount() @trusted nothrow @nogc
         if (rel.length)
         {
             uint tightest = 0;
-            char[320] pathBuf = void;
             for (;;)
             {
-                const q = readCpuMaxAt(rel, pathBuf[]);
+                const q = readCpuMaxAt(rel);
                 if (q > 0 && (tightest == 0 || q < tightest))
                     tightest = q;
                 if (rel.length <= 1)
@@ -263,27 +262,24 @@ version (linux)
     }
 
     /// Parses `/sys/fs/cgroup<rel>/cpu.max`, or 0 when absent/unlimited.
-    uint readCpuMaxAt(scope const(char)[] rel, char[] pathBuf) @system nothrow @nogc
+    uint readCpuMaxAt(scope const(char)[] rel) @system nothrow @nogc
     {
-        static immutable root = "/sys/fs/cgroup";
-        static immutable leaf = "/cpu.max";
-        const need = root.length + rel.length + leaf.length + 1;
-        if (need > pathBuf.length)
-            return 0;
+        import sparkles.base.text.cstring : CString, tryToCString;
 
-        size_t n;
-        pathBuf[n .. n + root.length] = root[]; n += root.length;
+        enum root = "/sys/fs/cgroup";
+        enum leaf = "/cpu.max";
+
         // A `rel` of "/" would double the separator; harmless on Linux, but
         // keep the path canonical so a failure is legible in strace.
-        if (!(rel.length == 1 && rel[0] == '/'))
-        {
-            pathBuf[n .. n + rel.length] = rel[]; n += rel.length;
-        }
-        pathBuf[n .. n + leaf.length] = leaf[]; n += leaf.length;
-        pathBuf[n] = '\0';
+        CString!320 path;
+        const built = rel.length == 1 && rel[0] == '/'
+            ? tryToCString(path, [root, leaf])
+            : tryToCString(path, [root, rel, leaf]);
+        if (!built)
+            return 0;
 
         char[64] buf = void;
-        auto v = readSmallFile(pathBuf.ptr, buf[]);
+        auto v = readSmallFile(path.ptr, buf[]);
         if (v.length == 0 || (v.length >= 3 && v[0 .. 3] == "max"))
             return 0;
         const q = readULong(v);
