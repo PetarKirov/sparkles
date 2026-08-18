@@ -27,7 +27,10 @@ import std.conv : to;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.text.width : Align;
 
-import sparkles.ui.geometry : Insets, SizeSpec, cellsOf;
+import sparkles.ui.canvas : RuleEdge;
+import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs, ScrollbarSpec;
+import sparkles.ui.geometry : Insets, Point, SizeSpec, cellsOf;
+import sparkles.ui.state : ScrollAxis;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind;
 import sparkles.ui.wrap : TextSpan, TextWrap, wrapSpans;
@@ -80,14 +83,41 @@ struct TableWidgetStyle
     bool wrapCells = true;
 }
 
-/// What `buildTableWidgets` produced: the root node plus the table's full
-/// content extent in cells/lines — the caller's input for embedding decisions
-/// (e.g. wrapping the root in a clipping viewport when it exceeds a pane).
+/// The framed-viewport input (hue's `TBL7`/`TBL8` model): when the table
+/// exceeds `availWidth` and/or its interior exceeds `maxLines`, the view
+/// emits a fence-style framed box instead of the plain grid — pinned frame
+/// corners and side caps, the interior (cells + junction runs) scrolling as
+/// one behind `clipX`/`clipY` viewports, the bottom border doubling as the
+/// horizontal scrollbar (junctions dropped while it shows) and the right
+/// border as the vertical track. Requires `TableProps.border`; scroll state
+/// lives with the caller (offsets are passed in, bar hit ids name the
+/// targets).
+struct TableViewportSpec
+{
+    int availWidth;      /// available box width in cells (0 = no h viewport)
+    int maxLines;        /// interior line clamp (0 = no vertical viewport)
+    int x;               /// horizontal scroll offset, in interior cells
+    int y;               /// vertical scroll offset, in interior lines
+    size_t hBarHitId;    /// bottom-border bar hit id (0 → `style.hitId`)
+    size_t vBarHitId;    /// right-border track hit id (0 → `style.hitId`)
+    RgbColor hThumbFg;   /// resolved h-thumb color (hot logic is the caller's)
+    bool hasHThumbFg;    /// ditto
+    RgbColor vThumbFg;   /// ditto
+    bool hasVThumbFg;    /// ditto
+}
+
+/// What `buildTableWidgets` produced: the root node, the table's full content
+/// extent in cells/lines, the framed box's outer size (equal to the content
+/// extent when no viewport engaged), and which bars were emitted.
 struct TableWidgetResult
 {
     uint root;
     int width;
     int height;
+    int viewWidth;
+    int viewHeight;
+    bool hBar;
+    bool vBar;
 }
 
 /// Build the table as a widget subtree in `b` and return its root. `cells` is
@@ -97,7 +127,8 @@ struct TableWidgetResult
 /// as plain rules.
 TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     TableProps props = TableProps.init,
-    TableWidgetStyle style = TableWidgetStyle.init) @safe
+    TableWidgetStyle style = TableWidgetStyle.init,
+    TableViewportSpec vp = TableViewportSpec.init) @safe
 {
     // Lower to the shared slot grid. Authored anchors keep authoring order
     // (row-major), so the flattened span/key lists parallel `grid.anchors`'
@@ -271,41 +302,134 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             b.add(alignW));
     }
 
-    uint[] parts;
+    // Does a viewport engage? Framing needs the border (the caps ARE frame
+    // glyphs) and a real interior on both axes.
+    const interiorLines = tableH - 2;
+    const hOver = vp.availWidth > 2 && tableW > vp.availWidth && props.border
+        && interiorLines > 0;
+    const shownLines = vp.maxLines > 0 && interiorLines > vp.maxLines
+        ? vp.maxLines : interiorLines;
+    const vOver = shownLines < interiorLines && props.border && tableW > 2;
+    const framed = hOver || vOver;
+
+    const interiorW = tableW - 2;
+    const viewW = hOver ? vp.availWidth : tableW;
+    const viewInnerW = viewW - 2;
+    int sx = vp.x, sy = vp.y;
+    if (sx > interiorW - viewInnerW)
+        sx = interiorW - viewInnerW;
+    if (sx < 0)
+        sx = 0;
+    if (sy > interiorLines - shownLines)
+        sy = interiorLines - shownLines;
+    if (sy < 0)
+        sy = 0;
+
+    const iconW = cast(int) cellsOf(style.cutout.icon.text);
+    const cutout = style.cutout.present && props.border && iconW > 0
+        && widths[g.numCols - 1] + 2 >= iconW;
+
+    uint cutoutIcon()
+    {
+        Widget iconWdg = Widget(kind: WidgetKind.rich,
+            spans: [style.cutout.icon],
+            slot: style.cutout.icon.slot, wrap: TextWrap.none,
+            hitId: style.cutout.hitId, textStyle: style.baseStyle);
+        if (style.cutout.hasFg)
+        {
+            iconWdg.fgOverride = style.cutout.fg;
+            iconWdg.hasFgOverride = true;
+        }
+        return b.add(iconWdg);
+    }
+
+    if (!framed)
+    {
+        uint[] parts;
+        foreach (ref ev; events)
+        {
+            const y = cast(int) ev.line;
+            final switch (ev.kind)
+            {
+                case EmitKind.ruleLine:
+                    const glyphs = ruleGlyphs(g, props, widths, ev.index);
+                    if (ev.index == 0 && cutout)
+                    {
+                        // `TBL6`: the icon replaces the last fill cells before
+                        // the corner; the junctions stay untouched.
+                        parts ~= positioned(0, y, b.container(WidgetKind.row, [
+                            ruleRun(glyphs[0 .. $ - 1 - iconW].to!string),
+                            cutoutIcon(),
+                            ruleRun(glyphs[$ - 1 .. $].to!string),
+                        ]));
+                    }
+                    else
+                        parts ~= positioned(0, y, ruleRun(glyphs.to!string));
+                    break;
+                case EmitKind.ruleCell:
+                    parts ~= positioned(cast(int) ev.x, y,
+                        ruleRun(walk.rules[ev.index].glyph.to!string));
+                    break;
+                case EmitKind.anchor:
+                    const rect = rects[ev.index];
+                    Widget cellW = Widget(kind: WidgetKind.stack,
+                        children: cellParts[ev.index],
+                        width: SizeSpec.fixed(cast(int) rect.w),
+                        height: SizeSpec.fixed(cast(int) rect.h),
+                        key: keyOf[ev.index]);
+                    parts ~= positioned(cast(int) rect.x, cast(int) rect.y,
+                        b.add(cellW));
+                    break;
+            }
+        }
+
+        Widget root = Widget(kind: WidgetKind.stack, children: parts,
+            width: SizeSpec.fixed(tableW), height: SizeSpec.fixed(tableH));
+        return TableWidgetResult(b.add(root), tableW, tableH,
+            viewWidth: tableW, viewHeight: tableH);
+    }
+
+    // ── The framed box: pinned caps, scrolled interior ──────────────────────
+    // Interior coordinates drop the frame column/row: everything between the
+    // borders — cells, inner `│` rules, and the interior `├─┼─┤` rule lines —
+    // moves as one offset behind the clip; the side caps (each line's first
+    // and last frame glyph) pin at the box edges so the frame stays whole.
+    uint[] interiorParts;
+    auto leftCapGlyph = new dchar[](interiorLines);
+    auto rightCapGlyph = new dchar[](interiorLines);
+    leftCapGlyph[] = props.glyphs.verticalLine;
+    rightCapGlyph[] = props.glyphs.verticalLine;
+    dchar[] topGlyphs, bottomGlyphs;
+
     foreach (ref ev; events)
     {
-        const y = cast(int) ev.line;
         final switch (ev.kind)
         {
             case EmitKind.ruleLine:
-                const glyphs = ruleGlyphs(g, props, widths, ev.index);
-                const iconW = cast(int) cellsOf(style.cutout.icon.text);
-                if (ev.index == 0 && style.cutout.present && props.border
-                    && iconW > 0 && widths[g.numCols - 1] + 2 >= iconW)
-                {
-                    // `TBL6`: the icon replaces the last fill cells before
-                    // the corner; the junctions stay untouched.
-                    Widget iconWdg = Widget(kind: WidgetKind.rich,
-                        spans: [style.cutout.icon],
-                        slot: style.cutout.icon.slot, wrap: TextWrap.none,
-                        hitId: style.cutout.hitId, textStyle: style.baseStyle);
-                    if (style.cutout.hasFg)
-                    {
-                        iconWdg.fgOverride = style.cutout.fg;
-                        iconWdg.hasFgOverride = true;
-                    }
-                    parts ~= positioned(0, y, b.container(WidgetKind.row, [
-                        ruleRun(glyphs[0 .. $ - 1 - iconW].to!string),
-                        b.add(iconWdg),
-                        ruleRun(glyphs[$ - 1 .. $].to!string),
-                    ]));
-                }
+                auto glyphs = ruleGlyphs(g, props, widths, ev.index);
+                if (ev.index == 0)
+                    topGlyphs = glyphs;
+                else if (ev.index == g.numRows)
+                    bottomGlyphs = glyphs;
                 else
-                    parts ~= positioned(0, y, ruleRun(glyphs.to!string));
+                {
+                    const li = cast(int) ev.line - 1;
+                    leftCapGlyph[li] = glyphs[0];
+                    rightCapGlyph[li] = glyphs[$ - 1];
+                    interiorParts ~= positioned(0, li,
+                        ruleRun(glyphs[1 .. $ - 1].to!string));
+                }
                 break;
             case EmitKind.ruleCell:
-                parts ~= positioned(cast(int) ev.x, y,
-                    ruleRun(walk.rules[ev.index].glyph.to!string));
+                const rc = walk.rules[ev.index];
+                const li = cast(int) rc.line - 1;
+                if (rc.x == 0)
+                    leftCapGlyph[li] = rc.glyph;
+                else if (rc.x + 1 == tableW)
+                    rightCapGlyph[li] = rc.glyph;
+                else
+                    interiorParts ~= positioned(cast(int) rc.x - 1, li,
+                        ruleRun(rc.glyph.to!string));
                 break;
             case EmitKind.anchor:
                 const rect = rects[ev.index];
@@ -314,15 +438,141 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
                     width: SizeSpec.fixed(cast(int) rect.w),
                     height: SizeSpec.fixed(cast(int) rect.h),
                     key: keyOf[ev.index]);
-                parts ~= positioned(cast(int) rect.x, cast(int) rect.y,
-                    b.add(cellW));
+                interiorParts ~= positioned(cast(int) rect.x - 1,
+                    cast(int) rect.y - 1, b.add(cellW));
                 break;
         }
     }
 
-    Widget root = Widget(kind: WidgetKind.stack, children: parts,
-        width: SizeSpec.fixed(tableW), height: SizeSpec.fixed(tableH));
-    return TableWidgetResult(b.add(root), tableW, tableH);
+    uint capColumn(in dchar[] caps)
+    {
+        auto runs = new uint[](0);
+        foreach (ch; caps)
+            runs ~= ruleRun(ch.to!string);
+        Widget col = Widget(kind: WidgetKind.column, children: runs,
+            width: SizeSpec.fixed(1), clipY: vOver,
+            childOffset: Point(0, vOver ? sy : 0));
+        if (vOver)
+            col.height = SizeSpec.fixed(shownLines);
+        return b.add(col);
+    }
+
+    // Top border: pinned corners (and the pinned TBL6 cutout) around the
+    // junction run, which scrolls behind a one-line viewport when hOver.
+    uint borderRow(in dchar[] glyphs, bool withCutout)
+    {
+        const mid = ruleRun(glyphs[1 .. $ - 1].to!string);
+        uint midPart = mid;
+        if (hOver)
+        {
+            Widget clip = Widget(kind: WidgetKind.column, children: [mid],
+                clipX: true, childOffset: Point(sx, 0),
+                width: SizeSpec.fixed(viewInnerW - (withCutout ? iconW : 0)),
+                height: SizeSpec.fixed(1));
+            midPart = b.add(clip);
+        }
+        uint[] parts = [ruleRun(glyphs[0 .. 1].to!string), midPart];
+        if (withCutout)
+            parts ~= cutoutIcon();
+        parts ~= ruleRun(glyphs[$ - 1 .. $].to!string);
+        return b.container(WidgetKind.row, parts);
+    }
+
+    uint top = borderRow(topGlyphs, cutout);
+
+    uint bottom;
+    if (hOver)
+    {
+        // The fence idiom: the bottom border IS the horizontal scrollbar —
+        // a plain fill under one semantic leaf, junctions dropped.
+        const fill = ruleRun(repeatGlyph(props.glyphs.horizontalLine,
+            viewInnerW));
+        const bar = scrollbar(b, ScrollbarSpec(
+            content: interiorW,
+            viewport: viewInnerW,
+            offset: sx,
+            axis: ScrollAxis.horizontal,
+            glyphs: ScrollbarGlyphs('━', props.glyphs.horizontalLine),
+            edge: RuleEdge.centerY,
+            hasEdge: true,
+            hitId: vp.hBarHitId ? vp.hBarHitId : style.hitId,
+            trackFg: style.ruleFg,
+            hasTrackFg: style.hasRuleFg,
+            thumbFg: vp.hThumbFg,
+            hasThumbFg: vp.hasHThumbFg,
+        ), viewInnerW);
+        const track = b.add(Widget(kind: WidgetKind.stack,
+            children: [fill, bar], width: SizeSpec.fixed(viewInnerW),
+            height: SizeSpec.fixed(1)));
+        bottom = b.container(WidgetKind.row, [
+            ruleRun(bottomGlyphs[0 .. 1].to!string), track,
+            ruleRun(bottomGlyphs[$ - 1 .. $].to!string),
+        ]);
+    }
+    else
+        bottom = borderRow(bottomGlyphs, false);
+
+    // The interior viewport plus its pinned caps (or the vertical track).
+    const inner = b.add(Widget(kind: WidgetKind.stack,
+        children: interiorParts, width: SizeSpec.fixed(interiorW),
+        height: SizeSpec.fixed(interiorLines)));
+    Widget clipW = Widget(kind: WidgetKind.column, children: [inner],
+        clipX: hOver, clipY: vOver,
+        childOffset: Point(hOver ? sx : 0, vOver ? sy : 0),
+        width: SizeSpec.fixed(viewInnerW),
+        height: SizeSpec.fixed(shownLines));
+    const clip = b.add(clipW);
+
+    uint rightSide;
+    if (vOver)
+    {
+        // The right border becomes the vertical track (fenceVTrack's shape).
+        auto trackCells = new uint[](0);
+        foreach (_; 0 .. shownLines)
+            trackCells ~= ruleRun(props.glyphs.verticalLine.to!string);
+        const base = b.add(Widget(kind: WidgetKind.column,
+            children: trackCells, width: SizeSpec.fixed(1)));
+        const vbar = scrollbar(b, ScrollbarSpec(
+            content: interiorLines,
+            viewport: shownLines,
+            offset: sy,
+            axis: ScrollAxis.vertical,
+            glyphs: ScrollbarGlyphs('┃', props.glyphs.verticalLine),
+            edge: RuleEdge.centerX,
+            hasEdge: true,
+            hitId: vp.vBarHitId ? vp.vBarHitId : style.hitId,
+            trackFg: style.ruleFg,
+            hasTrackFg: style.hasRuleFg,
+            thumbFg: vp.vThumbFg,
+            hasThumbFg: vp.hasVThumbFg,
+        ), shownLines);
+        rightSide = b.add(Widget(kind: WidgetKind.stack,
+            children: [base, vbar], width: SizeSpec.fixed(1),
+            height: SizeSpec.fixed(shownLines)));
+    }
+    else
+        rightSide = capColumn(rightCapGlyph);
+
+    const interiorRow = b.container(WidgetKind.row,
+        [capColumn(leftCapGlyph), clip, rightSide]);
+
+    Widget root = Widget(kind: WidgetKind.column,
+        children: [top, interiorRow, bottom],
+        width: SizeSpec.fixed(viewW),
+        height: SizeSpec.fixed(shownLines + 2));
+    return TableWidgetResult(b.add(root), tableW, tableH,
+        viewWidth: viewW, viewHeight: shownLines + 2,
+        hBar: hOver, vBar: vOver);
+}
+
+private string repeatGlyph(dchar g, int n) @safe pure
+{
+    import std.array : appender;
+
+    auto s = appender!string;
+    foreach (_; 0 .. n)
+        s ~= g;
+    return s[];
 }
 
 /// The widget view's decimal tails: cells of one wrapped line after its last
@@ -656,6 +906,109 @@ version (unittest)
     ];
     checkGlyphParity(rows, TableProps(headerRows: 1,
         columnAligns: [Align.left, Align.decimal]));
+}
+
+@("table.widgets.viewport.frameStaysPinned")
+@safe unittest
+{
+    // A 2-column table ~30 cells wide in a 16-cell box, scrolled 5 right:
+    // the frame pins, the interior carries the offset, the cutout rides the
+    // pinned top border.
+    auto cells = plainCells([
+        ["a rather long header", "second"],
+        ["x", "y"],
+    ]);
+    TableWidgetStyle style = {
+        cutout: TableCutout(present: true, hitId: 555,
+            icon: TextSpan(" + ", Slot.gutter, noBreak: true)),
+    };
+    auto b = Builder();
+    const res = buildTableWidgets(b, cells, TableProps(), style,
+        TableViewportSpec(availWidth: 16, x: 5));
+    assert(res.hBar && !res.vBar);
+    assert(res.viewWidth == 16 && res.width > 16);
+
+    auto tree = b.finish(res.root);
+    auto frames = layout(tree, Constraints(maxW: 16));
+    assert(frames[res.root].rect.width == 16);
+
+    bool sawClip, sawIcon;
+    foreach (i, ref n; tree.nodes)
+    {
+        if (n.clipX && n.childOffset.x == 5)
+            sawClip = true;
+        if (n.hitId == 555)
+        {
+            sawIcon = true;
+            // Pinned: 3 cells ending just before the top-right corner.
+            assert(frames[i].rect == Rect(16 - 4, 0, 3, 1));
+        }
+    }
+    assert(sawClip && sawIcon);
+}
+
+@("table.widgets.viewport.barsAreSemanticLeaves")
+@safe unittest
+{
+    import sparkles.ui.state : hoverTargets;
+
+    auto rows = new string[][](8);
+    foreach (r; 0 .. 8)
+        rows[r] = ["this row is quite wide indeed", "even wider than that"];
+    auto b = Builder();
+    const res = buildTableWidgets(b, plainCells(rows), TableProps(),
+        TableWidgetStyle(),
+        TableViewportSpec(availWidth: 20, maxLines: 4,
+            hBarHitId: 700, vBarHitId: 800));
+    assert(res.hBar && res.vBar);
+    assert(res.viewHeight == 6); // 4 interior lines + both borders
+
+    auto tree = b.finish(res.root);
+    auto frames = layout(tree, Constraints(maxW: 20));
+    auto targets = hoverTargets(tree, frames);
+
+    int bars;
+    Rect hRect, vRect;
+    foreach (i, ref const n; tree.nodes)
+    {
+        if (n.kind != WidgetKind.scrollbar)
+            continue;
+        ++bars;
+        assert(n.barContent > n.barViewport);
+        if (n.hitId == 700)
+            hRect = frames[i].rect;
+        else
+        {
+            assert(n.hitId == 800);
+            vRect = frames[i].rect;
+            assert(frames[i].rect.width == 1 && frames[i].rect.height == 4);
+        }
+    }
+    assert(bars == 2);
+
+    bool hHit, vHit;
+    foreach (ref const t; targets)
+    {
+        if (t.hitId == 700)
+            hHit = t.rect == hRect;
+        if (t.hitId == 800)
+            vHit = t.rect == vRect;
+    }
+    assert(hHit && vHit,
+        "the painted semantic track and its hit target share one frame");
+}
+
+@("table.widgets.viewport.fittingTableStaysUnframed")
+@safe unittest
+{
+    auto b = Builder();
+    const res = buildTableWidgets(b, plainCells([["a", "b"]]), TableProps(),
+        TableWidgetStyle(), TableViewportSpec(availWidth: 60, maxLines: 10));
+    assert(!res.hBar && !res.vBar);
+    assert(res.viewWidth == res.width && res.viewHeight == res.height);
+    auto tree = b.finish(res.root);
+    foreach (ref const n; tree.nodes)
+        assert(!n.clipX && !n.clipY && n.kind != WidgetKind.scrollbar);
 }
 
 @("table.widgets.cutoutPinsIconInTopBorder")
