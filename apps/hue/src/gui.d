@@ -36,6 +36,9 @@ import sparkles.input.frame : InputFrame, foldFrame;
 import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
     KeyContext;
 import picker_host : PickerAction, PickerHost;
+import picker_preview : PickerDocPane;
+import picker_view : pickerGeometryFor, pickerPreviewRect;
+import sparkles.ui_tui : Cell, Grid;
 import lantern : LanternState, ltnStep = step, ltnTick = tick,
     LtnStepKind = StepKind;
 import lantern_view : BoxLayout, LabelArena, LanternStyle, Placement,
@@ -760,17 +763,30 @@ int runGui(GuiArgs guiArgs) @system
     // The fuzzy file picker (`<leader>ff`, `PKS1`) — heap because the host
     // is non-copyable (address-stable scheduler slots), allocated on first
     // open (a user action, under `NFR1`'s startup carve-out). Reopening
-    // re-walks the corpus over the explorer's root and globs.
+    // re-walks the corpus over the explorer's root and globs. The preview
+    // pane (`picker_preview`) is a real document pane wired with the same
+    // loader, themes, grammar cache and ANSI decoder as the main view.
     PickerHost* filePicker;
+    PickerDocPane* filePickerDoc;
     void openFilePicker()
     {
         if (filePicker is null)
             filePicker = new PickerHost;
+        if (filePickerDoc is null)
+            filePickerDoc = new PickerDocPane;
+        filePickerDoc.load = loadDoc;
+        filePickerDoc.pane.names = names;
+        filePickerDoc.pane.themes = themes;
+        filePickerDoc.pane.labels = labels;
+        filePickerDoc.pane.vm.cache = tsCache;
+        filePickerDoc.pane.vm.decodeAnsi = (const(char)[] b) => decodeAnsi(b);
+        filePickerDoc.syncTheme(vm.themeIdx);
         filePicker.open(pn.tree.root.length ? pn.tree.root : ".",
             pn.tree.includeGlobs, pn.tree.excludeGlobs);
     }
 
     scope (exit) if (filePicker !is null) filePicker.shutdown();
+    scope (exit) if (filePickerDoc !is null) filePickerDoc.shutdown();
 
     /// ditto — the set's currently-selected entry (`GNV1`).
     bool loadSelected()
@@ -820,6 +836,75 @@ int runGui(GuiArgs guiArgs) @system
     // (`NFR2`, via `buildDisplayListInto`).
     LabelArena ltnLabels;
     SmallBuffer!(DrawOp, 256) ltnOps;
+
+    // The picker preview's cell blit: the document pane paints a `Grid`
+    // (exactly what the terminal shows), and this draws those cells through
+    // the font set — background runs coalesced, glyphs with their real
+    // bold/italic faces — so the pane needs no second GUI painter.
+    void blitPaneGrid(ref Grid src, float x0, float y0)
+    {
+        import sparkles.base.term_style : TextAttr, UnderlineStyle;
+
+        alias TColor = typeof(Cell.init.style.fg());
+        static RgbColor cellColor(in TColor value, RgbColor fallback)
+            @safe pure nothrow @nogc
+            => value.kind == TColor.Kind.rgb ? value.rgb : fallback;
+
+        auto cnv = RaylibCanvas(fontsP, &buf, fonts.cellW(), fonts.cellH());
+        const cw = fonts.cellW();
+        const chh = fonts.cellH();
+        foreach (y; 0 .. src.rows)
+        {
+            // Coalesce equal-background runs into one fill each.
+            int runStart;
+            RgbColor runBg;
+            bool haveRun;
+            void flush(int endX)
+            {
+                if (haveRun)
+                    cnv.fillPixels(cast(int)(x0 + runStart * cw),
+                        cast(int)(y0 + y * chh), (endX - runStart) * cw, chh,
+                        runBg);
+                haveRun = false;
+            }
+
+            foreach (x; 0 .. src.cols)
+            {
+                const cell = src[cast(ushort) x, cast(ushort) y];
+                const bg = cellColor(cell.style.bg, vm.pageBg);
+                if (!haveRun || bg != runBg)
+                {
+                    flush(x);
+                    runStart = x;
+                    runBg = bg;
+                    haveRun = true;
+                }
+            }
+            flush(src.cols);
+
+            foreach (x; 0 .. src.cols)
+            {
+                const cell = src[cast(ushort) x, cast(ushort) y];
+                if (cell.width == 0) // a wide glyph's continuation cell
+                    continue;
+                const g = cell.grapheme;
+                if (g == " ")
+                    continue;
+                TextStyle ts;
+                const attrs = cell.style.attrs;
+                if (attrs.bits & TextAttr.bold.bits)
+                    ts.bits |= TextStyle.bold;
+                if (attrs.bits & TextAttr.italic.bits)
+                    ts.bits |= TextStyle.italic;
+                if (attrs.bits & TextAttr.strikethrough.bits)
+                    ts.bits |= TextStyle.strikethrough;
+                if (cell.style.underline != UnderlineStyle.none)
+                    ts.bits |= TextStyle.underline;
+                drawText(fonts, cstrOf(buf, g), x0 + x * cw, y0 + y * chh,
+                    ts, cellColor(cell.style.fg, vm.pageFg));
+            }
+        }
+    }
 
     // Pointer capture (STM11, closing IXR6's GUI half). Every draggable
     // affordance takes an id and asks `inp.capture.available(id)` — "free, or
@@ -1591,24 +1676,37 @@ int runGui(GuiArgs guiArgs) @system
         }
 
         // The fuzzy picker (`PIK3`), over everything: the same shared widget
-        // tree the terminal paints, centered and one row down.
+        // tree the terminal paints, centered and one row down — then the
+        // preview panel's framed hole is filled with the live document
+        // pane's cells, drawn through the font set.
         if (filePicker !is null && filePicker.state.active)
         {
             const cellsW = screenW / cellW;
-            const pkCols = cellsW > 8
-                ? (cellsW - 4 > 120 ? 120 : cellsW - 4) : cellsW;
-            auto pkTree = filePicker.buildView();
-            auto pkFrames = layout(pkTree, Constraints(maxW: pkCols));
+            const cellsH = screenH / cellH;
+            const pkGeometry = pickerGeometryFor(cellsW, cellsH);
+            auto pkTree = filePicker.buildView(pkGeometry);
+            auto pkFrames = layout(pkTree,
+                Constraints(maxW: 2 * pkGeometry.panelCols));
             const pkPanel = pkFrames[pkTree.root].rect;
             const pkX = (cellsW - pkPanel.width) / 2;
+            const pkOriginX = pkX > 0 ? pkX : 0;
             window.resetClip();
             ltnOps.clear(); // sequential reuse of the guide's sink (`NFR2`)
             buildDisplayListInto(pkTree, pkFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
                 ltnOps);
             auto pkCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
-                cast(float)((pkX > 0 ? pkX : 0) * cellW), cast(float) cellH);
+                cast(float)(pkOriginX * cellW), cast(float) cellH);
             paint(pkCanvas, ltnOps[]);
+
+            const hole = pickerPreviewRect(pkTree, pkFrames);
+            if (filePickerDoc !is null && hole.width > 0 && hole.height > 0)
+            {
+                auto paneGrid = &filePickerDoc.paint(hole.width, hole.height);
+                blitPaneGrid(*paneGrid,
+                    cast(float)((pkOriginX + hole.x) * cellW),
+                    cast(float)((1 + hole.y) * cellH));
+            }
         }
 
         window.resetClip(); // never let a scissor survive the frame
@@ -1950,9 +2048,17 @@ int runGui(GuiArgs guiArgs) @system
 
         // The picker's scheduler publishes its newest partial page each
         // frame — and, in the synchronous degradation (`PIK8`), takes its
-        // next duration-bounded step here on the frame's own budget.
+        // next duration-bounded step here on the frame's own budget. The
+        // preview document pane's debounce/dwell clocks advance with it.
         if (filePicker !is null)
             cast(void) filePicker.poll();
+        if (filePicker !is null && filePicker.state.active
+            && filePickerDoc !is null)
+        {
+            filePickerDoc.select(filePicker.selectedPath);
+            filePickerDoc.syncTheme(vm.themeIdx);
+            cast(void) filePickerDoc.tick();
+        }
 
         if (filePicker !is null && filePicker.state.active)
         {
@@ -1962,12 +2068,24 @@ int runGui(GuiArgs guiArgs) @system
 
             foreach (k; keyBuf)
             {
+                // `Ctrl-d`/`Ctrl-u` scroll the preview pane — forwarded as
+                // the page keys its own keymap already binds.
+                if (k.key == Key.char_ && k.mods.ctrl
+                    && (k.ch == 'd' || k.ch == 'u') && filePickerDoc !is null)
+                {
+                    cast(void) filePickerDoc.pane.handle(Event(KeyEvent(
+                        key: k.ch == 'd' ? Key.pageDown : Key.pageUp)));
+                    continue;
+                }
                 final switch (filePicker.handleKey(k))
                 {
                 case PickerAction.consumed:
+                    break;
                 case PickerAction.closed:
+                    filePickerDoc.close();
                     break;
                 case PickerAction.accepted:
+                    filePickerDoc.close();
                     cast(void) openPath(filePicker.acceptedPath,
                         baseName(filePicker.acceptedPath), "");
                     break;
