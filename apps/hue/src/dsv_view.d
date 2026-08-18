@@ -402,6 +402,15 @@ version (unittest)
     checkDsvGolden("tall", DsvFlags(), maxLines: 8);
 }
 
+@("dsv_view.golden.widescrollViewport")
+@system unittest
+{
+    // A grid wider than the 48-cell golden width: the horizontal framed
+    // viewport engages (DSG4 via TBL7) — pinned corners, the bottom border
+    // as the scrollbar, the interior clipped at offset 0.
+    checkDsvGolden("wide");
+}
+
 @("dsv_view.columnName.spreadsheetLetters")
 @safe pure
 unittest
