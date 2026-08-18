@@ -870,8 +870,12 @@ unittest
 
 // ── the session: the one owner of preview state (FMV / RUL8) ────────────────
 
-/// The ruler's sane range (`RUL5`); drag, nudge and CLI all pass through it.
-enum ushort minRulerCol = 40;
+/// The ruler's range (`RUL5`); drag, nudge and CLI all pass through it. The
+/// floor is 1, not a "sane" minimum: the formatter is total at any width
+/// (a soft max of 1 simply breaks every group it can, measured at ~1 ms),
+/// so dragging the ruler to the gutter is a legitimate — and useful —
+/// question to ask it, not an input to defend against.
+enum ushort minRulerCol = 1;
 /// ditto
 enum ushort maxRulerCol = 300;
 
@@ -1421,6 +1425,24 @@ unittest
     // Dragging reshapes everywhere (RUL3).
     s.rulerDrag = true;
     assert(s.rulerShape(50.0) == PointerShape.ewResize);
+}
+
+@("format_preview.ruler.clampFloorIsOne")
+@safe pure nothrow @nogc
+unittest
+{
+    // `RUL5`: the floor is 1, not a "comfortable" minimum — the formatter is
+    // total at any width, so dragging the ruler into the gutter is a question
+    // it can answer. Pinned here so it is not quietly raised again.
+    assert(minRulerCol == 1);
+    assert(clampRulerCol(1) == 1);
+    assert(clampRulerCol(0) == 1);
+    assert(clampRulerCol(-40) == 1);
+    assert(clampRulerCol(39) == 39); // once floored at 40, this read 40
+    assert(clampRulerCol(120) == 120);
+    assert(clampRulerCol(maxRulerCol) == maxRulerCol);
+    assert(clampRulerCol(maxRulerCol + 1) == maxRulerCol);
+    assert(clampRulerCol(long.max) == maxRulerCol);
 }
 
 version (HueDmdFmt)

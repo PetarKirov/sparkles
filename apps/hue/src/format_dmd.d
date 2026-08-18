@@ -55,7 +55,9 @@ SRC";
     assert(at80.length, "formatDSource returned empty output");
     foreach (i; 0 .. 50)
     {
-        const width = cast(ushort) (40 + (i * 7) % 200);
+        // From 1, not 40: the ruler's floor is 1 (`minRulerCol`), so the
+        // narrow widths a drag to the gutter reaches are part of the gate.
+        const width = cast(ushort) (1 + (i * 7) % 240);
         const got = formatDSource(source, "spike.d", width);
         assert(got.length, "formatDSource returned empty output");
     }
