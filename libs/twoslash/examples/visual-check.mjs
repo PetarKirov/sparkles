@@ -110,10 +110,18 @@ addEventListener('load', () => setTimeout(() => {
       const rh = row.getBoundingClientRect().height;
       const label = row.querySelector('.twoslash-query-line, .twoslash-completion-list, .twoslash-error-line');
       const elbow = row.querySelector('.twoslash-crowded-elbow');
+      const arrow = row.querySelector('.twoslash-popup-arrow');
       if (elbow) segments.push(seg(elbow, 'elbow', i));
+      // The notch's CENTRE, not its left edge: it is a 6px diamond that has to
+      // straddle the 1px rule, so its edge is never the thing to compare.
+      const arrowCentre = (el) => {
+        const r = el.getBoundingClientRect();
+        return +((r.left + r.width / 2 - col0) / charW).toFixed(2);
+      };
       return {
         label: label ? leftCol(label) : null,
         elbow: elbow ? leftCol(elbow) : null,
+        arrow: arrow ? arrowCentre(arrow) : null,
         guides: [...row.querySelectorAll('.twoslash-crowded-guide')].map(g => {
           segments.push(seg(g, 'guide', i));
           return {
@@ -123,9 +131,17 @@ addEventListener('load', () => setTimeout(() => {
         }),
       };
     });
+    // Where the marker row puts its anchors. The row is preformatted text
+    // sharing the code's left edge, so the glyph at text index i sits at
+    // column i -- the index IS the column. (No backticks in here: this comment
+    // lives inside a JS template literal.)
+    const anchorCols = [...markers.textContent]
+      .map((ch, i) => (ch === '\\u252c' ? i : -1))
+      .filter(i => i >= 0);
     return {
       markers: markers.textContent,
       markersBottom: +markers.getBoundingClientRect().bottom.toFixed(2),
+      anchorCols,
       rows,
       segments,
     };
@@ -235,6 +251,23 @@ for (const name of names) {
       if (row.elbow === null || Math.abs(row.elbow - row.label) > COL_TOL)
         problems.push(
           `crowded row ${i} elbow ${row.elbow} off label ${row.label}`,
+        );
+      // One column carries the whole chain: the `┬` under the span, the rule
+      // down to the label, and the notch the label points back with.
+      if (
+        row.elbow !== null &&
+        !box.anchorCols.some(c => Math.abs(c - row.elbow) <= COL_TOL)
+      )
+        problems.push(
+          `crowded row ${i} elbow ${row.elbow} sits on no marker column (${box.anchorCols.join(',')})`,
+        );
+      if (
+        row.arrow !== null &&
+        row.elbow !== null &&
+        Math.abs(row.arrow - row.elbow) > COL_TOL
+      )
+        problems.push(
+          `crowded row ${i} arrow ${row.arrow} off the connector column ${row.elbow}`,
         );
       if (row.label >= previous)
         problems.push(
