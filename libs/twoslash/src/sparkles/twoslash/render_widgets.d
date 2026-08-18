@@ -150,8 +150,14 @@ This is the **line-source-agnostic seam** (`OVL8`): the caller supplies a row
 widget and says which line of `tw.code` it shows, so an overlay is no longer
 tied to "the twoslash document is the whole document". `viewTwoslashDocument`
 is one caller; hue's diff view is the other, where a row shows one side of one
-file and sits behind a gutter — hence `columnOffset`, the cells the row's own
-chrome occupies before the code starts.
+file.
+
+Decorations are positioned in the row's $(I own) coordinates — a `stack` child
+shares its parent's origin, so a caller that puts chrome beside the row makes
+the layout engine move both together. This used to take a `columnOffset` that
+every caller had to compute and thread, which is a layout concern leaking into
+a view; the chrome is a sibling widget now
+($(REF withGutter, sparkles,ui,components,gutter)) and the offset is gone.
 
 Params:
     b = the builder the row was added to
@@ -160,10 +166,9 @@ Params:
     plan = `planTwoslash(tw)`, hoisted by the caller so a multi-row render
         plans once
     line = the 0-based line of `tw.code` this row shows
-    columnOffset = cells of leading chrome on the row (gutter, markers)
 */
 uint decorateCodeRow(ref Builder b, uint code, const TwoslashReturn tw,
-    const ref TwoslashPlan plan, size_t line, int columnOffset = 0)
+    const ref TwoslashPlan plan, size_t line)
 {
     import sparkles.ui.canvas : LineStyle;
     import sparkles.ui.geometry : Point, SizeSpec;
@@ -174,7 +179,7 @@ uint decorateCodeRow(ref Builder b, uint code, const TwoslashReturn tw,
         if (d.line != line)
             continue;
         const cols = cast(int) cellsOf(tw.code[d.start .. d.end]);
-        const at = Insets(0, 0, 0, columnOffset + cast(int) d.character);
+        const at = Insets(0, 0, 0, cast(int) d.character);
         if (d.kind == NodeType.highlight)
         {
             const tint = b.add(Widget(kind: WidgetKind.box,
@@ -324,15 +329,13 @@ in (nodeIndex < tw.nodes.length)
 /// `sigSpans` (when non-empty) replaces a query signature's single-color text
 /// with resolved syntax-colored spans.
 ///
-/// `columnOffset` is the chrome the code rows above carry — a gutter, a diff
-/// marker — in cells. A caret points at a source column, and the block only
-/// lands under the token it describes if it is told how far the code itself
-/// was pushed right. Same contract as $(LREF decorateCodeRow), for the same
-/// reason.
+/// Indented to its source column and nothing else. The caller gives the block
+/// a blank gutter strip of the same width as the code rows above, so the caret
+/// lands under its token without this knowing what that width is.
 private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex,
-    TextSpan[] sigSpans = null, int maxWidth = 0, int columnOffset = 0)
+    TextSpan[] sigSpans = null, int maxWidth = 0)
 {
-    const indent = Insets(0, 0, 0, columnOffset + cast(int) node.character);
+    const indent = Insets(0, 0, 0, cast(int) node.character);
     const hit = hitOf(nodeIndex);
 
     final switch (node.type)
