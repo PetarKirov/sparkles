@@ -237,10 +237,16 @@ immutable Binding[] galleryBindings = [
         "row rules"),
     bind(GalleryScope.pageTable, chord('s'), GalleryCommand.tableStubCol,
         "stub col"),
-    bind(GalleryScope.pageTable, chord('['),
-        GalleryCommand.tableScrollLeft, "scroll left"),
-    bind(GalleryScope.pageTable, chord(']'),
-        GalleryCommand.tableScrollRight, "scroll right"),
+    // NOT `[`/`]`, though those are the conventional pair: the shell owns
+    // them catalog-wide for the theme, and since a page's keys also fire
+    // from the nav region (the shell's fallback rung), an advertised
+    // binding has to mean the same thing wherever the keyboard happens to
+    // be — the Dock page's `,`/`.` rule. `<`/`>` are `,`/`.`'s shifted
+    // siblings, so the two scroll axes read as one family.
+    bind(GalleryScope.pageTable, chord('<'),
+        GalleryCommand.tableScrollLeft, "cols left"),
+    bind(GalleryScope.pageTable, chord('>'),
+        GalleryCommand.tableScrollRight, "cols right"),
     bind(GalleryScope.pageTable, chord(','), GalleryCommand.tableScrollUp,
         "rows up"),
     bind(GalleryScope.pageTable, chord('.'), GalleryCommand.tableScrollDown,
@@ -449,19 +455,21 @@ version (unittest)
 @safe pure nothrow @nogc
 unittest
 {
-    // The Table page claims `[`/`]` ahead of theme cycling — but only while
-    // it shows and the keyboard is in the content region. (The Dock page
-    // deliberately does not: see its rows for why a page that can be reached
-    // from either region should not bind the shell's pair.)
-    const table = GalleryContext(pageScope: GalleryScope.pageTable,
+    // The Components page claims the arrows ahead of page switching — but
+    // only while it shows and the keyboard is in the content region. The
+    // arrows are the one deliberate shadow family: readers expect them to
+    // be region-local, where a shadowed PRINTABLE would contradict what the
+    // status bar advertises (the Dock and Table pages' `,`/`.`-family rows
+    // exist to avoid exactly that).
+    const comp = GalleryContext(pageScope: GalleryScope.pageComponents,
         contentRegion: true);
-    assert(ch(']', table).cmd == GalleryCommand.tableScrollRight);
-    assert(ch('[', table).cmd == GalleryCommand.tableScrollLeft);
+    assert(nk(Key.right, comp).cmd == GalleryCommand.compTabNext);
+    assert(nk(Key.left, comp).cmd == GalleryCommand.compTabPrev);
 
-    const tableNav = GalleryContext(pageScope: GalleryScope.pageTable);
-    assert(ch(']', tableNav).cmd == GalleryCommand.themeNext,
+    const compNav = GalleryContext(pageScope: GalleryScope.pageComponents);
+    assert(nk(Key.right, compNav).cmd == GalleryCommand.pageNext,
         "in the nav region the shell keeps the key");
-    assert(ch(']').cmd == GalleryCommand.themeNext,
+    assert(nk(Key.right).cmd == GalleryCommand.pageNext,
         "…and a page with no scope never shadows it");
 
     // A page scope never reaches across pages.
