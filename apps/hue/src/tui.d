@@ -341,10 +341,7 @@ struct PreviewTui
         => height > 2 ? height - 2 : 1;
 
     private long maxTop() const @safe pure nothrow @nogc
-    {
-        const over = lineCount - bodyRows();
-        return over > 0 ? over : 0;
-    }
+        => vm.maxTopFor(bodyRows());
 
     /**
     A wheel notch, in whichever axis it names.
@@ -385,15 +382,16 @@ struct PreviewTui
         const tbV = vm.tableAtRow(top + (w.pos.y - 1));
         if (tbV != size_t.max && vm.scrollTableV(tbV, w.dy))
             return true;
-        top += w.dy;
-        clampTop();
+        vm.scrollVertical(w.dy, bodyRows());
         return true;
     }
 
+    /// `NAV3`: the safety clamp — `top` must address a real row. Filling the
+    /// pane is `scrollVertical`'s job, not something to re-impose after every
+    /// rebuild: that is what moved the first line on a resize (issue #299).
     private void clampTop() @safe pure nothrow @nogc
     {
-        if (top > maxTop) top = maxTop;
-        if (top < 0) top = 0;
+        vm.clampView();
     }
 
     private void clampSel() @safe pure nothrow @nogc
@@ -466,8 +464,7 @@ struct PreviewTui
             const i = forward ? (from + step) % n : ((from - step) % n + n) % n;
             if (lineMatches(cast(size_t) i))
             {
-                top = i;
-                clampTop();
+                vm.scrollTo(i);
                 return;
             }
         }
@@ -1301,14 +1298,14 @@ struct PreviewTui
 
             case Command.quit: return false;
 
-            case Command.viewDown:     top += 1; clampTop(); break;
-            case Command.viewUp:       top -= 1; clampTop(); break;
-            case Command.viewPageDown: top += rows; clampTop(); break;
-            case Command.viewPageUp:   top -= rows; clampTop(); break;
+            case Command.viewDown:     vm.scrollVertical(1, rows); break;
+            case Command.viewUp:       vm.scrollVertical(-1, rows); break;
+            case Command.viewPageDown: vm.scrollVertical(rows, rows); break;
+            case Command.viewPageUp:   vm.scrollVertical(-rows, rows); break;
             case Command.viewHome:
-            case Command.viewTop:      top = 0; break;
+            case Command.viewTop:      vm.scrollTo(0); break;
             case Command.viewEnd:
-            case Command.viewBottom:   top = maxTop; break;
+            case Command.viewBottom:   vm.scrollTo(maxTop); break;
 
             case Command.themePrev:
                 themeIdx = themeIdx == 0 ? names.length - 1 : themeIdx - 1;
@@ -1329,8 +1326,7 @@ struct PreviewTui
                 {
                     // Nothing to expand: Enter/Space fall back to page-down,
                     // which is what a reader pressing Space actually wants.
-                    top += rows;
-                    clampTop();
+                    vm.scrollVertical(rows, rows);
                 }
                 break;
             case Command.cycleHoverPopup:
@@ -1505,8 +1501,7 @@ struct PreviewTui
                     cast(size_t) lineCount, rows, rows)
                 : sb.scrolledTo(top).dragged(e.pos.y - 1,
                     cast(size_t) lineCount, rows, rows);
-            top = sb.offset;
-            clampTop();
+            vm.scrollTo(sb.offset);
             return true;
         }
         // 0-based cells: row 0 is the header, the body spans rows 1 .. rows.
@@ -2488,4 +2483,81 @@ version (HueDmdFmt)
     t.handle(Event(KeyEvent(key: Key.enter)));
     assert(applied == "qty:>1");
     assert(!t.inputActive);
+}
+
+// ── the resize contract (`NAV5`/`NAV6`, issue #299) ──────────────────────────
+
+@("tui.resize.keepsTheFirstLineInPlace")
+@system unittest
+{
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+
+    // The end-to-end shape of issue #299 through the pane that owns the
+    // terminal's geometry: narrowing re-wraps, and the row the reader was on
+    // must still be the row the reader is on.
+    static immutable src =
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa\n"
+        ~ "second line\n"
+        ~ "third line that is also quite long and will certainly wrap\n"
+        ~ "fourth\nfifth\nsixth\nseventh\neighth\nninth\ntenth\n";
+    static HighlightEvent[1] ev = [HighlightEvent.sourceSpan(0, src.length)];
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+
+    PreviewTui t;
+    t.title = "doc.d";
+    t.source = src;
+    t.events = ev[];
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 70;
+    t.height = 8;
+    t.relayout();
+
+    t.vm.scrollTo(4);
+    const anchor = t.vm.rows[4].srcStart;
+    assert(anchor != size_t.max);
+
+    t.width = 30; // a narrower terminal: the long lines wrap
+    t.relayout();
+    assert(t.vm.rows[cast(size_t) t.top].srcStart == anchor,
+        "narrowing the terminal moved the first visible line");
+
+    t.width = 70; // …and back
+    t.relayout();
+    assert(t.vm.rows[cast(size_t) t.top].srcStart == anchor);
+}
+
+@("tui.resize.aTallerTerminalRevealsMoreBelow")
+@system unittest
+{
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+
+    // Growing the window must only change how much of the file is visible
+    // AFTER the first line — never which line that is.
+    static immutable src = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n";
+    static HighlightEvent[1] ev = [HighlightEvent.sourceSpan(0, src.length)];
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+
+    PreviewTui t;
+    t.title = "doc.d";
+    t.source = src;
+    t.events = ev[];
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 6;
+    t.relayout();
+
+    t.handle(Event(KeyEvent(key: Key.end))); // Shift-G / End: to the bottom
+    const parked = t.top;
+    assert(parked > 0);
+
+    t.height = 20; // the whole document now fits in the pane
+    t.relayout();
+    assert(t.top == parked,
+        "a taller terminal scrolled the document back to fill itself");
 }

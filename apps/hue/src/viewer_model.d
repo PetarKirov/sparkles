@@ -684,6 +684,26 @@ struct ViewerModel
         anchorOvershoot = true;
     }
 
+    /**
+    `NAV6`: the row extent to publish to a scroll container.
+
+    Normally the document's own row count. While a resize has parked the view
+    past the last full screen, it is the document PLUS that trailing space —
+    the container's clamp would otherwise snap the offset back the moment it
+    round-trips through the scroll model, undoing the pinned first line. The
+    inflation lasts exactly as long as the overshoot does.
+    */
+    long scrollExtent(long visRows) const @safe pure nothrow @nogc
+    {
+        const total = cast(long) rows.length;
+        const reach = top + visRows;
+        return anchorOvershoot && reach > total ? reach : total;
+    }
+
+    /// ditto, against the pane height the backends publish in `viewRows`.
+    long scrollExtent() const @safe pure nothrow @nogc
+        => scrollExtent(viewRows);
+
     /// The last `top` that fills a `visRows`-tall pane with content.
     long maxTopFor(long visRows) const @safe pure nothrow @nogc
     {

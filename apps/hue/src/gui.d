@@ -511,7 +511,10 @@ int runGui(GuiArgs guiArgs) @system
     {
         pn.dock.contentExtent(treePane, pn.tree.contentCols,
             pn.tree.rows.length);
-        pn.dock.contentExtent(docPane, vm.contentCols, vm.rows.length);
+        // `NAV6`: the extent, not the row count — a resize that pinned the
+        // first line past the last full screen must not be clamped back by
+        // the container the moment the offset round-trips through it.
+        pn.dock.contentExtent(docPane, vm.contentCols, vm.scrollExtent());
         pn.dock.contentExtent(inspPane, pn.insp.tv.contentCols,
             cast(long) pn.insp.tv.rows.length + pn.insp.tv.chromeRows);
     }
@@ -826,7 +829,7 @@ int runGui(GuiArgs guiArgs) @system
             return;
         vm.curMatch = i % vm.matches.length;
         vm.revealOffset(vm.matches[vm.curMatch].start);
-        vm.top = vm.visualOfMatch(vm.matches[vm.curMatch]) - visibleRows / 2;
+        vm.scrollTo(vm.visualOfMatch(vm.matches[vm.curMatch]) - visibleRows / 2);
     }
 
 
@@ -2200,7 +2203,7 @@ int runGui(GuiArgs guiArgs) @system
                             const line = cast(size_t) parsed;
                             if (line < vm.lineStarts.length)
                                 vm.revealOffset(vm.lineStarts[line]); // FLD6
-                            vm.top = vm.visualOfSrc(line);
+                            vm.scrollTo(vm.visualOfSrc(line));
                         }
                     }
                     catch (Exception)
@@ -2334,18 +2337,18 @@ int runGui(GuiArgs guiArgs) @system
 
                 // ── viewer ───────────────────────────────────────────────
                 case Command.viewDown:
-                    ++vm.top;
+                    vm.scrollVertical(1, docRows);
                     break;
                 case Command.viewUp:
-                    --vm.top;
+                    vm.scrollVertical(-1, docRows);
                     break;
                 case Command.viewHome:
                 case Command.viewTop:
-                    vm.top = 0;
+                    vm.scrollTo(0);
                     break;
                 case Command.viewEnd:
                 case Command.viewBottom:
-                    vm.top = maxTop;
+                    vm.scrollTo(maxTop);
                     break;
                 case Command.quit:
                     // The TUI has always had `q`; the GUI gains it here so one
@@ -2364,10 +2367,10 @@ int runGui(GuiArgs guiArgs) @system
                     // rather than growing a second, worse spelling of hover.
                     break;
                 case Command.viewPageDown:
-                    vm.top += visibleRows;
+                    vm.scrollVertical(visibleRows, docRows);
                     break;
                 case Command.viewPageUp:
-                    vm.top -= visibleRows;
+                    vm.scrollVertical(-visibleRows, docRows);
                     break;
 
                 // ── shared, normal mode ──────────────────────────────────
@@ -2723,7 +2726,10 @@ int runGui(GuiArgs guiArgs) @system
         const treePaneRows = pn.tree.bodyRows;
         const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
 
-        vm.top = vm.top < 0 ? 0 : (vm.top > maxTop ? maxTop : vm.top);
+        // `NAV3`: the frame clamp keeps `top` addressing a real row and
+        // nothing more — enforcing `maxTop` here is what used to pull the
+        // first line up when the window grew (issue #299).
+        vm.clampView();
         const topLine = cast(size_t) vm.top;
 
         // M16: every input block runs BEFORE the frame draws — the
@@ -3250,7 +3256,7 @@ int runGui(GuiArgs guiArgs) @system
             vm.showPreview = false;
             vm.rebuild();
         }
-        vm.top = initialTop;
+        vm.scrollTo(initialTop);
         if (docPath.length)
             pn.tree.reveal(docPath);
 
@@ -3273,7 +3279,7 @@ int runGui(GuiArgs guiArgs) @system
         {
             vm.search(inp.query[]);
             if (vm.matches.length)
-                vm.top = vm.visualOfMatch(vm.matches[0]);
+                vm.scrollTo(vm.visualOfMatch(vm.matches[0]));
         }
 
         // Debug/CI: the lantern seed opens the guide's pending path at once, so a
