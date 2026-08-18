@@ -25,13 +25,13 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import kit;
 import scrollbars;
+import keymap : GalleryCommand;
 import state : GalleryState, hitActions, hitChromeBar, hitChromeSamples, hitTabs;
 
 @safe:
 
 /// ditto
-static immutable string[] keys =
-    ["← → tab", "1-4 action", "n/p scroll", "click anything"];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageComponents`.
 
 /// The live scroll view's document and viewport.
 private enum int chromeDocRows = 10;
@@ -228,33 +228,45 @@ private uint glyphScrollbar(ref Builder b, in ScrollView sv,
 }
 
 /// ditto
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
-    if (k.key == Key.left)
+    switch (cmd)
     {
-        s.componentsTab = s.componentsTab == 0
-            ? tabLabels.length - 1 : s.componentsTab - 1;
-        return true;
+        case GalleryCommand.compTabPrev:
+            s.componentsTab = s.componentsTab == 0
+                ? tabLabels.length - 1 : s.componentsTab - 1;
+            return true;
+        case GalleryCommand.compTabNext:
+            s.componentsTab = (s.componentsTab + 1) % tabLabels.length;
+            return true;
+        case GalleryCommand.compAction:
+            // The ranged row's arg is 1-based; the action index is not.
+            s.componentsAction = arg - 1;
+            return true;
+        case GalleryCommand.compScrollDown:
+        case GalleryCommand.compScrollUp:
+            // Through the machine, so the printed thumb and the drawn one move
+            // together — the same rule the Scrolling page states.
+            s.chromeView.wheeledV(
+                cmd == GalleryCommand.compScrollDown ? 1 : -1, ScrollExtents(
+                    chromeGeom.content, chromeGeom.viewport, chromeGeom.track));
+            return true;
+        default: return false;
     }
-    if (k.key == Key.right)
+}
+
+version (unittest)
+{
+    import keymap : commandFor, GalleryContext, GalleryScope;
+
+    // Tests drive the page exactly as the shell does: the key resolves in
+    // the page's scope and the command dispatches above.
+    private bool handleKey(ref GalleryState s, in KeyEvent k) @safe
     {
-        s.componentsTab = (s.componentsTab + 1) % tabLabels.length;
-        return true;
+        const r = commandFor(k, GalleryContext(
+            pageScope: GalleryScope.pageComponents, contentRegion: true));
+        return handleCommand(s, r.cmd, r.arg);
     }
-    if (k.ch >= '1' && k.ch <= '4')
-    {
-        s.componentsAction = k.ch - '1';
-        return true;
-    }
-    if (k.ch == 'n' || k.ch == 'p')
-    {
-        // Through the machine, so the printed thumb and the drawn one move
-        // together — the same rule the Scrolling page states.
-        s.chromeView.wheeledV(k.ch == 'n' ? 1 : -1, ScrollExtents(
-            chromeGeom.content, chromeGeom.viewport, chromeGeom.track));
-        return true;
-    }
-    return false;
 }
 
 /// Every bar's pointer handling — each grab zone is its painted rect, which

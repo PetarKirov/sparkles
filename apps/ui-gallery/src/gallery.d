@@ -31,6 +31,9 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.run_app : AppTheme;
 import inspector : inspectorActivate, inspectorBody, inspectorInnerWidth;
+import keymap : bindingsAt, Binding, Chord, commandFor, GalleryCommand,
+    GalleryContext, GalleryScope, normaliseGrabKey, ShiftReq,
+    terminalGrabPolicy;
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
 import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
@@ -49,19 +52,62 @@ import term_store : TerminalStore;
 // The theme accessor is `@safe` because `runApp` probes for it from a context
 // that may be either.
 
-/**
-The capture-release chord: `Ctrl+]` (GS, 0x1d — a byte legacy terminal input
-delivers unambiguously) or VSCode's `` Ctrl+` `` (which some terminals cannot
-send at all — the reason there are two). The one binding a focused terminal
-never receives.
-*/
-bool isCaptureRelease(in KeyEvent k) @safe pure nothrow @nogc
+// The capture-release chords and the scrollback pass-through are the grab
+// policy's data (`terminalGrabPolicy` in `keymap`), routed through
+// `sparkles.ui.focus.checkGrab` — not a hand-written predicate here.
+
+/// A chord's display label, for the status bar and the help overlay. GC
+/// strings are fine — the gallery is not a `@nogc` surface, and the label
+/// feeds a per-frame widget text.
+private string chordText(in Chord c) @safe pure
 {
-    if (k.mods.ctrl && (k.ch == '`' || k.ch == ']'
-        || k.unshifted == '`' || k.unshifted == ']'))
-        return true;
-    // The raw GS control byte, however the input layer spelled it.
-    return k.ch == '\x1d' || k.text == "\x1d";
+    import std.conv : to;
+
+    string s;
+    if (c.ctrl)
+        s ~= "ctrl+";
+    if (c.alt)
+        s ~= "alt+";
+    if (c.key == Key.char_)
+    {
+        dchar shown(dchar ch)
+            => c.shift == ShiftReq.yes && ch >= 'a' && ch <= 'z'
+                ? cast(dchar)(ch + ('A' - 'a')) : ch;
+        if (c.shift == ShiftReq.yes && !(c.ch >= 'a' && c.ch <= 'z'))
+            s ~= "shift+";
+        s ~= c.ch == ' ' ? "Space" : shown(c.ch).to!string;
+        if (c.chEnd)
+            s ~= "-" ~ shown(c.chEnd).to!string;
+    }
+    else
+    {
+        if (c.shift == ShiftReq.yes)
+            s ~= "shift+";
+        s ~= namedKey(c.key);
+    }
+    return s;
+}
+
+/// ditto
+private string namedKey(Key k) @safe pure nothrow @nogc
+{
+    switch (k)
+    {
+        case Key.up: return "↑";
+        case Key.down: return "↓";
+        case Key.left: return "←";
+        case Key.right: return "→";
+        case Key.enter: return "⏎";
+        case Key.tab: return "Tab";
+        case Key.escape: return "Esc";
+        case Key.back: return "Back";
+        case Key.home: return "Home";
+        case Key.end: return "End";
+        case Key.pageUp: return "PgUp";
+        case Key.pageDown: return "PgDn";
+        case Key.backspace: return "⌫";
+        default: return "?";
+    }
 }
 
 /// ditto
@@ -346,30 +392,39 @@ struct Gallery
 
     private void onKey(H)(ref H h, in KeyEvent k)
     {
-        // With a terminal focused, the shell inside the pane owns the
-        // keyboard — `q`, `Tab`, arrows, `Ctrl+C` are $(I its) keys, not the
-        // gallery's, and releases forward too (the terminal-grade keyboard
-        // encodes them). The release chord is the one thing the gallery
-        // keeps; everything else goes to the pty. Checked before the
-        // release-drop below for exactly that reason.
+        // The routing chain (`FOC4`, keymap.md): grab → modal/focused scopes
+        // (context gating in the one table) → dispatch. With a terminal
+        // focused, the shell inside the pane owns the keyboard — `q`, `Tab`,
+        // arrows, `Ctrl+C` are $(I its) keys, not the gallery's, and releases
+        // forward too (the terminal-grade keyboard encodes them). The
+        // release chords and the scrollback pass-through are the grab
+        // policy's data, not a hand-written predicate — and the grab is
+        // checked before the release-drop below for exactly that reason.
         if (terminalCaptures)
         {
-            if (k.action != KeyAction.release && isCaptureRelease(k))
+            import sparkles.ui.focus : checkGrab, GrabVerdict, KeyGrab;
+
+            auto grab = KeyGrab(keyTermPane);
+            const verdict = k.action == KeyAction.release
+                ? GrabVerdict.forward
+                : checkGrab(grab, normaliseGrabKey(k), terminalGrabPolicy);
+            final switch (verdict)
             {
+            case GrabVerdict.released:
                 s.terms.focused = false;
                 return;
-            }
-            // The emulator convention's scrollback keys — the second and last
-            // thing the gallery keeps from a focused terminal.
-            if (k.action != KeyAction.release && k.mods.shift
-                && (k.key == Key.pageUp || k.key == Key.pageDown))
-            {
+            case GrabVerdict.passthrough:
+                // The emulator convention's scrollback keys — the second and
+                // last thing the gallery keeps from a focused terminal.
                 const page = s.terms.paneRows > 2 ? s.terms.paneRows - 1 : 1;
                 return scrollTerminal(k.key == Key.pageUp ? -page : page);
+            case GrabVerdict.forward:
+                if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+                    cast(void) (() @trusted => tv.sendKey(k))();
+                return;
+            case GrabVerdict.none:
+                assert(0, "an active capture always has a grab");
             }
-            if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
-                cast(void) (() @trusted => tv.sendKey(k))();
-            return;
         }
 
         // A release is not a second press. Terminals never send one; a window
@@ -383,84 +438,123 @@ struct Gallery
         if (!s.hasFrameClock && s.toast.visible)
             s.toast = s.toast.dismissed(toastConfigFor(false));
 
-        if (s.helpOpen)
-        {
-            // Modal: everything underneath is inert until it closes, so a key
-            // meant for the overlay cannot also move the page behind it.
-            if (isDismiss(k) || k.ch == '?' || k.ch == 'q' || k.key == Key.enter)
-                s.helpOpen = false;
+        // The ONE table: the help overlay is a modal scope, the showing
+        // page's scope gets first refusal in the content region (which is
+        // what lets a tree own the arrow keys without the page list losing
+        // them), and the shell's rows sit last.
+        const r = commandFor(k, keyContext());
+        if (pages[s.page].onCommand !is null
+            && pages[s.page].onCommand(s, r.cmd, r.arg))
             return;
-        }
-
-        if (isDismiss(k) || k.ch == 'q')
-            return h.quit();
-
-        if (k.key == Key.tab)
+        final switch (r.cmd)
         {
-            // Two regions, so forward and backward are the same move. Shift-Tab
-            // is accepted anyway, because a reader who knows the convention will
-            // press it. Taken before the page sees anything: a page that could
-            // claim Tab could strand a reader inside itself.
-            s.region = s.region == Region.nav ? Region.content : Region.nav;
-            return;
+            case GalleryCommand.none:
+                cast(void) pageDeclinedFromNav(k);
+                return;
+            case GalleryCommand.quit: return h.quit();
+            case GalleryCommand.showHelp: s.helpOpen = true; return;
+            case GalleryCommand.helpClose: s.helpOpen = false; return;
+            case GalleryCommand.regionToggle:
+                s.region = s.region == Region.nav ? Region.content : Region.nav;
+                return;
+            case GalleryCommand.enterContent:
+                s.region = Region.content;
+                return;
+            case GalleryCommand.moveDown: return moveWithin(1);
+            case GalleryCommand.moveUp: return moveWithin(-1);
+            case GalleryCommand.pagePrev:
+                return setPage(s.page == 0 ? pages.length - 1 : s.page - 1);
+            case GalleryCommand.pageNext:
+                return setPage((s.page + 1) % pages.length);
+            case GalleryCommand.pageJump: return setPage(r.arg - 1);
+            case GalleryCommand.scrollPageUp:
+                return scrollContent(-(s.contentHeight - 1));
+            case GalleryCommand.scrollPageDown:
+                return scrollContent(s.contentHeight - 1);
+            case GalleryCommand.scrollHome: return scrollContent(-int.max / 4);
+            case GalleryCommand.scrollEnd: return scrollContent(int.max / 4);
+            case GalleryCommand.themeNext: return cycleTheme(1);
+            case GalleryCommand.themePrev: return cycleTheme(-1);
+            case GalleryCommand.toggleNavPin:
+                s.navPinned = !s.navPinned;
+                return;
+            case GalleryCommand.toggleInspector:
+                s.inspectorOpen = !s.inspectorOpen;
+                return;
+
+            // The pages' commands — answered by `onCommand` above, so an arm
+            // reached here means the page it belongs to is not showing.
+            case GalleryCommand.layoutWidthMode: case GalleryCommand.layoutAlignX:
+            case GalleryCommand.layoutAlignY: case GalleryCommand.layoutGap:
+            case GalleryCommand.layoutPadding: case GalleryCommand.layoutThird:
+            case GalleryCommand.layoutGrow: case GalleryCommand.layoutShrink:
+            case GalleryCommand.tracksPreset: case GalleryCommand.tracksGrow:
+            case GalleryCommand.tracksShrink:
+            case GalleryCommand.textGrow: case GalleryCommand.textShrink:
+            case GalleryCommand.textHang:
+            case GalleryCommand.compTabPrev: case GalleryCommand.compTabNext:
+            case GalleryCommand.compAction: case GalleryCommand.compScrollDown:
+            case GalleryCommand.compScrollUp:
+            case GalleryCommand.treeDown: case GalleryCommand.treeUp:
+            case GalleryCommand.treeExpand: case GalleryCommand.treeCollapse:
+            case GalleryCommand.treeActivate: case GalleryCommand.treeOpenAll:
+            case GalleryCommand.treeCloseAll:
+            case GalleryCommand.tablePreset: case GalleryCommand.tableRowRules:
+            case GalleryCommand.tableStubCol:
+            case GalleryCommand.tableScrollLeft:
+            case GalleryCommand.tableScrollRight:
+            case GalleryCommand.tableScrollUp:
+            case GalleryCommand.tableScrollDown:
+            case GalleryCommand.scrollNext: case GalleryCommand.scrollPrev:
+            case GalleryCommand.scrollNextPage: case GalleryCommand.scrollPrevPage:
+            case GalleryCommand.scrollTop: case GalleryCommand.scrollBottom:
+            case GalleryCommand.machAnchor: case GalleryCommand.machExtend:
+            case GalleryCommand.machFocusNext: case GalleryCommand.machFocusPrev:
+            case GalleryCommand.machFoldToggle: case GalleryCommand.machFoldPolarity:
+            case GalleryCommand.machPulse:
+            case GalleryCommand.splitShrink: case GalleryCommand.splitGrow:
+            case GalleryCommand.dockShrink: case GalleryCommand.dockGrow:
+            case GalleryCommand.dockTabPrev: case GalleryCommand.dockTabNext:
+            case GalleryCommand.dockFocusNext: case GalleryCommand.dockWest:
+            case GalleryCommand.dockEast: case GalleryCommand.dockNorth:
+            case GalleryCommand.dockSouth: case GalleryCommand.dockReset:
+            case GalleryCommand.termNew: case GalleryCommand.termClose:
+            case GalleryCommand.termPrev: case GalleryCommand.termNext:
+            case GalleryCommand.termKeepExited: case GalleryCommand.termFocus:
+                return;
         }
-
-        // With the keyboard in the content region the page gets FIRST refusal —
-        // which is what lets a tree own the arrow keys without the page list
-        // losing them. In the nav region it gets the LAST (below), so the
-        // shell's own keys still drive the list.
-        if (s.region == Region.content
-            && pages[s.page].onKey !is null && pages[s.page].onKey(s, k))
-            return;
-
-        switch (k.key)
-        {
-            case Key.up: return moveWithin(-1);
-            case Key.down: return moveWithin(1);
-            case Key.left: return setPage(s.page == 0 ? pages.length - 1 : s.page - 1);
-            case Key.right: return setPage((s.page + 1) % pages.length);
-            case Key.pageUp: return scrollContent(-(s.contentHeight - 1));
-            case Key.pageDown: return scrollContent(s.contentHeight - 1);
-            case Key.home: return scrollContent(-int.max / 4);
-            case Key.end: return scrollContent(int.max / 4);
-            case Key.enter: s.region = Region.content; return;
-            default: break;
-        }
-
-        switch (k.ch)
-        {
-            case 'j': return moveWithin(1);
-            case 'k': return moveWithin(-1);
-            case '?': s.helpOpen = true; return;
-            case ']': return cycleTheme(1);
-            case '[': return cycleTheme(-1);
-            case ' ': s.region = Region.content; return;
-            // A punctuation key, not a letter: pages get first refusal in the
-            // content region, and every plausible letter is spoken for by one
-            // of them (`n`/`p` scroll, `d` discloses, `t` cycles a template).
-            case '\\': s.navPinned = !s.navPinned; return;
-            // The sidebar's shifted sibling, for the other side panel.
-            case '|': s.inspectorOpen = !s.inspectorOpen; return;
-            default: break;
-        }
-
-        // `1`..`9` then `0` jump straight to a page — the fastest route on a
-        // target where the sidebar is not clickable.
-        if (k.ch >= '1' && k.ch <= '9')
-            return setPage(k.ch - '1');
-        if (k.ch == '0')
-            return setPage(9);
-
-        // The page's own bindings work from EITHER half. The status bar has
-        // always listed them unconditionally, and until this fallback existed
-        // that was a promise the nav region could not keep: a reader who had
-        // not yet discovered Tab pressed the advertised `f` or `w` and nothing
-        // at all happened. The shell's keys are tried first here, so the list
-        // keeps its arrows — the ordering, not the page's absence, is what
-        // makes the two halves different.
-        if (s.region == Region.nav && pages[s.page].onKey !is null)
-            cast(void) pages[s.page].onKey(s, k);
     }
+
+    /**
+    The nav region's last word: a key the shell does not claim still reaches
+    the showing page.
+
+    The region decides the ORDER of refusal, not whether the page is asked at
+    all — the page's scope resolves first in the content region (above), and
+    here, where the shell's rows have already declined, the same key is
+    re-resolved in the page's scope. Without this the status bar's promise is
+    one the nav region cannot keep: it lists a page's keys unconditionally,
+    so a reader who has not yet discovered `Tab` presses an advertised `f`
+    and nothing happens. The shell's rows are still tried first, which is
+    what keeps the list's own arrows (and `j`/`k`) on a page that binds them.
+    */
+    private bool pageDeclinedFromNav(in KeyEvent k) @safe
+    {
+        if (s.region != Region.nav || pages[s.page].onCommand is null)
+            return false;
+        const inPage = commandFor(k, GalleryContext(
+            pageScope: pages[s.page].scope_, contentRegion: true,
+            helpShown: s.helpOpen));
+        return inPage.cmd != GalleryCommand.none
+            && pages[s.page].onCommand(s, inPage.cmd, inPage.arg);
+    }
+
+    /// The resolution context: the showing page's scope, the focused region,
+    /// and the help modal.
+    private GalleryContext keyContext() const @safe
+        => GalleryContext(pageScope: pages[s.page].scope_,
+            contentRegion: s.region == Region.content,
+            helpShown: s.helpOpen);
 
     /// Whether the keyboard belongs to the shell inside the pane.
     private bool terminalCaptures() const @safe
@@ -1199,9 +1293,20 @@ struct Gallery
             slot: Slot.chromeAccent,
             textStyle: TextStyle(bold: true),
         ));
-        foreach (key; pages[s.page].keys)
-            hints ~= b.add(Widget(kind: WidgetKind.text, text: key,
-                slot: Slot.chrome));
+        // The showing page's rows, straight from the one table — the prose
+        // copy this used to be could drift from the handlers; a listing
+        // cannot. One chip per command (the first spelling wins), so `+`
+        // and `=` do not both claim a chip in a one-line bar.
+        bool[GalleryCommand.max + 1] seenCmd;
+        foreach (ref bnd; reachableBindings())
+            if (bnd.scope_ == pages[s.page].scope_
+                && bnd.scope_ != GalleryScope.always && !seenCmd[bnd.cmd])
+            {
+                seenCmd[bnd.cmd] = true;
+                hints ~= b.add(Widget(kind: WidgetKind.text,
+                    text: chordText(bnd.path[0]) ~ " " ~ bnd.desc,
+                    slot: Slot.chrome));
+            }
 
         const help = b.add(Widget(
             kind: WidgetKind.text,
@@ -1210,6 +1315,24 @@ struct Gallery
         ));
         return headerBar(b, hints, null, [help]);
     }
+
+    /**
+    The bindings reachable in the current context, in resolution order —
+    what the help overlay and the status bar render, straight from the one
+    table. `contentRegion` is forced for the status bar (page keys are
+    worth showing from the nav too) and live for the overlay.
+    */
+    private Binding[] listedBindings(bool contentRegion) const @safe
+    {
+        Binding[] listed;
+        bindingsAt(listed, GalleryContext(pageScope: pages[s.page].scope_,
+            contentRegion: contentRegion));
+        return listed;
+    }
+
+    /// ditto — the status bar's cut.
+    private Binding[] reachableBindings() const @safe
+        => listedBindings(true);
 
     private uint helpOverlay(ref Builder b) @safe
     {
@@ -1221,24 +1344,21 @@ struct Gallery
             textStyle: TextStyle(bold: true),
         ));
         lines ~= hrule(b);
-        static immutable string[2][] binds = [
-            ["↑ ↓ / j k", "move within the focused region"],
-            ["← →", "previous / next page"],
-            ["Tab", "switch between the page list and the page"],
-            ["Enter / Space", "move to the page"],
-            ["1 … 9, 0", "jump to a page"],
-            ["PgUp / PgDn", "scroll the page"],
-            ["Home / End", "top / bottom"],
-            ["[ / ]", "previous / next theme"],
-            ["\\", "show the page list on a narrow terminal"],
-            ["|", "the inspector panel — dumpTree of the showing page"],
-            ["?", "this overlay"],
-            ["q / Esc", "quit"],
-            ["ctrl+] / ctrl+`", "give the keyboard back to the gallery"],
-            ["shift+PgUp / PgDn", "a focused terminal's scrollback"],
-        ];
-        foreach (ref bind; binds)
-            lines ~= keyHint(b, bind[0], bind[1]);
+        // The listing IS the table (`KEY3`): whatever is reachable right
+        // here — the showing page's rows first, then the shell's — in
+        // resolution order, so the overlay cannot describe a key the shell
+        // would resolve differently.
+        foreach (ref bnd; listedBindings(s.region == Region.content))
+            lines ~= keyHint(b, chordText(bnd.path[0]), bnd.desc);
+        // …plus the terminal grab's policy, which routes before the table.
+        lines ~= keyHint(b,
+            chordText(terminalGrabPolicy.release[0]) ~ " / "
+                ~ chordText(terminalGrabPolicy.release[1]),
+            "give the keyboard back to the gallery");
+        lines ~= keyHint(b,
+            chordText(terminalGrabPolicy.passthrough[0]) ~ " / "
+                ~ chordText(terminalGrabPolicy.passthrough[1]),
+            "a focused terminal's scrollback");
 
         const popup = b.add(Widget(
             kind: WidgetKind.popup,
@@ -1945,14 +2065,24 @@ version (unittest)
 @safe pure nothrow @nogc unittest
 {
     import sparkles.input : Mods;
+    import sparkles.ui.focus : checkGrab, GrabVerdict, KeyGrab;
+    import keymap : normaliseGrabKey, terminalGrabPolicy;
 
-    // Every spelling an input layer might deliver: the two chords by ch or
-    // by unshifted codepoint, and the raw GS byte legacy input decodes to.
-    assert(isCaptureRelease(KeyEvent(Key.char_, ']', Mods(ctrl: true))));
-    assert(isCaptureRelease(KeyEvent(Key.char_, '`', Mods(ctrl: true))));
-    assert(isCaptureRelease(KeyEvent(Key.char_, '\x1d')));
-    assert(!isCaptureRelease(KeyEvent(Key.char_, ']')), "a bare ] is text");
-    assert(!isCaptureRelease(KeyEvent(Key.char_, 'c', Mods(ctrl: true))),
+    // Every spelling an input layer might deliver releases the grab; text
+    // and the shell's own interrupt stay the pty's.
+    static bool releases(in KeyEvent k) @safe pure nothrow @nogc
+    {
+        KeyGrab g;
+        g.take(1);
+        return checkGrab(g, normaliseGrabKey(k), terminalGrabPolicy)
+            == GrabVerdict.released;
+    }
+
+    assert(releases(KeyEvent(Key.char_, ']', Mods(ctrl: true))));
+    assert(releases(KeyEvent(Key.char_, '`', Mods(ctrl: true))));
+    assert(releases(KeyEvent(Key.char_, '\x1d')));
+    assert(!releases(KeyEvent(Key.char_, ']')), "a bare ] is text");
+    assert(!releases(KeyEvent(Key.char_, 'c', Mods(ctrl: true))),
         "Ctrl+C is the shell's interrupt, never the gallery's");
 }
 

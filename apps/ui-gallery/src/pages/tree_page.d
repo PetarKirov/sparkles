@@ -24,12 +24,13 @@ import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
 import kit;
+import keymap : GalleryCommand;
 import state : GalleryState, TreeDemo;
 
 @safe:
 
 /// ditto
-static immutable string[] keys = ["↑ ↓ move", "→ ← open/close", "Enter toggle"];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageTree`.
 
 /**
 A node, with three optional capabilities the renderer detects.
@@ -149,7 +150,7 @@ private string numberText(size_t n)
 /// $(B visible) rows, Left is `collapseOrUp`, Enter is `activate`. The page
 /// keeps only what the component leaves to an adapter — the rebuild (a fresh
 /// flatten of the static specimen) and Right's expand-only meaning.
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
     const data = sampleTree();
     void refresh()
@@ -163,27 +164,27 @@ bool handleKey(ref GalleryState s, in KeyEvent k)
         return false;
     const node = s.treeDemo.selectedNode;
 
-    switch (k.key)
+    switch (cmd)
     {
-        case Key.down:
+        case GalleryCommand.treeDown:
             s.treeDemo.moveSel(1);
             return true;
-        case Key.up:
+        case GalleryCommand.treeUp:
             s.treeDemo.moveSel(-1);
             return true;
-        case Key.right:
+        case GalleryCommand.treeExpand:
             if (node != uint.max && data.hasChildren(node))
             {
                 s.treeDemo.open = s.treeDemo.open.opened(node);
                 refresh();
             }
             return true;
-        case Key.left:
+        case GalleryCommand.treeCollapse:
             if (treeCollapseOrUp(s.treeDemo.tv, data, (uint n) => n)
                 == TreeStep.rebuild)
                 refresh();
             return true;
-        case Key.enter:
+        case GalleryCommand.treeActivate:
             if (node != uint.max && data.hasChildren(node)
                 && treeActivate(s.treeDemo.tv, data, (uint n) => n)
                     == TreeStep.rebuild)
@@ -193,14 +194,34 @@ bool handleKey(ref GalleryState s, in KeyEvent k)
             break;
     }
 
-    switch (k.ch)
+    switch (cmd)
     {
         // The polarity resets: open everything / close everything, which are
         // O(1) on this machine rather than a walk, because a disclosure state
         // is a default plus a set of exceptions.
-        case 'O': s.treeDemo.open = typeof(s.treeDemo.open).allOpen; refresh(); return true;
-        case 'C': s.treeDemo.open = typeof(s.treeDemo.open).allClosed; refresh(); return true;
+        case GalleryCommand.treeOpenAll:
+            s.treeDemo.open = typeof(s.treeDemo.open).allOpen;
+            refresh();
+            return true;
+        case GalleryCommand.treeCloseAll:
+            s.treeDemo.open = typeof(s.treeDemo.open).allClosed;
+            refresh();
+            return true;
         default: return false;
+    }
+}
+
+version (unittest)
+{
+    import keymap : commandFor, GalleryContext, GalleryScope;
+
+    // Tests drive the page exactly as the shell does: the key resolves in
+    // the page's scope and the command dispatches above.
+    private bool handleKey(ref GalleryState s, in KeyEvent k) @safe
+    {
+        const r = commandFor(k, GalleryContext(
+            pageScope: GalleryScope.pageTree, contentRegion: true));
+        return handleCommand(s, r.cmd, r.arg);
     }
 }
 

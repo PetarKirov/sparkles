@@ -27,13 +27,13 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import kit;
 import scrollbars;
+import keymap : GalleryCommand;
 import state : GalleryState, hitDemoBar;
 
 @safe:
 
 /// ditto
-static immutable string[] keys =
-    ["n/p scroll", "N/P page", "g/G ends", "drag the bar"];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageScrolling`.
 
 /// The specimen document's length, and the viewport's.
 private enum int docRows = 40;
@@ -134,17 +134,31 @@ private uint document(ref Builder b)
 }
 
 /// ditto
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
-    switch (k.ch)
+    switch (cmd)
     {
-        case 'n': return scrollBy(s, 1);
-        case 'p': return scrollBy(s, -1);
-        case 'N': return scrollBy(s, viewRows);
-        case 'P': return scrollBy(s, -viewRows);
-        case 'g': return scrollBy(s, -docRows);
-        case 'G': return scrollBy(s, docRows);
+        case GalleryCommand.scrollNext: return scrollBy(s, 1);
+        case GalleryCommand.scrollPrev: return scrollBy(s, -1);
+        case GalleryCommand.scrollNextPage: return scrollBy(s, viewRows);
+        case GalleryCommand.scrollPrevPage: return scrollBy(s, -viewRows);
+        case GalleryCommand.scrollTop: return scrollBy(s, -docRows);
+        case GalleryCommand.scrollBottom: return scrollBy(s, docRows);
         default: return false;
+    }
+}
+
+version (unittest)
+{
+    import keymap : commandFor, GalleryContext, GalleryScope;
+
+    // Tests drive the page exactly as the shell does: the key resolves in
+    // the page's scope and the command dispatches above.
+    private bool handleKey(ref GalleryState s, in KeyEvent k) @safe
+    {
+        const r = commandFor(k, GalleryContext(
+            pageScope: GalleryScope.pageScrolling, contentRegion: true));
+        return handleCommand(s, r.cmd, r.arg);
     }
 }
 

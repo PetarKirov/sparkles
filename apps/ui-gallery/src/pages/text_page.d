@@ -22,12 +22,13 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind;
 import sparkles.ui.wrap : TextWrap;
 
 import kit;
+import keymap : GalleryCommand;
 import state : GalleryState, TextDemo;
 
 @safe:
 
 /// ditto
-static immutable string[] keys = ["+/- width", "h hang indent"];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageText`.
 
 /// The specimen paragraph. Chosen for a greedy break that leaves a short last
 /// line at the page's default width, so `balanced` has something to do.
@@ -146,13 +147,19 @@ int clampWidth(int want, int pane) pure nothrow @nogc
 }
 
 /// ditto
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
-    switch (k.ch)
+    switch (cmd)
     {
-        case '+': case '=': s.textDemo.width += 2; return true;
-        case '-': s.textDemo.width = s.textDemo.width > 12 ? s.textDemo.width - 2 : 12; return true;
-        case 'h': s.textDemo.hangIndent = (s.textDemo.hangIndent + 1) % 5; return true;
+        case GalleryCommand.textGrow:
+            s.textDemo.width += 2;
+            return true;
+        case GalleryCommand.textShrink:
+            s.textDemo.width = s.textDemo.width > 12 ? s.textDemo.width - 2 : 12;
+            return true;
+        case GalleryCommand.textHang:
+            s.textDemo.hangIndent = (s.textDemo.hangIndent + 1) % 5;
+            return true;
         default: return false;
     }
 }

@@ -35,15 +35,14 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import kit;
 import scrollbars;
+import keymap : GalleryCommand;
 import state : GalleryState, hitTerminal, hitTermActions, hitTermBar,
     keyTermPane, maxTerms;
 
 @safe:
 
 /// ditto
-static immutable string[] keys = [
-    "n new", "x close", "h/l tab", "⏎ focus", "⇧PgUp history", "ctrl+] leave",
-];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageTerminal`.
 
 /// The pane's own hit id. Tab lanes start at `+ 2` (ids start at 1), so the
 /// `+ 0` slot is the pane's alone.
@@ -393,41 +392,47 @@ private auto intoSymmetric(int v, int h) pure nothrow @nogc
 
 /// ditto — offered keys only while the keyboard is in the content region and
 /// no terminal is focused (capture is intercepted upstream in `gallery.d`).
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
-    if (k.ch == 'n')
+    switch (cmd)
     {
-        if (!s.terms.full)
-            s.terms.spawnRequested = true;
-        return true;
+        case GalleryCommand.termNew:
+            if (!s.terms.full)
+                s.terms.spawnRequested = true;
+            return true;
+        case GalleryCommand.termClose:
+            if (s.terms.any)
+                s.terms.closeRequested = cast(int) s.terms.active;
+            return true;
+        case GalleryCommand.termPrev:
+            s.terms.cycle(-1);
+            return true;
+        case GalleryCommand.termNext:
+            s.terms.cycle(1);
+            return true;
+        case GalleryCommand.termKeepExited:
+            s.terms.keepExited = !s.terms.keepExited;
+            return true;
+        case GalleryCommand.termFocus:
+            if (s.terms.any)
+                s.terms.focused = true;
+            return true;
+        default: return false;
     }
-    if (k.ch == 'x')
+}
+
+version (unittest)
+{
+    import keymap : commandFor, GalleryContext, GalleryScope;
+
+    // Tests drive the page exactly as the shell does: the key resolves in
+    // the page's scope and the command dispatches above.
+    private bool handleKey(ref GalleryState s, in KeyEvent k) @safe
     {
-        if (s.terms.any)
-            s.terms.closeRequested = cast(int) s.terms.active;
-        return true;
+        const r = commandFor(k, GalleryContext(
+            pageScope: GalleryScope.pageTerminal, contentRegion: true));
+        return handleCommand(s, r.cmd, r.arg);
     }
-    if (k.ch == 'h')
-    {
-        s.terms.cycle(-1);
-        return true;
-    }
-    if (k.ch == 'l')
-    {
-        s.terms.cycle(1);
-        return true;
-    }
-    if (k.ch == 'e')
-    {
-        s.terms.keepExited = !s.terms.keepExited;
-        return true;
-    }
-    if (k.key == Key.enter && s.terms.any)
-    {
-        s.terms.focused = true;
-        return true;
-    }
-    return false;
 }
 
 /// ditto

@@ -33,6 +33,7 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import kit;
 import scrollbars : rectOf;
+import keymap : GalleryCommand;
 import state : GalleryState, hitDock;
 
 @safe:
@@ -46,9 +47,7 @@ enum PaneId sidePane = 1, docPane = 2, notesPane = 3;
 enum int dockRows = 12;
 
 /// ditto
-static immutable string[] keys = [
-    "h l resize", ", . tab", "f focus", "w e n s re-dock", "r reset",
-];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageDock`.
 
 /// Builds the starting arrangement: a sidebar beside a tabbed group.
 DockLayout demoLayout()
@@ -329,57 +328,66 @@ void step(ref GalleryState s, int dtMs)
 }
 
 /// ditto
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
     ensure(s);
     const other = s.dock.focused == sidePane ? docPane : sidePane;
-    switch (k.key)
+    switch (cmd)
     {
-        case Key.char_:
-            switch (k.ch)
-            {
-                case 'h', 'l':
-                    // The keyboard route to the divider is the container's
-                    // own (DCK12): it runs the same clamp and the same
-                    // neighbour redistribution the pointer drag does, so a
-                    // page cannot grow a second opinion about either.
-                    s.dock.resizeBy(sidePane, k.ch == 'l' ? 2 : -2);
-                    return true;
-                case ',', '.':
-                    // Tab switching without a pointer, likewise container-
-                    // owned — including handing the shown pane the keyboard.
-                    //
-                    // NOT `[`/`]`, though those are the conventional pair: the
-                    // shell owns them catalog-wide for the theme, so a page
-                    // binding them would work in the content region and cycle
-                    // themes in the nav one. A binding the status bar
-                    // advertises has to mean the same thing wherever the
-                    // keyboard happens to be.
-                    s.dock.activateNext(k.ch == '.' ? 1 : -1);
-                    return true;
-                case 'f':
-                    s.dock.focusNext();
-                    return true;
-                case 'w', 'e', 'n', 's':
-                {
-                    // The same pure layout → layout step a drop applies, so
-                    // re-docking is not a pointer-only feature.
-                    const zone = k.ch == 'w' ? DockZone.west
-                        : k.ch == 'e' ? DockZone.east
-                            : k.ch == 'n' ? DockZone.north : DockZone.south;
-                    s.dock.layout = s.dock.layout.redocked(
-                        s.dock.focused, other, zone);
-                    ensure(s);
-                    return true;
-                }
-                case 'r':
-                    s.dock.layout = demoLayout();
-                    s.dock.focused = docPane;
-                    ensure(s);
-                    return true;
-                default: return false;
-            }
+        case GalleryCommand.dockShrink:
+        case GalleryCommand.dockGrow:
+            // The keyboard route to the divider is the container's
+            // own (DCK12): it runs the same clamp and the same
+            // neighbour redistribution the pointer drag does, so a
+            // page cannot grow a second opinion about either.
+            s.dock.resizeBy(sidePane,
+                cmd == GalleryCommand.dockGrow ? 2 : -2);
+            return true;
+        case GalleryCommand.dockTabPrev:
+        case GalleryCommand.dockTabNext:
+            // Tab switching without a pointer, likewise container-
+            // owned — including handing the shown pane the keyboard.
+            s.dock.activateNext(cmd == GalleryCommand.dockTabNext ? 1 : -1);
+            return true;
+        case GalleryCommand.dockFocusNext:
+            s.dock.focusNext();
+            return true;
+        case GalleryCommand.dockWest:
+        case GalleryCommand.dockEast:
+        case GalleryCommand.dockNorth:
+        case GalleryCommand.dockSouth:
+        {
+            // The same pure layout → layout step a drop applies, so
+            // re-docking is not a pointer-only feature.
+            const zone = cmd == GalleryCommand.dockWest ? DockZone.west
+                : cmd == GalleryCommand.dockEast ? DockZone.east
+                    : cmd == GalleryCommand.dockNorth
+                        ? DockZone.north : DockZone.south;
+            s.dock.layout = s.dock.layout.redocked(
+                s.dock.focused, other, zone);
+            ensure(s);
+            return true;
+        }
+        case GalleryCommand.dockReset:
+            s.dock.layout = demoLayout();
+            s.dock.focused = docPane;
+            ensure(s);
+            return true;
         default: return false;
+    }
+}
+
+version (unittest)
+{
+    import keymap : commandFor, GalleryContext, GalleryScope;
+
+    // Tests drive the page exactly as the shell does: the key resolves in
+    // the page's scope and the command dispatches above.
+    private bool handleKey(ref GalleryState s, in KeyEvent k) @safe
+    {
+        const r = commandFor(k, GalleryContext(
+            pageScope: GalleryScope.pageDock, contentRegion: true));
+        return handleCommand(s, r.cmd, r.arg);
     }
 }
 
