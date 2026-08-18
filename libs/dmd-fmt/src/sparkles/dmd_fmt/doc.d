@@ -263,6 +263,7 @@ private struct Engine
     const RenderOptions opt;
     Appender!string sink;
     int column;
+    int pendingIndent = -1; // indent to emit before the next visible output
     Doc*[] suffixes; // pending lineSuffix nodes, in emission order
 
     this(RenderOptions opt) @safe
@@ -290,6 +291,7 @@ private struct Engine
         final switch (doc.kind)
         {
             case DocKind.text:
+                materializeIndent();
                 sink.put(doc.text_);
                 column += cast(int) opt.measure(doc.text_);
                 break;
@@ -303,6 +305,7 @@ private struct Engine
                 {
                     if (doc.kind == DocKind.line)
                     {
+                        materializeIndent();
                         sink.put(' ');
                         column += 1;
                     }
@@ -366,6 +369,7 @@ private struct Engine
                 const t = cmd.mode == Mode.brk ? doc.text_ : doc.altText;
                 if (t.length)
                 {
+                    materializeIndent();
                     sink.put(t);
                     column += cast(int) opt.measure(t);
                 }
@@ -392,13 +396,25 @@ private struct Engine
     {
         flushSuffixes();
         sink.put('\n');
-        emitIndent(indent);
+        // Lazy: a blank line (another newline before any visible output)
+        // must not carry trailing indentation.
+        pendingIndent = indent;
+        column = indent;
+    }
+
+    private void materializeIndent() @safe
+    {
+        if (pendingIndent < 0)
+            return;
+        emitIndent(pendingIndent);
+        pendingIndent = -1;
     }
 
     private void flushSuffixes() @safe
     {
         foreach (s; suffixes)
         {
+            materializeIndent();
             sink.put(s.text_);
             column += cast(int) opt.measure(s.text_);
         }
@@ -422,6 +438,7 @@ private struct Engine
 
     private void emitVerbatim(const(char)[] raw) @safe
     {
+        materializeIndent();
         // Untouched bytes; recompute the column from the last newline.
         size_t lastNl = size_t.max;
         foreach_reverse (i, ch; raw)
@@ -660,4 +677,13 @@ private struct Engine
         text("four"));
     RenderOptions opt = {width: 9};
     assert(layout(d, opt) == "one two\nthree\nfour");
+}
+
+@("doc.blank-lines-carry-no-trailing-indentation")
+@safe unittest
+{
+    auto d = sequence(text("{"), indented(hardline, text("a"), hardline,
+        hardline, text("b")), hardline, text("}"));
+    RenderOptions opt = {width: 80};
+    assert(layout(d, opt) == "{\n    a\n\n    b\n}");
 }
