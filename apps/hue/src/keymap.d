@@ -103,6 +103,9 @@ struct KeyContext
     /// Which picker pane owns the keyboard while the picker is open — a
     /// `ScopeFocus!Scope_` value the host carries (`FOC2`).
     Scope_ pickerFocus = Scope_.pickerInput;
+    /// The tree-sitter inspector pane holds the keyboard (its hosts route
+    /// by pane, so only the inspector's own resolution sets this).
+    bool inspectorFocused;
 
 @safe pure nothrow @nogc const:
 
@@ -144,11 +147,13 @@ struct KeyContext
             case Scope_.pickerPreview:
                 return pickerActive && pickerFocus == Scope_.pickerPreview;
             case Scope_.picker:  return pickerActive;
-            case Scope_.ctrl:    return !pickerActive;
-            case Scope_.tree:    return !pickerActive && treeFocused && treeVisible;
-            case Scope_.viewer:  return !pickerActive
+            case Scope_.inspector: return inspectorFocused;
+            case Scope_.ctrl:    return !pickerActive && !inspectorFocused;
+            case Scope_.tree:    return !pickerActive && !inspectorFocused
+                && treeFocused && treeVisible;
+            case Scope_.viewer:  return !pickerActive && !inspectorFocused
                 && !(treeFocused && treeVisible);
-            case Scope_.shared_: return !pickerActive;
+            case Scope_.shared_: return !pickerActive && !inspectorFocused;
         }
     }
 
@@ -156,7 +161,8 @@ struct KeyContext
     /// before entering each of its blocks.
     bool scopeActive(Scope_ s, in KeyEvent k)
         => s == Scope_.ctrl
-            ? (!pickerActive && k.mods.ctrl && k.key == Key.char_)
+            ? (!pickerActive && !inspectorFocused
+                && k.mods.ctrl && k.key == Key.char_)
             : reachable(s);
 }
 
@@ -271,6 +277,14 @@ enum Command : ubyte
     pickerFocusNext, pickerFocusPrev,  /// `Tab` / `Shift-Tab` cycle the panes
     pickerToggleScore,                 /// `Ctrl-S` — `PKR4`'s debug view
     pickerPreviewDown, pickerPreviewUp, /// `Ctrl-D`/`Ctrl-U` — scroll the preview
+
+    // The tree-sitter inspector pane, while it holds focus (`INS*`) — the
+    // same pattern: table rows in a focused scope, one pane dispatch.
+    inspDown, inspUp, inspPageDown, inspPageUp, inspHome, inspEnd,
+    inspCollapse, inspExpand, inspActivate,
+    inspClose,           /// `q` / `Escape` — close and return the focus
+    inspToggleAnonymous, /// `a` — show/hide anonymous nodes
+    inspTogglePick,      /// `s` — DevTools' pick-from-source mode
 }
 
 /**
@@ -300,6 +314,10 @@ enum Scope_ : ubyte
     /// picker is modal — an unmatched key is the prompt's (or the preview's),
     /// never a command below, and the guide must not list what cannot fire
     @terminalScope @hidesLaterScopes picker,
+    /// the tree-sitter inspector pane, while it holds focus: it consumes
+    /// every key it is routed (its hosts route by pane), so it is terminal
+    /// and hides the scopes below from the guide
+    @terminalScope @hidesLaterScopes inspector,
     /// a Ctrl chord, before the plain letter is considered
     @terminalScope ctrl,
     tree,    /// the explorer pane, while focused and shown
@@ -654,6 +672,34 @@ immutable Binding[] hueBindings = [
         Command.pickerPreviewDown, "scroll preview down"),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 'u', ctrl: true),
         Command.pickerPreviewUp, "scroll preview up"),
+
+    // ── the tree-sitter inspector pane (`INS`) ───────────────────────────
+    bind(Scope_.inspector, chord(Key.down), Command.inspDown, "down"),
+    bind(Scope_.inspector, chord('j'), Command.inspDown, "down"),
+    bind(Scope_.inspector, chord(Key.up), Command.inspUp, "up"),
+    bind(Scope_.inspector, chord('k'), Command.inspUp, "up"),
+    bind(Scope_.inspector, chord(Key.pageDown), Command.inspPageDown,
+        "page down"),
+    bind(Scope_.inspector, chord(Key.pageUp), Command.inspPageUp, "page up"),
+    bind(Scope_.inspector, chord(Key.home), Command.inspHome, "first node"),
+    bind(Scope_.inspector, chord('g', ShiftReq.no), Command.inspHome,
+        "first node"),
+    bind(Scope_.inspector, chord(Key.end), Command.inspEnd, "last node"),
+    bind(Scope_.inspector, chord('g', ShiftReq.yes), Command.inspEnd,
+        "last node"),
+    bind(Scope_.inspector, chord(Key.left), Command.inspCollapse,
+        "collapse / up"),
+    bind(Scope_.inspector, chord('h'), Command.inspCollapse, "collapse / up"),
+    bind(Scope_.inspector, chord(Key.right), Command.inspExpand, "expand"),
+    bind(Scope_.inspector, chord('l'), Command.inspExpand, "expand"),
+    bind(Scope_.inspector, chord(Key.enter), Command.inspActivate,
+        "toggle node"),
+    bind(Scope_.inspector, chord(Key.escape), Command.inspClose, "close"),
+    bind(Scope_.inspector, chord('q'), Command.inspClose, "close"),
+    bind(Scope_.inspector, chord('a'), Command.inspToggleAnonymous,
+        "anonymous nodes"),
+    bind(Scope_.inspector, chord('s'), Command.inspTogglePick,
+        "pick from source"),
 ];
 
 // ---------------------------------------------------------------------------

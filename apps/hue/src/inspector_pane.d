@@ -37,9 +37,9 @@ every subsequent mouse move over the document would move the selection off
 it. That is why the picker is a mode with an explicit end, and why the click
 that ends it is the same click a reader would make anyway.
 
-Keys are handled pane-locally for now (like the explorer before `KEY1`); a
-`Scope_.inspector` in the shared table — and with it the lantern guide —
-lands when the pane's set stabilizes.
+The pane's keys are rows of the shared table under `Scope_.inspector`
+(`KEY1`), so the lantern guide lists them like everything else; this module
+keeps only the dispatch.
 */
 module inspector_pane;
 
@@ -286,35 +286,27 @@ struct InspectorPane
         );
     }
 
+    // The pane's keys are hueBindings rows in `Scope_.inspector` (`KEY1` —
+    // this used to be the last pane-local key switch), so the guide can list
+    // them; an unmatched key is consumed, as a focused pane's keys were.
     private bool key(in KeyEvent k, ref ViewerModel vm) @system
     {
-        switch (k.key)
+        import keymap : Command, commandFor, KeyContext;
+
+        switch (commandFor(k, KeyContext(inspectorFocused: true)).cmd)
         {
-            case InputKey.down: tv.moveSel(1); return true;
-            case InputKey.up: tv.moveSel(-1); return true;
-            case InputKey.pageDown: tv.moveSel(tv.bodyRows); return true;
-            case InputKey.pageUp: tv.moveSel(-tv.bodyRows); return true;
-            case InputKey.home: tv.selHome(); return true;
-            case InputKey.end: tv.selEnd(); return true;
-            case InputKey.left: collapseSel(); return true;
-            case InputKey.right: expandSel(); return true;
-            case InputKey.enter: activateSel(); return true;
-            case InputKey.escape: return false;
-            default: break;
-        }
-        if (k.key != InputKey.char_)
-            return true;
-        switch (k.ch)
-        {
-            case 'j': tv.moveSel(1); return true;
-            case 'k': tv.moveSel(-1); return true;
-            case 'g': tv.selHome(); return true;
-            case 'G': tv.selEnd(); return true;
-            case 'h': collapseSel(); return true;
-            case 'l': expandSel(); return true;
-            case 'a': toggleAnonymous(vm); return true;
-            case 's': pick(!picking); return true;
-            case 'q': return false;
+            case Command.inspDown: tv.moveSel(1); return true;
+            case Command.inspUp: tv.moveSel(-1); return true;
+            case Command.inspPageDown: tv.moveSel(tv.bodyRows); return true;
+            case Command.inspPageUp: tv.moveSel(-tv.bodyRows); return true;
+            case Command.inspHome: tv.selHome(); return true;
+            case Command.inspEnd: tv.selEnd(); return true;
+            case Command.inspCollapse: collapseSel(); return true;
+            case Command.inspExpand: expandSel(); return true;
+            case Command.inspActivate: activateSel(); return true;
+            case Command.inspClose: return false;
+            case Command.inspToggleAnonymous: toggleAnonymous(vm); return true;
+            case Command.inspTogglePick: pick(!picking); return true;
             default: return true;
         }
     }
