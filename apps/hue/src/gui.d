@@ -511,13 +511,13 @@ int runGui(GuiArgs guiArgs) @system
     void publishDockExtents()
     {
         pn.dock.contentExtent(treePane, pn.tree.contentCols,
-            pn.tree.rows.length);
+            pn.tree.tv.scrollExtent());
         // `NAV6`: the extent, not the row count — a resize that pinned the
         // first line past the last full screen must not be clamped back by
         // the container the moment the offset round-trips through it.
         pn.dock.contentExtent(docPane, vm.contentCols, vm.scrollExtent());
         pn.dock.contentExtent(inspPane, pn.insp.tv.contentCols,
-            cast(long) pn.insp.tv.rows.length + pn.insp.tv.chromeRows);
+            pn.insp.tv.scrollExtent() + pn.insp.tv.chromeRows);
     }
 
     void commitDockOffsets()

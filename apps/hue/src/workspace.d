@@ -258,12 +258,15 @@ struct WorkspaceTui
     // pane while only the body rows scroll.
     private void publishPaneExtents() @safe
     {
+        // `NAV6`: the extent, not the row count — a resize that pinned the
+        // first line past the last full screen must survive the round trip
+        // through the container's own clamp.
         dock.contentExtent(treePane, tree.contentCols,
-            cast(long) tree.rows.length + tree.chromeRows);
+            tree.tv.scrollExtent() + tree.chromeRows);
         dock.contentExtent(docPane, viewer.vm.contentCols,
-            cast(long) viewer.vm.rows.length + 2);
+            viewer.vm.scrollExtent() + 2);
         dock.contentExtent(inspPane, insp.tv.contentCols,
-            cast(long) insp.tv.rows.length + insp.tv.chromeRows);
+            insp.tv.scrollExtent() + insp.tv.chromeRows);
     }
 
     private void applyDockScrolls() @safe pure nothrow @nogc
@@ -2894,4 +2897,67 @@ unittest
         "the inspector rebuilt against the new parse");
     assert(w.viewer.vm.inspectRects.length == 0,
         "the stale extent tint cleared; the next hover re-syncs");
+}
+
+@("workspace.arrange.resizeKeepsTheFirstVisibleLine")
+@system
+unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    // Issue #299 through the whole terminal workspace, not just the pane:
+    // `arrange` re-lays the panes out AND round-trips every offset through
+    // the dock's own clamp, which is the second place a resize could move
+    // the reader.
+    const root = buildPath(tempDir(), "hue-workspace-resize-test");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    string src;
+    foreach (i; 0 .. 40)
+        src ~= "line of source number that is long enough to wrap somewhere\n";
+    write(buildPath(root, "long.d"), src);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    const labels = LabelSet.standard();
+
+    WorkspaceTui w;
+    w.loadDoc = delegate WorkspaceDoc(string path) @system {
+        import std.file : readText;
+        import std.path : baseName;
+
+        const s = readText(path);
+        return WorkspaceDoc(title: baseName(path), source: s,
+            events: [HighlightEvent.sourceSpan(0, s.length)]);
+    };
+    w.tree.root = root;
+    w.tree.themeValue = &themes[0];
+    w.tree.theme = resolveTheme(themes[0], labels);
+    w.pageFg = w.tree.pageFg = toRgb(w.tree.theme.defaults.fg,
+        RgbColor(0xcc, 0xcc, 0xcc));
+    w.pageBg = w.tree.pageBg = toRgb(w.tree.theme.defaults.bg,
+        RgbColor(0x1e, 0x1e, 0x1e));
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = labels;
+    w.tree.rebuild();
+    w.arrange(100, 20);
+    w.openDoc(buildPath(root, "long.d"));
+
+    // Through the container, so the offset is the one the dock agrees with
+    // (it clamps to the pane, exactly as a real session would).
+    w.viewer.vm.scrollTo(12);
+    w.commitPaneScrolls();
+    const anchor = w.viewer.vm.rows[cast(size_t) w.viewer.vm.top].srcStart;
+    assert(anchor != size_t.max && w.viewer.vm.top > 0);
+
+    w.arrange(50, 20); // narrower: the document re-wraps
+    assert(w.viewer.vm.rows[cast(size_t) w.viewer.vm.top].srcStart == anchor,
+        "a narrower workspace moved the first visible line");
+
+    w.arrange(50, 200); // taller than the whole document
+    assert(w.viewer.vm.rows[cast(size_t) w.viewer.vm.top].srcStart == anchor,
+        "a taller workspace scrolled the document up to fill itself");
 }

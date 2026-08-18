@@ -208,6 +208,20 @@ struct TreeViewState(Key)
     }
 
     /**
+    The row extent to publish to a scroll container (hue issue #299).
+
+    Normally the row count; while a growth overshoot is live, the rows the
+    view is actually parked over — otherwise the container's own clamp snaps
+    the offset back the moment it round-trips through it.
+    */
+    long scrollExtent() const pure nothrow @nogc
+    {
+        const total = cast(long) rows.length;
+        const reach = top + bodyRows;
+        return grewPastClamp && reach > total ? reach : total;
+    }
+
+    /**
     Sets the pane height (hue issue #299).
 
     A pane that grew must only reveal more rows $(I below) the first visible
