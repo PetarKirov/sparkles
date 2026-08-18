@@ -251,8 +251,19 @@ struct MdTableExtras
     /// engages the core's decimal-pad solver (`DSG7`).
     const(CellAlign)[] columnAligns;
     /// Pin the header band while the vertical table viewport scrolls
-    /// (`TableViewportSpec.pinHeader`, `DSG2`).
+    /// (`TableViewportSpec.pinHeader`, `DSG2`). Sugar for
+    /// `freezeTopRows = 1` (the md table's one header row).
     bool pinHeader;
+    /// Freeze panes (`TableViewportSpec.freeze*`): first/last grid rows and
+    /// columns held at the viewport edges while the interior scrolls —
+    /// frozen rows still scroll horizontally, frozen columns vertically.
+    /// Rows engage with the vertical viewport, columns with the horizontal
+    /// one; hue's DSV grid freezes its record-number gutter
+    /// (`freezeLeftColumns`, `DSG5`).
+    size_t freezeTopRows;
+    size_t freezeBottomRows;   /// ditto
+    size_t freezeLeftColumns;  /// ditto
+    size_t freezeRightColumns; /// ditto
 }
 
 /// The emphasis in force while rendering a subtree: which source ranges are
@@ -1517,7 +1528,11 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     vThumbFg: opt.hotTableVBar == blk.span.start
                         ? opt.theme.accentBlue : opt.theme.codeFg,
                     hasVThumbFg: opt.theme.present,
-                    pinHeader: opt.tableExtras.pinHeader);
+                    pinHeader: opt.tableExtras.pinHeader,
+                    freezeTopRows: opt.tableExtras.freezeTopRows,
+                    freezeBottomRows: opt.tableExtras.freezeBottomRows,
+                    freezeLeftColumns: opt.tableExtras.freezeLeftColumns,
+                    freezeRightColumns: opt.tableExtras.freezeRightColumns);
             }
             TableWidgetStyle st = {
                 hitId: opt.hitId,

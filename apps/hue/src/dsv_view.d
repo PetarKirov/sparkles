@@ -20,6 +20,8 @@ import std.conv : text;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.text.width : CellAlign = Align;
 import sparkles.syntax.md.render_widgets : MdTableExtras;
+
+version (unittest) import sparkles.syntax.md.render_widgets : TableScroll;
 import sparkles.dsv : classifyValue, ColumnType, decodeCell, detectHeader,
     Dialect, DsvDoc, inferColumnTypes, parseDsv, seedForExtension, sniff,
     sniffMaxBytes, sniffMaxRecords;
@@ -183,6 +185,9 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc) @safe
         columnMaxWidth: dsvColumnCapCells,
         columnAligns: cellAligns,
         pinHeader: true,
+        // The record-number gutter stays put while the grid scrolls
+        // horizontally (`DSG5` × the freeze-pane generalization).
+        freezeLeftColumns: 1,
     );
 
     // One row into the buffer + tree; texts are already decoded.
@@ -302,7 +307,8 @@ version (unittest)
             .buildNormalizedPath("../test/fixtures/dsv");
     }
 
-    private string dsvGridText(in DsvAdapted a, int maxLines = 0) @system
+    private string dsvGridText(in DsvAdapted a, int maxLines = 0,
+        int scrollX = 0, int scrollY = 0) @system
     {
         import std.utf : encode;
         import sparkles.base.term_color : RgbColor, toRgb;
@@ -325,6 +331,7 @@ version (unittest)
             maxWidth: dsvGoldenWidth,
             tableExtras: a.extras,
             tableMaxLines: maxLines,
+            tableScrolls: [TableScroll(0, scrollX, scrollY)],
         };
         auto tree = viewMarkdown(a.doc, opt);
         auto frames = layout(tree, Constraints(maxW: dsvGoldenWidth));
@@ -352,7 +359,7 @@ version (unittest)
     }
 
     private void checkDsvGolden(string name, in DsvFlags flags = DsvFlags(),
-        int maxLines = 0) @system
+        int maxLines = 0, int scrollX = 0, int scrollY = 0) @system
     {
         import std.file : exists, readText, write;
         import std.path : buildPath;
@@ -362,7 +369,7 @@ version (unittest)
         const fixture = dir.buildPath(name ~ ".csv");
         const golden = dir.buildPath(name ~ ".txt");
         const rendered = dsvGridText(adaptDsv(readText(fixture), "csv", flags),
-            maxLines);
+            maxLines, scrollX, scrollY);
         if (environment.get("SPARKLES_UPDATE_GOLDENS", "").length != 0
             || !golden.exists)
         {
@@ -409,6 +416,15 @@ version (unittest)
     // viewport engages (DSG4 via TBL7) — pinned corners, the bottom border
     // as the scrollbar, the interior clipped at offset 0.
     checkDsvGolden("wide");
+}
+
+@("dsv_view.golden.wideScrolledFrozenGutter")
+@system unittest
+{
+    // The same wide grid scrolled 12 cells right: the record-number gutter
+    // (and its heavy stub rule) stays frozen at the left edge while the
+    // data columns scroll behind it (DSG5 × the freeze-pane emission).
+    checkDsvGolden("wide-scrolled", DsvFlags(), maxLines: 0, scrollX: 12);
 }
 
 @("dsv_view.columnName.spreadsheetLetters")
