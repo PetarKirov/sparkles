@@ -1,6 +1,8 @@
 /** Clock-free deterministic chunked search over immutable candidate snapshots. */
 module sparkles.fuzzy.search;
 
+version (unittest) import sparkles.base.unique : makeUnique;
+
 import sparkles.base.text.utf8 : utf8SequenceLength;
 
 import sparkles.fuzzy.common : CandidateView, CorpusId, DefaultFuzzyCaps,
@@ -296,7 +298,8 @@ unittest
 
     SearchAccumulator!5 chunked;
     auto cursor = chunked.begin(snapshot.id, 7, 3, 0, 5).value;
-    MatcherWorkspace!() matcher;
+    auto matcherOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() matcher() => matcherOwner.get();
     ConstraintWorkspace!() constraints;
     SearchLimits limits;
     limits.maxCandidates = 2;
@@ -342,7 +345,8 @@ unittest
     CandidateSnapshot snapshot;
     snapshot.id.low = 9;
     snapshot.candidates = candidates[];
-    MatcherWorkspace!() matcher;
+    auto matcherOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() matcher() => matcherOwner.get();
     ConstraintWorkspace!() constraints;
 
     // A budget below the very first candidate's work bound is unsatisfiable:
@@ -387,7 +391,8 @@ unittest
     SearchAccumulator!2 accumulator;
     auto cursor = accumulator.begin(snapshot.id, 1, 1, 0, 2).value;
     ++cursor.accumulatorRevision;
-    MatcherWorkspace!() matcher;
+    auto matcherOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() matcher() => matcherOwner.get();
     ConstraintWorkspace!() constraints;
     auto result = searchChunk(query.value, snapshot, cursor,
         SearchLimits.init, accumulator, matcher, constraints);

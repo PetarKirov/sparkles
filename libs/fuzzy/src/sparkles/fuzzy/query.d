@@ -1295,12 +1295,26 @@ unittest
         && manyColons.value.location.startColumn == 5);
     assert(manyColons.value.fuzzyParts[0].decodedLength
         == "a:1:2:3".length);
+}
 
+// Split from the locations above rather than merged into one test: a parse
+// result is a `QueryStorage` by value (~26 KiB), so every live one is a stack
+// slot, and a test holding a dozen of them needs more stack than a secondary
+// thread gets on macOS (512 KiB). One frame per handful of parses.
+@("fuzzy.query.rejectedTokenShapes")
+@safe pure nothrow @nogc
+unittest
+{
     assert(parseQuery(`git:`).error.code == FuzzyErrorCode.emptyValue);
     assert(parseQuery(`git:m`).hasValue);
     assert(parseQuery(`type:source`).error.code == FuzzyErrorCode.unknownValue);
     assert(parseQuery(`"unterminated`).error.code == FuzzyErrorCode.unexpectedEnd);
+}
 
+@("fuzzy.query.windowsDriveIsNotALocation")
+@safe pure nothrow @nogc
+unittest
+{
     QueryParseOptions windows;
     windows.pathFlavor = PathFlavor.windows;
     auto drive = parseQuery("C:12", windows);
@@ -1389,7 +1403,14 @@ unittest
     auto narrower = parseQuery("abcdefghij");
     assert(stable.hasValue && narrower.hasValue);
     assert(narrower.value.refines(stable.value));
+}
 
+/// ditto — split for the stack budget described above.
+@("fuzzy.query.refinementNeedsTheSameConstraints")
+@safe pure nothrow @nogc
+unittest
+{
+    auto stable = parseQuery("abcdefghi");
     auto changedConstraint = parseQuery("abcdefghi ext:d");
     assert(!changedConstraint.value.refines(stable.value));
 

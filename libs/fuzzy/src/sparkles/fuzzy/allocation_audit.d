@@ -53,6 +53,7 @@ version (linux)
         import sparkles.fuzzy.glob : compileGlob, globMatch, GlobMatchWorkspace,
             GlobProgram;
         import sparkles.fuzzy.history : ComboTable, FrecencyTable;
+        import sparkles.base.unique : makeUnique;
         import sparkles.fuzzy.match : MatcherWorkspace;
         import sparkles.fuzzy.query : ConstraintWorkspace, parseQuery;
         import sparkles.fuzzy.rank : RankedResult;
@@ -80,7 +81,8 @@ version (linux)
         snapshot.candidates = candidates[];
 
         SearchAccumulator!8 accumulator;
-        MatcherWorkspace!() matcher;
+        auto matcherOwner = makeUnique!(MatcherWorkspace!())();
+        ref MatcherWorkspace!() matcher() => matcherOwner.get();
         ConstraintWorkspace!() constraints;
         RankedResult[8] page;
         GlobProgram!() glob;
