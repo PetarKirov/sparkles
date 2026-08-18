@@ -104,6 +104,15 @@ struct TableViewportSpec
     bool hasHThumbFg;    /// ditto
     RgbColor vThumbFg;   /// ditto
     bool hasVThumbFg;    /// ditto
+    /// Pin the header band (the `TableProps.headerRows` rows plus their
+    /// heavy rule) below the top border while the body scrolls behind the
+    /// vertical viewport — hue's `DSG2` (a data grid keeps its column names
+    /// in sight). Engages only when the vertical viewport does; ignored
+    /// when `headerRows == 0`, when the band would not fit `maxLines`, or
+    /// when a rowspan crosses the header/body boundary (the band must be
+    /// separable). The scroll range is unchanged: the pinned band shortens
+    /// the body view by exactly the lines it occupies.
+    bool pinHeader;
 }
 
 /// What `buildTableWidgets` produced: the root node, the table's full content
@@ -394,7 +403,49 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     // borders — cells, inner `│` rules, and the interior `├─┼─┤` rule lines —
     // moves as one offset behind the clip; the side caps (each line's first
     // and last frame glyph) pin at the box edges so the frame stays whole.
+
+    // `vp.pinHeader`: the header band (header rows + their rule) splits off
+    // into its own non-vertically-scrolling strip; `pinLines` is its height
+    // in interior lines, 0 when pinning does not engage.
+    int pinLines = 0;
+    if (vOver && vp.pinHeader && props.headerRows > 0
+        && props.headerRows < g.numRows)
+    {
+        foreach (ref ev; events)
+            if (ev.kind == EmitKind.ruleLine && ev.index == props.headerRows)
+            {
+                pinLines = cast(int) ev.line; // rule's interior li (+1) − 1
+                break;
+            }
+        if (pinLines <= 0 || pinLines >= shownLines)
+            pinLines = 0;
+        else
+            foreach (i; 0 .. authored)
+            {
+                // A rowspan crossing the boundary makes the band inseparable.
+                const iy = cast(int) rects[i].y - 1;
+                const ih = cast(int) rects[i].h;
+                if (iy < pinLines && iy + ih > pinLines)
+                {
+                    pinLines = 0;
+                    break;
+                }
+            }
+    }
+    const pin = pinLines > 0;
+    const bodyShown = shownLines - pinLines;
+
     uint[] interiorParts;
+    uint[] pinnedParts, bodyParts;
+    void addInterior(int x, int li, uint id)
+    {
+        if (!pin)
+            interiorParts ~= positioned(x, li, id);
+        else if (li < pinLines)
+            pinnedParts ~= positioned(x, li, id);
+        else
+            bodyParts ~= positioned(x, li - pinLines, id);
+    }
     auto leftCapGlyph = new dchar[](interiorLines);
     auto rightCapGlyph = new dchar[](interiorLines);
     leftCapGlyph[] = props.glyphs.verticalLine;
@@ -416,8 +467,7 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
                     const li = cast(int) ev.line - 1;
                     leftCapGlyph[li] = glyphs[0];
                     rightCapGlyph[li] = glyphs[$ - 1];
-                    interiorParts ~= positioned(0, li,
-                        ruleRun(glyphs[1 .. $ - 1].to!string));
+                    addInterior(0, li, ruleRun(glyphs[1 .. $ - 1].to!string));
                 }
                 break;
             case EmitKind.ruleCell:
@@ -428,7 +478,7 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
                 else if (rc.x + 1 == tableW)
                     rightCapGlyph[li] = rc.glyph;
                 else
-                    interiorParts ~= positioned(cast(int) rc.x - 1, li,
+                    addInterior(cast(int) rc.x - 1, li,
                         ruleRun(rc.glyph.to!string));
                 break;
             case EmitKind.anchor:
@@ -438,24 +488,26 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
                     width: SizeSpec.fixed(cast(int) rect.w),
                     height: SizeSpec.fixed(cast(int) rect.h),
                     key: keyOf[ev.index]);
-                interiorParts ~= positioned(cast(int) rect.x - 1,
-                    cast(int) rect.y - 1, b.add(cellW));
+                addInterior(cast(int) rect.x - 1, cast(int) rect.y - 1,
+                    b.add(cellW));
                 break;
         }
     }
 
-    uint capColumn(in dchar[] caps)
+    uint capSegment(in dchar[] caps, bool clip, int shown)
     {
         auto runs = new uint[](0);
         foreach (ch; caps)
             runs ~= ruleRun(ch.to!string);
         Widget col = Widget(kind: WidgetKind.column, children: runs,
-            width: SizeSpec.fixed(1), clipY: vOver,
-            childOffset: Point(0, vOver ? sy : 0));
-        if (vOver)
-            col.height = SizeSpec.fixed(shownLines);
+            width: SizeSpec.fixed(1), clipY: clip,
+            childOffset: Point(0, clip ? sy : 0));
+        if (clip)
+            col.height = SizeSpec.fixed(shown);
         return b.add(col);
     }
+
+    uint capColumn(in dchar[] caps) => capSegment(caps, vOver, shownLines);
 
     // Top border: pinned corners (and the pinned TBL6 cutout) around the
     // junction run, which scrolls behind a one-line viewport when hOver.
@@ -512,29 +564,17 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     else
         bottom = borderRow(bottomGlyphs, false);
 
-    // The interior viewport plus its pinned caps (or the vertical track).
-    const inner = b.add(Widget(kind: WidgetKind.stack,
-        children: interiorParts, width: SizeSpec.fixed(interiorW),
-        height: SizeSpec.fixed(interiorLines)));
-    Widget clipW = Widget(kind: WidgetKind.column, children: [inner],
-        clipX: hOver, clipY: vOver,
-        childOffset: Point(hOver ? sx : 0, vOver ? sy : 0),
-        width: SizeSpec.fixed(viewInnerW),
-        height: SizeSpec.fixed(shownLines));
-    const clip = b.add(clipW);
-
-    uint rightSide;
-    if (vOver)
+    // The vertical track for the scrolling region (fenceVTrack's shape).
+    uint vTrack(int contentLines, int shown)
     {
-        // The right border becomes the vertical track (fenceVTrack's shape).
         auto trackCells = new uint[](0);
-        foreach (_; 0 .. shownLines)
+        foreach (_; 0 .. shown)
             trackCells ~= ruleRun(props.glyphs.verticalLine.to!string);
         const base = b.add(Widget(kind: WidgetKind.column,
             children: trackCells, width: SizeSpec.fixed(1)));
         const vbar = scrollbar(b, ScrollbarSpec(
-            content: interiorLines,
-            viewport: shownLines,
+            content: contentLines,
+            viewport: shown,
             offset: sy,
             axis: ScrollAxis.vertical,
             glyphs: ScrollbarGlyphs('┃', props.glyphs.verticalLine),
@@ -545,19 +585,65 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             hasTrackFg: style.hasRuleFg,
             thumbFg: vp.vThumbFg,
             hasThumbFg: vp.hasVThumbFg,
-        ), shownLines);
-        rightSide = b.add(Widget(kind: WidgetKind.stack,
+        ), shown);
+        return b.add(Widget(kind: WidgetKind.stack,
             children: [base, vbar], width: SizeSpec.fixed(1),
-            height: SizeSpec.fixed(shownLines)));
+            height: SizeSpec.fixed(shown)));
+    }
+
+    uint[] frameRows;
+    if (pin)
+    {
+        // The pinned band: header rows + their rule, horizontal-only clip;
+        // its caps never scroll. The body below carries the vertical
+        // viewport, its cap/track heights shortened by the band.
+        const pinInner = b.add(Widget(kind: WidgetKind.stack,
+            children: pinnedParts, width: SizeSpec.fixed(interiorW),
+            height: SizeSpec.fixed(pinLines)));
+        const pinClip = b.add(Widget(kind: WidgetKind.column,
+            children: [pinInner], clipX: hOver,
+            childOffset: Point(hOver ? sx : 0, 0),
+            width: SizeSpec.fixed(viewInnerW),
+            height: SizeSpec.fixed(pinLines)));
+        frameRows ~= b.container(WidgetKind.row, [
+            capSegment(leftCapGlyph[0 .. pinLines], false, 0), pinClip,
+            capSegment(rightCapGlyph[0 .. pinLines], false, 0),
+        ]);
+
+        const bodyInner = b.add(Widget(kind: WidgetKind.stack,
+            children: bodyParts, width: SizeSpec.fixed(interiorW),
+            height: SizeSpec.fixed(interiorLines - pinLines)));
+        const bodyClip = b.add(Widget(kind: WidgetKind.column,
+            children: [bodyInner], clipX: hOver, clipY: true,
+            childOffset: Point(hOver ? sx : 0, sy),
+            width: SizeSpec.fixed(viewInnerW),
+            height: SizeSpec.fixed(bodyShown)));
+        frameRows ~= b.container(WidgetKind.row, [
+            capSegment(leftCapGlyph[pinLines .. $], true, bodyShown), bodyClip,
+            vTrack(interiorLines - pinLines, bodyShown),
+        ]);
     }
     else
-        rightSide = capColumn(rightCapGlyph);
+    {
+        // The interior viewport plus its pinned caps (or the vertical track).
+        const inner = b.add(Widget(kind: WidgetKind.stack,
+            children: interiorParts, width: SizeSpec.fixed(interiorW),
+            height: SizeSpec.fixed(interiorLines)));
+        Widget clipW = Widget(kind: WidgetKind.column, children: [inner],
+            clipX: hOver, clipY: vOver,
+            childOffset: Point(hOver ? sx : 0, vOver ? sy : 0),
+            width: SizeSpec.fixed(viewInnerW),
+            height: SizeSpec.fixed(shownLines));
+        const clip = b.add(clipW);
 
-    const interiorRow = b.container(WidgetKind.row,
-        [capColumn(leftCapGlyph), clip, rightSide]);
+        const rightSide = vOver ? vTrack(interiorLines, shownLines)
+            : capColumn(rightCapGlyph);
+        frameRows ~= b.container(WidgetKind.row,
+            [capColumn(leftCapGlyph), clip, rightSide]);
+    }
 
     Widget root = Widget(kind: WidgetKind.column,
-        children: [top, interiorRow, bottom],
+        children: [top] ~ frameRows ~ [bottom],
         width: SizeSpec.fixed(viewW),
         height: SizeSpec.fixed(shownLines + 2));
     return TableWidgetResult(b.add(root), tableW, tableH,
@@ -945,6 +1031,61 @@ version (unittest)
         }
     }
     assert(sawClip && sawIcon);
+}
+
+@("table.widgets.viewport.pinnedHeaderBand")
+@safe unittest
+{
+    // headerRows:1 + pinHeader: the header row and its heavy rule split into
+    // a non-vertically-scrolling band (interior lines 0–1 → pinLines 2); the
+    // body scrolls below it in a shortened viewport, same total box height.
+    auto rows = new string[][](9);
+    rows[0] = ["colA", "colB"];
+    foreach (r; 1 .. 9)
+        rows[r] = ["a", "b"];
+    auto b = Builder();
+    const res = buildTableWidgets(b, plainCells(rows),
+        TableProps(headerRows: 1), TableWidgetStyle(),
+        TableViewportSpec(maxLines: 4, y: 2, vBarHitId: 800, pinHeader: true));
+    assert(res.vBar && !res.hBar);
+    assert(res.viewHeight == 6); // 4 interior lines + both borders
+
+    auto tree = b.finish(res.root);
+    auto frames = layout(tree, Constraints(maxW: 40));
+    assert(frames[res.root].rect.height == 6);
+
+    bool sawHeaderText, sawBodyClip, sawPinClip;
+    foreach (i, ref n; tree.nodes)
+    {
+        foreach (ref sp; n.spans)
+            if (sp.text == "colA")
+            {
+                sawHeaderText = true;
+                // The header band sits directly under the top border and
+                // does NOT carry the vertical offset.
+                assert(frames[i].rect.y == 1);
+            }
+        if (n.clipY && n.childOffset.y == 2)
+        {
+            sawBodyClip = true;
+            // bodyShown = shownLines(4) − pinLines(2).
+            assert(frames[i].rect.height == 2);
+        }
+        if (!n.clipY && n.clipX)
+            sawPinClip = true; // never engages here (no hOver): stays false
+    }
+    assert(sawHeaderText && sawBodyClip);
+    assert(!sawPinClip);
+
+    // pinHeader without headerRows is inert: identical emission shape.
+    auto b2 = Builder();
+    const plainRes = buildTableWidgets(b2, plainCells(rows), TableProps(),
+        TableWidgetStyle(), TableViewportSpec(maxLines: 4, y: 2));
+    auto b3 = Builder();
+    const pinnedRes = buildTableWidgets(b3, plainCells(rows), TableProps(),
+        TableWidgetStyle(), TableViewportSpec(maxLines: 4, y: 2, pinHeader: true));
+    assert(b2.finish(plainRes.root).nodes.length
+        == b3.finish(pinnedRes.root).nodes.length);
 }
 
 @("table.widgets.viewport.barsAreSemanticLeaves")
