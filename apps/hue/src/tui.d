@@ -56,7 +56,8 @@ import ansi_model : Attr, BackgroundMode;
 import viewer_model : ViewerModel;
 import format_preview : formatPreviewActive, formatPreviewChip,
     formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
-    formatPreviewToggle;
+    formatPreviewRulerCol, formatPreviewRulerDragging, formatPreviewRulerHits,
+    formatPreviewRulerPointer, formatPreviewToggle;
 import gui_preview : PreviewModel;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
@@ -543,11 +544,47 @@ struct PreviewTui
         paintHeader(g);
 
         paintMarkdown(g);
+        paintFormatRuler(g);
         paintHoverPopup(g);
         if (!externalScroll)
             paintScrollbar(g);
         paintStatus(g);
         paintLantern(g);
+    }
+
+    /// Pointer hover over the ruler, kept by the bare-move branch (`RUL6`)
+    /// so the workspace's pane shapes can answer without a position.
+    private bool rulerHover;
+
+    /// The pane's shape contribution (`RUL3`): ew-resize while the ruler is
+    /// hovered or dragged.
+    bool rulerHovering() const @safe pure nothrow @nogc
+        => formatPreviewActive(vm) && (rulerHover || vm.fmt.rulerDrag);
+
+    /// The format-preview ruler (`RUL1`). A vertical `rule` op is a silent
+    /// no-op in the cell canvas, so paint by hand like the pane dividers:
+    /// `│` into blank cells, a fg accent where a glyph already sits — the
+    /// column stays readable under the mark.
+    private void paintFormatRuler(ref Grid g) @system
+    {
+        const col = formatPreviewRulerCol(vm);
+        if (col < 0)
+            return;
+        const hx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
+        const x = originX + col - hx;
+        const contentWidth = externalScroll ? width : width - 1;
+        if (x < originX || x >= originX + contentWidth)
+            return;
+        const rows = bodyRows();
+        CellStyle ruler = cellStyle(pageFg, true, pageBg, 0);
+        ruler.fg = Color.fromRgb(mix(pageBg, pageFg, 0.5));
+        foreach (y; 1 .. rows + 1)
+        {
+            if (g[cast(ushort) x, cast(ushort) y].grapheme == " ")
+                g.putText(cast(ushort) x, cast(ushort) y, "│", ruler);
+            else
+                g[cast(ushort) x, cast(ushort) y].style.fg = ruler.fg;
+        }
     }
 
     /**
@@ -762,11 +799,16 @@ struct PreviewTui
         auto b = Builder();
         // A notice outranks the key hints: it is the answer to what the
         // reviewer just did, and the hints are always true anyway.
+        // Chip precedence: a live query, then a notice, then the format
+        // preview's formatter · width · error chip (`FMV7`), then the hints.
+        const fchip = formatPreviewChip(vm);
         const line = b.add(Widget(kind: WidgetKind.text,
             text: searching ? text("/", query, "▏")
                 : notice.length ? notice
+                : fchip.length ? fchip
                 : "scroll ↑↓ · ←→ theme · Tab raw/preview · / search · za fold · drag+y copy · q quit",
-            slot: searching || notice.length ? Slot.inherit : Slot.gutter));
+            slot: searching || notice.length || fchip.length
+                ? Slot.inherit : Slot.gutter));
         paintBar(g, y, [line], null, null, b);
     }
 
@@ -1345,6 +1387,29 @@ struct PreviewTui
     private bool handlePointer(in PointerEvent e) @system
     {
         const rows = bodyRows();
+
+        // The format-preview ruler (`RUL2`/`RUL6`): pane cell → document
+        // column is the only TUI-side arithmetic; tolerance, drag state and
+        // the clamp are the session's (`RUL8`). A bare move — which every
+        // other branch here ignores — arms the hover shape; a press on the
+        // ruler grabs; the grab's drag/release retarget the width.
+        const rulerColF = cast(double)(e.pos.x - originX
+            + (vm.hOverflows() ? cast(int) vm.hsb.offset : 0));
+        if (e.button == PointerButton.none && e.action == PointerAction.move)
+            rulerHover = formatPreviewRulerHits(vm, rulerColF);
+        if (formatPreviewRulerDragging(vm) && e.button == PointerButton.left
+            && (e.action == PointerAction.drag
+                || e.action == PointerAction.release))
+        {
+            formatPreviewRulerPointer(vm, e.action, rulerColF);
+            return true;
+        }
+        if (e.button == PointerButton.left && e.action == PointerAction.press
+            && formatPreviewRulerPointer(vm, PointerAction.press, rulerColF))
+        {
+            rulerHover = true;
+            return true;
+        }
         if (e.button == PointerButton.left
             && e.action == PointerAction.release)
         {
@@ -2191,4 +2256,69 @@ unittest
     // Without the modifier it still scrolls vertically, as it always did.
     assert(t.handle(Event(WheelEvent(dy: 2))));
     assert(t.vm.hsb.offset == 4 && t.vm.top != before);
+}
+
+version (HueDmdFmt)
+@("tui.formatRuler.paintHoverDrag")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 80;
+    t.height = 10;
+    t.relayout();
+    enum src = "int  a;\nint  b;\n";
+    t.setDocument("t.d", src, [HighlightEvent.sourceSpan(0, src.length)],
+        PreviewModel.init, startPreview: false, TwoslashReturn.init, "d");
+
+    // Toggle on, pin a width inside the pane, wait for the buffer to apply.
+    assert(formatPreviewToggle(t.vm) is null);
+    t.vm.fmt.requestWidth(t.vm, 60);
+    foreach (_; 0 .. 2500)
+    {
+        formatPreviewPump(t.vm);
+        if (t.vm.fmt.flow.shownCol == 60)
+            break;
+        Thread.sleep(2.msecs);
+    }
+    assert(t.vm.source == "int a;\nint b;\n");
+
+    // RUL1: the ruler column paints — `│` in a blank cell at doc column 60.
+    Grid g;
+    g.resize(80, 10);
+    t.paint(g);
+    assert(g[60, 1].grapheme == "│", "no ruler glyph at the width column");
+
+    // RUL6: a bare move over the ruler arms the hover shape; off it, not.
+    assert(t.handle(Event(PointerEvent(button: PointerButton.none,
+        action: PointerAction.move, pos: Point(60, 2)))));
+    assert(t.rulerHovering);
+    t.handle(Event(PointerEvent(button: PointerButton.none,
+        action: PointerAction.move, pos: Point(20, 2))));
+    assert(!t.rulerHovering);
+
+    // RUL2: press on the ruler grabs; the drag retargets through the clamp;
+    // release ends the grab.
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(60, 2)))));
+    assert(formatPreviewRulerDragging(t.vm));
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(50, 2)))));
+    assert(t.vm.fmt.rulerCol == 50);
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(50, 2)))));
+    assert(!formatPreviewRulerDragging(t.vm));
+
+    formatPreviewToggle(t.vm); // off restores
+    assert(t.vm.source is src);
+    t.vm.fmt.service.shutdown();
 }

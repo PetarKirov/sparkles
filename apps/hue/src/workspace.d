@@ -16,7 +16,7 @@ version (Posix):
 import core.time : Duration;
 import core.time : msecs;
 import std.path : dirName;
-import format_preview : formatPreviewPump;
+import format_preview : formatPreviewPump, formatPreviewRulerDragging;
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.unique : makeUnique;
@@ -805,6 +805,8 @@ struct WorkspaceTui
     // precedence (DCK9) puts every grab above every hover.
     private PointerShape paneGrabShape() @safe pure nothrow @nogc
     {
+        if (formatPreviewRulerDragging(viewer.vm))
+            return PointerShape.ewResize; // the ruler grab (`RUL3`)
         if (viewer.vm.barGrabbing)
             return viewer.vm.barShape();
         return PointerShape.default_;
@@ -813,6 +815,8 @@ struct WorkspaceTui
     /// ditto
     private PointerShape paneHoverShape() @safe pure nothrow @nogc
     {
+        if (viewer.rulerHovering)
+            return PointerShape.ewResize; // the ruler hover (`RUL3`/`RUL6`)
         return viewer.vm.barShape();
     }
 
