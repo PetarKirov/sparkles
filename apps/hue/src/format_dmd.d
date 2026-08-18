@@ -83,3 +83,85 @@ SRC";
 /// found means the formatter's default.
 ushort discoveredWidth(string path) @system
     => cast(ushort) configFor(path, FormatConfig()).softMaxLineLength;
+
+// ── the fork-server execution backend (FPR10 / event-horizon M18) ───────────
+// The zygote runs `warmDmdFrontend` once; every per-request grandchild then
+// inherits initialized DMD globals by CoW — no repeated init, no lock, and a
+// frontend crash costs one format, not hue.
+
+version (Posix)
+{
+    import sparkles.event_horizon.forkserver : ForkServer, ForkServerConfig;
+
+    private __gshared ForkServer formatForkServer;
+    private __gshared bool formatForkUp;
+
+    /// Wire framing for a fork-format request:
+    /// `[ushort width][uint pathLen][path][source]`.
+    ubyte[] encodeForkFormat(const(char)[] source, string path,
+        ushort widthCols) @system
+    {
+        auto buf = new ubyte[](2 + 4 + path.length + source.length);
+        buf[0] = widthCols & 0xff;
+        buf[1] = (widthCols >> 8) & 0xff;
+        const plen = cast(uint) path.length;
+        buf[2 .. 6] = [cast(ubyte)(plen & 0xff), cast(ubyte)((plen >> 8) & 0xff),
+            cast(ubyte)((plen >> 16) & 0xff), cast(ubyte)((plen >> 24) & 0xff)];
+        buf[6 .. 6 + path.length] = cast(const(ubyte)[]) path;
+        buf[6 + path.length .. $] = cast(const(ubyte)[]) source;
+        return buf;
+    }
+
+    /// The grandchild's work: decode, format, publish. Top-level function —
+    /// the zygote runs the pointer.
+    private size_t forkFormatHandler(scope const(ubyte)[] input, uint kind,
+        scope ubyte[] output) @system
+    {
+        cast(void) kind;
+        if (input.length < 6)
+            return size_t.max;
+        const width = cast(ushort)(input[0] | (input[1] << 8));
+        const plen = input[2] | (input[3] << 8) | (input[4] << 16)
+            | (input[5] << 24);
+        if (6 + plen > input.length)
+            return size_t.max;
+        const path = cast(const(char)[]) input[6 .. 6 + plen];
+        const source = cast(const(char)[]) input[6 + plen .. $];
+        const text = formatDSource(source, path.idup, width);
+        if (text.length > output.length)
+            return size_t.max;
+        output[0 .. text.length] = cast(const(ubyte)[]) text;
+        return text.length;
+    }
+
+    /// The zygote's one-time init: run the whole pipeline once so `Id`,
+    /// `global` and the lexer/parse tables initialize — the CoW payload.
+    private void warmDmdFrontend() @system
+    {
+        cast(void) formatDSource("int a;\n", "warmup.d", 120);
+    }
+
+    /**
+    Fork the format zygote (`FPR10`). Call from the app entry $(B before any
+    thread exists); refusal (already threaded, non-Posix, fork failure) is
+    quiet — the provider falls back to the worker-thread backend.
+    */
+    bool startFormatForkServer() @system
+    {
+        if (formatForkUp)
+            return true;
+        const r = ForkServer.start(formatForkServer, &forkFormatHandler,
+            ForkServerConfig(slots: 2, childInit: &warmDmdFrontend));
+        formatForkUp = !r.hasError;
+        return formatForkUp;
+    }
+
+    /// The running server, or null (the thread backend's cue).
+    ForkServer* formatForkInstance() @system
+        => formatForkUp ? &formatForkServer : null;
+}
+else
+{
+    bool startFormatForkServer() @safe => false;
+    typeof(null) formatForkInstance() @safe => null;
+}

@@ -441,6 +441,16 @@ final class FormatService
     private Thread worker;
     private FormatterRegistry* registry;
 
+    // The fork-server backend (`FPR10`): single-flight bookkeeping for a
+    // request routed to the zygote instead of the thread. Parent-side cost
+    // is a socket send; the format runs in a CoW grandchild.
+    version (HueDmdFmt) version (Posix)
+    {
+        private bool forkInFlight;
+        private ushort forkWidth;
+        private long forkStartMs;
+    }
+
     this(FormatterRegistry* registry) @safe
     {
         this.registry = registry;
@@ -452,6 +462,30 @@ final class FormatService
     /// guarantees single-flight). Starts the worker lazily.
     void submit(FormatRequest r) @trusted
     {
+        // `FPR10`: an in-process request rides the fork server when the
+        // zygote is up — inherited init by CoW, crash isolation, and no
+        // worker thread involved. Refusal (no zygote, full slots) falls
+        // through to the thread backend below.
+        version (HueDmdFmt) version (Posix)
+        {
+            import core.time : MonoTime;
+
+            import format_dmd : encodeForkFormat, formatForkInstance;
+
+            if (r.formatter.kind == FormatterKind.inProcess)
+                if (auto fsrv = formatForkInstance())
+                {
+                    const tag = fsrv.submit(
+                        encodeForkFormat(r.source, r.path, r.width));
+                    if (!tag.hasError)
+                    {
+                        forkInFlight = true;
+                        forkWidth = r.width;
+                        forkStartMs = MonoTime.currTime.ticks;
+                        return;
+                    }
+                }
+        }
         synchronized (mtx)
         {
             assert(!hasRequest, "FormatService is single-flight");
@@ -470,6 +504,41 @@ final class FormatService
     /// Non-blocking: the finished completion, if one is waiting.
     bool tryTake(out FormatCompletion c) @trusted
     {
+        version (HueDmdFmt) version (Posix)
+        {
+            if (forkInFlight)
+            {
+                import core.time : MonoTime, ticksToNSecs;
+
+                import format_dmd : formatForkInstance;
+                import sparkles.event_horizon.forkserver : ForkResponse,
+                    forkOverflowExit, forkThrowExit;
+
+                auto fsrv = formatForkInstance();
+                assert(fsrv !is null, "fork in flight without a server");
+                ForkResponse fr;
+                if (!fsrv.tryTake(fr))
+                    return false; // single-flight: nothing else can be ready
+                forkInFlight = false;
+                FormatCompletion done = {
+                    width: forkWidth,
+                    durMs: ticksToNSecs(MonoTime.currTime.ticks - forkStartMs)
+                        / 1_000_000,
+                };
+                if (fr.ok)
+                {
+                    done.ok = true;
+                    done.text = (cast(const(char)[]) fr.output).idup;
+                }
+                else
+                {
+                    done.error = forkStatusToError(fr.status);
+                }
+                fsrv.release(fr);
+                c = done;
+                return true;
+            }
+        }
         synchronized (mtx)
         {
             if (!hasCompletion)
@@ -493,6 +562,27 @@ final class FormatService
         worker.join();
         worker = null;
         stopping = false;
+    }
+
+    version (HueDmdFmt) version (Posix)
+    private static FormatError forkStatusToError(int status) @safe
+    {
+        import std.conv : text;
+
+        import sparkles.event_horizon.forkserver : forkOverflowExit,
+            forkThrowExit;
+
+        if (status < 0)
+            return FormatError(FormatErrorKind.nonZeroExit, status,
+                text("formatter crashed (signal ", -status, ")"));
+        if (status == forkOverflowExit)
+            return FormatError(FormatErrorKind.unsupported, status,
+                "formatted result exceeds the fork arena slot");
+        if (status == forkThrowExit)
+            return FormatError(FormatErrorKind.nonZeroExit, status,
+                "formatter threw");
+        return FormatError(FormatErrorKind.nonZeroExit, status,
+            text("formatter exited ", status));
     }
 
     private void workerLoop() @system
@@ -1428,4 +1518,64 @@ version (HueDmdFmt)
     assert(!formatPreviewActive(vm));
     assert(vm.source is src2);
     vm.fmt.service.shutdown();
+}
+
+version (HueDmdFmt) version (Posix)
+@("format_preview.forkBackend.endToEndSingleFlight")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    import sparkles.test_runner.skip : skipTest;
+
+    import format_dmd : startFormatForkServer;
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    import gui_preview : PreviewModel;
+    import sparkles.twoslash.protocol : TwoslashReturn;
+
+    // The zygote needs the fork-safety window: run with
+    //     dub test :hue -- -t 1 -i forkBackend
+    if (Thread.getAll().length != 1)
+        skipTest("needs a single-threaded process (run with -t 1)");
+    assert(startFormatForkServer(), "the zygote did not start");
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 80;
+    vm.applyTheme(0);
+    enum src = "int  a;\nint    b  =  1;\n";
+    vm.setDocument("t.d", "", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        TwoslashReturn.init, "d");
+
+    assert(formatPreviewToggle(vm) is null);
+    foreach (_; 0 .. 2500)
+    {
+        if (formatPreviewPump(vm))
+            break;
+        Thread.sleep(2.msecs);
+    }
+    assert(vm.source == "int a;\nint b = 1;\n");
+    // The proof the fork backend served it: the thread worker never started.
+    assert(vm.fmt.service.worker is null,
+        "the worker thread ran — the fork backend was bypassed");
+
+    // A width change rides the fork path too, and lands via the cache/pump.
+    vm.fmt.requestWidth(vm, 60);
+    foreach (_; 0 .. 2500)
+    {
+        formatPreviewPump(vm);
+        if (vm.fmt.flow.shownCol == 60)
+            break;
+        Thread.sleep(2.msecs);
+    }
+    assert(vm.fmt.flow.shownCol == 60);
+    assert(vm.fmt.service.worker is null);
+
+    formatPreviewToggle(vm);
+    assert(vm.source is src);
 }
