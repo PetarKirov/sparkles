@@ -51,6 +51,14 @@ configuration "unittest" {
     // `base` alone, so this edge closes no cycle.
     dependency "sparkles:test-utils" path="../.."
 
+    // The keymap/lantern test fixture (`TestCommand`/`testBindings`) is shared
+    // across this package's modules, so it is declared at module scope — but
+    // guarded by this version, not `unittest`: a downstream `-unittest` build
+    // (hue's, say) analyses imported `version (unittest)` declarations too, and
+    // DMD then expects `Binding!(TestCommand, TestScope)`'s symbols from this
+    // library — which is compiled *without* `-unittest` and has none of it.
+    versions "UiKeymapFixtures"
+
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
