@@ -289,6 +289,19 @@
   border-bottom-left-radius: 4px;
 }
 
+/* Inside a connected row the notch is the last link of a chain: the marker
+  glyph under the span, the rule down to the label, and the notch the label
+  points back with all belong on the anchor's column. The stacked layout keeps
+  Shiki's fixed `1em` inset — there the popup is the only thing pointing, so it
+  points near the token start; here that inset put the notch 2.2 columns right
+  of its own connector. `margin-left` is half the notch, so the diamond
+  straddles the 1px rule instead of starting at it, and it overrides the
+  completion list's inline `left` (which names its caret) without touching it. */
+.twoslash .twoslash-crowded-row .twoslash-popup-arrow {
+  left: 0;
+  margin-left: -3px;
+}
+
 /* Inside a connected row an error message sits under its own anchor, so it is
   no longer the full-width accent band it is on a line of its own. */
 .twoslash .twoslash-crowded-row .twoslash-error-line {
