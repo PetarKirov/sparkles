@@ -54,6 +54,9 @@ import sparkles.ui_tui : Cell, CellStyle, Color, Grid, paintGrid;
 
 import ansi_model : Attr, BackgroundMode;
 import viewer_model : ViewerModel;
+import format_preview : formatPreviewActive, formatPreviewChip,
+    formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
+    formatPreviewToggle;
 import gui_preview : PreviewModel;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
@@ -1298,6 +1301,16 @@ struct PreviewTui
             case Command.diffToggleContext:    toggleDiffContext(); break;
             case Command.diffToggleFormatting: toggleFormattingHunks(); break;
             case Command.diffToggleStructural: vm.diffToggleStructural(); break;
+
+            case Command.toggleFormatPreview:
+                notice = formatPreviewToggle(vm);
+                clampTop();
+                break;
+            case Command.formatterNext:
+                notice = formatPreviewCycle(vm);
+                break;
+            case Command.formatWidthNarrower: formatPreviewNudge(vm, -2); break;
+            case Command.formatWidthWider:    formatPreviewNudge(vm, +2); break;
             case Command.viewScrollLeft:  vm.scrollHorizontal(-ViewerModel.hScrollStep); break;
             case Command.viewScrollRight: vm.scrollHorizontal(ViewerModel.hScrollStep); break;
             case Command.viewScrollHome:  vm.scrollHomeHorizontal(); break;
@@ -1326,6 +1339,7 @@ struct PreviewTui
             hasMatches: qlen > 0,
             hasDiffSession: vm.showPreview && !vm.diffSession.empty,
             showPreview: vm.showPreview,
+            formatPreviewActive: formatPreviewActive(vm),
         );
 
     private bool handlePointer(in PointerEvent e) @system

@@ -16,6 +16,7 @@ version (Posix):
 import core.time : Duration;
 import core.time : msecs;
 import std.path : dirName;
+import format_preview : formatPreviewPump;
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.unique : makeUnique;
@@ -572,6 +573,7 @@ struct WorkspaceTui
             startPreview: true, doc.twoslash, doc.lang, doc.diffDoc,
             doc.diffSides, doc.diffSession, doc.diffEmphasis);
         viewer.docNote = doc.dsvNote;
+        viewer.vm.docPath = path; // .editorconfig discovery (format preview)
         syncTreeSession();
         startDiffTypes();
         tree.reveal(path);
@@ -1118,6 +1120,8 @@ struct WorkspaceTui
             pickerDoc.syncTheme(viewer.themeIndex);
             changed |= pickerDoc.tick();
         }
+        // Format preview (`FPR9`): an applied buffer must paint this pass.
+        changed |= formatPreviewPump(viewer.vm);
         if (tree.git.poll())
         {
             tree.rebuild();
@@ -1424,6 +1428,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             initial.lang, initial.diffDoc, initial.diffSides,
             initial.diffSession);
         w.viewer.docNote = initial.dsvNote;
+        w.viewer.vm.docPath = isDir ? null : target;
         w.syncTreeSession();
         w.startDiffTypes();
         if (target.length)

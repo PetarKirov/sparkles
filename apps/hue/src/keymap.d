@@ -73,6 +73,8 @@ struct KeyContext
     /// and the `z` family folds files rather than syntax ranges)
     bool hasDiffSession;
     bool showPreview;    /// the decorated preview is showing (search is raw-only)
+    /// the format preview is showing (`<`/`>` nudge its ruler; `FMV`)
+    bool formatPreviewActive;
 }
 
 /**
@@ -128,6 +130,10 @@ enum Command : ubyte
     toggleLineNumbers,     /// `l`
     toggleCodeLineNumbers, /// `c`
     toggleAnsiCopy,        /// `<leader>uy`
+    toggleFormatPreview,   /// `<leader>vf` — the in-memory format preview
+    formatterNext,         /// `<leader>vF` — cycle the preview's formatter
+    formatWidthNarrower,   /// `<` while the preview is active
+    formatWidthWider,      /// `>` — same clamp as the ruler drag (`RUL5`)
     toggleTableCopy,       /// `t`
     startSearch,           /// `/`
     startGoto,             /// `gl`
@@ -268,6 +274,7 @@ enum CtxFlag : ubyte
     hasDocSet      = 1 << 1,
     hasDiffSession = 1 << 2,
     showPreview    = 1 << 3,
+    formatPreviewActive = 1 << 4,
 }
 
 /// `ctx`'s facts as $(LREF CtxFlag) bits.
@@ -278,6 +285,7 @@ ubyte ctxBits(in KeyContext ctx)
     if (ctx.hasDocSet)      b |= CtxFlag.hasDocSet;
     if (ctx.hasDiffSession) b |= CtxFlag.hasDiffSession;
     if (ctx.showPreview)    b |= CtxFlag.showPreview;
+    if (ctx.formatPreviewActive) b |= CtxFlag.formatPreviewActive;
     return b;
 }
 
@@ -470,6 +478,12 @@ immutable Binding[] hueBindings = [
     bind(Scope_.viewer, chord('k'), Command.viewUp, "up"),
     bind(Scope_.viewer, chord('l'), Command.toggleLineNumbers, "line numbers"),
     bind(Scope_.viewer, chord('c'), Command.toggleCodeLineNumbers, "code line numbers"),
+    // The ruler nudge shares the drag's clamp (`RUL5`); gated so `<`/`>`
+    // stay free elsewhere. `[`/`]` are set/diff navigation — not these.
+    bind(Scope_.viewer, chord('<'), Command.formatWidthNarrower, "ruler narrower",
+        require: CtxFlag.formatPreviewActive),
+    bind(Scope_.viewer, chord('>'), Command.formatWidthWider, "ruler wider",
+        require: CtxFlag.formatPreviewActive),
     // `ShiftReq.no` on the group, so `Shift-G` below is reachable rather than
     // being absorbed by a shift-agnostic prefix.
     group(Scope_.viewer, chord('g', ShiftReq.no), "goto"),
@@ -624,6 +638,11 @@ immutable Binding[] hueBindings = [
         Command.toggleCodeLineNumbers, "code line numbers"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('i'),
         Command.toggleInspector, "tree-sitter inspector"),
+    // Lowercase + ShiftReq, never `'F'` (`normalise` folds capitals).
+    bind(Scope_.shared_, chord(leader), chord('v'), chord('f', ShiftReq.no),
+        Command.toggleFormatPreview, "format preview"),
+    bind(Scope_.shared_, chord(leader), chord('v'), chord('f', ShiftReq.yes),
+        Command.formatterNext, "next formatter"),
 
     group(Scope_.shared_, chord(leader), chord('u'), "ui"),
     // Spelled lowercase + `ShiftReq.yes`, never `'T'`: `normalise` folds a
