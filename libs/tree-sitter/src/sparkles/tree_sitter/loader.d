@@ -14,6 +14,7 @@ highlights (the same lifetime policy Helix uses).
 module sparkles.tree_sitter.loader;
 
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.text.cstring : toCString;
 
 import sparkles.tree_sitter.errors : TsError, TsErrorCode, TsExpected, tsErr, tsOk;
 import sparkles.tree_sitter.tree_sitter_c : TSLanguage, ts_language_abi_version,
@@ -44,11 +45,8 @@ TsExpected!Grammar loadGrammar(scope const(char)[] soPath, scope const(char)[] s
     {
         import core.sys.posix.dlfcn : dlopen, dlsym, RTLD_LOCAL, RTLD_NOW;
 
-        SmallBuffer!(char, 512) pathZ;
-        pathZ ~= soPath;
-        pathZ ~= '\0';
-
-        void* handle = dlopen(pathZ[].ptr, RTLD_NOW | RTLD_LOCAL);
+        auto pathZ = toCString!512([soPath]);
+        void* handle = dlopen(pathZ.ptr, RTLD_NOW | RTLD_LOCAL);
         if (handle is null)
             return tsErr!Grammar(TsErrorCode.dlopenFailed);
 
