@@ -22,6 +22,16 @@ libs "vulkan"
 
 dependency "expected" version="~>0.4.1"
 
+// `sparkles:base` for the text primitives this binding builds on: the
+// duplicate-tolerant enum naming in `sparkles.base.text.enums` (ImportC turns
+// Vulkan's promoted-extension aliases into duplicate-valued members, which the
+// `final switch` in `enumMemberName` rejects) and `sparkles.base.text.cstring`
+// for handing C a NUL-terminated string without the GC. Both were open-coded
+// in `libs/vulkan/examples/vulkaninfo.d` before they lived here.
+//
+// This and `expected` are the whole D dependency floor; keep it that way.
+dependency "sparkles:base" path="../.."
+
 configuration "library" {
     // `sourceLibrary`, not `library`: dub skips pkg-config for `library` and
     // `staticLibrary` targets, so the ImportC include path would never reach
@@ -31,7 +41,6 @@ configuration "library" {
 
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
-    dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
