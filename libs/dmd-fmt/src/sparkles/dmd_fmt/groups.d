@@ -274,8 +274,12 @@ private struct Builder
         auto parent = &stack[$ - 1];
         parent.group.children ~= frame.group;
         // A completed non-bracket construct can never belong to a later
-        // declaration; brackets can (`const(int) h(…)` — adopted on demand).
-        if (frame.group.kind != GroupKind.brackets)
+        // declaration; paren/bracket spans can (`const(int) h(…)` — adopted
+        // on demand). A brace BLOCK can not: without this, a struct's body
+        // stayed adoptable and the next function's decl group swallowed the
+        // whole aggregate (caught by the M8 corpus differential).
+        if (frame.group.kind != GroupKind.brackets ||
+            spine.entries[frame.group.firstEntry].kind == TOK.leftCurly)
             parent.boundary = cast(uint) i + 1;
 
         // The body closing closes its declaration with it.

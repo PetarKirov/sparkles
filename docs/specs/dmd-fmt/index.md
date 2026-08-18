@@ -1,6 +1,6 @@
 # `sparkles:dmd-fmt` — M0 Decision Record
 
-_**Status:** M0 complete (spikes S1–S4 landed, decisions fixed) ·
+_**Status:** M0–M8 delivered (v1 formatter; M9 deferred by its own gate) ·
 **Date:** 2026-08-17 · **Scope:** the D formatter on the DMD substrate
 (`libs/dmd-fmt`), per
 [the research proposal](../../research/code-formatting/dmd-fmt-proposal.md)._
@@ -213,6 +213,36 @@ do-no-harm valve's verbatim slice is always a token-span slice.
 | `CompoundAsmStatement`                      | `asm` (per-instruction locs unusable — unneeded)              |
 | `IsExp`, `TraitsExp`                        | `is` / `__traits`                                             |
 | `UserAttributeDeclaration`                  | **invalid** — recognize UDAs from the `@` token               |
+
+## Milestone delivery (M1–M8)
+
+All eight milestones shipped on this branch, each guarded by the M1
+verifier; the v1 style policy is deliberately conservative and stated in
+`printer.d`'s module doc: **author's-breaks-preserved with structural
+reindentation** (the paradigm gofmt proves out), chosen because it is
+verifiable today and needs no unary-vs-binary token disambiguation.
+
+| Milestone                | Delivered as                                                                                                                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M1 verifier              | `verify.d` — tier-3 token equality, the separate DDoc-attachment check (double-lex), bounded idempotence harness                                                              |
+| M2 `Doc` IR + engine     | `doc.d` — Lindig's strict worklist with `fits` over the rest of the worklist, `conditionalGroup` in the IR, injected display-column measurer, mid-document start, lazy indent |
+| M3 printer + valve       | `printer.d` — spine+group walk emitting `Doc`; verbatim by default (`dfmt off/on`, `asm`, directives, tail, multi-line literals/comments); broken input never invents tokens  |
+| M4 author signals        | blank-run collapse, magic trailing comma (read, never written), author-aligned comments and table literals preserved verbatim                                                 |
+| M5 edits                 | `edits.d` — minimal line edits via `sparkles:diff`, `--check` in the `dmd-fmt` CLI (dub config `cli`)                                                                         |
+| M6 range/cursor/suppress | `formatRange` (format-all/filter per D2), `mapCursor`, the single suppression mechanism; on-type stays an LSP-server concern built from these primitives                      |
+| M7 configuration         | `.editorconfig` discovery honoring dfmt's keys; unimplemented `dfmt_*` keys ignored (documented migration posture)                                                            |
+| M8 differential          | `differential.d` — the stability triad gates over the corpus (repo trees + `expressionsem.d`); the similarity index is a ratchet (measured mean 0.927; tripwire floor 0.85)   |
+
+**M9 stays deferred by its own gate**: the proposal promotes cost search
+only if greedy output proves materially worse than dfmt on the M8 corpus —
+a comparison the harness runs whenever a `dfmt` binary is present. The IR
+already carries N-way choice, so promotion is an interpreter swap.
+
+Known v1 limitations, deliberate and recorded: one continuation level where
+authors nest several; no opinionated spacing between tokens (adjacency is
+preserved, so `a+b` vs `a + b` is the author's choice); no brace-style
+opinion; no comment reflow; no alignment engine (existing alignment is
+preserved, never created).
 
 ## Risks: retired and open
 

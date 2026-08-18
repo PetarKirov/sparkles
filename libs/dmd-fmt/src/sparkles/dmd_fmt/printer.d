@@ -165,6 +165,7 @@ private final class Printer
         uint runStart, runEnd; // byte range for verbatimRun
         int newlinesBefore;
         bool spaceBefore;
+        uint gapStart, gapEnd; // byte range of the preceding whitespace gap
     }
 
     /// The visible items of `g`'s interior (`[from, to]`), with each item's
@@ -175,6 +176,7 @@ private final class Printer
         Item[] items;
         int newlines;
         bool space;
+        uint gapStart = uint.max, gapEnd;
         size_t child;
 
         void gapEntry(size_t i) @safe
@@ -183,6 +185,17 @@ private final class Printer
                 if (ch == '\n')
                     newlines++;
             space = true;
+            if (gapStart == uint.max)
+                gapStart = spine.entries[i].start;
+            gapEnd = spine.entries[i].end;
+        }
+
+        void resetGap() @safe
+        {
+            newlines = 0;
+            space = false;
+            gapStart = uint.max;
+            gapEnd = 0;
         }
 
         for (size_t i = from; i <= to && i < spine.entries.length;)
@@ -192,9 +205,9 @@ private final class Printer
             if (child < g.children.length && g.children[child].firstEntry == i
                 && !suppressed[i])
             {
-                items ~= Item(ItemKind.child, child, 0, 0, newlines, space);
-                newlines = 0;
-                space = false;
+                items ~= Item(ItemKind.child, child, 0, 0, newlines, space,
+                    gapStart == uint.max ? 0 : gapStart, gapEnd);
+                resetGap();
                 i = g.children[child].lastEntry + 1;
                 child++;
                 continue;
@@ -212,9 +225,9 @@ private final class Printer
                     g.children[child].firstEntry <= j)
                     child++;
                 items ~= Item(ItemKind.verbatimRun, i, runStart,
-                    spine.entries[j].end, newlines, space);
-                newlines = 0;
-                space = false;
+                    spine.entries[j].end, newlines, space,
+                    gapStart == uint.max ? 0 : gapStart, gapEnd);
+                resetGap();
                 i = j + 1;
                 continue;
             }
@@ -227,9 +240,9 @@ private final class Printer
             const kind = t.cls == SpineClass.comment ? ItemKind.comment
                 : t.cls == SpineClass.directive ? ItemKind.directive
                 : ItemKind.token;
-            items ~= Item(kind, i, 0, 0, newlines, space);
-            newlines = 0;
-            space = false;
+            items ~= Item(kind, i, 0, 0, newlines, space,
+                gapStart == uint.max ? 0 : gapStart, gapEnd);
+            resetGap();
             i++;
         }
         return items;
@@ -298,13 +311,71 @@ private final class Printer
         }
     }
 
-    /// decl and clause groups: items joined inline; the author's newlines
-    /// become hardlines at the same indent (D clause style: constraints and
-    /// contracts sit at the declaration's own column).
+    /// decl and clause groups: the author's newlines become hardlines —
+    /// at the declaration's own column before a clause or body child (the
+    /// D clause style), one continuation level deeper anywhere else (a
+    /// wrapped `=>` body, a wrapped attribute run).
     private Doc buildClauseContainer(const Group g) @safe
     {
         const items = collectItems(g, g.firstEntry, g.lastEntry);
-        return sequence(joinInline(g, items, /*continuationIndent*/ false));
+        Doc[] parts;
+        Doc[] cont;
+        bool inCont;
+
+        void closeCont() @safe
+        {
+            if (cont.length)
+                parts ~= indented(cont);
+            cont = null;
+            inCont = false;
+        }
+
+        foreach (i, item; items)
+        {
+            const baseLevel = item.kind == ItemKind.child &&
+                isClauseOrBody(g.children[item.index]);
+            if (i != 0 && item.newlinesBefore > 0)
+            {
+                if (baseLevel)
+                {
+                    closeCont();
+                    parts ~= hardline;
+                }
+                else
+                {
+                    inCont = true;
+                    cont ~= hardline;
+                }
+            }
+            else if (i != 0 && item.spaceBefore)
+            {
+                const gap = spine.source[item.gapStart .. item.gapEnd];
+                (inCont ? cont : parts) ~=
+                    item.kind == ItemKind.comment && gap.length > 1
+                        ? text(gap.idup) : text(" ");
+            }
+            (inCont ? cont : parts) ~= buildItem(g, item);
+        }
+        closeCont();
+        return sequence(parts);
+    }
+
+    private bool isClauseOrBody(const Group child) const @safe
+    {
+        final switch (child.kind)
+        {
+            case GroupKind.constraint, GroupKind.inContract,
+                GroupKind.outContract, GroupKind.body_:
+                return true;
+            case GroupKind.brackets:
+                // An aggregate body inside a template declaration is a plain
+                // brace child (aggregates have no fbody marker); its Allman
+                // `{` sits at the declaration's column, not a continuation.
+                return spine.entries[child.firstEntry].kind == TOK.leftCurly;
+            case GroupKind.document, GroupKind.decl,
+                GroupKind.templateParams, GroupKind.runtimeParams:
+                return false;
+        }
     }
 
     /// Whether the group's final entry really is `closer` (broken input
@@ -432,31 +503,69 @@ private final class Printer
             }
             run ~= item;
         }
+        const(Item)[] trailingComments;
         if (run.length && !allTrailingComments(run))
             elements ~= Element(run, 0);
         else if (run.length)
         {
-            // Comments after the trailing comma stay with the last element.
-            elements[$ - 1].run ~= run;
+            // Comments after the trailing comma must stay AFTER it — merged
+            // into the last element they would precede the comma we emit,
+            // and a `//` comment would then swallow it on re-lex (caught by
+            // the M8 corpus triad on base/term_style.d).
+            trailingComments = run;
         }
 
         Doc[] inner;
+        if (trailingComma)
+        {
+            // The magic trailing comma (M4): canonical one-per-line.
+            foreach (i, elem; elements)
+            {
+                if (i != 0)
+                    inner ~= hardline;
+                foreach (piece; joinInline(g, elem.run, false, false, true))
+                    inner ~= piece;
+                inner ~= text(",");
+            }
+            foreach (item; trailingComments)
+            {
+                inner ~= text(" ");
+                inner ~= buildItem(g, item);
+            }
+            return sequence(text(openText), indented([hardline] ~ inner),
+                hardline, text(closeText));
+        }
+
+        if (itemsSpanLines(items))
+        {
+            // The author already chose a multi-line shape: preserve it
+            // exactly (commas, breaks and comments where they were), under
+            // one continuation level. Flattening is off the table — it
+            // would also let a `//` comment swallow the rest of the line.
+            return sequence(text(openText),
+                indented(joinInline(g, items, false, false, true)),
+                closerOnOwnLine(g) ? sequence(hardline, text(closeText))
+                    : text(closeText));
+        }
+
+        // Single-line as written: keep flat while it fits, explode past
+        // softMaxLineLength via the greedy group. An author-aligned gap
+        // after a comma is preserved verbatim (and is then not a wrap
+        // point: aligned rows are deliberate layout).
         foreach (i, elem; elements)
         {
             if (i != 0)
-                inner ~= elements[i - 1].newlinesAfterComma > 0 || trailingComma
-                    ? hardline : line;
-            foreach (piece; joinInline(g, elem.run, false))
+            {
+                const(char)[] gap;
+                if (elem.run.length && elem.run[0].newlinesBefore == 0)
+                    gap = spine.source[elem.run[0].gapStart
+                        .. elem.run[0].gapEnd];
+                inner ~= gap.length > 1 ? text(gap.idup) : line;
+            }
+            foreach (piece; joinInline(g, elem.run, false, false, true))
                 inner ~= piece;
-            if (i + 1 < elements.length || trailingComma)
+            if (i + 1 < elements.length)
                 inner ~= text(",");
-        }
-
-        if (trailingComma)
-        {
-            // The magic trailing comma (M4): pinned one-per-line.
-            return sequence(text(openText), indented([hardline] ~ inner),
-                hardline, text(closeText));
         }
         return group([text(openText),
             indented([softline()] ~ inner), softline, text(closeText)]);
@@ -496,6 +605,8 @@ private final class Printer
         Item[] run;
         bool caseLabel;
         bool expectColonEnd;
+        int ternaryDepth;
+        TOK prevToken = TOK.reserved;
 
         void flush() @safe
         {
@@ -540,8 +651,17 @@ private final class Printer
                     caseLabel = true;
                 }
             }
+            if (item.kind == ItemKind.token)
+            {
+                const k = spine.entries[item.index].kind;
+                if (k == TOK.question)
+                    ternaryDepth++;
+            }
+            const terminated = isTerminator(item, expectColonEnd,
+                ternaryDepth, prevToken);
+            if (item.kind == ItemKind.token)
+                prevToken = spine.entries[item.index].kind;
             run ~= item;
-            const terminated = isTerminator(item, expectColonEnd);
             if (terminated)
                 flush();
         }
@@ -573,7 +693,13 @@ private final class Printer
                     *target ~= hardline;
             }
             else if (i != 0)
-                *target ~= text(" ");
+            {
+                // Same-line join: keep an author-aligned comment's gap.
+                const first = stmt.run[0];
+                const gap = spine.source[first.gapStart .. first.gapEnd];
+                *target ~= first.kind == ItemKind.comment && gap.length > 1
+                    ? text(gap.idup) : text(" ");
+            }
             foreach (piece; buildStatement(g, stmt.run))
                 *target ~= piece;
             if (stmt.caseLabel)
@@ -583,23 +709,47 @@ private final class Printer
         return sequence(parts);
     }
 
-    private bool isTerminator(const Item item, bool expectColonEnd) const @safe
+    private bool isTerminator(const Item item, bool expectColonEnd,
+        ref int ternaryDepth, TOK prevToken) const @safe
     {
         if (item.kind == ItemKind.child)
         {
             // Only brace-bodied children end a statement; a parameter list
-            // or a parenthesized condition is mid-statement.
+            // or a parenthesized condition is mid-statement — and so is an
+            // expression brace (a struct initializer or lambda body after
+            // `=`, `(`, `,`, `return` or `=>`).
             const child = &currentChildren[item.index];
             if (child.kind == GroupKind.decl || child.kind == GroupKind.body_)
                 return true;
-            return child.kind == GroupKind.brackets &&
-                spine.entries[child.firstEntry].kind == TOK.leftCurly;
+            if (child.kind != GroupKind.brackets ||
+                spine.entries[child.firstEntry].kind != TOK.leftCurly)
+                return false;
+            switch (prevToken)
+            {
+                case TOK.assign, TOK.comma, TOK.leftParenthesis,
+                    TOK.leftBracket, TOK.return_, TOK.goesTo:
+                    return false;
+                default:
+                    return true;
+            }
         }
         if (item.kind != ItemKind.token)
             return false;
         const k = spine.entries[item.index].kind;
         if (expectColonEnd)
             return k == TOK.colon;
+        if (k == TOK.colon)
+        {
+            // An attribute/label statement (`pure nothrow @nogc:`,
+            // `private:`, `retry:`) ends at its colon — but a ternary's
+            // colon belongs to its pending `?`.
+            if (ternaryDepth > 0)
+            {
+                ternaryDepth--;
+                return false;
+            }
+            return true;
+        }
         return k == TOK.semicolon || k == TOK.comma || k == TOK.rightCurly;
     }
 
@@ -646,7 +796,8 @@ private final class Printer
     /// continuation indent applied by the caller), horizontal gaps become
     /// one space, adjacency stays tight.
     private Doc[] joinInline(const Group g, const Item[] items,
-        bool continuationIndent, bool leadingBreak = false) @safe
+        bool continuationIndent, bool leadingBreak = false,
+        bool preserveAlignment = false) @safe
     {
         Doc[] parts;
         foreach (i, item; items)
@@ -662,7 +813,17 @@ private final class Printer
                         parts ~= hardline;
                 }
                 else if (item.spaceBefore)
-                    parts ~= text(" ");
+                {
+                    // v1 has no alignment engine, so it must not destroy the
+                    // author's: a same-line gap wider than one space is kept
+                    // verbatim before a comment anywhere, and before
+                    // anything inside a list element (aligned table
+                    // literals). Statements still normalize to one space.
+                    const gap = spine.source[item.gapStart .. item.gapEnd];
+                    const keep = gap.length > 1 &&
+                        (item.kind == ItemKind.comment || preserveAlignment);
+                    parts ~= keep ? text(gap.idup) : text(" ");
+                }
             }
             parts ~= buildItem(g, item);
         }
@@ -759,12 +920,13 @@ version (unittest)
 @("printer.width.list-explodes-past-soft-max")
 @system unittest
 {
+    FormatConfig narrow = {softMaxLineLength: 80};
     checkFormat(
         "void g()\n{\n    callWithLongName(argumentOne, argumentTwo, "
         ~ "argumentThree, argumentFour, five);\n}\n",
         "void g()\n{\n    callWithLongName(\n        argumentOne,\n"
         ~ "        argumentTwo,\n        argumentThree,\n        argumentFour,\n"
-        ~ "        five\n    );\n}\n");
+        ~ "        five\n    );\n}\n", narrow);
 }
 
 @("printer.case-bodies.bump-one-level")

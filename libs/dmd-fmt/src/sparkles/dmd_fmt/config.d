@@ -16,8 +16,11 @@ struct FormatConfig
     int tabWidth = 4;
     /// The width the greedy engine wraps toward
     /// (`dfmt_soft_max_line_length`): the greedy engine has one width, and
-    /// the soft limit is the one wrapping targets — see D3/D6.
-    int softMaxLineLength = 80;
+    /// the soft limit is the one wrapping targets — see D3/D6. The default
+    /// matches dfmt's HARD cap rather than its soft 80: with the v1
+    /// author's-breaks policy, wrapping only what exceeds 120 minimizes
+    /// churn on existing code; projects wanting 80 set the dfmt key.
+    int softMaxLineLength = 120;
     /// Accepted for dfmt compatibility (`max_line_length`); v1 keeps it for
     /// a future soft/hard split and does not act on it.
     int maxLineLength = 120;
