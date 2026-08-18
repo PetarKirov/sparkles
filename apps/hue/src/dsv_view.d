@@ -247,6 +247,117 @@ bool contentLooksDsv(const(char)[] sourceText) @safe pure nothrow @nogc
     return sniff(sourceText[0 .. sampleLen]).looksDsv;
 }
 
+// ── Golden grids (the D1 gate) ──────────────────────────────────────────────
+// The adapter's output rendered through the shared widget pipeline
+// (`viewMarkdown` → `layout` → `CellGrid`) and compared as a plain glyph grid
+// — the `md/goldens.d` idiom. This is the layout oracle for every cell sink
+// (the GUI/TUI/ANSI arms paint this same tree); color stays out on purpose.
+// Fixtures: `apps/hue/test/fixtures/dsv/<name>.csv` + `<name>.txt`.
+// Regenerate after an intended change:
+//
+//   SPARKLES_UPDATE_GOLDENS=1 dub test :hue -- -i dsv_view.golden
+//   git diff apps/hue/test/fixtures/dsv
+
+version (unittest)
+{
+    private enum dsvGoldenWidth = 48;
+
+    private string dsvGoldenDir()
+    {
+        import std.path : buildNormalizedPath, dirName;
+
+        return __FILE_FULL_PATH__.dirName
+            .buildNormalizedPath("../test/fixtures/dsv");
+    }
+
+    private string dsvGridText(in DsvAdapted a) @system
+    {
+        import std.utf : encode;
+        import sparkles.base.term_color : RgbColor, toRgb;
+        import sparkles.syntax : builtinThemes, LabelSet, resolveTheme;
+        import sparkles.syntax.md.render_widgets : MdViewOptions, MdViewTheme,
+            viewMarkdown;
+        import sparkles.ui.display_list : buildDisplayList;
+        import sparkles.ui.geometry : Constraints;
+        import sparkles.ui.interp.cells : CellGrid;
+        import sparkles.ui.interp.immediate : paint;
+        import sparkles.ui.layout : layout;
+        import sparkles.ui.style : defaultTwoslashPalette;
+
+        const labels = LabelSet.standard();
+        const theme = resolveTheme(builtinThemes["catppuccin-mocha"], labels);
+        const pageFg = toRgb(theme.defaults.fg, RgbColor(0xcc, 0xcc, 0xcc));
+        const pageBg = toRgb(theme.defaults.bg, RgbColor(0x1e, 0x1e, 0x1e));
+        MdViewOptions opt = {
+            theme: MdViewTheme.derive(theme, pageFg, pageBg),
+            maxWidth: dsvGoldenWidth,
+        };
+        auto tree = viewMarkdown(a.doc, opt);
+        auto frames = layout(tree, Constraints(maxW: dsvGoldenWidth));
+        const r = frames[tree.root].rect;
+        auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
+        paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
+            pageFg, pageBg));
+
+        string out_;
+        foreach (y; 0 .. grid.height)
+        {
+            size_t lineEnd = out_.length;
+            foreach (x; 0 .. grid.width)
+            {
+                char[4] cbuf;
+                const n = encode(cbuf, grid.cells[y * grid.width + x].glyph);
+                out_ ~= cbuf[0 .. n];
+                if (grid.cells[y * grid.width + x].glyph != ' ')
+                    lineEnd = out_.length;
+            }
+            out_ = out_[0 .. lineEnd];
+            out_ ~= '\n';
+        }
+        return out_;
+    }
+
+    private void checkDsvGolden(string name, in DsvFlags flags = DsvFlags()) @system
+    {
+        import std.file : exists, readText, write;
+        import std.path : buildPath;
+        import std.process : environment;
+
+        const dir = dsvGoldenDir();
+        const fixture = dir.buildPath(name ~ ".csv");
+        const golden = dir.buildPath(name ~ ".txt");
+        const rendered = dsvGridText(adaptDsv(readText(fixture), "csv", flags));
+        if (environment.get("SPARKLES_UPDATE_GOLDENS", "").length != 0
+            || !golden.exists)
+        {
+            write(golden, rendered);
+            return;
+        }
+        assert(rendered == readText(golden), name ~ ": rendered grid differs "
+            ~ "from " ~ name ~ ".txt — if intended, regenerate with "
+            ~ "SPARKLES_UPDATE_GOLDENS=1 dub test :hue -- -i dsv_view.golden "
+            ~ "and review the diff");
+    }
+}
+
+@("dsv_view.golden.typed")
+@system unittest
+{
+    checkDsvGolden("typed");
+}
+
+@("dsv_view.golden.semicolon")
+@system unittest
+{
+    checkDsvGolden("semicolon");
+}
+
+@("dsv_view.golden.raggedSynthetic")
+@system unittest
+{
+    checkDsvGolden("ragged-synthetic");
+}
+
 @("dsv_view.columnName.spreadsheetLetters")
 @safe pure
 unittest
