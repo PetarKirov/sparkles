@@ -269,7 +269,12 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     }
 
     auto cargv = cstrings(argv);
-    auto cenv = cfg.env is null ? environ : cstrings(cfg.env).ptr;
+    // Bound to a named local rather than used as a bare `.ptr`: the slice is
+    // the only thing keeping the inner `char[]`s reachable, and the child's
+    // environment must survive until posix_spawnp has read it. `cargv` above
+    // was already rooted this way; `cenv` was the one that was not.
+    auto cenvArray = cfg.env is null ? null : cstrings(cfg.env);
+    auto cenv = cfg.env is null ? environ : cenvArray.ptr;
 
     int pid;
     const rc = posix_spawnp(&pid, cargv[0], &actions, &attr, cargv.ptr, cenv);
@@ -444,7 +449,12 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     posix_spawn_file_actions_adddup2(&actions, 0, 2);
 
     auto cargv = cstrings(argv);
-    auto cenv = cfg.env is null ? environ : cstrings(cfg.env).ptr;
+    // Bound to a named local rather than used as a bare `.ptr`: the slice is
+    // the only thing keeping the inner `char[]`s reachable, and the child's
+    // environment must survive until posix_spawnp has read it. `cargv` above
+    // was already rooted this way; `cenv` was the one that was not.
+    auto cenvArray = cfg.env is null ? null : cstrings(cfg.env);
+    auto cenv = cfg.env is null ? environ : cenvArray.ptr;
 
     int pid;
     const rc = posix_spawnp(&pid, cargv[0], &actions, &attr, cargv.ptr, cenv);
