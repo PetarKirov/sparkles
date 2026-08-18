@@ -28,6 +28,7 @@ import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
     highlightInjected, MdBlock, ResolvedTheme, RgbColor, TsConfigCache;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
+import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, dsvStatusNote;
 import gui_preview : PreviewModel;
 
 /// What a document *is* — detected from the content, not selected by a mode
@@ -39,6 +40,7 @@ enum ContentKind : ubyte
     markdown, /// the decorated markdown preview (a `.md` file's default)
     twoslash, /// a TypeScript twoslash payload rendered as a type overlay
     diff,     /// a computed or parsed diff rendered as the diff view (`MOD9`)
+    dsv,      /// delimiter-separated values rendered as the grid preview (`MOD10`)
 }
 
 /// One loaded document: the Whole that owns everything the old pipelines kept
@@ -69,6 +71,14 @@ struct Document
     /// re-running it after a `DST2` apply narrows to the same files. Widening
     /// the view as a side effect of staging would be its own small betrayal.
     string[] diffPaths;
+    /// `kind == dsv`: the original bytes (`source` holds the adapter's
+    /// decoded buffer — see `dsv_view`; the raw-fidelity copy contract
+    /// `DSC2`–`DSC5` is post-CHK and reads these).
+    string dsvText;
+    /// `kind == dsv`: the resolved dialect/header/ragged facts (`DSK5`).
+    DsvInfo dsvInfo;
+    /// `kind == dsv`: the status-chrome readout (`DSK5`).
+    string dsvNote;
 }
 
 /**
@@ -167,6 +177,13 @@ struct DocumentPipeline
     /// `DVN7`: the containers whose child order carries no meaning
     /// (`--diff-commutative`). Empty means no permutation is ever claimed.
     const(CommutativeKind)[] commutative = defaultCommutativeKinds;
+    // The `--dsv` family (`DSD4`) — declared after the positional tail so
+    // the existing DocumentPipeline(...) construction sites stay valid;
+    // set by field assignment.
+    bool forceDsv;      /// `--dsv`: the input is delimiter-separated values
+    string dsvDelimiter; /// `--dsv-delimiter` ("" = sniff)
+    string dsvQuote;     /// `--dsv-quote` ("" = sniff)
+    string dsvHeader = "auto"; /// `--dsv-header` `auto|yes|no`
 
 @system:
 
@@ -183,6 +200,9 @@ struct DocumentPipeline
                 return ContentKind.diff;
             if (forceMarkdown || canonicalLanguage(ext) == "markdown")
                 return ContentKind.markdown;
+            if (forceDsv || ext == "csv" || ext == "tsv" || ext == "psv"
+                || ext == "ssv")
+                return ContentKind.dsv;
         }
         return ContentKind.code;
     }
@@ -205,6 +225,9 @@ struct DocumentPipeline
                 return doc;
             case diff:
                 return fromPatchSource(path, baseName(path), readText(path));
+            case dsv:
+                return fromDsvSource(path, baseName(path), readText(path),
+                    path.extension.chompPrefix("."));
             case markdown:
             case code:
                 return fromSource(path, baseName(path), readText(path),
@@ -228,6 +251,34 @@ struct DocumentPipeline
         doc.diffSides = sidesFromWorktree(doc.diffDoc);
         classifyStructural(doc);
         attachSession(doc);
+        doc.events = highlight(doc.lang, doc.source, quietFallback: true);
+        return doc;
+    }
+
+    /// A DSV document (`MOD10`): resolve the dialect (extension seed →
+    /// sniff → the `--dsv-*` flag overrides), parse with `sparkles:dsv`, and
+    /// render through the md table model (`dsv_view.adaptDsv`, the D1
+    /// bridge). `source` holds the adapter's decoded buffer; the original
+    /// bytes stay on `dsvText`. An empty or unusably-forced input degrades
+    /// to the plain code view (`DSM3`/`DEG` doctrine), never errors.
+    Document fromDsvSource(string path, string title, string dsvText, string ext)
+    {
+        auto adapted = adaptDsv(dsvText, ext, DsvFlags(dsvDelimiter, dsvQuote, dsvHeader));
+        if (!adapted.info.present || adapted.info.columns == 0)
+        {
+            auto fallback = fromSource(path, title, dsvText,
+                canonicalLanguage(ext), allowDsv: false);
+            return fallback;
+        }
+        Document doc = {
+            path: path, title: title, kind: ContentKind.dsv,
+            source: adapted.text, lang: ext.length ? ext : "csv",
+            dsvText: dsvText, dsvInfo: adapted.info,
+            dsvNote: dsvStatusNote(adapted.info),
+        };
+        import gui_preview : previewOf;
+
+        doc.preview = previewOf(*cache, adapted.doc);
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
     }
@@ -755,8 +806,17 @@ struct DocumentPipeline
 
     /// A document from in-memory source (the embedded self-view). Detection
     /// runs on the language, not a path.
-    Document fromSource(string path, string title, string source, string lang)
+    Document fromSource(string path, string title, string source, string lang,
+        bool allowDsv = true)
     {
+        // `DSD5`: content stands in for the missing extension — but only
+        // when nothing else claimed the input (no language, not markdown,
+        // not raw), so a plain-text file that merely contains commas still
+        // needs the consistency sniff to accept it.
+        if (allowDsv && !raw && !forceMarkdown
+            && (forceDsv || ((lang.length == 0 || lang == "text" || lang == "txt")
+                && contentLooksDsv(source))))
+            return fromDsvSource(path, title, source, "");
         Document doc = {
             path: path, title: title, source: source, lang: lang,
             kind: !raw && (forceMarkdown || lang == "markdown")
@@ -942,6 +1002,16 @@ unittest
     assert(rawP.detect("fix.patch") == ContentKind.code);
     DocumentPipeline mdP = { forceMarkdown: true };
     assert(mdP.detect("README") == ContentKind.markdown);
+
+    // The DSV extensions select the grid preview (`DSK2`); `--dsv` forces
+    // it for any path, and `--raw` wins as everywhere.
+    assert(p.detect("data.csv") == ContentKind.dsv);
+    assert(p.detect("data.tsv") == ContentKind.dsv);
+    assert(p.detect("data.psv") == ContentKind.dsv);
+    assert(p.detect("data.ssv") == ContentKind.dsv);
+    DocumentPipeline dsvP = { forceDsv: true };
+    assert(dsvP.detect("export.txt") == ContentKind.dsv);
+    assert(rawP.detect("data.csv") == ContentKind.code);
 }
 
 /**
