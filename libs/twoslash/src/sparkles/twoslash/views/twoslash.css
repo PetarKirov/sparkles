@@ -257,6 +257,14 @@
 
 .twoslash .twoslash-crowded-row {
   position: relative;
+  /* A flow root, so the card's own margins (`margin-top: 1ch`, and the query
+    popup's `margin-bottom: 1.4em`) stay INSIDE the row instead of collapsing
+    through its edges. Without it the row box starts at the card's top and ends
+    at its bottom, so the guides — which span the row — stopped at every card
+    and the column read as a dashed line: measured breaks of 7.81px (1ch) and
+    18.19px (1.4em) between consecutive rows. It also puts the card's top edge
+    exactly 1ch below the row's, which is what the elbow's height assumes. */
+  display: flow-root;
 }
 
 /* A pending anchor's connector: a rule down the row at its own column, for
