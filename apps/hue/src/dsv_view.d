@@ -60,9 +60,14 @@ struct DsvProjection
 {
     ProjectionSpec spec;
     const(uint)[] columns;
+    /// `DSF3`: the fuzzy remainder's per-data-record admission mask
+    /// (`dsv_browser.fuzzyRowMask`), intersected AFTER the engine's
+    /// constraints — filtering commutes with sorting, so the intersection
+    /// preserves the projected order. null = no mask.
+    const(bool)[] rowMask;
 
     bool pristine() const scope @safe pure nothrow @nogc
-        => spec.pristine && columns is null;
+        => spec.pristine && columns is null && rowMask is null;
 }
 
 /// The adapter's product: the decoded buffer and the table model over it,
@@ -80,6 +85,20 @@ struct DsvAdapted
 
 /// The provisional per-column content-width cap (`DSG4`).
 enum size_t dsvColumnCapCells = 64;
+
+/// Drops permutation entries the fuzzy mask rejects, in place (`DSF3`).
+private void maskPermutation(ref SmallBuffer!(uint, 64) perm,
+    scope const(bool)[] mask) @safe pure nothrow @nogc
+{
+    size_t w = 0;
+    foreach (i; 0 .. perm.length)
+    {
+        const r = perm[i];
+        if (r < mask.length && mask[r])
+            perm[w++] = r;
+    }
+    perm.length = w;
+}
 
 /// One flag char from its CLI spelling (`,` · `;` · `\t`/`tab` · …).
 private char flagChar(string s, char fallback) @safe pure nothrow
@@ -139,6 +158,8 @@ DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags,
     inferColumnTypes(doc, sniffMaxRecords, types);
     SmallBuffer!(uint, 64) rowPerm;
     applyProjection(doc, types[], proj.spec, rowPerm);
+    if (proj.rowMask !is null)
+        maskPermutation(rowPerm, proj.rowMask);
     auto visCols = proj.columns !is null ? proj.columns.dup : {
         auto all = new uint[](doc.columnCount);
         foreach (c; 0 .. doc.columnCount)
@@ -390,6 +411,8 @@ struct DsvCopy
                 inferColumnTypes(c.parsed, sniffMaxRecords, types);
                 SmallBuffer!(uint, 64) perm;
                 applyProjection(c.parsed, types[], proj.spec, perm);
+                if (proj.rowMask !is null)
+                    maskPermutation(perm, proj.rowMask);
                 c.rowPerm = perm[].dup;
                 if (proj.columns !is null)
                     c.viewCols = proj.columns.dup;
