@@ -1594,12 +1594,10 @@ int runGui(GuiArgs guiArgs) @system
         // tree the terminal paints, centered and one row down.
         if (filePicker !is null && filePicker.state.active)
         {
-            import picker_view : pickerView;
-
             const cellsW = screenW / cellW;
             const pkCols = cellsW > 8
-                ? (cellsW - 4 > 100 ? 100 : cellsW - 4) : cellsW;
-            auto pkTree = pickerView(filePicker.state, filePicker.snapshot);
+                ? (cellsW - 4 > 120 ? 120 : cellsW - 4) : cellsW;
+            auto pkTree = filePicker.buildView();
             auto pkFrames = layout(pkTree, Constraints(maxW: pkCols));
             const pkPanel = pkFrames[pkTree.root].rect;
             const pkX = (cellsW - pkPanel.width) / 2;

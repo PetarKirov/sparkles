@@ -409,7 +409,6 @@ struct WorkspaceTui
     */
     private void paintPicker(ref Grid g) @system
     {
-        import picker_view : pickerView;
         import sparkles.ui.display_list : buildDisplayList;
         import sparkles.ui.geometry : Constraints;
         import sparkles.ui.layout : layout;
@@ -418,8 +417,8 @@ struct WorkspaceTui
 
         if (picker is null || !picker.state.active)
             return;
-        const cols = width > 8 ? (width - 4 > 100 ? 100 : width - 4) : width;
-        auto view = pickerView(picker.state, picker.snapshot);
+        const cols = width > 8 ? (width - 4 > 120 ? 120 : width - 4) : width;
+        auto view = picker.buildView();
         auto frames = layout(view, Constraints(maxW: cols));
         const panel = frames[view.root].rect;
         const x = (width - panel.width) / 2;
@@ -1969,6 +1968,7 @@ unittest
             all ~= g[cast(ushort) x, cast(ushort) y].grapheme;
     assert(all.canFind("›"), "the prompt row is on screen");
     assert(all.canFind("alpha.d"), "the ranked rows are on screen");
+    assert(all.canFind(" Files "), "the heading is embedded in the border");
 
     // Typing narrows; Enter opens the accepted file in the viewer pane.
     foreach (ch; "beta")
