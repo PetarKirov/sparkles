@@ -29,7 +29,9 @@ import sparkles.diff : DiffDoc, DiffOptions, diffText, emitPatch, FileEntry,
     parsePatch, RowKind, WhitespaceMode;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
     highlightInjected, MdBlock, ResolvedTheme, RgbColor, TsConfigCache;
-import sparkles.syntax.render.widgets : GutterCell, TintedRange;
+import sparkles.syntax.render.widgets : TintedRange;
+import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
+    GutterChannel;
 import sparkles.ui.style : Slot;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
@@ -173,7 +175,7 @@ consumer — the up-front document, set navigation, the gallery — runs the sam
 pipeline. Load failures throw; the CLI shell reports them once.
 */
 /**
-Builds the per-line coverage gutter column for a document.
+Builds the coverage gutter channel for a document.
 
 `CoveragePlan.gutterItems` lists the lines the report *described*, not one
 entry per source line: only a DMD `.lst` is dense, while lcov, gcov and
@@ -181,42 +183,51 @@ llvm-cov each describe a subset. Placing them by array position put every
 count on the wrong line for those three — each item carries the line number it
 belongs to, and this is the one place that gets honoured.
 
-Shared by the interactive viewer and the static ANSI writer so the column is
+Shared by the interactive viewer and the static ANSI writer so the channel is
 produced once and every backend paints the same thing (`OVL2`/`OVL7`).
+
+The channel's width is the widest count actually present rather than a fixed
+figure, so a file whose counts are all single digits does not pay four columns
+and a `18446744073G` is not clipped. It is stable for the document either way,
+which is what stops toggling one channel reflowing the code under another
+(`NUM3`).
 
 Params:
     plan = the planned overlay
     lineCount = the document's source line count
-    width = receives the column width in cells: the widest count actually
-        present plus the separator. Derived rather than fixed, so a file whose
-        counts are all single digits does not pay four columns and a
-        `18446744073G` is not clipped.
 
-Returns: one cell per source line, or `null` when the plan says nothing.
+Returns: the channel, disabled when the plan says nothing.
 */
-GutterCell[] coverageGutterCells(in CoveragePlan plan, size_t lineCount,
-    out int width) @safe
+GutterChannel coverageChannel(in CoveragePlan plan, size_t lineCount) @safe
 {
     if (plan.gutterItems.length == 0 || lineCount == 0)
-        return null;
+        return GutterChannel(id: coverageChannelId, enabled: false);
 
-    auto cells = new GutterCell[](lineCount);
     size_t widest;
+    foreach (ref item; plan.gutterItems)
+        if (item.lineNumber != 0 && item.lineNumber <= lineCount
+            && item.countText.length > widest)
+            widest = item.countText.length;
+    if (widest == 0)
+        return GutterChannel(id: coverageChannelId, enabled: false);
+
+    const width = cast(int) widest;
+    auto cells = new GutterCell[](lineCount);
+    foreach (i; 0 .. cells.length)
+        cells[i] = blankCell(width);
     foreach (ref item; plan.gutterItems)
     {
         if (item.lineNumber == 0 || item.lineNumber > cells.length)
             continue;   // a report describing lines this file does not have
-        cells[item.lineNumber - 1] = GutterCell(item.countText,
+        cells[item.lineNumber - 1] = cellOf(item.countText, width,
             coverageSlot(item.state),
             paintBackground: item.state != LineState.nonCode);
-        if (item.countText.length > widest)
-            widest = item.countText.length;
     }
-    if (widest == 0)
-        return null;
-    width = cast(int)(widest + 1);   // + the separator cell
-    return cells;
+    return GutterChannel(id: coverageChannelId, width: width, cells: cells);
 }
+
+/// The coverage channel's stable name — what a toggle addresses.
+enum coverageChannelId = "coverage";
 
 /**
 The sub-line ranges worth washing, from a plan's inline spans.

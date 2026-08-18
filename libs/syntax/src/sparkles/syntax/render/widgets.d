@@ -16,6 +16,7 @@ import sparkles.syntax.color : toRgb;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
 import sparkles.syntax.md.model : Span;
 import sparkles.syntax.theme : ResolvedTheme, StyleSpec;
+import sparkles.ui.components.gutter : cellOf, GutterChannel, withGutter;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
@@ -58,16 +59,17 @@ struct CodeViewOptions
     RgbColor whitespaceFg;
     bool hasWhitespaceFg;
 
-    /// Per-line gutter cells, indexed by 0-based source line (`OVL7`). An
-    /// index past the end, or an empty `text`, renders as blank padding, so
-    /// a producer only has to describe the lines it has something to say
-    /// about and the column still lines up.
-    const(GutterCell)[] gutter;
-
-    /// Gutter column width in cells, including the one-cell separator before
-    /// the code. `0` means no gutter column at all — the default, so a view
-    /// that wants none pays nothing.
-    int gutterWidth;
+    /// The chrome strips left of the code, in left-to-right order (`OVL7`) —
+    /// line numbers, coverage, diff markers, fold arrows, blame.
+    ///
+    /// This view neither places nor measures them: it hands each row to
+    /// $(REF withGutter, sparkles,ui,components,gutter) and the layout engine
+    /// puts the code past them. That is deliberate. While the chrome lived in
+    /// the row's own span list, every decoration positioned by a source column
+    /// had to be told how far the code had been pushed right, and this module
+    /// had to know a layout offset in order to tell it. Empty is the default,
+    /// and costs nothing.
+    const(GutterChannel)[] channels;
 
     /// Source byte ranges to tint, for decorations finer than a line
     /// (`OVL1`'s inline-span channel). Ranges are applied in order, so a
@@ -89,30 +91,6 @@ struct TintedRange
     size_t start;              /// inclusive source byte offset
     size_t end;                /// exclusive source byte offset
     Slot slot = Slot.highlight; /// the background to wash with
-}
-
-/**
-One cell of the per-line gutter column.
-
-The column is a decoration channel, not content: its spans carry no source
-identity, so selection, copy and goto-line see the code exactly as they would
-without it. Whoever fills it has already decided the text (a hit count, a
-marker); this only places and colours it.
-*/
-struct GutterCell
-{
-    /// Text to show, right-aligned in the column. Longer than the column
-    /// truncates rather than pushing the code sideways.
-    const(char)[] text;
-
-    /// The slot colouring it — `Slot.covCovered` and friends for coverage,
-    /// `Slot.gutter` for neutral chrome.
-    Slot slot = Slot.gutter;
-
-    /// Fill the cell with the slot's background as well as colouring its
-    /// text, so the column reads as a tinted band at a glance rather than
-    /// only on inspection. Off for chrome, which should stay invisible.
-    bool paintBackground;
 }
 
 /**
@@ -204,41 +182,6 @@ TextSpan[] applyTints(TextSpan[] spans, const(TintedRange)[] ranges) @safe
             result ~= slice(hi, sp.srcEnd, false);
     }
     return result;
-}
-
-/**
-Builds the gutter span for 0-based source line `line`.
-
-Right-aligned with a one-cell separator before the code, `noBreak` so a
-wrapping row keeps it attached to the first visual row, and carrying no
-`srcStart`/`srcEnd` — the column is chrome, and identity-bearing spans are
-what selection and goto-line walk.
-
-Public because $(LREF viewCodeDocument) is not the only document producer: the
-twoslash view renders the same source with the same per-line rows, and a reader
-who turned an overlay on does not expect it to vanish because a second one
-arrived. One channel, one implementation, however many producers.
-*/
-TextSpan gutterSpan(in CodeViewOptions opt, size_t line) @safe
-{
-    const cell = line < opt.gutter.length ? opt.gutter[line] : GutterCell.init;
-    const width = cast(size_t) opt.gutterWidth;
-    const avail = width > 1 ? width - 1 : width;
-
-    auto buf = new char[](width);
-    buf[] = ' ';
-    const text = cell.text.length > avail ? cell.text[0 .. avail] : cell.text;
-    if (text.length)
-        buf[avail - text.length .. avail] = text[];
-
-    // `TextSpan.text` is `const(char)[]`, so the freshly allocated buffer
-    // goes in as it is — no cast, and it outlives the tree as the field
-    // requires because nothing else holds it.
-    // A cell with no text still paints its tint: an unbroken band beside a
-    // run of covered lines is the point, and a gap in it would read as a
-    // change of state rather than as a line with no count to show.
-    return TextSpan(buf, cell.slot, noBreak: true,
-        paintBackground: cell.paintBackground);
 }
 
 WidgetTree viewCodeDocument(const(char)[] source,
@@ -447,11 +390,10 @@ WidgetTree viewCodeDocument(const(char)[] source,
                 srcStart: starts[first], srcEnd: clampedEnd);
             ph ~= TextSpan("  ⋯ " ~ cnt[].idup ~ " lines", Slot.gutter,
                 noBreak: true);
-            if (opt.gutterWidth > 0)
-                ph = gutterSpan(opt, first) ~ ph;
-            rows ~= b.add(Widget(kind: WidgetKind.rich, spans: ph,
-                slot: Slot.code,
-                hitId: foldHitBase != 0 ? foldHitBase + fr.start : 0));
+            rows ~= withGutter(b, opt.channels, first,
+                b.add(Widget(kind: WidgetKind.rich, spans: ph,
+                    slot: Slot.code,
+                    hitId: foldHitBase != 0 ? foldHitBase + fr.start : 0)));
             continue;
         }
         const blank = !byLine[li].length;
@@ -487,17 +429,13 @@ WidgetTree viewCodeDocument(const(char)[] source,
                 spans = [head, rest] ~ spans[1 .. $];
             }
         }
-        // After the indentation split (which indexes `spans[0]`), before the
-        // gutter (which is not part of the line's text).
+        // After the indentation split, which indexes `spans[0]`.
         spans = applyTints(spans, opt.tintedRanges);
-        // Prepended last: the indentation split above indexes `spans[0]`,
-        // and the gutter is not part of the line's text.
-        if (opt.gutterWidth > 0)
-            spans = gutterSpan(opt, li) ~ spans;
         // A blank row never wraps: the greedy breaker consumes a lone space
         // (a break eats its space), which would drop the row's identity.
-        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
-            slot: Slot.code, wrap: blank ? TextWrap.none : wrap));
+        rows ~= withGutter(b, opt.channels, li,
+            b.add(Widget(kind: WidgetKind.rich, spans: spans,
+                slot: Slot.code, wrap: blank ? TextWrap.none : wrap)));
     }
     return b.finish(b.container(WidgetKind.column, rows));
 }
@@ -561,47 +499,57 @@ WidgetTree viewCodeDocument(const(char)[] source,
     const rt = resolveTheme(builtinDark, labels);
     const ev = [HighlightEvent.sourceSpan(0, src.length)];
 
-    CodeViewOptions opt;
-    opt.gutterWidth = 5;
-    opt.gutter = [
-        GutterCell("12", Slot.covCovered),
-        GutterCell("0", Slot.covUncovered),
+    auto cells = [
+        cellOf("12", 4, Slot.covCovered),
+        cellOf("0", 4, Slot.covUncovered),
         // Line 3 is deliberately absent: a producer describes only the lines
         // it knows about, and the column still lines up.
     ];
+    CodeViewOptions opt;
+    opt.channels = [GutterChannel(id: "cov", width: 4, cells: cells)];
 
     auto tree = viewCodeDocument(src, ev, (() @trusted => &rt)(),
         RgbColor(0xcc, 0xcc, 0xcc), opt);
+    auto frames = layout(tree);
 
     // The gutter is chrome: it must not disturb the rows' source identity,
     // which is what selection, copy and goto-line walk.
     // `srcEnd` excludes the newline, as it does without a gutter.
-    auto rows = documentRows(tree, layout(tree));
+    auto rows = documentRows(tree, frames);
     assert(rows.length == 3);
     assert(rows[0].srcStart == 0 && rows[0].srcEnd == 2);
     assert(rows[1].srcStart == 3 && rows[1].srcEnd == 5);
     assert(rows[2].srcStart == 6);
+    assert(rows[0].sourceText == "a;", "and it stays out of the content");
 
-    // The row widgets, in source order, out of the flat arena.
+    // The chrome is a sibling of the code, not a span inside it: the code
+    // rows carry only the source, and the cells are their own widgets.
     TextSpan[][] rowSpans;
     foreach (ref node; tree.nodes)
         if (node.kind == WidgetKind.rich)
             rowSpans ~= node.spans;
     assert(rowSpans.length == 3);
+    assert(rowSpans[0][0].text == "a;", "no gutter span prefixes the code");
 
-    // Right-aligned into `gutterWidth - 1`, with the separator cell after.
-    assert(rowSpans[0][0].text == "  12 ");
-    assert(rowSpans[0][0].slot == Slot.covCovered);
-    assert(rowSpans[0][0].noBreak);
-    assert(rowSpans[0][0].srcStart == size_t.max, "the gutter carries no identity");
+    string[] cellText;
+    uint[] cellIdx;
+    foreach (i, ref node; tree.nodes)
+        if (node.kind == WidgetKind.text)
+        {
+            cellText ~= node.text.idup;
+            cellIdx ~= cast(uint) i;
+        }
+    // Right-aligned in the channel's own width; the separator is the row's gap.
+    assert(cellText == ["  12", "   0", ""],
+        "a line the producer said nothing about is blank, not a hole");
+    assert(tree.nodes[cellIdx[0]].slot == Slot.covCovered);
+    assert(tree.nodes[cellIdx[1]].slot == Slot.covUncovered);
+    assert(tree.nodes[cellIdx[2]].slot == Slot.gutter);
 
-    assert(rowSpans[1][0].text == "   0 ");
-    assert(rowSpans[1][0].slot == Slot.covUncovered);
-
-    // A line the producer said nothing about is blank padding in neutral
-    // chrome, not a hole that shifts the code left.
-    assert(rowSpans[2][0].text == "     ");
-    assert(rowSpans[2][0].slot == Slot.gutter);
+    // And the code starts past the chrome — 4 cells plus the separator.
+    foreach (i, ref node; tree.nodes)
+        if (node.kind == WidgetKind.rich)
+            assert(frames[i].rect.x == 5, "the layout placed the code, not us");
 }
 
 @("render.widgets.viewCodeDocument.tintedRanges")
