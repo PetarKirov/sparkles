@@ -1,6 +1,8 @@
 /** Exact bounded-deletion admission, canonical positions, and bounded scoring. */
 module sparkles.fuzzy.match;
 
+version (unittest) import sparkles.base.unique : makeUnique;
+
 import sparkles.base.text.analysis : AnalysisCase, AnalysisError,
     AnalysisOptions, AnalysisWorkspace, TextUnit, analyzeText;
 
@@ -811,7 +813,8 @@ unittest
     CandidateView candidate;
     candidate.path = "xxabdyy";
     candidate.filenameOffset = 0;
-    MatcherWorkspace!() workspace;
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     auto result = match(query.value, candidate, workspace);
     assert(result.hasValue);
     assert(result.value.kind == MatchKind.matched);
@@ -840,7 +843,8 @@ unittest
     CandidateView candidate;
     candidate.path = "src/Äffin.d";
     candidate.filenameOffset = 4;
-    MatcherWorkspace!() workspace;
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     assert(match(insensitive.value, candidate, workspace).value.admitted);
     candidate.path = "src/äffin.d";
     auto caseResult = match(sensitive.value, candidate, MatchConfig(0),
@@ -861,7 +865,8 @@ unittest
 {
     auto query = parseQuery("fb");
     assert(query.hasValue);
-    MatcherWorkspace!() workspace;
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     CandidateView candidate;
 
     candidate.path = "foobar";
@@ -893,7 +898,8 @@ unittest
 
     // Reparsing into the same storage reuses the same span addresses with
     // different content — the cache must key on content.
-    MatcherWorkspace!() shared_;
+    auto shared_Owner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() shared_() => shared_Owner.get();
     char[3] prompt = "abc";
     auto query = parseQuery(prompt[]);
     const first = match(query.value, candidate, shared_).value;
@@ -904,10 +910,12 @@ unittest
     query = parseQuery(prompt[]);
     const third = match(query.value, candidate, shared_).value;
 
-    MatcherWorkspace!() freshLower;
+    auto freshLowerOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() freshLower() => freshLowerOwner.get();
     auto lower = parseQuery("abc");
     const expectedLower = match(lower.value, candidate, freshLower).value;
-    MatcherWorkspace!() freshUpper;
+    auto freshUpperOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() freshUpper() => freshUpperOwner.get();
     auto upper = parseQuery("Abc");
     const expectedUpper = match(upper.value, candidate, freshUpper).value;
 
@@ -927,7 +935,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    MatcherWorkspace!() workspace;
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     TextUnit[5] needle = void;
     TextUnit[5] candidate = void;
     foreach (needleLength; 2 .. 6)
@@ -974,7 +983,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    MatcherWorkspace!() workspace;
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     TextUnit[4] needle = void;
     TextUnit[4] candidate = void;
     uint[4] expected = void;
