@@ -706,6 +706,10 @@ export default withMermaid(
                   text: 'Diff & PR view (planned)',
                   link: '/specs/hue/diff-view',
                 },
+                {
+                  text: 'DSV preview (design)',
+                  link: '/specs/hue/dsv-preview',
+                },
                 { text: 'Navigation (planned)', link: '/specs/hue/navigation' },
                 {
                   text: 'Images & diagrams (planned)',

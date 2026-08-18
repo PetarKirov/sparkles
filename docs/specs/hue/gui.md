@@ -248,7 +248,10 @@ scrolling with the code but pinned sideways:
 Tables break the `SEL` file-offset rule (cells are reflowed/stripped and the
 core-cli renderer wraps cell content across lines, so there is no clean
 byte-range). Instead a markdown table gets **spreadsheet-style 2D selection**, a
-regime distinct from `SEL`.
+regime distinct from `SEL`. A **DSV** document
+([dsv-preview.md](./dsv-preview.md)) consumes this regime whole; its planned
+deltas — a `source` dialect copy format, char-precise crossing, whole-file byte
+reproduction — are `DSC1`–`DSC5` there.
 
 | ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                                        | Status            | Traces to                                                                                                                                           |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
