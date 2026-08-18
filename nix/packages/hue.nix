@@ -20,7 +20,19 @@
         pname = "hue";
         version = "0.1.0";
 
-        nativeBuildInputs = [ pkgs.pkg-config ];
+        # `gitMinimal` for the same reason as apps/twoslash-extract: the format
+        # preview (`FPR2`) links `sparkles:dmd-fmt`, so `dmd:frontend`'s
+        # pre-generate step (`config.d`) runs here — and it shells out to
+        # `git describe` for the compiler version string. It falls back to the
+        # checked-in VERSION file when git *fails*, but throws outright when the
+        # binary is missing, so git must exist at build time even though the
+        # fetched source has no `.git`. No runtime wrap is needed: unlike the
+        # semantic consumers, the formatter is lex/parse-only and never reads
+        # `SPARKLES_DMD_IMPORT_PATH`.
+        nativeBuildInputs = [
+          pkgs.pkg-config
+          pkgs.gitMinimal
+        ];
 
         buildInputs = [
           pkgs.tree-sitter
