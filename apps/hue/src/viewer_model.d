@@ -109,6 +109,46 @@ struct FoldMarker
     bool open;
 }
 
+/**
+`NAV5`: what a re-layout pins when the wrapped row count changes under it.
+
+The scroll offset is a **visual row index**, and a visual row is a function of
+the laid-out width — so a window resize, a `Ctrl-±` font step or a pane toggle
+re-wraps the document and silently moves the reader. The offset is therefore
+defined against the **source**: capture the byte offset showing at the top of
+the pane, re-find it after the rebuild, and put it back where it was.
+
+The two modes differ only in where inside a wrapped source line they land.
+*/
+enum ScrollAnchorMode : ubyte
+{
+    /// Keep the exact wrap segment: the top row after the rebuild is the last
+    /// one whose content starts at or before the captured byte. A reader
+    /// parked in the middle of a long paragraph stays in the middle of it.
+    segment,
+    /// Keep the source line: the captured byte snaps back to its line start,
+    /// so the top row is that line's FIRST wrapped segment. Always exact, at
+    /// the cost of a small upward jump when the top row was a continuation.
+    line,
+}
+
+/**
+The captured scroll position, in source terms (`NAV5`).
+
+`src` is the byte offset of the first content visible at the top of the pane;
+`rowsAbove` is how many rows of it sat above that content — the blank lines and
+synthetic rows (borders, icons, spacing) that carry no source identity, so that
+a gap above a heading survives the reflow too. An `src` of `size_t.max` means
+"nothing to restore" (an empty document, or a view of pure chrome).
+*/
+struct ScrollAnchor
+{
+    size_t src = size_t.max;
+    int rowsAbove;
+
+    bool valid() const @safe pure nothrow @nogc => src != size_t.max;
+}
+
 /// Maps `gui_ansi.Attr` bits onto the toolkit's per-span text chrome — the
 /// decoded-ANSI fence renderer stamps these on its resolved-color spans.
 TextStyle attrsToTextStyle(ubyte attrs) pure nothrow @nogc @safe
@@ -306,6 +346,11 @@ struct ViewerModel
 
     // ── scroll + search ─────────────────────────────────────────────────────
     long top;                       /// first visible visual row
+    /// `NAV5`: how a re-layout re-finds the row it must keep at the top.
+    ScrollAnchorMode anchorMode = ScrollAnchorMode.segment;
+    /// `NAV6`: set while a resize has legitimately parked `top` past the
+    /// last full screen, so the per-frame clamp leaves it alone.
+    private bool anchorOvershoot;
     Match[] matches;
     size_t curMatch;
     Rect[][] matchRects;            /// per-match rects via the identity channel
@@ -351,6 +396,10 @@ struct ViewerModel
         // the session drops to off (`FMV4` must never restore across docs).
         if (fmt !is null)
             fmt.documentChanged();
+        // `NAV5`: a new document has nowhere to keep. The outgoing rows
+        // describe the outgoing buffer, so drop them before the rebuild —
+        // otherwise the anchor would restore the previous file's position.
+        rows = null;
         rebuild();
     }
 
@@ -381,12 +430,10 @@ struct ViewerModel
         barSv = typeof(barSv).init;
         barSvActive = size_t.max;
         folds = DisclosureState!size_t(true);
+        // `FMV5` is `NAV5` here: the reformat moves every byte, but the
+        // anchor is a byte offset into the OLD buffer and the new one is a
+        // reflow of the same text — near enough that the reader stays put.
         rebuild();
-        const last = rows.length ? cast(long) rows.length - 1 : 0;
-        if (top > last)
-            top = last;
-        if (top < 0)
-            top = 0;
     }
 
     /**
@@ -527,10 +574,209 @@ struct ViewerModel
         rebuild();
     }
 
+    /**
+    `NAV5`: the source position showing at the top of the pane.
+
+    Walks DOWN from `top` to the first row carrying source identity — the
+    first thing the reader can actually see — and records how far it had to
+    walk, so the blank rows above it come back too. Walking down rather than
+    up matters at a section break: the anchor becomes the heading, not the
+    trailing line of the paragraph before the gap.
+    */
+    ScrollAnchor captureAnchor() const @safe pure nothrow @nogc
+    {
+        if (rows.length == 0 || top < 0)
+            return ScrollAnchor.init;
+        auto from = cast(size_t) top;
+        if (from >= rows.length)
+            from = rows.length - 1;
+        foreach (i; from .. rows.length)
+            if (rows[i].srcStart != size_t.max)
+                return ScrollAnchor(rows[i].srcStart, cast(int)(i - from));
+        return ScrollAnchor.init;
+    }
+
+    /**
+    `NAV5`: the row that puts `a` back where it was, or `-1` when the anchor
+    finds nothing in the rebuilt rows.
+
+    A single forward scan, deliberately: the row list is only *mostly* ordered
+    by source offset (a table's cells, a code group's tabs and a diff's two
+    sides all interleave), so a binary search would answer confidently and
+    wrongly. The scan costs what `documentRows` already cost to build.
+    */
+    long rowForAnchor(in ScrollAnchor a) const @safe pure nothrow @nogc
+    {
+        if (!a.valid || rows.length == 0)
+            return -1;
+        // `line` mode re-targets the anchor at its source line's start, so
+        // the "first row at or after" branch lands on segment 0 of that line.
+        size_t target = a.src;
+        if (anchorMode == ScrollAnchorMode.line)
+            foreach_reverse (start; lineStarts)
+                if (start <= target)
+                {
+                    target = start;
+                    break;
+                }
+        // Ties are the whole difficulty: a fence's header row and the
+        // paragraph above it can both report the same start (the header
+        // carries the fence's own span), so "the last row at or before" would
+        // scroll past the paragraph. Take the FIRST row achieving the closest
+        // start on each side — the earliest row that shows that content.
+        long atOrBefore = -1, atOrAfter = -1;
+        size_t bestBefore, bestAfter;
+        foreach (idx, ref const r; rows)
+        {
+            if (r.srcStart == size_t.max)
+                continue;
+            if (r.srcStart <= target)
+            {
+                if (atOrBefore < 0 || r.srcStart > bestBefore)
+                {
+                    atOrBefore = cast(long) idx;
+                    bestBefore = r.srcStart;
+                }
+            }
+            else if (atOrAfter < 0 || r.srcStart < bestAfter)
+            {
+                atOrAfter = cast(long) idx;
+                bestAfter = r.srcStart;
+            }
+        }
+        final switch (anchorMode)
+        {
+            // The exact segment: the last row that starts no later than the
+            // captured byte still shows it.
+            case ScrollAnchorMode.segment:
+                return atOrBefore >= 0 ? atOrBefore : atOrAfter;
+            // The line: its first row is the first one reaching the line
+            // start, which is `atOrBefore` when a row starts exactly there.
+            case ScrollAnchorMode.line:
+                if (atOrBefore >= 0 && rows[cast(size_t) atOrBefore].srcStart == target)
+                    return atOrBefore;
+                return atOrAfter >= 0 ? atOrAfter : atOrBefore;
+        }
+    }
+
+    /**
+    `NAV5`/`NAV6`: puts the captured position back at the top of the pane.
+
+    The bottom clamp deliberately does NOT apply: a taller pane must not drag
+    the first line up to keep the document's tail flush with the bottom edge
+    (issue #299). `top` may legally exceed the last full screen afterwards —
+    `anchorOvershoot` records that so the per-frame clamp allows it, and a
+    downward scroll simply refuses to go further.
+    */
+    void restoreAnchor(in ScrollAnchor a) @safe pure nothrow @nogc
+    {
+        const row = rowForAnchor(a);
+        if (row < 0)
+        {
+            clampView();
+            return;
+        }
+        auto want = row - a.rowsAbove;
+        if (want < 0)
+            want = 0;
+        top = want;
+        clampView();
+        anchorOvershoot = true;
+    }
+
+    /// The last `top` that fills a `visRows`-tall pane with content.
+    long maxTopFor(long visRows) const @safe pure nothrow @nogc
+    {
+        const over = cast(long) rows.length - visRows;
+        return over > 0 ? over : 0;
+    }
+
+    /**
+    `NAV3`: the per-frame safety clamp — `top` must address a real row.
+
+    It is no longer the `[0, maxTop]` clamp it was: `maxTop` depends on the
+    pane height, and enforcing it every frame is exactly what moved the first
+    line when the window grew (issue #299). Filling the pane is the job of the
+    scroll operations (`scrollVertical`), which is where the user asks for it.
+    */
+    void clampView() @safe pure nothrow @nogc
+    {
+        const last = rows.length ? cast(long) rows.length - 1 : 0;
+        if (top > last)
+            top = last;
+        if (top < 0)
+            top = 0;
+    }
+
+    /**
+    `NAV6`: scrolls `delta` visual rows in a `visRows`-tall pane.
+
+    Downward travel stops at `maxTopFor(visRows)` as it always has — with one
+    exception: when a resize has already parked `top` beyond that (`NAV5` kept
+    the first line pinned over a document tail too short to fill the pane),
+    down is simply refused rather than snapping the view. Scrolling up out of
+    the overshoot clears it, and normal clamping resumes.
+
+    Returns `true` iff `top` moved.
+    */
+    bool scrollVertical(long delta, long visRows) @safe pure nothrow @nogc
+    {
+        const before = top;
+        auto next = top + delta;
+        const limit = maxTopFor(visRows);
+        if (next > limit)
+        {
+            // Inside a resize overshoot the clamp does not snap the view: it
+            // only refuses to travel FURTHER down. Upward travel is free, and
+            // re-entering the clamp below restores ordinary behaviour.
+            if (anchorOvershoot && top > limit)
+                next = next > top ? top : next;
+            else
+                next = limit;
+        }
+        if (next < 0)
+            next = 0;
+        top = next;
+        clampView();
+        if (top <= limit)
+            anchorOvershoot = false;
+        return top != before;
+    }
+
+    /// `NAV6`, against the pane height both backends already publish in
+    /// `viewRows` — the form ordinary scrolling uses.
+    bool scrollVertical(long delta) @safe pure nothrow @nogc
+        => scrollVertical(delta, viewRows);
+
+    /// The last `top` filling the current pane (`viewRows`).
+    long maxTop() const @safe pure nothrow @nogc => maxTopFor(viewRows);
+
+    /// `NAV6`: jumps straight to `row` (goto, search, fold, diff navigation).
+    /// Unlike `scrollVertical` this is not a clamp against the pane height —
+    /// the caller named the row it wants at the top.
+    void scrollTo(long row) @safe pure nothrow @nogc
+    {
+        top = row;
+        clampView();
+        anchorOvershoot = false;
+    }
+
     /// Rebuilds the active view's pipeline: view → layout → display list,
     /// plus the derived row index, hit targets, keyed cells, document
     /// structure, and the search-match rects — all in lockstep.
+    ///
+    /// `NAV5`: every rebuild re-wraps, so every rebuild pins the reader's
+    /// place — the anchor is captured from the OUTGOING rows and restored
+    /// against the incoming ones. Callers that mean to move the view (a
+    /// goto, a diff jump) set `top` *after* the rebuild and win.
     void rebuild()
+    {
+        const anchor = captureAnchor();
+        rebuildTree();
+        restoreAnchor(anchor);
+    }
+
+    private void rebuildTree()
     {
         if (showPreview && diff.files.length)
         {
@@ -892,12 +1138,11 @@ struct ViewerModel
         foreach (ref const r; inspectRects)
             if (r.y < first)
                 first = r.y;
-        top = first - visRows / 3;
-        const maxTop = cast(long) rows.length - visRows;
-        if (top > maxTop)
-            top = maxTop;
-        if (top < 0)
-            top = 0;
+        // A reveal fills the pane where it can — the caller asked to SEE the
+        // extent, so the bottom clamp is right here (`NAV6`, unlike a resize).
+        const want = first - visRows / 3;
+        const limit = maxTopFor(visRows);
+        scrollTo(want > limit ? limit : want);
     }
 
     /// The first visual row at/after source line `srcLine` (goto-line).
@@ -1454,7 +1699,7 @@ struct ViewerModel
         rebuild(); // the selection marker moved, so the headers changed
         const row = diffFileRow(diffSession.index);
         if (row >= 0)
-            top = row;
+            scrollTo(row);
         return true;
     }
 
@@ -1469,7 +1714,7 @@ struct ViewerModel
         rebuild();
         const row = diffFileRow(diffSession.index);
         if (row >= 0)
-            top = row;
+            scrollTo(row);
         return true;
     }
 
@@ -1509,7 +1754,7 @@ struct ViewerModel
         }
         if (best < 0)
             return false;
-        top = best;
+        scrollTo(best);
         // Keep the session selection honest: the file the new position is in
         // is the file the reviewer is now on, so `[`/`]` continue from here.
         foreach_reverse (i; 0 .. diffSession.entries.length)
@@ -1573,7 +1818,7 @@ struct ViewerModel
         rebuild();
         const row = diffFileRow(diffSession.index);
         if (row >= 0)
-            top = row;
+            scrollTo(row);
         return true;
     }
 
@@ -1588,7 +1833,7 @@ struct ViewerModel
         rebuild();
         const row = diffFileRow(diffSession.index);
         if (row >= 0)
-            top = row;
+            scrollTo(row);
         return true;
     }
 
@@ -1602,7 +1847,7 @@ struct ViewerModel
         rebuild();
         const row = diffFileRow(diffSession.index);
         if (row >= 0)
-            top = row;
+            scrollTo(row);
         return true;
     }
 
@@ -1618,7 +1863,7 @@ struct ViewerModel
         rebuild();
         const row = diffFileRow(diffSession.index);
         if (row >= 0)
-            top = row;
+            scrollTo(row);
         return true;
     }
 
@@ -1681,7 +1926,7 @@ struct ViewerModel
         rebuild();
         const row = diffFileRow(diffSession.index);
         if (row >= 0)
-            top = row;
+            scrollTo(row);
         return true;
     }
 }
@@ -2306,4 +2551,204 @@ struct ViewerModel
     vm.setDocument("diff", "", "", null, PreviewModel.init,
         TwoslashReturn.init, "diff", dd, null, readOnly);
     assert(vm.diffCursorPatch().length == 0);
+}
+
+// ── the scroll anchor (`NAV5`/`NAV6`, issue #299) ────────────────────────────
+
+version (unittest)
+{
+    /// A raw-view model over `src`, laid out at `width` — the fixture the
+    /// anchor tests reflow.
+    private ViewerModel anchorFixture(string src, int width)
+    {
+        import sparkles.syntax : builtinDark;
+
+        ViewerModel vm;
+        vm.names = ["dark"];
+        vm.themes = [builtinDark];
+        vm.labels = LabelSet.standard();
+        vm.widthCols = width;
+        vm.applyTheme(0);
+        vm.setDocument("t.d", "", src,
+            [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+            TwoslashReturn.init, "d");
+        return vm;
+    }
+
+    /// Twelve numbered lines, every third one long enough to wrap well
+    /// before 40 columns.
+    private string anchorSource()
+    {
+        import std.array : appender;
+        import std.conv : text;
+
+        auto a = appender!string;
+        foreach (i; 0 .. 12)
+        {
+            a ~= text("line", i);
+            if (i % 3 == 0)
+                foreach (w; 0 .. 12)
+                    a ~= text(" word", w);
+            a ~= "\n";
+        }
+        return a[];
+    }
+}
+
+@("viewer_model.scrollAnchor.reflowKeepsTheFirstLine")
+@system unittest
+{
+    // Issue #299: a width change re-wraps the document, so the visual row
+    // index the scroll offset used to be stops meaning the same place. The
+    // anchor is the SOURCE byte at the top of the pane.
+    auto vm = anchorFixture(anchorSource(), 100);
+    vm.top = vm.visualOfSrc(7);
+    const anchor = vm.rows[cast(size_t) vm.top].srcStart;
+    assert(anchor != size_t.max);
+    const rowsWide = vm.rows.length;
+
+    vm.relayout(30); // narrower: every long line now wraps
+    assert(vm.rows.length > rowsWide, "the fixture must actually re-wrap");
+    assert(vm.rows[cast(size_t) vm.top].srcStart == anchor,
+        "the first visible source byte survived the reflow");
+
+    vm.relayout(100); // and back
+    assert(vm.rows[cast(size_t) vm.top].srcStart == anchor);
+}
+
+@("viewer_model.scrollAnchor.segmentModeKeepsThePlaceInsideAWrappedLine")
+@system unittest
+{
+    // The default mode pins the wrap segment, not the line: a reader parked
+    // in the middle of a long line stays in the middle of it.
+    auto vm = anchorFixture(anchorSource(), 40);
+    assert(vm.anchorMode == ScrollAnchorMode.segment);
+
+    // Find a CONTINUATION row — one whose source start is past its line's.
+    long cont = -1;
+    foreach (idx, ref const r; vm.rows)
+        if (r.srcStart != size_t.max && idx > 0
+            && vm.rows[idx - 1].srcStart != size_t.max
+            && vm.source[r.srcStart - 1] != '\n')
+        {
+            cont = cast(long) idx;
+            break;
+        }
+    assert(cont > 0, "the fixture must produce a wrapped continuation row");
+    vm.top = cont;
+    const anchor = vm.rows[cast(size_t) cont].srcStart;
+
+    vm.relayout(28);
+    const ref top = vm.rows[cast(size_t) vm.top];
+    assert(top.srcStart <= anchor && anchor < top.srcEnd,
+        "the byte that was at the top is still on the top row");
+}
+
+@("viewer_model.scrollAnchor.lineModeSnapsToTheLineStart")
+@system unittest
+{
+    auto vm = anchorFixture(anchorSource(), 40);
+    vm.anchorMode = ScrollAnchorMode.line;
+
+    long cont = -1;
+    foreach (idx, ref const r; vm.rows)
+        if (r.srcStart != size_t.max && idx > 0
+            && vm.rows[idx - 1].srcStart != size_t.max
+            && vm.source[r.srcStart - 1] != '\n')
+        {
+            cont = cast(long) idx;
+            break;
+        }
+    assert(cont > 0);
+    vm.top = cont;
+    const anchor = vm.rows[cast(size_t) cont].srcStart;
+
+    // The line the continuation belongs to.
+    size_t lineStart;
+    foreach_reverse (s; vm.lineStarts)
+        if (s <= anchor)
+        {
+            lineStart = s;
+            break;
+        }
+    assert(lineStart < anchor, "the fixture row must be mid-line");
+
+    vm.relayout(28);
+    assert(vm.rows[cast(size_t) vm.top].srcStart == lineStart,
+        "line mode lands on the wrapped line's FIRST segment");
+}
+
+@("viewer_model.scrollAnchor.anUnwrappedDocumentDoesNotMoveAtAll")
+@system unittest
+{
+    // The degenerate case the anchor must not disturb: nothing re-wraps, so
+    // the restored row is the row it started on, blank lines included.
+    auto vm = anchorFixture("a\n\n\n\nbbbb\n", 40);
+    foreach (start; 0 .. cast(long) vm.rows.length)
+    {
+        vm.top = start;
+        vm.relayout(20);
+        assert(vm.top == start, "a narrower pane moved an unwrapped document");
+    }
+}
+
+@("viewer_model.scrollAnchor.aTallerPaneNeverPullsTheFirstLineUp")
+@system unittest
+{
+    // The #299 case for the OTHER axis: growing the window must only reveal
+    // more of the file after the first line — never scroll back to keep the
+    // tail flush with the bottom.
+    auto vm = anchorFixture(anchorSource(), 100);
+    vm.viewRows = 4;
+    const total = cast(long) vm.rows.length;
+    vm.scrollVertical(total, 4); // to the bottom
+    assert(vm.top == vm.maxTopFor(4));
+    const parked = vm.top;
+
+    vm.viewRows = 40; // the window grew past the whole document
+    vm.relayout(100);
+    assert(vm.top == parked, "the first line stayed put; the tail runs short");
+    assert(vm.maxTopFor(40) < parked, "…and it is genuinely past the clamp");
+}
+
+@("viewer_model.scrollAnchor.overshootRefusesDownAndClearsGoingUp")
+@system unittest
+{
+    // `NAV6`: while parked past the last full screen, down is refused rather
+    // than snapping; up works and returns the view to ordinary clamping.
+    auto vm = anchorFixture(anchorSource(), 100);
+    vm.viewRows = 4;
+    vm.scrollVertical(cast(long) vm.rows.length, 4);
+    const parked = vm.top;
+    vm.viewRows = 40;
+    vm.relayout(100);
+    assert(vm.top == parked);
+
+    assert(!vm.scrollVertical(1, 40), "down is refused inside the overshoot");
+    assert(vm.top == parked);
+    assert(vm.scrollVertical(-1, 40), "up always works");
+    assert(vm.top == parked - 1);
+    // Still overshooting, so still no travel down — the pane already shows
+    // everything below, and snapping would move the first line for nothing.
+    assert(!vm.scrollVertical(100, 40));
+    assert(vm.top == parked - 1);
+    // Back inside the clamp, ordinary behaviour resumes.
+    assert(vm.scrollVertical(-100, 40) && vm.top == 0);
+    assert(!vm.scrollVertical(5, 40), "the whole document fits: nowhere to go");
+    assert(vm.top == vm.maxTopFor(40));
+}
+
+@("viewer_model.scrollAnchor.aNewDocumentStartsAtTheTop")
+@system unittest
+{
+    // The anchor must not survive `setDocument`: the outgoing rows describe
+    // the outgoing buffer.
+    auto vm = anchorFixture(anchorSource(), 100);
+    vm.top = vm.visualOfSrc(9);
+    assert(vm.top > 0);
+    enum other = "one\ntwo\nthree\n";
+    vm.setDocument("o.d", "", other,
+        [HighlightEvent.sourceSpan(0, other.length)], PreviewModel.init,
+        TwoslashReturn.init, "d");
+    assert(vm.top == 0, "a new document opens at its first line");
 }
