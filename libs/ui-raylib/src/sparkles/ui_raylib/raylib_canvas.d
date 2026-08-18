@@ -18,6 +18,7 @@ import raylib;
 
 import sparkles.raylib_text : TextStyle, FontSet, drawText;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
 import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, RuleEdge;
@@ -479,8 +480,7 @@ struct RaylibCanvas
     private const(char)[] cstr(scope const(char)[] s) @system
     {
         buf.clear();
-        *buf ~= s;
-        *buf ~= '\0';
+        (*buf).writeStringz(s);
         return (*buf)[0 .. $ - 1];
     }
 }
