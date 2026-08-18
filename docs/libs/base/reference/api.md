@@ -38,23 +38,24 @@ See [Own a heap value without the collector](../how-to/own-heap-values.md).
 
 Importing the package pulls in every module below.
 
-| Module                           | Description                                                                                                                                                  |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `sparkles.base.text.writers`     | Integer (any radix 2–36), float, duration, byte, hex (`writeHexByte`), escape, and value writers.                                                            |
-| `sparkles.base.text.readers`     | Slice-advance parsers (`readInteger` at any radix 2–36, `readUntil`) plus hex predicates `isHexDigit` / `hexNibble`.                                         |
-| `sparkles.base.text.base_codecs` | RFC 4648 Base16/32/64 and relatives, driven by an `Alphabet` value — see [Base codecs](./base-codecs.md).                                                    |
-| `sparkles.base.text.percent`     | RFC 3986 percent-encoding and `x-www-form-urlencoded` — see [Percent-encoding](./percent-encoding.md).                                                       |
-| `sparkles.base.text.enums`       | Enum text helpers such as `StringRepresentation`.                                                                                                            |
-| `sparkles.base.text.errors`      | `ParseErrorCode`, `ParseError`, and `ParseExpected!T`.                                                                                                       |
-| `sparkles.base.text.float_conv`  | Exact decimal ⇄ `double`: correctly-rounded `readDecimalFloat`, shortest round-trip `formatShortestDouble` ([spec](../../../specs/base/text/float-conv.md)). |
-| `sparkles.base.text.case_style`  | `CaseStyle` and `convertCase` (camel/pascal/snake/kebab/…).                                                                                                  |
-| `sparkles.base.text.html`        | HTML entity escaping.                                                                                                                                        |
-| `sparkles.base.text.ansi`        | ANSI escape-sequence scanning.                                                                                                                               |
-| `sparkles.base.text.utf`         | `@nogc` UTF-8 decoding.                                                                                                                                      |
-| `sparkles.base.text.utf8`        | UTF-8 well-formedness: `indexOfInvalidUtf8`, `validateUtf8`.                                                                                                 |
-| `sparkles.base.text.grapheme`    | Grapheme-cluster segmentation.                                                                                                                               |
-| `sparkles.base.text.width`       | Terminal cell width, field alignment, and truncation.                                                                                                        |
-| `sparkles.base.text.wrap`        | Style-aware prose wrapping by terminal cell width.                                                                                                           |
+| Module                           | Description                                                                                                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sparkles.base.text.writers`     | Integer (any radix 2–36), float, duration, byte, hex (`writeHexByte`), escape, and value writers.                                                                         |
+| `sparkles.base.text.readers`     | Slice-advance parsers (`readInteger` at any radix 2–36, `readUntil`) plus hex predicates `isHexDigit` / `hexNibble`.                                                      |
+| `sparkles.base.text.cstring`     | NUL-terminated C strings without the GC: `writeStringz` (growable destination), `CString!N` + `toCString`/`tryToCString` (fixed `char[N]`, borrow checked by `-dip1000`). |
+| `sparkles.base.text.base_codecs` | RFC 4648 Base16/32/64 and relatives, driven by an `Alphabet` value — see [Base codecs](./base-codecs.md).                                                                 |
+| `sparkles.base.text.percent`     | RFC 3986 percent-encoding and `x-www-form-urlencoded` — see [Percent-encoding](./percent-encoding.md).                                                                    |
+| `sparkles.base.text.enums`       | Enum text helpers such as `StringRepresentation`.                                                                                                                         |
+| `sparkles.base.text.errors`      | `ParseErrorCode`, `ParseError`, and `ParseExpected!T`.                                                                                                                    |
+| `sparkles.base.text.float_conv`  | Exact decimal ⇄ `double`: correctly-rounded `readDecimalFloat`, shortest round-trip `formatShortestDouble` ([spec](../../../specs/base/text/float-conv.md)).              |
+| `sparkles.base.text.case_style`  | `CaseStyle` and `convertCase` (camel/pascal/snake/kebab/…).                                                                                                               |
+| `sparkles.base.text.html`        | HTML entity escaping.                                                                                                                                                     |
+| `sparkles.base.text.ansi`        | ANSI escape-sequence scanning.                                                                                                                                            |
+| `sparkles.base.text.utf`         | `@nogc` UTF-8 decoding.                                                                                                                                                   |
+| `sparkles.base.text.utf8`        | UTF-8 well-formedness: `indexOfInvalidUtf8`, `validateUtf8`.                                                                                                              |
+| `sparkles.base.text.grapheme`    | Grapheme-cluster segmentation.                                                                                                                                            |
+| `sparkles.base.text.width`       | Terminal cell width, field alignment, and truncation.                                                                                                                     |
+| `sparkles.base.text.wrap`        | Style-aware prose wrapping by terminal cell width.                                                                                                                        |
 
 ## `sparkles.base.term_style`
 
