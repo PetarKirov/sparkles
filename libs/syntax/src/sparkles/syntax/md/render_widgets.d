@@ -1267,13 +1267,17 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
 
         case table:
         {
-            import sparkles.ui.geometry : cellsOf;
-            import sparkles.ui.tracks : resolveTracks, TrackSpec;
-            import sparkles.ui.widget : Alignment;
+            import sparkles.base.text.width : Align;
+            import sparkles.ui.components.table : TableProps;
+            import sparkles.ui.components.table.widgets : buildTableWidgets,
+                SpanCell, TableCutout, TableWidgetStyle;
 
-            // The LAY9 track sizer: measure every cell, resolve auto tracks,
-            // lay each row as fixed-width aligned cells. The delimiter row's
-            // ColAlign drives per-column alignment; the header row is bold.
+            // The table is the shared span-capable component's widget view
+            // (`MDP10` via `sparkles.ui.components.table`): this arm only
+            // assembles styled cell spans from the AST — measurement, track
+            // sizing, the grid glyphs, the header rule and the copy cutout
+            // all live in `buildTableWidgets`. Rows may be ragged (missing
+            // trailing cells render as blank fillers, unkeyed).
             size_t cols;
             foreach (ref const row; blk.children)
                 if (row.children.length > cols)
@@ -1281,9 +1285,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             if (cols == 0)
                 return b.container(WidgetKind.column, null);
 
-            // Cell spans (built once) + per-column content maxima.
-            auto cellSpans = new TextSpan[][](blk.children.length * cols);
-            auto content = new int[](cols);
+            auto cells = new SpanCell[][](blk.children.length);
             foreach (ri, ref const row; blk.children)
             {
                 // `DVN6` twice, because a table has two levels a verdict can
@@ -1292,6 +1294,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 // Resolving only the cell loses the added row entirely — the
                 // exact case a re-wrapped table with one new row produces.
                 MdViewOptions rowOpt = decorated(opt, row.span.start);
+                cells[ri] = new SpanCell[](row.children.length);
                 foreach (ci, ref const cell; row.children)
                 {
                     TextSpan[] spans;
@@ -1305,132 +1308,43 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         cellOpt.emph);
                     fillDiffTints(spans); // the cell path is not a prose row
                     trimCellEdges(spans); // measured text sizes the track
-                    cellSpans[ri * cols + ci] = spans;
-                    int w;
-                    foreach (ref s; spans)
-                        w += cast(int) cellsOf(s.text);
-                    if (w > content[ci])
-                        content[ci] = w;
-                }
-            }
-
-            auto tracks = new TrackSpec[](cols);
-            tracks[] = TrackSpec.auto_;
-            const widths = resolveTracks(tracks, content, 0);
-
-            // The full table grid, as glyph runs (the old core-cli table
-            // look): rounded outer corners, `│` column separators, a heavy
-            // rule under the header row. Drawn as text rather than panel
-            // decorations because the cell backends draw whole boxes, not
-            // per-column inner rules — and glyphs render identically on
-            // every backend (the GPU path draws box glyphs procedurally,
-            // so they connect across cells).
-            uint ruleRun(string text_)
-            {
-                Widget w = Widget(kind: WidgetKind.rich, spans: [
-                        TextSpan(text_, Slot.border, opt.baseStyle,
-                            noBreak: true)],
-                    slot: Slot.border, wrap: TextWrap.none,
-                    hitId: opt.hitId, textStyle: opt.baseStyle);
-                if (opt.theme.present)
-                {
-                    w.fgOverride = opt.theme.ruleFg;
-                    w.hasFgOverride = true;
-                }
-                return b.add(w);
-            }
-
-            string borderRow(string l, string fill, string mid, string r)
-            {
-                string s = l;
-                foreach (ci; 0 .. cols)
-                {
-                    foreach (_; 0 .. widths[ci] + 2)
-                        s ~= fill;
-                    s ~= ci + 1 < cols ? mid : r;
-                }
-                return s;
-            }
-
-            auto rows = new uint[](0);
-            // `TBL6`: the whole-table copy button sits in a 3-cell cutout of
-            // the top border just before the corner (`╭──   ╮`), mirroring
-            // the fence header's affordance; too-narrow tables skip it.
-            const cutout = opt.tableCopyHitBase != 0
-                && widths[cols - 1] + 2 >= 3;
-            if (!cutout)
-                rows ~= ruleRun(borderRow("╭", "─", "┬", "╮"));
-            else
-            {
-                const hit = opt.tableCopyHitBase + blk.span.start;
-                string prefix = "╭";
-                foreach (ci; 0 .. cols)
-                {
-                    foreach (_; 0 .. widths[ci] + 2 - (ci + 1 == cols ? 3 : 0))
-                        prefix ~= "─";
-                    if (ci + 1 < cols)
-                        prefix ~= "┬";
-                }
-                const copied = opt.copiedTable == blk.span.start;
-                Widget iconW = Widget(kind: WidgetKind.rich, spans: [
-                        TextSpan(" " ~ (copied ? opt.glyphs.copiedIcon
-                            : opt.glyphs.copyIcon) ~ " ", Slot.gutter,
-                            opt.baseStyle, noBreak: true)],
-                    slot: Slot.gutter, wrap: TextWrap.none, hitId: hit,
-                    textStyle: opt.baseStyle);
-                if (opt.theme.present)
-                {
-                    iconW.fgOverride = copied ? opt.theme.accentGreen
-                        : opt.theme.ruleFg;
-                    iconW.hasFgOverride = true;
-                }
-                rows ~= b.container(WidgetKind.row,
-                    [ruleRun(prefix), b.add(iconW), ruleRun("╮")]);
-            }
-            foreach (ri; 0 .. blk.children.length)
-            {
-                auto cells = new uint[](0);
-                foreach (ci; 0 .. cols)
-                {
-                    cells ~= ruleRun("│");
-                    auto spans = cellSpans[ri * cols + ci];
-                    if (!spans.length)
-                        spans = [TextSpan(" ", opt.proseSlot, opt.baseStyle)];
-                    Widget cellW = Widget(kind: WidgetKind.rich, spans: spans,
-                        hitId: opt.hitId, slot: opt.proseSlot,
-                        textStyle: opt.baseStyle);
                     const a = ci < blk.aligns.length ? blk.aligns[ci]
                         : ColAlign.none;
-                    // Alignment via a fixed-width single-child column (LAY8),
-                    // one padding cell inside each separator.
-                    const inner = b.add(cellW);
-                    Widget colW = Widget(kind: WidgetKind.column,
-                        children: [inner],
-                        width: SizeSpec.fixed(widths[ci] + 2),
-                        padding: Insets(0, 1, 0, 1),
-                        alignX: a == ColAlign.right ? Alignment.end
-                            : a == ColAlign.center ? Alignment.center
-                            : Alignment.start);
-                    // Source-anchored cell identity for interactive backends.
-                    if (opt.tableKeyBase != 0
-                        && ci < blk.children[ri].children.length)
-                        colW.key = opt.tableKeyBase
-                            + blk.children[ri].children[ci].span.start;
-                    cells ~= b.add(colW);
+                    cells[ri][ci] = SpanCell(spans,
+                        halign: a == ColAlign.right ? Align.right
+                            : a == ColAlign.center ? Align.center
+                            : Align.left,
+                        // Source-anchored cell identity for interactive
+                        // backends.
+                        key: opt.tableKeyBase != 0
+                            ? opt.tableKeyBase + cell.span.start : 0);
                 }
-                cells ~= ruleRun("│");
-                rows ~= b.container(WidgetKind.row, cells);
-                if (ri == 0)
-                    rows ~= ruleRun(borderRow("┝", "━", "┿", "┥"));
-                else if (opt.tableRowRules
-                    && ri + 1 < blk.children.length)
-                    // Inner row separators, on by default (MDP10): a light
-                    // `├─┼─┤` rule between body rows (the header keeps its
-                    // heavy one; the bottom border closes the last row).
-                    rows ~= ruleRun(borderRow("├", "─", "┼", "┤"));
             }
-            rows ~= ruleRun(borderRow("╰", "─", "┴", "╯"));
-            return b.container(WidgetKind.column, rows);
+
+            // `TBL6`: the whole-table copy button in the top border,
+            // mirroring the fence header's affordance (the component skips it
+            // for too-narrow tables).
+            const copied = opt.copiedTable == blk.span.start;
+            TableProps props = {
+                headerRows: 1,
+                rowSeparators: opt.tableRowRules,
+            };
+            TableWidgetStyle st = {
+                hitId: opt.hitId,
+                baseStyle: opt.baseStyle,
+                cellSlot: opt.proseSlot,
+                ruleFg: opt.theme.ruleFg,
+                hasRuleFg: opt.theme.present,
+                cutout: TableCutout(
+                    present: opt.tableCopyHitBase != 0,
+                    hitId: opt.tableCopyHitBase + blk.span.start,
+                    icon: TextSpan(" " ~ (copied ? opt.glyphs.copiedIcon
+                        : opt.glyphs.copyIcon) ~ " ", Slot.gutter,
+                        opt.baseStyle, noBreak: true),
+                    fg: copied ? opt.theme.accentGreen : opt.theme.ruleFg,
+                    hasFg: opt.theme.present),
+            };
+            return buildTableWidgets(b, cells, props, st).root;
         }
 
         case listItem, tableRow, tableCell:
