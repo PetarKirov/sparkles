@@ -47,7 +47,7 @@ enum int dockRows = 12;
 
 /// ditto
 static immutable string[] keys = [
-    "h l resize", "[ ] tab", "f focus", "w e n s re-dock", "r reset",
+    "h l resize", ", . tab", "f focus", "w e n s re-dock", "r reset",
 ];
 
 /// Builds the starting arrangement: a sidebar beside a tabbed group.
@@ -169,7 +169,7 @@ private uint viewWith(ref Builder b, in DockContainer c, in GalleryState s)
     body_ ~= para(b,
         "Every one of those is reachable from the keyboard as well, and the "
         ~ "routes belong to the container rather than to this page: h/l ask it "
-        ~ "to resize, [ and ] to switch tabs — through the same clamp and the "
+        ~ "to resize, , and . switch tabs — through the same clamp and the "
         ~ "same redistribution a drag runs, so a key cannot reach a size a "
         ~ "drag refuses. w/e/n/s re-dock the focused pane against its "
         ~ "neighbour, which is the same pure layout-to-layout step the drop "
@@ -345,10 +345,17 @@ bool handleKey(ref GalleryState s, in KeyEvent k)
                     // page cannot grow a second opinion about either.
                     s.dock.resizeBy(sidePane, k.ch == 'l' ? 2 : -2);
                     return true;
-                case '[', ']':
+                case ',', '.':
                     // Tab switching without a pointer, likewise container-
                     // owned — including handing the shown pane the keyboard.
-                    s.dock.activateNext(k.ch == ']' ? 1 : -1);
+                    //
+                    // NOT `[`/`]`, though those are the conventional pair: the
+                    // shell owns them catalog-wide for the theme, so a page
+                    // binding them would work in the content region and cycle
+                    // themes in the nav one. A binding the status bar
+                    // advertises has to mean the same thing wherever the
+                    // keyboard happens to be.
+                    s.dock.activateNext(k.ch == '.' ? 1 : -1);
                     return true;
                 case 'f':
                     s.dock.focusNext();
@@ -418,7 +425,7 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     assert(s.dock.paneExtent(sidePane) >= 8, "the minimum still holds");
 
     // Tabs, and focus.
-    assert(handleKey(s, ch(']')));
+    assert(handleKey(s, ch('.')));
     assert(s.dock.focused == notesPane);
     assert(handleKey(s, ch('f')));
 
