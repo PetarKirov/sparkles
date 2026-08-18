@@ -13,6 +13,8 @@ $(UL
     $(LI `sparkles.base.text.case_style` — identifier case conversion.)
     $(LI `sparkles.base.text.errors` — the `Expected`-based parse
         error vocabulary shared by the readers.)
+    $(LI `sparkles.base.text.cstring` — NUL-terminated C strings without
+        the GC.)
 )
 
 Importing `sparkles.base.text` pulls in the whole package.
@@ -20,6 +22,7 @@ Importing `sparkles.base.text` pulls in the whole package.
 module sparkles.base.text;
 
 public import sparkles.base.text.writers;
+public import sparkles.base.text.cstring;
 public import sparkles.base.text.base_codecs;
 public import sparkles.base.text.percent;
 public import sparkles.base.text.html;
