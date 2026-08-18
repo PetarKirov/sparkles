@@ -199,7 +199,12 @@ private struct Builder
         if (parent.group.kind == GroupKind.decl)
             return; // eponymous template: template and function share the marker
 
-        const start = parent.boundary;
+        // The statement boundary may sit on trivia (the newline after the
+        // previous statement); the declaration's span must start at its
+        // first visible token or the gap between siblings disappears.
+        uint start = parent.boundary;
+        while (start < i && spine.entries[start].isTrivia)
+            start++;
         Frame frame = Frame(Group(GroupKind.decl, start, cast(uint) i));
         frame.boundary = start;
 
