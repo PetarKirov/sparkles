@@ -601,6 +601,7 @@ struct ViewerModel
                 ? activeFenceOwner : size_t.max,
             tableOverflow: tableOverflow,
             tableMaxLines: resolvedTableMaxLines(),
+            tableExtras: preview.tableExtras,
             tableScrolls: tableScrollList(),
             tableHBarHitBase: tableHBarHitBase,
             tableVBarHitBase: tableVBarHitBase,

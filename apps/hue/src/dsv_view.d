@@ -18,6 +18,8 @@ import std.array : appender;
 import std.conv : text;
 
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.text.width : CellAlign = Align;
+import sparkles.syntax.md.render_widgets : MdTableExtras;
 import sparkles.dsv : classifyValue, ColumnType, decodeCell, detectHeader,
     Dialect, DsvDoc, inferColumnTypes, parseDsv, seedForExtension, sniff,
     sniffMaxBytes, sniffMaxRecords;
@@ -45,13 +47,21 @@ struct DsvInfo
     uint ragged;          /// records off the modal column count (`DSM3`)
 }
 
-/// The adapter's product: the decoded buffer and the table model over it.
+/// The adapter's product: the decoded buffer and the table model over it,
+/// plus the table refinements every sink forwards (`MdViewOptions.tableExtras`
+/// via `PreviewModel`): the record-number stub column (`DSG5`), the
+/// per-column cap (`DSG4`), typed + decimal alignment (`DSG3`/`DSG7`), and
+/// the pinned header (`DSG2`).
 struct DsvAdapted
 {
     DsvInfo info;
     string text; /// becomes `Document.source` / `MdDoc.source`
     MdDoc doc;
+    MdTableExtras extras;
 }
+
+/// The provisional per-column content-width cap (`DSG4`).
+enum size_t dsvColumnCapCells = 64;
 
 /// One flag char from its CLI spelling (`,` · `;` · `\t`/`tab` · …).
 private char flagChar(string s, char fallback) @safe pure nothrow
@@ -133,28 +143,47 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc) @safe
 
     MdBlock table = { kind: MdBlockKind.table };
 
-    // DSG3: alignment from the sampled column types.
+    // DSG3/DSG7: alignment from the sampled column types — the md-model
+    // `ColAlign` for any plain consumer, and the extras' `CellAlign` overrides
+    // that carry what markdown cannot say (`decimal`). Column 0 is the
+    // record-number gutter (`DSG5`).
     SmallBuffer!(ColumnType, 16) types;
     inferColumnTypes(doc, sniffMaxRecords, types);
-    auto aligns = new ColAlign[cols];
+    auto aligns = new ColAlign[cols + 1];
+    auto cellAligns = new CellAlign[cols + 1];
+    aligns[0] = ColAlign.right;
+    cellAligns[0] = CellAlign.right;
     foreach (c; 0 .. cols)
     {
         final switch (c < types.length ? types[c] : ColumnType.text)
         {
         case ColumnType.integer:
-        case ColumnType.floating:
         case ColumnType.date:
-            aligns[c] = ColAlign.right;
+            aligns[c + 1] = ColAlign.right;
+            cellAligns[c + 1] = CellAlign.right;
+            break;
+        case ColumnType.floating:
+            aligns[c + 1] = ColAlign.right;
+            cellAligns[c + 1] = CellAlign.decimal; // DSG7
             break;
         case ColumnType.boolean:
-            aligns[c] = ColAlign.center;
+            aligns[c + 1] = ColAlign.center;
+            cellAligns[c + 1] = CellAlign.center;
             break;
         case ColumnType.text:
-            aligns[c] = ColAlign.none;
+            aligns[c + 1] = ColAlign.none;
+            cellAligns[c + 1] = CellAlign.inherit;
             break;
         }
     }
     table.aligns = aligns;
+
+    a.extras = MdTableExtras(
+        headerCols: 1,
+        columnMaxWidth: dsvColumnCapCells,
+        columnAligns: cellAligns,
+        pinHeader: true,
+    );
 
     // One row into the buffer + tree; texts are already decoded.
     void addRow(scope const(char)[][] cells)
@@ -179,31 +208,34 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc) @safe
         table.children ~= row;
     }
 
-    // Header row.
+    // Header row; column 0 is the gutter's own header.
     {
-        auto names = new const(char)[][cols];
+        auto names = new const(char)[][cols + 1];
+        names[0] = "#";
         if (a.info.hasHeader)
         {
             const rec = doc.records[0];
             foreach (c; 0 .. cols)
-                names[c] = c < rec.cellCount
+                names[c + 1] = c < rec.cellCount
                     ? decodeCell(doc, doc.cells[rec.cellsStart + c], cellBuf).idup
                     : text("…+", c - rec.cellCount + 1); // overflow columns (DSM3)
         }
         else
             foreach (c; 0 .. cols)
-                names[c] = columnName(c);
+                names[c + 1] = columnName(c);
         addRow(names);
     }
 
-    // Data rows, padded to the grid width.
+    // Data rows, padded to the grid width, numbered 1-based in source order
+    // (`DSG5` — under a projection these stay source numbers).
     const first = a.info.hasHeader ? 1 : 0;
     foreach (r; first .. doc.records.length)
     {
         const rec = doc.records[r];
-        auto cells = new const(char)[][cols];
+        auto cells = new const(char)[][cols + 1];
+        cells[0] = text(r - first + 1);
         foreach (c; 0 .. cols)
-            cells[c] = c < rec.cellCount
+            cells[c + 1] = c < rec.cellCount
                 ? decodeCell(doc, doc.cells[rec.cellsStart + c], cellBuf).idup
                 : "";
         addRow(cells);
@@ -270,7 +302,7 @@ version (unittest)
             .buildNormalizedPath("../test/fixtures/dsv");
     }
 
-    private string dsvGridText(in DsvAdapted a) @system
+    private string dsvGridText(in DsvAdapted a, int maxLines = 0) @system
     {
         import std.utf : encode;
         import sparkles.base.term_color : RgbColor, toRgb;
@@ -291,6 +323,8 @@ version (unittest)
         MdViewOptions opt = {
             theme: MdViewTheme.derive(theme, pageFg, pageBg),
             maxWidth: dsvGoldenWidth,
+            tableExtras: a.extras,
+            tableMaxLines: maxLines,
         };
         auto tree = viewMarkdown(a.doc, opt);
         auto frames = layout(tree, Constraints(maxW: dsvGoldenWidth));
@@ -317,7 +351,8 @@ version (unittest)
         return out_;
     }
 
-    private void checkDsvGolden(string name, in DsvFlags flags = DsvFlags()) @system
+    private void checkDsvGolden(string name, in DsvFlags flags = DsvFlags(),
+        int maxLines = 0) @system
     {
         import std.file : exists, readText, write;
         import std.path : buildPath;
@@ -326,7 +361,8 @@ version (unittest)
         const dir = dsvGoldenDir();
         const fixture = dir.buildPath(name ~ ".csv");
         const golden = dir.buildPath(name ~ ".txt");
-        const rendered = dsvGridText(adaptDsv(readText(fixture), "csv", flags));
+        const rendered = dsvGridText(adaptDsv(readText(fixture), "csv", flags),
+            maxLines);
         if (environment.get("SPARKLES_UPDATE_GOLDENS", "").length != 0
             || !golden.exists)
         {
@@ -358,6 +394,14 @@ version (unittest)
     checkDsvGolden("ragged-synthetic");
 }
 
+@("dsv_view.golden.tallPinnedHeader")
+@system unittest
+{
+    // The vertical viewport engages (interior > maxLines) and the header
+    // band pins below the top border (DSG2) — the right border is the track.
+    checkDsvGolden("tall", DsvFlags(), maxLines: 8);
+}
+
 @("dsv_view.columnName.spreadsheetLetters")
 @safe pure
 unittest
@@ -381,10 +425,20 @@ unittest
     const table = a.doc.root.children[0];
     assert(table.kind == MdBlockKind.table);
     assert(table.children.length == 3); // header + 2 data rows
-    assert(table.aligns == [ColAlign.none, ColAlign.right, ColAlign.right]);
-    // The first row is the header (the md table convention).
+    // Column 0 is the record-number gutter (DSG5); data columns follow.
+    assert(table.aligns == [ColAlign.right, ColAlign.none, ColAlign.right,
+        ColAlign.right]);
     const hdr = table.children[0];
-    assert(a.text[hdr.children[1].span.start .. hdr.children[1].span.end] == "age");
+    assert(a.text[hdr.children[0].span.start .. hdr.children[0].span.end] == "#");
+    assert(a.text[hdr.children[2].span.start .. hdr.children[2].span.end] == "age");
+    const row1 = table.children[1];
+    assert(a.text[row1.children[0].span.start .. row1.children[0].span.end] == "1");
+    // The extras: stub column, cap, typed + decimal aligns, pinned header.
+    assert(a.extras.headerCols == 1);
+    assert(a.extras.columnMaxWidth == dsvColumnCapCells);
+    assert(a.extras.pinHeader);
+    assert(a.extras.columnAligns == [CellAlign.right, CellAlign.inherit,
+        CellAlign.right, CellAlign.right]);
 }
 
 @("dsv_view.adapt.syntheticHeaderAndPadding")
@@ -398,10 +452,12 @@ unittest
     const table = a.doc.root.children[0];
     assert(table.children.length == 4); // synthetic header + 3 data rows
     const hdr = table.children[0];
-    assert(a.text[hdr.children[0].span.start .. hdr.children[0].span.end] == "A");
+    assert(a.text[hdr.children[0].span.start .. hdr.children[0].span.end] == "#");
+    assert(a.text[hdr.children[1].span.start .. hdr.children[1].span.end] == "A");
     const short_ = table.children[2];
-    assert(short_.children.length == 3);
-    assert(short_.children[2].inlines.length == 0); // padded empty cell
+    assert(short_.children.length == 4); // gutter + 3 data columns
+    assert(a.text[short_.children[0].span.start .. short_.children[0].span.end] == "2");
+    assert(short_.children[3].inlines.length == 0); // padded empty cell
 }
 
 @("dsv_view.adapt.decodedBufferUnquotes")
@@ -412,8 +468,8 @@ unittest
     // text (the D1 buffer decision; raw fidelity is post-CHK).
     const a = adaptDsv("h1,h2\n\"a,b\",\"say \"\"hi\"\"\"\n", "csv", DsvFlags());
     const row = a.doc.root.children[0].children[1];
-    assert(a.text[row.children[0].span.start .. row.children[0].span.end] == "a,b");
-    assert(a.text[row.children[1].span.start .. row.children[1].span.end] == `say "hi"`);
+    assert(a.text[row.children[1].span.start .. row.children[1].span.end] == "a,b");
+    assert(a.text[row.children[2].span.start .. row.children[2].span.end] == `say "hi"`);
 }
 
 @("dsv_view.adapt.flagOverridesRerunHeaderHeuristic")

@@ -11,6 +11,7 @@ import sparkles.syntax : MdDecoration, MdDoc, MdBlock, MdBlockKind, HighlightEve
     ResolvedTheme, toRgb, RgbColor, GrammarRegistry, TsConfigCache,
     canonicalLanguage, extractMarkdown, highlightInjected;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.syntax.md.render_widgets : MdTableExtras;
 import sparkles.base.term_color : mix;
 import sparkles.test_runner.attributes : benchmark;
 
@@ -35,6 +36,11 @@ struct PreviewModel
     bool present;
     MdDoc doc;
     CodeFence[] fences; /// in document order, parallel to the codeFence blocks
+    /// Host table refinements every sink hands to `MdViewOptions.tableExtras`
+    /// — set by the DSV loader (`dsv_view.adaptDsv`), default-inert for
+    /// markdown documents. Travels with the model so no `setDocument`
+    /// signature grows.
+    MdTableExtras tableExtras;
     /// `DVN6`: per-block diff verdicts for a rendered-preview diff, sorted by
     /// span start (empty for an ordinary preview). Every sink hands these to
     /// `MdViewOptions.diffBlocks`, so the decorated document renders the same
