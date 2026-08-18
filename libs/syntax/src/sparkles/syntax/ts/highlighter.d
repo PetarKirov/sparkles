@@ -256,11 +256,10 @@ private enum size_t maxInjectionDepth = 8;
 /// the GC finalizer at end of run.
 private struct Layer
 {
-    TsTree tree;                         /// this layer's parse (kept alive for its cursor)
+    ParsedLayer* parsed;                 /// the parse this cursor runs over (owns the tree)
     TsQueryCursor cursor;                /// the highlights capture stream
     const(TsHighlightConfig)* config;    /// the language config
     size_t depth;                        /// injection nesting depth (root = 0)
-    const(TSRange)[] ranges;             /// included ranges (empty = whole buffer)
     SmallBuffer!(size_t, 16) endStack;   /// pending highlight-end byte offsets (LIFO)
     bool havePeeked;                     /// `peeked` holds the next highlights capture
     LayerCapture peeked;                 /// predicate-filtered lookahead
@@ -297,19 +296,71 @@ TsExpected!void highlightInjected(Sink)(
     ref Sink sink,
     HighlightOptions options = HighlightOptions()) @system
 {
-    if (source.length > options.maxSourceBytes || source.length > cast(size_t) int.max)
-        return tsErr!void(TsErrorCode.sourceTooLarge);
+    ParsedLayer*[] layers;
+    return highlightInjected(cache, rootLanguage, source, sink, layers, options);
+}
 
-    auto rootConfig = cache.resolve(rootLanguage);
-    if (rootConfig is null)
+/**
+$(LREF highlightInjected), handing the caller the layer stack it parsed.
+
+The trees are the expensive half of highlighting, and a consumer that keeps
+the buffer around almost always wants them again — for folds, a structural
+view, or the next highlight of the same bytes. Taking them here is what lets
+such a consumer parse $(B once) per buffer instead of once to color it and
+once more to retain it. Ownership transfers with the array: the layers stay
+valid as long as the caller holds them and as long as `source` does.
+*/
+TsExpected!void highlightInjected(Sink)(
+    ref TsConfigCache cache,
+    const(char)[] rootLanguage,
+    scope const(char)[] source,
+    ref Sink sink,
+    out ParsedLayer*[] layers,
+    HighlightOptions options = HighlightOptions()) @system
+{
+    auto parsed = parseLayers(cache, rootLanguage, source, layers, options);
+    if (parsed.hasError)
+        return tsErr!void(parsed.error);
+
+    return highlightParsed(cache, layers, source, sink, options);
+}
+
+/**
+The cursor-driving half of $(LREF highlightInjected), over layers a caller
+already has from $(LREF parseLayers) — the seam that turns a retained parse
+into a re-highlight without re-parsing.
+
+`layers` must be the stack `parseLayers` produced for exactly these `source`
+bytes; the trees index into them. A layer whose language no longer resolves
+in `cache` is skipped, so its range renders as plain text — the same totality
+the parse path has for a missing grammar.
+*/
+TsExpected!void highlightParsed(Sink)(
+    ref TsConfigCache cache,
+    ParsedLayer*[] layers,
+    scope const(char)[] source,
+    ref Sink sink,
+    HighlightOptions options = HighlightOptions()) @system
+{
+    Layer*[] cursors;
+    foreach (parsed; layers)
+    {
+        auto config = cache.resolve(parsed.language);
+        if (config is null)
+            continue;
+        auto layer = new Layer;
+        layer.parsed = parsed;
+        layer.config = config;
+        layer.depth = parsed.depth;
+        layer.cursor = TsQueryCursor.create();
+        layer.cursor.setMatchLimit(options.matchLimit);
+        layer.cursor.exec(config.query, parsed.tree.rootNode);
+        cursors ~= layer;
+    }
+    if (cursors.length == 0)
         return tsErr!void(TsErrorCode.grammarNotFound);
 
-    Layer*[] layers;
-    auto built = buildLayers(cache, rootConfig, source, options, layers);
-    if (built.hasError)
-        return tsErr!void(built.error);
-
-    return interleaveLayers(layers, source, sink, options);
+    return interleaveLayers(cursors, source, sink, options);
 }
 
 /**
@@ -429,90 +480,6 @@ TsExpected!void parseLayers(
 
             queue ~= Work(childConfig, inj.language.idup, childRanges,
                 w.depth + 1, thisIndex);
-        }
-    }
-
-    return tsOk();
-}
-
-/// BFS layer construction: parse each layer, run its injections query, resolve
-/// and enqueue child layers. A failed $(I root) parse errors; a failed child
-/// parse (or unresolved injection) is skipped — that range stays plain text.
-private TsExpected!void buildLayers(
-    ref TsConfigCache cache, const(TsHighlightConfig)* rootConfig,
-    scope const(char)[] source, in HighlightOptions options, out Layer*[] layers) @system
-{
-    static struct Work
-    {
-        const(TsHighlightConfig)* config;
-        TSRange[] ranges;
-        size_t depth;
-    }
-
-    Work[] queue = [Work(rootConfig, null, 0)];
-    for (size_t qi = 0; qi < queue.length; ++qi)
-    {
-        auto w = queue[qi];
-
-        auto parser = TsParser.create();
-        auto langSet = parser.setLanguage(w.config.grammar.language);
-        if (langSet.hasError)
-        {
-            if (w.depth == 0)
-                return tsErr!void(langSet.error);
-            continue;
-        }
-        if (w.ranges.length)
-            parser.setIncludedRanges(w.ranges);
-
-        TsError parseError;
-        auto tree = parser.parse(source, parseError,
-            ParseGuards(budget: options.parseBudget, cancelFlag: options.cancelFlag));
-        if (!tree.valid)
-        {
-            if (w.depth == 0)
-                return tsErr!void(parseError);
-            continue;
-        }
-
-        auto layer = new Layer;
-        layer.config = w.config;
-        layer.depth = w.depth;
-        layer.ranges = w.ranges;
-        move(tree, layer.tree);
-        layer.cursor = TsQueryCursor.create();
-        layer.cursor.setMatchLimit(options.matchLimit);
-        layer.cursor.exec(w.config.query, layer.tree.rootNode);
-        layers ~= layer;
-
-        // Discover this layer's injections (unless it injects nothing / too deep).
-        if (!w.config.hasInjections || w.depth + 1 > maxInjectionDepth)
-            continue;
-
-        auto injCursor = TsQueryCursor.create();
-        injCursor.setMatchLimit(options.matchLimit);
-        injCursor.exec(w.config.injectionQuery, layer.tree.rootNode);
-
-        TSQueryMatch m;
-        while (injCursor.nextMatch(m))
-        {
-            if (m.pattern_index < w.config.injectionPredicates.length
-                && !satisfies(w.config.injectionPredicates[m.pattern_index], m, source))
-                continue;
-
-            auto inj = injectionForMatch(*w.config, m, source);
-            if (!inj.hasContent || inj.language.length == 0)
-                continue;
-
-            auto childConfig = cache.resolve(inj.language);
-            if (childConfig is null)
-                continue; // grammar/queries missing → plain text
-
-            auto childRanges = intersectRanges(w.ranges, inj.contentNode, inj.includeChildren);
-            if (childRanges.length == 0)
-                continue;
-
-            queue ~= Work(childConfig, childRanges, w.depth + 1);
         }
     }
 
@@ -1106,6 +1073,36 @@ unittest
     // JSON highlights keys/strings; either form proves the injection fired.
     assert(spans.canFind!(s => s.canFind("hello")),
         spans.length ? spans[0] : "no hello span — dub.json injection did not fire");
+}
+
+@("ts.highlighter.highlightParsedMatchesAFreshParse")
+@system
+unittest
+{
+    import std.process : environment;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    static GrammarRegistry registry;
+    registry = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+
+    // Injected content, so the agreement covers the whole layer stack and not
+    // just a root tree: re-highlighting from retained layers must produce the
+    // event stream the parse-and-highlight path does, or the reuse is a
+    // rendering change wearing a performance change's clothes.
+    const source = "# Title\n\n```d\nvoid main() { int x = 1; }\n```\n";
+
+    SmallBuffer!HighlightEvent fresh;
+    ParsedLayer*[] layers;
+    assert(!highlightInjected(cache, "markdown", source, fresh, layers).hasError);
+    assert(layers.length >= 2);
+
+    SmallBuffer!HighlightEvent reused;
+    assert(!highlightParsed(cache, layers, source, reused).hasError);
+    assert(reused[] == fresh[], "a retained parse re-colors identically");
 }
 
 @("ts.highlighter.parseLayersRetainsTheTrees")
