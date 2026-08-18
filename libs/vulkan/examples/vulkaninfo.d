@@ -21,7 +21,7 @@
  */
 module vulkaninfo_example;
 
-import std.algorithm : endsWith, filter, map, startsWith;
+import std.algorithm : filter, map;
 import std.array : appender, array;
 import std.conv : to;
 import std.format : format;
@@ -105,16 +105,6 @@ struct VulkanInfo
 // -----------------------------------------------------------------------------
 
 @WireCase(CaseStyle.kebabCase)
-enum DeviceType
-{
-    @WireName("other") other = VK_PHYSICAL_DEVICE_TYPE_OTHER,
-    @WireName("integrated-gpu") integratedGpu = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
-    @WireName("discrete-gpu") discreteGpu = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
-    @WireName("virtual-gpu") virtualGpu = VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU,
-    @WireName("cpu") cpu = VK_PHYSICAL_DEVICE_TYPE_CPU,
-}
-
-@WireCase(CaseStyle.kebabCase)
 enum VendorId : uint
 {
     @WireName("AMD") amd = 0x1002,
@@ -152,7 +142,7 @@ struct GpuReport
 {
     uint id;
     string name;
-    DeviceType type;
+    string type;
     string apiVersion;
     string driverVersion;
     VendorId vendorID;
@@ -163,41 +153,11 @@ struct GpuReport
     string[] supportedFeatures;
 }
 
-/// Generic bitmask flags wrapper with `@WireConvert` value transform at the wire boundary.
-@WireConvert!(f => f.toNames)
-struct Flags(Enum, string prefix = "")
-{
-    uint raw;
-
-    string[] toNames() const pure @safe
-    {
-        string[] result;
-        static foreach (member; __traits(allMembers, Enum))
-        {
-            {
-                enum val = cast(uint) __traits(getMember, Enum, member);
-                static if (val != 0 && val != uint.max && !member.startsWith("VK_FLAG_VENDOR") && member.endsWith("_BIT"))
-                {
-                    if ((raw & val) == val)
-                        result ~= stripAffixes(member, prefix, "_BIT");
-                }
-            }
-        }
-        return result;
-    }
-
-    alias toNames this;
-}
-
-alias QueueFlags = Flags!(VkQueueFlagBits, "VK_QUEUE_");
-alias MemoryHeapFlags = Flags!(VkMemoryHeapFlagBits, "VK_MEMORY_HEAP_");
-alias MemoryPropertyFlags = Flags!(VkMemoryPropertyFlagBits, "VK_MEMORY_PROPERTY_");
-
 struct QueueFamilyReport
 {
     uint index;
     uint queueCount;
-    QueueFlags flags;
+    string[] flags;
     uint timestampValidBits;
 }
 
@@ -211,29 +171,19 @@ struct MemoryHeapReport
 {
     uint index;
     string size;
-    MemoryHeapFlags flags;
+    string[] flags;
 }
 
 struct MemoryTypeReport
 {
     uint index;
     uint heapIndex;
-    MemoryPropertyFlags propertyFlags;
+    string[] propertyFlags;
 }
 
 // -----------------------------------------------------------------------------
 // Functional Query & Metaprogramming Helpers
 // -----------------------------------------------------------------------------
-
-/// Strip both prefix and suffix from a string.
-string stripAffixes(string s, string prefix, string suffix = "") pure @safe
-{
-    if (prefix.length && s.startsWith(prefix))
-        s = s[prefix.length .. $];
-    if (suffix.length && s.endsWith(suffix))
-        s = s[0 .. $ - suffix.length];
-    return s;
-}
 
 /// Extract all enabled features from VkPhysicalDeviceFeatures via compile-time reflection.
 string[] extractFeatures(in VkPhysicalDeviceFeatures feat) pure @safe
@@ -255,10 +205,6 @@ string formatBytes(ulong bytes) pure @safe
     return app.data;
 }
 
-/// Format Vulkan packed version (e.g. 1.3.204).
-string formatApiVersion(uint v) pure @safe
-    => format("%d.%d.%d", apiVersionMajor(v), apiVersionMinor(v), apiVersionPatch(v));
-
 // -----------------------------------------------------------------------------
 // Engine / Query Core
 // -----------------------------------------------------------------------------
@@ -272,9 +218,11 @@ GpuReport queryGpu(in InstanceCommands inst, size_t index, VkPhysicalDevice gpuD
 
     GpuReport gpu = {
         id: cast(uint) index,
-        name: props.deviceName.ptr.fromStringz.to!string,
-        type: cast(DeviceType) props.deviceType,
+        name: props.deviceName.fromStringz.to!string,
+        type: deviceTypeName(props.deviceType),
         apiVersion: formatApiVersion(props.apiVersion),
+        // Only `apiVersion` is guaranteed to use this packing — NVIDIA and
+        // Intel encode a driver version differently, so this is approximate.
         driverVersion: formatApiVersion(props.driverVersion),
         vendorID: cast(VendorId) props.vendorID,
         deviceID: format("0x%04x", props.deviceID),
@@ -287,7 +235,7 @@ GpuReport queryGpu(in InstanceCommands inst, size_t index, VkPhysicalDevice gpuD
             .map!(qf => QueueFamilyReport(
                 index: cast(uint) qf.index,
                 queueCount: qf.value.queueCount,
-                flags: QueueFlags(qf.value.queueFlags),
+                flags: flagNames!VkQueueFlagBits(qf.value.queueFlags),
                 timestampValidBits: qf.value.timestampValidBits,
             ))
             .array;
@@ -302,12 +250,12 @@ GpuReport queryGpu(in InstanceCommands inst, size_t index, VkPhysicalDevice gpuD
             heaps: iota(mem.memoryHeapCount).map!(h => MemoryHeapReport(
                 index: cast(uint) h,
                 size: formatBytes(mem.memoryHeaps[h].size),
-                flags: MemoryHeapFlags(mem.memoryHeaps[h].flags),
+                flags: flagNames!VkMemoryHeapFlagBits(mem.memoryHeaps[h].flags),
             )).array,
             types: iota(mem.memoryTypeCount).map!(t => MemoryTypeReport(
                 index: cast(uint) t,
                 heapIndex: mem.memoryTypes[t].heapIndex,
-                propertyFlags: MemoryPropertyFlags(mem.memoryTypes[t].propertyFlags),
+                propertyFlags: flagNames!VkMemoryPropertyFlagBits(mem.memoryTypes[t].propertyFlags),
             )).array,
         );
     }
@@ -388,8 +336,8 @@ Expected!(VulkanReport, string) queryVulkan(in VulkanInfo cli) @system
     if (cli.layers || (!cli.summary && !cli.features && !cli.memory && !cli.queues && !cli.extensions))
     {
         report.layers = instLayerProps.map!(l => LayerReport(
-            name: l.layerName.ptr.fromStringz.to!string,
-            description: l.description.ptr.fromStringz.to!string,
+            name: l.layerName.fromStringz.to!string,
+            description: l.description.fromStringz.to!string,
             specVersion: formatApiVersion(l.specVersion),
             implementationVersion: l.implementationVersion,
         )).array;

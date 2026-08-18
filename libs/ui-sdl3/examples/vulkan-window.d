@@ -125,6 +125,9 @@ struct SurfaceReport
     string currentExtent;
     uint minImageCount;
     uint maxImageCount;
+    string[] supportedUsage;
+    string[] supportedTransforms;
+    string[] supportedCompositeAlpha;
     SwapchainReport swapchain;
     string[] formats;
     string[] presentModes;
@@ -165,6 +168,14 @@ SurfaceReport describe(ref VulkanContext vk, ref Window window) @system
             : format("%dx%d", caps.currentExtent.width, caps.currentExtent.height);
         r.minImageCount = caps.minImageCount;
         r.maxImageCount = caps.maxImageCount;
+
+        // Three bitmasks the report has always had in hand and never printed,
+        // for want of anything that could name a bit.
+        r.supportedUsage = flagNames!VkImageUsageFlagBits(caps.supportedUsageFlags);
+        r.supportedTransforms =
+            flagNames!VkSurfaceTransformFlagBitsKHR(caps.supportedTransforms);
+        r.supportedCompositeAlpha =
+            flagNames!VkCompositeAlphaFlagBitsKHR(caps.supportedCompositeAlpha);
     }
 
     // Creating it is the point: `chooseExtent` and friends are unit-tested,
@@ -185,7 +196,7 @@ SurfaceReport describe(ref VulkanContext vk, ref Window window) @system
             extent: format("%dx%d", sc.extent.width, sc.extent.height),
             format: format("%s", sc.format),
             colorSpace: format("%s", sc.colorSpace),
-            presentMode: presentModeName(sc.presentMode),
+            presentMode: describeMode(sc.presentMode),
             imageCount: cast(uint) sc.images.length,
         );
         sc.destroy(vk);
@@ -198,32 +209,16 @@ SurfaceReport describe(ref VulkanContext vk, ref Window window) @system
 
     r.presentModes = queryVkList!VkPresentModeKHR(
         vk.instance.getPhysicalDeviceSurfacePresentModesKHR, vk.physicalDevice, vk.surface)
-        .map!(m => presentModeName(m))
+        .map!(m => describeMode(m))
         .array;
 
     return r;
 }
 
-string deviceTypeName(VkPhysicalDeviceType t) @safe pure nothrow @nogc
+/// `"fifo (vsync, always available)"` — the library's name plus its hint, the
+/// same shape `describeResult` gives a `VkResult`.
+string describeMode(VkPresentModeKHR m) @safe pure nothrow
 {
-    with (VkPhysicalDeviceType) switch (t)
-    {
-        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return "integrated-gpu";
-        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:   return "discrete-gpu";
-        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:    return "virtual-gpu";
-        case VK_PHYSICAL_DEVICE_TYPE_CPU:            return "cpu";
-        default:                                     return "other";
-    }
-}
-
-string presentModeName(VkPresentModeKHR m) @safe pure nothrow @nogc
-{
-    with (VkPresentModeKHR) switch (m)
-    {
-        case VK_PRESENT_MODE_IMMEDIATE_KHR:    return "immediate (no vsync, tears)";
-        case VK_PRESENT_MODE_MAILBOX_KHR:      return "mailbox (vsync, no tear, drops frames)";
-        case VK_PRESENT_MODE_FIFO_KHR:         return "fifo (vsync, always available)";
-        case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return "fifo-relaxed (vsync, tears when late)";
-        default:                               return "other";
-    }
+    const hint = presentModeHint(m);
+    return hint is null ? presentModeName(m) : presentModeName(m) ~ " (" ~ hint ~ ")";
 }
