@@ -79,8 +79,14 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
             text: text("picker error: ", state.error.code),
             slot: Slot.error));
 
+    // A panel is a stack — children share its content origin (the lantern's
+    // `popup` finding) — so the prompt/list/footer rows need an explicit
+    // column or they paint over one another.
+    const bodyColumn = builder.add(Widget(kind: WidgetKind.column,
+        children: body, width: SizeSpec.grow()));
     Widget listPanel = Widget(kind: WidgetKind.panel,
-        children: body, padding: Insets.all(1), width: SizeSpec.grow());
+        children: [bodyColumn], padding: Insets.all(1),
+        slot: Slot.surface, paintBackground: true, width: SizeSpec.grow());
     const panel = builder.add(listPanel);
     uint root;
     final switch (preset)
@@ -96,7 +102,8 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         const preview = builder.add(Widget(kind: WidgetKind.panel,
             children: [builder.add(Widget(kind: WidgetKind.text,
                 text: previewLabel, slot: Slot.muted))],
-            padding: Insets.all(1), width: SizeSpec.grow()));
+            padding: Insets.all(1), slot: Slot.surface,
+            paintBackground: true, width: SizeSpec.grow()));
         root = builder.add(Widget(kind: WidgetKind.row,
             children: [panel, preview], gap: 1, width: SizeSpec.grow()));
         break;

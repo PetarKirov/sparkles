@@ -137,6 +137,10 @@ struct PreviewTui
     /// (no workspace) simply never reads it.
     bool inspectorToggleRequested;
 
+    /// ditto — the `pickerFiles` command arm (`<leader>ff`): the corpus and
+    /// the loader are the workspace's, so the pane reports the intent.
+    bool pickerRequested;
+
     /// The source byte at pane-local `p`, else `-1` — the inspector's
     /// hover-sync feed. Char-precise through the identity channel where the
     /// point carries one; else the row's whole span (the TUI's granularity).
@@ -1141,6 +1145,12 @@ struct PreviewTui
 
             case Command.toggleInspector:
                 inspectorToggleRequested = true;
+                break;
+
+            case Command.pickerFiles:
+                // The workspace owns the corpus and the loader; the pane only
+                // reports the intent — the `inspectorToggleRequested` shape.
+                pickerRequested = true;
                 break;
 
             case Command.quit: return false;

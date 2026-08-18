@@ -40,6 +40,7 @@ import diff_view : DiffLayout;
 import document : Document;
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
+import picker_host : PickerAction, PickerHost;
 import gui_preview : PreviewModel;
 import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
@@ -95,6 +96,12 @@ struct WorkspaceTui
 
     /// The tree-sitter inspector pane (`TSI`/`INS6`), right of the document.
     InspectorPane insp;
+
+    /// The fuzzy file picker (`<leader>ff`, `PKS1`) — heap so the workspace
+    /// stays copy-friendly for tests; allocated on first open (a user
+    /// action, under `NFR1`'s startup carve-out). `runWorkspace` shuts its
+    /// worker pool down on exit.
+    package PickerHost* picker;
 
     /// The sidebar's width in cells (incl. its own chrome) — `--tree-width`
     /// seeds it, the divider drag moves it.
@@ -391,6 +398,35 @@ struct WorkspaceTui
                     g.putText(cast(ushort) d.rect.x, cast(ushort) y, "│", div);
         }
         paintDockScrollbars(g);
+        paintPicker(g);
+    }
+
+    /**
+    The fuzzy picker (`PIK3`), over everything: the shared widget tree
+    (`picker_view`), interpreted through the same cell canvas the guide
+    uses — so the window and the terminal cannot drift on what it looks
+    like. Centered, one row down, clipped to the terminal.
+    */
+    private void paintPicker(ref Grid g) @system
+    {
+        import picker_view : pickerView;
+        import sparkles.ui.display_list : buildDisplayList;
+        import sparkles.ui.geometry : Constraints;
+        import sparkles.ui.layout : layout;
+        import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
+        import sparkles.ui_tui : paintGrid;
+
+        if (picker is null || !picker.state.active)
+            return;
+        const cols = width > 8 ? (width - 4 > 100 ? 100 : width - 4) : width;
+        auto view = pickerView(picker.state, picker.snapshot);
+        auto frames = layout(view, Constraints(maxW: cols));
+        const panel = frames[view.root].rect;
+        const x = (width - panel.width) / 2;
+        paintGrid(g, pageBg, buildDisplayList(view, frames,
+            defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg,
+            pageBg), x > 0 ? x : 0, 1,
+            Rect(0, 0, panel.width, height > 2 ? height - 2 : height));
     }
 
     /// Paints the semantic bars the dock routed. The terminal degradation is
@@ -755,8 +791,38 @@ struct WorkspaceTui
         tree.tickLantern(elapsed);
     }
 
+    /// Opens the fuzzy file picker (`<leader>ff`, `PKS1`) over the tree's
+    /// root, with the explorer's include/exclude globs. Reopening re-walks
+    /// the corpus, so files created since the last open are found.
+    package void openPicker() @system
+    {
+        if (picker is null)
+            picker = new PickerHost;
+        picker.open(tree.root.length ? tree.root : ".",
+            tree.includeGlobs, tree.excludeGlobs);
+        dirty = true;
+    }
+
     bool handle(in Event e) @system
     {
+        // The fuzzy picker is a modal surface (`PIK1`): while it is open it
+        // owns the whole keyboard, and everything else waits behind it.
+        if (picker !is null && picker.state.active)
+        {
+            e.match!((in KeyEvent k) {
+                final switch (picker.handleKey(k))
+                {
+                case PickerAction.consumed:
+                case PickerAction.closed:
+                    break;
+                case PickerAction.accepted:
+                    openDoc(picker.acceptedPath);
+                    break;
+                }
+            }, (_) {});
+            return true;
+        }
+
         // Global keys — only when no pane is consuming typed text.
         const typing = (treeFocused && tree.inputActive)
             || (!treeFocused && viewer.inputActive);
@@ -879,6 +945,12 @@ struct WorkspaceTui
         if (toTree && treeVisible)
         {
             const alive = tree.handle(ev);
+            if (tree.pickerRequested) // `<leader>ff` with the tree focused
+            {
+                tree.pickerRequested = false;
+                openPicker();
+                return true;
+            }
             if (tree.pickedSession >= 0) // `TVU6`: a changed-file row
             {
                 const idx = cast(size_t) tree.pickedSession;
@@ -912,6 +984,11 @@ struct WorkspaceTui
         {
             viewer.inspectorToggleRequested = false;
             toggleInspector();
+        }
+        if (viewer.pickerRequested) // `<leader>ff` from the document pane
+        {
+            viewer.pickerRequested = false;
+            openPicker();
         }
         // INS6 source→tree, the picker half (DevTools' semantics): while the
         // `⌕` chip is armed, hovering the document walks the tree live, and a
@@ -962,6 +1039,11 @@ struct WorkspaceTui
     {
         bool changed = pollLive();
         changed |= pollDiffTypes();
+        // The picker's scheduler publishes its newest partial page here —
+        // and, in the synchronous degradation (`PIK8`), takes its next
+        // duration-bounded step.
+        if (picker !is null && picker.poll())
+            changed = true;
         if (tree.git.poll())
         {
             tree.rebuild();
@@ -1206,6 +1288,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     WorkspaceDoc delegate() @system reloadDiff = null) @system
 {
     WorkspaceTui w;
+    // The picker's worker pool must stop before the process exits.
+    scope (exit) if (w.picker !is null) w.picker.shutdown();
     w.loadDoc = loadDoc;
     // `DST2`: after a patch is applied the diff on screen is stale — the rows
     // just staged are no longer part of it. Only the host owns the loader
@@ -1457,6 +1541,11 @@ private Duration waitDeadline(ref WorkspaceTui w, bool eventDriven = false)
     const untilScroll = w.dock.nextTickIn();
     if (untilScroll < deadline)
         deadline = untilScroll;
+    // A searching picker progresses through `pollAll` — synchronously in the
+    // degraded mode, via completions otherwise — and neither wakes a loop
+    // blocked on input, so cap the wait while one is running (`PIK5`).
+    if (w.picker !is null && w.picker.busy && deadline > 16.msecs)
+        deadline = 16.msecs;
     return deadline;
 }
 
@@ -1834,6 +1923,62 @@ unittest
     assert(w.dock.paneExtent(WorkspaceTui.treePane) == 50, "clamped at half the screen");
     w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(99, 4))));
+}
+
+@("workspace.leaderFfMountsThePicker")
+@system
+unittest
+{
+    import core.thread : Thread;
+    import std.algorithm.searching : canFind;
+    import std.file : rmdirRecurse;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-picker-test");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (w.picker !is null) w.picker.shutdown();
+
+    static void settle(ref WorkspaceTui w) @system
+    {
+        foreach (_; 0 .. 100_000)
+        {
+            cast(void) w.pollAll();
+            if (!w.picker.busy)
+                return;
+            Thread.yield();
+        }
+    }
+
+    // `<leader>ff` routes through the focused pane's own key path (the one
+    // table) and surfaces as the workspace's picker.
+    foreach (ch; " ff")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    assert(w.picker !is null && w.picker.state.active, "the picker opened");
+    settle(w);
+    assert(w.picker.state.error.code == 0);
+    assert(w.picker.state.rowCount == 2, "the empty prompt ranks the corpus");
+
+    // The panel paints over the panes through the shared widget tree.
+    Grid g;
+    g.resize(80, 24);
+    w.paint(g);
+    string all;
+    foreach (y; 0 .. g.rows)
+        foreach (x; 0 .. g.cols)
+            all ~= g[cast(ushort) x, cast(ushort) y].grapheme;
+    assert(all.canFind("›"), "the prompt row is on screen");
+    assert(all.canFind("alpha.d"), "the ranked rows are on screen");
+
+    // Typing narrows; Enter opens the accepted file in the viewer pane.
+    foreach (ch; "beta")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    settle(w);
+    assert(w.picker.state.rowCount == 1);
+    assert(w.handle(Event(KeyEvent(key: Key.enter))));
+    assert(!w.picker.state.active, "accepting closes the picker");
+    assert(w.currentDocPath == buildPath(root, "beta.d"),
+        "the accepted file is the open document");
 }
 
 @("workspace.pointerCapture.grabsStayWithTheirPane")
