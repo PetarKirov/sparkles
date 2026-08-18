@@ -1,0 +1,19 @@
+󰲡 Wrapped tables
+
+The same wide table under --table-overflow wrap: cells wrap so the table fits
+the pane — no viewport, no bars.
+
+╭────────────┬───────────────┬────────────────┬───────────────┬────────────────╮
+│ identifier │ description   │ first observed │ last observed │ status of the  │
+│            │ of the entry  │                │               │ record         │
+│            │ in question   │                │               │                │
+┝━━━━━━━━━━━━┿━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━┥
+│ alpha-1    │ a fairly long │ 2026-01-04     │ 2026-02-11    │ active         │
+│            │ description   │                │               │                │
+│            │ sits here     │                │               │                │
+├────────────┼───────────────┼────────────────┼───────────────┼────────────────┤
+│ beta-2     │ another       │ 2026-03-17     │ 2026-08-02    │ retired        │
+│            │ verbose       │                │               │                │
+│            │ description   │                │               │                │
+│            │ of it         │                │               │                │
+╰────────────┴───────────────┴────────────────┴───────────────┴────────────────╯

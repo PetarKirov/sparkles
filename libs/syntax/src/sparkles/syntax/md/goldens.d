@@ -30,7 +30,7 @@ import sparkles.base.term_color : RgbColor, toRgb;
 import sparkles.syntax.label : LabelSet;
 import sparkles.syntax.md.model : extractMarkdown;
 import sparkles.syntax.md.render_widgets : MdViewOptions, MdViewTheme,
-    viewMarkdown;
+    OverflowPolicy, viewMarkdown, WrapOverflow;
 import sparkles.syntax.theme : resolveTheme;
 import sparkles.syntax.themes : builtinThemes;
 import sparkles.syntax.ts.registry : GrammarRegistry;
@@ -45,8 +45,18 @@ import sparkles.ui.style : defaultTwoslashPalette;
 /// The fixture corpus: individual features first, then the composition.
 private static immutable fixtureNames = [
     "headings", "inline", "lists", "tables", "tables-wide", "tables-tall",
-    "code", "code-tall", "callouts", "misc", "kitchen-sink",
+    "tables-wrap", "code", "code-tall", "callouts", "misc", "kitchen-sink",
 ];
+
+/// Per-fixture option overrides: the corpus renders under one shared
+/// configuration, except where a fixture exists to pin a specific MODE —
+/// `tables-wrap` renders the wide-table corpus under `--table-overflow wrap`.
+private MdViewOptions fixtureOverrides(string name, MdViewOptions opt)
+{
+    if (name == "tables-wrap")
+        opt.tableOverflow = OverflowPolicy(WrapOverflow());
+    return opt;
+}
 
 private enum goldenWidth = 80;
 
@@ -60,7 +70,7 @@ private string goldenDir()
 /// hit bases the way hue's viewer does, so the fence header's copy glyph and
 /// the table's top-border cutout render.
 private string renderGridText(ref GrammarRegistry registry,
-    const(char)[] source, bool interactive = false)
+    const(char)[] source, bool interactive = false, string name = null)
 {
     const labels = LabelSet.standard();
     const theme = resolveTheme(builtinThemes["catppuccin-mocha"], labels);
@@ -77,7 +87,7 @@ private string renderGridText(ref GrammarRegistry registry,
         fenceHitBase: interactive ? size_t.max / 2 + 1 : 0,
         tableCopyHitBase: interactive ? size_t.max / 8 + 1 : 0,
     };
-    auto tree = viewMarkdown(doc, opt);
+    auto tree = viewMarkdown(doc, fixtureOverrides(name, opt));
     auto frames = layout(tree, Constraints(maxW: goldenWidth));
     const r = frames[tree.root].rect;
 
@@ -120,7 +130,7 @@ private void checkFixtures(in string[] names, string suffix, bool interactive)
         const mdPath = dir.buildNormalizedPath(name ~ ".md");
         const txtPath = dir.buildNormalizedPath(name ~ suffix);
         const rendered = renderGridText(registry, readText(mdPath),
-            interactive);
+            interactive, name);
 
         if (update)
         {
