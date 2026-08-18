@@ -371,6 +371,15 @@ struct ViewerModel
         matches = null;
         matchRects = null;
         curMatch = 0;
+        // Everything keyed by a SOURCE OFFSET or an element identity dies with
+        // the old buffer: a reformat moves every fence, table and copy anchor.
+        // `setDocument` clears the same set — the difference here is that the
+        // viewport (`FMV5`) and the user's view mode survive the swap.
+        copiedFenceSrc = size_t.max;
+        copiedTableSrc = size_t.max;
+        fenceScrollAt = null;
+        barSv = typeof(barSv).init;
+        barSvActive = size_t.max;
         folds = DisclosureState!size_t(true);
         rebuild();
         const last = rows.length ? cast(long) rows.length - 1 : 0;
