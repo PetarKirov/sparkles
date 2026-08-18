@@ -33,6 +33,7 @@ import sparkles.syntax.render.widgets : GutterCell, TintedRange;
 import sparkles.ui.style : Slot;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
+import coverage_discovery : findCoverageArtifact;
 import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, dsvStatusNote;
 import gui_preview : PreviewModel;
 
@@ -333,6 +334,10 @@ struct DocumentPipeline
     string dsvQuote;     /// `--dsv-quote` ("" = sniff)
     string dsvHeader = "auto"; /// `--dsv-header` `auto|yes|no`
     string coverageArtifact; /// `--cov` / `--overlay coverage=<path>`
+    /// `COV4`: with no artifact named, look for one `ci --test` left behind.
+    /// On by default, like live types — the reader should not have to ask for
+    /// data the repository already has.
+    bool autoCoverage = true;
 
 @system:
 
@@ -478,8 +483,10 @@ struct DocumentPipeline
                     }
                 }
                 auto doc = fromSource(path, baseName(path), contents, lang);
-                if (coverageArtifact.length)
-                    attachCoverage(doc, coverageArtifact);
+                const artifact = coverageArtifact.length ? coverageArtifact
+                    : (autoCoverage ? findCoverageArtifact(path) : null);
+                if (artifact.length)
+                    attachCoverage(doc, artifact);
                 return doc;
         }
     }
