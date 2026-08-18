@@ -70,6 +70,7 @@ import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTab
 import sparkles.syntax : HighlightEvent, LabelId, LabelSet, Theme, StyleSpec, TextAttr, UnderlineStyle,
     ResolvedTheme, RgbColor, toRgb;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_color : mix;
 
 import sparkles.syntax.md.render_widgets : CodeOverflow, FenceScroll;
@@ -3109,8 +3110,7 @@ private char[] uintToBuf(size_t v) @safe nothrow
 private const(char)[] cstrOf(ref SmallBuffer!(char, 4096) buf, scope const(char)[] s) @safe
 {
     buf.clear();
-    buf ~= s;
-    buf ~= '\0';
+    buf.writeStringz(s);
     return buf[][0 .. $ - 1];
 }
 /// `true` iff this frame's keys include `k` — the edge query the input-mode
