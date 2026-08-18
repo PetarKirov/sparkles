@@ -15,7 +15,16 @@ conversion that higher layers build on:
 - **name** — an enum value's serialized member name, optionally recased by a
   [`CaseStyle`](./case-style.md);
 - **value** — an enum's underlying value, taken via `OriginalType` so that
-  non-integer-backed enums work too.
+  non-integer-backed enums work too;
+- **prefix** — the leading text every member name of an enum shares, so that an
+  enum translated from C can be rendered without repeating its own type name.
+
+The name direction comes in two forms because enums arriving from C break the
+assumptions of the direct one. A `.h` translated by ImportC routinely declares
+several members with the same underlying value (an extension enumerator promoted
+to core keeps its former spelling as an alias), and a value read back from a C
+library need not be a declared member at all — a newer library may report an
+enumerator postdating the header this was built against.
 
 The module is unopinionated: it applies no per-member name overrides (those are a
 policy concern for a layer like `@WireName` in `sparkles:wired`). It only knows
@@ -33,6 +42,18 @@ validate an underlying value back into a declared member.
 ```d
 // value → its member name, recased per `style` (a compile-time string literal).
 string enumMemberName(CaseStyle style = CaseStyle.original, E)(in E value)
+if (is(E == enum));
+
+// the same, tolerating duplicate values and values that are not declared members,
+// and optionally dropping affixes from the member identifier before recasing.
+string enumMemberNameOr(CaseStyle style = CaseStyle.original, string prefix = "",
+    string suffix = "", E)
+    (in E value, string fallback)
+if (is(E == enum));
+
+// the prefix every member name shares, cut back to the last `_`.
+// An eponymous value template, so it can be passed straight to `enumMemberNameOr`.
+template enumCommonPrefix(E)
 if (is(E == enum));
 
 // membership-checked underlying value → enum.
@@ -74,11 +95,59 @@ member equal to `value`:
 
 Because a `final switch` requires each member to map to a distinct `case`, an
 enum with duplicate underlying values is rejected at compile time when
-`enumMemberName` is instantiated for it.
+`enumMemberName` is instantiated for it. Use §3.2 for such an enum.
 
-### 3.2 `enumFromValue`
+### 3.2 `enumMemberNameOr`
 
-`enumFromValue!E(value)` validates an underlying value back into an enum:
+`enumMemberNameOr!style(value, fallback)` is the total, duplicate-tolerant form.
+It is specified as a sequence of equality tests over the declared members in
+declaration order, not as a `final switch`, and therefore:
+
+- **Duplicate underlying values are permitted**, and the **first declared**
+  matching member supplies the name. For a C-derived enum this is the required
+  rule rather than an arbitrary tie-break: the header declares the core
+  enumerator before the alias retaining the pre-promotion spelling.
+- **A value equal to no declared member yields `fallback`**, which the caller
+  supplies. It is not a programming error, so nothing asserts.
+- Recasing is by `convertCase!style`, identical to §3.1, and each candidate name
+  is a compile-time string literal, so nothing is allocated.
+- **`prefix` and `suffix` are removed from the member identifier before
+  recasing**, and a member not carrying one is left whole. The ordering is
+  normative: `convertCase` to a style that drops separators does not preserve
+  length, so a caller slicing the _recased_ name by the raw affix's length would
+  cut it in the wrong place. An affix that would consume the identifier entirely
+  is not applied.
+- **`fallback` is returned verbatim** — never stripped, never recased. It is the
+  caller's own string and carries no member affix. This asymmetry is the reason
+  stripping is specified here rather than left to the call site, where slicing
+  the result would run past the end of a fallback shorter than the prefix.
+
+Where both forms are usable they return the same name. The trade is that this
+one is a linear scan where §3.1 permits a jump table.
+
+### 3.3 `enumCommonPrefix`
+
+`enumCommonPrefix!E` is the longest common prefix of every declared member
+identifier, truncated to end at the last `_` it contains:
+
+- The truncation keeps the result a whole word. Members sharing `VK_FORMAT_R`
+  yield `VK_FORMAT_`, so the rendered names read `R8_UNORM` and `R16_SFLOAT`
+  rather than `8_UNORM` and `16_SFLOAT`.
+- An enum whose members share no leading text, whose common prefix contains no
+  `_`, or which declares **fewer than two members** yields `""`. The last case is
+  degenerate rather than an error: a lone member is entirely its own prefix, so
+  stripping it would leave nothing to render.
+- The result is a compile-time constant, so it can be a template argument (§4).
+
+`enumCommonPrefix` only reports. Whether to drop the prefix is the caller's
+choice, expressed by passing it to §3.2 rather than by slicing a returned
+string — see that section for why the difference matters.
+
+### 3.4 `enumFromValue`
+
+`enumFromValue!E(value)` validates an underlying value back into an enum. Like
+§3.2 and unlike §3.1 it is a scan over the declared members, so a duplicate-valued
+enum is accepted and the first declared match wins:
 
 - The parameter type is `OriginalType!E`, so an `enum : string`, `enum : char`,
   or any non-integer-backed enum is supported, not only integral enums.
@@ -160,6 +229,46 @@ void main()
 fast
 true
 false
+```
+
+An enum as ImportC delivers one — duplicate values from a promoted extension,
+and every member carrying the type's name — rendered without either problem:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "enums_c_derived"
+    dependency "sparkles:base" version="*"
++/
+import std.stdio : writeln;
+import sparkles.base.text.case_style : CaseStyle;
+import sparkles.base.text.enums : enumCommonPrefix, enumMemberNameOr;
+
+// `_KHR` was promoted to core; the old spelling survives as an alias.
+enum PresentMode
+{
+    VK_PRESENT_MODE_IMMEDIATE = 0,
+    VK_PRESENT_MODE_MAILBOX = 1,
+    VK_PRESENT_MODE_MAILBOX_KHR = 1,
+}
+
+string render(PresentMode m)
+    => enumMemberNameOr!(CaseStyle.kebabCase, enumCommonPrefix!PresentMode)(m, "unknown");
+
+void main()
+{
+    writeln(enumCommonPrefix!PresentMode);
+    writeln(render(PresentMode.VK_PRESENT_MODE_IMMEDIATE));
+    writeln(render(PresentMode.VK_PRESENT_MODE_MAILBOX_KHR)); // first declaration wins
+    writeln(render(cast(PresentMode) 7));                     // not a declared member
+}
+```
+
+```ansi
+VK_PRESENT_MODE_
+immediate
+mailbox
+unknown
 ```
 
 ---
