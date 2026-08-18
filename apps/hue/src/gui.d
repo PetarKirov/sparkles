@@ -56,7 +56,7 @@ import document : DiffSides, Document;
 import gui_preview : PreviewModel, stripSgr;
 import sparkles.diff.model : DiffDoc;
 import gui_ansi : decodeAnsi;
-import viewer_model : Dims, MdCell, MdFence, ViewerModel;
+import viewer_model : Dims, MdCell, MdFence, ScrollAnchorMode, ViewerModel;
 import format_preview : formatPreviewActive, formatPreviewChip,
     formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
     formatPreviewRulerCol, formatPreviewRulerDragging, formatPreviewRulerHits,
@@ -231,6 +231,7 @@ struct GuiArgs
     bool formatPreview = false;          // FMV8: start in the format preview
     int formatWidth = 0;                 // ruler column (0 = discover)
     string formatterName = null;         // preferred formatter
+    ScrollAnchorMode scrollAnchor = ScrollAnchorMode.segment; // NAV5
     int treeWidth = 32;                  // explorer pane width in cells
     int tabWidth = 4;                    // tab stops in the raw view
     bool listWhitespace = false;         // vim 'list' whitespace glyphs
@@ -3237,6 +3238,7 @@ int runGui(GuiArgs guiArgs) @system
         // container reports nothing.
         arrangePanes();
         applyTheme(vm.themeIdx); // resolves the theme before the first document
+        vm.anchorMode = scrollAnchor; // `NAV5`: what a resize re-finds
         vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
             source, events, preview, twoslash, docLang, initialDiff,
             initialDiffSides, initialDiffSession);

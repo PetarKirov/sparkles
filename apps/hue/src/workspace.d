@@ -53,6 +53,7 @@ import gui_preview : PreviewModel;
 import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import tui : PreviewTui;
+import viewer_model : ScrollAnchorMode;
 
 version (linux)
     import sparkles.event_horizon.watch : Watcher;
@@ -1436,7 +1437,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     WorkspaceDoc delegate() @system reloadDiff = null,
     bool formatPreview = false, int formatWidth = 0,
     string formatterName = null,
-    string tableCopyFlag = "auto") @system
+    string tableCopyFlag = "auto",
+    ScrollAnchorMode scrollAnchor = ScrollAnchorMode.segment) @system
 {
     WorkspaceTui w;
     // The picker's worker pool and the preview's oracle must stop before the
@@ -1466,6 +1468,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     // `DVL3`: the layout the reviewer asked for on the command line; `s`
     // toggles it, and a narrow pane degrades it at render time.
     w.viewer.vm.diffLayout = diffLayout;
+    // `NAV5`: what a terminal resize re-finds at the top of the pane.
+    w.viewer.vm.anchorMode = scrollAnchor;
     w.viewer.vm.codeOverflow = codeOverflow;
     w.viewer.vm.codeMaxLines = codeMaxLines;
     w.viewer.vm.tableOverflow = tableOverflow;
