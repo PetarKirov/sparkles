@@ -818,26 +818,26 @@ struct PreviewTui
     }
 
     // Press on a fence scrollbar (`COD6`): the same ScrollbarState math the
-    // pane bars use, keyed to the fence via `vm.fenceSvOwner`. The semantic
-    // h-bar target is already the corner-free track.
+    // pane bars use, on the fence's own per-bar machine (`SCV5`). The
+    // semantic h-bar target is already the corner-free track.
     private void fenceBarPress(in HoverTarget t, Point p) @system
     {
         const isH = t.hitId >= fenceHBarHitBase;
         const owner = t.hitId - (isH ? fenceHBarHitBase : fenceVBarHitBase);
-        vm.fenceSvOwner = owner;
+        auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
         const ex = vm.fenceExtent(owner);
         const cur = vm.fenceScrollAt.get(owner, FenceScroll(owner, 0, 0));
         if (isH)
         {
-            vm.fenceSv.h = vm.fenceSv.h.pressed(p.x - t.rect.x,
+            sv.h = sv.h.pressed(p.x - t.rect.x,
                 ex.widest, ex.innerW, t.rect.width);
-            vm.setFenceScroll(owner, vm.fenceSv.h.offset, cur.y);
+            vm.setFenceScroll(owner, sv.h.offset, cur.y);
         }
         else
         {
-            vm.fenceSv.v = vm.fenceSv.v.pressed(p.y - t.rect.y,
+            sv.v = sv.v.pressed(p.y - t.rect.y,
                 ex.lines, ex.shownRows, t.rect.height);
-            vm.setFenceScroll(owner, cur.x, vm.fenceSv.v.offset);
+            vm.setFenceScroll(owner, cur.x, sv.v.offset);
         }
         vm.syncFenceHot(); // grab feedback even when the offset didn't move
     }
@@ -845,10 +845,11 @@ struct PreviewTui
     /// ditto — the drag tracks wherever the pointer strays until release.
     private void fenceBarDrag(Point p) @system
     {
-        const owner = vm.fenceSvOwner;
-        if (owner == size_t.max)
+        const owner = vm.activeFenceOwner;
+        auto sv = vm.activeBar();
+        if (owner == size_t.max || sv is null)
             return;
-        const isH = vm.fenceSv.h.dragging;
+        const isH = sv.h.dragging;
         const wantId = (isH ? fenceHBarHitBase : fenceVBarHitBase) + owner;
         foreach (ref const t; mdTargets)
         {
@@ -858,15 +859,15 @@ struct PreviewTui
             const cur = vm.fenceScrollAt.get(owner, FenceScroll(owner, 0, 0));
             if (isH)
             {
-                vm.fenceSv.h = vm.fenceSv.h.dragged(p.x - t.rect.x,
+                sv.h = sv.h.dragged(p.x - t.rect.x,
                     ex.widest, ex.innerW, t.rect.width);
-                vm.setFenceScroll(owner, vm.fenceSv.h.offset, cur.y);
+                vm.setFenceScroll(owner, sv.h.offset, cur.y);
             }
             else
             {
-                vm.fenceSv.v = vm.fenceSv.v.dragged(p.y - t.rect.y,
+                sv.v = sv.v.dragged(p.y - t.rect.y,
                     ex.lines, ex.shownRows, t.rect.height);
-                vm.setFenceScroll(owner, cur.x, vm.fenceSv.v.offset);
+                vm.setFenceScroll(owner, cur.x, sv.v.offset);
             }
             return;
         }
@@ -1268,8 +1269,11 @@ struct PreviewTui
                 sb = sb.released();
                 vm.hsb = vm.hsb.released();
             }
-            vm.fenceSv.h = vm.fenceSv.h.released();
-            vm.fenceSv.v = vm.fenceSv.v.released();
+            if (auto sv = vm.activeBar())
+            {
+                sv.h = sv.h.released();
+                sv.v = sv.v.released();
+            }
             vm.syncFenceHot(); // the thumb's accent feedback follows
             return true;
         }
@@ -1277,7 +1281,7 @@ struct PreviewTui
         // tracks wherever it strays, like every scrollbar grab.
         if (e.button == PointerButton.left
             && e.action == PointerAction.drag
-            && (vm.fenceSv.h.dragging || vm.fenceSv.v.dragging))
+            && vm.barGrabbing)
         {
             fenceBarDrag(Point(e.pos.x + (vm.hOverflows()
                 ? cast(int) vm.hsb.offset : 0),

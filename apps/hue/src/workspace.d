@@ -802,15 +802,15 @@ struct WorkspaceTui
     // precedence (DCK9) puts every grab above every hover.
     private PointerShape paneGrabShape() @safe pure nothrow @nogc
     {
-        if (viewer.vm.fenceSv.grabbing)
-            return viewer.vm.fenceSv.shape();
+        if (viewer.vm.barGrabbing)
+            return viewer.vm.barShape();
         return PointerShape.default_;
     }
 
     /// ditto
     private PointerShape paneHoverShape() @safe pure nothrow @nogc
     {
-        return viewer.vm.fenceSv.shape();
+        return viewer.vm.barShape();
     }
 
     /// Applies one event; returns false to quit.
