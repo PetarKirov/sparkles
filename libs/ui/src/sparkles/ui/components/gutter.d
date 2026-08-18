@@ -157,7 +157,8 @@ one-cell separators between them and before the code.
 Nothing in the render path needs this — the layout does the arithmetic. It is
 here for the callers that reason about width themselves (a wrap budget, a test).
 */
-int gutterWidth(const(GutterChannel)[] channels) @safe pure nothrow @nogc
+int gutterWidth(const(GutterChannel)[] channels, int separator = 1)
+    @safe pure nothrow @nogc
 {
     int total, strips;
     foreach (ch; channels.enabledOf)
@@ -165,9 +166,8 @@ int gutterWidth(const(GutterChannel)[] channels) @safe pure nothrow @nogc
         total += ch.width;
         strips++;
     }
-    // `strips - 1` gaps between the cells, plus the one before the code: the
-    // code never abuts its chrome. So `strips` separators in total.
-    return strips == 0 ? 0 : total + strips;
+    // One cell between adjacent strips, plus `separator` before the code.
+    return strips == 0 ? 0 : total + (strips - 1) + separator;
 }
 
 /**
@@ -186,31 +186,66 @@ uint gutterRow(ref Builder b, const(GutterChannel)[] channels, size_t line)
 {
     uint[] cells;
     foreach (ch; channels.enabledOf)
+        cells ~= cellWidget(b, ch, line < ch.cells.length ? &ch.cells[line] : null);
+    return stripOf(b, channels, cells);
+}
+
+/**
+As $(LREF gutterRow), but with the row's cells given directly rather than
+looked up by source line.
+
+For a producer whose rows are not one per source line. A diff row shows an old
+line, a new line, both or neither, and its position in the file is not an index
+into anything — so it computes its own cells and passes them, one per enabled
+channel in order. A short array leaves the remaining strips blank.
+
+Params:
+    b = the builder to append to
+    channels = the document's channels, in left-to-right order
+    cells = this row's cells, parallel to the $(I enabled) channels
+
+Returns: the row's index, or `0` when no channel is enabled.
+*/
+uint gutterRowOf(ref Builder b, const(GutterChannel)[] channels,
+    const(GutterCell)[] cells)
+{
+    uint[] widgets;
+    size_t i;
+    foreach (ch; channels.enabledOf)
     {
-        const has = line < ch.cells.length;
-        // Sliced straight out of the caller's array, never out of a local
-        // copy. The storage is *inline*, so a copied cell's `text[]` points
-        // into a struct that dies at the end of this iteration — the slice
-        // outlives its buffer and the gutter renders whatever the stack held
-        // next. Hence also the borrow contract: the channel array must outlive
-        // the tree and must not be reallocated under it.
-        cells ~= b.add(Widget(
-            kind: WidgetKind.text,
-            text: has && ch.cells[line].text.length ? ch.cells[line].text[] : null,
-            slot: has ? ch.cells[line].slot : Slot.gutter,
-            paintBackground: has && ch.cells[line].paintBackground,
-            hitId: has ? ch.cells[line].hitId : 0,
-            width: SizeSpec.fixed(ch.width),
-        ));
+        widgets ~= cellWidget(b, ch, i < cells.length ? &cells[i] : null);
+        i++;
     }
+    return stripOf(b, channels, widgets);
+}
+
+/// One channel's cell widget. `cell` is a $(I pointer) into the caller's
+/// storage, never a copy: a cell's text lives inline, so slicing a copy yields
+/// a dangling pointer the moment it goes out of scope — the gutter then renders
+/// whatever the stack held next, which looks like text and is not.
+private uint cellWidget(ref Builder b, in GutterChannel ch, const(GutterCell)* cell)
+{
+    return b.add(Widget(
+        kind: WidgetKind.text,
+        text: cell !is null && cell.text.length ? cell.text[] : null,
+        slot: cell !is null ? cell.slot : Slot.gutter,
+        paintBackground: cell !is null && cell.paintBackground,
+        hitId: cell !is null ? cell.hitId : 0,
+        width: SizeSpec.fixed(ch.width),
+    ));
+}
+
+/// The strip row holding `cells`, floored at its own width.
+private uint stripOf(ref Builder b, const(GutterChannel)[] channels, uint[] cells)
+{
     if (cells.length == 0)
         return 0;
-    // Fixed *and* floored at its own width. A `fixed` spec is only a base
-    // extent: when a row overflows, the engine reclaims the excess from every
-    // child in proportion to its slack, which squeezed the chrome to a single
-    // cell and left the code hanging off it. Chrome is not negotiable — a long
-    // line reflows, the line number does not shrink.
-    auto strip = SizeSpec.fixed(gutterWidth(channels) - 1);
+    // Fixed *and* floored. A `fixed` spec is only a base extent: when a row
+    // overflows, the engine reclaims the excess from every child in proportion
+    // to its slack, which squeezed the chrome to a single cell and left the
+    // code hanging off it. Chrome is not negotiable — a long line reflows, the
+    // line number does not shrink.
+    auto strip = SizeSpec.fixed(gutterWidth(channels, 0));
     strip.min = strip.value;
     return b.add(Widget(
         kind: WidgetKind.row,
@@ -232,21 +267,29 @@ Params:
     channels = the document's channels, in left-to-right order
     line = the 0-based source line, or `size_t.max` for a blank strip
     content = the row's code widget
+    separator = cells between the chrome and the code. `1` reads as a column
+        of its own; `0` is for a last channel that must abut the code, like a
+        diff marker whose tinted band runs into the row it marks
 
 Returns: the composed row, or `content` unchanged when no channel is enabled —
     so a document with every channel off is exactly the tree it was before
     gutters existed.
 */
 uint withGutter(ref Builder b, const(GutterChannel)[] channels, size_t line,
-    uint content)
+    uint content, int separator = 1)
 {
-    const strip = gutterRow(b, channels, line);
+    return joinStrip(b, gutterRow(b, channels, line), content, separator);
+}
+
+/// The strip and the code, separated by `separator` cells.
+private uint joinStrip(ref Builder b, uint strip, uint content, int separator)
+{
     if (strip == 0)
         return content;
     return b.add(Widget(
         kind: WidgetKind.row,
         children: [strip, content],
-        gap: 1,
+        gap: separator,
     ));
 }
 
@@ -427,4 +470,16 @@ unittest
             seen ~= n.text.idup;
 
     assert(seen == ["10", "  5", "11", "  0", "12", "163k"]);
+}
+
+/**
+As $(LREF withGutter), but with the row's cells given directly.
+
+The diff view's form: a row there is a hunk row rather than a source line, so
+it computes its own old/new/marker cells and hands them over.
+*/
+uint withGutterCells(ref Builder b, const(GutterChannel)[] channels,
+    const(GutterCell)[] cells, uint content, int separator = 1)
+{
+    return joinStrip(b, gutterRowOf(b, channels, cells), content, separator);
 }

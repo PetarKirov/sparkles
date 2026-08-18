@@ -28,6 +28,8 @@ import sparkles.twoslash.overlay : planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : decorateCodeRow;
 import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
+    GutterChannel, withGutterCells;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
@@ -314,7 +316,9 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         return b.container(WidgetKind.column, rows, gap: 1);
     }
 
-    const gutterWidth = opt.lineNumbers ? gutterDigits(doc, file) : 0;
+    const digits = opt.lineNumbers ? gutterDigits(doc, file) : 0;
+    const chans = diffChannels(digits, split: false);
+    const halfChans = diffChannels(digits, split: true);
     // Hunk keys are the document-global hunk index, so "next hunk" is one
     // ordering over the whole session rather than per file (`DVG1`).
     uint hi = file.hunksStart;
@@ -330,7 +334,7 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         const prevEnd = gi == 0 ? 1u : hunks[gi - 1].newStart + hunks[gi - 1].newCount;
         if (hunk.newStart > prevEnd)
             rows ~= keyed(b, contextGap(b, prevEnd, hunk.newStart - prevEnd,
-                gutterWidth, opt, gapIndex), opt.fileKey ? diffGapKey(gapIndex) : 0);
+                chans, digits, opt, gapIndex), opt.fileKey ? diffGapKey(gapIndex) : 0);
         ++gapIndex;
 
         const key = opt.fileKey ? diffHunkKey(hi) : 0;
@@ -339,9 +343,9 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         if ((hunk.formattingOnly || hunk.reordered) && opt.foldFormattingOnly)
             node = foldedHunk(b, doc, hunk);
         else if (opt.layout == DiffLayout.split)
-            node = viewHunkSplit(b, doc, hunk, gutterWidth, opt);
+            node = viewHunkSplit(b, doc, hunk, halfChans, digits, opt);
         else
-            node = viewHunk(b, doc, hunk, gutterWidth, opt);
+            node = viewHunk(b, doc, hunk, chans, digits, opt);
         rows ~= keyed(b, node, key);
     }
 
@@ -354,7 +358,7 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         const total = cast(uint) countLines(opt.sideText);
         if (total >= after)
             rows ~= keyed(b, contextGap(b, after, total - after + 1,
-                gutterWidth, opt, gapIndex),
+                chans, digits, opt, gapIndex),
                 opt.fileKey ? diffGapKey(gapIndex) : 0);
     }
 
@@ -517,33 +521,31 @@ demote-never-hide contract `DVN2` holds for noise.
 Indented to the code's column so the conversation reads as belonging to that
 line rather than to the file.
 */
-private uint threadBlock(ref Builder b, in AnchoredThread t, int gutterWidth,
-    in DiffViewOptions opt) @safe
+private uint threadBlock(ref Builder b, in AnchoredThread t,
+    const(GutterChannel)[] chans, in DiffViewOptions opt) @safe
 {
     import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
     import sparkles.ui.geometry : Insets;
     import sparkles.ui.style : TextStyle;
 
-    const pad = gutterWidth > 0 ? gutterWidth + 2 : 2;
-    auto indent = new char[](pad);
-    indent[] = ' ';
-
+    // The blank strip is the gutter's, added below — this builds the thread at
+    // the code's own column and lets the layout put it there, rather than
+    // hand-indenting by a width this function had to be told.
     if (t.resolved)
     {
         const who = t.comments.length ? t.comments[0].author : "someone";
-        return b.add(Widget(kind: WidgetKind.rich, spans: [
-            TextSpan(indent.idup, slot: Slot.gutter),
-            TextSpan(text("✓ resolved — ", t.comments.length,
-                t.comments.length == 1 ? " comment by " : " comments, from ",
-                who), slot: Slot.muted),
-        ]));
+        return withGutterCells(b, chans, null, b.add(Widget(
+            kind: WidgetKind.rich, spans: [
+                TextSpan(text("✓ resolved — ", t.comments.length,
+                    t.comments.length == 1 ? " comment by " : " comments, from ",
+                    who), slot: Slot.muted),
+            ])), 0);
     }
 
     auto rows = new uint[](0);
     foreach (i, ref c; t.comments)
     {
-        TextSpan[] head = [TextSpan(indent.idup, slot: Slot.gutter)];
-        head ~= TextSpan(i == 0 ? "▌ " : "│ ", slot: Slot.chromeAccent);
+        TextSpan[] head = [TextSpan(i == 0 ? "▌ " : "│ ", slot: Slot.chromeAccent)];
         head ~= TextSpan(c.author.idup, slot: Slot.chromeAccent,
             textStyle: TextStyle(bold: true));
         if (c.when.length)
@@ -560,10 +562,81 @@ private uint threadBlock(ref Builder b, in AnchoredThread t, int gutterWidth,
             MdViewOptions mopt;
             rows ~= b.add(Widget(kind: WidgetKind.column,
                 children: [viewMarkdownInto(b, c.body_, mopt)],
-                padding: Insets(0, 0, 0, pad + 2)));
+                padding: Insets(0, 0, 0, 2)));
         }
     }
-    return b.container(WidgetKind.column, rows);
+    return withGutterCells(b, chans, null,
+        b.container(WidgetKind.column, rows), 0);
+}
+
+/**
+The diff view's gutter channels.
+
+The old and new line numbers, then the two-cell change marker — which is the
+last strip and abuts the code, because its tint is the row's own band and a
+separator cell would cut a gap through it. A split half shows one number
+rather than two, since each side numbers itself.
+
+Params:
+    digits = width of a line-number strip, `0` when numbers are off
+    split = one number instead of two
+*/
+private GutterChannel[] diffChannels(int digits, bool split) @safe
+{
+    GutterChannel[] chans;
+    if (digits > 0)
+    {
+        if (split)
+            chans ~= GutterChannel(id: "diff-line", width: digits);
+        else
+        {
+            chans ~= GutterChannel(id: "diff-old", width: digits);
+            chans ~= GutterChannel(id: "diff-new", width: digits);
+        }
+    }
+    chans ~= GutterChannel(id: "diff-marker", width: 2);
+    return chans;
+}
+
+/// The marker cell for `kind`: the `+`/`-`/context band that runs into the code.
+private GutterCell markerCell(RowKind kind) @safe
+{
+    final switch (kind) with (RowKind)
+    {
+        case context:
+            return cellOf("  ", 2, Slot.inherit, alignEnd: false);
+        case removed:
+            return cellOf("- ", 2, Slot.diffRemoved, alignEnd: false,
+                paintBackground: true);
+        case added:
+            return cellOf("+ ", 2, Slot.diffAdded, alignEnd: false,
+                paintBackground: true);
+    }
+}
+
+/// A row's cells for the unified channels: both line numbers, then the marker.
+private GutterCell[] unifiedCells(in Row row, int digits) @safe
+{
+    GutterCell[] cells;
+    if (digits > 0)
+    {
+        cells ~= numberCell(row.oldLine, digits);
+        cells ~= numberCell(row.newLine, digits);
+    }
+    return cells ~ markerCell(row.kind);
+}
+
+/// A line number, or a blank strip when the side has none.
+private GutterCell numberCell(uint line, int digits) @safe
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeInteger;
+
+    if (line == 0)
+        return blankCell(digits);
+    SmallBuffer!(char, 16) buf;
+    writeInteger(buf, line);
+    return cellOf(buf[], digits);
 }
 
 /**
@@ -661,7 +734,8 @@ Without a side text the band still renders but cannot expand: a patch does not
 carry the lines it elided, and pretending otherwise would mean inventing them.
 */
 private uint contextGap(ref Builder b, uint firstLine, uint count,
-    int gutterWidth, DiffViewOptions opt, size_t gapIndex) @safe
+    const(GutterChannel)[] chans, int digits, DiffViewOptions opt,
+    size_t gapIndex) @safe
 {
     if (count == 0)
         return b.add(Widget(kind: WidgetKind.text, text: ""));
@@ -681,12 +755,14 @@ private uint contextGap(ref Builder b, uint firstLine, uint count,
         const line = lineOf(opt.sideText, n);
         if (line is null)
             break;
-        TextSpan[] spans;
-        if (gutterWidth > 0)
-            spans ~= TextSpan(bothGutterText(n, gutterWidth), slot: Slot.gutter);
-        spans ~= TextSpan("  ");
-        spans ~= TextSpan(line);
-        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans));
+        // An unchanged line has the same position on both sides, so both
+        // number strips carry it.
+        GutterCell[] cells;
+        if (digits > 0)
+            cells = [numberCell(n, digits), numberCell(n, digits)];
+        cells ~= markerCell(RowKind.context);
+        rows ~= withGutterCells(b, chans, cells,
+            b.add(Widget(kind: WidgetKind.rich, spans: [TextSpan(line)])), 0);
     }
     if (rows.length == 0)
         return b.add(Widget(kind: WidgetKind.text, text: ""));
@@ -725,25 +801,6 @@ private size_t countLines(const(char)[] text) @safe pure nothrow @nogc
     return text[$ - 1] == '\n' ? n : n + 1;
 }
 
-/// An expanded context line's gutter: the same number on both sides, since an
-/// unchanged line has the same position in each.
-private const(char)[] bothGutterText(uint n, int width) @safe
-{
-    auto digits = text(n);
-    auto s = new char[](width + 1);
-    s[] = ' ';
-    const half = width / 2;
-    const start = digits.length >= cast(size_t) half
-        ? 0 : cast(size_t) half - digits.length;
-    foreach (i, c; digits)
-        if (start + i < cast(size_t) half)
-            s[start + i] = c;
-    foreach (i, c; digits)
-        if (half + 1 + i < cast(size_t) width)
-            s[half + 1 + i] = c;
-    return s;
-}
-
 /// The hunk header, rendered as its own tinted band — shared by both layouts.
 private uint hunkHeader(ref Builder b, in Hunk hunk) @safe
     => b.add(Widget(kind: WidgetKind.rich, spans: [
@@ -757,7 +814,7 @@ private uint noticeRow(ref Builder b, string message) @safe
 
 /// `DVL2`: one hunk as two aligned panes.
 private uint viewHunkSplit(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
-    int gutterWidth, DiffViewOptions opt) @safe
+    const(GutterChannel)[] chans, int digits, DiffViewOptions opt) @safe
 {
     auto rows = new uint[](0);
     rows ~= hunkHeader(b, hunk);
@@ -766,9 +823,9 @@ private uint viewHunkSplit(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
     foreach (pair; alignSplitRows(hunkRows))
     {
         const left = splitHalf(b, doc, hunkRows, pair.old_, true,
-            gutterWidth, opt);
+            chans, digits, opt);
         const right = splitHalf(b, doc, hunkRows, pair.new_, false,
-            gutterWidth, opt);
+            chans, digits, opt);
         // The row itself must fill the pane, or its two `grow` halves have no
         // remaining space to divide and both shrink-wrap their text.
         // The row fills the pane; its two halves each take exactly 50% of it.
@@ -789,8 +846,8 @@ needs to see that the OTHER side gained or lost a line; blank space would read
 as "unchanged and short".
 */
 private uint splitHalf(ref Builder b, const ref DiffDoc doc,
-    const(Row)[] hunkRows, int idx, bool oldSide, int gutterWidth,
-    DiffViewOptions opt) @safe
+    const(Row)[] hunkRows, int idx, bool oldSide,
+    const(GutterChannel)[] chans, int digits, DiffViewOptions opt) @safe
 {
     if (idx < 0)
     {
@@ -800,10 +857,11 @@ private uint splitHalf(ref Builder b, const ref DiffDoc doc,
     }
 
     const row = hunkRows[cast(size_t) idx];
+    GutterCell[] cells;
+    if (digits > 0)
+        cells ~= numberCell(oldSide ? row.oldLine : row.newLine, digits);
+    cells ~= markerCell(row.kind);
     TextSpan[] spans;
-    if (gutterWidth > 0)
-        spans ~= TextSpan(halfGutterText(row, oldSide, gutterWidth),
-            slot: Slot.gutter);
 
     const rowText = doc.rowText(row);
     const emph = doc.rowEmph(row);
@@ -814,45 +872,25 @@ private uint splitHalf(ref Builder b, const ref DiffDoc doc,
     final switch (row.kind) with (RowKind)
     {
         case context:
-            spans ~= TextSpan("  ");
             spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
                 Slot.inherit, false);
             break;
         case removed:
-            spans ~= TextSpan("- ", slot: Slot.diffRemoved, paintBackground: true);
             spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
                 Slot.diffEmphRemoved, true);
             break;
         case added:
-            spans ~= TextSpan("+ ", slot: Slot.diffAdded, paintBackground: true);
             spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
                 Slot.diffEmphAdded, true);
             break;
     }
-    const text = b.add(Widget(kind: WidgetKind.rich, spans: spans));
+    const text = withGutterCells(b, chans, cells,
+        b.add(Widget(kind: WidgetKind.rich, spans: spans)), 0);
     return halfWidth(b, b.container(WidgetKind.column, [text]));
 }
 
-/// The one side's line number, right-aligned in `width` cells.
-private const(char)[] halfGutterText(in Row row, bool oldSide, int width) @safe
-{
-    const n = oldSide ? row.oldLine : row.newLine;
-    auto s = new char[](width + 1);
-    s[] = ' ';
-    if (n != 0)
-    {
-        auto digits = text(n);
-        const start = digits.length >= cast(size_t) width
-            ? 0 : cast(size_t) width - digits.length;
-        foreach (i, c; digits)
-            if (start + i < cast(size_t) width)
-                s[start + i] = c;
-    }
-    return s;
-}
-
 private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
-    int gutterWidth, DiffViewOptions opt) @safe
+    const(GutterChannel)[] chans, int digits, DiffViewOptions opt) @safe
 {
     auto rows = new uint[](0);
     rows.reserve(hunk.rowsCount + 1);
@@ -861,26 +899,22 @@ private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
 
     foreach (ref row; doc.hunkRows(hunk))
     {
-        rows ~= viewRow(b, doc, row, gutterWidth, opt);
+        rows ~= viewRow(b, doc, row, chans, digits, opt);
         // `DPR3`: the conversation goes UNDER the line it is about, the way
         // a reviewer reads it — not in a margin, and not in a separate pane
         // where the code it refers to is no longer on screen.
         foreach (ref t; opt.threads)
             if (anchoredHere(t, row))
-                rows ~= threadBlock(b, t, gutterWidth, opt);
+                rows ~= threadBlock(b, t, chans, opt);
     }
 
     return b.container(WidgetKind.column, rows);
 }
 
 private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
-    int gutterWidth, DiffViewOptions opt) @safe
+    const(GutterChannel)[] chans, int digits, DiffViewOptions opt) @safe
 {
     TextSpan[] spans;
-
-    if (gutterWidth > 0)
-        spans ~= TextSpan(gutterText(row, gutterWidth), slot: Slot.gutter);
-
     const rowText = doc.rowText(row);
     const emph = doc.rowEmph(row);
     // The side's syntax-styled line, when the host supplied one (`DVM5`).
@@ -890,36 +924,31 @@ private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
     final switch (row.kind)
     {
     case RowKind.context:
-        spans ~= TextSpan("  ");
         spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
             Slot.inherit, false);
         break;
     case RowKind.removed:
-        spans ~= TextSpan("- ", slot: Slot.diffRemoved, paintBackground: true);
         spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
             Slot.diffEmphRemoved, true);
         break;
     case RowKind.added:
-        spans ~= TextSpan("+ ", slot: Slot.diffAdded, paintBackground: true);
         spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
             Slot.diffEmphAdded, true);
         break;
     }
     const code = b.add(Widget(kind: WidgetKind.rich, spans: spans));
 
-    // `DVT1`: the side's type overlay decorates this row. The row's own
-    // chrome — the gutter plus the two-cell marker — sits left of the code,
-    // so the decorations shift right by exactly that much; getting this
-    // wrong is the difference between an underline on a token and one two
-    // cells off it, which is why the offset is passed rather than assumed.
+    // `DVT1`: the side's type overlay decorates this row. The decorations are
+    // `stack` children of the code and the chrome is its sibling, so the
+    // layout places both — nothing here has to know how wide the gutter is,
+    // which is what an underline two cells off its token used to cost.
+    const cells = unifiedCells(row, digits);
     const side = row.kind == RowKind.added ? opt.newTypes : opt.oldTypes;
-    if (!side.live)
-        return code;
     const line = row.kind == RowKind.added ? row.newLine : row.oldLine;
-    if (line == 0)
-        return code;
-    return decorateCodeRow(b, code, side.payload, side._plan, line - 1,
-        gutterWidth + 2);
+    if (!side.live || line == 0)
+        return withGutterCells(b, chans, cells, code, 0);
+    return withGutterCells(b, chans, cells,
+        decorateCodeRow(b, code, side.payload, side._plan, line - 1), 0);
 }
 
 /// The 1-based `line`'s styled spans, or null when unavailable.
@@ -1010,29 +1039,6 @@ private TextSpan[] contentSpans(const(char)[] rowText, const(Span)[] emph,
 
 private TextSpan segment(const(char)[] text_, Slot slot, bool tint) @safe
     => TextSpan(text_, slot: slot, paintBackground: tint && slot != Slot.inherit);
-
-/// `"<old> <new> "` — both numbers right-aligned to `width` digits; an absent
-/// side renders as spaces.
-private const(char)[] gutterText(in Row row, int width) @safe
-{
-    auto buf = new char[](2 * width + 2);
-    buf[] = ' ';
-    writeNum(buf[0 .. width], row.oldLine);
-    writeNum(buf[width + 1 .. 2 * width + 1], row.newLine);
-    return buf;
-}
-
-private void writeNum(char[] slot, uint value) @safe pure nothrow @nogc
-{
-    if (value == 0)
-        return;
-    size_t i = slot.length;
-    while (value != 0 && i > 0)
-    {
-        slot[--i] = cast(char)('0' + value % 10);
-        value /= 10;
-    }
-}
 
 private int gutterDigits(const ref DiffDoc doc, in FileEntry file) @safe pure nothrow @nogc
 {
@@ -1127,9 +1133,23 @@ version (unittest)
     assert(header.spans[0].slot == Slot.diffHunk);
     assert(header.spans[0].text == "@@ -1,3 +1,3 @@");
 
+    // A row is `row[ strip, code ]` now: the numbers and the change marker are
+    // their own widgets beside the code rather than spans inside it, so the
+    // decorations that sit on the code need no offset to find their column.
     const removed = tree.nodes[hunkCol.children[2]];
-    assert(removed.spans[1].text == "- ");
-    assert(removed.spans[1].slot == Slot.diffRemoved);
+    assert(removed.kind == WidgetKind.row && removed.children.length == 2);
+    const strip = tree.nodes[removed.children[0]];
+    assert(strip.kind == WidgetKind.row);
+    // old number, new number, marker.
+    assert(strip.children.length == 3);
+    const marker = tree.nodes[strip.children[2]];
+    assert(marker.text == "- ");
+    assert(marker.slot == Slot.diffRemoved);
+    assert(marker.paintBackground, "the marker's band runs into the code");
+    // And the code carries only the code.
+    const code = tree.nodes[removed.children[1]];
+    assert(code.kind == WidgetKind.rich);
+    assert(code.spans[0].text == "two");
 }
 
 @("diff_view.viewDiffDoc.emph-two-tier")
@@ -1156,18 +1176,48 @@ version (unittest)
 @("diff_view.viewDiffDoc.gutter-alignment")
 @safe unittest
 {
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+
     auto doc = diffText("a\nb\nc\n", "a\nB\nc\n");
     auto tree = viewDiffDoc(doc);
-    // Gutter of the first context row: old 1, new 1, width 1 → "1 1 ".
+    auto frames = layout(tree, Constraints(maxW: 40));
+
+    // Every code row starts at the same column, whatever its strips hold — an
+    // absent line number on one side must not shift its row against the others.
+    // This is what the gutter is *for*, and it is now a property of the layout
+    // rather than of every producer padding to the same width.
+    int[] codeX;
+    foreach (i, ref node; tree.nodes)
+        if (node.kind == WidgetKind.rich && node.spans.length
+            && (node.spans[0].text == "a" || node.spans[0].text == "b"
+                || node.spans[0].text == "B" || node.spans[0].text == "c"))
+            codeX ~= frames[i].rect.x;
+    assert(codeX.length >= 4, "the rows were not found");
+    foreach (x; codeX)
+        assert(x == codeX[0], "every code row shares a column");
+
+    // The removed row has an old number and no new one; the added row the
+    // reverse. Both strips are the same width regardless.
+    // A blank strip is spaces, not an absent widget: the column has to hold its
+    // width or the code beside it moves.
+    import std.string : strip;
+
+    bool sawOldOnly, sawNewOnly;
     foreach (ref node; tree.nodes)
-        if (node.kind == WidgetKind.rich && node.spans.length == 3
-            && node.spans[2].text == "a")
-        {
-            assert(node.spans[0].slot == Slot.gutter);
-            assert(node.spans[0].text == "1 1 ");
-            return;
-        }
-    assert(false, "context row not found");
+    {
+        if (node.kind != WidgetKind.row || node.children.length != 3)
+            continue;
+        const oldNum = tree.nodes[node.children[0]];
+        const newNum = tree.nodes[node.children[1]];
+        assert(oldNum.text.length == newNum.text.length,
+            "both number strips keep the same width");
+        if (oldNum.text.strip.length && !newNum.text.strip.length)
+            sawOldOnly = true;
+        if (!oldNum.text.strip.length && newNum.text.strip.length)
+            sawNewOnly = true;
+    }
+    assert(sawOldOnly && sawNewOnly, "a one-sided row blanks the other strip");
 }
 
 @("diff_view.viewDiffDoc.empty-and-binary")
