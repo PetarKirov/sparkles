@@ -776,7 +776,10 @@ export default withMermaid(
             {
               text: 'Twoslash',
               collapsed: false,
-              items: [{ text: 'Specification', link: '/specs/twoslash/SPEC' }],
+              items: [
+                { text: 'Specification', link: '/specs/twoslash/SPEC' },
+                { text: 'SARIF (decision)', link: '/specs/twoslash/sarif' },
+              ],
             },
             {
               text: 'UI',

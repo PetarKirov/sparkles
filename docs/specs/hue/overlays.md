@@ -57,15 +57,16 @@ overlay-specific data artifact    ─┘     (per kind)          (uniform)      
 The overlay registry. Twoslash is kind #1 (owned by its own doc); the rest are
 specified in the sections below.
 
-| #   | Kind                      | Area                               | Data source                                                                  | Annotates                                                       | Status                                                              |
-| --- | ------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 1   | **twoslash**              | `TWO` / `TWM`                      | semantic backend (`sparkles:dmd-lsp`) or a TS-twoslash node JSON             | inferred types, hovers, completions, errors, tags               | planned/branch-only                                                 |
-| 2   | **source map**            | `SMP`                              | a Source Map v3 (`.map`) — alternative to twoslash                           | provenance: which original file/position a span maps to         | not started                                                         |
-| 3   | **code coverage**         | `COV`                              | D `-cov` `.lst` listings, lcov `.info`                                       | per-line/region hit counts (covered / uncovered)                | not started                                                         |
-| 4   | **tracing / profiling**   | `TRC`                              | a trace/profile JSON in the `sparkles:test-runner` metric-catalog shape      | per-function call count + wall-clock decomposition              | not started                                                         |
-| 5   | **tree-sitter inspector** | `TSI`                              | the tree-sitter parse tree itself (no external artifact)                     | node type / field / S-expression at the cursor                  | researched                                                          |
-| 6   | **function code size**    | `CSZ`                              | native symbol-size report (nm/bloaty/linker map) or a JS bundle report       | bytes per function (`.text` segment, or minified size)          | not started                                                         |
-| 7   | **diff decorations**      | [diff-view](./diff-view.md) `DVM5` | the `sparkles:diff` decoration stream — a second span stream over both sides | added/removed/changed rows, intra-line segments, noise verdicts | future kind — diff **ships standalone first**, never gated on `OVL` |
+| #   | Kind                      | Area                               | Data source                                                                          | Annotates                                                       | Status                                                              |
+| --- | ------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 1   | **twoslash**              | `TWO` / `TWM`                      | semantic backend (`sparkles:dmd-lsp`) or a TS-twoslash node JSON                     | inferred types, hovers, completions, errors, tags               | planned/branch-only                                                 |
+| 2   | **source map**            | `SMP`                              | a Source Map v3 (`.map`) — alternative to twoslash                                   | provenance: which original file/position a span maps to         | not started                                                         |
+| 3   | **code coverage**         | `COV`                              | D `-cov` `.lst` listings, lcov `.info`                                               | per-line/region hit counts (covered / uncovered)                | not started                                                         |
+| 4   | **tracing / profiling**   | `TRC`                              | a trace/profile JSON in the `sparkles:test-runner` metric-catalog shape              | per-function call count + wall-clock decomposition              | not started                                                         |
+| 5   | **tree-sitter inspector** | `TSI`                              | the tree-sitter parse tree itself (no external artifact)                             | node type / field / S-expression at the cursor                  | researched                                                          |
+| 6   | **function code size**    | `CSZ`                              | native symbol-size report (nm/bloaty/linker map) or a JS bundle report               | bytes per function (`.text` segment, or minified size)          | not started                                                         |
+| 7   | **diff decorations**      | [diff-view](./diff-view.md) `DVM5` | the `sparkles:diff` decoration stream — a second span stream over both sides         | added/removed/changed rows, intra-line segments, noise verdicts | future kind — diff **ships standalone first**, never gated on `OVL` |
+| 8   | **SARIF findings**        | `SAR`                              | a SARIF 2.1.0 log (dscanner, clang-tidy, semgrep, CodeQL, `dmd -verror-style=sarif`) | third-party diagnostics: level, message, location               | not started                                                         |
 
 ## Source-map overlay (`SMP`) — provenance, an alternative to twoslash
 
@@ -135,6 +136,18 @@ data sources, unified behind one overlay.
 | CSZ2 | For **JS/TS**, the producer must map each function to its byte contribution in a **minified bundle**, via the bundle's source map (`SMP1`) plus a size report.                                 | not started | `CSZ` producer (+ reuses `SMP1`) |
 | CSZ3 | Each function definition must carry an inline byte badge, heat-tinted by size, with a per-function breakdown on hover and a file total; the ordering must make the largest functions findable. | not started | `CSZ` producer → inline + hover  |
 
+## SARIF-findings overlay (`SAR`)
+
+Third-party static-analysis results over any source file. Its requirements
+(`SAR1`–`SAR6`) live in
+[docs/specs/twoslash/sarif.md](../twoslash/sarif.md), the decision record that
+also rejects SARIF as a replacement for the twoslash node model — the two
+questions are answered together because they were raised together. Note the
+concrete limits established there: SARIF text regions are measured in UTF-16
+code units (or code points) rather than bytes, so the producer transcodes at
+ingest, and a region carrying only `startLine`/`startColumn` yields a point
+marker rather than a span.
+
 ## Milestones
 
 The overlay framework is a design; there is no committed track yet. A sensible
@@ -152,13 +165,13 @@ composition (`OVL5`).
 Proposed layout — no code on this branch yet; twoslash's overlay is the only
 existing instance (branch-only).
 
-| Source (proposed / branch)                                     | Requirements                                |
-| -------------------------------------------------------------- | ------------------------------------------- |
-| shared `OverlayModel` + producer seam (proposed)               | `OVL1`–`OVL3`                               |
-| `apps/hue/src/app.d` (`--overlay` dispatch, proposed)          | `OVL4`, `OVL5`, `OVL6`                      |
-| `apps/hue/src/gui.d` gutter channel (proposed, cf. `NUM*`)     | `OVL7`                                      |
-| `libs/twoslash` `overlay.d` + backends (branch)                | overlay #1 (→ [twoslash.md](./twoslash.md)) |
-| `overlay/{source_map,coverage,tracing,code_size}.d` (proposed) | `SMP*`, `COV*`, `TRC*`, `CSZ*`              |
-| `sparkles:tree-sitter` / `sparkles:syntax` tree (existing)     | `TSI*`                                      |
+| Source (proposed / branch)                                           | Requirements                                  |
+| -------------------------------------------------------------------- | --------------------------------------------- |
+| shared `OverlayModel` + producer seam (proposed)                     | `OVL1`–`OVL3`                                 |
+| `apps/hue/src/app.d` (`--overlay` dispatch, proposed)                | `OVL4`, `OVL5`, `OVL6`                        |
+| `apps/hue/src/gui.d` gutter channel (proposed, cf. `NUM*`)           | `OVL7`                                        |
+| `libs/twoslash` `overlay.d` + backends (branch)                      | overlay #1 (→ [twoslash.md](./twoslash.md))   |
+| `overlay/{source_map,coverage,tracing,code_size,sarif}.d` (proposed) | `SMP*`, `COV*`, `TRC*`, `CSZ*`, `SAR1`–`SAR2` |
+| `sparkles:tree-sitter` / `sparkles:syntax` tree (existing)           | `TSI*`                                        |
 
 → [Twoslash requirements](./twoslash.md) · [GUI requirements](./gui.md) · [General requirements](./feature-requirements.md) · [Overview](./index.md)
