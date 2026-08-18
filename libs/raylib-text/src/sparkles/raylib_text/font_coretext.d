@@ -34,6 +34,7 @@ module sparkles.raylib_text.font_coretext;
 version (OSX):
 
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.text.cstring : toCString;
 
 // ── ASCII text helpers ───────────────────────────────────────────────────────
 //
@@ -306,15 +307,21 @@ private
         if (cf is null || c is null)
             return;
 
+        // `(name ~ "\0").ptr` would hand dlsym the only reference to a fresh
+        // GC array and then drop it — and allocate on each of the ~20 calls
+        // below. The CString is a named local, so it is plainly still alive
+        // across the call, and nothing is allocated at all.
         T sym(T)(void* h, string name)
         {
-            return cast(T) dlsym(h, (name ~ "\0").ptr);
+            auto nameZ = toCString!128([name]);
+            return cast(T) dlsym(h, nameZ.ptr);
         }
 
         // A CFStringRef global: dlsym yields `CFStringRef*`, so deref it.
         const(void)* strGlobal(void* h, string name)
         {
-            auto p = cast(const(void)**) dlsym(h, (name ~ "\0").ptr);
+            auto nameZ = toCString!128([name]);
+            auto p = cast(const(void)**) dlsym(h, nameZ.ptr);
             return p is null ? null : *p;
         }
 
