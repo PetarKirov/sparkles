@@ -78,7 +78,7 @@ import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_color : mix;
 import sparkles.base.unique : makeUnique;
 
-import sparkles.syntax.md.render_widgets : CodeOverflow, FenceScroll;
+import sparkles.syntax.md.render_widgets : FenceScroll, OverflowPolicy;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
@@ -205,7 +205,7 @@ struct GuiArgs
     bool codeLineNumbers = true;
     bool ansiCopyStrip = false;          // --ansi-copy=strip (SEL7/CLI10); default raw
     TableCopyFormat tableCopy = TableCopyFormat.tsv; // --table-copy (TBL2/CLI11)
-    CodeOverflow codeOverflow = CodeOverflow.scroll; // --code-overflow
+    OverflowPolicy codeOverflow; // --code-overflow
     int codeMaxLines = -1;               // --code-max-lines (COD6; -1 = auto)
     SourceSet* set = null;               // the document set to navigate (GNV1)
     DocLoader loadDoc = null;            // loads a set entry (supplied by app.d)

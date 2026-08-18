@@ -35,6 +35,8 @@ import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
+import std.sumtype : match, SumType;
+
 @safe:
 
 /// The view's configuration: measure, identity and recursion budget.
@@ -112,11 +114,13 @@ struct MdViewOptions
     bool codeLineNumbers;
 
     /// How a fence body line longer than its panel behaves (`COD`):
-    /// `scroll` — lines keep their natural width behind a per-fence
+    /// `ScrollOverflow` — lines keep their natural width behind a per-fence
     /// horizontal viewport (`fenceScrolls`), clipped at the panel;
-    /// `wrap` — greedy in-panel wrapping, continuations hanging past the
-    /// number gutter.
-    CodeOverflow codeOverflow = CodeOverflow.scroll;
+    /// `WrapOverflow` — greedy in-panel wrapping, continuations hanging past
+    /// the number gutter; `WrapAtOverflow(n)` — wrap the body so the whole
+    /// box is at most `n` cells wide, then scroll horizontally when `n`
+    /// exceeds the panel.
+    OverflowPolicy codeOverflow;
 
     /// Per-fence scroll offsets (scroll mode), keyed by the fence's
     /// `codeBody.start` — source-anchored like `activeCodeTabs`, so a
@@ -202,13 +206,41 @@ struct MdEmphasis
     Slot slot = Slot.inherit;
 }
 
-/// How a fence body line longer than its panel behaves — see
-/// $(LREF MdViewOptions.codeOverflow).
-enum CodeOverflow : ubyte
+/// How content wider than its panel behaves — the one overflow vocabulary
+/// shared by `--code-overflow` and `--table-overflow` (see
+/// $(LREF MdViewOptions.codeOverflow) / `tableOverflow`). A `SumType` whose
+/// default is `ScrollOverflow` (today's behavior); construct the others as
+/// `OverflowPolicy(WrapOverflow())` / `OverflowPolicy(WrapAtOverflow(n))`.
+struct ScrollOverflow
 {
-    scroll, /// per-fence horizontal viewport, clipped at the panel
-    wrap,   /// greedy in-panel wrapping with a hang past the number gutter
 }
+
+/// ditto — fit to the available box, never a bar.
+struct WrapOverflow
+{
+}
+
+/// ditto — wrap to a total width of `width` cells (frame included), then
+/// scroll horizontally when `width` exceeds the available box.
+struct WrapAtOverflow
+{
+    int width;
+}
+
+/// ditto
+alias OverflowPolicy = SumType!(ScrollOverflow, WrapOverflow, WrapAtOverflow);
+
+/// The policy's shape, without `match!` noise at the use sites.
+bool isScroll(in OverflowPolicy p) @safe pure nothrow @nogc
+    => p.match!((in ScrollOverflow _) => true, _ => false);
+
+/// ditto
+bool isWrap(in OverflowPolicy p) @safe pure nothrow @nogc
+    => p.match!((in WrapOverflow _) => true, _ => false);
+
+/// The wrap-at target width, or 0 for the other policies.
+int wrapAtWidth(in OverflowPolicy p) @safe pure nothrow @nogc
+    => p.match!((in WrapAtOverflow w) => w.width, _ => 0);
 
 /// One fence's scroll position: `x` cells of the body scrolled off to the
 /// left, `y` lines scrolled off the top (only fences past
@@ -1113,6 +1145,40 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             // ancestor's left padding. Unbounded (a popup's docs): the box
             // shrink-wraps to its content.
             const gutterW = opt.codeLineNumbers ? numW + 1 : 0;
+
+            // `wrap-at:N` pre-wraps the body to N's interior and then rides
+            // the scroll structure over the wrapped lines: the box caps at N,
+            // the h bar appears only when N exceeds the panel, and
+            // `codeMaxLines` counts visual lines. `srcLineOf` keeps the
+            // gutter numbering on first lines; continuations blank.
+            const wrapAtW = wrapAtWidth(opt.codeOverflow);
+            int[] srcLineOf;
+            if (wrapAtW > 0)
+            {
+                import sparkles.ui.wrap : wrapSpans;
+
+                static int measureCells(scope const(char)[] s) @safe pure nothrow @nogc
+                    => cast(int) cellsOf(s);
+                const wrapW = wrapAtW - 4 - gutterW > 1
+                    ? wrapAtW - 4 - gutterW : 1;
+                TextSpan[][] visual;
+                Slot[] visualSlots;
+                foreach (li, spans; lineSpans)
+                {
+                    auto wl = wrapSpans(spans, wrapW, &measureCells);
+                    if (!wl.length)
+                        wl = [spans];
+                    foreach (k, line; wl)
+                    {
+                        visual ~= line;
+                        visualSlots ~= lineSlots[li];
+                        srcLineOf ~= k == 0 ? cast(int) li : -1;
+                    }
+                }
+                lineSpans = visual;
+                lineSlots = visualSlots;
+            }
+
             int widest;
             foreach (spans; lineSpans)
             {
@@ -1123,11 +1189,13 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     widest = w;
             }
             const bounded = opt.maxWidth > 0;
-            const boxW = bounded ? opt.maxWidth - opt.indentCols
+            int boxW = bounded ? opt.maxWidth - opt.indentCols
                 : widest + gutterW + 4;
+            if (wrapAtW > 0 && wrapAtW < boxW)
+                boxW = wrapAtW;
             const innerW = boxW - 4 - gutterW; // border + pad each side
             const lines = cast(int) lineSpans.length;
-            const scrolling = opt.codeOverflow == CodeOverflow.scroll;
+            const scrolling = !isWrap(opt.codeOverflow);
             const shownRows = scrolling && opt.codeMaxLines > 0
                 && lines > opt.codeMaxLines ? opt.codeMaxLines : lines;
             const vOver = shownRows < lines;
@@ -1162,13 +1230,18 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 {
                     auto nums = new uint[](0);
                     foreach (li; 0 .. lineSpans.length)
+                    {
+                        // Under wrap-at, continuations carry no number.
+                        const srcLi = wrapAtW > 0 ? srcLineOf[li]
+                            : cast(int) li;
                         nums ~= b.add(Widget(kind: WidgetKind.rich,
-                            spans: [cast(int) li < realLines
-                                ? numberSpan(li + 1)
+                            spans: [srcLi >= 0 && srcLi < realLines
+                                ? numberSpan(srcLi + 1)
                                 : TextSpan(repGlyph(" ", numW + 1),
                                     Slot.gutter, codeStyle(opt),
                                     noBreak: true)],
                             slot: Slot.gutter, textStyle: codeStyle(opt)));
+                    }
                     // Fixed, not fit: the viewport's natural width is its
                     // widest (overflowing) line, and the row's deficit
                     // would otherwise squeeze the gutter's trailing space.
@@ -2018,7 +2091,7 @@ version (unittest)
     // Wrap mode: no viewport anywhere; the body row wraps greedily, its
     // continuations hanging past the number gutter (numW 1 + a space).
     MdViewOptions wrapOpt = {codeLineNumbers: true,
-        codeOverflow: CodeOverflow.wrap};
+        codeOverflow: OverflowPolicy(WrapOverflow())};
     auto wt = viewMarkdown(doc, wrapOpt);
     bool sawWrap;
     foreach (ref const n; wt.nodes)
@@ -2028,6 +2101,52 @@ version (unittest)
             sawWrap = true;
     }
     assert(sawWrap);
+}
+
+@("md.render_widgets.codeOverflow.wrapAt")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints;
+
+    // One long fence line of two 14-cell words. wrap-at:20 wraps the body to
+    // the 20-cell box's 16-cell interior (one word per line); in a 40-cell
+    // pane the box caps at 20 and no bar appears.
+    const src = "01234567890123 01234567890123";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.codeFence,
+            span: Span(0, src.length), codeBody: Span(0, src.length)),
+    ]), src);
+
+    MdViewOptions opt = {maxWidth: 40, fenceHBarHitBase: 77,
+        codeOverflow: OverflowPolicy(WrapAtOverflow(20))};
+    auto tree = viewMarkdown(doc, opt);
+    auto frames = layout(tree, Constraints(maxW: 40));
+    bool sawBar;
+    int boxW;
+    foreach (i, ref const n; tree.nodes)
+    {
+        if (n.kind == WidgetKind.scrollbar)
+            sawBar = true;
+        if (n.kind == WidgetKind.panel)
+            boxW = frames[i].rect.width;
+    }
+    assert(!sawBar, "wrap-at within the pane needs no bar");
+    assert(boxW == 20, "the box caps at the wrap-at target");
+
+    // The same wrap-at:20 in a 16-cell pane: the box clamps to the pane and
+    // the 20-wide wrapped body scrolls behind the bottom-border bar.
+    MdViewOptions narrow = {maxWidth: 16, fenceHBarHitBase: 77,
+        codeOverflow: OverflowPolicy(WrapAtOverflow(20))};
+    auto nt = viewMarkdown(doc, narrow);
+    bool sawNarrowBar, sawViewport;
+    foreach (ref const n; nt.nodes)
+    {
+        if (n.kind == WidgetKind.scrollbar && n.hitId == 77)
+            sawNarrowBar = true;
+        if (n.clipX)
+            sawViewport = true;
+    }
+    assert(sawNarrowBar && sawViewport);
 }
 
 @("md.render_widgets.codeOverflow.fenceBarsAreSemanticLeaves")
