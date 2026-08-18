@@ -4,6 +4,7 @@ module picker;
 import core.atomic : MemoryOrder, atomicLoad, atomicStore;
 import core.time : Duration, MonoTime;
 
+import sparkles.base.unique : makeUnique;
 // The module, never the package: `sparkles.event_horizon`'s package module
 // publicly imports the Linux fs/pty surface, and Android — Linux without
 // those — cannot compile it, so a package import here breaks the APK build.
@@ -535,10 +536,12 @@ unittest
     snapshot.id.low = 9;
     snapshot.candidates = candidates[];
 
-    // Heap, not stack: a scheduler is four generation slots of matcher
-    // workspace (~3 MiB), and a test runs on a worker thread — 512 KiB of
-    // stack on macOS.
-    auto scheduler = new PickerScheduler!(DefaultFuzzyCaps, 4);
+    // Neither the stack nor the collected heap: a scheduler is four
+    // generation slots of matcher workspace (~3 MiB), a test runs on a
+    // worker thread (512 KiB of stack on macOS), and a GC block that size
+    // crashes the collector there.
+    auto owner = makeUnique!(PickerScheduler!(DefaultFuzzyCaps, 4))();
+    auto scheduler = &owner.get();
     auto oldGeneration = scheduler.request("docs", snapshot, 1.msecs);
     auto newest = scheduler.request("src/", snapshot, 1.msecs);
     assert(oldGeneration.hasValue && newest.hasValue
@@ -581,7 +584,9 @@ unittest
         == RawPoolResult.accepted);
     scope (exit) cast(void) pool.shutdown(true);
 
-    auto scheduler = new PickerScheduler!(DefaultFuzzyCaps, 4); // see above
+    // Off the collected heap, as above.
+    auto owner = makeUnique!(PickerScheduler!(DefaultFuzzyCaps, 4))();
+    auto scheduler = &owner.get();
     scheduler.attach(pool);
     auto generation = scheduler.request("alpha", snapshot, 1.msecs);
     assert(generation.hasValue);

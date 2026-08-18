@@ -13,6 +13,7 @@ module picker_host;
 
 import core.time : Duration, msecs;
 
+import sparkles.base.unique : makeUnique, Unique;
 import sparkles.event_horizon.raw_pool : RawPoolResult;
 import sparkles.fuzzy : CandidateSnapshot, DefaultFuzzyCaps, FuzzyLimits,
     MatchConfig, MatcherWorkspace, parseQuery, positions, TextRange;
@@ -38,10 +39,23 @@ enum PickerAction : ubyte
 enum size_t pickerRows = 16;
 
 /**
+A host's picker, owned off the collected heap.
+
+A `PickerHost` is a few megabytes — four generation slots of matcher
+workspace plus one for render-time positions — and asking the collector for a
+block that size crashes inside its stack scan on macOS when the requesting
+thread is not the main one (a test runs on a `std.parallelism` worker, whose
+stack is 512 KiB there). `Unique` allocates it with `malloc` instead, and
+registers the block as a root range so the paths the finder owns stay
+reachable.
+*/
+alias OwnedPicker = Unique!PickerHost;
+
+/**
 One host-owned picker: corpus, scheduler, state, and the modal key policy.
 
 Non-copyable (the scheduler's generation slots are address-stable), so hosts
-hold a `PickerHost*` allocated on first open — a user action, under hue's
+hold an $(LREF OwnedPicker) built on first open — a user action, under hue's
 startup/shutdown allocation carve-out (`NFR1`). `shutdown` must run before
 the host exits; it stops the worker pool.
 */
@@ -348,7 +362,8 @@ unittest
     const root = pickerFixture("hue-picker-host");
     scope (exit) rmdirRecurse(root);
 
-    auto host = new PickerHost;
+    auto owner = makeUnique!PickerHost();
+    auto host = &owner.get();
     scope (exit) host.shutdown();
     host.open(root);
     assert(host.state.active);
@@ -384,7 +399,8 @@ unittest
     const root = pickerFixture("hue-picker-host-keys");
     scope (exit) rmdirRecurse(root);
 
-    auto host = new PickerHost;
+    auto owner = makeUnique!PickerHost();
+    auto host = &owner.get();
     scope (exit) host.shutdown();
     host.open(root);
     drain(*host);

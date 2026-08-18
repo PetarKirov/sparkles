@@ -35,7 +35,7 @@ import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
 import sparkles.input.frame : InputFrame, foldFrame;
 import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
     KeyContext;
-import picker_host : PickerAction, PickerHost;
+import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_preview : PickerDocPane;
 import picker_view : pickerGeometryFor, pickerPreviewRect;
 import sparkles.ui_tui : Cell, Grid;
@@ -75,6 +75,7 @@ import sparkles.syntax : HighlightEvent, LabelId, LabelSet, Theme, StyleSpec, Te
     ResolvedTheme, RgbColor, toRgb;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : mix;
+import sparkles.base.unique : makeUnique;
 
 import sparkles.syntax.md.render_widgets : CodeOverflow, FenceScroll;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -766,12 +767,12 @@ int runGui(GuiArgs guiArgs) @system
     // re-walks the corpus over the explorer's root and globs. The preview
     // pane (`picker_preview`) is a real document pane wired with the same
     // loader, themes, grammar cache and ANSI decoder as the main view.
-    PickerHost* filePicker;
+    OwnedPicker filePicker;
     PickerDocPane* filePickerDoc;
     void openFilePicker()
     {
-        if (filePicker is null)
-            filePicker = new PickerHost;
+        if (filePicker.empty)
+            filePicker = makeUnique!PickerHost();
         if (filePickerDoc is null)
             filePickerDoc = new PickerDocPane;
         filePickerDoc.load = loadDoc;
@@ -781,11 +782,11 @@ int runGui(GuiArgs guiArgs) @system
         filePickerDoc.pane.vm.cache = tsCache;
         filePickerDoc.pane.vm.decodeAnsi = (const(char)[] b) => decodeAnsi(b);
         filePickerDoc.syncTheme(vm.themeIdx);
-        filePicker.open(pn.tree.root.length ? pn.tree.root : ".",
+        filePicker.get.open(pn.tree.root.length ? pn.tree.root : ".",
             pn.tree.includeGlobs, pn.tree.excludeGlobs);
     }
 
-    scope (exit) if (filePicker !is null) filePicker.shutdown();
+    scope (exit) if (!filePicker.empty) filePicker.get.shutdown();
     scope (exit) if (filePickerDoc !is null) filePickerDoc.shutdown();
 
     /// ditto — the set's currently-selected entry (`GNV1`).
@@ -1679,12 +1680,12 @@ int runGui(GuiArgs guiArgs) @system
         // tree the terminal paints, centered and one row down — then the
         // preview panel's framed hole is filled with the live document
         // pane's cells, drawn through the font set.
-        if (filePicker !is null && filePicker.state.active)
+        if (!filePicker.empty && filePicker.get.state.active)
         {
             const cellsW = screenW / cellW;
             const cellsH = screenH / cellH;
             const pkGeometry = pickerGeometryFor(cellsW, cellsH);
-            auto pkTree = filePicker.buildView(pkGeometry);
+            auto pkTree = filePicker.get.buildView(pkGeometry);
             auto pkFrames = layout(pkTree,
                 Constraints(maxW: 2 * pkGeometry.panelCols));
             const pkPanel = pkFrames[pkTree.root].rect;
@@ -2050,17 +2051,17 @@ int runGui(GuiArgs guiArgs) @system
         // frame — and, in the synchronous degradation (`PIK8`), takes its
         // next duration-bounded step here on the frame's own budget. The
         // preview document pane's debounce/dwell clocks advance with it.
-        if (filePicker !is null)
-            cast(void) filePicker.poll();
-        if (filePicker !is null && filePicker.state.active
+        if (!filePicker.empty)
+            cast(void) filePicker.get.poll();
+        if (!filePicker.empty && filePicker.get.state.active
             && filePickerDoc !is null)
         {
-            filePickerDoc.select(filePicker.selectedPath);
+            filePickerDoc.select(filePicker.get.selectedPath);
             filePickerDoc.syncTheme(vm.themeIdx);
             cast(void) filePickerDoc.tick();
         }
 
-        if (filePicker !is null && filePicker.state.active)
+        if (!filePicker.empty && filePicker.get.state.active)
         {
             // The fuzzy picker is a modal surface (`PIK1`): while it is
             // open it owns the whole keyboard.
@@ -2077,7 +2078,7 @@ int runGui(GuiArgs guiArgs) @system
                         key: k.ch == 'd' ? Key.pageDown : Key.pageUp)));
                     continue;
                 }
-                final switch (filePicker.handleKey(k))
+                final switch (filePicker.get.handleKey(k))
                 {
                 case PickerAction.consumed:
                     break;
@@ -2086,8 +2087,8 @@ int runGui(GuiArgs guiArgs) @system
                     break;
                 case PickerAction.accepted:
                     filePickerDoc.close();
-                    cast(void) openPath(filePicker.acceptedPath,
-                        baseName(filePicker.acceptedPath), "");
+                    cast(void) openPath(filePicker.get.acceptedPath,
+                        baseName(filePicker.get.acceptedPath), "");
                     break;
                 }
             }
@@ -3108,7 +3109,7 @@ int runGui(GuiArgs guiArgs) @system
         {
             openFilePicker();
             foreach (ch; capture.picker)
-                cast(void) filePicker.handleKey(KeyEvent(Key.char_, ch));
+                cast(void) filePicker.get.handleKey(KeyEvent(Key.char_, ch));
         }
     }
 
