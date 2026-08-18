@@ -552,6 +552,14 @@ struct PreviewTui
         paintLantern(g);
     }
 
+    /// A host-supplied status notice (workspace startup messages — e.g. a
+    /// format-preview refusal). Null/empty leaves the bar unchanged.
+    void showNotice(string msg) @safe pure nothrow @nogc
+    {
+        if (msg !is null && msg.length)
+            notice = msg;
+    }
+
     /// Pointer hover over the ruler, kept by the bare-move branch (`RUL6`)
     /// so the workspace's pane shapes can answer without a position.
     private bool rulerHover;

@@ -16,7 +16,8 @@ version (Posix):
 import core.time : Duration;
 import core.time : msecs;
 import std.path : dirName;
-import format_preview : formatPreviewPump, formatPreviewRulerDragging;
+import format_preview : formatPreviewPump, formatPreviewRulerDragging,
+    formatPreviewStart;
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.unique : makeUnique;
@@ -1369,7 +1370,9 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     int codeMaxLines = -1,
     OverflowPolicy tableOverflow = OverflowPolicy.init,
     int tableMaxLines = -1,
-    WorkspaceDoc delegate() @system reloadDiff = null) @system
+    WorkspaceDoc delegate() @system reloadDiff = null,
+    bool formatPreview = false, int formatWidth = 0,
+    string formatterName = null) @system
 {
     WorkspaceTui w;
     // The picker's worker pool and the preview's oracle must stop before the
@@ -1433,6 +1436,10 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             initial.diffSession);
         w.viewer.docNote = initial.dsvNote;
         w.viewer.vm.docPath = isDir ? null : target;
+        // `FMV8`: --format-preview starts the session on the opening file.
+        if (formatPreview)
+            w.viewer.showNotice(formatPreviewStart(w.viewer.vm,
+                formatWidth, formatterName));
         w.syncTreeSession();
         w.startDiffTypes();
         if (target.length)

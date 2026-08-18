@@ -347,6 +347,10 @@ struct ViewerModel
         barSv = typeof(barSv).init;
         barSvActive = size_t.max;
         folds = DisclosureState!size_t(true);
+        // A new document invalidates the format preview's restore pair —
+        // the session drops to off (`FMV4` must never restore across docs).
+        if (fmt !is null)
+            fmt.documentChanged();
         rebuild();
     }
 

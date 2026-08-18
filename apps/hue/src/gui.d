@@ -60,7 +60,7 @@ import viewer_model : Dims, MdCell, MdFence, ViewerModel;
 import format_preview : formatPreviewActive, formatPreviewChip,
     formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
     formatPreviewRulerCol, formatPreviewRulerDragging, formatPreviewRulerHits,
-    formatPreviewRulerPointer, formatPreviewToggle;
+    formatPreviewRulerPointer, formatPreviewStart, formatPreviewToggle;
 
 // The composable markdown view (M10): the preview is one widget tree; the
 
@@ -224,6 +224,9 @@ struct GuiArgs
     string docLang = null;               // canonical language (CST folds)
     string[] includeGlobs = null;        // explorer globs (XPF2)
     string[] excludeGlobs = null;        // ditto
+    bool formatPreview = false;          // FMV8: start in the format preview
+    int formatWidth = 0;                 // ruler column (0 = discover)
+    string formatterName = null;         // preferred formatter
     int treeWidth = 32;                  // explorer pane width in cells
     int tabWidth = 4;                    // tab stops in the raw view
     bool listWhitespace = false;         // vim 'list' whitespace glyphs
@@ -3215,6 +3218,13 @@ int runGui(GuiArgs guiArgs) @system
             source, events, preview, twoslash, docLang, initialDiff,
             initialDiffSides, initialDiffSession);
         vm.docPath = docPath;
+        // `FMV8`: --format-preview starts the session on the opening file.
+        if (formatPreview)
+            if (const msg = formatPreviewStart(vm, formatWidth, formatterName))
+            {
+                flash.copyModeMsg = msg;
+                flash.toast = Timeline.triggered(toastCfg);
+            }
         // A markdown file opens in preview by default; Tab toggles to the raw
         // highlighted-source view. The capture's preview pin ("0") fixes the
         // initial mode for deterministic goldens.
