@@ -409,12 +409,25 @@ struct ViewerModel
     diff/preview state. The viewport survives clamped (`FMV5`); search and
     folds reset so they recompute against the new buffer (`FMV6`). The
     retained parse re-keys automatically: `ensureParsed` compares by slice
-    identity, and every formatted buffer is a fresh allocation.
+    identity, and every formatted buffer is a fresh allocation — pass
+    `layers_` when the caller already parsed `source_` (the layer-returning
+    `highlightInjected` overload) so that re-parse never happens.
     */
-    void swapContent(const(char)[] source_, const(HighlightEvent)[] events_)
+    void swapContent(const(char)[] source_, const(HighlightEvent)[] events_,
+        ParsedLayer*[] layers_ = null)
     {
         source = source_;
         events = events_;
+        // A caller that highlighted `source_` already parsed it, and the
+        // parse is the expensive half. Adopting its layers here is what
+        // stops `ensureParsed` from parsing the same bytes a second time
+        // during the rebuild below — the format preview's per-width cost.
+        if (layers_ !is null)
+        {
+            layers = layers_;
+            parsedFor = source_;
+            parsedLang = lang;
+        }
         srcTotal = lineCount(source);
         lineStarts = buildLineStarts(source);
         matches = null;
