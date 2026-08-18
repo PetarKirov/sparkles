@@ -23,6 +23,8 @@ version (linux)
 }
 version (EventHorizonRingFs)  :  // rides the linux Sched; generalizes with M10
 
+import sparkles.base.text.cstring : CString, tryToCString;
+
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.io : FileHandle;
 import sparkles.event_horizon.op;
@@ -81,15 +83,15 @@ completion delivers the fd. `flags`/`mode` are the `open(2)` values
 IoResult!FileHandle openFile(ref Sched s, scope const(char)[] path, int flags,
     uint mode = 0)
 {
-    // NUL-terminate on this frame — kernel-stable while parked (§6.5).
-    char[4096] zpath = void;
-    if (path.length >= zpath.length)
+    // NUL-terminate on this frame — kernel-stable while parked (§6.5). The
+    // CString lives on the same frame the raw array did, so the operand stays
+    // valid for exactly as long; it just owns the `= void` and the bound.
+    CString!4096 zpath;
+    if (!tryToCString(zpath, [path]))
         return ioErr!FileHandle(36 /* ENAMETOOLONG */, OpKind.openAt,
             IoErrorStage.submit, "path too long");
-    zpath[0 .. path.length] = path[];
-    zpath[path.length] = '\0';
 
-    auto o = s.await(OpOpenAt(atFdCwd, (() @trusted => zpath.ptr)(), flags, mode));
+    auto o = s.await(OpOpenAt(atFdCwd, zpath.ptr, flags, mode));
     if (o.res < 0)
         return ioErr!FileHandle(-o.res, OpKind.openAt);
     return ioOk(FileHandle(o.res));
@@ -118,14 +120,12 @@ IoResult!void fsyncFile(ref Sched s, FileHandle f)
 IoResult!void statxPath(ref Sched s, scope const(char)[] path, ref Statx out_,
     uint mask = statxBasicStats)
 {
-    char[4096] zpath = void;
-    if (path.length >= zpath.length)
+    CString!4096 zpath;
+    if (!tryToCString(zpath, [path]))
         return ioErr!void(36 /* ENAMETOOLONG */, OpKind.statx,
             IoErrorStage.submit, "path too long");
-    zpath[0 .. path.length] = path[];
-    zpath[path.length] = '\0';
 
-    auto o = s.await(OpStatx(atFdCwd, (() @trusted => zpath.ptr)(), 0, mask,
+    auto o = s.await(OpStatx(atFdCwd, zpath.ptr, 0, mask,
         (() @trusted => cast(void*) &out_)()));
     if (o.res < 0)
         return ioErr!void(-o.res, OpKind.statx);
