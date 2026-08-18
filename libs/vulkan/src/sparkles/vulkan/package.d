@@ -24,6 +24,10 @@ $(LI $(MREF sparkles,vulkan,enumerate) — Vulkan's two-call
 $(LI $(MREF sparkles,vulkan,extensions) — extension names read inside their
     fixed-array bound, and the portability handshake MoltenVK needs, decided
     once instead of at each consumer.)
+$(LI $(MREF sparkles,vulkan,flags) — which bits of a `Vk*Flags` value are set,
+    decided by the bit rather than by the enumerator's spelling.)
+$(LI $(MREF sparkles,vulkan,names) — an enumerator's own name, kebab-cased and
+    stripped of the type-name prefix C forces onto every member.)
 $(LI $(MREF sparkles,vulkan,result) — `VkResult` as
     `Expected!(T, VkResult)`, following Vulkan's own rule that negative codes
     are errors and warnings such as `VK_SUBOPTIMAL_KHR` are not.))
@@ -44,6 +48,8 @@ public import sparkles.vulkan.vulkan_c;
 public import sparkles.vulkan.dispatch;
 public import sparkles.vulkan.enumerate;
 public import sparkles.vulkan.extensions;
+public import sparkles.vulkan.flags;
 public import sparkles.vulkan.loader;
+public import sparkles.vulkan.names;
 public import sparkles.vulkan.result;
 public import sparkles.vulkan.structure_type;
