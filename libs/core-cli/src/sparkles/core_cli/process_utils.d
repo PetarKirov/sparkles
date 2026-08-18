@@ -385,6 +385,7 @@ MonitoredResult executeMonitored(
     scope void delegate(in ResourceUsage sample) @safe onSample = null,
     ChildStdin childStdin = ChildStdin.inherit,
     Duration timeout = Duration.zero,
+    const string[string] env = null,
 )
 {
     import std.process : kill, spawnProcess, tryWait, wait;
@@ -410,7 +411,10 @@ MonitoredResult executeMonitored(
 
     auto sink = File(logPath, "w");
     auto childIn = childStdin == ChildStdin.empty ? File(nullDevice, "r") : stdin;
-    auto pid = spawnProcess(resolvedArgv(args), childIn, sink, sink);
+    // `env` adds to the inherited environment; only `Config.newEnv` would
+    // replace it, and a caller setting one variable does not mean to drop the
+    // rest (see `runStreaming`).
+    auto pid = spawnProcess(resolvedArgv(args), childIn, sink, sink, env);
 
     version (linux)
         result.usage.sampled = true;
@@ -849,6 +853,7 @@ CapturedResult runStreaming(Sink)(
     const(string)[] args,
     scope Sink sink,
     string workDir = null,
+    const string[string] env = null,
 )
 {
     import std.array : appender;
@@ -858,9 +863,12 @@ CapturedResult runStreaming(Sink)(
     auto all = appender!string;
     try
     {
+        // `env` *adds to* the inherited environment rather than replacing it
+        // (that would need `Config.newEnv`), so a caller sets one variable for
+        // the child without having to reconstruct the rest.
         auto pipes = (() @trusted => pipeProcess(
             resolvedArgv(args), Redirect.stdout | Redirect.stderrToStdout,
-            null, Config.none, workDir))();
+            env, Config.none, workDir))();
         foreach (line; (() @trusted => pipes.stdout.byLine)())
         {
             sink(line);
@@ -1112,4 +1120,27 @@ version (Posix)
         p.terminate();
         assert(!p.alive);
     }
+}
+
+@("process_utils.runStreaming.envAddsToTheInheritedEnvironment")
+@system unittest
+{
+    import std.process : environment;
+
+    // The child must see both the variable we set and the ones it inherited —
+    // `std.process` replaces the environment only under `Config.newEnv`, and a
+    // caller passing one variable does not mean to discard `PATH`.
+    environment["CI_RUNSTREAMING_PARENT"] = "inherited";
+    scope (exit)
+        environment.remove("CI_RUNSTREAMING_PARENT");
+
+    string[] seen;
+    auto r = runStreaming(
+        ["sh", "-c", `echo "$CI_RUNSTREAMING_CHILD/$CI_RUNSTREAMING_PARENT"`],
+        (scope const(char)[] line) { seen ~= line.idup; },
+        null,
+        ["CI_RUNSTREAMING_CHILD": "added"]);
+
+    assert(r.succeeded);
+    assert(seen == ["added/inherited"]);
 }
