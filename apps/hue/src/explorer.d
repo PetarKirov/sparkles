@@ -943,6 +943,16 @@ struct ExplorerTui
             case Command.pickerToggleScore:
             case Command.pickerPreviewDown: case Command.pickerPreviewUp:
                 break;
+
+            // The inspector pane answers these; its scope is unreachable
+            // while a pane dispatches.
+            case Command.inspDown: case Command.inspUp:
+            case Command.inspPageDown: case Command.inspPageUp:
+            case Command.inspHome: case Command.inspEnd:
+            case Command.inspCollapse: case Command.inspExpand:
+            case Command.inspActivate: case Command.inspClose:
+            case Command.inspToggleAnonymous: case Command.inspTogglePick:
+                break;
         }
         return true;
     }
