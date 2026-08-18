@@ -754,6 +754,10 @@ export default withMermaid(
                   link: '/specs/hue/folding',
                 },
                 {
+                  text: 'Format preview (planned)',
+                  link: '/specs/hue/format-preview',
+                },
+                {
                   text: 'Tree / DAG view (planned)',
                   link: '/specs/hue/tree-view',
                 },

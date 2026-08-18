@@ -94,13 +94,14 @@ It shares the parse tree with the [tree-sitter inspector overlay](./overlays.md)
 
 ## Relationship to existing specs
 
-| Piece                                            | Role in folding                                       |
-| ------------------------------------------------ | ----------------------------------------------------- |
-| `sparkles:syntax` CST + `folds.scm`              | code fold ranges (`FSR1`/`FSR2`)                      |
-| `sparkles:syntax` `md/model.d` (`MdDoc`)         | markdown fold ranges (`FSR3`)                         |
-| [ui-architecture.md](./ui-architecture.md) `STM` | the fold state machine (`FLD2`)                       |
-| [gui.md](./gui.md) `RND`/`NUM`/`NAV`/`FND`       | line elision, gutter, reflow, search/goto integration |
-| [tui.md](./tui.md) `TSF`/`TIN`                   | terminal rendering + input (`FLD9`)                   |
-| [overlays.md](./overlays.md) `TSI`               | shares the same CST (the tree-sitter inspector)       |
+| Piece                                            | Role in folding                                                                                      |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `sparkles:syntax` CST + `folds.scm`              | code fold ranges (`FSR1`/`FSR2`)                                                                     |
+| `sparkles:syntax` `md/model.d` (`MdDoc`)         | markdown fold ranges (`FSR3`)                                                                        |
+| [ui-architecture.md](./ui-architecture.md) `STM` | the fold state machine (`FLD2`)                                                                      |
+| [gui.md](./gui.md) `RND`/`NUM`/`NAV`/`FND`       | line elision, gutter, reflow, search/goto integration                                                |
+| [tui.md](./tui.md) `TSF`/`TIN`                   | terminal rendering + input (`FLD9`)                                                                  |
+| [overlays.md](./overlays.md) `TSI`               | shares the same CST (the tree-sitter inspector)                                                      |
+| [format-preview.md](./format-preview.md) `FMV6`  | both transform the visible text; folds recompute against the displayed (possibly reformatted) buffer |
 
 → [GUI requirements](./gui.md) · [TUI requirements](./tui.md) · [UI architecture](./ui-architecture.md) · [Overview](./index.md)
