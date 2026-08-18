@@ -16,9 +16,7 @@ is why `sparkles:vulkan`'s dispatch tables are per-device rather than global.
 */
 module sparkles.ui_sdl3.vulkan_context;
 
-import std.algorithm : canFind, filter, map, maxElement;
-import std.array : array;
-import std.range : iota;
+import std.algorithm : maxElement;
 import std.string : fromStringz;
 
 import expected : err, ok;
@@ -135,7 +133,12 @@ struct VulkanContext
         if (extNames is null)
             return err!void("SDL_Vulkan_GetInstanceExtensions: " ~ sdlError());
 
-        auto instanceCreated = ctx.createInstance(req, extNames, extCount);
+        // Decided once, here: `createInstance` retries itself without the
+        // validation layer, and re-enumerating the loader's extensions on that
+        // second pass would be pure waste.
+        auto requested = extNames[0 .. extCount];
+        auto instanceCreated = ctx.createInstance(req, requested,
+            instancePortability(ctx.global, requested));
         if (instanceCreated.hasError)
             return instanceCreated;
 
@@ -159,7 +162,7 @@ struct VulkanContext
     }
 
     private SdlExpected!() createInstance(in ContextRequest req,
-        const(char*)* extNames, uint extCount) @trusted nothrow
+        scope const(char*)[] extNames, in InstancePortability portability) @trusted nothrow
     {
         import std.string : toStringz;
 
@@ -174,10 +177,18 @@ struct VulkanContext
         static immutable validationLayer = "VK_LAYER_KHRONOS_validation";
         const(char)* layerName = validationLayer.ptr;
 
+        // SDL 3.4's GetInstanceExtensions on Apple is just VK_KHR_surface +
+        // VK_EXT_metal_surface, so on MoltenVK the portability extension has
+        // to be appended to SDL's list rather than replacing it.
+        auto names = portability.addExtension
+            ? extNames ~ khrPortabilityEnumeration.ptr
+            : extNames;
+
         auto createInfo = vkInfo(VkInstanceCreateInfo(
+            flags: portability.flags,
             pApplicationInfo: &appInfo,
-            enabledExtensionCount: extCount,
-            ppEnabledExtensionNames: extNames,
+            enabledExtensionCount: cast(uint) names.length,
+            ppEnabledExtensionNames: names.ptr,
             enabledLayerCount: req.validation ? 1 : 0,
             ppEnabledLayerNames: req.validation ? &layerName : null,
         ));
@@ -193,9 +204,9 @@ struct VulkanContext
             {
                 ContextRequest without = req;
                 without.validation = false;
-                return createInstance(without, extNames, extCount);
+                return createInstance(without, extNames, portability);
             }
-            return err!void("vkCreateInstance: " ~ resultName(created.error));
+            return err!void("vkCreateInstance: " ~ describeResult(created.error));
         }
 
         instance = InstanceCommands.load(global, handle);
@@ -227,20 +238,22 @@ struct VulkanContext
             pQueuePriorities: &priority,
         ));
 
-        static immutable swapchainExt = "VK_KHR_swapchain";
-        const(char)* swapchainName = swapchainExt.ptr;
+        // On a portability ICD the subset extension is mandatory, not
+        // optional — VUID-VkDeviceCreateInfo-pProperties-04451.
+        const(char)*[2] deviceExts = [khrSwapchain.ptr, khrPortabilitySubset.ptr];
+        const deviceExtCount = needsPortabilitySubset(instance, physicalDevice) ? 2 : 1;
 
         auto deviceInfo = vkInfo(VkDeviceCreateInfo(
             queueCreateInfoCount: 1,
             pQueueCreateInfos: &queueInfo,
-            enabledExtensionCount: 1,
-            ppEnabledExtensionNames: &swapchainName,
+            enabledExtensionCount: deviceExtCount,
+            ppEnabledExtensionNames: deviceExts.ptr,
         ));
 
         VkDevice handle;
         auto created = instance.createDevice(physicalDevice, &deviceInfo, null, &handle).check;
         if (created.hasError)
-            return err!void("vkCreateDevice: " ~ resultName(created.error));
+            return err!void("vkCreateDevice: " ~ describeResult(created.error));
 
         device = DeviceCommands.load(instance, handle);
         if (!device.complete)
