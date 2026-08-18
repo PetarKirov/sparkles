@@ -267,6 +267,8 @@ real reduction and is scheduled after this branch ships).
   [the survey](../../research/code-formatting/index.md)
 - Code: `libs/dmd-fmt/src/sparkles/dmd_fmt/` — `spine.d` (S1/S3),
   `oracle.d` + `groups.d` (S2), `loc_inventory.d` (S4), `bench.d` (D3)
+- Consumers: hue's [format preview](../hue/format-preview.md) (`FPR2`/`FPR7`)
+  drives `formatText`/`configFor` interactively from a draggable column ruler
 - Fork: [PLAN-UPSTREAMING.md][plan] on `dmdserver-dub` tracks the
   upstreamable fixes and library-quality findings this work produced
 

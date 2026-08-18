@@ -81,17 +81,18 @@ concerns compose (ordered, dependency-aware) rather than accrete as ad-hoc passe
 
 Every hue feature lands on a pipeline stage — the concrete payoff of naming the seam:
 
-| Feature                                                                                                               | Stage                                          |
-| --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Highlighting, grammar loading ([`ENG`](./feature-requirements.md))                                                    | `PRS` (parse) → base `XFM`                     |
-| Injections ([`ENG1`](./feature-requirements.md))                                                                      | `XFM3` (nested pipeline)                       |
-| Overlays — twoslash / coverage / tracing / TSI / CSZ / source-map ([overlays](./overlays.md))                         | `XFM2` (decorations)                           |
-| Content folding fold ranges ([folding](./folding.md) `FSR`)                                                           | `XFM2` (derived data)                          |
-| Navigation reference targets ([navigation](./navigation.md) `REF`)                                                    | `XFM2` (derived data)                          |
-| Images / diagrams / math ([media](./media.md) `MDB`)                                                                  | `XFM2` (media blocks) → `CMP`                  |
-| Semantic refinement (`sparkles:dmd-lsp`, [`SEM1`](./gui.md))                                                          | `XFM4` (semantic)                              |
-| Diff passes — pairing / word refinement / noise classification / structural ([diff-view](./diff-view.md) `DVM`/`DVN`) | `XFM2` (derived data) — ships standalone first |
-| ANSI / HTML / GUI / TUI renderers                                                                                     | `CMP` (compilers)                              |
-| `@sparkles/hue` unified/rehype interop ([web](./web-integration.md))                                                  | `PIP6`                                         |
+| Feature                                                                                                               | Stage                                               |
+| --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Highlighting, grammar loading ([`ENG`](./feature-requirements.md))                                                    | `PRS` (parse) → base `XFM`                          |
+| Injections ([`ENG1`](./feature-requirements.md))                                                                      | `XFM3` (nested pipeline)                            |
+| Overlays — twoslash / coverage / tracing / TSI / CSZ / source-map ([overlays](./overlays.md))                         | `XFM2` (decorations)                                |
+| Content folding fold ranges ([folding](./folding.md) `FSR`)                                                           | `XFM2` (derived data)                               |
+| Navigation reference targets ([navigation](./navigation.md) `REF`)                                                    | `XFM2` (derived data)                               |
+| Images / diagrams / math ([media](./media.md) `MDB`)                                                                  | `XFM2` (media blocks) → `CMP`                       |
+| Semantic refinement (`sparkles:dmd-lsp`, [`SEM1`](./gui.md))                                                          | `XFM4` (semantic)                                   |
+| Diff passes — pairing / word refinement / noise classification / structural ([diff-view](./diff-view.md) `DVM`/`DVN`) | `XFM2` (derived data) — ships standalone first      |
+| Format preview ([format-preview](./format-preview.md) `FMV`/`FPR`)                                                    | pre-`PRS` source transform (re-enters the pipeline) |
+| ANSI / HTML / GUI / TUI renderers                                                                                     | `CMP` (compilers)                                   |
+| `@sparkles/hue` unified/rehype interop ([web](./web-integration.md))                                                  | `PIP6`                                              |
 
 → [UI architecture](./ui-architecture.md) · [Overlays](./overlays.md) · [Web integration](./web-integration.md) · [General requirements](./feature-requirements.md) · [Overview](./index.md)
