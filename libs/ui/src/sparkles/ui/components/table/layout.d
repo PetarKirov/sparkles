@@ -845,3 +845,129 @@ dchar[] frameLineGlyphs(in SlotGrid g, in TableProps p, in size_t[] widths, size
     }
     return line;
 }
+
+version (unittest)
+{
+    private SlotGrid testGrid(in Cell[][] cells) @safe pure nothrow
+        => resolveGrid(cells).grid;
+}
+
+@("table.layout.resolveColumnWidths.seamAndCaps")
+@safe pure unittest
+{
+    // naturals are per-anchor inputs now — the core never measures content.
+    auto g = testGrid([[Cell("aa"), Cell("b")], [Cell("c"), Cell("dddd")]]);
+    const naturals = [size_t(2), 1, 1, 4];
+    assert(resolveColumnWidths(g, TableProps(), naturals) == [2, 4]);
+    assert(resolveColumnWidths(g,
+        TableProps(columnMinWidths: [5]), naturals) == [5, 4]);
+    assert(resolveColumnWidths(g,
+        TableProps(columnMaxWidths: [0, 2]), naturals) == [2, 2]);
+    // Total cap: frame = 2*2 gutters + 1 separator + 2 borders = 7; shrink
+    // widest-first (leftmost on a tie) to fit 10.
+    assert(resolveColumnWidths(g, TableProps(maxWidth: 10), naturals) == [1, 2]);
+}
+
+@("table.layout.resolveColumnWidths.colspanDistribution")
+@safe pure unittest
+{
+    auto g = testGrid([[Cell("xxxxxxx", colSpan: 2)], [Cell("a"), Cell("b")]]);
+    // The span absorbs 2 gutters + 1 separator; the remaining deficit of 2
+    // spreads 1 per member column.
+    assert(resolveColumnWidths(g, TableProps(), [size_t(7), 1, 1]) == [2, 2]);
+}
+
+@("table.layout.resolveRowHeights.seamAndRowspanGrowth")
+@safe pure unittest
+{
+    auto g = testGrid([[Cell("A", rowSpan: 2), Cell("B")], [Cell("C")]]);
+    assert(resolveRowHeights(g, [size_t(1), 1, 1]) == [1, 1]);
+    // A 3-line rowspan cell grows its bands (remainder to the earlier row).
+    assert(resolveRowHeights(g, [size_t(3), 1, 1]) == [2, 1]);
+}
+
+@("table.layout.decimalPadsFor.tailAggregation")
+@safe pure unittest
+{
+    import sparkles.base.text.width : Align;
+
+    auto g = testGrid([[Cell("1.5")], [Cell("23.25")], [Cell("7")]]);
+    const p = TableProps(columnAligns: [Align.decimal]);
+    // tails: width after the last dot; size_t.max = no dot.
+    const pads = decimalPadsFor(g, p, [size_t(1), 2, size_t.max]);
+    assert(pads == [1, 0, 3]); // maxTail 2: 1.5 pads 1, 23.25 pads 0, dotless 7 pads 3
+    assert(decimalPadsFor(g, TableProps(), [size_t(1), 2, size_t.max]) is null);
+}
+
+@("table.layout.walkBodyLines.rowspanValignAndRules")
+@safe pure unittest
+{
+    import std.algorithm : count, filter;
+
+    // A(rowSpan 2, middle) | B  over  C(2 lines), with row separators: output
+    // lines are top(0) body(1) rule(2) body(3) body(4) bottom(5).
+    auto g = testGrid([
+        [Cell("A", rowSpan: 2, valign: VAlign.middle), Cell("B")],
+        [Cell("C")],
+    ]);
+    const p = TableProps(rowSeparators: true);
+    const widths = [size_t(1), 1];
+    const heights = resolveRowHeights(g, [size_t(1), 1, 2]);
+    assert(heights == [1, 2]);
+    const walk = walkBodyLines(g, p, widths, heights, [size_t(1), 1, 2]);
+
+    // One field per covering anchor per body line: 2 fields on each of 3 lines.
+    assert(walk.fields.length == 6);
+    // A's single content line lands on the middle of its 3-line extent
+    // (line 3, the first text line of row 1), blank above and below.
+    foreach (f; walk.fields.filter!(f => f.anchor == 0))
+        assert(f.hasContent == (f.line == 3));
+    // Vertical rules: both borders on every body line, and the interior
+    // separator (owners differ at boundary 1 in both bands).
+    assert(walk.rules.count!(rc => rc.x == 0) == 3);
+    assert(walk.rules.count!(rc => rc.x == 8) == 3);
+    assert(walk.rules.count!(rc => rc.x == 4) == 3);
+    assert(walk.rules.length == 9);
+}
+
+@("table.layout.anchorRects.rowspanSwallowsRuleLine")
+@safe pure unittest
+{
+    auto g = testGrid([[Cell("A", rowSpan: 2), Cell("B")], [Cell("C")]]);
+    const p = TableProps(rowSeparators: true);
+    const rects = anchorRects(g, p, [size_t(1), 1], [size_t(1), 1]);
+    // Lines: top(0) body(1) rule(2) body(3) bottom(4). A spans body+rule+body;
+    // its rect is the field plus both gutters, borders excluded.
+    assert(rects[0] == AnchorRect(1, 1, 3, 3));
+    assert(rects[1] == AnchorRect(5, 1, 3, 1)); // B
+    assert(rects[2] == AnchorRect(5, 3, 3, 1)); // C (the cursor skips A's band)
+}
+
+@("table.layout.ruleGlyphs.spanAwareRule")
+@safe pure unittest
+{
+    import std.conv : to;
+
+    auto g = testGrid([[Cell("A", rowSpan: 2), Cell("B")], [Cell("C")]]);
+    const p = TableProps(rowSeparators: true);
+    const widths = [size_t(1), 1];
+    // The interior rule vanishes inside the rowspan: bare vertical at the left
+    // border, a tee where the rule meets the separator, blank fill above A.
+    assert(ruleGlyphs(g, p, widths, 1).to!string == "│   ├───┤");
+    assert(ruleGlyphs(g, p, widths, 0).to!string == "╭───┬───╮");
+    assert(ruleGlyphs(g, p, widths, 2).to!string == "╰───┴───╯");
+    assert(tableWidth(p, widths, g.numCols) == 9);
+}
+
+@("table.layout.frameLineGlyphs.bandFrame")
+@safe pure unittest
+{
+    import std.conv : to;
+
+    auto g = testGrid([[Cell("A"), Cell("B")], [Cell("wide", colSpan: 2)]]);
+    const widths = [size_t(1), 2];
+    const p = TableProps();
+    // Row 0 has the interior separator; row 1's colspan absorbs it.
+    assert(frameLineGlyphs(g, p, widths, 0).to!string == "│   │    │");
+    assert(frameLineGlyphs(g, p, widths, 1).to!string == "│        │");
+}
