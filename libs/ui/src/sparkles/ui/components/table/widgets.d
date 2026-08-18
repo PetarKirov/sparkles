@@ -164,9 +164,6 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     const walk = walkBodyLines(g, props, widths, rowHeights, lineCounts);
     const rects = anchorRects(g, props, widths, rowHeights);
 
-    uint[] parts;
-    int tableH;
-
     uint ruleRun(string text_, size_t hitId = 0)
     {
         Widget w = Widget(kind: WidgetKind.rich, spans: [
@@ -186,49 +183,35 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
         => b.container(WidgetKind.column, [child],
             padding: Insets(y, 0, 0, x));
 
-    // The lattice: whole-line runs for the rules, one 1-cell run per drawn
-    // vertical on the body lines — never a run across a field or gutter, so
-    // unpainted cells stay unpainted (the same coverage as per-line emission).
+    // Emission is one event list sorted by (line, x) — global reading order —
+    // because `documentRows` aggregates per-row text in tree walk order: a
+    // body row must contribute `│ a │ b │` left to right, not rules-then-
+    // cells. An anchor emits its whole keyed wrapper at its first visible
+    // content line (its rect's top line when it has none), so single-line
+    // tables order perfectly and multi-line cells stay one addressable node.
+    enum EmitKind : ubyte { ruleLine, ruleCell, anchor }
+    static struct EmitEvent
+    {
+        size_t line, x;
+        EmitKind kind;
+        size_t index; // lattice row (ruleLine), walk.rules index, or anchor
+    }
+
+    EmitEvent[] events;
     size_t outLine;
     foreach (d; lineDescs(g, props, rowHeights))
     {
         scope (exit) outLine++;
-        const y = cast(int) outLine;
         final switch (d.kind)
         {
             case LineKind.topRule:
-                const glyphs = ruleGlyphs(g, props, widths, 0);
-                const iconW = cast(int) cellsOf(style.cutout.icon.text);
-                if (style.cutout.present && props.border && iconW > 0
-                    && widths[g.numCols - 1] + 2 >= iconW)
-                {
-                    // `TBL6`: the icon replaces the last fill cells before the
-                    // corner; the junctions stay untouched.
-                    Widget iconWdg = Widget(kind: WidgetKind.rich,
-                        spans: [style.cutout.icon],
-                        slot: style.cutout.icon.slot, wrap: TextWrap.none,
-                        hitId: style.cutout.hitId, textStyle: style.baseStyle);
-                    if (style.cutout.hasFg)
-                    {
-                        iconWdg.fgOverride = style.cutout.fg;
-                        iconWdg.hasFgOverride = true;
-                    }
-                    parts ~= positioned(0, y, b.container(WidgetKind.row, [
-                        ruleRun(glyphs[0 .. $ - 1 - iconW].to!string),
-                        b.add(iconWdg),
-                        ruleRun(glyphs[$ - 1 .. $].to!string),
-                    ]));
-                }
-                else
-                    parts ~= positioned(0, y, ruleRun(glyphs.to!string));
+                events ~= EmitEvent(outLine, 0, EmitKind.ruleLine, 0);
                 break;
             case LineKind.rule:
-                parts ~= positioned(0, y,
-                    ruleRun(ruleGlyphs(g, props, widths, d.r).to!string));
+                events ~= EmitEvent(outLine, 0, EmitKind.ruleLine, d.r);
                 break;
             case LineKind.bottomRule:
-                parts ~= positioned(0, y,
-                    ruleRun(ruleGlyphs(g, props, widths, g.numRows).to!string));
+                events ~= EmitEvent(outLine, 0, EmitKind.ruleLine, g.numRows);
                 break;
             case LineKind.body:
             case LineKind.titlePlain:
@@ -236,15 +219,31 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
                 break; // body verticals come from the walk; titles unsupported
         }
     }
-    tableH = cast(int) outLine;
+    const tableH = cast(int) outLine;
 
-    foreach (ref rc; walk.rules)
-        parts ~= positioned(cast(int) rc.x, cast(int) rc.line,
-            ruleRun(rc.glyph.to!string));
+    foreach (ri, ref rc; walk.rules)
+        events ~= EmitEvent(rc.line, rc.x, EmitKind.ruleCell, ri);
 
-    // The cell layer: one keyed wrapper per authored anchor, sized to the
-    // anchor's rect (field + both gutters wide, every band tall), each visible
-    // content line placed inside it as a fixed-width aligned single-line run.
+    // An anchor's emission point: its first contentful line (rect top for an
+    // empty cell), at the rect's x.
+    auto anchorLine = new size_t[](authored);
+    foreach (i; 0 .. authored)
+        anchorLine[i] = rects[i].y;
+    auto seen = new bool[](authored);
+    foreach (ref fp; walk.fields)
+        if (fp.hasContent && fp.anchor < authored && !seen[fp.anchor])
+        {
+            seen[fp.anchor] = true;
+            anchorLine[fp.anchor] = fp.line;
+        }
+    foreach (i; 0 .. authored)
+        events ~= EmitEvent(anchorLine[i], rects[i].x, EmitKind.anchor, i);
+
+    import std.algorithm : sort;
+
+    events.sort!((a, b) => a.line != b.line ? a.line < b.line : a.x < b.x);
+
+    // Content lines per anchor, prebuilt so the event walk emits whole cells.
     auto cellParts = new uint[][](authored);
     foreach (ref fp; walk.fields)
     {
@@ -271,15 +270,54 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             cast(int)(fp.x - rect.x), cast(int)(fp.line - rect.y),
             b.add(alignW));
     }
-    foreach (i; 0 .. authored)
+
+    uint[] parts;
+    foreach (ref ev; events)
     {
-        const rect = rects[i];
-        Widget cellW = Widget(kind: WidgetKind.stack,
-            children: cellParts[i],
-            width: SizeSpec.fixed(cast(int) rect.w),
-            height: SizeSpec.fixed(cast(int) rect.h),
-            key: keyOf[i]);
-        parts ~= positioned(cast(int) rect.x, cast(int) rect.y, b.add(cellW));
+        const y = cast(int) ev.line;
+        final switch (ev.kind)
+        {
+            case EmitKind.ruleLine:
+                const glyphs = ruleGlyphs(g, props, widths, ev.index);
+                const iconW = cast(int) cellsOf(style.cutout.icon.text);
+                if (ev.index == 0 && style.cutout.present && props.border
+                    && iconW > 0 && widths[g.numCols - 1] + 2 >= iconW)
+                {
+                    // `TBL6`: the icon replaces the last fill cells before
+                    // the corner; the junctions stay untouched.
+                    Widget iconWdg = Widget(kind: WidgetKind.rich,
+                        spans: [style.cutout.icon],
+                        slot: style.cutout.icon.slot, wrap: TextWrap.none,
+                        hitId: style.cutout.hitId, textStyle: style.baseStyle);
+                    if (style.cutout.hasFg)
+                    {
+                        iconWdg.fgOverride = style.cutout.fg;
+                        iconWdg.hasFgOverride = true;
+                    }
+                    parts ~= positioned(0, y, b.container(WidgetKind.row, [
+                        ruleRun(glyphs[0 .. $ - 1 - iconW].to!string),
+                        b.add(iconWdg),
+                        ruleRun(glyphs[$ - 1 .. $].to!string),
+                    ]));
+                }
+                else
+                    parts ~= positioned(0, y, ruleRun(glyphs.to!string));
+                break;
+            case EmitKind.ruleCell:
+                parts ~= positioned(cast(int) ev.x, y,
+                    ruleRun(walk.rules[ev.index].glyph.to!string));
+                break;
+            case EmitKind.anchor:
+                const rect = rects[ev.index];
+                Widget cellW = Widget(kind: WidgetKind.stack,
+                    children: cellParts[ev.index],
+                    width: SizeSpec.fixed(cast(int) rect.w),
+                    height: SizeSpec.fixed(cast(int) rect.h),
+                    key: keyOf[ev.index]);
+                parts ~= positioned(cast(int) rect.x, cast(int) rect.y,
+                    b.add(cellW));
+                break;
+        }
     }
 
     Widget root = Widget(kind: WidgetKind.stack, children: parts,
@@ -546,6 +584,23 @@ version (unittest)
             }
         }
     assert(sawV && sawX);
+}
+
+@("table.widgets.documentRowsReadInOrder")
+@safe unittest
+{
+    import sparkles.ui.state : documentRows;
+
+    // documentRows appends in tree walk order, so a body row's extracted text
+    // must interleave rules and cells left to right — the emission order
+    // contract a screen reader / search index depends on.
+    auto b = Builder();
+    const res = buildTableWidgets(b, plainCells([["ab", "cd"]]));
+    auto tree = b.finish(res.root);
+    auto frames = layout(tree, Constraints(maxW: res.width));
+    const rows = documentRows(tree, frames);
+    assert(rows.length == 3);
+    assert(rows[1].text == "│ab│cd│");
 }
 
 @("table.widgets.rowspanKeyedRectSpansRuleLine")
