@@ -19,12 +19,13 @@ import sparkles.ui.tracks : resolveTracks, TrackSpec;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
 import kit;
+import keymap : GalleryCommand;
 import state : GalleryState, TracksDemo;
 
 @safe:
 
 /// ditto
-static immutable string[] keys = ["t template", "+/- width"];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageTracks`.
 
 /// A named track template, with the content widths it is resolved against.
 private struct Preset
@@ -147,14 +148,34 @@ private int total(in int[] ns) pure nothrow @nogc
 }
 
 /// ditto
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
-    switch (k.ch)
+    switch (cmd)
     {
-        case 't': s.tracksDemo.preset = (s.tracksDemo.preset + 1) % presets().length; return true;
-        case '+': case '=': s.tracksDemo.avail = clampAvail(s.tracksDemo.avail + 4); return true;
-        case '-': s.tracksDemo.avail = clampAvail(s.tracksDemo.avail - 4); return true;
+        case GalleryCommand.tracksPreset:
+            s.tracksDemo.preset = (s.tracksDemo.preset + 1) % presets().length;
+            return true;
+        case GalleryCommand.tracksGrow:
+            s.tracksDemo.avail = clampAvail(s.tracksDemo.avail + 4);
+            return true;
+        case GalleryCommand.tracksShrink:
+            s.tracksDemo.avail = clampAvail(s.tracksDemo.avail - 4);
+            return true;
         default: return false;
+    }
+}
+
+version (unittest)
+{
+    import keymap : commandFor, GalleryContext, GalleryScope;
+
+    // Tests drive the page exactly as the shell does: the key resolves in
+    // the page's scope and the command dispatches above.
+    private bool handleKey(ref GalleryState s, in KeyEvent k) @safe
+    {
+        const r = commandFor(k, GalleryContext(
+            pageScope: GalleryScope.pageTracks, contentRegion: true));
+        return handleCommand(s, r.cmd, r.arg);
     }
 }
 

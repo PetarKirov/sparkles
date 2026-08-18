@@ -12,21 +12,19 @@ module pages.layout_page;
 
 import std.conv : text;
 
-import sparkles.input : Key, KeyEvent;
 import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Visibility, Widget, WidgetKind;
 
+import keymap : GalleryCommand;
 import kit;
 import state : GalleryState, LayoutDemo;
 
 @safe:
 
 /// The bindings the shell prints in the status bar for this page.
-static immutable string[] keys = [
-    "w width", "a alignX", "A alignY", "g gap", "p padding", "v visibility",
-    "+/- size",
-];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageLayout`;
+// the status bar and the help panel render them from the table.
 
 /// ditto
 uint view(ref Builder b, in GalleryState s)
@@ -144,18 +142,34 @@ SizeSpec widthOf(in LayoutDemo d) pure nothrow @nogc
 
 /// The page's own key handling, applied by the shell when this page is showing.
 /// Returns `true` iff it consumed the key.
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
-    switch (k.ch)
+    switch (cmd)
     {
-        case 'w': s.layoutDemo.widthMode = (s.layoutDemo.widthMode + 1) % 4; return true;
-        case 'a': s.layoutDemo.alignX = cycle(s.layoutDemo.alignX); return true;
-        case 'A': s.layoutDemo.alignY = cycle(s.layoutDemo.alignY); return true;
-        case 'g': s.layoutDemo.gap = (s.layoutDemo.gap + 1) % 4; return true;
-        case 'p': s.layoutDemo.padding = (s.layoutDemo.padding + 1) % 3; return true;
-        case 'v': s.layoutDemo.third = cycleVisibility(s.layoutDemo.third); return true;
-        case '+': case '=': s.layoutDemo.fixedCells = clampCells(s.layoutDemo.fixedCells + 2); return true;
-        case '-': s.layoutDemo.fixedCells = clampCells(s.layoutDemo.fixedCells - 2); return true;
+        case GalleryCommand.layoutWidthMode:
+            s.layoutDemo.widthMode = (s.layoutDemo.widthMode + 1) % 4;
+            return true;
+        case GalleryCommand.layoutAlignX:
+            s.layoutDemo.alignX = cycle(s.layoutDemo.alignX);
+            return true;
+        case GalleryCommand.layoutAlignY:
+            s.layoutDemo.alignY = cycle(s.layoutDemo.alignY);
+            return true;
+        case GalleryCommand.layoutGap:
+            s.layoutDemo.gap = (s.layoutDemo.gap + 1) % 4;
+            return true;
+        case GalleryCommand.layoutPadding:
+            s.layoutDemo.padding = (s.layoutDemo.padding + 1) % 3;
+            return true;
+        case GalleryCommand.layoutThird:
+            s.layoutDemo.third = cycleVisibility(s.layoutDemo.third);
+            return true;
+        case GalleryCommand.layoutGrow:
+            s.layoutDemo.fixedCells = clampCells(s.layoutDemo.fixedCells + 2);
+            return true;
+        case GalleryCommand.layoutShrink:
+            s.layoutDemo.fixedCells = clampCells(s.layoutDemo.fixedCells - 2);
+            return true;
         default: return false;
     }
 }
@@ -225,15 +239,16 @@ private int clampCells(int n) pure nothrow @nogc
     // look broken.
     GalleryState s;
     foreach (_; 0 .. 3)
-        handleKey(s, KeyEvent(Key.char_, 'a'));
+        handleCommand(s, GalleryCommand.layoutAlignX, 0);
     assert(s.layoutDemo.alignX == Alignment.start);
 
     foreach (_; 0 .. 50)
-        handleKey(s, KeyEvent(Key.char_, '+'));
+        handleCommand(s, GalleryCommand.layoutGrow, 0);
     assert(s.layoutDemo.fixedCells == 60);
     foreach (_; 0 .. 50)
-        handleKey(s, KeyEvent(Key.char_, '-'));
+        handleCommand(s, GalleryCommand.layoutShrink, 0);
     assert(s.layoutDemo.fixedCells == 4);
 
-    assert(!handleKey(s, KeyEvent(Key.char_, 'z')), "an unclaimed key falls through to the shell");
+    assert(!handleCommand(s, GalleryCommand.quit, 0),
+        "another scope's command falls through to the shell");
 }

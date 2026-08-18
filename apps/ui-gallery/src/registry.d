@@ -11,49 +11,46 @@ Adding a page is two lines: the module, and its row here.
 */
 module registry;
 
-import sparkles.input : KeyEvent, PointerEvent;
+import sparkles.input : PointerEvent;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : Builder, WidgetTree;
 
+import keymap : GalleryCommand, GalleryScope;
 import state : GalleryState;
 
 // Each page's view is imported under its own name rather than by package.
 // `import pages.welcome;` would introduce the symbol `pages`, which is what the
 // catalog below is called — and the collision is a compile error, not a
 // shadowing surprise.
-import pages.components_page : componentsKeys = keys,
-    componentsAnimating = animating,
-    componentsOnActivate = handleActivate, componentsOnKey = handleKey,
+import pages.components_page : componentsAnimating = animating,
+    componentsOnActivate = handleActivate,
+    componentsOnCommand = handleCommand,
     componentsOnPointer = handlePointer, componentsStep = step,
     componentsView = view;
 import pages.decoration_page : decorationView = view;
-import pages.dock_page : dockKeys = keys, dockOnKey = handleKey,
+import pages.dock_page : dockOnCommand = handleCommand,
     dockOnPointer = handlePointer, dockStep = step, dockView = view;
 import pages.machines_page : machinesAnimating = animating,
-    machinesKeys = keys, machinesOnActivate = handleActivate,
-    machinesOnKey = handleKey, machinesStep = step, machinesView = view;
-import pages.scrolling_page : scrollingKeys = keys,
-    scrollingOnKey = handleKey, scrollingOnPointer = handlePointer,
+    machinesOnActivate = handleActivate, machinesOnCommand = handleCommand,
+    machinesStep = step, machinesView = view;
+import pages.scrolling_page : scrollingOnCommand = handleCommand,
+    scrollingOnPointer = handlePointer,
     scrollingStep = step, scrollingView = view;
-import pages.split_page : splitKeys = keys, splitOnKey = handleKey,
-    splitView = view;
-import pages.tree_page : treeKeys = keys, treeOnActivate = handleActivate,
-    treeOnKey = handleKey, treeView_ = view;
-import pages.layout_page : layoutKeys = keys, layoutOnKey = handleKey,
+import pages.split_page : splitOnCommand = handleCommand, splitView = view;
+import pages.tree_page : treeOnActivate = handleActivate,
+    treeOnCommand = handleCommand, treeView_ = view;
+import pages.layout_page : layoutOnCommand = handleCommand,
     layoutView = view;
 import pages.primitives : primitivesView = view;
 import pages.slots_page : slotsView = view;
-import pages.themes_page : themesKeys = keys, themesOnActivate = handleActivate,
+import pages.themes_page : themesOnActivate = handleActivate,
     themesView = view;
-import pages.table_page : tableKeys = keys, tableOnKey = handleKey,
-    tableView = view;
-import pages.terminal_page : terminalKeys = keys,
-    terminalOnActivate = handleActivate, terminalOnKey = handleKey,
-    terminalOnPointer = handlePointer, terminalStep = step,
-    terminalView = view;
-import pages.text_page : textKeys = keys, textOnKey = handleKey,
-    textView = view;
-import pages.tracks_page : tracksKeys = keys, tracksOnKey = handleKey,
+import pages.table_page : tableOnCommand = handleCommand, tableView = view;
+import pages.terminal_page : terminalOnActivate = handleActivate,
+    terminalOnCommand = handleCommand, terminalOnPointer = handlePointer,
+    terminalStep = step, terminalView = view;
+import pages.text_page : textOnCommand = handleCommand, textView = view;
+import pages.tracks_page : tracksOnCommand = handleCommand,
     tracksView = view;
 import pages.welcome : welcomeView = view;
 
@@ -68,20 +65,26 @@ struct Page
     string blurb;
     /// The view: appends a subtree to `b`, returns its root index.
     uint function(ref Builder b, in GalleryState s) @safe view;
-    /// Page-local bindings, rendered into the status bar. Shell-wide keys
-    /// (navigation, theme, quit) are not repeated here.
-    immutable(string)[] keys;
     /**
-    The page's own key handling, or `null`. Returns `true` iff it consumed the
-    key.
-
-    Offered the key $(B only while the keyboard is in the content region), and
-    only after the shell has taken the four bindings that must always work:
-    quit, dismiss, `Tab`, and the help overlay. So a page may claim `j` for its
-    own tree without stranding a reader who cannot then leave it — `Tab` is
-    never the page's to take.
+    The page's keymap scope — its rows in
+    $(REF galleryBindings, keymap), reachable only while the page shows and
+    the keyboard is in the content region. `GalleryScope.always` for a page
+    with no keys of its own. The status bar and the help panel render the
+    scope's rows, so a page's bindings are described exactly once.
     */
-    bool function(ref GalleryState s, in KeyEvent k) @safe onKey;
+    GalleryScope scope_ = GalleryScope.always;
+    /**
+    The page's dispatch for its own commands, or `null`. Returns `true` iff
+    the command was the page's.
+
+    The shell resolves the key against the one table (the page's scope
+    outranks the shell's rows — the old "first refusal in the content
+    region", now row order) and offers the command here; the lifelines a
+    page must never claim (`Tab`, quit, `?`) are pinned by
+    `ui_gallery.keymap.noPageMayClaimTheShellsLifelines`.
+    */
+    bool function(ref GalleryState s, GalleryCommand cmd, ubyte arg) @safe
+        onCommand;
 
     /**
     What a completed press on one of the page's own hit ids does, or `null`.
@@ -116,32 +119,33 @@ static immutable Page[] pages = [
     Page("Welcome", "what this build is", &welcomeView),
     Page("Primitives", "the ten widget kinds", &primitivesView),
     Page("Layout", "sizing, spacing, alignment", &layoutView,
-        layoutKeys, &layoutOnKey),
+        GalleryScope.pageLayout, &layoutOnCommand),
     Page("Tracks", "the grid subset, resolved live", &tracksView,
-        tracksKeys, &tracksOnKey),
+        GalleryScope.pageTracks, &tracksOnCommand),
     Page("Text", "wrapping and measurement", &textView,
-        textKeys, &textOnKey),
-    Page("Themes", "thirty-six built-ins, live", &themesView, themesKeys,
-        null, &themesOnActivate),
+        GalleryScope.pageText, &textOnCommand),
+    Page("Themes", "thirty-six built-ins, live", &themesView,
+        onActivate: &themesOnActivate),
     Page("Slots", "the semantic colour vocabulary", &slotsView),
     Page("Decoration", "box and text chrome", &decorationView),
     Page("Components", "the application chrome", &componentsView,
-        componentsKeys, &componentsOnKey, &componentsOnActivate,
-        &componentsOnPointer),
+        GalleryScope.pageComponents, &componentsOnCommand,
+        &componentsOnActivate, &componentsOnPointer),
     Page("Tree", "data, interaction, view", &treeView_,
-        treeKeys, &treeOnKey, &treeOnActivate),
+        GalleryScope.pageTree, &treeOnCommand, &treeOnActivate),
     Page("Table", "one grid, two views", &tableView,
-        tableKeys, &tableOnKey),
+        GalleryScope.pageTable, &tableOnCommand),
     Page("Scrolling", "one thumb formula", &scrollingView,
-        scrollingKeys, &scrollingOnKey, null, &scrollingOnPointer),
+        GalleryScope.pageScrolling, &scrollingOnCommand, null,
+        &scrollingOnPointer),
     Page("State", "the interaction machines", &machinesView,
-        machinesKeys, &machinesOnKey, &machinesOnActivate),
+        GalleryScope.pageMachines, &machinesOnCommand, &machinesOnActivate),
     Page("Split", "a divider between two panes", &splitView,
-        splitKeys, &splitOnKey),
+        GalleryScope.pageSplit, &splitOnCommand),
     Page("Dock", "panes as a value", &dockView,
-        dockKeys, &dockOnKey, null, &dockOnPointer),
+        GalleryScope.pageDock, &dockOnCommand, null, &dockOnPointer),
     Page("Terminal", "a shell as a widget", &terminalView,
-        terminalKeys, &terminalOnKey, &terminalOnActivate,
+        GalleryScope.pageTerminal, &terminalOnCommand, &terminalOnActivate,
         &terminalOnPointer),
 ];
 
@@ -208,6 +212,9 @@ size_t pageIndexOf(scope const(char)[] name)
         assert(p.view !is null);
         assert(p.title !in seen, "two pages share a title: " ~ p.title);
         seen[p.title] = true;
+        assert((p.scope_ == GalleryScope.always) == (p.onCommand is null),
+            "a page's keymap scope and its command dispatch come together: "
+            ~ p.title);
     }
 }
 

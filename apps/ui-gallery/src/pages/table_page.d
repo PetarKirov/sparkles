@@ -25,15 +25,13 @@ import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, TextSpan;
 import sparkles.ui.wrap : TextWrap;
 
+import keymap : GalleryCommand;
 import kit;
 import state : GalleryState, TableDemo;
 
 @safe:
 
-/// ditto
-static immutable string[] keys = [
-    "g glyphs", "r row rules", "s stub col", "[/] scroll", ",/. rows",
-];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageTable`.
 
 /// The showcase grid: a colspan banner, a decimal column, and a rowspan cell
 /// with `VAlign.middle` — the features GFM tables cannot author but the
@@ -192,23 +190,49 @@ private int boxWidth(int contentWidth) pure nothrow @nogc
 }
 
 /// ditto
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
-    switch (k.ch)
+    switch (cmd)
     {
-        case 'g':
+        case GalleryCommand.tablePreset:
             s.tableDemo.preset = (s.tableDemo.preset + 1)
                 % builtinPresetNames.length;
             return true;
-        case 'r': s.tableDemo.rowRules = !s.tableDemo.rowRules; return true;
-        case 's': s.tableDemo.stubCol = !s.tableDemo.stubCol; return true;
+        case GalleryCommand.tableRowRules:
+            s.tableDemo.rowRules = !s.tableDemo.rowRules;
+            return true;
+        case GalleryCommand.tableStubCol:
+            s.tableDemo.stubCol = !s.tableDemo.stubCol;
+            return true;
         // The component clamps to the real overflow; the page only keeps the
         // number in a sane band so it cannot wander far past the edge.
-        case '[': s.tableDemo.scrollX = clampScroll(s.tableDemo.scrollX - 4); return true;
-        case ']': s.tableDemo.scrollX = clampScroll(s.tableDemo.scrollX + 4); return true;
-        case ',': s.tableDemo.scrollY = clampScroll(s.tableDemo.scrollY - 1); return true;
-        case '.': s.tableDemo.scrollY = clampScroll(s.tableDemo.scrollY + 1); return true;
+        case GalleryCommand.tableScrollLeft:
+            s.tableDemo.scrollX = clampScroll(s.tableDemo.scrollX - 4);
+            return true;
+        case GalleryCommand.tableScrollRight:
+            s.tableDemo.scrollX = clampScroll(s.tableDemo.scrollX + 4);
+            return true;
+        case GalleryCommand.tableScrollUp:
+            s.tableDemo.scrollY = clampScroll(s.tableDemo.scrollY - 1);
+            return true;
+        case GalleryCommand.tableScrollDown:
+            s.tableDemo.scrollY = clampScroll(s.tableDemo.scrollY + 1);
+            return true;
         default: return false;
+    }
+}
+
+version (unittest)
+{
+    import keymap : commandFor, GalleryContext, GalleryScope;
+
+    // Tests drive the page exactly as the shell does: the key resolves in
+    // the page's scope and the command dispatches above.
+    private bool handleKey(ref GalleryState s, in KeyEvent k) @safe
+    {
+        const r = commandFor(k, GalleryContext(
+            pageScope: GalleryScope.pageTable, contentRegion: true));
+        return handleCommand(s, r.cmd, r.arg);
     }
 }
 

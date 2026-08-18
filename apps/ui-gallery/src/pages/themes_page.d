@@ -24,7 +24,7 @@ import state : GalleryState, hitTheme, themeNames, toastConfigFor;
 @safe:
 
 /// ditto
-static immutable string[] keys = ["[ ] cycle", "click a name"];
+// Theme cycling is the shell's `[`/`]` rows; names are pointer targets.
 
 /// How many names the list shows at once before it starts following the
 /// selection. Thirty-six rows would push everything else off the page.

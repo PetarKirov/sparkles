@@ -23,12 +23,13 @@ import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
 import kit;
+import keymap : GalleryCommand;
 import state : GalleryState, hitSplit;
 
 @safe:
 
 /// ditto
-static immutable string[] keys = ["← → resize", "drag the divider"];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageSplit`.
 
 /// The pane's bounds, in cells. Named because the clamp, the drag and the
 /// display all need them and three copies would disagree.
@@ -149,21 +150,35 @@ private string shapeName(PointerShape p)
 }
 
 /// ditto
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
     // The keyboard route, so the page is usable on a target with no pointer at
     // all. It goes through the same clamp the drag does.
     const available = s.contentWidth - 1;
-    switch (k.key)
+    switch (cmd)
     {
-        case Key.left:
+        case GalleryCommand.splitShrink:
             s.split = SplitState(s.split.size - 2).clamped(minPane, maxPane(available));
             return true;
-        case Key.right:
+        case GalleryCommand.splitGrow:
             s.split = SplitState(s.split.size + 2).clamped(minPane, maxPane(available));
             return true;
         default:
             return false;
+    }
+}
+
+version (unittest)
+{
+    import keymap : commandFor, GalleryContext, GalleryScope;
+
+    // Tests drive the page exactly as the shell does: the key resolves in
+    // the page's scope and the command dispatches above.
+    private bool handleKey(ref GalleryState s, in KeyEvent k) @safe
+    {
+        const r = commandFor(k, GalleryContext(
+            pageScope: GalleryScope.pageSplit, contentRegion: true));
+        return handleCommand(s, r.cmd, r.arg);
     }
 }
 

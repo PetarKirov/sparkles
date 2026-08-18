@@ -24,13 +24,13 @@ import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
 import kit;
+import keymap : GalleryCommand;
 import state : GalleryState, hitMachines, MachinesDemo;
 
 @safe:
 
 /// ditto
-static immutable string[] keys = ["a/e select", "f focus", "d disclose",
-    "p pulse", "hover the tiles"];
+// The page's keys are `galleryBindings` rows in `GalleryScope.pageMachines`.
 
 /// The focus order the `f` key walks — the same identity space `hoverTargets`
 /// uses, so a view's focus order is its paint order unless it says otherwise.
@@ -219,40 +219,54 @@ private size_t ownerOf(in CaptureState c)
 }
 
 /// ditto
-bool handleKey(ref GalleryState s, in KeyEvent k)
+bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 {
-    switch (k.ch)
+    switch (cmd)
     {
-        case 'a':
+        case GalleryCommand.machAnchor:
             // Anchor the selection one step along. `started` rather than a
             // struct literal: `active` is the first field, so a positional
             // construction would set the flag and leave the anchor at zero.
             s.machines.selection = Selection!int.started(
                 (s.machines.selection.anchor + 1) % 8);
             return true;
-        case 'e':
+        case GalleryCommand.machExtend:
             s.machines.selection = s.machines.selection.extended(
                 (s.machines.selection.focus + 1) % 8);
             return true;
-        case 'f':
+        case GalleryCommand.machFocusNext:
             s.focus = s.focus.next(focusOrder);
             return true;
-        case 'F':
+        case GalleryCommand.machFocusPrev:
             s.focus = s.focus.previous(focusOrder);
             return true;
-        case 'd':
+        case GalleryCommand.machFoldToggle:
             s.machines.folds = s.machines.folds.toggled(3);
             return true;
-        case 'D':
+        case GalleryCommand.machFoldPolarity:
             s.machines.folds = s.machines.folds.defaultOpen
                 ? typeof(s.machines.folds).allClosed
                 : typeof(s.machines.folds).allOpen;
             return true;
-        case 'p':
+        case GalleryCommand.machPulse:
             s.machines.pulse = Timeline.triggered(pulseConfig);
             return true;
         default:
             return false;
+    }
+}
+
+version (unittest)
+{
+    import keymap : commandFor, GalleryContext, GalleryScope;
+
+    // Tests drive the page exactly as the shell does: the key resolves in
+    // the page's scope and the command dispatches above.
+    private bool handleKey(ref GalleryState s, in KeyEvent k) @safe
+    {
+        const r = commandFor(k, GalleryContext(
+            pageScope: GalleryScope.pageMachines, contentRegion: true));
+        return handleCommand(s, r.cmd, r.arg);
     }
 }
 
