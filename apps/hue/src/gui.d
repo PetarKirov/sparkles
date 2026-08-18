@@ -2117,18 +2117,16 @@ int runGui(GuiArgs guiArgs) @system
 
             foreach (k; keyBuf)
             {
-                // `Ctrl-d`/`Ctrl-u` scroll the preview pane — forwarded as
-                // the page keys its own keymap already binds.
-                if (k.key == Key.char_ && k.mods.ctrl
-                    && (k.ch == 'd' || k.ch == 'u') && filePickerDoc !is null)
-                {
-                    cast(void) filePickerDoc.pane.handle(Event(KeyEvent(
-                        key: k.ch == 'd' ? Key.pageDown : Key.pageUp)));
-                    continue;
-                }
                 final switch (filePicker.get.handleKey(k))
                 {
                 case PickerAction.consumed:
+                    break;
+                case PickerAction.preview:
+                    // The preview scope's keys (`Ctrl-d`/`Ctrl-u` from any
+                    // pane, everything while the preview holds focus) go to
+                    // the document pane, whose own keymap applies.
+                    if (filePickerDoc !is null)
+                        filePickerDoc.forwardKey(filePicker.get.previewKey);
                     break;
                 case PickerAction.closed:
                     filePickerDoc.close();
@@ -2457,6 +2455,18 @@ int runGui(GuiArgs guiArgs) @system
                 case Command.diffStage:
                 case Command.diffUnstage:
                 case Command.diffDiscard:
+                    break;
+
+                // The picker's modal surface answers these; its scopes are
+                // unreachable while this dispatch runs.
+                case Command.pickerClose: case Command.pickerAccept:
+                case Command.pickerErase:
+                case Command.pickerUp: case Command.pickerDown:
+                case Command.pickerPageUp: case Command.pickerPageDown:
+                case Command.pickerTop: case Command.pickerBottom:
+                case Command.pickerFocusNext: case Command.pickerFocusPrev:
+                case Command.pickerToggleScore:
+                case Command.pickerPreviewDown: case Command.pickerPreviewUp:
                     break;
                 case Command.toggleView:
                     toggleView();

@@ -96,6 +96,13 @@ struct KeyContext
     bool formatPreviewActive;
     /// a DSV grid is showing (`/` filters it, `Shift-R` resets — `DSB`)
     bool hasDsvGrid;
+    /// The fuzzy picker is open (`PIK1`): a modal surface, expressed as
+    /// context gating (`FOC4`) — while set, only the `always` and `picker*`
+    /// scopes are reachable, which is the whole modality mechanism.
+    bool pickerActive;
+    /// Which picker pane owns the keyboard while the picker is open — a
+    /// `ScopeFocus!Scope_` value the host carries (`FOC2`).
+    Scope_ pickerFocus = Scope_.pickerInput;
 
 @safe pure nothrow @nogc const:
 
@@ -112,6 +119,7 @@ struct KeyContext
         if (showPreview)    b |= CtxFlag.showPreview;
         if (formatPreviewActive) b |= CtxFlag.formatPreviewActive;
         if (hasDsvGrid)     b |= CtxFlag.hasDsvGrid;
+        if (pickerActive)   b |= CtxFlag.pickerActive;
         return b;
     }
 
@@ -129,10 +137,18 @@ struct KeyContext
         {
             case Scope_.always:  return true;
             case Scope_.input:   return mode != InputMode.normal;
-            case Scope_.ctrl:    return true;
-            case Scope_.tree:    return treeFocused && treeVisible;
-            case Scope_.viewer:  return !(treeFocused && treeVisible);
-            case Scope_.shared_: return true;
+            case Scope_.pickerInput:
+                return pickerActive && pickerFocus == Scope_.pickerInput;
+            case Scope_.pickerList:
+                return pickerActive && pickerFocus == Scope_.pickerList;
+            case Scope_.pickerPreview:
+                return pickerActive && pickerFocus == Scope_.pickerPreview;
+            case Scope_.picker:  return pickerActive;
+            case Scope_.ctrl:    return !pickerActive;
+            case Scope_.tree:    return !pickerActive && treeFocused && treeVisible;
+            case Scope_.viewer:  return !pickerActive
+                && !(treeFocused && treeVisible);
+            case Scope_.shared_: return !pickerActive;
         }
     }
 
@@ -140,7 +156,7 @@ struct KeyContext
     /// before entering each of its blocks.
     bool scopeActive(Scope_ s, in KeyEvent k)
         => s == Scope_.ctrl
-            ? (k.mods.ctrl && k.key == Key.char_)
+            ? (!pickerActive && k.mods.ctrl && k.key == Key.char_)
             : reachable(s);
 }
 
@@ -244,6 +260,17 @@ enum Command : ubyte
     diffStage,                         /// `space` — stage the hunk in view
     diffUnstage,                       /// `u` — take it back out of the index
     diffDiscard,                       /// `Shift-X` — throw the change away
+
+    // The fuzzy picker's modal surface (`PKL7`): its keys are table rows so
+    // the guide can list them (`PKL3`), gated on `pickerActive` + pane focus.
+    // Only the hosts' picker branch answers these; every other dispatch
+    // carries empty arms (`KEY11`).
+    pickerClose, pickerAccept, pickerErase,
+    pickerUp, pickerDown, pickerPageUp, pickerPageDown,
+    pickerTop, pickerBottom,
+    pickerFocusNext, pickerFocusPrev,  /// `Tab` / `Shift-Tab` cycle the panes
+    pickerToggleScore,                 /// `Ctrl-S` — `PKR4`'s debug view
+    pickerPreviewDown, pickerPreviewUp, /// `Ctrl-D`/`Ctrl-U` — scroll the preview
 }
 
 /**
@@ -264,6 +291,15 @@ enum Scope_ : ubyte
     always,  /// resolves in every context (fullscreen, dismiss)
     /// a line-editing mode owns the keyboard
     @terminalScope @hidesLaterScopes input,
+    /// the picker's prompt pane holds its focus (no rows of its own — a
+    /// printable is prompt text; the member exists as a `ScopeFocus` target)
+    pickerInput,
+    pickerList,    /// the picker's result list holds its focus (`j`/`k`/`g`/`G`)
+    pickerPreview, /// the picker's preview pane holds its focus (keys forward)
+    /// every picker pane (`PIK1`): terminal $(I and) hiding, because the
+    /// picker is modal — an unmatched key is the prompt's (or the preview's),
+    /// never a command below, and the guide must not list what cannot fire
+    @terminalScope @hidesLaterScopes picker,
     /// a Ctrl chord, before the plain letter is considered
     @terminalScope ctrl,
     tree,    /// the explorer pane, while focused and shown
@@ -281,6 +317,7 @@ enum CtxFlag : ubyte
     showPreview    = 1 << 3,
     formatPreviewActive = 1 << 4,
     hasDsvGrid     = 1 << 5,
+    pickerActive   = 1 << 6,
 }
 
 /// The framework's row builders, with hue's command type pinned so the table
@@ -328,8 +365,10 @@ immutable Binding[] hueBindings = [
         mode: ModeReq.editing),
     bind(Scope_.always, chord(Key.back), Command.inputCancel, "cancel",
         mode: ModeReq.editing),
+    // The picker claims Back as close (`pickerClose` below); the dismiss
+    // chain must not also fire under the modal.
     bind(Scope_.always, chord(Key.back), Command.dismiss, "back",
-        mode: ModeReq.normal),
+        mode: ModeReq.normal, forbid: CtxFlag.pickerActive),
 
     // ── input (terminal: a letter is text while typing) ───────────────────
     bind(Scope_.input, chord(Key.backspace), Command.inputBackspace, "erase"),
@@ -584,6 +623,37 @@ immutable Binding[] hueBindings = [
         Command.diffPrevFile, "prev file", require: CtxFlag.hasDiffSession),
     bind(Scope_.shared_, chord(leader), chord('d'), chord('f'),
         Command.diffToggleFile, "toggle file", require: CtxFlag.hasDiffSession),
+
+    // ── the fuzzy picker's modal surface (`PKL7`) ────────────────────────
+    // Reachable only while the picker is open; the `picker` scope covers
+    // every pane, the focused-pane scopes add their own keys, and an
+    // unmatched key falls to the host — prompt text in the input pane, a
+    // forwarded key in the preview.
+    bind(Scope_.pickerList, chord('j'), Command.pickerDown, "down"),
+    bind(Scope_.pickerList, chord('k'), Command.pickerUp, "up"),
+    bind(Scope_.pickerList, chord('g', ShiftReq.no), Command.pickerTop,
+        "first row"),
+    bind(Scope_.pickerList, chord('g', ShiftReq.yes), Command.pickerBottom,
+        "last row"),
+    bind(Scope_.picker, chord(Key.escape), Command.pickerClose, "close"),
+    bind(Scope_.picker, chord(Key.back), Command.pickerClose, "close"),
+    bind(Scope_.picker, chord(Key.enter), Command.pickerAccept, "open file"),
+    bind(Scope_.picker, chord(Key.backspace), Command.pickerErase, "erase"),
+    bind(Scope_.picker, chord(Key.tab, ShiftReq.no), Command.pickerFocusNext,
+        "next pane"),
+    bind(Scope_.picker, chord(Key.tab, ShiftReq.yes), Command.pickerFocusPrev,
+        "prev pane"),
+    bind(Scope_.picker, chord(Key.up), Command.pickerUp, "up"),
+    bind(Scope_.picker, chord(Key.down), Command.pickerDown, "down"),
+    bind(Scope_.picker, chord(Key.pageUp), Command.pickerPageUp, "page up"),
+    bind(Scope_.picker, chord(Key.pageDown), Command.pickerPageDown,
+        "page down"),
+    bind(Scope_.picker, Chord(key: Key.char_, ch: 's', ctrl: true),
+        Command.pickerToggleScore, "score breakdown"),
+    bind(Scope_.picker, Chord(key: Key.char_, ch: 'd', ctrl: true),
+        Command.pickerPreviewDown, "scroll preview down"),
+    bind(Scope_.picker, Chord(key: Key.char_, ch: 'u', ctrl: true),
+        Command.pickerPreviewUp, "scroll preview up"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -703,7 +773,7 @@ unittest
                     "a shadowed duplicate must not be listed");
     }
 
-    foreach (ubyte bits; 0 .. 32)
+    foreach (ubyte bits; 0 .. 64)
     {
         const ctx = KeyContext(
             treeFocused:    (bits & 1) != 0,
@@ -715,6 +785,14 @@ unittest
         );
         checkLevel(null, ctx, maxPathLength);
     }
+
+    // The picker's modal contexts, per focused pane: the listing/behaviour
+    // agreement must hold there too, or the guide would lie inside the modal.
+    static immutable Scope_[3] panes =
+        [Scope_.pickerInput, Scope_.pickerList, Scope_.pickerPreview];
+    foreach (pane; panes)
+        checkLevel(null,
+            KeyContext(pickerActive: true, pickerFocus: pane), maxPathLength);
 }
 
 @("keymap.modesClaimTheKeyboard")
@@ -995,6 +1073,52 @@ unittest
     assert(nk(Key.f5).cmd == Command.none);
     assert(nk(Key.none).cmd == Command.none);
     assert(commandFor(KeyEvent.init, KeyContext.init).cmd == Command.none);
+}
+
+@("keymap.pickerScopesAreModalAndFocusRouted")
+@safe pure nothrow @nogc
+unittest
+{
+    // While the picker is open (`PIK1`), only the always + picker scopes are
+    // reachable — modality as context gating (`FOC4`), not a second filter.
+    auto pk = KeyContext(pickerActive: true); // prompt pane holds focus
+    assert(nk(Key.escape, pk).cmd == Command.pickerClose);
+    assert(nk(Key.back, pk).cmd == Command.pickerClose,
+        "Back closes the picker; the dismiss chain must not also fire");
+    assert(nk(Key.enter, pk).cmd == Command.pickerAccept);
+    assert(nk(Key.backspace, pk).cmd == Command.pickerErase);
+    assert(nk(Key.tab, pk).cmd == Command.pickerFocusNext);
+    assert(nk(Key.tab, pk, Mods(shift: true)).cmd == Command.pickerFocusPrev);
+    assert(nk(Key.down, pk).cmd == Command.pickerDown);
+    assert(nk(Key.pageDown, pk).cmd == Command.pickerPageDown);
+
+    // A letter is prompt text, and nothing below the modal can fire.
+    assert(ch('j', pk).cmd == Command.none);
+    assert(ch('q', pk).cmd == Command.none, "quit is unreachable under it");
+    assert(ch('e', pk).cmd == Command.none);
+    assert(ch('c', pk, Mods(ctrl: true)).cmd == Command.none,
+        "the ctrl scope is gated off while the picker is open");
+    assert(ch('s', pk, Mods(ctrl: true)).cmd == Command.pickerToggleScore);
+    assert(ch('d', pk, Mods(ctrl: true)).cmd == Command.pickerPreviewDown);
+
+    // The focused pane adds its keys: the list navigates with letters…
+    auto lst = KeyContext(pickerActive: true, pickerFocus: Scope_.pickerList);
+    assert(ch('j', lst).cmd == Command.pickerDown);
+    assert(ch('k', lst).cmd == Command.pickerUp);
+    assert(ch('g', lst).cmd == Command.pickerTop);
+    assert(ch('G', lst).cmd == Command.pickerBottom);
+
+    // …while the preview resolves only the shared picker keys — everything
+    // else is unbound so the host forwards it to the document pane.
+    auto pv = KeyContext(pickerActive: true,
+        pickerFocus: Scope_.pickerPreview);
+    assert(ch('j', pv).cmd == Command.none);
+    assert(nk(Key.enter, pv).cmd == Command.pickerAccept);
+    assert(nk(Key.escape, pv).cmd == Command.pickerClose);
+
+    // The always scope still outranks the modal (`LTN10`'s doctrine): a
+    // half-typed anything can never trap you in a fullscreen window.
+    assert(nk(Key.f11, pk).cmd == Command.toggleFullscreen);
 }
 
 @("keymap.horizontalScrollHasKeysNotJustAScrollbar")

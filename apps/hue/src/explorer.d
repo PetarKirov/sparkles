@@ -918,6 +918,18 @@ struct ExplorerTui
             case Command.diffStage: case Command.diffUnstage:
             case Command.diffDiscard:
                 break;
+
+            // The picker's modal surface answers these; its scopes are
+            // unreachable while a pane dispatches.
+            case Command.pickerClose: case Command.pickerAccept:
+            case Command.pickerErase:
+            case Command.pickerUp: case Command.pickerDown:
+            case Command.pickerPageUp: case Command.pickerPageDown:
+            case Command.pickerTop: case Command.pickerBottom:
+            case Command.pickerFocusNext: case Command.pickerFocusPrev:
+            case Command.pickerToggleScore:
+            case Command.pickerPreviewDown: case Command.pickerPreviewUp:
+                break;
         }
         return true;
     }

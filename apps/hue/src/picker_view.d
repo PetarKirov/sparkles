@@ -12,6 +12,7 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind,
 import sparkles.ui.wrap : TextWrap;
 
 import explorer : fsIcon;
+import keymap : Scope_;
 import picker : PickerState;
 
 /// Supported picker presentation presets.
@@ -89,9 +90,14 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     scope const(RowHighlight)[] highlights = null,
     const(char)[] previewTitle = null,
     PickerGeometry geometry = PickerGeometry.init,
-    PickerLayout preset = PickerLayout.default_)
+    PickerLayout preset = PickerLayout.default_,
+    Scope_ focus = Scope_.pickerInput)
 {
     auto builder = Builder();
+    // The focused pane's panel carries the accent chrome; the list dims its
+    // selection while the preview owns the keyboard (`PKL7` — the reader
+    // must see where keys go).
+    const previewFocused = focus == Scope_.pickerPreview;
 
     // ── the prompt row: `› query▏` left, `matched/total` right ────────────
     TextSpan[] promptSpans;
@@ -100,7 +106,9 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     // Copied, not borrowed: the prompt accessor is `return scope` into the
     // caller's state, which the tree must not capture.
     promptSpans ~= TextSpan(text: state.prompt.text.idup);
-    promptSpans ~= TextSpan(text: "▏", slot: Slot.caret);
+    // The caret lives where the keys go: only the prompt pane shows it.
+    if (focus == Scope_.pickerInput)
+        promptSpans ~= TextSpan(text: "▏", slot: Slot.caret);
     if (state.searching)
         promptSpans ~= TextSpan(text: " …", slot: Slot.muted);
     const promptText = builder.add(Widget(kind: WidgetKind.rich,
@@ -130,7 +138,10 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         }
         else
             spans ~= TextSpan(text: "(stale row)", slot: Slot.muted);
-        const selected = i == state.selection;
+        // The selection keeps its bar only while the list side owns the
+        // keyboard — snacks dims its cursorline the same way when focus
+        // leaves the list.
+        const selected = i == state.selection && !previewFocused;
         body ~= builder.add(Widget(kind: WidgetKind.rich,
             spans: spans,
             slot: selected ? Slot.selection : Slot.inherit,
@@ -164,7 +175,8 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
             text: text("picker error: ", state.error.code),
             slot: Slot.error));
 
-    const filesPanel = titledPanel(builder, body, " Files ", geometry);
+    const filesPanel = titledPanel(builder, body, " Files ", geometry,
+        focused: !previewFocused);
     uint root;
     final switch (preset)
     {
@@ -183,7 +195,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         const title = previewTitle.length
             ? text(" ", previewTitle, " ") : " preview ";
         const previewPanel = titledPanel(builder, previewBody, title,
-            geometry);
+            geometry, focused: previewFocused);
         root = builder.add(Widget(kind: WidgetKind.row,
             children: [filesPanel, previewPanel]));
         break;
@@ -199,9 +211,13 @@ full-width centered row drawn second lands its title text ON the border row,
 interrupting the line exactly the way fzf-lua/telescope draw theirs. The
 fixed `geometry` is what keeps the overlay frame-stable: content never
 resizes a panel, it clips inside one (`clipX`/`clipY`).
+
+`focused` is the chrome half of `PKL7`: the pane that owns the keyboard gets
+the highlight border and the accent title, its sibling the muted ones.
 */
 private uint titledPanel(ref Builder builder, uint[] body,
-    const(char)[] title, in PickerGeometry geometry) @safe
+    const(char)[] title, in PickerGeometry geometry, bool focused = true)
+    @safe
 {
     const content = builder.add(Widget(kind: WidgetKind.column,
         children: body, width: SizeSpec.grow(), height: SizeSpec.grow(),
@@ -213,12 +229,13 @@ private uint titledPanel(ref Builder builder, uint[] body,
         // `borderRadius` doubles as the rounded-corner flag: the window
         // rounds the stroke, the cell canvas picks `╭╮╰╯`.
         decoration: Decoration(borderWidth: Insets.all(2),
-            borderStyle: BorderStyle.solid, borderRadius: 6),
+            borderStyle: BorderStyle.solid, borderRadius: 6,
+            borderSlot: focused ? Slot.highlightBorder : Slot.border),
         width: SizeSpec.fixed(geometry.panelCols),
         height: SizeSpec.fixed(geometry.panelRows)));
     const titleText = builder.add(Widget(kind: WidgetKind.text,
-        text: title, slot: Slot.chromeAccent,
-        textStyle: TextStyle(bold: true)));
+        text: title, slot: focused ? Slot.chromeAccent : Slot.muted,
+        textStyle: TextStyle(bold: focused)));
     const titleRow = builder.add(Widget(kind: WidgetKind.row,
         children: [titleText],
         width: SizeSpec.fixed(geometry.panelCols),
@@ -333,4 +350,75 @@ unittest
     assert(hole.width <= geometry.panelCols - 2
         && hole.height <= geometry.panelRows - 2,
         "the hole sits inside the preview panel's frame");
+}
+
+@("picker.view.focusSelectsTheChrome")
+@safe
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.fuzzy : CandidateView, RankedResult;
+    import sparkles.ui.style : Decoration;
+
+    CandidateView[1] candidates;
+    candidates[0].path = "src/app.d";
+    candidates[0].filenameOffset = 4;
+    CandidateSnapshot snapshot;
+    snapshot.candidates = candidates[];
+    PickerState!4 state;
+    state.open();
+    RankedResult[1] rows;
+    state.publish(rows[], 1, false);
+
+    // Panel chrome and caret per focused pane (`PKL7`): the pane that owns
+    // the keyboard gets the highlight border and the accent title, the
+    // caret lives only in the prompt, and the list's selection bar drops
+    // while the preview reads.
+    static void scan(in WidgetTree tree, out Slot filesTitle,
+        out Slot previewTitle, out bool caret, out bool selectionBar,
+        out Slot filesBorder, out Slot previewBorder) @safe
+    {
+        int panels;
+        foreach (node; tree.nodes)
+        {
+            if (node.text == " Files ")
+                filesTitle = node.slot;
+            if (node.kind == WidgetKind.text && node.text.canFind("app.d"))
+                previewTitle = node.slot;
+            if (node.decoration.borderWidth.left > 0)
+            {
+                // The panels appear in build order: files first, preview
+                // second (`titledPanel` call order in `pickerView`).
+                if (panels == 0)
+                    filesBorder = node.decoration.borderSlot;
+                else
+                    previewBorder = node.decoration.borderSlot;
+                ++panels;
+            }
+            if (node.slot == Slot.selection && node.paintBackground)
+                selectionBar = true;
+            foreach (span; node.spans)
+                caret |= span.text == "▏";
+        }
+    }
+
+    Slot ft, pt, fb, pb;
+    bool caret, bar;
+    const geometry = PickerGeometry(panelCols: 40, panelRows: 12);
+
+    scan(pickerView(state, snapshot, null, "app.d", geometry,
+        PickerLayout.default_, Scope_.pickerInput), ft, pt, caret, bar, fb, pb);
+    assert(ft == Slot.chromeAccent && pt == Slot.muted);
+    assert(fb == Slot.highlightBorder && pb == Slot.border);
+    assert(caret, "the prompt pane shows its caret");
+    assert(bar, "…and the selection bar");
+
+    scan(pickerView(state, snapshot, null, "app.d", geometry,
+        PickerLayout.default_, Scope_.pickerPreview), ft, pt, caret, bar, fb, pb);
+    assert(ft == Slot.muted && pt == Slot.chromeAccent,
+        "focus swaps the titles");
+    assert(fb == Slot.border && pb == Slot.highlightBorder,
+        "…and the borders");
+    assert(!caret, "no caret while the keys go to the preview");
+    assert(!bar, "the selection bar dims with the list");
 }
