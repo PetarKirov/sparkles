@@ -67,6 +67,13 @@ configuration "application" {
     dependency "sparkles:ghostty" path="../.."
     subConfiguration "sparkles:ui-app" "full"
     versions "HueGui"
+
+    // The in-process D formatter behind the format preview (FPR2): pulls the
+    // pinned dmd:lexer + dmd:frontend fork into this configuration's closure.
+    // Deliberately absent from `android` (the DMD frontend is untested on
+    // bionic; format_dmd.d is version-gated to an empty module there).
+    dependency "sparkles:dmd-fmt" path="../.."
+    versions "HueDmdFmt"
 }
 
 // Android build (BLD5): the same GUI closure as `application`, but emitted as
@@ -114,6 +121,12 @@ configuration "no-gui" {
     libs "curl"
     versions "HueCurl"
 
+    // The terminal build keeps the in-process formatter (FPR2): formatting is
+    // as useful in the TUI as in the window, at the cost of the DMD-frontend
+    // archive in this closure too.
+    dependency "sparkles:dmd-fmt" path="../.."
+    versions "HueDmdFmt"
+
     excludedSourceFiles "src/gui.d" "src/gui_ansi.d"
 }
 
@@ -136,6 +149,11 @@ configuration "unittest" {
 
     // The off-screen VT bridge (gui_ansi.d) + preview model (gui_preview.d).
     dependency "sparkles:ghostty" path="../.."
+
+    // The in-process formatter, so the format-preview provider tests run here
+    // (FPR2/FP0's repeat-format spike).
+    dependency "sparkles:dmd-fmt" path="../.."
+    versions "HueDmdFmt"
 
     // hue has no unittests of its own, but `dub test` still compiles its
     // dependency sources with -unittest — and sparkles:syntax / sparkles:
