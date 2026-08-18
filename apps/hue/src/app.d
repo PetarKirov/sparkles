@@ -150,6 +150,8 @@ struct ViewRenderOptions
     bool codeLineNumbers = true;
     string codeOverflow = "scroll";
     int codeMaxLines = -1;
+    string tableOverflow = "scroll";
+    int tableMaxLines = -1;
     string ansiCopy = "raw";
     string tableCopy = "tsv";
     string[] include;
@@ -205,6 +207,12 @@ struct View
     @(Option("code-max-lines", description: "A code block taller than this many lines shows a fixed-height vertical viewport (-1 auto, 0 disables)."))
     int codeMaxLines = -1;
 
+    @(Option("table-overflow", description: "How a table wider than its panel behaves: 'scroll', 'wrap', or 'wrap-at:N' (wrap to N cells total, then scroll)."))
+    string tableOverflow = "scroll";
+
+    @(Option("table-max-lines", description: "A table taller than this many interior lines shows a fixed-height vertical viewport (-1 auto, 0 disables)."))
+    int tableMaxLines = -1;
+
     @(Option("group-themes", description: "Group the theme cycle by light/dark (default on)."))
     bool groupThemes = true;
 
@@ -252,11 +260,17 @@ struct Diff
     @(Option("line-numbers", description: "--gui: show line-number gutter."))
     bool lineNumbers = true;
 
-    @(Option("code-overflow", description: "How code-block lines behave: 'scroll' or 'wrap'."))
+    @(Option("code-overflow", description: "How code-block lines behave: 'scroll', 'wrap', or 'wrap-at:N'."))
     string codeOverflow = "scroll";
 
     @(Option("code-max-lines", description: "Max code block lines before vertical scrollbar."))
     int codeMaxLines = -1;
+
+    @(Option("table-overflow", description: "How a wide table behaves: 'scroll', 'wrap', or 'wrap-at:N'."))
+    string tableOverflow = "scroll";
+
+    @(Option("table-max-lines", description: "Max table interior lines before vertical scrollbar."))
+    int tableMaxLines = -1;
 
     int run(Program)(in Program program)
     {
@@ -281,11 +295,17 @@ struct Pr
     @(Option("line-numbers", description: "--gui: show line-number gutter."))
     bool lineNumbers = true;
 
-    @(Option("code-overflow", description: "How code-block lines behave: 'scroll' or 'wrap'."))
+    @(Option("code-overflow", description: "How code-block lines behave: 'scroll', 'wrap', or 'wrap-at:N'."))
     string codeOverflow = "scroll";
 
     @(Option("code-max-lines", description: "Max code block lines before vertical scrollbar."))
     int codeMaxLines = -1;
+
+    @(Option("table-overflow", description: "How a wide table behaves: 'scroll', 'wrap', or 'wrap-at:N'."))
+    string tableOverflow = "scroll";
+
+    @(Option("table-max-lines", description: "Max table interior lines before vertical scrollbar."))
+    int tableMaxLines = -1;
 
     int run(Program)(in Program program)
     {
@@ -488,6 +508,8 @@ private int executeView(in HueCli root, in View view)
     opt.codeLineNumbers = view.codeLineNumbers;
     opt.codeOverflow = view.codeOverflow;
     opt.codeMaxLines = view.codeMaxLines;
+    opt.tableOverflow = view.tableOverflow;
+    opt.tableMaxLines = view.tableMaxLines;
     opt.ansiCopy = view.ansiCopy;
     opt.tableCopy = view.tableCopy;
     opt.include = view.include.dup;
@@ -516,7 +538,9 @@ private int executeView(in HueCli root, in View view)
                     &cache, view.include.dup, view.exclude.dup, view.treeWidth,
                     view.tabWidth, view.listWhitespace, liveTypes: !view.noLiveTypes,
                     codeOverflow: parseOverflow(view.codeOverflow, "--code-overflow"),
-                    codeMaxLines: view.codeMaxLines);
+                    codeMaxLines: view.codeMaxLines,
+                    tableOverflow: parseOverflow(view.tableOverflow, "--table-overflow"),
+                    tableMaxLines: view.tableMaxLines);
             }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
@@ -594,6 +618,8 @@ private int executeDiff(in HueCli root, in Diff diff)
     opt.lineNumbers = diff.lineNumbers;
     opt.codeOverflow = diff.codeOverflow;
     opt.codeMaxLines = diff.codeMaxLines;
+    opt.tableOverflow = diff.tableOverflow;
+    opt.tableMaxLines = diff.tableMaxLines;
     opt.diffLayout = diff.diff.diffLayout;
     opt.gui = copyGui(root.gui);
 
@@ -665,6 +691,8 @@ private int executePr(in HueCli root, in Pr pr)
     opt.lineNumbers = pr.lineNumbers;
     opt.codeOverflow = pr.codeOverflow;
     opt.codeMaxLines = pr.codeMaxLines;
+    opt.tableOverflow = pr.tableOverflow;
+    opt.tableMaxLines = pr.tableMaxLines;
     opt.diffLayout = pr.diff.diffLayout;
     opt.gui = copyGui(root.gui);
 
@@ -1149,6 +1177,8 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 diffBlocks: doc.preview.decorations,
                 codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
                 codeMaxLines: opt.codeMaxLines < 0 ? 0 : opt.codeMaxLines,
+                tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
+                tableMaxLines: opt.tableMaxLines < 0 ? 0 : opt.tableMaxLines,
             };
             auto tree = viewMarkdown(doc.preview.doc, mopt);
             auto frames = layout(tree, Constraints(maxW: previewWidth()));
@@ -1282,6 +1312,8 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             diffLayout: parseDiffLayout(opt.diffLayout),
             codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
             codeMaxLines: opt.codeMaxLines,
+            tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
+            tableMaxLines: opt.tableMaxLines,
             reloadDiff: reloadDiff);
     }
     else
@@ -1363,6 +1395,8 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             tableCopy: parseTableCopy(opt.tableCopy),
             codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
             codeMaxLines: opt.codeMaxLines,
+            tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
+            tableMaxLines: opt.tableMaxLines,
             set: docSet,
             loadDoc: &loadDoc,
             tsCache: &cache,

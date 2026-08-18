@@ -22,6 +22,7 @@ import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
 import sparkles.syntax.md.model : codeLineCount, fenceBody, MdBlock,
     MdBlockKind, Span;
 import sparkles.syntax.md.render_widgets : FenceScroll, isWrap, OverflowPolicy,
+    TableScroll,
     foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
     viewMarkdown;
 import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
@@ -41,7 +42,7 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_color : Color;
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
     schemeForBackground, Slot, TextStyle;
-import sparkles.ui.widget : TextSpan, WidgetTree;
+import sparkles.ui.widget : TextSpan, WidgetKind, WidgetTree;
 
 /// Sane concrete fallbacks when a theme leaves the page fore-/background unset
 /// (a GPU/grid surface has no "terminal default" to defer to).
@@ -78,6 +79,16 @@ struct FenceExtent
     int lines;     /// body line count
     int innerW;    /// the panel's code viewport width (top-level fence)
     int shownRows; /// rows the vertical viewport shows
+}
+
+/// What `tableExtent` reads off a framed table's retained scrollbar leaves
+/// (`TBL7`/`TBL8`); zeros where an axis has no bar.
+struct TableExtent
+{
+    int content;    /// interior width in cells (h bar present)
+    int viewport;   /// visible interior width
+    int lines;      /// interior line count (v bar present)
+    int shownLines; /// visible interior lines
 }
 
 /// A table's grid dimensions.
@@ -198,10 +209,27 @@ struct ViewerModel
     /// document holding one long fence never needs a scroll to reach the
     /// bottom border. An unknown pane height (a static sink) never clips.
     int resolvedCodeMaxLines() const @safe pure nothrow @nogc
-        => codeMaxLines >= 0 ? codeMaxLines
-            : (viewRows > 6 ? viewRows - 2 : 0);
+        => codeMaxLines >= 0 ? codeMaxLines : autoMaxLines;
+
+    /// `--table-overflow` (`TBL7`): how a table wider than the pane behaves —
+    /// the same `OverflowPolicy` the fences use.
+    OverflowPolicy tableOverflow;
+    /// `--table-max-lines` (`TBL8`): a table whose interior exceeds this many
+    /// lines scrolls vertically (negative = auto, 0 = never).
+    int tableMaxLines = -1;
+    /// ditto — auto follows the code-max-lines formula.
+    int resolvedTableMaxLines() const @safe pure nothrow @nogc
+        => tableMaxLines >= 0 ? tableMaxLines : autoMaxLines;
+
+    /// The auto clamp both max-lines options share: the whole box, borders
+    /// included, fits the pane; unknown pane height never clips.
+    private int autoMaxLines() const @safe pure nothrow @nogc
+        => viewRows > 6 ? viewRows - 2 : 0;
     /// Per-fence scroll offsets, keyed by `codeBody.start` (scroll mode).
     FenceScroll[size_t] fenceScrollAt;
+    /// Per-table scroll offsets, keyed by the table's `span.start`
+    /// (scroll / wrap-at modes).
+    TableScroll[size_t] tableScrollAt;
     /// The per-bar drag/hover machines (`SCV5`): one `ScrollView` per bar
     /// owner — a fence's (and a table's) — keyed by the owner's canonical
     /// bar key, so every bar keeps its own hover and easing phase instead of
@@ -236,6 +264,7 @@ struct ViewerModel
     MdFence[] fences;
     MdCell[] cellList;
     size_t[] tableSpans;            /// each table's `span.start`, by table index
+    Span[] tableSpanRanges;         /// each table's full span (wheel targeting)
     size_t copiedFenceSrc = size_t.max; /// body start of the just-copied fence
     size_t copiedTableSrc = size_t.max; /// span start of the just-copied table
     DisclosureState!size_t folds = DisclosureState!size_t(true);
@@ -255,6 +284,8 @@ struct ViewerModel
     int widthCols = -1;             /// the width the pipeline is laid out for
 
     // Source-anchored identity bases (disjoint id spaces — see the md view).
+    enum size_t tableVBarHitBase = size_t.max / 128 + 1;
+    enum size_t tableHBarHitBase = size_t.max / 64 + 1;
     enum size_t fenceVBarHitBase = size_t.max / 32 + 1;
     enum size_t fenceHBarHitBase = size_t.max / 16 + 1;
     enum size_t tableCopyHitBase = size_t.max / 8 + 1;
@@ -568,6 +599,15 @@ struct ViewerModel
                 ? activeFenceOwner : size_t.max,
             hotFenceVBar: fenceHotGlyphs && activeBarV()
                 ? activeFenceOwner : size_t.max,
+            tableOverflow: tableOverflow,
+            tableMaxLines: resolvedTableMaxLines(),
+            tableScrolls: tableScrollList(),
+            tableHBarHitBase: tableHBarHitBase,
+            tableVBarHitBase: tableVBarHitBase,
+            hotTableHBar: fenceHotGlyphs && activeBarH()
+                ? activeTableOwner : size_t.max,
+            hotTableVBar: fenceHotGlyphs && activeBarV()
+                ? activeTableOwner : size_t.max,
             diffBlocks: preview.decorations, // `DVN6`
         };
         foldable = foldableSpans(preview.doc);
@@ -687,6 +727,7 @@ struct ViewerModel
         fences.length = 0;
         cellList.length = 0;
         tableSpans.length = 0;
+        tableSpanRanges.length = 0;
         int tableIdx = -1;
         void collect(in MdBlock blk)
         {
@@ -697,6 +738,7 @@ struct ViewerModel
             {
                 ++tableIdx;
                 tableSpans ~= blk.span.start;
+                tableSpanRanges ~= blk.span;
                 foreach (ri, ref const row; blk.children)
                     foreach (ci, ref const cell; row.children)
                         cellList ~= MdCell(tableIdx, ri, ci, cell.span);
@@ -1006,6 +1048,16 @@ struct ViewerModel
         => barSvActive >= fenceHBarHitBase
             ? barSvActive - fenceHBarHitBase : size_t.max;
 
+    /// A table's canonical bar key (both axes share the one machine).
+    static size_t tableBarKey(size_t spanStart) @safe pure nothrow @nogc
+        => tableHBarHitBase + spanStart;
+
+    /// The active machine's table owner (`span.start`), or `size_t.max`
+    /// when the active bar is not a table's.
+    size_t activeTableOwner() const @safe pure nothrow @nogc
+        => barSvActive >= tableHBarHitBase && barSvActive < fenceVBarHitBase
+            ? barSvActive - tableHBarHitBase : size_t.max;
+
     /// Whether the active bar engages its horizontal / vertical axis.
     private bool activeBarH() const @safe pure nothrow @nogc
     {
@@ -1219,6 +1271,99 @@ struct ViewerModel
         const cur = fenceScrollAt.get(bodyStart, FenceScroll(bodyStart, 0, 0));
         return delta != 0
             && setFenceScroll(bodyStart, cur.x, cur.y + delta);
+    }
+
+    /// The armed per-table scrolls, as the view consumes them.
+    private TableScroll[] tableScrollList() const
+    {
+        TableScroll[] list;
+        foreach (v; tableScrollAt)
+            if (v.x != 0 || v.y != 0)
+                list ~= v;
+        return list;
+    }
+
+    /// The table containing visual row `row`'s source identity (the
+    /// sideways-wheel target), else `size_t.max`.
+    size_t tableAtRow(long row) const @safe pure nothrow @nogc
+    {
+        if (row < 0 || row >= cast(long) rows.length)
+            return size_t.max;
+        const s = rows[cast(size_t) row].srcStart;
+        if (s == size_t.max)
+            return size_t.max;
+        foreach (ref const sp; tableSpanRanges)
+            if (s >= sp.start && s < sp.end)
+                return sp.start;
+        return size_t.max;
+    }
+
+    /// Measures the framed table starting at `spanStart` off its retained
+    /// scrollbar leaves (`TBL7`/`TBL8`) — a bar exists exactly when its axis
+    /// overflows, the only case the clamp matters. Zeros where an axis has
+    /// no bar.
+    TableExtent tableExtent(size_t spanStart) const @safe pure nothrow @nogc
+    {
+        TableExtent e;
+        foreach (ref const n; tree.nodes)
+        {
+            if (n.kind != WidgetKind.scrollbar)
+                continue;
+            if (n.hitId == tableHBarHitBase + spanStart)
+            {
+                e.content = cast(int) n.barContent;
+                e.viewport = cast(int) n.barViewport;
+            }
+            else if (n.hitId == tableVBarHitBase + spanStart)
+            {
+                e.lines = cast(int) n.barContent;
+                e.shownLines = cast(int) n.barViewport;
+            }
+        }
+        return e;
+    }
+
+    /// Sets a table's absolute scroll (either axis), clamped to its
+    /// overflow; true when it moved (and the pipeline rebuilt). A pure-wrap
+    /// table never scrolls (its contract — no bars at all).
+    bool setTableScroll(size_t spanStart, long x, long y)
+    {
+        if (isWrap(tableOverflow))
+            return false;
+        const e = tableExtent(spanStart);
+        const maxX = e.content > e.viewport ? e.content - e.viewport : 0;
+        const maxY = e.lines > e.shownLines ? e.lines - e.shownLines : 0;
+        if (maxX == 0 && maxY == 0)
+            return false;
+        auto next = TableScroll(spanStart,
+            cast(int)(x < 0 ? 0 : (x > maxX ? maxX : x)),
+            cast(int)(y < 0 ? 0 : (y > maxY ? maxY : y)));
+        const cur = tableScrollAt.get(spanStart,
+            TableScroll(spanStart, 0, 0));
+        if (next == cur)
+            return false;
+        if (next.x == 0 && next.y == 0)
+            tableScrollAt.remove(spanStart);
+        else
+            tableScrollAt[spanStart] = next;
+        rebuild();
+        return true;
+    }
+
+    /// Scrolls a table sideways by `delta` cells; true when it moved.
+    bool scrollTable(size_t spanStart, int delta)
+    {
+        const cur = tableScrollAt.get(spanStart, TableScroll(spanStart, 0, 0));
+        return delta != 0
+            && setTableScroll(spanStart, cur.x + delta, cur.y);
+    }
+
+    /// Scrolls a table vertically by `delta` lines; true when it moved.
+    bool scrollTableV(size_t spanStart, int delta)
+    {
+        const cur = tableScrollAt.get(spanStart, TableScroll(spanStart, 0, 0));
+        return delta != 0
+            && setTableScroll(spanStart, cur.x, cur.y + delta);
     }
 
     /// The table index of the table starting at `spanStart`, else -1.
@@ -2005,6 +2150,64 @@ struct ViewerModel
     assert(!vm.hOverflows && !vm.scrollHorizontal(8));
     assert(!vm.scrollEndHorizontal(), "nowhere to go in content that fits");
     assert(!vm.scrollHomeHorizontal(), "and the same at the other edge");
+}
+
+@("viewer_model.setTableScroll.clampsRemovesAndRefusesInWrap")
+@system unittest
+{
+    import sparkles.syntax : builtinDark, MdDoc, MdInline, MdInlineKind;
+    import sparkles.syntax.md.render_widgets : WrapOverflow;
+
+    ViewerModel vm;
+    vm.themes = [builtinDark];
+    vm.names = ["dark"];
+    vm.widthCols = 30;
+    vm.applyTheme(0);
+
+    // A two-column table ~55 cells wide in a 30-cell pane: the default
+    // scroll mode frames it, so its retained h bar carries the extents.
+    string src;
+    foreach (_; 0 .. 25)
+        src ~= "a";
+    foreach (_; 0 .. 25)
+        src ~= "b";
+    static MdBlock tcell(size_t s, size_t e)
+        => MdBlock(kind: MdBlockKind.tableCell, span: Span(s, e),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(s, e))]);
+    auto trow = MdBlock(kind: MdBlockKind.tableRow, span: Span(0, 50),
+        children: [tcell(0, 25), tcell(25, 50)]);
+    auto md = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.table, span: Span(0, 50),
+            children: [trow, trow]),
+    ]), src);
+    vm.setDocument("wide.md", "", src, null,
+        PreviewModel(present: true, doc: md), TwoslashReturn.init, "markdown");
+
+    const e = vm.tableExtent(0);
+    assert(e.content > e.viewport && e.viewport > 0,
+        "precondition: the framed table's h bar carries its extents");
+    assert(!vm.hOverflows, "the framed table never engages the document bar");
+
+    // Wheel targeting resolves a visible row inside the table to its span.
+    bool sawTable;
+    foreach (row; 0 .. cast(long) vm.rows.length)
+        sawTable = sawTable || vm.tableAtRow(row) == 0;
+    assert(sawTable);
+
+    // Moves, clamps at the far edge, and 0/0 drops the entry.
+    assert(vm.setTableScroll(0, 5, 0));
+    assert(vm.tableScrollAt[0].x == 5);
+    assert(vm.setTableScroll(0, 10_000, 0));
+    assert(vm.tableScrollAt[0].x == e.content - e.viewport);
+    assert(vm.setTableScroll(0, 0, 0));
+    assert((0 in vm.tableScrollAt) is null);
+    assert(vm.scrollTable(0, 7) && vm.tableScrollAt[0].x == 7);
+
+    // Pure wrap mode has no bars and refuses to scroll.
+    vm.tableScrollAt.clear();
+    vm.tableOverflow = OverflowPolicy(WrapOverflow());
+    vm.rebuild();
+    assert(!vm.setTableScroll(0, 5, 0));
 }
 
 @("viewer_model.diffCursorPatch.stagesTheHunkInViewOrNothing")
