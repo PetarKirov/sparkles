@@ -769,6 +769,15 @@ struct WorkspaceTui
     // `[`/`]`: open the previous/next file of the tree, wrapping (XPL4).
     /// `DVG1`: the viewer is showing a multi-file diff, so the bracket keys
     /// belong to its changed-file list rather than to the tree's neighbours.
+    /// Toggle the explorer pane; focus follows (XPL2). Reached through the
+    /// panes' `toggleExplorer` intent flags — `e` and `<leader>e` alike.
+    private void toggleExplorerPane() @system
+    {
+        treeVisible = !treeVisible;
+        treeFocused = treeVisible;
+        arrange(width, height);
+    }
+
     private bool viewerHasDiffSession() const @safe pure nothrow @nogc
         => viewer.diffNav();
 
@@ -962,51 +971,48 @@ struct WorkspaceTui
             return true;
         }
 
-        // Global keys — only when no pane is consuming typed text.
+        // Workspace-level commands the panes cannot answer — resolved by the
+        // ONE table with the workspace's own context, never by a key switch
+        // (this block was the policy's surviving fourth copy). Guarded off
+        // while a pane consumes typed text or has a key sequence pending: a
+        // key that is the tail of a `<leader>…` path belongs to that pane's
+        // lantern, not to an interception.
         const typing = (treeFocused && tree.inputActive)
             || (!treeFocused && viewer.inputActive);
-        if (!typing)
+        if (!typing && !tree.lanternPending && !viewer.lanternPending)
         {
+            import keymap : Command, commandFor, KeyContext;
+
             bool handled;
-            bool quit;
             e.match!((in KeyEvent k) {
-                if (k.key != Key.char_)
-                    return;
-                switch (k.ch)
+                const ctx = KeyContext(
+                    treeFocused: treeFocused, treeVisible: treeVisible,
+                    hasDiffSession: viewerHasDiffSession,
+                    hasDocSet: currentDocPath.length != 0);
+                // With the tree focused the brackets resolve to the pane's
+                // own commands (next/prev git change) and fall through to
+                // it; the viewer-scope rows carry the `DVG1` precedence — a
+                // diff session's files ahead of document navigation (XPL4).
+                switch (commandFor(k, ctx).cmd)
                 {
-                    case 'e': // toggle the explorer pane; focus follows
-                        treeVisible = !treeVisible;
-                        treeFocused = treeVisible;
-                        arrange(width, height);
+                    case Command.diffPrevFile:
+                        viewer.moveDiffFile(-1);
                         handled = true;
                         break;
-                    // With the tree focused the brackets belong to the pane
-                    // (next/prev git change); the viewer keeps them for
-                    // document navigation (XPL4).
-                    // …and a diff session claims them ahead of the document
-                    // set: the changed-file list is what is being walked
-                    // (`DVG1`).
-                    case '[':
-                        if (!treeFocused)
-                        {
-                            if (viewerHasDiffSession)
-                                viewer.moveDiffFile(-1);
-                            else
-                                openAdjacent(-1);
-                            handled = true;
-                        }
+                    case Command.diffNextFile:
+                        viewer.moveDiffFile(+1);
+                        handled = true;
                         break;
-                    case ']':
-                        if (!treeFocused)
-                        {
-                            if (viewerHasDiffSession)
-                                viewer.moveDiffFile(+1);
-                            else
-                                openAdjacent(+1);
-                            handled = true;
-                        }
+                    case Command.setPrev:
+                        openAdjacent(-1);
+                        handled = true;
                         break;
-                    default: break;
+                    case Command.setNext:
+                        openAdjacent(+1);
+                        handled = true;
+                        break;
+                    default:
+                        break; // the panes' own commands route below
                 }
             }, (_) {});
             if (handled)
@@ -1090,6 +1096,12 @@ struct WorkspaceTui
                 openPicker();
                 return true;
             }
+            if (tree.explorerToggleRequested) // `e` / `<leader>e`
+            {
+                tree.explorerToggleRequested = false;
+                toggleExplorerPane();
+                return true;
+            }
             if (tree.pickedSession >= 0) // `TVU6`: a changed-file row
             {
                 const idx = cast(size_t) tree.pickedSession;
@@ -1128,6 +1140,11 @@ struct WorkspaceTui
         {
             viewer.pickerRequested = false;
             openPicker();
+        }
+        if (viewer.explorerToggleRequested) // `e` / `<leader>e`
+        {
+            viewer.explorerToggleRequested = false;
+            toggleExplorerPane();
         }
         // INS6 source→tree, the picker half (DevTools' semantics): while the
         // `⌕` chip is armed, hovering the document walks the tree live, and a
@@ -1846,6 +1863,32 @@ unittest
     assert(w.treeVisible == !treeWas, "'e' toggled the explorer");
     assert(w.treeFocused == w.treeVisible, "and focus followed it");
     assert(!rec.quitRequested, "'e' is not a quit");
+}
+
+@("workspace.leaderETogglesTheExplorer")
+@system
+unittest
+{
+    import std.file : rmdirRecurse;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-leader-e");
+    scope (exit) rmdirRecurse(root);
+
+    // `<leader>e` lives in the focused pane's own lantern; the workspace must
+    // not steal the sequence's tail. (The old hand-rolled 'e' interception
+    // consumed the second key and left the leader pending — the sequence
+    // never worked in the terminal workspace.)
+    const was = w.treeVisible;
+    assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ' '))));
+    assert(w.handle(Event(KeyEvent(key: Key.char_, ch: 'e'))));
+    assert(w.treeVisible == !was, "<leader>e toggled the explorer");
+    assert(w.treeFocused == w.treeVisible, "focus follows the pane");
+
+    // …and plain `e` still toggles, now through the pane's intent flag
+    // rather than a workspace key switch.
+    assert(w.handle(Event(KeyEvent(key: Key.char_, ch: 'e'))));
+    assert(w.treeVisible == was);
 }
 
 @("workspace.component.anIdlePassDeclinesToDraw")

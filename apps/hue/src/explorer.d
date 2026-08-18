@@ -207,6 +207,11 @@ struct ExplorerTui
         ltnTick(lantern, elapsed);
     }
 
+    /// Whether a key sequence is in flight (`LTN1`): the workspace must not
+    /// intercept a key that is the tail of one.
+    bool lanternPending() const @safe pure nothrow @nogc
+        => lantern.active;
+
     // Visibility toggles (XPF2), state shown in the status bar: dotfiles are
     // hidden by default; git-ignored entries are listed (dimmed) by default.
     bool showHidden;
@@ -222,6 +227,9 @@ struct ExplorerTui
     /// Set by the `pickerFiles` command arm (`<leader>ff`); the workspace
     /// drains it and opens the fuzzy picker (the `picked` handoff pattern).
     bool pickerRequested;
+    /// ditto — the `toggleExplorer` arm (`e`, `<leader>e`): the pane split
+    /// is the workspace's, so the pane reports the intent.
+    bool explorerToggleRequested;
     /// `TVU6`: the session index of the chosen row, or `-1` when the pick was
     /// an ordinary filesystem row (so the host loads it as a document).
     int pickedSession = -1;
@@ -883,11 +891,16 @@ struct ExplorerTui
             case Command.treeParent:   rerootParent(); break;
             case Command.treeCloseAll: closeAll(); break;
 
+            case Command.toggleExplorer:
+                // The pane split is the workspace's; report the intent — the
+                // `pickerRequested` shape.
+                explorerToggleRequested = true;
+                break;
+
             // The workspace owns the pane split and the viewer owns its own
             // document; a focused tree simply does not answer these. Explicit
             // arms rather than a `default:`, so a new command is a compile
             // error here until someone decides whether the tree answers it.
-            case Command.toggleExplorer:
             case Command.toggleInspector:
             case Command.viewDown: case Command.viewUp:
             case Command.viewHome: case Command.viewEnd:
