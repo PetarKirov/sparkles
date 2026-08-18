@@ -23,9 +23,9 @@ import sparkles.syntax.md.render_widgets : MdTableExtras;
 import table_select : serializeTable, TableCopyFormat, TableRegion;
 
 version (unittest) import sparkles.syntax.md.render_widgets : TableScroll;
-import sparkles.dsv : classifyValue, ColumnType, decodeCell, detectHeader,
-    Dialect, DsvDoc, inferColumnTypes, parseDsv, seedForExtension, sniff,
-    sniffMaxBytes, sniffMaxRecords;
+import sparkles.dsv : applyProjection, classifyValue, ColumnType, decodeCell,
+    detectHeader, Dialect, DsvDoc, inferColumnTypes, parseDsv, ProjectionSpec,
+    seedForExtension, sniff, sniffMaxBytes, sniffMaxRecords;
 import sparkles.syntax.md.model : ColAlign, MdBlock, MdBlockKind, MdDoc,
     MdInline, MdInlineKind, MdSpan = Span;
 
@@ -48,6 +48,21 @@ struct DsvInfo
     uint columns;
     uint dataRows;
     uint ragged;          /// records off the modal column count (`DSM3`)
+    uint visibleRows;     /// data rows surviving the projection (`DSK5`)
+    bool projected;       /// a non-pristine projection is showing (`DSB2`)
+}
+
+/// The presentation projection (`DSB1`): the engine's spec (which records,
+/// what order) plus the host's column choice (`columns` = visible **data**
+/// columns in view order; null = all, natural order). One regular value —
+/// every browser surface edits it, `adaptDsv`/`DsvCopy` consume it.
+struct DsvProjection
+{
+    ProjectionSpec spec;
+    const(uint)[] columns;
+
+    bool pristine() const scope @safe pure nothrow @nogc
+        => spec.pristine && columns is null;
 }
 
 /// The adapter's product: the decoded buffer and the table model over it,
@@ -93,7 +108,8 @@ string columnName(size_t index) @safe pure nothrow
 /// Resolves the dialect and header per the `DSD` precedence
 /// (flags > sniff > extension seed) and adapts the parsed document onto the
 /// md table model. `ext` is the extension without its dot ("" for stdin).
-DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags) @safe
+DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags,
+    in DsvProjection proj = DsvProjection.init) @safe
 {
     DsvAdapted a;
 
@@ -117,6 +133,19 @@ DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags) @safe
         : flags.header == "no" ? false : detectHeader(doc);
     doc.hasHeader = hasHeader;
 
+    // The projection resolves here (`DSB1`): the engine's permutation over
+    // data records, and the host's visible-column list.
+    SmallBuffer!(ColumnType, 16) types;
+    inferColumnTypes(doc, sniffMaxRecords, types);
+    SmallBuffer!(uint, 64) rowPerm;
+    applyProjection(doc, types[], proj.spec, rowPerm);
+    auto visCols = proj.columns !is null ? proj.columns.dup : {
+        auto all = new uint[](doc.columnCount);
+        foreach (c; 0 .. doc.columnCount)
+            all[c] = cast(uint) c;
+        return all;
+    }();
+
     a.info = DsvInfo(
         present: true,
         dialect: dialect,
@@ -125,22 +154,26 @@ DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags) @safe
         columns: doc.columnCount,
         dataRows: cast(uint) doc.dataRecordCount,
         ragged: doc.raggedCount,
+        visibleRows: cast(uint) rowPerm.length,
+        projected: !proj.pristine,
     );
-    if (doc.columnCount == 0)
-        return a; // empty input: no table (the caller degrades, DSM3)
+    if (doc.columnCount == 0 || visCols.length == 0)
+        return a; // empty input / all columns hidden: the caller degrades
 
-    buildTable(a, doc);
+    buildTable(a, doc, types[], rowPerm[], visCols);
     return a;
 }
 
 /// Synthesizes the decoded buffer + the `table` block tree (`DSG1` via the
-/// md path): header row first (real, padded with `…+N` overflow names, or
-/// fully synthetic), data rows padded to the grid width (`DSM3`), per-column
-/// alignment from the inferred types (`DSG3`: numeric/date right, bool
-/// center).
-private void buildTable(ref DsvAdapted a, in DsvDoc doc) @safe
+/// md path) over the **projected view**: header row first (real, padded with
+/// `…+N` overflow names, or fully synthetic), the permuted data rows padded
+/// to the grid width (`DSM3`), per-column alignment from the inferred types
+/// (`DSG3`: numeric/date right, bool center). `rowPerm` holds data-record
+/// indexes in view order; `visCols` the visible data columns in view order.
+private void buildTable(ref DsvAdapted a, in DsvDoc doc,
+    in ColumnType[] types, in uint[] rowPerm, in uint[] visCols) @safe
 {
-    const cols = doc.columnCount;
+    const cols = visCols.length;
     auto buf = appender!string;
     SmallBuffer!(char, 256) cellBuf;
 
@@ -150,32 +183,30 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc) @safe
     // `ColAlign` for any plain consumer, and the extras' `CellAlign` overrides
     // that carry what markdown cannot say (`decimal`). Column 0 is the
     // record-number gutter (`DSG5`).
-    SmallBuffer!(ColumnType, 16) types;
-    inferColumnTypes(doc, sniffMaxRecords, types);
     auto aligns = new ColAlign[cols + 1];
     auto cellAligns = new CellAlign[cols + 1];
     aligns[0] = ColAlign.right;
     cellAligns[0] = CellAlign.right;
-    foreach (c; 0 .. cols)
+    foreach (vi, c; visCols)
     {
         final switch (c < types.length ? types[c] : ColumnType.text)
         {
         case ColumnType.integer:
         case ColumnType.date:
-            aligns[c + 1] = ColAlign.right;
-            cellAligns[c + 1] = CellAlign.right;
+            aligns[vi + 1] = ColAlign.right;
+            cellAligns[vi + 1] = CellAlign.right;
             break;
         case ColumnType.floating:
-            aligns[c + 1] = ColAlign.right;
-            cellAligns[c + 1] = CellAlign.decimal; // DSG7
+            aligns[vi + 1] = ColAlign.right;
+            cellAligns[vi + 1] = CellAlign.decimal; // DSG7
             break;
         case ColumnType.boolean:
-            aligns[c + 1] = ColAlign.center;
-            cellAligns[c + 1] = CellAlign.center;
+            aligns[vi + 1] = ColAlign.center;
+            cellAligns[vi + 1] = CellAlign.center;
             break;
         case ColumnType.text:
-            aligns[c + 1] = ColAlign.none;
-            cellAligns[c + 1] = CellAlign.inherit;
+            aligns[vi + 1] = ColAlign.none;
+            cellAligns[vi + 1] = CellAlign.inherit;
             break;
         }
     }
@@ -221,27 +252,28 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc) @safe
         if (a.info.hasHeader)
         {
             const rec = doc.records[0];
-            foreach (c; 0 .. cols)
-                names[c + 1] = c < rec.cellCount
+            foreach (vi, c; visCols)
+                names[vi + 1] = c < rec.cellCount
                     ? decodeCell(doc, doc.cells[rec.cellsStart + c], cellBuf).idup
                     : text("…+", c - rec.cellCount + 1); // overflow columns (DSM3)
         }
         else
-            foreach (c; 0 .. cols)
-                names[c + 1] = columnName(c);
+            foreach (vi, c; visCols)
+                names[vi + 1] = columnName(c);
         addRow(names);
     }
 
-    // Data rows, padded to the grid width, numbered 1-based in source order
-    // (`DSG5` — under a projection these stay source numbers).
+    // The projected data rows, padded to the grid width, gutter-numbered by
+    // their 1-based SOURCE order (`DSG5` — a sorted/filtered view shows
+    // provenance, never a renumbering).
     const first = a.info.hasHeader ? 1 : 0;
-    foreach (r; first .. doc.records.length)
+    foreach (dataIdx; rowPerm)
     {
-        const rec = doc.records[r];
+        const rec = doc.records[first + dataIdx];
         auto cells = new const(char)[][cols + 1];
-        cells[0] = text(r - first + 1);
-        foreach (c; 0 .. cols)
-            cells[c + 1] = c < rec.cellCount
+        cells[0] = text(dataIdx + 1);
+        foreach (vi, c; visCols)
+            cells[vi + 1] = c < rec.cellCount
                 ? decodeCell(doc, doc.cells[rec.cellsStart + c], cellBuf).idup
                 : "";
         addRow(cells);
@@ -327,6 +359,9 @@ struct DsvCopy
     DsvInfo info;
     private DsvDoc parsed;
     private bool parsedOk;
+    private uint[] rowPerm;  /// view data row → data record (`DSC5`)
+    private uint[] viewCols; /// view data col → data column
+    private bool projPristine = true;
 
     bool present() const @safe pure nothrow @nogc => info.present;
     /// View grid chrome: the gutter column, and the synthetic header row.
@@ -335,9 +370,11 @@ struct DsvCopy
     size_t skipRows() const @safe pure nothrow @nogc
         => info.present && info.syntheticHeader ? 1 : 0;
 
-    static DsvCopy of(string rawText, in DsvInfo info) @safe
+    static DsvCopy of(string rawText, in DsvInfo info,
+        in DsvProjection proj = DsvProjection.init) @safe
     {
         DsvCopy c = { rawText: rawText, info: info };
+        c.projPristine = proj.pristine;
         if (info.present)
         {
             auto res = parseDsv(rawText, info.dialect);
@@ -346,33 +383,61 @@ struct DsvCopy
                 c.parsed = res.value;
                 c.parsed.hasHeader = info.hasHeader;
                 c.parsedOk = true;
+                // The same deterministic projection the adapter rendered
+                // (`DSS3` makes re-deriving it here exact), so view
+                // coordinates map through it (`DSC5`: WYSIWYG).
+                SmallBuffer!(ColumnType, 16) types;
+                inferColumnTypes(c.parsed, sniffMaxRecords, types);
+                SmallBuffer!(uint, 64) perm;
+                applyProjection(c.parsed, types[], proj.spec, perm);
+                c.rowPerm = perm[].dup;
+                if (proj.columns !is null)
+                    c.viewCols = proj.columns.dup;
+                else
+                {
+                    c.viewCols = new uint[](c.parsed.columnCount);
+                    foreach (col; 0 .. c.parsed.columnCount)
+                        c.viewCols[col] = cast(uint) col;
+                }
             }
         }
         return c;
     }
 
     /// Raw bytes of VIEW cell `(row, col)`: view column 0 is the gutter (""),
-    /// view row 0 the header (synthetic → ""); data rows map to source
-    /// records in order; a ragged row's padded cells are "".
+    /// view row 0 the header (synthetic → ""); data rows and columns map
+    /// through the projection (`DSC5` — the copy is what the view shows),
+    /// a ragged row's padded cells are "".
     const(char)[] rawCell(size_t viewRow, size_t viewCol) const @safe
     {
-        if (!parsedOk || viewCol == 0)
+        if (!parsedOk || viewCol == 0 || viewCol - 1 >= viewCols.length)
             return "";
-        const dataCol = viewCol - 1;
-        const rec = info.hasHeader ? cast(long) viewRow : cast(long) viewRow - 1;
-        if (rec < 0 || rec >= cast(long) parsed.records.length)
+        const dataCol = viewCols[viewCol - 1];
+        const first = info.hasHeader ? 1 : 0;
+        size_t recIdx;
+        if (viewRow == 0 && info.hasHeader)
+            recIdx = 0; // the real header row
+        else
+        {
+            const dataRow = viewRow - 1; // below the (real or synthetic) header
+            if (dataRow >= rowPerm.length)
+                return "";
+            recIdx = first + rowPerm[dataRow];
+        }
+        if (recIdx >= parsed.records.length)
             return "";
-        const r = parsed.records[cast(size_t) rec];
+        const r = parsed.records[recIdx];
         if (dataCol >= r.cellCount)
             return "";
         return parsed.cellRaw(parsed.cells[r.cellsStart + dataCol]);
     }
 
-    /// The region covers the whole view grid — a `source` copy then IS the
-    /// input file (`DSC4`).
+    /// The region covers the whole view grid of a PRISTINE projection — a
+    /// `source` copy then IS the input file (`DSC4`; under a projection the
+    /// copy is the visible view instead, `DSC5`).
     bool coversWholeGrid(in TableRegion reg, size_t rows, size_t cols) const
         @safe pure nothrow @nogc
-        => !reg.subCell && reg.rowLo == 0 && reg.colLo == 0
+        => projPristine && !reg.subCell && reg.rowLo == 0 && reg.colLo == 0
             && reg.rowHi + 1 >= rows && reg.colHi + 1 >= cols;
 }
 
@@ -461,6 +526,57 @@ string serializeGridCopy(const DsvCopy copy, in TableRegion reg, size_t rows,
     // And the whole grid under `source` is still the exact file.
     assert(serializeGridCopy(copy, all, 4, 3, &viewCell,
         TableCopyFormat.source) == src);
+}
+
+@("dsv_view.copy.projectedWysiwyg")
+@safe unittest
+{
+    import sparkles.dsv : Constraint, ConstraintOp, ProjectionSpec, SortKey;
+
+    // DSC5: under a projection, copies serialize the VISIBLE view in view
+    // order — and the byte-exact whole-grid shortcut is off.
+    const src = "name,qty\nb,2\na,3\nc,1\n";
+    DsvProjection proj = {
+        spec: ProjectionSpec([SortKey(1)], // qty asc → c(1), b(2), a(3)
+            [Constraint(1, ConstraintOp.gt, false, "1")]), // qty > 1
+    };
+    const a = adaptDsv(src, "csv", DsvFlags(), proj);
+    assert(a.info.projected && a.info.visibleRows == 2);
+    // The rendered grid: header, then b(row 1, gutter "1"), a(row 2, "2").
+    const table = a.doc.root.children[0];
+    const r1 = table.children[1];
+    assert(a.text[r1.children[0].span.start .. r1.children[0].span.end] == "1");
+    assert(a.text[r1.children[1].span.start .. r1.children[1].span.end] == "b");
+    const r2 = table.children[2];
+    assert(a.text[r2.children[0].span.start .. r2.children[0].span.end] == "2");
+    assert(a.text[r2.children[1].span.start .. r2.children[1].span.end] == "a");
+
+    const copy = DsvCopy.of(src, a.info, proj);
+    const(char)[] viewCell(size_t r, size_t c) @safe => "";
+    const all = TableRegion(rowLo: 0, rowHi: 2, colLo: 0, colHi: 2);
+    // Whole grid ≠ the file when projected: it is the visible view.
+    assert(serializeGridCopy(copy, all, 3, 3, &viewCell,
+        TableCopyFormat.source) == "name,qty\nb,2\na,3");
+}
+
+@("dsv_view.copy.hiddenColumnsExcluded")
+@safe unittest
+{
+    // A column projection: only qty shows; source copies emit just it.
+    const src = "name,qty,tag\nx,2,aa\ny,3,bb\n";
+    static immutable uint[1] only = [1u];
+    DsvProjection proj = { columns: only[] };
+    const a = adaptDsv(src, "csv", DsvFlags(), proj);
+    assert(a.info.projected);
+    const hdr = a.doc.root.children[0].children[0];
+    assert(hdr.children.length == 2); // gutter + qty
+    assert(a.text[hdr.children[1].span.start .. hdr.children[1].span.end] == "qty");
+
+    const copy = DsvCopy.of(src, a.info, proj);
+    const(char)[] viewCell(size_t r, size_t c) @safe => "";
+    const all = TableRegion(rowLo: 0, rowHi: 2, colLo: 0, colHi: 1);
+    assert(serializeGridCopy(copy, all, 3, 2, &viewCell,
+        TableCopyFormat.source) == "qty\n2\n3");
 }
 
 // ── Golden grids (the D1 gate) ──────────────────────────────────────────────

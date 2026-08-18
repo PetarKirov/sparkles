@@ -57,7 +57,7 @@ struct ProjectionSpec
     const(SortKey)[] sortKeys;
     const(Constraint)[] constraints;
 
-    bool pristine() const @safe pure nothrow @nogc
+    bool pristine() const scope @safe pure nothrow @nogc
         => sortKeys.length == 0 && constraints.length == 0;
 }
 
