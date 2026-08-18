@@ -19,6 +19,8 @@ module sparkles.ui_sdl3.vulkan_context;
 import std.algorithm : maxElement;
 import std.string : fromStringz;
 
+import sparkles.base.text.cstring : CString, tryToCString;
+
 import expected : err, ok;
 
 import sparkles.ui_sdl3.error;
@@ -55,6 +57,9 @@ private struct Candidate
     /// Not a `final switch`: ImportC carries Vulkan's `*_MAX_ENUM` sentinel
     /// across as a real member, and a driver reporting anything unexpected
     /// should rank last rather than fail the build.
+    ///
+    /// This ranks rather than names — `deviceTypeName` in
+    /// $(MREF sparkles,vulkan,names) is the vocabulary side of the same enum.
     int score() const @safe pure nothrow @nogc
     {
         with (VkPhysicalDeviceType) switch (props.deviceType)
@@ -164,10 +169,16 @@ struct VulkanContext
     private SdlExpected!() createInstance(in ContextRequest req,
         scope const(char*)[] extNames, in InstancePortability portability) @trusted nothrow
     {
-        import std.string : toStringz;
+        // Not `toStringz`: that allocates a fresh copy on every call, and this
+        // one is called twice whenever the validation-layer retry fires. The
+        // buffer outlives `vkCreateInstance` below, which is all Vulkan needs —
+        // it copies the name out of `pApplicationName`.
+        CString!256 appName;
+        if (!tryToCString(appName, [req.applicationName]))
+            return err!void("VulkanContext.create: applicationName is too long");
 
         auto appInfo = vkInfo(VkApplicationInfo(
-            pApplicationName: req.applicationName.toStringz,
+            pApplicationName: appName.ptr,
             applicationVersion: makeApiVersion(0, 0, 1, 0),
             pEngineName: "sparkles",
             engineVersion: makeApiVersion(0, 0, 1, 0),
@@ -302,8 +313,11 @@ struct VulkanContext
     }
 
     /// The selected device's name, as the driver reports it.
-    string deviceName() const @trusted nothrow
-        => properties.deviceName.ptr.fromStringz.idup;
+    ///
+    /// `@safe`, because `fromStringz` on the array stays inside its 256 bytes;
+    /// the `.ptr` spelling would pick the pointer overload and read past them.
+    string deviceName() const @safe nothrow
+        => properties.deviceName.fromStringz.idup;
 
     /// Tear down device, surface and instance, in that order.
     void destroy() @trusted nothrow
