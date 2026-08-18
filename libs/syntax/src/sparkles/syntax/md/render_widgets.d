@@ -17,6 +17,7 @@ pills are unbreakable spans, and the wrap width is the node's width maximum
 module sparkles.syntax.md.render_widgets;
 
 import sparkles.base.term_color : mix, RgbColor, toRgb;
+import sparkles.base.text.width : CellAlign = Align;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
 import sparkles.syntax.md.model : codeLineCount, ColAlign, fenceBody, MdBlock,
@@ -226,6 +227,32 @@ struct MdViewOptions
     size_t hotTableHBar = size_t.max;
     /// ditto, for the vertical track.
     size_t hotTableVBar = size_t.max;
+
+    /// Host-supplied table refinements beyond markdown's own vocabulary —
+    /// the DSV grid's needs (`docs/specs/hue/dsv-preview.md` `DSG2`/`DSG4`/
+    /// `DSG5`/`DSG7`). Markdown documents leave it default (inert).
+    MdTableExtras tableExtras;
+}
+
+/// See $(LREF MdViewOptions.tableExtras). Every field composes with the
+/// document's own table markup; defaults change nothing.
+struct MdTableExtras
+{
+    /// Leading stub / row-header columns (`TableProps.headerCols`): the
+    /// stub rule is drawn heavy and width-budgeted — hue's record-number
+    /// gutter (`DSG5`).
+    size_t headerCols;
+    /// Uniform per-column content-width cap in cells (0 = none) —
+    /// `TableProps.columnMaxWidths` filled for every column; over-cap
+    /// content wraps (`DSG4`).
+    size_t columnMaxWidth;
+    /// Per-column alignment overrides. An `inherit` entry (or a column past
+    /// the array) keeps the document's own `ColAlign`; `Align.decimal`
+    /// engages the core's decimal-pad solver (`DSG7`).
+    const(CellAlign)[] columnAligns;
+    /// Pin the header band while the vertical table viewport scrolls
+    /// (`TableViewportSpec.pinHeader`, `DSG2`).
+    bool pinHeader;
 }
 
 /// The emphasis in force while rendering a subtree: which source ranges are
@@ -1421,10 +1448,17 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         cellOpt.emph);
                     fillDiffTints(spans); // the cell path is not a prose row
                     trimCellEdges(spans); // measured text sizes the track
+                    // An extras entry owns the column: the cell defers to
+                    // `TableProps.columnAligns` (which is how `decimal`
+                    // reaches the core's pad solver); otherwise markdown's
+                    // own `ColAlign` maps per cell as before.
+                    const overridden = ci < opt.tableExtras.columnAligns.length
+                        && opt.tableExtras.columnAligns[ci] != Align.inherit;
                     const a = ci < blk.aligns.length ? blk.aligns[ci]
                         : ColAlign.none;
                     cells[ri][ci] = SpanCell(spans,
-                        halign: a == ColAlign.right ? Align.right
+                        halign: overridden ? Align.inherit
+                            : a == ColAlign.right ? Align.right
                             : a == ColAlign.center ? Align.center
                             : Align.left,
                         // Source-anchored cell identity for interactive
@@ -1441,7 +1475,15 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             TableProps props = {
                 headerRows: 1,
                 rowSeparators: opt.tableRowRules,
+                headerCols: opt.tableExtras.headerCols,
+                columnAligns: opt.tableExtras.columnAligns.dup,
             };
+            if (opt.tableExtras.columnMaxWidth > 0)
+            {
+                auto caps = new size_t[](cols);
+                caps[] = opt.tableExtras.columnMaxWidth;
+                props.columnMaxWidths = caps;
+            }
 
             // `TBL7`/`TBL8`: the overflow policy. The available box is
             // `maxWidth - indentCols` — the fence convention, so a nested
@@ -1474,7 +1516,8 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     hasHThumbFg: opt.theme.present,
                     vThumbFg: opt.hotTableVBar == blk.span.start
                         ? opt.theme.accentBlue : opt.theme.codeFg,
-                    hasVThumbFg: opt.theme.present);
+                    hasVThumbFg: opt.theme.present,
+                    pinHeader: opt.tableExtras.pinHeader);
             }
             TableWidgetStyle st = {
                 hitId: opt.hitId,
