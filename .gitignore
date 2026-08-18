@@ -82,6 +82,7 @@ bazel-*
 /apps/hue/tools/capture-goldens
 /apps/hue/tools/preview_widget
 /apps/hue/tools/tui_ab
+/apps/hue/tools/resize_probe
 /apps/hue/tools/dub.selections.json
 screenshot*.png
 
