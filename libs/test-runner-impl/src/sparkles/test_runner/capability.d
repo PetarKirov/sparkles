@@ -327,21 +327,15 @@ version (linux)
     /// AMD IBS precise-memory engine; `cpu` is the core PMU.
     long probePmuType(scope const(char)[] name) @safe nothrow @nogc
     {
+        import sparkles.base.text.cstring : CString, tryToCString;
+
         enum prefix = "/sys/bus/event_source/devices/";
         enum suffix = "/type";
-        char[128] path = void;
-        if (prefix.length + name.length + suffix.length + 1 > path.length)
+        CString!128 path;
+        if (!tryToCString(path, [prefix, name, suffix]))
             return -1;
-        size_t n = 0;
-        path[n .. n + prefix.length] = prefix;
-        n += prefix.length;
-        path[n .. n + name.length] = name;
-        n += name.length;
-        path[n .. n + suffix.length] = suffix;
-        n += suffix.length;
-        path[n] = '\0';
         char[32] buf = void;
-        const content = readSmallFile(&path[0], buf[]);
+        const content = readSmallFile(path.ptr, buf[]);
         const parsed = parseLongValue(content);
         return parsed.ok ? parsed.value : -1;
     }
