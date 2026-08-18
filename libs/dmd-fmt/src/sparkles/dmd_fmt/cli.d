@@ -14,7 +14,7 @@ module sparkles.dmd_fmt.cli;
 
 version (DmdFmtCli):
 
-import sparkles.dmd_fmt.config : FormatConfig;
+import sparkles.dmd_fmt.config : configFor, FormatConfig;
 import sparkles.dmd_fmt.printer : formatText;
 
 int main(string[] args) @system
@@ -48,10 +48,10 @@ int main(string[] args) @system
         return 2;
     }
 
-    FormatConfig cfg; // M7: discovered per file from .editorconfig
-
     if (!files.length)
     {
+        // stdin: discover config from the working directory.
+        const cfg = configFor("stdin.d");
         string source;
         foreach (chunk; stdin.byChunk(64 * 1024))
             source ~= cast(const(char)[]) chunk;
@@ -77,7 +77,7 @@ int main(string[] args) @system
             return 2;
         }
         const source = cast(string) read(file);
-        const formatted = formatText(source, cfg);
+        const formatted = formatText(source, configFor(file));
         if (check)
         {
             if (formatted != source)
