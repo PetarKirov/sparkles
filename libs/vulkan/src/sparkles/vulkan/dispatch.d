@@ -45,7 +45,7 @@ Vulkan resolves an extension's commands to null unless that extension was
 enabled at instance or device creation. A table that treats every command as
 mandatory therefore reports a correctly-built instance as broken — which is
 exactly what the first version of this module did, and what
-`libs/vulkan/examples/instance-info.d` caught: an instance created without
+`libs/vulkan/examples/vulkaninfo.d` caught: an instance created without
 `VK_KHR_surface` has no `vkDestroySurfaceKHR`, and that is not an error.
 */
 private struct CommandSet
@@ -185,6 +185,24 @@ private enum CommandSet[] deviceSets = [
     ]),
 ];
 
+/**
+`true` when `name` matches an ImportC-folded header string macro.
+
+ImportC folds an object-like string macro to a `char[N]`, but `N` is not the
+same across compilers: LDC counts the terminating NUL, DMD does not. A
+comparison written against either alone passes on that compiler and fails on
+the other — `macro[0 .. $ - 1]` compared `"VK_KHR_surface"` against
+`"VK_KHR_surfac"` under DMD. Trim a terminator only where there is one.
+*/
+package bool matchesHeaderMacro(scope const(char)[] name, scope const(char)[] macroValue)
+    @safe pure nothrow @nogc
+{
+    const trimmed = macroValue.length && macroValue[$ - 1] == '\0'
+        ? macroValue[0 .. $ - 1]
+        : macroValue;
+    return name == trimmed;
+}
+
 /// Extension names, spelled once so a call site cannot typo one.
 enum string khrSurface = "VK_KHR_surface";
 /// ditto
@@ -285,6 +303,23 @@ struct DeviceCommands
     assert(lowerFirst("") == "");
 }
 
+@("vulkan.dispatch.extensionNamesArePinnedToTheHeader")
+@safe pure nothrow @nogc unittest
+{
+    // Spelling one of these wrong is not a compile error at the use site — it
+    // is an extension that silently never matches, so pin them to the header's
+    // own macros rather than to a second hand-written literal.
+    static assert(matchesHeaderMacro(khrSurface, VK_KHR_SURFACE_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrSwapchain, VK_KHR_SWAPCHAIN_EXTENSION_NAME));
+
+    // The trimming itself, since the whole point is that it differs by
+    // compiler and only one of these two shapes is exercised per build.
+    static assert(matchesHeaderMacro("abc", "abc\0"));
+    static assert(matchesHeaderMacro("abc", "abc"));
+    static assert(!matchesHeaderMacro("abc", "abd"));
+    static assert(!matchesHeaderMacro("abc", "ab"));
+}
+
 @("vulkan.dispatch.tablesDeclareTheirCommands")
 @safe pure nothrow @nogc unittest
 {
@@ -332,7 +367,7 @@ struct DeviceCommands
 @("vulkan.dispatch.extensionCommandsAreNotCore")
 @system pure nothrow @nogc unittest
 {
-    // The property the instance-info example forced into existence: an
+    // The property the vulkaninfo example forced into existence: an
     // instance created without VK_KHR_surface has no surface commands, and
     // that is a correctly-built instance, not a broken one. So `complete`
     // must ignore them and `has` must answer for them separately.

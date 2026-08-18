@@ -21,6 +21,9 @@ $(LI $(MREF sparkles,vulkan,structure_type) — `sType` derived from the struct'
 $(LI $(MREF sparkles,vulkan,enumerate) — Vulkan's two-call
     count-then-fill enumeration pattern, written once and specialised at
     compile time on whether the command returns `VkResult` or `void`.)
+$(LI $(MREF sparkles,vulkan,extensions) — extension names read inside their
+    fixed-array bound, and the portability handshake MoltenVK needs, decided
+    once instead of at each consumer.)
 $(LI $(MREF sparkles,vulkan,result) — `VkResult` as
     `Expected!(T, VkResult)`, following Vulkan's own rule that negative codes
     are errors and warnings such as `VK_SUBOPTIMAL_KHR` are not.))
@@ -40,6 +43,7 @@ public import sparkles.vulkan.api;
 public import sparkles.vulkan.vulkan_c;
 public import sparkles.vulkan.dispatch;
 public import sparkles.vulkan.enumerate;
+public import sparkles.vulkan.extensions;
 public import sparkles.vulkan.loader;
 public import sparkles.vulkan.result;
 public import sparkles.vulkan.structure_type;
