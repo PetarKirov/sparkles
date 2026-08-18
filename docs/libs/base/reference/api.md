@@ -6,7 +6,7 @@ The public symbols of `sparkles:base`, by module.
 
 Package module re-exporting `lifetime`, `logger`, `prettyprint`,
 `smallbuffer`, `source_uri`, `styled_template`, `term_color`, `term_style`,
-and `text`.
+`text`, and `unique`.
 
 ## `sparkles.base.smallbuffer`
 
@@ -14,6 +14,18 @@ and `text`.
 | ------------------------------- | ----------------------------------------------------------------- |
 | `SmallBuffer!(T, N)`            | Stack-first append buffer that grows with `pureMalloc` if needed. |
 | `checkToString` / `checkWriter` | `@nogc` unit-test helpers for output-range rendering assertions.  |
+
+## `sparkles.base.unique`
+
+| Symbol                                   | Description                                                                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------- |
+| `Unique!(T, Allocator, rootInCollector)` | Move-only sole owner of one heap value (struct, scalar, or class instance).     |
+| `makeUnique!T(args)`                     | Allocates and constructs a `T`, returning its owner; an empty owner on refusal. |
+| `needsCollectorRoot!(T, Allocator)`      | Whether the block is registered as a collector root by default.                 |
+| `isCollectorScanned!Allocator`           | Allocator capability probe (`enum bool collectorScanned` opts in).              |
+| `isUniqueTarget!(T, Allocator)`          | Whether the pair is ownable — no interfaces, stateless allocators only.         |
+
+See [Own a heap value without the collector](../how-to/own-heap-values.md).
 
 ## `sparkles.base.lifetime`
 

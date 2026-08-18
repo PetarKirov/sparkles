@@ -264,6 +264,10 @@ export default withMermaid(
                       link: '/libs/base/how-to/parse-text-readers',
                     },
                     {
+                      text: 'Own heap values without the collector',
+                      link: '/libs/base/how-to/own-heap-values',
+                    },
+                    {
                       text: 'Test @nogc code with check helpers',
                       link: '/libs/base/how-to/test-with-check-helpers',
                     },

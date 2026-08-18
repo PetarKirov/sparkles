@@ -37,6 +37,7 @@ _Task-oriented._ Short recipes for common jobs.
 - [Style templates with IES](./how-to/style-text-templates.md)
 - [Pretty-print values](./how-to/prettyprint-values.md)
 - [Parse text with readers](./how-to/parse-text-readers.md)
+- [Own a heap value without the collector](./how-to/own-heap-values.md)
 - [Test `@nogc` code with check helpers](./how-to/test-with-check-helpers.md)
 
 ### Reference
