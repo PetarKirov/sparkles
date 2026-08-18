@@ -4,7 +4,7 @@
 <title>twoslash · 03-errors</title>
 <style>
   html, body { height: 100%; }
-  body { margin: 0; background: #1e1e2e; color: #cdd6f4;
+  body { margin: 0; background: #1a1b26; color: #cdd6f4;
          font: 14px/1.5 system-ui, sans-serif;
          display: flex; flex-direction: column; }
   header { flex: none; display: flex; gap: 0.9em; align-items: baseline;
@@ -14,7 +14,7 @@
   header .spacer { flex: 1; } header a { color: #89b4fa; text-decoration: none; }
   header a:hover { text-decoration: underline; }
   header .disabled { color: #45475a; }
-  main { flex: 1; min-height: 0; overflow: auto; background: #1e1e2e; }
+  main { flex: 1; min-height: 0; overflow: auto; background: #1a1b26; }
   main pre.syn-root { margin: 0; padding: 0.6em 1ch; min-height: 100%;
                       box-sizing: border-box; }
   main pre.syn-root > code { display: block; counter-reset: lineno;
@@ -35,69 +35,61 @@
 </style></head><body>
 <header><a class="prev" href="02-inference.html">← prev</a><b>03-errors</b><span class="kinds">hover×2 error</span><span class="spacer"></span><a href="index.html">all</a><a class="next" href="04-tags.html">next →</a></header>
 <main><style>
-.syn-root{color:#cdd6f4;background-color:#1e1e2e}
-.syn-comment{color:#9399b2;font-style:italic}
-.syn-comment-block{color:#eba0ac}
-.syn-comment-documentation{color:#cdd6f4}
-.syn-comment-line{color:#f5c2e7;font-style:italic}
-.syn-constant{color:#fab387}
-.syn-constant-builtin{color:#f38ba8}
-.syn-constant-builtin-boolean{color:#fab387}
-.syn-constant-character{color:#fab387}
-.syn-constant-character-escape{color:#f5c2e7}
-.syn-constant-numeric{color:#fab387}
-.syn-constant-numeric-float{color:#fab387}
-.syn-constant-numeric-integer{color:#fab387}
-.syn-diff-delta{color:#fab387}
-.syn-diff-minus{color:#f38ba8}
-.syn-diff-plus{color:#a6e3a1}
-.syn-function{color:#89b4fa;font-style:italic}
-.syn-function-builtin{color:#89b4fa;font-style:italic}
-.syn-function-constructor{color:#89b4fa;font-style:italic}
-.syn-function-macro{color:#89b4fa;font-style:italic}
-.syn-function-method{color:#89b4fa;font-style:italic}
-.syn-keyword{color:#cba6f7}
-.syn-keyword-control{color:#cba6f7}
-.syn-keyword-directive{color:#f9e2af}
-.syn-keyword-function{color:#cba6f7}
-.syn-keyword-operator{color:#94e2d5}
-.syn-keyword-storage{color:#cba6f7}
-.syn-markup-bold{color:#f38ba8;font-weight:bold}
-.syn-markup-heading{color:#f38ba8;font-weight:bold}
-.syn-markup-italic{color:#f38ba8;font-style:italic}
-.syn-markup-link{color:#b4befe}
-.syn-markup-link-url{color:#89b4fa}
-.syn-markup-list{color:#94e2d5}
-.syn-markup-list-checked{color:#94e2d5}
-.syn-markup-list-numbered{color:#94e2d5}
-.syn-markup-list-unchecked{color:#94e2d5}
-.syn-markup-quote{color:#f5c2e7}
-.syn-markup-raw{color:#a6e3a1}
-.syn-markup-raw-block{color:#a6e3a1}
-.syn-markup-raw-inline{color:#a6e3a1}
-.syn-markup-strikethrough{color:#a6adc8;text-decoration:line-through}
-.syn-module{color:#f9e2af}
-.syn-operator{color:#cba6f7;font-weight:bold}
-.syn-punctuation{color:#9399b2}
-.syn-punctuation-bracket{color:#9399b2}
-.syn-punctuation-delimiter{color:#9399b2}
-.syn-punctuation-special{color:#9399b2}
-.syn-string{color:#a6e3a1}
-.syn-string-escape{color:#a6e3a1}
-.syn-string-regexp{color:#cdd6f4}
-.syn-string-special{color:#a6e3a1}
-.syn-string-special-key{color:#f9e2af}
-.syn-string-special-path{color:#a6e3a1}
-.syn-string-special-symbol{color:#eba0ac}
-.syn-string-special-url{color:#b4befe}
-.syn-tag{color:#89b4fa}
-.syn-tag-attribute{color:#f9e2af;font-style:italic}
-.syn-type{color:#f9e2af;font-style:italic}
-.syn-type-builtin{color:#f9e2af;font-style:italic}
-.syn-variable{color:#eba0ac;font-style:italic}
-.syn-variable-builtin{color:#f5c2e7}
-.syn-variable-member{color:#eba0ac;font-style:italic}
-.syn-variable-parameter{color:#eba0ac;font-style:italic}
+.syn-root{color:#a9b1d6;background-color:#1a1b26}
+.syn-comment{color:#51597d;font-style:italic}
+.syn-comment-block{color:#5a638c}
+.syn-comment-documentation{color:#51597d}
+.syn-comment-line{color:#51597d;font-style:italic}
+.syn-constant{color:#bb9af7}
+.syn-constant-builtin{color:#ff9e64}
+.syn-constant-builtin-boolean{color:#ff9e64}
+.syn-constant-character{color:#bb9af7}
+.syn-constant-character-escape{color:#89ddff}
+.syn-constant-numeric{color:#ff9e64}
+.syn-constant-numeric-float{color:#ff9e64}
+.syn-constant-numeric-integer{color:#ff9e64}
+.syn-diff-delta{color:#6183bb}
+.syn-diff-minus{color:#914c54}
+.syn-diff-plus{color:#449dab}
+.syn-embedded{color:#c0caf5}
+.syn-error{color:#ff5370}
+.syn-function{color:#7aa2f7}
+.syn-function-builtin{color:#0db9d7}
+.syn-function-constructor{color:#7aa2f7}
+.syn-function-macro{color:#7aa2f7}
+.syn-function-method{color:#7aa2f7}
+.syn-keyword{color:#bb9af7}
+.syn-keyword-control{color:#bb9af7;font-style:italic}
+.syn-keyword-directive{color:#73daca}
+.syn-keyword-function{color:#bb9af7}
+.syn-keyword-operator{color:#89ddff}
+.syn-keyword-storage{color:#9d7cd8;font-style:italic}
+.syn-markup-bold{color:#c0caf5;font-weight:bold}
+.syn-markup-italic{color:#c0caf5;font-style:italic}
+.syn-markup-link-url{color:#73daca}
+.syn-markup-quote{font-style:italic}
+.syn-module{color:#0db9d7}
+.syn-operator{color:#bb9af7;font-weight:bold}
+.syn-punctuation{color:#89ddff}
+.syn-punctuation-bracket{color:#9abdf5}
+.syn-punctuation-delimiter{color:#89ddff}
+.syn-punctuation-special{color:#7dcfff}
+.syn-string{color:#9ece6a}
+.syn-string-escape{color:#9ece6a}
+.syn-string-regexp{color:#b4f9f8}
+.syn-string-special{color:#9ece6a}
+.syn-string-special-key{color:#7aa2f7}
+.syn-string-special-path{color:#9ece6a}
+.syn-string-special-symbol{color:#9ece6a}
+.syn-string-special-url{color:#73daca}
+.syn-tag{color:#ba3c97}
+.syn-tag-attribute{color:#bb9af7}
+.syn-type{color:#0db9d7}
+.syn-type-builtin{color:#0db9d7}
+.syn-variable{color:#c0caf5}
+.syn-variable-builtin{color:#f7768e}
+.syn-variable-member{color:#c0caf5}
+.syn-variable-parameter{color:#e0af68}
 /* Twoslash overlay stylesheet — ported from @shikijs/twoslash `style-rich.css`.
   Styles only the `.twoslash-*` chrome; syntax token colors come from the
   sparkles:syntax theme stylesheet (`.syn-*` / `.syn-root`). Interactivity is
@@ -328,6 +320,73 @@
   background-color: var(--twoslash-warn-bg);
   border-left: 3px solid var(--twoslash-warn-color);
   color: var(--twoslash-warn-color);
+}
+
+/* ── Crowded lines ───────────────────────────────────────────────────────────
+  Several annotations anchored to one source line. A shared marker row under the
+  code, then the labels peeled off right to left, each connected back to its own
+  column by a vertical guide — the compiler-diagnostic shape (Rust, Elm, modern
+  GCC/Clang), which is the only thing that says which label belongs to which
+  token once there is more than one.
+
+  The cell backends repeat a glyph per row because a terminal has no other way
+  to draw a line. Here the guides are absolutely positioned at their exact
+  column and stretch to whatever height the card beside them turns out to be,
+  which is what lets a card keep the markup it always had — the art is chrome
+  around the `.twoslash-*` contract, not a replacement for it. */
+.twoslash .twoslash-crowded {
+  /* Decoration, not code: stays out of a selection of the code, like every
+    other annotation surface (the marker row's padding spaces especially). */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.twoslash .twoslash-crowded-markers {
+  /* Preformatted, so the marker columns are exact with no arithmetic. */
+  white-space: pre;
+  color: var(--twoslash-underline-color);
+}
+
+.twoslash .twoslash-crowded-row {
+  position: relative;
+  /* A flow root, so the card's own margins (`margin-top: 1ch`, and the query
+    popup's `margin-bottom: 1.4em`) stay INSIDE the row instead of collapsing
+    through its edges. Without it the row box starts at the card's top and ends
+    at its bottom, so the guides — which span the row — stopped at every card
+    and the column read as a dashed line: measured breaks of 7.81px (1ch) and
+    18.19px (1.4em) between consecutive rows. It also puts the card's top edge
+    exactly 1ch below the row's, which is what the elbow's height assumes. */
+  display: flow-root;
+}
+
+/* A pending anchor's connector: a rule down the row at its own column, for
+  every anchor whose label has not been drawn yet. */
+.twoslash .twoslash-crowded-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--twoslash-underline-color);
+}
+
+/* The turn into a label. `1ch` is the gap the popup cards leave above
+  themselves (`margin-top: 1ch`), so the hook lands exactly on the card's top
+  edge rather than at a hand-tuned offset. */
+.twoslash .twoslash-crowded-elbow {
+  position: absolute;
+  top: 0;
+  height: 1ch;
+  width: 0.7ch;
+  border-left: 1px solid var(--twoslash-underline-color);
+  border-bottom: 1px solid var(--twoslash-underline-color);
+  border-bottom-left-radius: 4px;
+}
+
+/* Inside a connected row an error message sits under its own anchor, so it is
+  no longer the full-width accent band it is on a line of its own. */
+.twoslash .twoslash-crowded-row .twoslash-error-line {
+  min-width: 0;
+  width: max-content;
+  margin-top: 1ch;
 }
 
 /* Inline error span: wavy underline (SVG data-URI, bottom-repeat). */
