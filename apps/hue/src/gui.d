@@ -1215,23 +1215,24 @@ int runGui(GuiArgs guiArgs) @system
                         || oy > vm.top + docRows))
                     continue;
                 auto op = sourceOp;
-                if (op.kind == OpKind.scrollbar
-                    && vm.fenceSvOwner != size_t.max)
+                const activeSv = vm.activeBar();
+                if (op.kind == OpKind.scrollbar && activeSv !is null
+                    && vm.activeFenceOwner != size_t.max)
                 {
                     const h = op.ruleEdge == RuleEdge.centerY;
                     const base = h ? vm.fenceHBarHitBase
                         : vm.fenceVBarHitBase;
-                    const want = base + vm.fenceSvOwner;
+                    const want = base + vm.activeFenceOwner;
                     foreach (ref const t; vm.targets)
                     {
                         if (t.hitId != want || t.rect != op.rect)
                             continue;
                         op.expandPercent = barPercent(h
-                            ? vm.fenceSv.hAnim.percent
-                            : vm.fenceSv.vAnim.percent);
+                            ? activeSv.hAnim.percent
+                            : activeSv.vAnim.percent);
                         op.barTrackLit = h
-                            ? vm.fenceSv.h.hovered || vm.fenceSv.h.dragging
-                            : vm.fenceSv.v.hovered || vm.fenceSv.v.dragging;
+                            ? activeSv.h.hovered || activeSv.h.dragging
+                            : activeSv.v.hovered || activeSv.v.dragging;
                         break;
                     }
                 }
@@ -2614,9 +2615,9 @@ int runGui(GuiArgs guiArgs) @system
                 syncInspectorExtent();
             }
         }
-        const fenceShape = vm.fenceSv.shape();
+        const fenceShape = vm.barShape();
         window.pointerShape(pn.dock.shape(
-            vm.fenceSv.grabbing ? fenceShape : PointerShape.default_,
+            vm.barGrabbing ? fenceShape : PointerShape.default_,
             fenceShape));
 
         const treePaneRows = pn.tree.bodyRows;
@@ -2677,34 +2678,36 @@ int runGui(GuiArgs guiArgs) @system
             // The bar this frame concerns: the grabbed owner's, else the
             // one under the pointer (h and v live in disjoint id ranges).
             const(HoverTarget)* hTgt, vTgt;
+            const grabbedSv = vm.activeBar();
+            const hDragging = grabbedSv !is null && grabbedSv.h.dragging;
+            const vDragging = grabbedSv !is null && grabbedSv.v.dragging;
             foreach (ref const t; vm.targets)
             {
                 if (t.hitId >= vm.fenceHBarHitBase
                     && t.hitId < vm.tableCopyHitBase
-                    && (vm.fenceSv.h.dragging
-                        ? t.hitId - vm.fenceHBarHitBase == vm.fenceSvOwner
+                    && (hDragging
+                        ? t.hitId - vm.fenceHBarHitBase == vm.activeFenceOwner
                         : t.rect.contains(dpf)))
                     hTgt = &t;
                 if (t.hitId >= vm.fenceVBarHitBase
                     && t.hitId < vm.fenceHBarHitBase
-                    && (vm.fenceSv.v.dragging
-                        ? t.hitId - vm.fenceVBarHitBase == vm.fenceSvOwner
+                    && (vDragging
+                        ? t.hitId - vm.fenceVBarHitBase == vm.activeFenceOwner
                         : t.rect.contains(dpf)))
                     vTgt = &t;
             }
 
             // (Hover-while-foreign-owned is gated inside the machine now —
             // STM11 covers hover as well as the press, for every bar.)
-            if (hTgt !is null && !vm.fenceSv.v.dragging)
+            if (hTgt !is null && !vDragging)
             {
                 const owner = hTgt.hitId - vm.fenceHBarHitBase;
-                if (!vm.fenceSv.h.dragging)
-                    vm.fenceSvOwner = owner;
+                auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
                 const e = vm.fenceExtent(owner);
                 const cur = vm.fenceScrollAt.get(owner,
                     FenceScroll(owner, 0, 0));
                 // The semantic target is exactly the corner-free track.
-                inp.capture = vm.fenceSv.stepH(inp.capture, capFenceSb,
+                inp.capture = sv.stepH(inp.capture, capFenceSb,
                     true,
                     ScrollPointer(over: hTgt.rect.contains(dpf),
                         pressed: clickPressed(),
@@ -2712,20 +2715,19 @@ int runGui(GuiArgs guiArgs) @system
                         trackPos: dpf.x - hTgt.rect.x),
                     cur.x, ScrollExtents(e.widest, e.innerW,
                         hTgt.rect.width));
-                if (vm.fenceSv.h.dragging && clickPressed())
+                if (sv.h.dragging && clickPressed())
                     copyClicked = true; // a bar press is not a selection
-                if (vm.fenceSv.h.offset != cur.x)
-                    vm.setFenceScroll(owner, vm.fenceSv.h.offset, cur.y);
+                if (sv.h.offset != cur.x)
+                    vm.setFenceScroll(owner, sv.h.offset, cur.y);
             }
             else if (vTgt !is null)
             {
                 const owner = vTgt.hitId - vm.fenceVBarHitBase;
-                if (!vm.fenceSv.v.dragging)
-                    vm.fenceSvOwner = owner;
+                auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
                 const e = vm.fenceExtent(owner);
                 const cur = vm.fenceScrollAt.get(owner,
                     FenceScroll(owner, 0, 0));
-                inp.capture = vm.fenceSv.stepV(inp.capture, capFenceSb,
+                inp.capture = sv.stepV(inp.capture, capFenceSb,
                     true,
                     ScrollPointer(over: vTgt.rect.contains(dpf),
                         pressed: clickPressed(),
@@ -2733,19 +2735,22 @@ int runGui(GuiArgs guiArgs) @system
                         trackPos: dpf.y - vTgt.rect.y),
                     cur.y, ScrollExtents(e.lines, e.shownRows,
                         vTgt.rect.height));
-                if (vm.fenceSv.v.dragging && clickPressed())
+                if (sv.v.dragging && clickPressed())
                     copyClicked = true;
-                if (vm.fenceSv.v.offset != cur.y)
-                    vm.setFenceScroll(owner, cur.x, vm.fenceSv.v.offset);
+                if (sv.v.offset != cur.y)
+                    vm.setFenceScroll(owner, cur.x, sv.v.offset);
             }
             // The pointer left a bar: a dead step drops its hover (a grab
             // never lands here — the grabbed bar stays the target above).
-            if (hTgt is null && vm.fenceSv.h.hovered)
-                inp.capture = vm.fenceSv.stepH(inp.capture, capFenceSb,
-                    false, ScrollPointer(), 0, ScrollExtents(1, 1, 1));
-            if (vTgt is null && vm.fenceSv.v.hovered)
-                inp.capture = vm.fenceSv.stepV(inp.capture, capFenceSb,
-                    false, ScrollPointer(), 0, ScrollExtents(1, 1, 1));
+            if (auto sv = vm.activeBar())
+            {
+                if (hTgt is null && sv.h.hovered)
+                    inp.capture = sv.stepH(inp.capture, capFenceSb,
+                        false, ScrollPointer(), 0, ScrollExtents(1, 1, 1));
+                if (vTgt is null && sv.v.hovered)
+                    inp.capture = sv.stepV(inp.capture, capFenceSb,
+                        false, ScrollPointer(), 0, ScrollExtents(1, 1, 1));
+            }
             // Hover/grab transitions repaint the thumbs' accent feedback.
             vm.syncFenceHot();
         }
@@ -2935,8 +2940,11 @@ int runGui(GuiArgs guiArgs) @system
         {
             const mp = inp.fin.pos;
             const overTree = pn.treeVisible && mp.x < treeCols * cellW;
-            vm.fenceSv.easeH(caps, window.frameSeconds);
-            vm.fenceSv.easeV(caps, window.frameSeconds);
+            if (auto sv = vm.activeBar())
+            {
+                sv.easeH(caps, window.frameSeconds);
+                sv.easeV(caps, window.frameSeconds);
+            }
             // A row click is not a drag, so it takes no id — it only needs
             // the pointer to be unowned. Focus is NOT set here: the press
             // already moved it to the pane it landed in, which is the

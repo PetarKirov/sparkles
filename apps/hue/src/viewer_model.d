@@ -35,8 +35,9 @@ import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Rect;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollView;
-import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, HoverTarget,
-    hoverTargets, KeyedRect, keyedRects, selectionRects;
+import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, ElementStore,
+    HoverTarget, hoverTargets, KeyedRect, keyedRects, selectionRects;
+import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_color : Color;
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
     schemeForBackground, Slot, TextStyle;
@@ -201,10 +202,13 @@ struct ViewerModel
             : (viewRows > 6 ? viewRows - 2 : 0);
     /// Per-fence scroll offsets, keyed by `codeBody.start` (scroll mode).
     FenceScroll[size_t] fenceScrollAt;
-    /// The fence-bar drag machine (one pointer, one grab) + its owner.
-    ScrollView fenceSv;
-    /// ditto
-    size_t fenceSvOwner = size_t.max;
+    /// The per-bar drag/hover machines (`SCV5`): one `ScrollView` per bar
+    /// owner — a fence's (and a table's) — keyed by the owner's canonical
+    /// bar key, so every bar keeps its own hover and easing phase instead of
+    /// inheriting the previously touched bar's.
+    ElementStore!ScrollView barSv;
+    /// The canonical bar key being interacted with (`size_t.max` = none).
+    size_t barSvActive = size_t.max;
     /// Fold placeholders keep their inline `▸ ` prefix — the TUI's one fold
     /// affordance; the GUI leaves this false (its gutter column carries it).
     bool inlineFoldMarker;
@@ -299,8 +303,8 @@ struct ViewerModel
         copiedTableSrc = size_t.max;
         plainSyntax = false;
         fenceScrollAt = null;
-        fenceSv = ScrollView.init;
-        fenceSvOwner = size_t.max;
+        barSv = typeof(barSv).init;
+        barSvActive = size_t.max;
         folds = DisclosureState!size_t(true);
         rebuild();
     }
@@ -560,12 +564,10 @@ struct ViewerModel
             fenceScrolls: fenceScrollList(),
             fenceHBarHitBase: fenceHBarHitBase,
             fenceVBarHitBase: fenceVBarHitBase,
-            hotFenceHBar: fenceHotGlyphs
-                && (fenceSv.h.hovered || fenceSv.h.dragging)
-                ? fenceSvOwner : size_t.max,
-            hotFenceVBar: fenceHotGlyphs
-                && (fenceSv.v.hovered || fenceSv.v.dragging)
-                ? fenceSvOwner : size_t.max,
+            hotFenceHBar: fenceHotGlyphs && activeBarH()
+                ? activeFenceOwner : size_t.max,
+            hotFenceVBar: fenceHotGlyphs && activeBarV()
+                ? activeFenceOwner : size_t.max,
             diffBlocks: preview.decorations, // `DVN6`
         };
         foldable = foldableSpans(preview.doc);
@@ -982,6 +984,57 @@ struct ViewerModel
     /// expansion percent at paint time, so easing needs no per-frame rebuild.
     bool fenceHotGlyphs = true;
 
+    /// A fence's canonical bar key: both axes of one fence share one machine.
+    static size_t fenceBarKey(size_t bodyStart) @safe pure nothrow @nogc
+        => fenceHBarHitBase + bodyStart;
+
+    /// Point the interaction at `key`'s bar machine (per-element state,
+    /// created on first sight) and return it for stepping.
+    ref ScrollView activateBar(size_t key) return @safe
+    {
+        barSvActive = key;
+        return barSv.require(key);
+    }
+
+    /// The active bar's machine, or null when none is active.
+    inout(ScrollView)* activeBar() inout return @safe pure nothrow @nogc
+        => barSvActive != size_t.max ? barSv.find(barSvActive) : null;
+
+    /// The active machine's fence owner (`codeBody.start`), or `size_t.max`
+    /// when the active bar is not a fence's.
+    size_t activeFenceOwner() const @safe pure nothrow @nogc
+        => barSvActive >= fenceHBarHitBase
+            ? barSvActive - fenceHBarHitBase : size_t.max;
+
+    /// Whether the active bar engages its horizontal / vertical axis.
+    private bool activeBarH() const @safe pure nothrow @nogc
+    {
+        const sv = activeBar();
+        return sv !is null && (sv.h.hovered || sv.h.dragging);
+    }
+
+    /// ditto
+    private bool activeBarV() const @safe pure nothrow @nogc
+    {
+        const sv = activeBar();
+        return sv !is null && (sv.v.hovered || sv.v.dragging);
+    }
+
+    /// The active bar's pointer shape (default when idle) — the workspace's
+    /// pane-shape input.
+    PointerShape barShape() const @safe pure nothrow @nogc
+    {
+        const sv = activeBar();
+        return sv !is null ? sv.shape() : PointerShape.default_;
+    }
+
+    /// Whether any bar grab owns the pointer.
+    bool barGrabbing() const @safe pure nothrow @nogc
+    {
+        const sv = activeBar();
+        return sv !is null && sv.grabbing;
+    }
+
     /// Rebuilds when the fence-bar hover/grab state changed since the last
     /// step — the thumbs' accent feedback is part of the widget tree, the
     /// same way the ✔ copy feedback is. True when a rebuild happened.
@@ -989,8 +1042,8 @@ struct ViewerModel
     {
         if (!fenceHotGlyphs)
             return false;
-        const h = fenceSv.h.hovered || fenceSv.h.dragging;
-        const v = fenceSv.v.hovered || fenceSv.v.dragging;
+        const h = activeBarH();
+        const v = activeBarV();
         if (h == fenceHotH && v == fenceHotV)
             return false;
         fenceHotH = h;
