@@ -45,6 +45,8 @@ import pages.primitives : primitivesView = view;
 import pages.slots_page : slotsView = view;
 import pages.themes_page : themesKeys = keys, themesOnActivate = handleActivate,
     themesView = view;
+import pages.table_page : tableKeys = keys, tableOnKey = handleKey,
+    tableView = view;
 import pages.terminal_page : terminalKeys = keys,
     terminalOnActivate = handleActivate, terminalOnKey = handleKey,
     terminalOnPointer = handlePointer, terminalStep = step,
@@ -128,6 +130,8 @@ static immutable Page[] pages = [
         &componentsOnPointer),
     Page("Tree", "data, interaction, view", &treeView_,
         treeKeys, &treeOnKey, &treeOnActivate),
+    Page("Table", "one grid, two views", &tableView,
+        tableKeys, &tableOnKey),
     Page("Scrolling", "one thumb formula", &scrollingView,
         scrollingKeys, &scrollingOnKey, null, &scrollingOnPointer),
     Page("State", "the interaction machines", &machinesView,

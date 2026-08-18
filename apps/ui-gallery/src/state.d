@@ -123,6 +123,18 @@ struct TracksDemo
     int avail = 48; /// the width the tracks are resolved against
 }
 
+/// The Table page's live state: which glyph preset shows, the toggles, and
+/// the framed demo's scroll offsets (the component clamps them to the real
+/// overflow, so the page only accumulates).
+struct TableDemo
+{
+    size_t preset;        /// index into `builtinPresetNames`
+    bool rowRules = true; /// `TableProps.rowSeparators`
+    bool stubCol;         /// `TableProps.headerCols: 1` — the heavy stub rule
+    int scrollX;          /// the framed demo's horizontal offset
+    int scrollY;          /// ditto, vertical
+}
+
 /// The Tree page's live state: the shared interaction layer
 /// (`sparkles.ui.components.tree_view`), keyed by the arena index — the demo
 /// tree is static, so the index IS the node's identity.
@@ -290,6 +302,7 @@ struct GalleryState
     LayoutDemo layoutDemo;   ///
     TextDemo textDemo;       ///
     TracksDemo tracksDemo;   ///
+    TableDemo tableDemo;     ///
     TreeDemo treeDemo;       ///
     MachinesDemo machines;   ///
     SplitState split = SplitState(24); ///
