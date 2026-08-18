@@ -123,10 +123,17 @@ scope permanently.)
 
 ### D8 — Verifier before printer (M1 ordering)
 
-Unchanged from the proposal, and already seeded: `spine.d` ships the
-byte-for-byte round-trip, token-equality-modulo-trivia and doc-lex
-correspondence checks that M1 grows into the tier-3 verifier, the separate
-DDoc check, and the idempotence harness.
+Unchanged from the proposal, and **delivered**: `verify.d` is the M1
+verifier, built with no printer in existence. `verifyFormat` runs tier 3
+(token equality modulo whitespace over the spine — prefix and `__EOF__`
+tail byte-verbatim, comments and directives text-exact per v1 policy) and
+the separate DDoc-attachment check (doc-lex both texts, compare the
+compiler's own attachment: ordinal, preceding-vs-trailing slot, text —
+which catches the whitespace-only trailing-`///` reattachment hazard tier 3
+cannot see). `checkConvergence` is the idempotence harness: bounded
+iteration to a fixed point with per-step verification, ocamlformat's
+`max-iters` discipline. The `dub run :ci` sweep wires in with M5's
+`--check`, when a formatter exists to drive it.
 
 ## Spike results
 

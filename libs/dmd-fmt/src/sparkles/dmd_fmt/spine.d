@@ -128,9 +128,10 @@ shared static this()
 // it the token stream is materially different: `__EOF__` is an ordinary
 // identifier and lexing runs PAST it, and `#line` splits into pound/number
 // tokens instead of being consumed as a directive. Ensure the state once per
-// process, under the lock. (Id.initialize pools identifiers idempotently; a
+// process, under the lock. `package`: the verifier's doc-lex shares the
+// state. (Id.initialize pools identifiers idempotently; a
 // later full `initDMD` in the same process re-pools the same entries.)
-private void ensureLexerGlobals() @system
+package void ensureLexerGlobals() @system
 {
     if (lexerGlobalsReady)
         return;
