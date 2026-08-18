@@ -82,6 +82,20 @@ with safe defaults, so a bare context still resolves a flat table.
 | `LTN16` | An **icon** may be attached to a binding or a group, as which-key does, so a dense panel is scannable by shape as well as by text.                                                                                                      | not started       | proposed `Binding.icon`                                                                         |
 | `LTN17` | The guide must render as a **static HTML cheat sheet** — the same tree through the HTML interpreter — so a keymap is documentable without a screenshot.                                                                                 | not started       | `sparkles.ui.interp.html`; `LTN5`                                                               |
 
+## Focus & routing (`FOC`)
+
+The values of the input-routing chain — the pieces every app hand-rolled as
+booleans and statement order. The chain, extending `DCK13` from pointers to
+keys: **grab → modal / focused scopes (the context's `reachable` hook) →
+keymap/lantern → app fallback**.
+
+| ID     | Requirement                                                                                                                                                                                                                                             | Status                                                       | Traces to                                                                                  |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `FOC1` | Element focus traversal must have an **edge-aware form** ([popup.md `MDL5`](./popup.md)): the same walk as `FocusState.next`/`previous`, reporting "the edge was reached, leave this order" instead of wrapping — what a spliced or nested order needs. | full                                                         | `sparkles.ui.focus.move`; `ui.focus.moveReportsTheEdgeInsteadOfWrapping`                   |
+| `FOC2` | **Scope-level keyboard focus** must be a value over the app's own scope enum — the thing the context's `reachable` hook reads — with deterministic, wrapping cycling over a caller-supplied pane order.                                                 | full                                                         | `sparkles.ui.focus.ScopeFocus`; `ui.focus.scopeFocusCyclesTheSuppliedOrder`                |
+| `FOC3` | **Exclusive keyboard capture** must be a value: an addressable owner, release chords and a pass-through allowlist as `Chord` tables (not hand-written predicates), and verdicts a host switches on before anything else sees the key.                   | full                                                         | `sparkles.ui.focus.KeyGrab`/`checkGrab`; `ui.focus.grabRoutesReleaseAndPassthroughByChord` |
+| `FOC4` | **Modality is context gating, not a mechanism**: a modal surface is a context in which `reachable` answers `false` for everything below its scopes — so the table, the guide, and the router agree about what is live without a second filter.          | partial — hue's picker adopts it; ui-gallery's shell is next | hue `KeyContext.reachable`; [popup.md `LYR11`](./popup.md)                                 |
+
 ## Module coverage
 
 | Source                                              | Key symbols                                                                                                | Requirements                                |
