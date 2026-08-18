@@ -891,6 +891,10 @@ export default withMermaid(
                   link: '/specs/ui/state-machines',
                 },
                 {
+                  text: 'Keymap & lantern',
+                  link: '/specs/ui/keymap',
+                },
+                {
                   text: 'Interaction architecture review',
                   link: '/specs/ui/interaction-review',
                 },

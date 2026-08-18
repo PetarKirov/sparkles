@@ -21,6 +21,8 @@ color — the `Palette` resolves it to a `Visual` during display-list constructi
 | `widget`           | the flat-arena `Widget` (currently a tagged record; `WGT3` targets a closed sum) with explicit `uint[]` child-index lists + `Builder`                                            |
 | `layout`           | the two-pass box-flow layout (`row`/`column`/`stack`/`panel`/`popup`)                                                                                                            |
 | `state`            | presentation-free interaction machines for hover, scroll, selection, disclosure, focus, activation and pointer capture                                                           |
+| `keymap`           | keyboard policy as data: `Binding!(Cmd, Scope)` tables over app-supplied enums, chord matching/normalisation, and two-direction resolution (`resolve` ↔ `bindingsAt`)            |
+| `lantern`          | the which-key-style guide machine — the pending prefix path, the reveal delay, the panel's own keys — pure over any table (`components/lantern_view` builds the panel)           |
 | `display_list`     | `buildDisplayList` — resolves each node's slot + decoration + text style into `DrawOp`s                                                                                          |
 | `interp/immediate` | `paint(canvas, ops)` — the immediate-mode replay (attributes inferred from the canvas)                                                                                           |
 | `interp/cells`     | a retained cell-grid interpreter (diffed minimal updates)                                                                                                                        |
