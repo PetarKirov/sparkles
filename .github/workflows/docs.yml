@@ -65,7 +65,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Same headroom as the CI job's build — see the note there.
       - name: Build VitePress site
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: npm run docs:build
 
       # Shared with CircleCI — see ci/README.md. The script wraps the same two
