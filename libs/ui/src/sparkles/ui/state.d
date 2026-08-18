@@ -270,12 +270,25 @@ unittest
 
 // ── Document rows (the identity channel, aggregated) ────────────────────────
 
-/// One visual row of a laid-out document: its concatenated visible text (for
-/// incremental search) and the source byte range its content came from (for
-/// line-granular selection and copy) — `TextSpan.srcStart` aggregated per row.
+/// One visual row of a laid-out document: its visible text and the source byte
+/// range its content came from (for line-granular selection and copy) —
+/// `TextSpan.srcStart` aggregated per row.
 struct DocRow
 {
+    /// Everything the row renders, chrome included — line numbers, coverage
+    /// counts, bullets, guides.
     const(char)[] text;
+
+    /// Only the parts that carry source identity: the document's own content.
+    ///
+    /// What a search should look through by default. `text` mixes the chrome
+    /// in, so searching a code view for `5` matches coverage counts and line
+    /// numbers, and a blame channel would add commit hashes, authors and dates
+    /// to the haystack. Scoping a search to particular channels is a later
+    /// change; the seam is that a channel is addressable by its id, so the
+    /// chrome can be re-admitted deliberately rather than by default.
+    const(char)[] sourceText;
+
     size_t srcStart = size_t.max;
     size_t srcEnd;
 }
@@ -284,8 +297,9 @@ struct DocRow
 Aggregates a laid-out tree into per-visual-row text + source ranges: every
 visible text/rich node contributes its (wrapped) lines at their frame rows.
 Rows are indexed from the root's top; text appends in tree walk order (left to
-right for a column-of-rows document). Synthetic spans (icons, bullets, guides)
-carry no source identity and never widen a row's range.
+right for a column-of-rows document). Synthetic spans (icons, bullets, guides,
+every gutter channel) carry no source identity: they never widen a row's range
+and never reach `DocRow.sourceText`, only `DocRow.text`.
 */
 DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
 {
@@ -299,6 +313,7 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
         rows[y].text ~= text;
         if (srcStart != size_t.max)
         {
+            rows[y].sourceText ~= text;
             if (srcStart < rows[y].srcStart)
                 rows[y].srcStart = srcStart;
             if (srcEnd > rows[y].srcEnd)
@@ -1841,4 +1856,37 @@ size_t[] elementKeys(in WidgetTree tree) pure nothrow
     auto tree = b.finish(root);
 
     assert(elementKeys(tree) == [42]); // key 0 nodes are anonymous
+}
+
+@("ui.state.documentRows.sourceTextExcludesChrome")
+@safe unittest
+{
+    import sparkles.ui.components.gutter : cellOf, GutterChannel, withGutter;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
+
+    // A code row behind a two-channel gutter. `text` is what the row renders;
+    // `sourceText` is what a search should look through — otherwise searching
+    // for `5` in this document matches the coverage count, and a blame channel
+    // would put hashes and author names in the haystack.
+    auto nums = [cellOf("12", 2)];
+    auto covs = [cellOf("5", 3)];
+    const chans = [
+        GutterChannel(id: "line", width: 2, cells: nums),
+        GutterChannel(id: "cov", width: 3, cells: covs),
+    ];
+
+    auto b = Builder();
+    TextSpan[] spans = [TextSpan("return a + b;", srcStart: 40, srcEnd: 53)];
+    const code = b.add(Widget(kind: WidgetKind.rich, spans: spans));
+    auto tree = b.finish(withGutter(b, chans, 0, code));
+    auto frames = layout(tree, Constraints(maxW: 40));
+
+    const rows = documentRows(tree, frames);
+    assert(rows.length == 1);
+    assert(rows[0].sourceText == "return a + b;", "content only");
+    assert(rows[0].text.length > rows[0].sourceText.length, "chrome renders too");
+    assert(rows[0].srcStart == 40 && rows[0].srcEnd == 53,
+        "the chrome never widens the row's source range");
 }
