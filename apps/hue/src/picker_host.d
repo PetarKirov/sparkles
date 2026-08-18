@@ -17,24 +17,28 @@ import sparkles.base.unique : makeUnique, Unique;
 import sparkles.event_horizon.raw_pool : RawPoolResult;
 import sparkles.fuzzy : CandidateSnapshot, DefaultFuzzyCaps, FuzzyLimits,
     MatchConfig, MatcherWorkspace, parseQuery, positions, TextRange;
-import sparkles.input.events : Key, KeyEvent;
+import sparkles.input.events : Event, Key, KeyEvent, match, PointerAction,
+    PointerButton, PointerEvent, WheelEvent;
 import sparkles.ui.focus : ScopeFocus;
+import sparkles.ui.geometry : Constraints, Point, Rect;
+import sparkles.ui.layout : layout;
 import sparkles.ui.widget : WidgetTree;
 
 import keymap : Command, commandFor, KeyContext, Scope_;
 import picker : PickerScheduler, PickerState;
 import picker_sources : collectFilesFinder, FilesFinder;
-import picker_view : PickerGeometry, PickerLayout, pickerView, RowHighlight;
+import picker_view : PickerGeometry, PickerLayout, pickerPreviewRect,
+    pickerView, RowHighlight;
 
-/// What a modal keystroke did — the host acts on `accepted` (open the file),
-/// hands `previewKey` to the preview document pane on `preview`, and repaints
-/// on the rest.
+/// What a modal event did — the host acts on `accepted` (open the file),
+/// hands `previewEvent` to the preview document pane on `preview`, and
+/// repaints on the rest.
 enum PickerAction : ubyte
 {
-    consumed, /// state changed (or the key was swallowed); still open
+    consumed, /// state changed (or the event was swallowed); still open
     closed,   /// the picker dismissed itself
     accepted, /// a row was accepted — `acceptedPath` names the file
-    preview,  /// forward `previewKey` to the preview document pane
+    preview,  /// forward `previewEvent` to the preview document pane
 }
 
 /// Ranked rows the hosts show and select through. Deliberately small: the
@@ -76,8 +80,15 @@ struct PickerHost
     /// `KeyContext.pickerFocus` carries into resolution, and the view reads
     /// for its chrome. Reset to the prompt on every open.
     ScopeFocus!Scope_ focus = ScopeFocus!Scope_(Scope_.pickerInput);
-    /// Set by `handleKey` when it returns `PickerAction.preview`.
-    KeyEvent previewKey;
+    /// Set when `handleKey`/`handleOverlay` return `PickerAction.preview`:
+    /// the event the host must hand the preview document pane, with any
+    /// position already pane-local.
+    Event previewEvent;
+
+    /// A press inside the preview hole grabs the pointer for the pane
+    /// (`STM11`): drags and the release forward wherever they stray, so its
+    /// scrollbar grabs survive leaving the hole.
+    private bool previewGrab;
 
     /// The pane order `Tab` cycles (`pickerFocusNext`/`Prev`).
     static immutable Scope_[3] paneOrder =
@@ -276,17 +287,17 @@ struct PickerHost
             state.toggleScoreDebug();
             return PickerAction.consumed;
         case Command.pickerPreviewDown:
-            previewKey = KeyEvent(key: Key.pageDown);
+            previewEvent = Event(KeyEvent(key: Key.pageDown));
             return PickerAction.preview;
         case Command.pickerPreviewUp:
-            previewKey = KeyEvent(key: Key.pageUp);
+            previewEvent = Event(KeyEvent(key: Key.pageUp));
             return PickerAction.preview;
         default:
             break; // unbound here — the pane fallback below
         }
         if (focus.isFocused(Scope_.pickerPreview))
         {
-            previewKey = k;
+            previewEvent = Event(k);
             return PickerAction.preview;
         }
         if (k.key == Key.char_ && !k.mods.ctrl && !k.mods.alt && k.ch >= 0x20)
@@ -298,6 +309,97 @@ struct PickerHost
                 request();
         }
         return PickerAction.consumed;
+    }
+
+    /**
+    Route a pointer or wheel event whose position is $(B overlay-local) — in
+    cells, relative to the overlay's top-left corner (the hosts translate
+    from their own screen space). The `DCK7` doctrine, inside the modal: the
+    wheel scrolls the element $(I under the cursor) — the list moves its
+    selection, the preview scrolls its document — never a pane beneath the
+    overlay. A press selects the row it lands on (and focuses the list), or
+    focuses the preview and forwards, so the document pane's own scrollbars
+    are draggable.
+
+    Hit geometry is derived from the same tree the hosts paint
+    (`buildView` + `layout`), never registered — `INP10`.
+    */
+    PickerAction handleOverlay(in Event e, PickerGeometry geometry) @system
+    {
+        auto tree = buildView(geometry);
+        auto frames = layout(tree, Constraints(maxW: 2 * geometry.panelCols));
+        const hole = pickerPreviewRect(tree, frames);
+
+        PickerAction result = PickerAction.consumed;
+        e.match!(
+            (in WheelEvent w) {
+                if (hole.contains(w.pos))
+                {
+                    WheelEvent local = w;
+                    local.pos = Point(w.pos.x - hole.x, w.pos.y - hole.y);
+                    previewEvent = Event(local);
+                    result = PickerAction.preview;
+                    return;
+                }
+                if (w.pos.x < geometry.panelCols)
+                    state.moveSelection(w.dy); // web sign: positive is down
+            },
+            (in PointerEvent p) {
+                // An active preview grab keeps every motion (`STM11`),
+                // wherever the pointer strays; the release ends it.
+                const press = p.action == PointerAction.press
+                    && p.button == PointerButton.left;
+                if (previewGrab || (press && hole.contains(p.pos)))
+                {
+                    if (press)
+                    {
+                        previewGrab = true;
+                        focus = ScopeFocus!Scope_(Scope_.pickerPreview);
+                    }
+                    if (p.action == PointerAction.release)
+                        previewGrab = false;
+                    PointerEvent local = p;
+                    local.pos = Point(p.pos.x - hole.x, p.pos.y - hole.y);
+                    previewEvent = Event(local);
+                    result = PickerAction.preview;
+                    return;
+                }
+                // Bare motion over the hole forwards too (pane-local, no
+                // focus change), so the pane's hover affordances — its
+                // scrollbar's hot/expand feedback — work under the overlay.
+                if (p.action == PointerAction.move && hole.contains(p.pos))
+                {
+                    PointerEvent local = p;
+                    local.pos = Point(p.pos.x - hole.x, p.pos.y - hole.y);
+                    previewEvent = Event(local);
+                    result = PickerAction.preview;
+                    return;
+                }
+                if (!press)
+                    return;
+                // A press on a ranked row selects it and focuses the list;
+                // rows carry their corpus index as `hitId + 1`.
+                import sparkles.ui.state : hoverTargets;
+
+                foreach (t; hoverTargets(tree, frames))
+                {
+                    if (t.hitId == 0 || !t.rect.contains(p.pos))
+                        continue;
+                    foreach (i; 0 .. state.rowCount)
+                        if (state.rows[i].corpusIndex + 1 == t.hitId)
+                        {
+                            state.selection = i;
+                            focus = ScopeFocus!Scope_(Scope_.pickerList);
+                            return;
+                        }
+                }
+                // Anywhere else on the files side is the prompt's.
+                if (p.pos.x < geometry.panelCols)
+                    focus = ScopeFocus!Scope_(Scope_.pickerInput);
+            },
+            (_) {},
+        );
+        return result;
     }
 
 private:
@@ -497,7 +599,9 @@ unittest
 
     // While the preview holds focus, an unbound key forwards to the pane…
     auto r = host.handleKey(KeyEvent(Key.char_, 'j'));
-    assert(r == PickerAction.preview && host.previewKey.ch == 'j',
+    assert(r == PickerAction.preview
+        && host.previewEvent.match!((in KeyEvent fk) => fk.ch, _ => dchar(0))
+            == 'j',
         "preview keys belong to the document pane");
     // …the shared picker keys still resolve…
     assert(host.handleKey(KeyEvent(Key.escape)) == PickerAction.closed);
@@ -523,5 +627,79 @@ unittest
 
     // Ctrl-D scrolls the preview from any pane — the translated page key.
     r = host.handleKey(KeyEvent(Key.char_, 'd', Mods(ctrl: true)));
-    assert(r == PickerAction.preview && host.previewKey.key == Key.pageDown);
+    assert(r == PickerAction.preview
+        && host.previewEvent.match!((in KeyEvent fk) => fk.key, _ => Key.none)
+            == Key.pageDown);
+}
+
+@("picker.host.overlayRoutesWheelAndPointerByPosition")
+@system
+unittest
+{
+    import std.file : rmdirRecurse;
+    import sparkles.ui.state : hoverTargets;
+
+    const root = pickerFixture("hue-picker-host-overlay");
+    scope (exit) rmdirRecurse(root);
+
+    auto owner = makeUnique!PickerHost();
+    auto host = &owner.get();
+    scope (exit) host.shutdown();
+    host.open(root);
+    drain(*host);
+    assert(host.state.rowCount == 3);
+
+    // Derive the geometry the router derives — the same tree, the same
+    // frames (`INP10`), so the test cannot disagree with the routing about
+    // where anything is.
+    const geometry = PickerGeometry(panelCols: 40, panelRows: 12);
+    auto tree = host.buildView(geometry);
+    auto frames = layout(tree, Constraints(maxW: 2 * geometry.panelCols));
+    const hole = pickerPreviewRect(tree, frames);
+    assert(hole.width > 0);
+
+    // The wheel scrolls the element under the cursor (`DCK7` inside the
+    // modal): over the list it moves the selection…
+    assert(host.handleOverlay(Event(WheelEvent(dy: 1, pos: Point(3, 3))),
+        geometry) == PickerAction.consumed);
+    assert(host.state.selection == 1);
+
+    // …over the preview hole it forwards, position made pane-local.
+    assert(host.handleOverlay(Event(WheelEvent(dy: 2,
+        pos: Point(hole.x + 2, hole.y + 1))), geometry)
+        == PickerAction.preview);
+    const fw = host.previewEvent.match!(
+        (in WheelEvent w) => w, _ => WheelEvent.init);
+    assert(fw.dy == 2 && fw.pos == Point(2, 1), "the position is pane-local");
+
+    // A press on a ranked row selects it and focuses the list.
+    Rect rowRect;
+    foreach (t; hoverTargets(tree, frames))
+        if (t.hitId == host.state.rows[0].corpusIndex + 1)
+            rowRect = t.rect;
+    assert(rowRect.width > 0, "the rows are hit-testable");
+    assert(host.handleOverlay(Event(PointerEvent(
+        pos: Point(rowRect.x + 1, rowRect.y),
+        action: PointerAction.press, button: PointerButton.left)), geometry)
+        == PickerAction.consumed);
+    assert(host.state.selection == 0);
+    assert(host.focus.isFocused(Scope_.pickerList), "a click focuses the list");
+
+    // A press in the hole focuses the preview, forwards pane-local, and
+    // grabs (`STM11`): drags forward wherever they stray until the release,
+    // which is what keeps the document pane's scrollbar drags alive.
+    assert(host.handleOverlay(Event(PointerEvent(
+        pos: Point(hole.x + 1, hole.y + 2),
+        action: PointerAction.press, button: PointerButton.left)), geometry)
+        == PickerAction.preview);
+    assert(host.focus.isFocused(Scope_.pickerPreview));
+    assert(host.handleOverlay(Event(PointerEvent(pos: Point(0, 0),
+        action: PointerAction.drag, button: PointerButton.left)), geometry)
+        == PickerAction.preview, "a grab keeps every motion");
+    assert(host.handleOverlay(Event(PointerEvent(pos: Point(0, 0),
+        action: PointerAction.release, button: PointerButton.left)), geometry)
+        == PickerAction.preview);
+    assert(host.handleOverlay(Event(PointerEvent(pos: Point(0, 0),
+        action: PointerAction.drag, button: PointerButton.left)), geometry)
+        == PickerAction.consumed, "the release ended the grab");
 }

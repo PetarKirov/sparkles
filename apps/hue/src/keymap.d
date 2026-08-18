@@ -646,7 +646,27 @@ immutable Binding[] hueBindings = [
     // Reachable only while the picker is open; the `picker` scope covers
     // every pane, the focused-pane scopes add their own keys, and an
     // unmatched key falls to the host — prompt text in the input pane, a
-    // forwarded key in the preview.
+    // forwarded key in the preview. The NAVIGATION rows live in the
+    // prompt/list scopes, never in `picker`: with the preview focused they
+    // must stay unbound so the same keys fall through to the document pane
+    // and navigate IT — focus selects what the arrows mean.
+    bind(Scope_.pickerInput, chord(Key.up), Command.pickerUp, "up"),
+    bind(Scope_.pickerInput, chord(Key.down), Command.pickerDown, "down"),
+    bind(Scope_.pickerInput, chord(Key.pageUp), Command.pickerPageUp,
+        "page up"),
+    bind(Scope_.pickerInput, chord(Key.pageDown), Command.pickerPageDown,
+        "page down"),
+    bind(Scope_.pickerInput, chord(Key.home), Command.pickerTop, "first row"),
+    bind(Scope_.pickerInput, chord(Key.end), Command.pickerBottom,
+        "last row"),
+    bind(Scope_.pickerList, chord(Key.up), Command.pickerUp, "up"),
+    bind(Scope_.pickerList, chord(Key.down), Command.pickerDown, "down"),
+    bind(Scope_.pickerList, chord(Key.pageUp), Command.pickerPageUp,
+        "page up"),
+    bind(Scope_.pickerList, chord(Key.pageDown), Command.pickerPageDown,
+        "page down"),
+    bind(Scope_.pickerList, chord(Key.home), Command.pickerTop, "first row"),
+    bind(Scope_.pickerList, chord(Key.end), Command.pickerBottom, "last row"),
     bind(Scope_.pickerList, chord('j'), Command.pickerDown, "down"),
     bind(Scope_.pickerList, chord('k'), Command.pickerUp, "up"),
     bind(Scope_.pickerList, chord('g', ShiftReq.no), Command.pickerTop,
@@ -661,11 +681,6 @@ immutable Binding[] hueBindings = [
         "next pane"),
     bind(Scope_.picker, chord(Key.tab, ShiftReq.yes), Command.pickerFocusPrev,
         "prev pane"),
-    bind(Scope_.picker, chord(Key.up), Command.pickerUp, "up"),
-    bind(Scope_.picker, chord(Key.down), Command.pickerDown, "down"),
-    bind(Scope_.picker, chord(Key.pageUp), Command.pickerPageUp, "page up"),
-    bind(Scope_.picker, chord(Key.pageDown), Command.pickerPageDown,
-        "page down"),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 's', ctrl: true),
         Command.pickerToggleScore, "score breakdown"),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 'd', ctrl: true),
@@ -1137,6 +1152,8 @@ unittest
     assert(nk(Key.tab, pk, Mods(shift: true)).cmd == Command.pickerFocusPrev);
     assert(nk(Key.down, pk).cmd == Command.pickerDown);
     assert(nk(Key.pageDown, pk).cmd == Command.pickerPageDown);
+    assert(nk(Key.home, pk).cmd == Command.pickerTop);
+    assert(nk(Key.end, pk).cmd == Command.pickerBottom);
 
     // A letter is prompt text, and nothing below the modal can fire.
     assert(ch('j', pk).cmd == Command.none);
@@ -1154,11 +1171,18 @@ unittest
     assert(ch('g', lst).cmd == Command.pickerTop);
     assert(ch('G', lst).cmd == Command.pickerBottom);
 
-    // …while the preview resolves only the shared picker keys — everything
-    // else is unbound so the host forwards it to the document pane.
+    // …while the preview resolves only the shared picker keys — the whole
+    // navigation family is unbound there, so the host forwards it and the
+    // DOCUMENT pane's own keymap answers (arrows scroll it, Home/End jump,
+    // `gg`/`G` are its goto family). Focus selects what the arrows mean.
     auto pv = KeyContext(pickerActive: true,
         pickerFocus: Scope_.pickerPreview);
     assert(ch('j', pv).cmd == Command.none);
+    assert(nk(Key.down, pv).cmd == Command.none);
+    assert(nk(Key.pageDown, pv).cmd == Command.none);
+    assert(nk(Key.home, pv).cmd == Command.none);
+    assert(nk(Key.end, pv).cmd == Command.none);
+    assert(ch('g', pv).cmd == Command.none);
     assert(nk(Key.enter, pv).cmd == Command.pickerAccept);
     assert(nk(Key.escape, pv).cmd == Command.pickerClose);
 

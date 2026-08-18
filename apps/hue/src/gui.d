@@ -2109,35 +2109,73 @@ int runGui(GuiArgs guiArgs) @system
             cast(void) filePickerDoc.tick();
         }
 
+        // What a modal step decided — shared by the key routing below and
+        // the pointer/wheel routing in the event drain further down, so the
+        // two cannot disagree on what accept or close means.
+        void applyPickerAction(PickerAction a) @system
+        {
+            import std.path : baseName;
+
+            final switch (a)
+            {
+            case PickerAction.consumed:
+                break;
+            case PickerAction.preview:
+                // Forwarded to the document pane, whose own input surface
+                // applies — keys, wheel, scrollbar grabs alike.
+                if (filePickerDoc !is null)
+                    filePickerDoc.forward(filePicker.get.previewEvent);
+                break;
+            case PickerAction.closed:
+                filePickerDoc.close();
+                break;
+            case PickerAction.accepted:
+                filePickerDoc.close();
+                cast(void) openPath(filePicker.get.acceptedPath,
+                    baseName(filePicker.get.acceptedPath), "");
+                break;
+            }
+        }
+
+        // A pointer or wheel event while the picker is open (`DCK7` inside
+        // the modal: the element under the cursor, never a pane beneath the
+        // overlay). Pixel positions become overlay-local cells against the
+        // same centered-at-row-1 arithmetic the paint pass uses — the panel
+        // is frame-stable, so both derive one origin.
+        void routePickerOverlay(in Event ev) @system
+        {
+            const cellsW = screenW / cellW;
+            const cellsH = screenH / cellH;
+            const pkGeometry = pickerGeometryFor(cellsW, cellsH);
+            const pkX = (cellsW - 2 * pkGeometry.panelCols) / 2;
+            const overlayX = pkX > 0 ? pkX : 0;
+            ev.match!(
+                (in PointerEvent p) {
+                    PointerEvent local = p;
+                    local.pos = Point(
+                        cast(int)(p.pos.x / cellW) - overlayX,
+                        cast(int)(p.pos.y / cellH) - 1);
+                    applyPickerAction(filePicker.get.handleOverlay(
+                        Event(local), pkGeometry));
+                },
+                (in WheelEvent w) {
+                    WheelEvent local = w;
+                    local.pos = Point(
+                        cast(int)(w.pos.x / cellW) - overlayX,
+                        cast(int)(w.pos.y / cellH) - 1);
+                    applyPickerAction(filePicker.get.handleOverlay(
+                        Event(local), pkGeometry));
+                },
+                (_) {},
+            );
+        }
+
         if (!filePicker.empty && filePicker.get.state.active)
         {
             // The fuzzy picker is a modal surface (`PIK1`): while it is
             // open it owns the whole keyboard.
-            import std.path : baseName;
-
             foreach (k; keyBuf)
-            {
-                final switch (filePicker.get.handleKey(k))
-                {
-                case PickerAction.consumed:
-                    break;
-                case PickerAction.preview:
-                    // The preview scope's keys (`Ctrl-d`/`Ctrl-u` from any
-                    // pane, everything while the preview holds focus) go to
-                    // the document pane, whose own keymap applies.
-                    if (filePickerDoc !is null)
-                        filePickerDoc.forwardKey(filePicker.get.previewKey);
-                    break;
-                case PickerAction.closed:
-                    filePickerDoc.close();
-                    break;
-                case PickerAction.accepted:
-                    filePickerDoc.close();
-                    cast(void) openPath(filePicker.get.acceptedPath,
-                        baseName(filePicker.get.acceptedPath), "");
-                    break;
-                }
-            }
+                applyPickerAction(filePicker.get.handleKey(k));
         }
         else if (pn.inspVisible && pn.inspFocused)
         {
@@ -2649,6 +2687,21 @@ int runGui(GuiArgs guiArgs) @system
         PaneId dockPressPane;
         foreach (e; evBuf)
         {
+            // The picker is modal (`PIK1`): its overlay owns every pointer
+            // and wheel event before the dock can route one to a pane
+            // beneath it.
+            if (!filePicker.empty && filePicker.get.state.active)
+            {
+                const overlayBound = e.match!(
+                    (in PointerEvent p) => true,
+                    (in WheelEvent w) => true,
+                    (_) => false);
+                if (overlayBound)
+                {
+                    routePickerOverlay(e);
+                    continue;
+                }
+            }
             const route = pn.dock.handle(e);
             if (route.relayout)
             {
