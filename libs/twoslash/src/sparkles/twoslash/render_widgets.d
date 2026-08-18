@@ -29,6 +29,7 @@ module sparkles.twoslash.render_widgets;
 
 import sparkles.base.term_color : RgbColor, toRgb;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
+import sparkles.syntax.render.widgets : applyTints, CodeViewOptions, gutterSpan;
 import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
@@ -209,9 +210,21 @@ uint decorateCodeRow(ref Builder b, uint code, const TwoslashReturn tw,
         : code;
 }
 
+/**
+The whole twoslash document: code lines as resolved spans, fused decorations,
+and the interleaved below-line blocks.
+
+`decorations` carries the same per-line gutter and byte-range tint channels
+$(REF viewCodeDocument, sparkles,syntax,render,widgets) takes, so an overlay
+attached to the source survives the switch to this view. Live D types turn it
+on asynchronously — a payload lands a second or two after the file opens — and
+before this the coverage gutter simply disappeared at that moment, because the
+two producers rendered the same file and only one of them knew about it.
+*/
 WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
     const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
-    RgbColor pageFg, TsConfigCache* cache = null, int maxWidth = 0)
+    RgbColor pageFg, TsConfigCache* cache = null, int maxWidth = 0,
+    CodeViewOptions decorations = CodeViewOptions.init)
 {
     import sparkles.ui.canvas : LineStyle;
     import sparkles.ui.geometry : Point, SizeSpec;
@@ -243,20 +256,31 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
             srcStart: ls.span.start, srcEnd: ls.span.end);
     }
 
+    const gutterCells = decorations.gutterWidth > 0 ? decorations.gutterWidth : 0;
+
     uint[] rows;
     foreach (line; 0 .. total)
     {
         auto spans = spansByLine[line].length ? spansByLine[line]
             : [TextSpan(" ")];
+        // The same order `viewCodeDocument` uses: tint the source spans by
+        // byte range first, then prepend the gutter, which is chrome and
+        // carries no source range of its own.
+        spans = applyTints(spans, decorations.tintedRanges);
+        if (decorations.gutterWidth > 0)
+            spans = gutterSpan(decorations, line) ~ spans;
         const code = b.add(Widget(kind: WidgetKind.rich, spans: spans,
             slot: Slot.code));
 
-        rows ~= decorateCodeRow(b, code, tw, plan, line);
+        // Everything positioned by source column has to be told what the row
+        // carries before the code starts, or it lands that many cells left of
+        // the token it belongs to.
+        rows ~= decorateCodeRow(b, code, tw, plan, line, gutterCells);
 
         foreach (ref const blk; plan.belowBlocks)
             if (blk.line == line)
                 rows ~= buildBelowBlock(b, tw.nodes[blk.node], blk.node,
-                    sigSpans(tw.nodes[blk.node]), maxWidth);
+                    sigSpans(tw.nodes[blk.node]), maxWidth, gutterCells);
     }
 
     return b.finish(b.container(WidgetKind.column, rows));
@@ -301,10 +325,16 @@ in (nodeIndex < tw.nodes.length)
 /// One below-line block: a left-indented `column` of a caret row + payload.
 /// `sigSpans` (when non-empty) replaces a query signature's single-color text
 /// with resolved syntax-colored spans.
+///
+/// `columnOffset` is the chrome the code rows above carry — a gutter, a diff
+/// marker — in cells. A caret points at a source column, and the block only
+/// lands under the token it describes if it is told how far the code itself
+/// was pushed right. Same contract as $(LREF decorateCodeRow), for the same
+/// reason.
 private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex,
-    TextSpan[] sigSpans = null, int maxWidth = 0)
+    TextSpan[] sigSpans = null, int maxWidth = 0, int columnOffset = 0)
 {
-    const indent = Insets(0, 0, 0, cast(int) node.character);
+    const indent = Insets(0, 0, 0, columnOffset + cast(int) node.character);
     const hit = hitOf(nodeIndex);
 
     final switch (node.type)
@@ -1676,4 +1706,110 @@ version (unittest)
             sawNewlineGlyph = true; // the OLD single-run bug
     }
     assert(sawFirst && sawSecond && !sawNewlineGlyph);
+}
+
+@("render_widgets.viewTwoslashDocument.carriesTheGutterAndTintChannels")
+@safe unittest
+{
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, resolveTheme;
+    import sparkles.syntax.render.widgets : GutterCell, TintedRange;
+    import sparkles.ui.style : Slot;
+    import std.string : strip;
+
+    // The regression this pins: live D types land a payload a second or two
+    // after a `.d` file opens, the viewer switches from `viewCodeDocument` to
+    // this producer, and a coverage gutter attached to the *file* used to
+    // disappear at that moment — the second overlay silently replacing the
+    // first.
+    const code = "int a;\nint b;\n";
+    const tw = TwoslashReturn(code: code);
+    const ev = [HighlightEvent.sourceSpan(0, code.length)];
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+
+    auto opts = CodeViewOptions(
+        gutter: [
+            GutterCell(text: "5", slot: Slot.covCovered, paintBackground: true),
+            GutterCell(text: "0", slot: Slot.covUncovered, paintBackground: true),
+        ],
+        gutterWidth: 2,
+        tintedRanges: [TintedRange(start: 7, end: 13, slot: Slot.covUncovered)],
+    );
+    auto tree = viewTwoslashDocument(tw, ev, (() @trusted => &rt)(),
+        RgbColor(0xcc, 0xcc, 0xcc), null, 0, opts);
+
+    bool sawFive, sawZero, sawTint;
+    foreach (ref const n; tree.nodes)
+    {
+        if (n.kind != WidgetKind.rich)
+            continue;
+        foreach (ref const sp; n.spans)
+        {
+            // The gutter is chrome: right-aligned in its column, and carrying
+            // no source range, so selection and goto-line still walk the code.
+            // The badge is padded to its column width, so compare the text
+            // it carries rather than the cell it fills.
+            if (sp.text.strip == "5" && sp.slot == Slot.covCovered)
+                sawFive = sp.srcStart == size_t.max;
+            if (sp.text.strip == "0" && sp.slot == Slot.covUncovered)
+                sawZero = sp.srcStart == size_t.max;
+            // The inline channel washes a byte range of the source itself.
+            if (sp.slot == Slot.covUncovered && sp.srcStart != size_t.max)
+                sawTint = true;
+        }
+    }
+    assert(sawFive, "the covered line's badge reached the twoslash view");
+    assert(sawZero, "and the uncovered one");
+    assert(sawTint, "as did the sub-line tint");
+
+    // Without decorations the view is exactly what it was.
+    auto plain = viewTwoslashDocument(tw, ev, (() @trusted => &rt)(),
+        RgbColor(0xcc, 0xcc, 0xcc));
+    foreach (ref const n; plain.nodes)
+        if (n.kind == WidgetKind.rich)
+            foreach (ref const sp; n.spans)
+                assert(sp.slot != Slot.covCovered && sp.slot != Slot.covUncovered,
+                    "no gutter appears unless one is asked for");
+}
+
+@("render_widgets.viewTwoslashDocument.decorationsShiftWithTheGutter")
+@safe unittest
+{
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, resolveTheme;
+    import sparkles.syntax.render.widgets : GutterCell;
+    import sparkles.ui.canvas : OpKind;
+    import sparkles.ui.style : Slot;
+
+    // A decoration is positioned by *source column*, so a row that carries
+    // chrome before its code must say how much — otherwise the underline lands
+    // that many cells left of the token, which is what a coverage gutter did to
+    // every hover on the file.
+    const code = "const x = 1\n";
+    const tw = TwoslashReturn(code: code, nodes: [
+        Node(type: NodeType.hover, start: 6, length: 1, line: 0, character: 6,
+            text: "const x: 1"),
+    ]);
+    const ev = [HighlightEvent.sourceSpan(0, code.length)];
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+
+    int underlineX(CodeViewOptions opt)
+    {
+        auto tree = viewTwoslashDocument(tw, ev, (() @trusted => &rt)(),
+            RgbColor(0xcc, 0xcc, 0xcc), null, 0, opt);
+        auto ops = buildDisplayList(tree, layout(tree), defaultTwoslashPalette(),
+            RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
+        foreach (ref op; ops)
+            if (op.kind == OpKind.fillRect && op.slot == Slot.hoverUnderline)
+                return op.rect.x;
+        assert(false, "no hover underline was drawn");
+    }
+
+    const bare = underlineX(CodeViewOptions.init);
+    const withGutter = underlineX(CodeViewOptions(
+        gutter: [GutterCell(text: "5", slot: Slot.covCovered)], gutterWidth: 3));
+
+    assert(bare == 6, "the underline sits at the token's own column");
+    assert(withGutter == bare + 3,
+        "and moves right by exactly the chrome the row gained, no more");
 }

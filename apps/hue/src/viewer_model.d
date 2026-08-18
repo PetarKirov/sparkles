@@ -871,8 +871,18 @@ struct ViewerModel
         {
             // A twoslash document: the whole-document widget view (code lines
             // as resolved spans + fused decorations + interleaved blocks).
+            // The coverage overlay is attached to the *file*, and this view
+            // renders the same file — so it carries the same decorations. Live
+            // types arrive asynchronously and switch to this producer a second
+            // or two after open; without this the gutter vanished exactly then.
+            const covGutter = hasCoverage
+                ? coverageGutterCells(coverage, srcTotal, coverageGutterWidth)
+                : null;
             tree = viewTwoslashDocument(tw, events, thisCurrent(), pageFg,
-                cache, widthCols);
+                cache, widthCols,
+                CodeViewOptions(gutter: covGutter,
+                    gutterWidth: covGutter.length ? coverageGutterWidth : 0,
+                    tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
                 defaultTwoslashPalette(schemeForBackground(pageBg)),
