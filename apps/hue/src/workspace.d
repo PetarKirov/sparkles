@@ -19,7 +19,7 @@ import std.path : dirName;
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.unique : makeUnique;
-import sparkles.syntax.md.render_widgets : CodeOverflow;
+import sparkles.syntax.md.render_widgets : OverflowPolicy;
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
     Theme, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -1356,7 +1356,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     int treeWidth = 32, int tabWidth = 4, bool listWhitespace = false,
     bool liveTypes = true,
     DiffLayout diffLayout = DiffLayout.unified,
-    CodeOverflow codeOverflow = CodeOverflow.scroll,
+    OverflowPolicy codeOverflow = OverflowPolicy.init,
     int codeMaxLines = -1,
     WorkspaceDoc delegate() @system reloadDiff = null) @system
 {

@@ -21,7 +21,7 @@ import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
     RgbColor, Theme, toRgb;
 import sparkles.syntax.md.model : codeLineCount, fenceBody, MdBlock,
     MdBlockKind, Span;
-import sparkles.syntax.md.render_widgets : CodeOverflow, FenceScroll,
+import sparkles.syntax.md.render_widgets : FenceScroll, isWrap, OverflowPolicy,
     foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
     viewMarkdown;
 import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
@@ -183,7 +183,7 @@ struct ViewerModel
     bool codeLineNumbers = true;    /// in-panel fence numbers ('c' toggles)
     /// `--code-overflow`: long fence lines scroll behind a per-fence
     /// viewport (default) or wrap in-panel.
-    CodeOverflow codeOverflow = CodeOverflow.scroll;
+    OverflowPolicy codeOverflow;
     /// `--code-max-lines`: a taller fence shows a vertical viewport of
     /// exactly this height plus an inner right track. 0 = never; -1 (the
     /// default) = auto — fit the whole box, borders included, in the pane.
@@ -1129,7 +1129,7 @@ struct ViewerModel
     /// overflow; true when it moved (and the pipeline rebuilt).
     bool setFenceScroll(size_t bodyStart, long x, long y)
     {
-        if (codeOverflow != CodeOverflow.scroll)
+        if (isWrap(codeOverflow))
             return false;
         const e = fenceExtent(bodyStart);
         if (e.lines == 0)

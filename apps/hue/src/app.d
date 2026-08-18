@@ -32,7 +32,8 @@ import std.sumtype : match, SumType;
 
 import sparkles.syntax;
 import sparkles.syntax.md.model : MdDoc;
-import sparkles.syntax.md.render_widgets : CodeOverflow;
+import sparkles.syntax.md.render_widgets : OverflowPolicy, ScrollOverflow,
+    WrapAtOverflow, WrapOverflow;
 import sparkles.twoslash;
 import sparkles.core_cli.args;
 
@@ -198,7 +199,7 @@ struct View
     @(Option("code-line-numbers", description: "--gui: number the lines inside each code block (default on)."))
     bool codeLineNumbers = true;
 
-    @(Option("code-overflow", description: "How a code-block line longer than its panel behaves: 'scroll' or 'wrap'."))
+    @(Option("code-overflow", description: "How a code-block line longer than its panel behaves: 'scroll', 'wrap', or 'wrap-at:N' (wrap to N cells total, then scroll)."))
     string codeOverflow = "scroll";
 
     @(Option("code-max-lines", description: "A code block taller than this many lines shows a fixed-height vertical viewport (-1 auto, 0 disables)."))
@@ -514,7 +515,7 @@ private int executeView(in HueCli root, in View view)
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
                     &cache, view.include.dup, view.exclude.dup, view.treeWidth,
                     view.tabWidth, view.listWhitespace, liveTypes: !view.noLiveTypes,
-                    codeOverflow: parseCodeOverflow(view.codeOverflow),
+                    codeOverflow: parseOverflow(view.codeOverflow, "--code-overflow"),
                     codeMaxLines: view.codeMaxLines);
             }
         const openSet = backend == Backend.gui
@@ -831,16 +832,33 @@ private int renderDocument(Backend backend, in ViewRenderOptions opt, ref Docume
 
 // ── Helper Utilities ────────────────────────────────────────────────────────
 
-/// Parses `--code-overflow` into a `CodeOverflow`; unknown → `scroll`.
-private CodeOverflow parseCodeOverflow(string name)
+/// Parses a `--code-overflow`/`--table-overflow` value into the shared
+/// `OverflowPolicy`: `scroll`, `wrap`, or `wrap-at:N` (N > 0); anything else
+/// warns and falls back to `scroll`.
+private OverflowPolicy parseOverflow(string name, string flag)
 {
+    import std.algorithm.searching : startsWith;
+    import std.conv : ConvException, to;
+
     switch (name)
     {
-        case "wrap":   return CodeOverflow.wrap;
-        case "scroll": return CodeOverflow.scroll;
+        case "wrap":   return OverflowPolicy(WrapOverflow());
+        case "scroll": return OverflowPolicy(ScrollOverflow());
         default:
-            warning(i"unknown --code-overflow '$(name)'; using 'scroll'");
-            return CodeOverflow.scroll;
+            if (name.startsWith("wrap-at:"))
+            {
+                try
+                {
+                    const n = name["wrap-at:".length .. $].to!int;
+                    if (n > 0)
+                        return OverflowPolicy(WrapAtOverflow(n));
+                }
+                catch (ConvException)
+                {
+                }
+            }
+            warning(i"unknown $(flag) '$(name)'; using 'scroll'");
+            return OverflowPolicy(ScrollOverflow());
     }
 }
 
@@ -1129,7 +1147,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 maxWidth: previewWidth(),
                 fenceRenderer: hueFenceRenderer(&cache, &theme, pageFg),
                 diffBlocks: doc.preview.decorations,
-                codeOverflow: parseCodeOverflow(opt.codeOverflow),
+                codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
                 codeMaxLines: opt.codeMaxLines < 0 ? 0 : opt.codeMaxLines,
             };
             auto tree = viewMarkdown(doc.preview.doc, mopt);
@@ -1262,7 +1280,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             &cache, opt.include.dup, opt.exclude.dup, opt.treeWidth,
             opt.tabWidth, opt.listWhitespace, liveTypes: !opt.noLiveTypes,
             diffLayout: parseDiffLayout(opt.diffLayout),
-            codeOverflow: parseCodeOverflow(opt.codeOverflow),
+            codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
             codeMaxLines: opt.codeMaxLines,
             reloadDiff: reloadDiff);
     }
@@ -1343,7 +1361,7 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             codeLineNumbers: opt.codeLineNumbers,
             ansiCopyStrip: opt.ansiCopy == "strip",
             tableCopy: parseTableCopy(opt.tableCopy),
-            codeOverflow: parseCodeOverflow(opt.codeOverflow),
+            codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
             codeMaxLines: opt.codeMaxLines,
             set: docSet,
             loadDoc: &loadDoc,
