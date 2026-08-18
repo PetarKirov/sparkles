@@ -81,6 +81,60 @@ ParseExpected!FileCoverage parseDmdCoverage(const(char)[] contents,
     return parseOk(file);
 }
 
+/**
+The source path a listing's trailer names, read from the end of `contents`
+without parsing the counter columns.
+
+For indexing a directory of listings: a `.lst`'s *name* is the source path with
+`/` replaced by `-`, which cannot be inverted (a package directory may itself
+contain a `-`), and it encodes the path as the compiler saw it — relative to
+wherever the build ran. The trailer is the only place the path survives intact,
+so mapping artifacts back to sources means reading it. Parsing each whole file
+to recover one line is the thing this avoids.
+
+Params:
+    contents = the listing, or enough of its tail to hold the trailer
+
+Returns: the path, or `null` when the text does not end in a trailer — which is
+    what a truncated listing, or a file that is not a `.lst` at all, looks like.
+*/
+string dmdListingSource(const(char)[] contents) @safe
+{
+    import std.string : lineSplitter;
+
+    // The trailer is the last non-empty line; a listing may end with a newline
+    // and CRLF input leaves a stray `\r` that `trimmed` takes off.
+    string found;
+    foreach (line; contents.lineSplitter)
+    {
+        const stripped = line.trimmed;
+        if (stripped.length == 0)
+            continue;
+        found = parseTrailer(stripped);
+    }
+    return found;
+}
+
+@("coverage.formats.dmd.dmdListingSource")
+@safe
+unittest
+{
+    enum listing = "      5|    return a + b;\n"
+        ~ "libs/x/src/math.d is 50% covered\n";
+    assert(dmdListingSource(listing) == "libs/x/src/math.d");
+    assert(dmdListingSource("       |module m;\nsrc/m.d has no code\n") == "src/m.d");
+
+    // Only the trailer answers: a counted line is not a path, and a listing
+    // cut off before its trailer names nothing rather than guessing.
+    assert(dmdListingSource("      5|    return a + b;\n") is null);
+    assert(dmdListingSource("") is null);
+    assert(dmdListingSource("just some prose\n") is null);
+
+    // CRLF, and a trailing blank line after the trailer.
+    assert(dmdListingSource("      5|x();\r\nsrc/a.d is 100% covered\r\n\r\n")
+        == "src/a.d");
+}
+
 /// The source path named by a listing's trailer, or `null` for any other
 /// line. Handles both spellings `-cov` emits.
 private string parseTrailer(const(char)[] line) @safe

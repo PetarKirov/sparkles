@@ -73,6 +73,9 @@ struct OverlayOptions
     @(Option("cov", description: "Attach a code coverage artifact (.lst, .gcov, .info, .json) to the document (compatibility alias for --overlay coverage=<artifact>)."))
     string cov;
 
+    @(Option("no-auto-cov", description: "Do not look for a coverage artifact in build/coverage when none is named."))
+    bool noAutoCov;
+
     @(Option("list-overlays", description: "List registered overlay kinds."))
     bool listOverlays;
 }
@@ -553,6 +556,7 @@ private int executeView(in HueCli root, in View view)
     pipeline.dsvQuote = view.dsvQuote;
     pipeline.dsvHeader = view.dsvHeader;
     pipeline.coverageArtifact = coverageArtifact;
+    pipeline.autoCoverage = !root.overlay.noAutoCov;
 
     const backend = view.sink.resolveBackend(root.gui);
 

@@ -13,3 +13,7 @@ module sparkles.code_instrumentation;
 public import sparkles.code_instrumentation.coverage.model;
 public import sparkles.code_instrumentation.coverage.ingest;
 public import sparkles.code_instrumentation.coverage.overlay;
+
+/// The DMD-listing trailer reader, for mapping a directory of `.lst` artifacts
+/// back to the sources they describe without parsing each one in full.
+public import sparkles.code_instrumentation.coverage.formats.dmd : dmdListingSource;
