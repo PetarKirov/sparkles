@@ -41,6 +41,7 @@ import sparkles.ui.style : Slot;
 import ansi_model : BackgroundMode;
 import diff_view : DiffLayout;
 import document : Document;
+import dsv_view : DsvCopy, resolveTableCopy;
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
 
@@ -74,6 +75,7 @@ struct WorkspaceTui
     ExplorerTui tree;
     PreviewTui viewer;
     WsLoader loadDoc;
+    string tableCopyFlag = "auto"; /// `--table-copy` raw flag (`DSC2`)
     /// Live D types (`PRJ12`-`PRJ16`): a `twoslash-extract --dub --serve`
     /// oracle for the open `.d` document. The session belongs to the document
     /// — opening another file ends it — and its stderr is silenced, because
@@ -575,6 +577,8 @@ struct WorkspaceTui
             doc.diffSides, doc.diffSession, doc.diffEmphasis);
         viewer.docNote = doc.dsvNote;
         viewer.vm.docPath = path; // .editorconfig discovery (format preview)
+        viewer.dsvCopy = DsvCopy.of(doc.dsvText, doc.dsvInfo);
+        viewer.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
         syncTreeSession();
         startDiffTypes();
         tree.reveal(path);
@@ -1372,7 +1376,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     int tableMaxLines = -1,
     WorkspaceDoc delegate() @system reloadDiff = null,
     bool formatPreview = false, int formatWidth = 0,
-    string formatterName = null) @system
+    string formatterName = null,
+    string tableCopyFlag = "auto") @system
 {
     WorkspaceTui w;
     // The picker's worker pool and the preview's oracle must stop before the
@@ -1380,6 +1385,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
     scope (exit) if (w.pickerDoc !is null) w.pickerDoc.shutdown();
     w.loadDoc = loadDoc;
+    w.tableCopyFlag = tableCopyFlag;
     // `DST2`: after a patch is applied the diff on screen is stale — the rows
     // just staged are no longer part of it. Only the host owns the loader
     // that produced the document, so it hands one back.
@@ -1391,6 +1397,9 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
                 fresh.diffDoc, fresh.diffSides, fresh.diffSession,
                 fresh.diffEmphasis);
             w.viewer.docNote = fresh.dsvNote;
+            w.viewer.dsvCopy = DsvCopy.of(fresh.dsvText, fresh.dsvInfo);
+            w.viewer.tableFmt = resolveTableCopy(w.tableCopyFlag,
+                fresh.dsvInfo.present);
         };
     w.liveTypes = liveTypes;
     // `DVL3`: the layout the reviewer asked for on the command line; `s`
@@ -1440,6 +1449,9 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         if (formatPreview)
             w.viewer.showNotice(formatPreviewStart(w.viewer.vm,
                 formatWidth, formatterName));
+        w.viewer.dsvCopy = DsvCopy.of(initial.dsvText, initial.dsvInfo);
+        w.viewer.tableFmt = resolveTableCopy(tableCopyFlag,
+            initial.dsvInfo.present);
         w.syncTreeSession();
         w.startDiffTypes();
         if (target.length)

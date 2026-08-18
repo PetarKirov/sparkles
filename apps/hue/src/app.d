@@ -51,6 +51,7 @@ import diff_view : DiffLayout, DiffViewOptions;
 import sparkles.diff : WhitespaceMode;
 import source_set : SourceSet;
 import table_select : TableCopyFormat;
+import dsv_view : resolveTableCopy;
 
 import sparkles.ui_app.gui_options : defaultGuiFont, defaultGuiFontFamily,
     defaultTheme, GuiOptions;
@@ -153,7 +154,7 @@ struct ViewRenderOptions
     string tableOverflow = "scroll";
     int tableMaxLines = -1;
     string ansiCopy = "raw";
-    string tableCopy = "tsv";
+    string tableCopy = "auto";
     string[] include;
     string[] exclude;
     bool noLiveTypes = false;
@@ -234,8 +235,8 @@ struct View
     @(Option("ansi-copy", description: "--gui: how a selection over a ```ansi block copies: 'raw' or 'strip'."))
     string ansiCopy = "raw";
 
-    @(Option("table-copy", description: "--gui: how a table grid selection copies: 'tsv' or 'markdown'."))
-    string tableCopy = "tsv";
+    @(Option("table-copy", description: "How a table grid selection copies: 'auto' (source for DSV, else tsv), 'tsv', 'markdown' or 'source' (the DSV dialect)."))
+    string tableCopy = "auto";
 
     @(Option("include", description: "Explorer glob(s) to always show. Repeatable."))
     string[] include;
@@ -582,7 +583,8 @@ private int executeView(in HueCli root, in View view)
                     codeOverflow: parseOverflow(view.codeOverflow, "--code-overflow"),
                     codeMaxLines: view.codeMaxLines,
                     tableOverflow: parseOverflow(view.tableOverflow, "--table-overflow"),
-                    tableMaxLines: view.tableMaxLines);
+                    tableMaxLines: view.tableMaxLines,
+                    tableCopyFlag: view.tableCopy);
             }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
@@ -946,20 +948,7 @@ private OverflowPolicy parseOverflow(string name, string flag)
     }
 }
 
-/// Parses `--table-copy` (`CLI11`) into a `TableCopyFormat`; unknown → `tsv`.
-private TableCopyFormat parseTableCopy(string name)
-{
-    import table_select : TableCopyFormat;
 
-    switch (name)
-    {
-        case "markdown": return TableCopyFormat.markdown;
-        case "tsv":      return TableCopyFormat.tsv;
-        default:
-            warning(i"unknown --table-copy '$(name)'; using 'tsv'");
-            return TableCopyFormat.tsv;
-    }
-}
 
 /// `true` iff `path` names an existing directory — the multi-document target
 /// (`SRC4`). A missing or unreadable path is not a directory (the file paths
@@ -1398,7 +1387,8 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             reloadDiff: reloadDiff,
             formatPreview: opt.formatPreview,
             formatWidth: opt.formatWidth,
-            formatterName: opt.formatter);
+            formatterName: opt.formatter,
+            tableCopyFlag: opt.tableCopy);
     }
     else
     {
@@ -1476,7 +1466,11 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             lineNumbers: opt.lineNumbers,
             codeLineNumbers: opt.codeLineNumbers,
             ansiCopyStrip: opt.ansiCopy == "strip",
-            tableCopy: parseTableCopy(opt.tableCopy),
+            tableCopy: resolveTableCopy(opt.tableCopy,
+                doc.kind == ContentKind.dsv),
+            tableCopyFlag: opt.tableCopy,
+            dsvText: doc.dsvText,
+            dsvInfo: doc.dsvInfo,
             codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
             codeMaxLines: opt.codeMaxLines,
             tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),

@@ -20,6 +20,7 @@ import std.conv : text;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.text.width : CellAlign = Align;
 import sparkles.syntax.md.render_widgets : MdTableExtras;
+import table_select : serializeTable, TableCopyFormat, TableRegion;
 
 version (unittest) import sparkles.syntax.md.render_widgets : TableScroll;
 import sparkles.dsv : classifyValue, ColumnType, decodeCell, detectHeader,
@@ -282,6 +283,184 @@ bool contentLooksDsv(const(char)[] sourceText) @safe pure nothrow @nogc
 {
     const sampleLen = sourceText.length < sniffMaxBytes ? sourceText.length : sniffMaxBytes;
     return sniff(sourceText[0 .. sampleLen]).looksDsv;
+}
+
+// ── Grid copy (`DSC2`/`DSC4`) ───────────────────────────────────────────────
+
+/// Resolves `--table-copy` (`CLI11` × `DSC2`): explicit names win; `auto`
+/// (the default) picks `source` for a DSV document and `tsv` otherwise.
+TableCopyFormat resolveTableCopy(string name, bool isDsv) @safe
+{
+    import sparkles.base.logger : warning;
+
+    switch (name)
+    {
+        case "markdown": return TableCopyFormat.markdown;
+        case "tsv": return TableCopyFormat.tsv;
+        case "source": return TableCopyFormat.source;
+        case "auto", "": break;
+        default:
+            warning(i"unknown --table-copy '$(name)'; using 'auto'");
+    }
+    return isDsv ? TableCopyFormat.source : TableCopyFormat.tsv;
+}
+
+@("dsv_view.resolveTableCopy.autoByKind")
+@safe unittest
+{
+    assert(resolveTableCopy("auto", true) == TableCopyFormat.source);
+    assert(resolveTableCopy("auto", false) == TableCopyFormat.tsv);
+    assert(resolveTableCopy("markdown", true) == TableCopyFormat.markdown);
+    assert(resolveTableCopy("source", false) == TableCopyFormat.source);
+}
+
+
+/// The grid-copy side of a DSV document: raw cell bytes for the `source`
+/// format (original quoting preserved — the serializer never re-quotes), the
+/// whole-grid shortcut that reproduces the input byte-for-byte (`DSC4`: BOM,
+/// per-record terminators, ragged rows and all), and the chrome geometry —
+/// the record-number stub column and a synthetic header row are excluded
+/// from every copy format (`DSG5`/`DSD3`).
+struct DsvCopy
+{
+    string rawText; /// the original bytes ("" = not a DSV document)
+    DsvInfo info;
+    private DsvDoc parsed;
+    private bool parsedOk;
+
+    bool present() const @safe pure nothrow @nogc => info.present;
+    /// View grid chrome: the gutter column, and the synthetic header row.
+    size_t stubCols() const @safe pure nothrow @nogc => info.present ? 1 : 0;
+    /// ditto
+    size_t skipRows() const @safe pure nothrow @nogc
+        => info.present && info.syntheticHeader ? 1 : 0;
+
+    static DsvCopy of(string rawText, in DsvInfo info) @safe
+    {
+        DsvCopy c = { rawText: rawText, info: info };
+        if (info.present)
+        {
+            auto res = parseDsv(rawText, info.dialect);
+            if (!res.hasError)
+            {
+                c.parsed = res.value;
+                c.parsed.hasHeader = info.hasHeader;
+                c.parsedOk = true;
+            }
+        }
+        return c;
+    }
+
+    /// Raw bytes of VIEW cell `(row, col)`: view column 0 is the gutter (""),
+    /// view row 0 the header (synthetic → ""); data rows map to source
+    /// records in order; a ragged row's padded cells are "".
+    const(char)[] rawCell(size_t viewRow, size_t viewCol) const @safe
+    {
+        if (!parsedOk || viewCol == 0)
+            return "";
+        const dataCol = viewCol - 1;
+        const rec = info.hasHeader ? cast(long) viewRow : cast(long) viewRow - 1;
+        if (rec < 0 || rec >= cast(long) parsed.records.length)
+            return "";
+        const r = parsed.records[cast(size_t) rec];
+        if (dataCol >= r.cellCount)
+            return "";
+        return parsed.cellRaw(parsed.cells[r.cellsStart + dataCol]);
+    }
+
+    /// The region covers the whole view grid — a `source` copy then IS the
+    /// input file (`DSC4`).
+    bool coversWholeGrid(in TableRegion reg, size_t rows, size_t cols) const
+        @safe pure nothrow @nogc
+        => !reg.subCell && reg.rowLo == 0 && reg.colLo == 0
+            && reg.rowHi + 1 >= rows && reg.colHi + 1 >= cols;
+}
+
+/// One serialization entry for both hosts (`TBL2`/`TBL6` × `DSC2`): DSV-aware
+/// when `copy.present` (chrome exclusion in every format, raw bytes + the
+/// whole-grid byte-exact shortcut under `source`), the plain path otherwise.
+/// `viewCell` is the host's decoded-view accessor.
+string serializeGridCopy(const DsvCopy copy, in TableRegion reg, size_t rows,
+    size_t cols, scope const(char)[] delegate(size_t, size_t) @safe viewCell,
+    TableCopyFormat fmt) @safe
+{
+    if (!copy.present)
+        return serializeTable(reg, viewCell, fmt);
+    if (fmt == TableCopyFormat.source && copy.coversWholeGrid(reg, rows, cols))
+        return copy.rawText;
+    if (fmt == TableCopyFormat.source)
+        return serializeTable(reg,
+            (size_t r, size_t c) @safe => copy.rawCell(r, c), fmt,
+            copy.info.dialect.delimiter, copy.stubCols, copy.skipRows);
+    return serializeTable(reg, viewCell, fmt, ',', copy.stubCols, copy.skipRows);
+}
+
+@("dsv_view.copy.rawCellsAndChrome")
+@safe unittest
+{
+    const src = "name,price\n\"a,b\",\"1,5\"\nplain,27\n";
+    const a = adaptDsv(src, "csv", DsvFlags());
+    const copy = DsvCopy.of(src, a.info);
+    assert(copy.present && copy.stubCols == 1 && copy.skipRows == 0);
+    // View (row, col): row 0 header, col 0 gutter; raw bytes keep quotes.
+    assert(copy.rawCell(0, 1) == "name");
+    assert(copy.rawCell(1, 1) == `"a,b"`);
+    assert(copy.rawCell(1, 2) == `"1,5"`);
+    assert(copy.rawCell(1, 0) == ""); // gutter
+    assert(copy.rawCell(9, 1) == ""); // out of range
+
+    const(char)[] viewCell(size_t r, size_t c) @safe => "view";
+    const all = TableRegion(rowLo: 0, rowHi: 2, colLo: 0, colHi: 2);
+    // The whole grid under `source` IS the file.
+    assert(serializeGridCopy(copy, all, 3, 3, &viewCell,
+        TableCopyFormat.source) == src);
+    // A partial rect re-emits raw cells in the dialect.
+    const rect = TableRegion(rowLo: 1, rowHi: 2, colLo: 1, colHi: 2);
+    assert(serializeGridCopy(copy, rect, 3, 3, &viewCell,
+        TableCopyFormat.source) == "\"a,b\",\"1,5\"\nplain,27");
+}
+
+@("dsv_view.copy.byteExactHardCases")
+@safe unittest
+{
+    // BOM + CRLF + ragged + unterminated-quote tolerance + no trailing
+    // newline: the whole-grid `source` copy reproduces the bytes exactly.
+    const src = "\xEF\xBB\xBFa,b\r\n1,2,3\n4";
+    const a = adaptDsv(src, "csv", DsvFlags());
+    const copy = DsvCopy.of(src, a.info);
+    const rows = 1 + a.info.dataRows + (a.info.syntheticHeader ? 1 : 0) - (a.info.hasHeader ? 0 : 0);
+    const dims = a.doc.root.children.length
+        ? a.doc.root.children[0].children.length : 0;
+    const all = TableRegion(rowLo: 0, rowHi: dims ? dims - 1 : 0,
+        colLo: 0, colHi: a.info.columns); // +1 gutter − 1 inclusive
+    const(char)[] viewCell(size_t r, size_t c) @safe => "";
+    assert(serializeGridCopy(copy, all, dims, a.info.columns + 1, &viewCell,
+        TableCopyFormat.source) == src);
+}
+
+@("dsv_view.copy.syntheticHeaderNeverSerialized")
+@safe unittest
+{
+    const src = "1,2\n3,4\n5,6\n";
+    const a = adaptDsv(src, "csv", DsvFlags());
+    assert(a.info.syntheticHeader);
+    const copy = DsvCopy.of(src, a.info);
+    assert(copy.skipRows == 1);
+    // A tsv copy spanning the synthetic header + gutter drops both.
+    const(char)[] viewCell(size_t r, size_t c) @safe
+    {
+        // the decoded view: row 0 = "A B", data rows numbered
+        static immutable string[3][4] v = [
+            ["#", "A", "B"], ["1", "1", "2"], ["2", "3", "4"], ["3", "5", "6"],
+        ];
+        return v[r][c];
+    }
+    const all = TableRegion(rowLo: 0, rowHi: 3, colLo: 0, colHi: 2);
+    assert(serializeGridCopy(copy, all, 4, 3, &viewCell, TableCopyFormat.tsv)
+        == "1\t2\n3\t4\n5\t6");
+    // And the whole grid under `source` is still the exact file.
+    assert(serializeGridCopy(copy, all, 4, 3, &viewCell,
+        TableCopyFormat.source) == src);
 }
 
 // ── Golden grids (the D1 gate) ──────────────────────────────────────────────

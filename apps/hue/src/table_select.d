@@ -6,11 +6,16 @@ module table_select;
 
 import sparkles.ui.components.table : GridHit;
 
-/// How a table grid selection serializes to the clipboard (`CLI11`/`TBL2`).
+/// How a table grid selection serializes to the clipboard (`CLI11`/`TBL2`;
+/// `source` per `dsv-preview.md` `DSC2`).
 enum TableCopyFormat : ubyte
 {
     tsv,      /// rows as lines, cells tab-separated (spreadsheet-friendly)
     markdown, /// re-emitted `| … |` rows (first selected row as header)
+    /// the document's own DSV dialect: cells joined by its delimiter, rows by
+    /// newline — the accessor supplies **raw** cell bytes (original quoting
+    /// preserved), so the serializer never re-quotes. DSV documents only.
+    source,
 }
 
 /// A resolved table selection: either a **sub-cell** byte range within one cell,
@@ -66,19 +71,28 @@ Serialize `reg` to clipboard text via a `cell(row, col)` content accessor, per
 `| --- |` delimiter after the first selected row so the copy is a valid table).
 */
 string serializeTable(in TableRegion reg,
-    scope const(char)[] delegate(size_t, size_t) @safe cell, TableCopyFormat fmt) @safe
+    scope const(char)[] delegate(size_t, size_t) @safe cell, TableCopyFormat fmt,
+    char srcDelimiter = ',', size_t stubCols = 0, size_t skipRows = 0) @safe
 {
     import std.array : appender;
 
     if (reg.subCell)
     {
+        if (reg.col < stubCols || reg.row < skipRows)
+            return ""; // chrome, never serialized (`DSG5`/`DSD3`)
         const t = cell(reg.row, reg.col);
         const a = reg.charLo > t.length ? t.length : reg.charLo;
         const b = reg.charHi > t.length ? t.length : reg.charHi;
         return t[a .. b].idup;
     }
 
-    const cols = reg.colHi - reg.colLo + 1;
+    // Stub columns (the record-number gutter) and skipped rows (a synthetic
+    // header) are view chrome: excluded from every format.
+    const colLo = reg.colLo < stubCols ? stubCols : reg.colLo;
+    const rowLo = reg.rowLo < skipRows ? skipRows : reg.rowLo;
+    if (colLo > reg.colHi || rowLo > reg.rowHi)
+        return "";
+    const cols = reg.colHi - colLo + 1;
     auto w = appender!string;
 
     // Emit one line of `cols` cells, taking each from `at(i)` (0-based within the
@@ -90,7 +104,7 @@ string serializeTable(in TableRegion reg,
             if (fmt == TableCopyFormat.markdown)
                 w ~= i == 0 ? "| " : " | ";
             else if (i)
-                w ~= '\t';
+                w ~= fmt == TableCopyFormat.source ? srcDelimiter : '\t';
             w ~= at(i);
         }
         if (fmt == TableCopyFormat.markdown)
@@ -98,11 +112,11 @@ string serializeTable(in TableRegion reg,
     }
 
     bool first = true;
-    foreach (r; reg.rowLo .. reg.rowHi + 1)
+    foreach (r; rowLo .. reg.rowHi + 1)
     {
         if (!first)
             w ~= '\n';
-        line(i => cell(r, reg.colLo + i));
+        line(i => cell(r, colLo + i));
         if (fmt == TableCopyFormat.markdown && first)
         {
             w ~= '\n';
@@ -173,6 +187,36 @@ version (unittest)
     const r = tableSelection(at(0, 0), at(1, 1), false, false, 3, 3);
     assert(serializeTable(r, (size_t r, size_t c) => stubCell(r, c), TableCopyFormat.markdown)
         == "| Name | Age |\n| --- | --- |\n| Ann | 30 |");
+}
+
+@("table_select.serialize.sourceDialect")
+@safe unittest
+{
+    // `source`: raw cells joined by the document's delimiter, no re-quoting
+    // (the accessor already supplies original bytes, quotes included).
+    const raw = [
+        ["#", "name", "price"],
+        ["1", `"a,b"`, "1,5"],
+        ["2", "plain", "27"],
+    ];
+    const(char)[] rawCell(size_t r, size_t c) @safe => raw[r][c];
+
+    const all = TableRegion(rowLo: 0, rowHi: 2, colLo: 0, colHi: 2);
+    // stubCols excludes the gutter from every format.
+    assert(serializeTable(all, &rawCell, TableCopyFormat.source, ';', 1)
+        == "name;price\n\"a,b\";1,5\nplain;27");
+    assert(serializeTable(all, &rawCell, TableCopyFormat.tsv, ',', 1)
+        == "name\tprice\n\"a,b\"\t1,5\nplain\t27");
+
+    // skipRows drops a synthetic header row; a gutter sub-cell is chrome.
+    assert(serializeTable(all, &rawCell, TableCopyFormat.source, ';', 1, 1)
+        == "\"a,b\";1,5\nplain;27");
+    const gutter = TableRegion(subCell: true, row: 1, col: 0, charLo: 0, charHi: 1);
+    assert(serializeTable(gutter, &rawCell, TableCopyFormat.source, ';', 1) == "");
+
+    // A region entirely inside the chrome serializes to nothing.
+    const onlyGutter = TableRegion(rowLo: 0, rowHi: 2, colLo: 0, colHi: 0);
+    assert(serializeTable(onlyGutter, &rawCell, TableCopyFormat.source, ';', 1) == "");
 }
 
 @("table_select.serialize.subCell")
