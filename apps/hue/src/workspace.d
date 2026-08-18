@@ -226,12 +226,12 @@ struct WorkspaceTui
             if (f.pane == treePane)
             {
                 tree.width = f.rect.width;
-                tree.height = f.rect.height;
+                tree.resize(f.rect.height);
             }
             else if (f.pane == inspPane)
             {
                 insp.tv.width = f.rect.width;
-                insp.tv.height = f.rect.height;
+                insp.tv.resize(f.rect.height);
                 inspRect = f.rect;
             }
             else
