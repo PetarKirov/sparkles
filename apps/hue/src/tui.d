@@ -471,9 +471,14 @@ struct PreviewTui
     }
 
     // Does visual line `i` contain the query (case-insensitive)? Every view
-    // searches the aggregated row text.
+    // searches the row's *content* — `DocRow.sourceText`, the spans carrying
+    // source identity — and not its chrome. Searching the rendered row instead
+    // means a code view matches its own line numbers and coverage counts, and
+    // a blame channel would put commit hashes, authors and dates in the
+    // haystack. Scoping a search back onto particular channels is a later
+    // change; excluding them is the honest default.
     private bool lineMatches(size_t i) @safe
-        => qlen != 0 && containsIC(mdRows[i].text, query);
+        => qlen != 0 && containsIC(mdRows[i].sourceText, query);
 
     // The nearest matching line from `from` in the given direction (wrapping);
     // scrolls it to the top when found.
