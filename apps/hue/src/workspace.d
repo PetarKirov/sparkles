@@ -18,6 +18,7 @@ import core.time : msecs;
 import std.path : dirName;
 
 import sparkles.base.term_control : PointerShape;
+import sparkles.base.unique : makeUnique;
 import sparkles.syntax.md.render_widgets : CodeOverflow;
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
     Theme, toRgb;
@@ -40,7 +41,8 @@ import diff_view : DiffLayout;
 import document : Document;
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
-import picker_host : PickerAction, PickerHost;
+
+import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_preview : PickerDocPane;
 import picker_view : PickerGeometry;
 import gui_preview : PreviewModel;
@@ -103,7 +105,7 @@ struct WorkspaceTui
     /// stays copy-friendly for tests; allocated on first open (a user
     /// action, under `NFR1`'s startup carve-out). `runWorkspace` shuts its
     /// worker pool down on exit.
-    package PickerHost* picker;
+    package OwnedPicker picker;
     /// The picker's preview: another document pane, fed by the same loader
     /// and theme as the main viewer (`picker_preview`). Heap with `picker`.
     package PickerDocPane* pickerDoc;
@@ -432,10 +434,10 @@ struct WorkspaceTui
         import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
         import sparkles.ui_tui : paintGrid;
 
-        if (picker is null || !picker.state.active)
+        if (picker.empty || !picker.get.state.active)
             return;
         const geometry = pickerGeometry();
-        auto view = picker.buildView(geometry);
+        auto view = picker.get.buildView(geometry);
         auto frames = layout(view,
             Constraints(maxW: 2 * geometry.panelCols));
         const panel = frames[view.root].rect;
@@ -834,8 +836,8 @@ struct WorkspaceTui
     /// the corpus, so files created since the last open are found.
     package void openPicker() @system
     {
-        if (picker is null)
-            picker = new PickerHost;
+        if (picker.empty)
+            picker = makeUnique!PickerHost();
         if (pickerDoc is null)
             pickerDoc = new PickerDocPane;
         // The preview pane is wired exactly like the main viewer: the same
@@ -848,7 +850,7 @@ struct WorkspaceTui
         pickerDoc.pane.vm.cache = viewer.vm.cache;
         pickerDoc.pane.vm.decodeAnsi = viewer.vm.decodeAnsi;
         pickerDoc.syncTheme(viewer.themeIndex);
-        picker.open(tree.root.length ? tree.root : ".",
+        picker.get.open(tree.root.length ? tree.root : ".",
             tree.includeGlobs, tree.excludeGlobs);
         dirty = true;
     }
@@ -857,7 +859,7 @@ struct WorkspaceTui
     {
         // The fuzzy picker is a modal surface (`PIK1`): while it is open it
         // owns the whole keyboard, and everything else waits behind it.
-        if (picker !is null && picker.state.active)
+        if (!picker.empty && picker.get.state.active)
         {
             e.match!((in KeyEvent k) {
                 // `Ctrl-d`/`Ctrl-u` scroll the preview pane — forwarded as
@@ -869,7 +871,7 @@ struct WorkspaceTui
                         key: k.ch == 'd' ? Key.pageDown : Key.pageUp)));
                     return;
                 }
-                final switch (picker.handleKey(k))
+                final switch (picker.get.handleKey(k))
                 {
                 case PickerAction.consumed:
                     break;
@@ -880,7 +882,7 @@ struct WorkspaceTui
                 case PickerAction.accepted:
                     if (pickerDoc !is null)
                         pickerDoc.close();
-                    openDoc(picker.acceptedPath);
+                    openDoc(picker.get.acceptedPath);
                     break;
                 }
             }, (_) {});
@@ -1107,11 +1109,11 @@ struct WorkspaceTui
         // and, in the synchronous degradation (`PIK8`), takes its next
         // duration-bounded step. The preview pane's debounce/dwell clocks
         // advance with it.
-        if (picker !is null && picker.poll())
+        if (!picker.empty && picker.get.poll())
             changed = true;
-        if (picker !is null && picker.state.active && pickerDoc !is null)
+        if (!picker.empty && picker.get.state.active && pickerDoc !is null)
         {
-            pickerDoc.select(picker.selectedPath);
+            pickerDoc.select(picker.get.selectedPath);
             pickerDoc.syncTheme(viewer.themeIndex);
             changed |= pickerDoc.tick();
         }
@@ -1361,7 +1363,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     WorkspaceTui w;
     // The picker's worker pool and the preview's oracle must stop before the
     // process exits.
-    scope (exit) if (w.picker !is null) w.picker.shutdown();
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
     scope (exit) if (w.pickerDoc !is null) w.pickerDoc.shutdown();
     w.loadDoc = loadDoc;
     // `DST2`: after a patch is applied the diff on screen is stale — the rows
@@ -1618,9 +1620,9 @@ private Duration waitDeadline(ref WorkspaceTui w, bool eventDriven = false)
     // degraded mode, via completions otherwise — and neither wakes a loop
     // blocked on input, so cap the wait while one is running (`PIK5`). The
     // preview pane's debounce/dwell/oracle clocks ask for their own wake.
-    if (w.picker !is null && w.picker.busy && deadline > 16.msecs)
+    if (!w.picker.empty && w.picker.get.busy && deadline > 16.msecs)
         deadline = 16.msecs;
-    if (w.picker !is null && w.picker.state.active && w.pickerDoc !is null)
+    if (!w.picker.empty && w.picker.get.state.active && w.pickerDoc !is null)
     {
         const untilPreview = w.pickerDoc.nextDeadline();
         if (untilPreview < deadline)
@@ -2017,14 +2019,14 @@ unittest
     WorkspaceTui w;
     const root = fixtureWorkspace(w, "hue-ws-picker-test");
     scope (exit) rmdirRecurse(root);
-    scope (exit) if (w.picker !is null) w.picker.shutdown();
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
 
     static void settle(ref WorkspaceTui w) @system
     {
         foreach (_; 0 .. 100_000)
         {
             cast(void) w.pollAll();
-            if (!w.picker.busy)
+            if (!w.picker.get.busy)
                 return;
             Thread.yield();
         }
@@ -2034,13 +2036,13 @@ unittest
     // table) and surfaces as the workspace's picker.
     foreach (ch; " ff")
         assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
-    assert(w.picker !is null && w.picker.state.active, "the picker opened");
+    assert(!w.picker.empty && w.picker.get.state.active, "the picker opened");
     // Deterministic preview in a test: no debounce, no oracle subprocess.
     w.pickerDoc.loadDelay = Duration.zero;
     w.pickerDoc.liveOverlays = false;
     settle(w);
-    assert(w.picker.state.error.code == 0);
-    assert(w.picker.state.rowCount == 2, "the empty prompt ranks the corpus");
+    assert(w.picker.get.state.error.code == 0);
+    assert(w.picker.get.state.rowCount == 2, "the empty prompt ranks the corpus");
     cast(void) w.pollAll(); // the zero debounce loads the selection now
 
     // The panel paints over the panes through the shared widget tree, and
@@ -2062,9 +2064,9 @@ unittest
     foreach (ch; "beta")
         assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
     settle(w);
-    assert(w.picker.state.rowCount == 1);
+    assert(w.picker.get.state.rowCount == 1);
     assert(w.handle(Event(KeyEvent(key: Key.enter))));
-    assert(!w.picker.state.active, "accepting closes the picker");
+    assert(!w.picker.get.state.active, "accepting closes the picker");
     assert(w.currentDocPath == buildPath(root, "beta.d"),
         "the accepted file is the open document");
 }
