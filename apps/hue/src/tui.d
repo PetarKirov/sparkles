@@ -23,7 +23,8 @@ import core.time : Duration;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
 import lantern : LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;
-import lantern_view : BoxLayout, LabelArena, LanternStyle, Placement,
+import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
+    LanternStyle, Placement,
     viewLantern;
 import document : DiffEmphasis, DiffSides;
 import staging : StageAction;

@@ -16,7 +16,7 @@ and nothing else. Two things need the other direction — $(I which keys are
 available here):
 
 $(UL
-    $(LI $(B lantern) (`docs/specs/hue/lantern.md`), the key guide, is an
+    $(LI $(B lantern) (`docs/specs/ui/keymap.md`), the key guide, is an
     enumeration of the binding set. It cannot be honest about a policy it
     cannot read.)
     $(LI $(B configuration) (`CFG6`) says "configuration replaces the
@@ -32,19 +32,33 @@ in the shape of an `if`/`else` chain: an armed fold sequence claims letters that
 otherwise toggle things, a Ctrl chord resolves before the plain letter, a focused
 tree claims `j` before the viewer does. That ordering is preserved exactly — as
 $(LREF Scope_), whose declaration order $(I is) the resolution order, and whose
-$(LREF terminal) scopes are the ones that used to `return` rather than fall
-through.
+$(REF terminalScope, sparkles,ui,keymap)-marked scopes are the ones that used
+to `return` rather than fall through.
 
-$(B This is hue's policy, not the framework's.) Which key does what, and which
-context gates it, is exactly the application's business — the dividing line the
-extraction work has held throughout. What belongs to `sparkles:input` is the
-$(I vocabulary) the key arrives in.
+$(B This is hue's policy; the machinery is the framework's.) Which key does
+what, and which context gates it, is exactly the application's business. The
+vocabulary ($(REF Chord, sparkles,ui,keymap)), the matching rules, and the
+resolution algorithm live in $(MREF sparkles,ui,keymap); this module supplies
+the payloads — $(LREF Command), $(LREF Scope_), $(LREF KeyContext), the table —
+and binds them together so every hue call site reads the policy through one
+door and no site can pass a different table by accident.
 */
 module keymap;
 
 import sparkles.input.events : Key, KeyEvent;
 
-@safe pure nothrow @nogc:
+import ui_keymap = sparkles.ui.keymap;
+public import sparkles.ui.keymap : acceptsTyped, Chord, chord, chordRange,
+    hidesLaterScopes, matches, maxPathLength, ModeReq, normalise, ResolveKind,
+    sameKey, ShiftReq, terminalScope;
+
+/// hue's binding row, resolution result, and resolved command — the framework
+/// types instantiated with hue's payloads.
+alias Binding = ui_keymap.Binding!(Command, Scope_);
+/// ditto
+alias Resolution = ui_keymap.Resolution!Command;
+/// ditto
+alias KeyCommand = ui_keymap.KeyCommand!Command;
 
 /// Which input surface owns the keyboard. `search` and `gotoLine` are the
 /// two line-editing modes; everything else is `normal`.
@@ -61,6 +75,11 @@ Everything outside the key itself that changes what the key means.
 Explicit and flat on purpose: this is the entire set of facts the keymap may
 consult, so a reader can see what a binding depends on without tracing the
 frame loop, and a test can construct any situation directly.
+
+The `const` members are the framework's context hooks
+($(MREF sparkles,ui,keymap)): `reachable`/`scopeActive` gate the scopes,
+`bits` feeds a row's `require`/`forbid`, and `editing` answers
+$(REF ModeReq, sparkles,ui,keymap).
 */
 struct KeyContext
 {
@@ -77,6 +96,52 @@ struct KeyContext
     bool formatPreviewActive;
     /// a DSV grid is showing (`/` filters it, `Shift-R` resets — `DSB`)
     bool hasDsvGrid;
+
+@safe pure nothrow @nogc const:
+
+    /// Whether a line editor owns the keyboard, for `ModeReq`.
+    bool editing() => mode != InputMode.normal;
+
+    /// The context's facts as $(LREF CtxFlag) bits.
+    ubyte bits()
+    {
+        ubyte b;
+        if (hasMatches)     b |= CtxFlag.hasMatches;
+        if (hasDocSet)      b |= CtxFlag.hasDocSet;
+        if (hasDiffSession) b |= CtxFlag.hasDiffSession;
+        if (showPreview)    b |= CtxFlag.showPreview;
+        if (formatPreviewActive) b |= CtxFlag.formatPreviewActive;
+        if (hasDsvGrid)     b |= CtxFlag.hasDsvGrid;
+        return b;
+    }
+
+    /**
+    Whether `s` applies here for reasons that do not depend on the key.
+
+    Every scope but $(LREF Scope_.ctrl) is gated purely by context, which is
+    what lets $(LREF bindingsAt) enumerate without a key in hand. `ctrl` is
+    the exception — it is gated by the keystroke itself — and its rows carry
+    that in their chords, so listing them unconditionally is correct.
+    */
+    bool reachable(Scope_ s)
+    {
+        final switch (s)
+        {
+            case Scope_.always:  return true;
+            case Scope_.input:   return mode != InputMode.normal;
+            case Scope_.ctrl:    return true;
+            case Scope_.tree:    return treeFocused && treeVisible;
+            case Scope_.viewer:  return !(treeFocused && treeVisible);
+            case Scope_.shared_: return true;
+        }
+    }
+
+    /// Whether `s` applies at all — the conditions the old `if` chain tested
+    /// before entering each of its blocks.
+    bool scopeActive(Scope_ s, in KeyEvent k)
+        => s == Scope_.ctrl
+            ? (k.mods.ctrl && k.key == Key.char_)
+            : reachable(s);
 }
 
 /**
@@ -181,94 +246,30 @@ enum Command : ubyte
     diffDiscard,                       /// `Shift-X` — throw the change away
 }
 
-/// A resolved command plus its argument (only `foldLevel` uses one: the
-/// nesting level 1–9). A struct rather than nine enum members, so the fold
-/// family stays one row in the table and one case at the call site.
-struct KeyCommand
-{
-    Command cmd;
-    ubyte arg;
-}
-
-// ---------------------------------------------------------------------------
-// The binding table's vocabulary.
-// ---------------------------------------------------------------------------
-
-/**
-Whether a binding cares about Shift.
-
-Three states rather than a `bool`, because hue's bindings genuinely want all
-three and conflating them loses a distinction the old chain expressed by
-$(I where) it tested `mods.shift`. `j` scrolls down whether or not Shift is
-held ($(LREF ignore)); `r` refreshes only unshifted and `R` re-roots only
-shifted ($(LREF no)/$(LREF yes)). A two-state encoding would need the shifted
-row to be checked first and would silently break if the table were reordered —
-this one does not depend on order at all.
-*/
-enum ShiftReq : ubyte
-{
-    ignore, /// Shift is not part of the binding
-    no,     /// binds only when Shift is $(I not) held
-    yes,    /// binds only when Shift $(I is) held
-}
-
-/**
-One key in a binding's path.
-
-`chEnd` makes a contiguous code-point range one row: `z1`–`z9` is a single
-binding whose $(LREF KeyCommand.arg) is derived from which key landed, so the
-fold family stays one table row and one lantern item — which is also the
-spelling `CFG6` already proposed (`"1-9": "foldLevel"`).
-*/
-struct Chord
-{
-    Key key = Key.none;
-    dchar ch = 0;    /// the code point, when `key == Key.char_`
-    dchar chEnd = 0; /// inclusive range end; `0` for a single code point
-    ShiftReq shift;
-    bool ctrl;
-    bool alt;
-}
-
-/// A `char_` chord.
-Chord chord(dchar ch, ShiftReq shift = ShiftReq.ignore)
-    => Chord(key: Key.char_, ch: ch, shift: shift);
-
-/// A named-key chord.
-Chord chord(Key key, ShiftReq shift = ShiftReq.ignore)
-    => Chord(key: key, shift: shift);
-
-/// A `char_` chord spanning `lo`..`hi` inclusive.
-Chord chordRange(dchar lo, dchar hi) => Chord(key: Key.char_, ch: lo, chEnd: hi);
-
 /**
 Which surface a binding belongs to — $(B and, by declaration order, when it is
 resolved).
 
 This is the `if`/`else` chain `commandFor` used to be, turned into data. Reading
 top to bottom gives the old precedence: the always-available keys, then an open
-input mode, then an armed fold sequence (diff-flavoured first), then Ctrl
-chords, then whichever pane has focus, then the keys both panes share.
+input mode, then Ctrl chords, then whichever pane has focus, then the keys both
+panes share. The markers carry what the chain expressed by `return`ing: while a
+line-editing mode is open a letter is $(I text) and must not reach a command
+(so `input` is terminal $(I and) hides the scopes below it), and a Ctrl'd
+letter resolves as a chord or not at all (terminal, but its chords are the
+only keys it swallows, so the scopes below stay listable).
 */
 enum Scope_ : ubyte
 {
     always,  /// resolves in every context (fullscreen, dismiss)
-    input,   /// a line-editing mode owns the keyboard
-    ctrl,    /// a Ctrl chord, before the plain letter is considered
+    /// a line-editing mode owns the keyboard
+    @terminalScope @hidesLaterScopes input,
+    /// a Ctrl chord, before the plain letter is considered
+    @terminalScope ctrl,
     tree,    /// the explorer pane, while focused and shown
     viewer,  /// the document viewer (i.e. not the above)
     shared_, /// available from either pane
 }
-
-/**
-Whether an active scope stops resolution.
-
-A terminal scope is one the old chain `return`ed from: while a line-editing mode
-is open, a letter is $(I text) and must not reach a command. The pane scopes are
-deliberately not terminal — that is what lets `Tab` and the theme arrows work
-with either pane focused.
-*/
-bool terminal(Scope_ s) => s == Scope_.input || s == Scope_.ctrl;
 
 /// Which $(LREF KeyContext) facts a binding may require or forbid, as bits so a
 /// row states its gate inline instead of the caller filtering afterwards.
@@ -282,119 +283,19 @@ enum CtxFlag : ubyte
     hasDsvGrid     = 1 << 5,
 }
 
-/// `ctx`'s facts as $(LREF CtxFlag) bits.
-ubyte ctxBits(in KeyContext ctx)
-{
-    ubyte b;
-    if (ctx.hasMatches)     b |= CtxFlag.hasMatches;
-    if (ctx.hasDocSet)      b |= CtxFlag.hasDocSet;
-    if (ctx.hasDiffSession) b |= CtxFlag.hasDiffSession;
-    if (ctx.showPreview)    b |= CtxFlag.showPreview;
-    if (ctx.formatPreviewActive) b |= CtxFlag.formatPreviewActive;
-    if (ctx.hasDsvGrid)     b |= CtxFlag.hasDsvGrid;
-    return b;
-}
+/// The framework's row builders, with hue's command type pinned so the table
+/// below needs no explicit instantiations.
+private alias bind = ui_keymap.bind;
 
-/// Which input mode a binding applies in. Only Escape and the platform Back key
-/// need this: they mean different things while typing than they do at rest.
-enum ModeReq : ubyte
-{
-    any,
-    normal,  /// only outside a line-editing mode
-    editing, /// only inside one
-}
-
-/// The longest binding path the table may hold — enough for the leader tree
-/// (`<leader> f f`). Inline, so a `Binding` carries no indirection.
-enum maxPathLength = 3;
-
-/**
-One row of $(LREF hueBindings): a key path, what it does, and where it applies.
-
-`desc` and `group` exist for $(LREF bindingsAt)'s readers — the guide renders
-them, and a non-empty `group` marks the row as a prefix node rather than a
-command. They are `string` literals, so a row costs no allocation to read.
-*/
-struct Binding
-{
-    Chord[maxPathLength] path;
-    ubyte depth = 1; /// how many of `path` are used
-    Scope_ scope_;
-    Command cmd;
-    ubyte arg;       /// for a ranged chord, the value the range's first key maps to
-    ubyte require;   /// $(LREF CtxFlag) bits that must all be set
-    ubyte forbid;    /// $(LREF CtxFlag) bits that must all be clear
-    ModeReq mode;
-    string desc;     /// what it does, for the guide
-    /// Non-empty ⇒ a prefix node (`"fold"`), not a command. Stored bare: the
-    /// panel adds the `+` marker, and a name carrying one renders `++fold`.
-    string group;
-}
-
-/// Builds a one-chord row. Optional arguments are named at every call site, so
-/// the table below reads as a table rather than as positional noise.
-private Binding bind(Scope_ scope_, Chord a, Command cmd, string desc,
-    ubyte require = 0, ubyte forbid = 0, ModeReq mode = ModeReq.any, ubyte arg = 0)
-{
-    Binding b;
-    b.path[0] = a;
-    b.depth = 1;
-    b.scope_ = scope_;
-    b.cmd = cmd;
-    b.desc = desc;
-    b.require = require;
-    b.forbid = forbid;
-    b.mode = mode;
-    b.arg = arg;
-    return b;
-}
-
-/// ditto, for a two-chord path (`z c`, `<leader> e`).
-private Binding bind(Scope_ scope_, Chord a, Chord b_, Command cmd, string desc,
-    ubyte require = 0, ubyte forbid = 0, ubyte arg = 0)
-{
-    Binding b = bind(scope_, a, cmd, desc, require, forbid, ModeReq.any, arg);
-    b.path[1] = b_;
-    b.depth = 2;
-    return b;
-}
-
-/// ditto, for a three-chord path (`<leader> v r`).
-private Binding bind(Scope_ scope_, Chord a, Chord b_, Chord c_, Command cmd,
-    string desc, ubyte require = 0, ubyte forbid = 0)
-{
-    Binding b = bind(scope_, a, b_, cmd, desc, require, forbid);
-    b.path[2] = c_;
-    b.depth = 3;
-    return b;
-}
-
-/**
-Builds a $(B prefix node) — a key that opens a group rather than running a
-command.
-
-A group row carries no `cmd`; it exists so the path is nameable and so the
-guide has something to label the key with. Declare one before its children:
-resolution does not require it (a deeper row makes its own prefix descendable),
-but $(LREF bindingsAt) lists whichever row it meets first, and the group's
-`+name` is the better label.
-*/
+/// ditto
 private Binding group(Scope_ scope_, Chord a, string name,
-    ubyte require = 0, ubyte forbid = 0)
-{
-    Binding b = bind(scope_, a, Command.none, name, require, forbid);
-    b.group = name;
-    return b;
-}
+    ubyte require = 0, ubyte forbid = 0) @safe pure nothrow @nogc
+    => ui_keymap.group!Command(scope_, a, name, require, forbid);
 
-/// ditto, for a nested group (`<leader> v`).
+/// ditto
 private Binding group(Scope_ scope_, Chord a, Chord b_, string name,
-    ubyte require = 0, ubyte forbid = 0)
-{
-    Binding b = bind(scope_, a, b_, Command.none, name, require, forbid);
-    b.group = name;
-    return b;
-}
+    ubyte require = 0, ubyte forbid = 0) @safe pure nothrow @nogc
+    => ui_keymap.group!Command(scope_, a, b_, name, require, forbid);
 
 /// The leader key (`LMP1`). `<space>` because that is the muscle memory the
 /// LazyVim-shaped map this table is growing into is built on.
@@ -632,8 +533,10 @@ immutable Binding[] hueBindings = [
     group(Scope_.shared_, chord(leader), "leader"),
     bind(Scope_.shared_, chord(leader), chord('e'), Command.toggleExplorer,
         "toggle explorer"),
+    // `reveal` is what opens the panel: the guide consumes the row itself
+    // (`LTN11`), so `lanternAll`'s dispatch arms stay empty in both hosts.
     bind(Scope_.shared_, chord(leader), chord('?'), Command.lanternAll,
-        "all bindings"),
+        "all bindings", reveal: true),
 
     // `LMP7`: the find branch. `ff` opens the fuzzy file picker (`PKS1`);
     // its siblings (`fr` recent, `fg` git files) land with their sources.
@@ -684,291 +587,29 @@ immutable Binding[] hueBindings = [
 ];
 
 // ---------------------------------------------------------------------------
-// Resolution.
+// Resolution — the framework's algorithms bound to hue's table.
 // ---------------------------------------------------------------------------
 
-/**
-Whether `k` is the key `c` names, ignoring context.
+/// $(REF resolve, sparkles,ui,keymap) over $(LREF hueBindings).
+Resolution resolve(scope const Chord[] prefix, in KeyEvent raw,
+    in KeyContext ctx) @safe pure nothrow @nogc
+    => ui_keymap.resolve(hueBindings, prefix, raw, ctx);
 
-$(B A modifier a chord does not name is ignored, not required to be absent.)
-`Ctrl-Up` scrolls the viewer because `Up` binds scrolling and says nothing about
-Ctrl — which is what the `if` chain did, since its Ctrl block only ever guarded
-`char_` keys. Requiring equality instead would silently unbind every chorded
-arrow and page key.
-
-That is safe for letters precisely because $(LREF Scope_.ctrl) is
-$(LREF terminal): a Ctrl'd letter resolves there or nowhere, so it can never
-reach a plain-letter row that happens to ignore Ctrl.
-*/
-bool matches(in Chord c, in KeyEvent k)
-{
-    if (c.ctrl && !k.mods.ctrl)
-        return false;
-    if (c.alt && !k.mods.alt)
-        return false;
-    final switch (c.shift)
-    {
-        case ShiftReq.ignore: break;
-        case ShiftReq.no:  if (k.mods.shift) return false; break;
-        case ShiftReq.yes: if (!k.mods.shift) return false; break;
-    }
-    if (c.key != k.key)
-        return false;
-    if (c.key != Key.char_)
-        return true;
-    return c.chEnd ? (k.ch >= c.ch && k.ch <= c.chEnd) : k.ch == c.ch;
-}
-
-/// Whether two chords name the same key — path comparison, no live event.
-/// Exact, including `shift`: `g` and `Shift-G` are different bindings and must
-/// both be listed, so the guide's de-duplication must not conflate them.
-bool sameKey(in Chord a, in Chord b)
-    => a.key == b.key && a.ch == b.ch && a.chEnd == b.chEnd
-    && a.shift == b.shift && a.ctrl == b.ctrl && a.alt == b.alt;
-
-/**
-Whether a table chord accepts a chord already typed — prefix comparison.
-
-Deliberately $(I not) $(LREF sameKey). A pending chord records what the user
-actually pressed (Shift held or not); a table row may be shift-agnostic
-($(LREF ShiftReq.ignore)), in which case it accepts either. Comparing those
-exactly would make every prefix under a shift-agnostic row unreachable.
-
-The case that forced this: `g` opens the goto group while `Shift-G` jumps to
-the bottom. The group row has to be `ShiftReq.no` so `G` is not swallowed by
-it — and then a typed `g`, which records `ShiftReq.no`, has to still match it.
-*/
-bool acceptsTyped(in Chord table, in Chord typed)
-    => table.key == typed.key && table.ch == typed.ch
-    && table.ctrl == typed.ctrl && table.alt == typed.alt
-    && (table.shift == ShiftReq.ignore || table.shift == typed.shift);
-
-/// Whether `s` applies at all in `ctx` — the conditions the old `if` chain
-/// tested before entering each of its blocks.
-bool active(Scope_ s, in KeyContext ctx, in KeyEvent k)
-    => s == Scope_.ctrl
-        ? (k.mods.ctrl && k.key == Key.char_)
-        : reachable(s, ctx);
-
-/**
-Whether `s` applies in `ctx` for reasons that do not depend on the key.
-
-Every scope but $(LREF Scope_.ctrl) is gated purely by context, which is what
-lets $(LREF bindingsAt) enumerate without a key in hand. `ctrl` is the
-exception — it is gated by the keystroke itself — and its rows carry that in
-their chords, so listing them unconditionally is correct.
-*/
-bool reachable(Scope_ s, in KeyContext ctx)
-{
-    final switch (s)
-    {
-        case Scope_.always:  return true;
-        case Scope_.input:   return ctx.mode != InputMode.normal;
-        case Scope_.ctrl:    return true;
-        case Scope_.tree:    return ctx.treeFocused && ctx.treeVisible;
-        case Scope_.viewer:  return !(ctx.treeFocused && ctx.treeVisible);
-        case Scope_.shared_: return true;
-    }
-}
-
-/**
-Whether an active scope hides every later scope from $(LREF bindingsAt).
-
-Narrower than $(LREF terminal), and the difference is the whole reason both
-exist. `input` swallows $(I every) key while it is active, so nothing below it
-is reachable and listing it would be a lie. $(LREF Scope_.ctrl) is terminal
-during resolution but swallows only Ctrl'd letters — which are exactly its own
-rows — so the plain letters below it stay reachable and must still be listed.
-*/
-private bool hidesLaterScopes(Scope_ s) => s == Scope_.input;
-
-/// Whether `b`'s context gates are satisfied — the `hasMatches`/`hasDocSet`/…
-/// conditions, plus the input-mode requirement Escape and Back need.
-private bool gated(in Binding b, in KeyContext ctx)
-{
-    const bits = ctxBits(ctx);
-    if ((bits & b.require) != b.require)
-        return false;
-    if (bits & b.forbid)
-        return false;
-    final switch (b.mode)
-    {
-        case ModeReq.any:     return true;
-        case ModeReq.normal:  return ctx.mode == InputMode.normal;
-        case ModeReq.editing: return ctx.mode != InputMode.normal;
-    }
-}
-
-/**
-Normalises a key event so one table row covers every producer's spelling of it.
-
-Producers disagree about how a shifted letter arrives. raylib's
-`GetCharPressed` yields the SHIFTED character ('R') and separately reports
-`shift`; a terminal may send 'R' with no modifier at all; a synthesised event
-may send 'r' + shift. All three mean one keystroke, so normalise here — once —
-rather than spelling both cases in every table row, or asking each producer to
-normalise, which is how producers drift apart again.
-*/
-KeyEvent normalise(in KeyEvent raw)
-{
-    KeyEvent k = raw;
-    if (k.key == Key.char_ && k.ch >= 'A' && k.ch <= 'Z')
-    {
-        k.ch += 'a' - 'A';
-        k.mods.shift = true;
-    }
-    return k;
-}
-
-/// What a key resolved to under a prefix.
-enum ResolveKind : ubyte
-{
-    none,    /// not bound here
-    group,   /// a prefix node — more keys are expected
-    command, /// a command, ready to run
-}
-
-/// ditto
-struct Resolution
-{
-    ResolveKind kind;
-    Command cmd;
-    ubyte arg;
-}
-
-/**
-Resolves `raw` against the table, given the chords already typed.
-
-A lookup over $(LREF hueBindings), walking $(LREF Scope_) in declaration order.
-That order mirrors the frame loop's own precedence, which is load-bearing: a
-Ctrl chord resolves before the plain letter, an open input mode claims
-Enter/Escape/Backspace before anything else sees them, and a focused tree claims
-`j` before the viewer does. An active $(LREF terminal) scope ends the search
-whether or not it matched.
-
-A key resolves to $(LREF ResolveKind.group) when the row it matched has more
-chords after this one — so a prefix is descendable whether or not anyone wrote
-an explicit $(LREF group) row for it. That is what keeps the table's shape and
-its behaviour from being able to disagree.
-*/
-Resolution resolve(scope const Chord[] prefix, in KeyEvent raw, in KeyContext ctx)
-{
-    const k = normalise(raw);
-    const depth = prefix.length;
-
-    static foreach (s; __traits(allMembers, Scope_))
-    {{
-        enum sc = __traits(getMember, Scope_, s);
-        if (active(sc, ctx, k))
-        {
-            foreach (ref b; hueBindings)
-            {
-                if (b.scope_ != sc || b.depth <= depth || !gated(b, ctx))
-                    continue;
-                bool under = true;
-                foreach (i, ref p; prefix)
-                    if (!acceptsTyped(b.path[i], p))
-                    {
-                        under = false;
-                        break;
-                    }
-                if (!under || !matches(b.path[depth], k))
-                    continue;
-                if (b.depth > depth + 1)
-                    return Resolution(ResolveKind.group);
-                if (b.group.length)
-                    return Resolution(ResolveKind.group);
-                const arg = b.path[depth].chEnd
-                    ? cast(ubyte)(b.arg + (k.ch - b.path[depth].ch))
-                    : b.arg;
-                return Resolution(ResolveKind.command, b.cmd, arg);
-            }
-            if (terminal(sc))
-                return Resolution(ResolveKind.none);
-        }
-    }}
-    return Resolution(ResolveKind.none);
-}
-
-/**
-The keymap, for a caller with no pending prefix.
-
-Returns $(LREF Command.none) both when `k` is unbound and when it opens a
-group — a caller using this entry point has nowhere to put the pending chord,
-so a prefix key is simply not a command to it. Drive
-$(REF step, lantern) instead to reach anything behind a prefix.
-*/
+/// $(REF commandFor, sparkles,ui,keymap) over $(LREF hueBindings).
 KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
-{
-    const r = resolve(null, raw, ctx);
-    return r.kind == ResolveKind.command
-        ? KeyCommand(r.cmd, r.arg) : KeyCommand(Command.none);
-}
+    @safe pure nothrow @nogc
+    => ui_keymap.commandFor(hueBindings, raw, ctx);
 
-/// Resolves only the always-available bindings — the ones that outrank a
-/// pending prefix, so Escape and fullscreen keep working mid-sequence.
+/// $(REF resolveAlways, sparkles,ui,keymap) over $(LREF hueBindings).
 Resolution resolveAlways(in KeyEvent raw, in KeyContext ctx)
+    @safe pure nothrow @nogc
+    => ui_keymap.resolveAlways(hueBindings, raw, ctx);
+
+/// $(REF bindingsAt, sparkles,ui,keymap) over $(LREF hueBindings).
+void bindingsAt(Sink)(ref Sink sink, in KeyContext ctx,
+    scope const Chord[] prefix = null)
 {
-    const k = normalise(raw);
-    foreach (ref b; hueBindings)
-    {
-        if (b.scope_ != Scope_.always || b.depth != 1 || !gated(b, ctx))
-            continue;
-        if (matches(b.path[0], k))
-            return Resolution(ResolveKind.command, b.cmd, b.arg);
-    }
-    return Resolution(ResolveKind.none);
-}
-
-/**
-The other direction: which bindings are reachable in `ctx`.
-
-$(LREF commandFor) answers "what does this key do"; this answers "which keys are
-available", which is what the guide renders and what a `--show-config`-style
-dump would list. Rows are written to `sink` in resolution order, so the first
-row for a given key is the one that would actually fire — a shadowed duplicate
-(the same key bound in both `tree` and `shared_`) is dropped rather than listed
-twice.
-
-`sink` must accept `~=` and be readable by index — a
-$(REF SmallBuffer, sparkles,base,smallbuffer) is the intended argument, and
-the whole walk allocates nothing.
-*/
-void bindingsAt(Sink)(ref Sink sink, in KeyContext ctx, scope const Chord[] prefix = null)
-{
-    static foreach (s; __traits(allMembers, Scope_))
-    {{
-        enum sc = __traits(getMember, Scope_, s);
-        if (reachable(sc, ctx))
-        {
-            foreach (ref b; hueBindings)
-            {
-                if (b.scope_ != sc || b.depth <= prefix.length || !gated(b, ctx))
-                    continue;
-                bool underPrefix = true;
-                foreach (i, ref p; prefix)
-                    if (!acceptsTyped(b.path[i], p))
-                    {
-                        underPrefix = false;
-                        break;
-                    }
-                if (!underPrefix)
-                    continue;
-                const next = b.path[prefix.length];
-                bool shadowed;
-                foreach (ref seen; sink[])
-                    if (sameKey(seen.path[prefix.length], next))
-                    {
-                        shadowed = true;
-                        break;
-                    }
-                if (!shadowed)
-                    sink ~= b;
-            }
-            if (hidesLaterScopes(sc))
-                return;
-        }
-    }}
+    ui_keymap.bindingsAt(sink, hueBindings, ctx, prefix);
 }
 
 // ---------------------------------------------------------------------------
@@ -980,8 +621,10 @@ version (unittest)
     import sparkles.input.events : Mods;
 
     KeyCommand ch(dchar c, KeyContext ctx = KeyContext.init, Mods m = Mods())
+        @safe pure nothrow @nogc
         => commandFor(KeyEvent(Key.char_, c, m), ctx);
     KeyCommand nk(Key k, KeyContext ctx = KeyContext.init, Mods m = Mods())
+        @safe pure nothrow @nogc
         => commandFor(KeyEvent(k, 0, m), ctx);
 }
 
