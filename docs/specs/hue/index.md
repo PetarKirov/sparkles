@@ -60,6 +60,7 @@ hue-side requirements referencing those areas live in
 | [Tab view](./tab-view.md) _(planned)_                           | a **tab view** component (tab bar + active-tab state machine) — open files as tabs, and VitePress-style code groups — a `sparkles:ui` widget across GUI/TUI/HTML                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | [Gallery & multi-document nav](./gallery.md) _(shipped: G0–G3)_ | rendering a **set** of documents: the static **HTML gallery** (index + per-file pages, prev/next header, physical-line gutter, selection domains) and interactive prev/next + index view in the GUI/TUI. Superseded in part by the [file explorer](./tree-view.md), whose HTML flavor the gallery becomes                                                                                                                                                                                                                                                                                                   |
 | [Diff & PR view](./diff-view.md) _(planned)_                    | viewing **diffs** (two files, piped unified patch, git revisions) and **pull requests** (via a DbI **forge seam** — GitHub first, then GitLab/Gitea/Forgejo/Codeberg) across all four sinks: a `sparkles:diff` engine library, unified + side-by-side layouts, layered formatting-noise handling (word-level, formatting-only hunks, structural tree-sitter diff, commutative-container equivalence, rendered-preview diff), hunk/file navigation — then a **write surface**: hunk/line staging, inline editing, content-anchored comments with proposed suggestions, and 3-way conflict viewing/resolution |
+| [DSV preview](./dsv-preview.md) _(design)_                      | **Delimiter-Separated Values** (CSV/TSV/PSV) as a content kind: the dialect sniffer (delimiter · quote · header, incl. stdin/`.txt` content detection), the `sparkles:dsv` engine (RFC 4180 identity-channel parser, typed columns, projection compute), the grid preview in every sink, the **data-browser** tier (multi-key sort, filter bar + header menus, column hide/reorder), the copy deltas (`source` dialect re-emit, pristine byte reproduction), and a 100 MB / 1M-row scale target — phased around the table-rendering unification (CHK)                                                       |
 | [Navigation](./navigation.md) _(planned)_                       | **link following & go-to** — markdown anchors + local-file links, module/import & relative paths, doc-comment (`$(REF …)`/`@see`) references, and LSP go-to-definition; intra- and inter-document, cross-backend                                                                                                                                                                                                                                                                                                                                                                                            |
 | [Images & diagrams](./media.md) _(planned)_                     | **media rendering** — raster images (`![](…)`), diagram fences (mermaid, graphviz), and LaTeX math via one media-block mechanism; GUI texture · terminal graphics protocol · HTML `<img>`/`<svg>`                                                                                                                                                                                                                                                                                                                                                                                                           |
 | [Twoslash requirements](./twoslash.md) _(planned/branch-only)_  | the `--twoslash` / `--markdown` modes and the raylib twoslash overlay — the **first overlay** of hue's pluggable overlay layer; implemented on `feat/syntax-twoslash`, not yet on this branch                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -104,7 +105,9 @@ Rendering subcommands (`view`, `diff`, `pr`) resolve to exactly one active backe
 > preview** by default (general [`MOD8`](./feature-requirements.md)) — ANSI
 > (`ANS3`), HTML (`HTM5`), the terminal previewer ([`MDP-T`](./tui.md)), and the
 > GUI ([`MDP`](./gui.md)) — over the shared `MdDoc` model and widget view; `--raw`
-> forces highlighted source.
+> forces highlighted source. A **DSV** file (CSV/TSV/…) likewise renders the
+> **grid preview** by default in every sink ([dsv-preview.md](./dsv-preview.md)
+> `DSK3`, general `MOD10`).
 
 ## Status scheme
 
@@ -131,8 +134,9 @@ within a document (e.g. `ENG3`, `MDP7`, `SEL2`). The general spec uses
 `CLI/SRC/CAT/RNG/TXT/LNG/ENG/THM/CLR/MOD/CHR/WID/PGR/BGM/ANS/HTM/PRV/DEG/NFR`; the
 chrome spec uses `STY/CHW/CHG` and the pager spec `PAG/PIN/STR`; the GUI spec uses
 `WIN/FNT/RND/VIW/WRP/NUM/NAV/SCB/THG/FND/MDP/COD/SEL/FSC/DBG/BOX`; the lantern
-spec uses `KEY/LTN/LMP` and the picker spec `PIK/PKQ/PKR/PKS/PKL/PKM`. Each area's
-mnemonic is expanded at its section heading.
+spec uses `KEY/LTN/LMP`, the picker spec `PIK/PKQ/PKR/PKS/PKL/PKM`, and the DSV
+spec `DSK/DSD/DSM/DSG/DSB/DSS/DSF/DSC/DSN/DSZ`. Each area's mnemonic is
+expanded at its section heading.
 
 ## Traceability
 
