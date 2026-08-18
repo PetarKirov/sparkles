@@ -163,6 +163,7 @@ struct ViewRenderOptions
     bool formatPreview = false;  /// `FMV8`: start in the format preview
     int formatWidth = 0;         /// ruler column (0 = discover)
     string formatter;            /// preferred formatter name
+    string scrollAnchor = "segment"; /// `NAV5`: what a re-layout pins
 }
 
 // ── Subcommands ─────────────────────────────────────────────────────────────
@@ -255,6 +256,9 @@ struct View
 
     @(Option("formatter", description: "Formatter for the format preview; a miss lists the candidates."))
     string formatter;
+
+    @(Option("scroll-anchor", description: "What a resize or font change keeps at the top: segment (the exact wrapped segment, default) or line (the source line's first segment)."))
+    string scrollAnchor = "segment";
 
     @Flatten
     DiffOptions diffOptions;
@@ -557,6 +561,7 @@ private int executeView(in HueCli root, in View view)
     opt.noLiveTypes = view.noLiveTypes;
     opt.diffLayout = view.diffOptions.diffLayout;
     opt.gui = copyGui(root.gui);
+    opt.scrollAnchor = view.scrollAnchor;
     opt.formatPreview = view.formatPreview;
     opt.formatWidth = view.formatWidth;
     opt.formatter = view.formatter;
@@ -1072,6 +1077,21 @@ private DiffLayout parseDiffLayout(string spelling) @safe
     }
 }
 
+/// `NAV5`: the anchor mode named on the command line.
+private auto parseScrollAnchor(string spelling) @safe
+{
+    import viewer_model : ScrollAnchorMode;
+
+    switch (spelling)
+    {
+        case "segment": return ScrollAnchorMode.segment;
+        case "line":    return ScrollAnchorMode.line;
+        default:
+            warning(i"unknown --scroll-anchor '$(spelling)'; using segment");
+            return ScrollAnchorMode.segment;
+    }
+}
+
 private WhitespaceMode parseWhitespaceMode(string spelling) @safe
 {
     switch (spelling)
@@ -1397,7 +1417,8 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             formatPreview: opt.formatPreview,
             formatWidth: opt.formatWidth,
             formatterName: opt.formatter,
-            tableCopyFlag: opt.tableCopy);
+            tableCopyFlag: opt.tableCopy,
+            scrollAnchor: parseScrollAnchor(opt.scrollAnchor));
     }
     else
     {
@@ -1497,6 +1518,7 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             formatPreview: opt.formatPreview,
             formatWidth: opt.formatWidth,
             formatterName: opt.formatter,
+            scrollAnchor: parseScrollAnchor(opt.scrollAnchor),
             treeWidth: opt.treeWidth,
             tabWidth: opt.tabWidth,
             listWhitespace: opt.listWhitespace,
