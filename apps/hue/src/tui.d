@@ -16,7 +16,7 @@ import sparkles.base.term_color : mix;
 import sparkles.diff.model : DiffDoc;
 import diff_session : DiffSession, SessionEntry;
 import diff_view : TypeOverlay;
-import sparkles.syntax.md.render_widgets : FenceScroll;
+import sparkles.syntax.md.render_widgets : FenceScroll, TableScroll;
 import table_select : serializeTable, TableCopyFormat, TableRegion;
 import core.time : Duration;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
@@ -258,6 +258,8 @@ struct PreviewTui
     private enum size_t tableCopyHitBase = ViewerModel.tableCopyHitBase;
     private enum size_t fenceHBarHitBase = ViewerModel.fenceHBarHitBase;
     private enum size_t fenceVBarHitBase = ViewerModel.fenceVBarHitBase;
+    private enum size_t tableHBarHitBase = ViewerModel.tableHBarHitBase;
+    private enum size_t tableVBarHitBase = ViewerModel.tableVBarHitBase;
 
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
 
@@ -362,15 +364,21 @@ struct PreviewTui
             const fb = vm.fenceBodyAtRow(top + (w.pos.y - 1));
             if (fb != size_t.max && vm.scrollFence(fb, dx))
                 return true;
+            const tb = vm.tableAtRow(top + (w.pos.y - 1));
+            if (tb != size_t.max && vm.scrollTable(tb, dx))
+                return true;
             vm.scrollHorizontal(dx);
             return true;
         }
         if (w.mods.shift)
             return true; // a shifted notch never scrolls vertically
-        // A vertical notch over a TALL fence scrolls the fence until its
-        // edge; only then does it reach the document.
+        // A vertical notch over a TALL fence or table scrolls it until its
+        // edge; only then does it reach the document (the COD6/TBL8 rule).
         const fbV = vm.fenceBodyAtRow(top + (w.pos.y - 1));
         if (fbV != size_t.max && vm.scrollFenceV(fbV, w.dy))
+            return true;
+        const tbV = vm.tableAtRow(top + (w.pos.y - 1));
+        if (tbV != size_t.max && vm.scrollTableV(tbV, w.dy))
             return true;
         top += w.dy;
         clampTop();
@@ -817,39 +825,95 @@ struct PreviewTui
         vm.markTableCopied(spanStart);
     }
 
-    // Press on a fence scrollbar (`COD6`): the same ScrollbarState math the
-    // pane bars use, on the fence's own per-bar machine (`SCV5`). The
-    // semantic h-bar target is already the corner-free track.
-    private void fenceBarPress(in HoverTarget t, Point p) @system
+    // Press on a fence or table scrollbar (`COD6`/`TBL7`): the same
+    // ScrollbarState math the pane bars use, on the owner's per-bar machine
+    // (`SCV5`). The semantic h-bar target is already the corner-free track.
+    private void barPress(in HoverTarget t, Point p) @system
     {
-        const isH = t.hitId >= fenceHBarHitBase;
-        const owner = t.hitId - (isH ? fenceHBarHitBase : fenceVBarHitBase);
-        auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
-        const ex = vm.fenceExtent(owner);
-        const cur = vm.fenceScrollAt.get(owner, FenceScroll(owner, 0, 0));
-        if (isH)
+        if (t.hitId < fenceVBarHitBase)
         {
-            sv.h = sv.h.pressed(p.x - t.rect.x,
-                ex.widest, ex.innerW, t.rect.width);
-            vm.setFenceScroll(owner, sv.h.offset, cur.y);
+            const isH = t.hitId >= tableHBarHitBase;
+            const owner = t.hitId
+                - (isH ? tableHBarHitBase : tableVBarHitBase);
+            auto sv = &vm.activateBar(ViewerModel.tableBarKey(owner));
+            const ex = vm.tableExtent(owner);
+            const cur = vm.tableScrollAt.get(owner, TableScroll(owner, 0, 0));
+            if (isH)
+            {
+                sv.h = sv.h.pressed(p.x - t.rect.x,
+                    ex.content, ex.viewport, t.rect.width);
+                vm.setTableScroll(owner, sv.h.offset, cur.y);
+            }
+            else
+            {
+                sv.v = sv.v.pressed(p.y - t.rect.y,
+                    ex.lines, ex.shownLines, t.rect.height);
+                vm.setTableScroll(owner, cur.x, sv.v.offset);
+            }
         }
         else
         {
-            sv.v = sv.v.pressed(p.y - t.rect.y,
-                ex.lines, ex.shownRows, t.rect.height);
-            vm.setFenceScroll(owner, cur.x, sv.v.offset);
+            const isH = t.hitId >= fenceHBarHitBase;
+            const owner = t.hitId
+                - (isH ? fenceHBarHitBase : fenceVBarHitBase);
+            auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
+            const ex = vm.fenceExtent(owner);
+            const cur = vm.fenceScrollAt.get(owner, FenceScroll(owner, 0, 0));
+            if (isH)
+            {
+                sv.h = sv.h.pressed(p.x - t.rect.x,
+                    ex.widest, ex.innerW, t.rect.width);
+                vm.setFenceScroll(owner, sv.h.offset, cur.y);
+            }
+            else
+            {
+                sv.v = sv.v.pressed(p.y - t.rect.y,
+                    ex.lines, ex.shownRows, t.rect.height);
+                vm.setFenceScroll(owner, cur.x, sv.v.offset);
+            }
         }
         vm.syncFenceHot(); // grab feedback even when the offset didn't move
     }
 
-    /// ditto — the drag tracks wherever the pointer strays until release.
-    private void fenceBarDrag(Point p) @system
+    /// ditto — the drag tracks wherever the pointer strays until release,
+    /// decoding the grabbed owner's space from the active bar key.
+    private void barDrag(Point p) @system
     {
-        const owner = vm.activeFenceOwner;
         auto sv = vm.activeBar();
-        if (owner == size_t.max || sv is null)
+        if (sv is null)
             return;
         const isH = sv.h.dragging;
+        const tOwner = vm.activeTableOwner;
+        if (tOwner != size_t.max)
+        {
+            const wantId = (isH ? tableHBarHitBase : tableVBarHitBase)
+                + tOwner;
+            foreach (ref const t; mdTargets)
+            {
+                if (t.hitId != wantId)
+                    continue;
+                const ex = vm.tableExtent(tOwner);
+                const cur = vm.tableScrollAt.get(tOwner,
+                    TableScroll(tOwner, 0, 0));
+                if (isH)
+                {
+                    sv.h = sv.h.dragged(p.x - t.rect.x,
+                        ex.content, ex.viewport, t.rect.width);
+                    vm.setTableScroll(tOwner, sv.h.offset, cur.y);
+                }
+                else
+                {
+                    sv.v = sv.v.dragged(p.y - t.rect.y,
+                        ex.lines, ex.shownLines, t.rect.height);
+                    vm.setTableScroll(tOwner, cur.x, sv.v.offset);
+                }
+                return;
+            }
+            return;
+        }
+        const owner = vm.activeFenceOwner;
+        if (owner == size_t.max)
+            return;
         const wantId = (isH ? fenceHBarHitBase : fenceVBarHitBase) + owner;
         foreach (ref const t; mdTargets)
         {
@@ -1283,7 +1347,7 @@ struct PreviewTui
             && e.action == PointerAction.drag
             && vm.barGrabbing)
         {
-            fenceBarDrag(Point(e.pos.x + (vm.hOverflows()
+            barDrag(Point(e.pos.x + (vm.hOverflows()
                 ? cast(int) vm.hsb.offset : 0),
                 cast(int)(top + (e.pos.y - 1))));
             return true;
@@ -1394,7 +1458,15 @@ struct PreviewTui
                     if (t.hitId >= fenceVBarHitBase
                         && t.hitId < tableCopyHitBase && t.rect.contains(p))
                     {
-                        fenceBarPress(t, p);
+                        barPress(t, p);
+                        return true;
+                    }
+                    // The table scrollbars (TBL7/TBL8): the same grab
+                    // machine, one id space below the fences'.
+                    if (t.hitId >= tableVBarHitBase
+                        && t.hitId < fenceVBarHitBase && t.rect.contains(p))
+                    {
+                        barPress(t, p);
                         return true;
                     }
                 }
@@ -1586,6 +1658,77 @@ unittest
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(30, 3)))));
     assert(!t.vm.hsb.dragging);
+}
+
+@("tui.pointer.tableBarScrollsWideTable")
+@system
+unittest
+{
+    import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
+        MdInline, MdInlineKind, Span, LabelSet;
+
+    // The wide table that used to drive the document bar now carries its own
+    // bottom-border scrollbar (TBL7): press + drag moves the table's offset,
+    // and a sideways wheel over it scrolls IT, never the document.
+    string src;
+    foreach (_; 0 .. 60)
+        src ~= "a";
+    foreach (_; 0 .. 60)
+        src ~= "b";
+    static MdBlock tcell(size_t s, size_t e)
+        => MdBlock(kind: MdBlockKind.tableCell, span: Span(s, e),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(s, e))]);
+    auto trow = MdBlock(kind: MdBlockKind.tableRow, span: Span(0, 120),
+        children: [tcell(0, 60), tcell(60, 120)]);
+    auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.table, span: Span(0, 120),
+            children: [trow, trow]),
+    ]), src);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 12;
+    t.relayout();
+    t.setDocument("wide.md", src, null, PreviewModel(present: true, doc: doc),
+        startPreview: true);
+    assert(!t.vm.hOverflows(),
+        "the framed table stays out of the document bar");
+
+    // The table's bottom-border bar is an ordinary hit target.
+    Rect bar;
+    bool found;
+    foreach (ref const tgt; t.vm.targets)
+        if (tgt.hitId == ViewerModel.tableHBarHitBase + 0)
+        {
+            bar = tgt.rect;
+            found = true;
+        }
+    assert(found, "the wide table grew a bottom-border h bar");
+
+    // Press grabs; the drag scrolls the table's own offset; release frees.
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press,
+        pos: Point(bar.x + 1, bar.y + 1)))));
+    assert(t.vm.barGrabbing, "the press grabbed the table bar");
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag,
+        pos: Point(bar.x + 12, bar.y + 1)))));
+    assert(t.vm.tableScrollAt.get(0, TableScroll(0, 0, 0)).x > 0,
+        "the drag scrolled the table");
+    assert(t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(bar.x + 12, bar.y + 1)))));
+    assert(!t.vm.barGrabbing);
+
+    // A sideways wheel over the table scrolls the table, not the document.
+    const before = t.vm.tableScrollAt.get(0, TableScroll(0, 0, 0)).x;
+    assert(t.handle(Event(WheelEvent(dx: 3, pos: Point(5, 2)))));
+    assert(t.vm.tableScrollAt.get(0, TableScroll(0, 0, 0)).x == before + 3);
+    assert(t.vm.hsb.offset == 0, "the document bar never engaged");
 }
 
 @("tui.pointer.nestedFenceScrollsToTheEnd")

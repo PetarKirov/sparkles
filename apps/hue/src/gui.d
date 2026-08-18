@@ -78,7 +78,8 @@ import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_color : mix;
 import sparkles.base.unique : makeUnique;
 
-import sparkles.syntax.md.render_widgets : FenceScroll, OverflowPolicy;
+import sparkles.syntax.md.render_widgets : FenceScroll, OverflowPolicy,
+    TableScroll;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
@@ -1221,12 +1222,16 @@ int runGui(GuiArgs guiArgs) @system
                 auto op = sourceOp;
                 const activeSv = vm.activeBar();
                 if (op.kind == OpKind.scrollbar && activeSv !is null
-                    && vm.activeFenceOwner != size_t.max)
+                    && (vm.activeFenceOwner != size_t.max
+                        || vm.activeTableOwner != size_t.max))
                 {
                     const h = op.ruleEdge == RuleEdge.centerY;
-                    const base = h ? vm.fenceHBarHitBase
-                        : vm.fenceVBarHitBase;
-                    const want = base + vm.activeFenceOwner;
+                    const isFence = vm.activeFenceOwner != size_t.max;
+                    const want = isFence
+                        ? (h ? vm.fenceHBarHitBase : vm.fenceVBarHitBase)
+                            + vm.activeFenceOwner
+                        : (h ? vm.tableHBarHitBase : vm.tableVBarHitBase)
+                            + vm.activeTableOwner;
                     foreach (ref const t; vm.targets)
                     {
                         if (t.hitId != want || t.rect != op.rect)
@@ -2595,6 +2600,15 @@ int runGui(GuiArgs guiArgs) @system
                             nested = vm.scrollFence(fb, dx);
                         else if (dy != 0 && fb != size_t.max)
                             nested = vm.scrollFenceV(fb, dy);
+                        if (nested)
+                            return;
+                        // A table under the pointer scrolls to its edge
+                        // before the document (the COD6 rule, for TBL7/8).
+                        const tb = vm.tableAtRow(row);
+                        if (dx != 0 && tb != size_t.max)
+                            nested = vm.scrollTable(tb, dx);
+                        else if (dy != 0 && tb != size_t.max)
+                            nested = vm.scrollTableV(tb, dy);
                     }, (_) {});
                     if (!nested)
                         pn.dock.scrollBy(docPane, dx, dy);
@@ -2653,9 +2667,10 @@ int runGui(GuiArgs guiArgs) @system
 
         bool copyClicked; // a click landing on a copy button is not a selection
 
-        // Per-fence horizontal scroll (`COD6`): a sideways wheel notch —
-        // a horizontal axis or Shift+wheel, folded into `wheelCellsX` —
-        // over a fence body scrolls THAT fence's viewport.
+        // Per-fence/per-table horizontal scroll (`COD6`/`TBL7`): a sideways
+        // wheel notch — a horizontal axis or Shift+wheel, folded into
+        // `wheelCellsX` — over a fence body or a framed table scrolls THAT
+        // viewport.
         if (inp.fin.wheelCellsX != 0)
         {
             const mpw = inp.fin.pos;
@@ -2665,6 +2680,12 @@ int runGui(GuiArgs guiArgs) @system
                 const fb = vm.fenceBodyAtRow(row);
                 if (fb != size_t.max)
                     vm.scrollFence(fb, inp.fin.wheelCellsX);
+                else
+                {
+                    const tb = vm.tableAtRow(row);
+                    if (tb != size_t.max)
+                        vm.scrollTable(tb, inp.fin.wheelCellsX);
+                }
             }
         }
 
@@ -2680,23 +2701,32 @@ int runGui(GuiArgs guiArgs) @system
                 cast(int)(vm.top + cast(long)((mpf.y - docY0) / cellH)));
 
             // The bar this frame concerns: the grabbed owner's, else the
-            // one under the pointer (h and v live in disjoint id ranges).
+            // one under the pointer. Fence and table bars live in disjoint
+            // id ranges, one axis per range.
             const(HoverTarget)* hTgt, vTgt;
             const grabbedSv = vm.activeBar();
             const hDragging = grabbedSv !is null && grabbedSv.h.dragging;
             const vDragging = grabbedSv !is null && grabbedSv.v.dragging;
+            const grabbedH = vm.activeFenceOwner != size_t.max
+                ? vm.fenceHBarHitBase + vm.activeFenceOwner
+                : vm.tableHBarHitBase + vm.activeTableOwner;
+            const grabbedV = vm.activeFenceOwner != size_t.max
+                ? vm.fenceVBarHitBase + vm.activeFenceOwner
+                : vm.tableVBarHitBase + vm.activeTableOwner;
             foreach (ref const t; vm.targets)
             {
-                if (t.hitId >= vm.fenceHBarHitBase
-                    && t.hitId < vm.tableCopyHitBase
-                    && (hDragging
-                        ? t.hitId - vm.fenceHBarHitBase == vm.activeFenceOwner
+                const isHBar = (t.hitId >= vm.fenceHBarHitBase
+                        && t.hitId < vm.tableCopyHitBase)
+                    || (t.hitId >= vm.tableHBarHitBase
+                        && t.hitId < vm.fenceVBarHitBase);
+                const isVBar = (t.hitId >= vm.fenceVBarHitBase
+                        && t.hitId < vm.fenceHBarHitBase)
+                    || (t.hitId >= vm.tableVBarHitBase
+                        && t.hitId < vm.tableHBarHitBase);
+                if (isHBar && (hDragging ? t.hitId == grabbedH
                         : t.rect.contains(dpf)))
                     hTgt = &t;
-                if (t.hitId >= vm.fenceVBarHitBase
-                    && t.hitId < vm.fenceHBarHitBase
-                    && (vDragging
-                        ? t.hitId - vm.fenceVBarHitBase == vm.activeFenceOwner
+                if (isVBar && (vDragging ? t.hitId == grabbedV
                         : t.rect.contains(dpf)))
                     vTgt = &t;
             }
@@ -2705,44 +2735,90 @@ int runGui(GuiArgs guiArgs) @system
             // STM11 covers hover as well as the press, for every bar.)
             if (hTgt !is null && !vDragging)
             {
-                const owner = hTgt.hitId - vm.fenceHBarHitBase;
-                auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
-                const e = vm.fenceExtent(owner);
-                const cur = vm.fenceScrollAt.get(owner,
-                    FenceScroll(owner, 0, 0));
-                // The semantic target is exactly the corner-free track.
-                inp.capture = sv.stepH(inp.capture, capFenceSb,
-                    true,
-                    ScrollPointer(over: hTgt.rect.contains(dpf),
-                        pressed: clickPressed(),
-                        released: inp.fin.leftReleased,
-                        trackPos: dpf.x - hTgt.rect.x),
-                    cur.x, ScrollExtents(e.widest, e.innerW,
-                        hTgt.rect.width));
-                if (sv.h.dragging && clickPressed())
-                    copyClicked = true; // a bar press is not a selection
-                if (sv.h.offset != cur.x)
-                    vm.setFenceScroll(owner, sv.h.offset, cur.y);
+                if (hTgt.hitId < vm.fenceVBarHitBase)
+                {
+                    const owner = hTgt.hitId - vm.tableHBarHitBase;
+                    auto sv = &vm.activateBar(ViewerModel.tableBarKey(owner));
+                    const e = vm.tableExtent(owner);
+                    const cur = vm.tableScrollAt.get(owner,
+                        TableScroll(owner, 0, 0));
+                    inp.capture = sv.stepH(inp.capture, capFenceSb,
+                        true,
+                        ScrollPointer(over: hTgt.rect.contains(dpf),
+                            pressed: clickPressed(),
+                            released: inp.fin.leftReleased,
+                            trackPos: dpf.x - hTgt.rect.x),
+                        cur.x, ScrollExtents(e.content, e.viewport,
+                            hTgt.rect.width));
+                    if (sv.h.dragging && clickPressed())
+                        copyClicked = true; // a bar press is not a selection
+                    if (sv.h.offset != cur.x)
+                        vm.setTableScroll(owner, sv.h.offset, cur.y);
+                }
+                else
+                {
+                    const owner = hTgt.hitId - vm.fenceHBarHitBase;
+                    auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
+                    const e = vm.fenceExtent(owner);
+                    const cur = vm.fenceScrollAt.get(owner,
+                        FenceScroll(owner, 0, 0));
+                    // The semantic target is exactly the corner-free track.
+                    inp.capture = sv.stepH(inp.capture, capFenceSb,
+                        true,
+                        ScrollPointer(over: hTgt.rect.contains(dpf),
+                            pressed: clickPressed(),
+                            released: inp.fin.leftReleased,
+                            trackPos: dpf.x - hTgt.rect.x),
+                        cur.x, ScrollExtents(e.widest, e.innerW,
+                            hTgt.rect.width));
+                    if (sv.h.dragging && clickPressed())
+                        copyClicked = true; // a bar press is not a selection
+                    if (sv.h.offset != cur.x)
+                        vm.setFenceScroll(owner, sv.h.offset, cur.y);
+                }
             }
             else if (vTgt !is null)
             {
-                const owner = vTgt.hitId - vm.fenceVBarHitBase;
-                auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
-                const e = vm.fenceExtent(owner);
-                const cur = vm.fenceScrollAt.get(owner,
-                    FenceScroll(owner, 0, 0));
-                inp.capture = sv.stepV(inp.capture, capFenceSb,
-                    true,
-                    ScrollPointer(over: vTgt.rect.contains(dpf),
-                        pressed: clickPressed(),
-                        released: inp.fin.leftReleased,
-                        trackPos: dpf.y - vTgt.rect.y),
-                    cur.y, ScrollExtents(e.lines, e.shownRows,
-                        vTgt.rect.height));
-                if (sv.v.dragging && clickPressed())
-                    copyClicked = true;
-                if (sv.v.offset != cur.y)
-                    vm.setFenceScroll(owner, cur.x, sv.v.offset);
+                if (vTgt.hitId < vm.fenceVBarHitBase)
+                {
+                    const owner = vTgt.hitId - vm.tableVBarHitBase;
+                    auto sv = &vm.activateBar(ViewerModel.tableBarKey(owner));
+                    const e = vm.tableExtent(owner);
+                    const cur = vm.tableScrollAt.get(owner,
+                        TableScroll(owner, 0, 0));
+                    inp.capture = sv.stepV(inp.capture, capFenceSb,
+                        true,
+                        ScrollPointer(over: vTgt.rect.contains(dpf),
+                            pressed: clickPressed(),
+                            released: inp.fin.leftReleased,
+                            trackPos: dpf.y - vTgt.rect.y),
+                        cur.y, ScrollExtents(e.lines, e.shownLines,
+                            vTgt.rect.height));
+                    if (sv.v.dragging && clickPressed())
+                        copyClicked = true;
+                    if (sv.v.offset != cur.y)
+                        vm.setTableScroll(owner, cur.x, sv.v.offset);
+                }
+                else
+                {
+                    const owner = vTgt.hitId - vm.fenceVBarHitBase;
+                    auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
+                    const e = vm.fenceExtent(owner);
+                    const cur = vm.fenceScrollAt.get(owner,
+                        FenceScroll(owner, 0, 0));
+                    inp.capture = sv.stepV(inp.capture, capFenceSb,
+                        true,
+                        ScrollPointer(over: vTgt.rect.contains(dpf),
+                            pressed: clickPressed(),
+                            released: inp.fin.leftReleased,
+                            trackPos: dpf.y - vTgt.rect.y),
+                        cur.y, ScrollExtents(e.lines, e.shownRows,
+                            vTgt.rect.height));
+                    if (sv.v.dragging && clickPressed())
+                        copyClicked = true;
+                    if (sv.v.offset != cur.y)
+                        vm.setFenceScroll(owner, cur.x, sv.v.offset);
+                }
             }
             // The pointer left a bar: a dead step drops its hover (a grab
             // never lands here — the grabbed bar stays the target above).
