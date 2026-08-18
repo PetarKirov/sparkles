@@ -57,3 +57,11 @@ overload all emit `drawTable`'s exact bytes.
 For the full API — spans, alignment, glyph presets, custom glyphs, validation,
 streaming — see the module `libs/ui/src/sparkles/ui/components/table/` and
 the runnable gallery `libs/core-cli/examples/table.d`.
+
+The same layout core also has a **widget view**: `buildTableWidgets`
+(`sparkles.ui.components.table.widgets`) emits the table as a `sparkles:ui`
+widget subtree — styled `TextSpan` cells with source identity, per-cell element
+keys for hit-testing, theme slots, and an optional top-border cutout — which is
+how `hue`'s markdown preview renders its tables. The two views share every
+sizing and junction decision, so a table looks the same whether it is printed
+or painted.
