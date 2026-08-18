@@ -1898,8 +1898,7 @@ struct ViewerModel
 @("viewer_model.scrollHorizontal.movesAndClamps")
 @system unittest
 {
-    import sparkles.syntax : builtinDark, ColAlign, MdDoc, MdInline,
-        MdInlineKind;
+    import sparkles.syntax : builtinDark, MdDoc, MdInline, MdInlineKind;
 
     ViewerModel vm;
     vm.themes = [builtinDark];
@@ -1907,22 +1906,18 @@ struct ViewerModel
     vm.widthCols = 40;
     vm.applyTheme(0);
 
-    // A table far wider than the pane. NOT a fence: a fence body has its own
-    // viewport now (`COD`), so it clips instead of widening the document —
-    // a table is what still overflows, and it is the shape a reviewer hits.
+    // A paragraph whose single 120-cell word cannot wrap. NOT a fence (its
+    // body scrolls its own viewport, `COD`) and NOT a table (a wide table now
+    // self-clips behind its framed viewport, `TBL7`) — an unbreakable prose
+    // run is what still widens the document.
     string src;
     foreach (_; 0 .. 60)
         src ~= "a";
     foreach (_; 0 .. 60)
         src ~= "b";
-    static MdBlock tcell(size_t s, size_t e)
-        => MdBlock(kind: MdBlockKind.tableCell, span: Span(s, e),
-            inlines: [MdInline(kind: MdInlineKind.text, span: Span(s, e))]);
-    auto trow = MdBlock(kind: MdBlockKind.tableRow, span: Span(0, 120),
-        children: [tcell(0, 60), tcell(60, 120)]);
     auto md = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
-        MdBlock(kind: MdBlockKind.table, span: Span(0, 120),
-            aligns: [ColAlign.none, ColAlign.none], children: [trow, trow]),
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(0, 120), inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(0, 120))]),
     ]), src);
     vm.setDocument("wide.md", "", src, null,
         PreviewModel(present: true, doc: md), TwoslashReturn.init, "markdown");

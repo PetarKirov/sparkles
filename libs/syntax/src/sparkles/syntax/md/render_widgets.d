@@ -196,6 +196,36 @@ struct MdViewOptions
     /// cutout shows the copied glyph — feedback state lives in the app, like
     /// `copiedFence`.
     size_t copiedTable = size_t.max;
+
+    /// How a table wider than its panel behaves (`TBL7`), sharing the fence's
+    /// `OverflowPolicy` vocabulary: `ScrollOverflow` — natural column widths
+    /// behind a per-table framed viewport (pinned frame, scrolled interior,
+    /// the bottom border doubling as the scrollbar); `WrapOverflow` — cells
+    /// wrap so the table fits the panel, never a bar; `WrapAtOverflow(n)` —
+    /// wrap to a total width of `n`, then scroll when `n` exceeds the panel.
+    OverflowPolicy tableOverflow;
+
+    /// Scroll/wrap-at modes: a table whose interior (everything between the
+    /// top and bottom border) exceeds this many lines shows a fixed-height
+    /// vertical viewport whose right border is the track (`TBL8`;
+    /// `--table-max-lines`; 0 = never).
+    int tableMaxLines = 100;
+
+    /// Per-table scroll offsets, keyed by the table's `span.start` —
+    /// source-anchored like `fenceScrolls`.
+    const(TableScroll)[] tableScrolls;
+
+    /// Non-zero makes the table's bottom-border scrollbar a drag target:
+    /// `hitId = tableHBarHitBase + table.span.start`.
+    size_t tableHBarHitBase = 0;
+    /// ditto, for the vertical track.
+    size_t tableVBarHitBase = 0;
+
+    /// `span.start` of the table whose horizontal bar is hovered or grabbed
+    /// (`size_t.max` = none) — the fence bars' hover feedback, for tables.
+    size_t hotTableHBar = size_t.max;
+    /// ditto, for the vertical track.
+    size_t hotTableVBar = size_t.max;
 }
 
 /// The emphasis in force while rendering a subtree: which source ranges are
@@ -249,6 +279,16 @@ int wrapAtWidth(in OverflowPolicy p) @safe pure nothrow @nogc
 struct FenceScroll
 {
     size_t bodyStart;
+    int x;
+    int y;
+}
+
+/// One table's scroll position (`TBL7`/`TBL8`): `x` interior cells scrolled
+/// off to the left, `y` interior lines scrolled off the top, keyed by the
+/// table's `span.start`.
+struct TableScroll
+{
+    size_t tableStart;
     int x;
     int y;
 }
@@ -1343,7 +1383,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             import sparkles.base.text.width : Align;
             import sparkles.ui.components.table : TableProps;
             import sparkles.ui.components.table.widgets : buildTableWidgets,
-                SpanCell, TableCutout, TableWidgetStyle;
+                SpanCell, TableCutout, TableViewportSpec, TableWidgetStyle;
 
             // The table is the shared span-capable component's widget view
             // (`MDP10` via `sparkles.ui.components.table`): this arm only
@@ -1402,6 +1442,40 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 headerRows: 1,
                 rowSeparators: opt.tableRowRules,
             };
+
+            // `TBL7`/`TBL8`: the overflow policy. The available box is
+            // `maxWidth - indentCols` — the fence convention, so a nested
+            // table respects its ancestors' left indentation. Wrap modes hand
+            // the core a total-width cap; scroll and wrap-at additionally arm
+            // the framed viewport (which engages only on real overflow).
+            const boxW = opt.maxWidth > 0
+                ? cast(int) opt.maxWidth - opt.indentCols : 0;
+            const wrapAtW = wrapAtWidth(opt.tableOverflow);
+            if (isWrap(opt.tableOverflow) && boxW > 0)
+                props.maxWidth = boxW;
+            else if (wrapAtW > 0)
+                props.maxWidth = wrapAtW;
+            TableViewportSpec vps;
+            if (!isWrap(opt.tableOverflow))
+            {
+                const ts = tableScrollOf(opt, blk.span.start);
+                const availW = wrapAtW > 0 && (boxW == 0 || wrapAtW < boxW)
+                    ? wrapAtW : boxW;
+                vps = TableViewportSpec(
+                    availWidth: availW,
+                    maxLines: opt.tableMaxLines > 0 ? opt.tableMaxLines : 0,
+                    x: ts.x, y: ts.y,
+                    hBarHitId: opt.tableHBarHitBase != 0
+                        ? opt.tableHBarHitBase + blk.span.start : 0,
+                    vBarHitId: opt.tableVBarHitBase != 0
+                        ? opt.tableVBarHitBase + blk.span.start : 0,
+                    hThumbFg: opt.hotTableHBar == blk.span.start
+                        ? opt.theme.accentBlue : opt.theme.codeFg,
+                    hasHThumbFg: opt.theme.present,
+                    vThumbFg: opt.hotTableVBar == blk.span.start
+                        ? opt.theme.accentBlue : opt.theme.codeFg,
+                    hasVThumbFg: opt.theme.present);
+            }
             TableWidgetStyle st = {
                 hitId: opt.hitId,
                 baseStyle: opt.baseStyle,
@@ -1417,7 +1491,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     fg: copied ? opt.theme.accentGreen : opt.theme.ruleFg,
                     hasFg: opt.theme.present),
             };
-            return buildTableWidgets(b, cells, props, st).root;
+            return buildTableWidgets(b, cells, props, st, vps).root;
         }
 
         case listItem, tableRow, tableCell:
@@ -1439,6 +1513,16 @@ private FenceScroll fenceScrollOf(in MdViewOptions opt, size_t bodyStart)
         if (fs.bodyStart == bodyStart)
             return fs;
     return FenceScroll(bodyStart, 0, 0);
+}
+
+/// ditto, for a table (keyed by the table's `span.start`).
+private TableScroll tableScrollOf(in MdViewOptions opt, size_t tableStart)
+    @safe pure nothrow @nogc
+{
+    foreach (ref const ts; opt.tableScrolls)
+        if (ts.tableStart == tableStart)
+            return ts;
+    return TableScroll(tableStart, 0, 0);
 }
 
 // A table cell's text, edge-trimmed: `| cell |` sources collapse to one
@@ -2147,6 +2231,120 @@ version (unittest)
             sawViewport = true;
     }
     assert(sawNarrowBar && sawViewport);
+}
+
+@("md.render_widgets.tableOverflow.scrollViewportWrapAndWrapAt")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints;
+
+    // | one very long header cell | second column here |  (two wide cells)
+    const src = "one very long header cell second column here x y";
+    static MdBlock cell(size_t a, size_t b2)
+        => MdBlock(kind: MdBlockKind.tableCell, span: Span(a, b2),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(a, b2))]);
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.table, span: Span(0, src.length), children: [
+            MdBlock(kind: MdBlockKind.tableRow,
+                children: [cell(0, 25), cell(26, 44)]),
+            MdBlock(kind: MdBlockKind.tableRow,
+                children: [cell(45, 46), cell(47, 48)]),
+        ]),
+    ]), src);
+
+    // Default scroll in a 30-cell pane: a framed viewport carrying the armed
+    // offset; the root spans the pane, not the content.
+    MdViewOptions opt = {maxWidth: 30,
+        tableScrolls: [TableScroll(0, 4, 0)]};
+    auto tree = viewMarkdown(doc, opt);
+    auto frames = layout(tree, Constraints(maxW: 30));
+    bool sawClip;
+    foreach (ref const n; tree.nodes)
+        if (n.clipX && n.childOffset.x == 4)
+            sawClip = true;
+    assert(sawClip);
+
+    // Wrap mode: no viewport anywhere; the widest row fits the pane.
+    MdViewOptions wrapOpt = {maxWidth: 30,
+        tableOverflow: OverflowPolicy(WrapOverflow())};
+    auto wt = viewMarkdown(doc, wrapOpt);
+    auto wframes = layout(wt, Constraints(maxW: 30));
+    foreach (i, ref const n; wt.nodes)
+    {
+        assert(!n.clipX && n.kind != WidgetKind.scrollbar);
+        assert(wframes[i].rect.width <= 30);
+    }
+
+    // wrap-at:60 in a 40-cell pane: content wraps to 60, viewport at 40.
+    MdViewOptions wa = {maxWidth: 40,
+        tableOverflow: OverflowPolicy(WrapAtOverflow(60))};
+    auto wat = viewMarkdown(doc, wa);
+    bool waClip;
+    foreach (ref const n; wat.nodes)
+        if (n.clipX)
+            waClip = true;
+    assert(waClip);
+
+    // wrap-at:20 in a 40-cell pane: fits after wrapping — no viewport.
+    MdViewOptions wa2 = {maxWidth: 40,
+        tableOverflow: OverflowPolicy(WrapAtOverflow(20))};
+    auto wat2 = viewMarkdown(doc, wa2);
+    foreach (ref const n; wat2.nodes)
+        assert(!n.clipX && n.kind != WidgetKind.scrollbar);
+}
+
+@("md.render_widgets.tableOverflow.tableBarsAreSemanticLeaves")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.state : hoverTargets;
+
+    enum size_t hBase = 30_000, vBase = 40_000;
+    const src = "a wide wide wide wide header b c d e f g h i j";
+    static MdBlock cell(size_t a, size_t b2)
+        => MdBlock(kind: MdBlockKind.tableCell, span: Span(a, b2),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(a, b2))]);
+    MdBlock[] rows_ = [MdBlock(kind: MdBlockKind.tableRow,
+        children: [cell(0, 29), cell(30, 31)])];
+    foreach (i; 0 .. 6)
+        rows_ ~= MdBlock(kind: MdBlockKind.tableRow,
+            children: [cell(32 + 2 * i, 33 + 2 * i),
+                cell(33 + 2 * i, 34 + 2 * i)]);
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.table, span: Span(0, src.length),
+            children: rows_),
+    ]), src);
+
+    MdViewOptions opt = {
+        maxWidth: 24,
+        tableMaxLines: 5,
+        tableHBarHitBase: hBase,
+        tableVBarHitBase: vBase,
+    };
+    auto tree = viewMarkdown(doc, opt);
+    auto frames = layout(tree, Constraints(maxW: 24));
+    auto targets = hoverTargets(tree, frames);
+
+    int bars;
+    bool hHit, vHit;
+    foreach (i, ref const node; tree.nodes)
+    {
+        if (node.kind != WidgetKind.scrollbar)
+            continue;
+        ++bars;
+        assert(node.barContent > node.barViewport);
+        foreach (ref const t; targets)
+            if (t.hitId == node.hitId && t.rect == frames[i].rect)
+            {
+                if (node.hitId == hBase)
+                    hHit = true;
+                if (node.hitId == vBase)
+                    vHit = true;
+            }
+    }
+    assert(bars == 2);
+    assert(hHit && vHit,
+        "the painted semantic track and its hit target share one frame");
 }
 
 @("md.render_widgets.codeOverflow.fenceBarsAreSemanticLeaves")

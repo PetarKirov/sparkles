@@ -44,8 +44,8 @@ import sparkles.ui.style : defaultTwoslashPalette;
 
 /// The fixture corpus: individual features first, then the composition.
 private static immutable fixtureNames = [
-    "headings", "inline", "lists", "tables", "code", "code-tall", "callouts",
-    "misc", "kitchen-sink",
+    "headings", "inline", "lists", "tables", "tables-wide", "code",
+    "code-tall", "callouts", "misc", "kitchen-sink",
 ];
 
 private enum goldenWidth = 80;
@@ -147,7 +147,8 @@ private void checkFixtures(in string[] names, string suffix, bool interactive)
 @("md.goldens.interactiveChrome")
 @system unittest
 {
-    checkFixtures(["code", "tables"], ".interactive.txt", interactive: true);
+    checkFixtures(["code", "tables", "tables-wide"], ".interactive.txt",
+        interactive: true);
 }
 
 /// 1-based line number of the first differing line, as text for the message.

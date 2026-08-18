@@ -1541,23 +1541,20 @@ unittest
     import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
         MdInline, MdInlineKind, Span, LabelSet;
 
-    // A table whose one cell is 120 cells wide in a 40-column pane: table
-    // cells never wrap, so the laid-out frames extend past the pane and the
-    // model reports horizontal overflow (IXB2). (A wide FENCE no longer
-    // qualifies — its body scrolls inside its own panel viewport, `COD`.)
+    // A paragraph whose 120-cell unbreakable word overflows a 40-column
+    // pane: the laid-out frames extend past it and the model reports
+    // horizontal overflow (IXB2). (A wide FENCE no longer qualifies — its
+    // body scrolls inside its own panel viewport, `COD` — and neither does a
+    // wide TABLE, which self-clips behind its framed viewport, `TBL7`.)
     string src = "wide\n";
     foreach (i; 0 .. 120)
         src ~= "x";
     auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
         MdBlock(kind: MdBlockKind.paragraph, inlines: [
             MdInline(kind: MdInlineKind.text, span: Span(0, 4))]),
-        MdBlock(kind: MdBlockKind.table, children: [
-            MdBlock(kind: MdBlockKind.tableRow, children: [
-                MdBlock(kind: MdBlockKind.tableCell, span: Span(5, src.length),
-                    inlines: [MdInline(kind: MdInlineKind.text,
-                        span: Span(5, src.length))]),
-            ]),
-        ]),
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(5, src.length),
+            inlines: [MdInline(kind: MdInlineKind.text,
+                span: Span(5, src.length))]),
     ]), src);
 
     static immutable(Theme)[1] themes = [builtinDark];
@@ -1984,26 +1981,20 @@ unittest
 
     // The terminal has decoded horizontal wheel since SGR-1006 went in
     // (buttons 66/67 → `dx`); the viewer's handler dropped it on the floor.
-    // A wide TABLE, repeated until it is also tall, so the two axes can be
-    // told apart. Not a fence: a fence body scrolls its own viewport now
-    // (`COD`) and never widens the document.
+    // A wide unbreakable PARAGRAPH, repeated until the page is also tall, so
+    // the two axes can be told apart. Not a fence (its body scrolls its own
+    // viewport, `COD`) and not a table (it self-clips too, `TBL7`).
     string src;
     foreach (_; 0 .. 60)
         src ~= "a";
     foreach (_; 0 .. 60)
         src ~= "b";
-    static MdBlock tcell(size_t s, size_t e)
-        => MdBlock(kind: MdBlockKind.tableCell, span: Span(s, e),
-            inlines: [MdInline(kind: MdInlineKind.text, span: Span(s, e))]);
-    auto trow = MdBlock(kind: MdBlockKind.tableRow, span: Span(0, 120),
-        children: [tcell(0, 60), tcell(60, 120)]);
-    MdBlock[] rows;
+    MdBlock[] paras;
     foreach (_; 0 .. 20)
-        rows ~= trow;
-    auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
-        MdBlock(kind: MdBlockKind.table, span: Span(0, 120),
-            aligns: [ColAlign.none, ColAlign.none], children: rows),
-    ]), src);
+        paras ~= MdBlock(kind: MdBlockKind.paragraph, span: Span(0, 120),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(0, 120))]);
+    auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: paras),
+        src);
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
