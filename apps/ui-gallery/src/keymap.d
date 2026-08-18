@@ -25,7 +25,7 @@ module keymap;
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.focus : GrabPolicy;
 import ui_keymap = sparkles.ui.keymap;
-public import sparkles.ui.keymap : Chord, chord, chordRange,
+public import sparkles.ui.keymap : acceptsTyped, Chord, chord, chordRange,
     hidesLaterScopes, maxPathLength, ModeReq, ResolveKind, sameKey, ShiftReq,
     terminalScope;
 
