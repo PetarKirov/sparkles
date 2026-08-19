@@ -2447,7 +2447,6 @@ private int runDubTestsMode(bool failFast, bool coverage)
         const progress = i"[$(i + 1)/$(subPackages.length)]".text;
         const header = styledText(i"{dim $(progress)} {cyan $(pkgName)} {dim › dub test :$(pkgName)}");
 
-        info(i"starting {cyan dub test :$(pkgName)} {dim $(progress)}");
         mkdirRecurse(buildPath(repoRoot, pkg, "build"));
         // Honour `$DC` so the sub-package tests use the CI matrix's compiler
         // (the dev shell provides both dmd and ldc). Example verification keeps
@@ -2461,8 +2460,6 @@ private int runDubTestsMode(bool failFast, bool coverage)
             });
         if (cov.enabled && !result.coverageCollected && result.status == 0)
             uncovered ~= pkgName;
-        const stats = formatResourceStats(result.usage);
-        info(i"finished {cyan :$(pkgName)} {dim $(stats.length ? stats : "done")}");
 
         auto outputLines = result.output.lineSplitter
             .map!(l => l.to!string)
@@ -2559,14 +2556,9 @@ private void reportCoverage(in string[] subPackages, in CoverageRun cov,
     drawTable(rows, TableProps(headerRows: 1)).writeln;
     styledText(i"{dim listings in} $(cov.dir) {dim — open one with} hue --cov").writeln;
 
-    // The notes below go to stderr, which is unbuffered; without this the
-    // first one lands in the middle of the table stdout has not flushed yet.
+    // The uncovered note goes to stderr; flush so it cannot land in the
+    // middle of the table stdout has not finished writing.
     stdout.flush();
-
-    // A package whose tests did not run has no coverage to report, and a zero
-    // that means "did not build" must not read as a zero that means "untested".
-    if (failedPackages.length)
-        warning(i"{yellow tests failed} for $(failedPackages.length) package(s): $(failedPackages.join(", ")) — their rows are not meaningful");
 
     // A package that only builds without `-cov` is tested but unmeasured, and
     // a row of zeroes would read as untested rather than as unmeasured.
@@ -2752,10 +2744,7 @@ private int runExtractedTestsMode(bool failFast)
             repoRoot, job.packageName,
             ["--", job.flag, "--self-test", "--require-toolchain"]);
 
-        info(i"starting {cyan dub test :$(job.packageName) -- $(job.flag)} {dim $(progress)}");
         auto result = executeLogged(cmd, job.flag ~ " " ~ job.packageName);
-        const stats = formatResourceStats(result.usage);
-        info(i"finished {cyan :$(job.packageName) $(job.flag)} {dim $(stats.length ? stats : "done")}");
         auto outputLines = result.output.lineSplitter.map!(l => l.to!string).array;
         displayResultBox(outputLines, header, result.status == 0, result.usage);
         flushStdout();
@@ -2816,7 +2805,6 @@ private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool fai
         mkdirRecurse(buildPath(repoRoot, pkg, "build"));
         auto testCmd = dubTestCommand(repoRoot, pkgName);
 
-        info(i"starting {cyan dub test :$(pkgName)} {dim [$(i + 1)/$(subPackages.length)]}");
         tasks.start(ids[i]);
         const before = childrenCpuUsage();
         const started = MonoTime.currTime;
@@ -2836,7 +2824,6 @@ private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool fai
         if (result.usage.sampled)
             usage = result.usage;
         const stats = formatResourceStats(usage, includeWall: false);
-        info(i"finished {cyan :$(pkgName)} {dim $(formatResourceStats(usage))}");
         processed = i + 1;
 
         if (result.status == 0)
@@ -4046,7 +4033,6 @@ private void displayResultBox(
 private void displayFailureReplay(FailureReplay replay)
 {
     writeln();
-    warning(i"{red Fail-fast:} replaying first failing case");
     replay.outputLines
         .drawBox(replay.header, BoxProps(footer: replay.footer))
         .writeln;
