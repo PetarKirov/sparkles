@@ -2,7 +2,7 @@
 
 The vocabulary the deep-dives use, defined once. Each term is grounded in at least one surveyed implementation, so a definition can be checked rather than argued about.
 
-**Last reviewed:** August 18, 2026
+**Last reviewed:** August 19, 2026
 
 ---
 
@@ -29,6 +29,9 @@ Whatever the library uses to say "this node" across time. Five distinct answers 
 | entry object, re-matched structurally | [WinForms][winforms] | `EqualsIgnoreParent` comparison of freshly built children |
 | handle (`IPropertyHandle`)            | [Unreal][unreal]     | the handle itself, with `IsValidHandle()` to ask          |
 | hashed structural path (`egui::Id`)   | [bevy][bevy]         | being recomputed identically next frame                   |
+| mutable cursor + `propertyPath`       | [Unity][unity]       | the path string; the cursor is transient by design        |
+| field path + **synthetic row key**    | [rjsf][rjsf]         | the key travelling with the element, not the index        |
+| remote `objectId` lease + `path()`    | [DevTools][devtools] | refetching; the lease may be revoked entirely             |
 
 ### Descent decision
 
@@ -40,7 +43,34 @@ When the children of an expandable node come into existence. **Eager** ([Qt][qt]
 
 ### Cut
 
-Stopping a descent that would not terminate. A **visited set** over values (nobody in the corpus), over types (the D compile-time walk must, or the build fails), a **depth cap** (nobody, except [Godot's][godot] purely cosmetic colour level), or nothing at all plus the observation that recursion is user-driven ([Godot][godot], [WinForms][winforms]).
+Stopping a descent that would not terminate. A **visited set** over values ([Unity][unity], keyed
+by `managedReferenceId`), over `$ref`s ([rjsf][rjsf]), over _types_ (the D compile-time walk
+must, or the build fails), a **structural ban** ([Qt][qt] refuses the insert), a **depth cap**
+(nobody, except [Godot's][godot] purely cosmetic colour level), or nothing at all plus the
+observation that recursion is user-driven ([Godot][godot], [WinForms][winforms],
+[DevTools][devtools]).
+
+### Driven vs automatic walk
+
+The distinction that decides whether a guard is needed at all. A walk is **driven** when a human
+expands one level ([DevTools][devtools], [Godot][godot]) or when the data itself is finite
+(array items, `oneOf` branches); it is **automatic** when the code descends on its own —
+expand-all ([Unity][unity]) or schema resolution ([rjsf][rjsf]). Both subjects that carry a
+visited set carry it in an automatic walk, and neither guards painting.
+
+### Cut with an affordance
+
+Rendering the cut as a row the reader can act on rather than as silence. [rjsf][rjsf]'s
+`CyclicSchemaField` is a placeholder with an **Expand** button that opens exactly one more level;
+[DevTools][devtools]'s "show all" button past 200 children is the same shape.
+[`erased-descent.d`](./examples/erased-descent.d) reproduces it in D.
+
+### Erasure boundary
+
+Where a statically-dispatched descent becomes a runtime call. The Rust
+[derive family][derive] puts one in the child walk (`&mut dyn EguiProbe`), which is why a
+recursive type is ordinary there and a build error in a D CTFE walk. Moving the boundary is the
+lever; the cost is a virtual call and an allocation per open node.
 
 ---
 
@@ -53,6 +83,19 @@ Where per-field facts other than the type come from: .NET attributes read throug
 ### Static vs value-dependent metadata
 
 A label, a group and a range are functions of the **type**; "show this field only when that one is `gradient`" is a function of the **value**. Runtime channels blur the two ([Godot's][godot] `_validate_property` rewrites usage flags per rebuild); a compile-time channel cannot, so a value-dependent condition has to be carried as data and evaluated per frame.
+
+### Provenance
+
+Not just the value, but why it is that value. [VS Code's][vscode] row carries `scopeValue`,
+`defaultValue`, `defaultValueSource`, `isConfigured`, `hasPolicyValue` and per-language
+overrides — the difference between "unset" and "set to the same thing as the default", and
+between "you may change this" and "policy forbids it". No developer-inspector subject models it.
+
+### Mirror
+
+A serialized copy of the subject that the editor edits instead of the object, pulled before
+drawing and pushed at a commit point ([Unity][unity]: `Update()` / `ApplyModifiedProperties()`).
+The push is where undo attaches.
 
 ### Descriptor
 
@@ -96,7 +139,24 @@ A value that is present but unavailable, with a reason. [Unreal][unreal] has `Is
 
 ### Constructability
 
-Whether a variant or element can be created blank. In Rust it is a registry question (`ReflectDefault`, [bevy][bevy]); in D almost every type has `.init`, and the residual case is an author's `@disable this()` — measured in [`sumtype-variants.d`](./examples/sumtype-variants.d).
+Whether a variant or element can be created blank. A registry question at runtime
+(`ReflectDefault`, [bevy][bevy]); a **compile-time** one when a derive macro generates the
+construction ([derive crates][derive] — a field without `Default` fails the build); and in D
+almost a non-question, since every type has `.init`, the residual case being an author's
+`@disable this()` — measured in [`sumtype-variants.d`](./examples/sumtype-variants.d).
+
+### Variant migration
+
+Carrying data across a change of variant instead of discarding it. Only [rjsf][rjsf] attempts it:
+`sanitizeDataForNewSchema` keeps the keys whose name and resolved type match, recursing into
+objects and arrays. Every type-driven subject discards.
+
+### Fetch policy
+
+Bounding a walk before it reaches the renderer, by limiting what is even retrieved:
+[DevTools][devtools]'s 200 visible children, 100-element buckets and recursive `[from … to]`
+ranges. Distinct from virtualization (render fewer of the rows you have) and from pagination
+(show a window of a known list).
 
 ### Virtualization vs pagination
 
@@ -105,6 +165,11 @@ Rendering only visible rows while the model holds all of them ([WinForms][winfor
 <!-- References -->
 
 [qt]: ./qt-property-browser.md
+[unity]: ./unity-serializedproperty.md
+[derive]: ./derive-macro-inspectors.md
+[vscode]: ./vscode-settings-ui.md
+[rjsf]: ./react-jsonschema-form.md
+[devtools]: ./devtools-object-inspector.md
 [godot]: ./godot-inspector.md
 [winforms]: ./winforms-propertygrid.md
 [bevy]: ./bevy-inspector-egui.md
