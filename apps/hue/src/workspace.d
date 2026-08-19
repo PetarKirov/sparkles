@@ -812,8 +812,8 @@ struct WorkspaceTui
     /// the reprojection (`DSB`).
     void wireDsvHooks() @system
     {
-        viewer.onDsvSort = (uint col) @system {
-            dsvBrowser.cycleSort(col, append: false);
+        viewer.onDsvSort = (uint col, bool append) @system {
+            dsvBrowser.cycleSort(col, append);
             applyDsvBrowser();
         };
         viewer.onDsvReset = () @system {

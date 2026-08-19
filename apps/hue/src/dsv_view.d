@@ -25,7 +25,7 @@ import table_select : serializeTable, TableCopyFormat, TableRegion;
 version (unittest) import sparkles.syntax.md.render_widgets : TableScroll;
 import sparkles.dsv : applyProjection, classifyValue, ColumnType, decodeCell,
     detectHeader, Dialect, DsvDoc, inferColumnTypes, parseDsv, ProjectionSpec,
-    seedForExtension, sniff, sniffMaxBytes, sniffMaxRecords;
+    seedForExtension, sniff, sniffMaxBytes, sniffMaxRecords, SortKey;
 import sparkles.syntax.md.model : ColAlign, MdBlock, MdBlockKind, MdDoc,
     MdInline, MdInlineKind, MdSpan = Span;
 
@@ -191,7 +191,7 @@ DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags,
     if (doc.columnCount == 0 || visCols.length == 0)
         return a; // empty input / all columns hidden: the caller degrades
 
-    buildTable(a, doc, types[], rowPerm[], visCols);
+    buildTable(a, doc, types[], rowPerm[], visCols, proj.spec.sortKeys);
     return a;
 }
 
@@ -202,7 +202,8 @@ DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags,
 /// (`DSG3`: numeric/date right, bool center). `rowPerm` holds data-record
 /// indexes in view order; `visCols` the visible data columns in view order.
 private void buildTable(ref DsvAdapted a, in DsvDoc doc,
-    in ColumnType[] types, in uint[] rowPerm, in uint[] visCols) @safe
+    in ColumnType[] types, in uint[] rowPerm, in uint[] visCols,
+    in SortKey[] sortKeys = null) @safe
 {
     const cols = visCols.length;
     auto buf = appender!string;
@@ -243,6 +244,23 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
     }
     table.aligns = aligns;
 
+    // `DSS1`'s rank chrome: ` ▲`/` ▼` for a single key, ` 1▲ `-style with
+    // the rank when several sort. View-column indexed (gutter at 0).
+    const(char)[][] badges;
+    if (sortKeys.length)
+    {
+        badges = new const(char)[][](cols + 1);
+        foreach (vi, c; visCols)
+            foreach (ki, k; sortKeys)
+                if (k.column == c)
+                {
+                    badges[vi + 1] = sortKeys.length == 1
+                        ? (k.descending ? " ▼" : " ▲")
+                        : text(" ", ki + 1, k.descending ? "▼" : "▲");
+                    break;
+                }
+    }
+
     a.extras = MdTableExtras(
         headerCols: 1,
         columnMaxWidth: dsvColumnCapCells,
@@ -251,6 +269,7 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
         // The record-number gutter stays put while the grid scrolls
         // horizontally (`DSG5` × the freeze-pane generalization).
         freezeLeftColumns: 1,
+        headerBadges: badges,
     );
 
     // One row into the buffer + tree; texts are already decoded.
@@ -609,6 +628,29 @@ string serializeGridCopy(const DsvCopy copy, in TableRegion reg, size_t rows,
     // Whole grid ≠ the file when projected: it is the visible view.
     assert(serializeGridCopy(copy, all, 3, 3, &viewCell,
         TableCopyFormat.source) == "name,qty\nb,2\na,3");
+}
+
+@("dsv_view.adapt.sortRankBadges")
+@system unittest
+{
+    import sparkles.dsv : ProjectionSpec, SortKey;
+
+    const src = "name,qty\nb,2\na,3\n";
+    DsvProjection proj = { spec: ProjectionSpec([SortKey(1, descending: true)]) };
+    auto a = adaptDsv(src, "csv", DsvFlags(), proj);
+    assert(a.extras.headerBadges.length == 3);
+    assert(a.extras.headerBadges[2] == " ▼"); // qty, single key
+    assert(a.extras.headerBadges[1] == ""); // name unbadged
+
+    DsvProjection multi = { spec: ProjectionSpec([SortKey(1), SortKey(0)]) };
+    a = adaptDsv(src, "csv", DsvFlags(), multi);
+    assert(a.extras.headerBadges[2] == " 1▲");
+    assert(a.extras.headerBadges[1] == " 2▲");
+    // The badge renders in the grid but lives in no source buffer: the
+    // header cell's model span is untouched.
+    import std.algorithm.searching : canFind;
+
+    assert(dsvGridText(a).canFind("qty 1▲"));
 }
 
 @("dsv_view.copy.hiddenColumnsExcluded")

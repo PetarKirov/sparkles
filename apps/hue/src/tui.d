@@ -485,7 +485,7 @@ struct PreviewTui
     /// The data browser's host hooks (`DSB`): the workspace owns the
     /// `DsvBrowser` and the reprojection; the viewer only reports intent
     /// (a header click, an applied filter query, a reset).
-    void delegate(uint) @system onDsvSort;
+    void delegate(uint, bool) @system onDsvSort;
     /// ditto
     void delegate(string) @system onDsvFilterApply;
     /// ditto
@@ -1587,8 +1587,9 @@ struct PreviewTui
                     }
                 }
                 // `DSS1`: a press on a DSV grid's header cell cycles that
-                // column as the primary sort key (the workspace reprojects).
-                if (dsvHeaderSortAt(p))
+                // column as the primary sort key — Shift appends it as the
+                // next key instead (the workspace reprojects).
+                if (dsvHeaderSortAt(p, e.mods.shift))
                     return true;
             }
             sel = e.action == PointerAction.press
@@ -1617,7 +1618,7 @@ struct PreviewTui
     /// `DSS1` via the mouse: resolve a document-space point to a table
     /// cell (the keyed rects the selection machinery already maintains);
     /// a header-row hit on a data column reports a sort-cycle intent.
-    private bool dsvHeaderSortAt(Point p) @system
+    private bool dsvHeaderSortAt(Point p, bool append) @system
     {
         if (!dsvCopy.info.present || onDsvSort is null)
             return false;
@@ -1630,7 +1631,7 @@ struct PreviewTui
                 {
                     if (mc.row == 0 && mc.col > 0)
                     {
-                        onDsvSort(cast(uint)(mc.col - 1));
+                        onDsvSort(cast(uint)(mc.col - 1), append);
                         return true;
                     }
                     return false; // a body cell: fall through to selection
@@ -2435,6 +2436,7 @@ version (HueDmdFmt)
 @system unittest
 {
     import dsv_view : adaptDsv, DsvCopy, DsvFlags;
+    import sparkles.input : Mods;
     import sparkles.syntax : builtinDark, LabelSet, Theme;
 
     const src = "name,qty\nb,2\na,3\nc,1\n";
@@ -2455,7 +2457,8 @@ version (HueDmdFmt)
     t.dsvCopy = DsvCopy.of(src, adapted.info);
 
     uint sorted = uint.max;
-    t.onDsvSort = (uint col) { sorted = col; };
+    bool appended;
+    t.onDsvSort = (uint col, bool append) { sorted = col; appended = append; };
     string applied;
     t.onDsvFilterApply = (string q) { applied = q; };
 
@@ -2467,6 +2470,13 @@ version (HueDmdFmt)
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(hx, 2)))));
     assert(sorted == 1, "the qty header click should report data column 1");
+    assert(!appended);
+
+    // Shift+click appends as the next key (`DSS1`).
+    t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(hx, 2),
+        mods: Mods(shift: true))));
+    assert(appended);
 
     // A body-cell press falls through to selection, never a sort.
     sorted = uint.max;
