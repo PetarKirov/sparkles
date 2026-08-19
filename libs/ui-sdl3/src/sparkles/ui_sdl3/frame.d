@@ -429,23 +429,29 @@ struct FrameSync
     /**
     Destroy semaphores retired by $(LREF replaceImages).
 
-    The queue must already be idle — those semaphores may still be the wait
-    of an in-flight present. Call a few frames after the last rebuild so
-    the wait is already satisfied; do not call during a drag, where an idle
-    would serialise every size on FIFO vsync. $(LREF Swapchain.reap) has
-    the same contract; wait once, then reap both.
+    The queue must already be done with those waits — a few quiet frames
+    after the last rebuild, or `queueWaitIdle` first. `limit` caps how
+    many this call destroys. $(LREF Swapchain.reap) has the same contract.
     */
-    void reap(ref VulkanContext vk) @system nothrow
+    void reap(ref VulkanContext vk, uint limit = uint.max) @system nothrow
     {
         if (_retired.length == 0 || vk.device.device is null)
             return;
 
+        uint n;
         if (vk.device.destroySemaphore !is null)
             foreach (s; _retired)
+            {
+                if (n >= limit)
+                    break;
                 if (s !is null)
                     vk.device.destroySemaphore(vk.device.device, s, null);
+                n++;
+            }
+        else
+            n = limit < _retired.length ? limit : cast(uint) _retired.length;
 
-        _retired = null;
+        _retired = n >= _retired.length ? null : _retired[n .. $];
     }
 
     /**

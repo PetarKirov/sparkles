@@ -35,6 +35,10 @@
  * `FrameSync` (per-image `renderFinished`, the suboptimal-finishes-its-frame
  * rule, the fence reset that must not happen early) and `CommandPool`.
  *
+ * Native Wayland (no SDL / no libdecor) is the next WSI step. The session
+ * that measured SDL+Mutter vs X11 and decided that is
+ * `docs/specs/ui-sdl3/native-wayland-resize-handoff.md`.
+ *
  * Running it headless, with no GPU, which is how the frame loop is checked:
  *
  * ---
@@ -56,8 +60,10 @@
  *
  * Under validation, add the synchronization-validation feature — it is what
  * catches the semaphore-reuse class of bug this design exists to avoid.
- * `--resize-stress` rebuilds the swapchain every frame, which is the path
- * that used to `vkDeviceWaitIdle` and destroy objects a present still held:
+ * `--resize-stress` changes the window size every frame through a band that
+ * both shrinks and grows, which is the path that used to `vkDeviceWaitIdle`
+ * and destroy objects a present still held. `--trace-ms N` logs any frame
+ * whose wall time is at least N milliseconds:
  *
  * ---
  * VK_LAYER_VALIDATE_SYNC=1 ./build/vulkan_triangle --frames 300 --validation --resize-stress
@@ -99,6 +105,32 @@ enum PresentMode : uint
     auto_       = uint.max,
 }
 
+/**
+Wayland client-side decorations.
+
+GNOME's default libdecor plugin is GTK, and `libdecor-gtk` calls
+`g_main_context_iteration` and `wl_display_roundtrip` from dispatch —
+both can block for a compositor timeout (hundreds of ms to >1s) while
+Mutter waits for a configure ack that Vulkan-WSI stole the frame
+callback for. `cairo` loads only the cairo plugin. `none` asks SDL not
+to use libdecor at all.
+*/
+@WireCase(CaseStyle.kebabCase)
+enum Decor
+{
+    auto_,
+    cairo,
+    none,
+}
+
+@WireCase(CaseStyle.kebabCase)
+enum VideoDriver
+{
+    auto_,
+    wayland,
+    x11,
+}
+
 int main(string[] args) => runCli!VulkanTriangle(args);
 
 @(Command("vulkan-triangle",
@@ -130,11 +162,30 @@ struct VulkanTriangle
         description: "Swapchain present mode (auto = mailbox if offered, else fifo)"))
     PresentMode presentMode = PresentMode.auto_;
 
+    @(Option("trace-ms",
+        description: "Log frames whose wall time is at least N milliseconds"))
+    uint traceMs;
+
+    @(Option("decor",
+        description: "Wayland decorations (auto / cairo / none). none skips libdecor's per-configure roundtrip"))
+    Decor decor = Decor.none;
+
+    @(Option("video-driver",
+        description: "SDL video driver (auto / wayland / x11). x11 uses XWayland and avoids Mutter's sync configure"))
+    VideoDriver videoDriver = VideoDriver.auto_;
+
     Expected!(void, string) run()
     {
+        if (videoDriver != VideoDriver.auto_)
+        {
+            const name = videoDriver == VideoDriver.x11 ? "x11" : "wayland";
+            setenv("SDL_VIDEODRIVER".toStringz, name.toStringz, 1);
+        }
+        applyWaylandDecor(decor);
+
         Window window;
         auto opened = Window.open(window, WindowRequest(
-            title: "sparkles — vulkan triangle",
+            title: "sparkles - vulkan triangle",
             width: width,
             height: height,
         ));
@@ -156,7 +207,7 @@ struct VulkanTriangle
             ? anyPresentMode
             : cast(VkPresentModeKHR) presentMode;
 
-        auto drawn = draw(vk, window, frames, resizeStress, preferred);
+        auto drawn = draw(vk, window, frames, resizeStress, preferred, traceMs, decor);
         if (drawn.hasError)
             return err!void(drawn.error);
 
@@ -166,7 +217,111 @@ struct VulkanTriangle
     }
 }
 
-import std.stdio : writeln;
+import core.sys.posix.dlfcn : RTLD_NOLOAD, RTLD_NOW, dladdr, dlopen, dlsym, Dl_info;
+import core.sys.posix.stdlib : setenv;
+import core.time : MonoTime, msecs;
+
+import std.file : exists, mkdirRecurse, remove, symlink;
+import std.path : buildPath, dirName;
+import std.stdio : stderr, writefln, writeln;
+import std.string : fromStringz, toStringz;
+
+/// Apply Wayland decoration policy before `SDL_Init`.
+void applyWaylandDecor(Decor decor) @system
+{
+    final switch (decor)
+    {
+    case Decor.auto_:
+        return;
+
+    case Decor.none:
+        setenv("SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR".toStringz, "0".toStringz, 1);
+        return;
+
+    case Decor.cairo:
+        forceLibdecorCairo();
+        return;
+    }
+}
+
+/// Point libdecor at a directory that contains only the cairo plugin.
+void forceLibdecorCairo() @system
+{
+    auto handle = dlopen("libdecor-0.so.0", RTLD_NOW | RTLD_NOLOAD);
+    if (handle is null)
+        handle = dlopen("libdecor-0.so.0", RTLD_NOW);
+    if (handle is null)
+        return;
+
+    auto sym = dlsym(handle, "libdecor_new");
+    Dl_info info;
+    if (sym is null || dladdr(sym, &info) == 0 || info.dli_fname is null)
+        return;
+
+    const cairo = buildPath(dirName(info.dli_fname.fromStringz.idup),
+        "libdecor", "plugins-1", "libdecor-cairo.so");
+    if (!exists(cairo))
+        return;
+
+    const dir = "/tmp/sparkles-libdecor-cairo";
+    mkdirRecurse(dir);
+    const dest = buildPath(dir, "libdecor-cairo.so");
+    if (exists(dest))
+        remove(dest);
+    symlink(cairo, dest);
+    setenv("LIBDECOR_PLUGIN_DIR".toStringz, dir.toStringz, 1);
+}
+
+/**
+Present one frame from inside `SDL_PumpEvents`.
+
+libdecor commits a configure with `wl_display_roundtrip` after posting
+`PIXEL_SIZE_CHANGED` and before the event loop can present. Mutter then
+waits for a buffer. A *cheap* present here (no swapchain create) gives
+it that buffer so the roundtrip returns. Creating a swapchain from this
+watch is what turned a smooth drag into a multi-second pump.
+*/
+struct LiveResizeHook
+{
+    Expected!(void, string) delegate() present;
+    string error;
+    bool busy;
+    bool didThisPump;
+    uint presented;
+}
+
+private void invokeLiveResizePresent(LiveResizeHook* hook) @system
+{
+    // One present per PumpEvents. A configure burst otherwise plays back
+    // every intermediate size inside the same pump — smooth, but a second
+    // behind the cursor. The main loop presents the latest size after.
+    if (hook.busy || hook.present is null || hook.didThisPump)
+        return;
+    hook.busy = true;
+    auto r = hook.present();
+    hook.busy = false;
+    if (r.hasError)
+        hook.error = r.error;
+    else
+    {
+        hook.presented++;
+        hook.didThisPump = true;
+    }
+}
+
+extern (C) bool liveResizeWatch(void* userdata, SDL_Event* event) nothrow @nogc
+{
+    if (event is null)
+        return true;
+    const t = event.type;
+    if (t != SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED
+        && t != SDL_EventType.SDL_EVENT_WINDOW_EXPOSED)
+        return true;
+
+    auto call = cast(void function(LiveResizeHook*) nothrow @nogc)&invokeLiveResizePresent;
+    call(cast(LiveResizeHook*) userdata);
+    return true;
+}
 
 /// A skip is a success: the environment lacks a display or a driver.
 Expected!(void, string) skip(string what, string detail)
@@ -184,8 +339,34 @@ struct RunReport
     uint imageCount;
     uint framesInFlight;
     string extent;
+    string surfaceExtent;
+    string decor;
+    string videoDriver;
     uint framesPresented;
     uint swapchainsBuilt;
+    uint rebuildsForced;
+    uint acquireSuboptimal;
+    uint acquireOutOfDate;
+    uint presentSuboptimal;
+    uint presentOutOfDate;
+    uint reaps;
+    uint watchPresents;
+    uint pixelSizeEvents;
+    uint maxPixelSizeEvents;
+    uint eventsDrained;
+    uint maxEventsDrained;
+    uint framesOver50ms;
+    uint framesOver100ms;
+    double maxFrameMs = 0;
+    double maxPollMs = 0;
+    double maxPumpMs = 0;
+    double maxPeepMs = 0;
+    double maxWaitFrameMs = 0;
+    double maxWaitAllMs = 0;
+    double maxCreateMs = 0;
+    double maxAcquireMs = 0;
+    double maxPresentMs = 0;
+    double maxReapMs = 0;
     string rendering;
     string exitedBecause;
 }
@@ -196,9 +377,15 @@ struct RunReport
 
 Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
     int frameBudget, bool resizeStress = false,
-    VkPresentModeKHR preferredPresentMode = anyPresentMode) @system
+    VkPresentModeKHR preferredPresentMode = anyPresentMode,
+    uint traceMs = 0, Decor decor = Decor.cairo) @system
 {
-    RunReport report = { device: vk.deviceName };
+    const driverName = SDL_GetCurrentVideoDriver();
+    RunReport report = {
+        device: vk.deviceName,
+        decor: format("%s", decor),
+        videoDriver: driverName is null ? "unknown" : driverName.fromStringz.idup,
+    };
 
     Swapchain sc;
     RenderTarget target;
@@ -209,6 +396,17 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
     // semaphores are reaped once this passes framesInFlight, so the wait
     // is already satisfied and a drag never serialises on vsync.
     uint framesSinceRebuild;
+    long lastWaitAllUs, lastCreateUs;
+    MonoTime lastSizeChange = MonoTime.currTime;
+
+    double msOf(long us) @safe pure nothrow @nogc => us / 1_000.0;
+
+    void noteMax(ref double slot, long us)
+    {
+        const ms = msOf(us);
+        if (ms > slot)
+            slot = ms;
+    }
 
     // A resize is the swapchain and the views that name its images. Dynamic
     // rendering drops the framebuffers entirely; the render-pass fallback
@@ -225,6 +423,9 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
     // leaves it false so a drag that reports the same size twice is a no-op.
     Expected!(void, string) rebuild(bool force = false)
     {
+        lastWaitAllUs = 0;
+        lastCreateUs = 0;
+
         auto px = window.pixelSize;
         if (px.hasError)
             return err!void(px.error);
@@ -235,29 +436,29 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         if (px.value.width <= 0 || px.value.height <= 0)
             return ok!string();
 
-        // Same size, or a shrink into a padded swapchain: viewport-only.
+        // Grow-only. X11 presents 1:1: a shrink is a viewport into the
+        // existing images; a grow must create or the triangle stays
+        // small in a larger window. Slack / debounce made the numbers
+        // prettier and the resize feel late — live tracking wins.
         if (!force && sc.handle !is null
             && cast(uint) px.value.width <= sc.extent.width
             && cast(uint) px.value.height <= sc.extent.height)
             return ok!string();
 
+        if (force)
+            report.rebuildsForced++;
+
+        const waitStarted = MonoTime.currTime;
         auto waited = sync.waitAll(vk);
+        lastWaitAllUs = (MonoTime.currTime - waitStarted).total!"usecs";
+        noteMax(report.maxWaitAllMs, lastWaitAllUs);
         if (waited.hasError)
             return err!void("vkWaitForFences: " ~ describeResult(waited.error));
 
-        // Pad to the display on a surface-defined (Wayland) resize so
-        // subsequent shrinks stay inside the allocation. First create
-        // stays exact so a --frames N run at 960×540 still reports that.
-        PixelSize minAlloc;
-        if (sc.handle !is null)
-        {
-            auto display = window.displayPixelSize;
-            if (!display.hasError)
-                minAlloc = display.value;
-        }
-
-        auto updated = Swapchain.recreate(sc, vk, px.value, force, minAlloc,
-            preferredPresentMode);
+        const createStarted = MonoTime.currTime;
+        auto updated = Swapchain.recreate(sc, vk, px.value, force);
+        lastCreateUs = (MonoTime.currTime - createStarted).total!"usecs";
+        noteMax(report.maxCreateMs, lastCreateUs);
         if (updated.hasError)
             return err!void(updated.error);
         if (updated.value != SwapchainResize.rebuilt)
@@ -297,6 +498,17 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
     if (sc.handle is null)
         return err!RunReport("swapchain extent is zero (window minimised?)");
 
+    {
+        VkSurfaceCapabilitiesKHR caps;
+        if (!vk.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
+                vk.physicalDevice, vk.surface, &caps).check.hasError)
+        {
+            report.surfaceExtent = caps.currentExtent.width == uint.max
+                ? "app-defined"
+                : format("%dx%d", caps.currentExtent.width, caps.currentExtent.height);
+        }
+    }
+
     scope (exit)
     {
         cast(void) vk.device.deviceWaitIdle(vk.device.device);
@@ -317,6 +529,113 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
     if (pooled.hasError)
         return err!RunReport(pooled.error);
 
+    long waitFrameUs, acquireUs, presentUs, reapUs;
+    VkResult acquired = VkResult.VK_SUCCESS;
+    VkResult presentedResult = VkResult.VK_SUCCESS;
+    bool rebuiltThisFrame;
+
+    Expected!(void, string) presentOnce(bool mayBlock)
+    {
+        auto px = window.pixelSize;
+        if (px.hasError)
+            return err!void(px.error);
+        if (px.value.width <= 0 || px.value.height <= 0)
+            return ok!string();
+
+        if (sc.handle is null || sc.extent.width == 0 || sc.extent.height == 0)
+            return ok!string();
+
+        const waitFrameStarted = MonoTime.currTime;
+        if (mayBlock)
+        {
+            auto waited = sync.waitForFrame(vk);
+            waitFrameUs = (MonoTime.currTime - waitFrameStarted).total!"usecs";
+            noteMax(report.maxWaitFrameMs, waitFrameUs);
+            if (waited.hasError)
+                return err!void("vkWaitForFences: " ~ describeResult(waited.error));
+        }
+        else
+        {
+            // Inside PumpEvents: never block. Skip if this slot is still busy.
+            auto fence = sync.inFlight;
+            const r = vk.device.waitForFences(
+                vk.device.device, 1, &fence, VK_TRUE, 0);
+            waitFrameUs = (MonoTime.currTime - waitFrameStarted).total!"usecs";
+            noteMax(report.maxWaitFrameMs, waitFrameUs);
+            if (r != VkResult.VK_SUCCESS)
+                return ok!string();
+        }
+
+        uint index;
+        const acquireStarted = MonoTime.currTime;
+        acquired = vk.device.acquireNextImageKHR(vk.device.device, sc.handle,
+            mayBlock ? ulong.max : 0, sync.imageAvailable, null, &index);
+        acquireUs = (MonoTime.currTime - acquireStarted).total!"usecs";
+        noteMax(report.maxAcquireMs, acquireUs);
+        if (acquired == VkResult.VK_SUBOPTIMAL_KHR)
+            report.acquireSuboptimal++;
+        else if (acquired == VkResult.VK_ERROR_OUT_OF_DATE_KHR)
+            report.acquireOutOfDate++;
+        const decision = decideAcquire(acquired);
+
+        if (decision.failed)
+            return err!void("vkAcquireNextImageKHR: " ~ describeResult(acquired));
+
+        if (!decision.proceed)
+        {
+            if (decision.recreate && mayBlock)
+            {
+                auto again = rebuild(true);
+                if (again.hasError)
+                    return again;
+                rebuiltThisFrame = true;
+            }
+            return ok!string();
+        }
+
+        auto held = sync.waitForImage(vk, index);
+        if (held.hasError)
+            return err!void("vkWaitForFences (image): " ~ describeResult(held.error));
+
+        auto begun = sync.beginFrame(vk, index);
+        if (begun.hasError)
+            return err!void("vkResetFences: " ~ describeResult(begun.error));
+
+        auto recorded = record(vk, pool, pipeline, target, sc, sync.frame, index,
+            drawableExtent(sc, px.value));
+        if (recorded.hasError)
+            return recorded;
+
+        auto submitted = sync.submit(vk, pool.buffers[sync.frame], index);
+        if (submitted.hasError)
+            return err!void("vkQueueSubmit: " ~ describeResult(submitted.error));
+
+        const presentStarted = MonoTime.currTime;
+        const presented = sc.present(vk, index, sync.renderFinished(index));
+        presentUs = (MonoTime.currTime - presentStarted).total!"usecs";
+        noteMax(report.maxPresentMs, presentUs);
+        presentedResult = presented.hasError ? presented.error : presented.value;
+        if (presentedResult == VkResult.VK_SUBOPTIMAL_KHR)
+            report.presentSuboptimal++;
+        else if (presentedResult == VkResult.VK_ERROR_OUT_OF_DATE_KHR)
+            report.presentOutOfDate++;
+        sync.advance();
+        report.framesPresented++;
+        framesSinceRebuild++;
+
+        if (presented.hasError && !Swapchain.needsRecreation(presented.error))
+            return err!void("vkQueuePresentKHR: " ~ describeResult(presented.error));
+
+        return ok!string();
+    }
+
+    LiveResizeHook hook;
+    hook.present = () => presentOnce(false); // never block inside PumpEvents
+    if (!SDL_AddEventWatch(&liveResizeWatch, &hook))
+        return err!RunReport("SDL_AddEventWatch: " ~ sdlError());
+    scope (exit)
+        SDL_RemoveEventWatch(&liveResizeWatch, &hook);
+
     report.format = format("%s", sc.format);
     report.presentMode = presentModeName(sc.presentMode);
     report.imageCount = cast(uint) sc.images.length;
@@ -324,14 +643,51 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
     report.rendering = vk.dynamicRendering ? "dynamic" : "render-pass";
     report.exitedBecause = "frame budget reached";
 
+    if (traceMs > 0)
+    {
+        stderr.writefln(
+            "tracing frames ≥ %sms decor=%s driver=%s (resize, then close the window)",
+            traceMs, report.decor, report.videoDriver);
+        stderr.flush();
+    }
+
     while (frameBudget == 0 || report.framesPresented < frameBudget)
     {
         if (resizeStress)
         {
+            // Sweep a band that both shrinks and grows past the default
+            // 960×540 window. The older 480–872 range never exceeded that,
+            // so grow-only skipped every rebuild after the first create.
             const i = report.framesPresented;
             SDL_SetWindowSize(window.handle,
-                480 + cast(int)(i % 50) * 8,
-                270 + cast(int)(i % 40) * 6);
+                400 + cast(int)(i % 80) * 16,
+                240 + cast(int)(i % 60) * 12);
+        }
+
+        const frameStarted = MonoTime.currTime;
+        long pollUs, pumpUs, peepUs;
+        waitFrameUs = acquireUs = presentUs = reapUs = 0;
+        acquired = VkResult.VK_SUCCESS;
+        presentedResult = VkResult.VK_SUCCESS;
+        rebuiltThisFrame = false;
+        hook.didThisPump = false;
+        uint sizeEvents, drained;
+        char[128] evKindsBuf;
+        uint evKindsLen;
+
+        void noteEventKind(string name)
+        {
+            if (evKindsLen >= evKindsBuf.length)
+                return;
+            if (evKindsLen)
+            {
+                evKindsBuf[evKindsLen] = ',';
+                evKindsLen++;
+            }
+            const room = cast(uint)(evKindsBuf.length - evKindsLen);
+            const n = cast(uint)(name.length < room ? name.length : room);
+            evKindsBuf[evKindsLen .. evKindsLen + n] = name[0 .. n];
+            evKindsLen += n;
         }
 
         SDL_Event ev;
@@ -339,119 +695,177 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         // One flag for the whole drain: a drag produces many PIXEL_SIZE_CHANGED
         // events per pump, and only the last size SDL reports is worth building.
         bool sizeChanged;
-        while (SDL_PollEvent(&ev))
+        const pollStarted = MonoTime.currTime;
+        // Pump once, then take events off the queue. `SDL_PollEvent` in a
+        // loop pumps on every event, and each pump can wait 4ms for a
+        // Wayland socket that mailbox has filled — a fast drag then
+        // costs `events × 4ms` inside what looks like one "poll".
+        const pumpStarted = MonoTime.currTime;
+        SDL_PumpEvents();
+        pumpUs = (MonoTime.currTime - pumpStarted).total!"usecs";
+        noteMax(report.maxPumpMs, pumpUs);
+        const peepStarted = MonoTime.currTime;
+        while (SDL_PeepEvents(&ev, 1, SDL_EventAction.SDL_GETEVENT, 0, uint.max) > 0)
         {
+            drained++;
             if (ev.type == SDL_EventType.SDL_EVENT_QUIT
                 || ev.type == SDL_EventType.SDL_EVENT_WINDOW_CLOSE_REQUESTED)
+            {
                 quit = true;
+                noteEventKind("quit");
+            }
             else if (ev.type == SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+            {
                 sizeChanged = true;
+                sizeEvents++;
+                noteEventKind("pixel");
+            }
+            else if (ev.type == SDL_EventType.SDL_EVENT_WINDOW_RESIZED)
+                noteEventKind("resized");
+            else if (ev.type == SDL_EventType.SDL_EVENT_WINDOW_EXPOSED)
+                noteEventKind("exposed");
+            else if (ev.type == SDL_EventType.SDL_EVENT_WINDOW_RESTORED)
+                noteEventKind("restored");
+            else if (ev.type == SDL_EventType.SDL_EVENT_MOUSE_MOTION)
+                noteEventKind("motion");
+            else if (ev.type == SDL_EventType.SDL_EVENT_MOUSE_BUTTON_DOWN
+                || ev.type == SDL_EventType.SDL_EVENT_MOUSE_BUTTON_UP)
+                noteEventKind("button");
+            else
+                noteEventKind("other");
         }
+        peepUs = (MonoTime.currTime - peepStarted).total!"usecs";
+        noteMax(report.maxPeepMs, peepUs);
+        pollUs = (MonoTime.currTime - pollStarted).total!"usecs";
+        noteMax(report.maxPollMs, pollUs);
+        report.eventsDrained += drained;
+        if (drained > report.maxEventsDrained)
+            report.maxEventsDrained = drained;
+        report.pixelSizeEvents += sizeEvents;
+        if (sizeEvents > report.maxPixelSizeEvents)
+            report.maxPixelSizeEvents = sizeEvents;
+        if (hook.error.length)
+            return err!RunReport(hook.error);
         if (quit)
         {
             report.exitedBecause = "window closed";
             break;
         }
 
-        // Rebuild before acquire so this frame is already at the new size —
-        // waiting for OUT_OF_DATE keeps presenting a stretched old swapchain
-        // for the rest of the drag.
-        if (sizeChanged)
-        {
-            auto again = rebuild();
-            if (again.hasError)
-                return err!RunReport(again.error);
-        }
-
-        // No surface to draw into (still starting, or minimised). A
-        // padded swapchain can outlive a 0×0 window — we still must not
-        // present into it until the window is a real size again.
         auto pxNow = window.pixelSize;
         if (sc.handle is null || sc.extent.width == 0 || sc.extent.height == 0
             || (!pxNow.hasError && (pxNow.value.width <= 0 || pxNow.value.height <= 0)))
             continue;
 
-        auto waited = sync.waitForFrame(vk);
-        if (waited.hasError)
-            return err!RunReport("vkWaitForFences: " ~ describeResult(waited.error));
+        if (sizeChanged || hook.didThisPump)
+            lastSizeChange = MonoTime.currTime;
 
-        uint index;
-        const acquired = vk.device.acquireNextImageKHR(vk.device.device, sc.handle,
-            ulong.max, sync.imageAvailable, null, &index);
-        const decision = decideAcquire(acquired);
+        const builtBefore = report.swapchainsBuilt;
+        auto grown = rebuild();
+        if (grown.hasError)
+            return err!RunReport(grown.error);
+        if (report.swapchainsBuilt != builtBefore)
+            rebuiltThisFrame = true;
 
-        if (decision.failed)
-            return err!RunReport("vkAcquireNextImageKHR: " ~ describeResult(acquired));
+        auto drawn = presentOnce(true);
+        if (drawn.hasError)
+            return err!RunReport(drawn.error);
 
-        // Not `else if`: a suboptimal acquire is both, and the frame is drawn
-        // first — see `sparkles.ui_sdl3.frame.decideAcquire`.
-        if (!decision.proceed)
-        {
-            if (decision.recreate)
-            {
-                auto again = rebuild(true);
-                if (again.hasError)
-                    return err!RunReport(again.error);
-            }
-            continue;
-        }
-
-        auto held = sync.waitForImage(vk, index);
-        if (held.hasError)
-            return err!RunReport("vkWaitForFences (image): " ~ describeResult(held.error));
-
-        auto begun = sync.beginFrame(vk, index);
-        if (begun.hasError)
-            return err!RunReport("vkResetFences: " ~ describeResult(begun.error));
-
-        auto recorded = record(vk, pool, pipeline, target, sc, sync.frame, index);
-        if (recorded.hasError)
-            return err!RunReport(recorded.error);
-
-        auto submitted = sync.submit(vk, pool.buffers[sync.frame], index);
-        if (submitted.hasError)
-            return err!RunReport("vkQueueSubmit: " ~ describeResult(submitted.error));
-
-        const presented = sc.present(vk, index, sync.renderFinished(index));
-        sync.advance();
-        report.framesPresented++;
-        framesSinceRebuild++;
-
-        // Old presents have had a couple of vsyncs to finish; queueWaitIdle
-        // is then a no-op rather than a stall on the drag.
+        // 100ms of presenting the new chain is enough for the old
+        // presents to finish. Do not queueWaitIdle — that blocked ~70ms
+        // on a 5K swapchain — and destroy at most one swapchain (plus a
+        // handful of semaphores) per frame so a batch of grows does not
+        // hitch when the drag stops.
         if ((sync.hasRetired || sc.hasRetired)
-            && framesSinceRebuild == sync.framesInFlight + 1)
+            && MonoTime.currTime - lastSizeChange >= 100.msecs)
         {
-            cast(void) vk.device.queueWaitIdle(vk.queue);
-            sync.reap(vk);
-            sc.reap(vk);
+            const reapStarted = MonoTime.currTime;
+            sync.reap(vk, 8);
+            sc.reap(vk, 1);
+            reapUs = (MonoTime.currTime - reapStarted).total!"usecs";
+            noteMax(report.maxReapMs, reapUs);
+            report.reaps++;
         }
 
-        // Skip a second rebuild when PIXEL_SIZE_CHANGED already did this
-        // tick: present is often SUBOPTIMAL for the same size, and waiting
-        // the fence we just submitted would stall on a vsync for nothing.
-        if (!sizeChanged && (presented.hasError
-            || Swapchain.needsRecreation(presented.value) || decision.recreate))
+        const frameUs = (MonoTime.currTime - frameStarted).total!"usecs";
+        noteMax(report.maxFrameMs, frameUs);
+        if (frameUs >= 50_000)
+            report.framesOver50ms++;
+        if (frameUs >= 100_000)
+            report.framesOver100ms++;
+        if (traceMs > 0 && frameUs >= cast(long) traceMs * 1_000)
         {
-            if (presented.hasError && !Swapchain.needsRecreation(presented.error))
-                return err!RunReport("vkQueuePresentKHR: " ~ describeResult(presented.error));
-
-            auto again = rebuild(true);
-            if (again.hasError)
-                return err!RunReport(again.error);
+            const win = pxNow.hasError ? PixelSize.init : pxNow.value;
+            stderr.writefln(
+                "trace frame=%s %.1fms win=%sx%s sc=%sx%s events=%s [%s] sizeEvents=%s " ~
+                "rebuilt=%s watch=%s poll=%.1fms pump=%.1fms peep=%.1fms waitFrame=%.1fms " ~
+                "acq=%s/%.1fms pres=%s/%.1fms waitAll=%.1fms create=%.1fms reap=%.1fms",
+                report.framesPresented, msOf(frameUs),
+                win.width, win.height, sc.extent.width, sc.extent.height,
+                drained, evKindsBuf[0 .. evKindsLen], sizeEvents,
+                rebuiltThisFrame, hook.didThisPump,
+                msOf(pollUs), msOf(pumpUs), msOf(peepUs), msOf(waitFrameUs),
+                resultName(acquired), msOf(acquireUs),
+                resultName(presentedResult), msOf(presentUs),
+                msOf(lastWaitAllUs), msOf(lastCreateUs), msOf(reapUs));
+            stderr.flush();
         }
-        else if (presented.hasError && !Swapchain.needsRecreation(presented.error))
-            return err!RunReport("vkQueuePresentKHR: " ~ describeResult(presented.error));
+
+        // Mailbox does not wait for vsync, so an unpaced loop presents
+        // thousands of times a second and fills the Wayland socket.
+        // SDL's pump then waits 4ms per flush-EAGAIN; a drag that queued
+        // hundreds of pointer events became a 1–2s stall. Cap well above
+        // any display and well below that flood. FIFO already waits.
+        // Don't sleep on a resize tick: the next configure may already
+        // be waiting, and a 2ms nap is how a drag starts to trail the
+        // cursor. Idle mailbox still needs the cap so we don't flood.
+        if (!sizeChanged && !hook.didThisPump
+            && sc.presentMode == VkPresentModeKHR.VK_PRESENT_MODE_MAILBOX_KHR)
+        {
+            enum mailboxMinFrameNs = 2_000_000UL;
+            const used = (MonoTime.currTime - frameStarted).total!"nsecs";
+            if (used >= 0 && used < mailboxMinFrameNs)
+                SDL_DelayNS(mailboxMinFrameNs - used);
+        }
     }
 
     report.extent = format("%dx%d", sc.extent.width, sc.extent.height);
+    report.watchPresents = hook.presented;
     return ok!string(report);
+}
+
+/// Window-sized top-left of a (possibly larger) swapchain.
+///
+/// X11 presents 1:1 and clips. After a shrink we keep the big images and
+/// draw only this rect so the triangle tracks the window without a create.
+VkExtent2D drawableExtent(in Swapchain sc, in PixelSize windowPx)
+    @safe pure nothrow @nogc
+{
+    const w = cast(uint) windowPx.width;
+    const h = cast(uint) windowPx.height;
+    if (w == 0 || h == 0)
+        return sc.extent;
+    return VkExtent2D(
+        width: w < sc.extent.width ? w : sc.extent.width,
+        height: h < sc.extent.height ? h : sc.extent.height,
+    );
+}
+
+@("vulkan_triangle.drawableExtentClampsToTheSwapchain")
+@safe pure nothrow @nogc unittest
+{
+    Swapchain sc;
+    sc.extent = VkExtent2D(2560, 1440);
+    assert(drawableExtent(sc, PixelSize(800, 600)) == VkExtent2D(800, 600));
+    assert(drawableExtent(sc, PixelSize(2560, 1440)) == VkExtent2D(2560, 1440));
+    assert(drawableExtent(sc, PixelSize(3000, 2000)) == VkExtent2D(2560, 1440));
+    assert(drawableExtent(sc, PixelSize(0, 600)) == sc.extent);
 }
 
 /// Record one frame: begin the pass, set the dynamic state, draw three vertices.
 Expected!(void, string) record(ref VulkanContext vk, ref CommandPool pool,
     ref Pipeline pipeline, ref RenderTarget target, ref Swapchain sc,
-    uint frame, uint imageIndex) @system
+    uint frame, uint imageIndex, VkExtent2D drawExtent) @system
 {
     auto begun = pool.begin(vk, frame);
     if (begun.hasError)
@@ -492,7 +906,7 @@ Expected!(void, string) record(ref VulkanContext vk, ref CommandPool pool,
             clearValue: clear,
         ));
         auto rendering = vkInfo(VkRenderingInfo(
-            renderArea: VkRect2D(VkOffset2D(0, 0), sc.extent),
+            renderArea: VkRect2D(VkOffset2D(0, 0), drawExtent),
             layerCount: 1,
             colorAttachmentCount: 1,
             pColorAttachments: &colour,
@@ -504,7 +918,7 @@ Expected!(void, string) record(ref VulkanContext vk, ref CommandPool pool,
         auto passInfo = vkInfo(VkRenderPassBeginInfo(
             renderPass: target.renderPass,
             framebuffer: target.framebuffers[imageIndex],
-            renderArea: VkRect2D(VkOffset2D(0, 0), sc.extent),
+            renderArea: VkRect2D(VkOffset2D(0, 0), drawExtent),
             clearValueCount: 1,
             pClearValues: &clear,
         ));
@@ -515,16 +929,12 @@ Expected!(void, string) record(ref VulkanContext vk, ref CommandPool pool,
     vk.device.cmdBindPipeline(cmd,
         VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle);
 
-    // Always the swapchain extent: a padded allocation presents the whole
-    // image and the compositor scales it to the window. A viewport smaller
-    // than the image would draw the triangle into a corner of a large
-    // present, which then scales down looking like a stamp.
     auto viewport = VkViewport(
         x: 0, y: 0,
-        width: sc.extent.width, height: sc.extent.height,
+        width: drawExtent.width, height: drawExtent.height,
         minDepth: 0, maxDepth: 1,
     );
-    auto scissor = VkRect2D(VkOffset2D(0, 0), sc.extent);
+    auto scissor = VkRect2D(VkOffset2D(0, 0), drawExtent);
     vk.device.cmdSetViewport(cmd, 0, 1, &viewport);
     vk.device.cmdSetScissor(cmd, 0, 1, &scissor);
 
