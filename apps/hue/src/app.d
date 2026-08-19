@@ -1297,25 +1297,29 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             return 0;
         case dsv:
         {
-            import sparkles.syntax.md.render_widgets : MdViewOptions,
-                MdViewTheme, viewMarkdown;
-            import sparkles.ui.interp.html : writeWidgetHtmlPage;
-            import sparkles.ui.style : defaultTwoslashPalette;
+            // The markdown arm re-extracts markdown from `doc.source` (the
+            // adapter's decoded buffer — useless here), and the widget-HTML
+            // interpreter cannot lay out the table view's absolutely
+            // positioned stack. The semantic route is also what `DSG6`
+            // wants: the adapter's already-built `MdDoc` through the shared
+            // `MdDoc → HTML` emitter (the `HTM5` machinery), yielding a
+            // real `<table>` with the theme stylesheet.
+            import std.conv : text;
+            import sparkles.syntax.md.render_html : renderMarkdownHtml;
 
-            // The markdown arm re-extracts markdown from `doc.source`, which
-            // for DSV is the adapter's decoded buffer — render the already
-            // built widget tree instead (the diff arm's route, `DSG6`).
-            const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-            MdViewOptions mopt = {
-                theme: MdViewTheme.derive(theme, pageFg, pageBg),
-                maxWidth: previewWidth(),
-                tableExtras: doc.preview.tableExtras,
-            };
-            SmallBuffer!char htmlOut;
-            writeWidgetHtmlPage(htmlOut, viewMarkdown(doc.preview.doc, mopt),
-                defaultTwoslashPalette(), pageFg, pageBg, doc.title);
-            write(htmlOut[]);
+            SmallBuffer!char output;
+            output ~= "<style>\n";
+            writeThemeStylesheet(theme, output);
+            output ~= markdownPreviewCss;
+            // `DSG2`'s HTML half: the header row pins while the page
+            // scrolls, over the theme's own background.
+            output ~= text("thead th{position:sticky;top:0;background-color:#",
+                hex2(pageBg.r), hex2(pageBg.g), hex2(pageBg.b), "}\n");
+            output ~= "</style>\n<article class=\"syn-root md\">\n";
+            renderMarkdownHtml(doc.preview.doc, output);
+            output ~= "\n</article>\n";
+            write(output[]);
             return 0;
         }
         case diff:
@@ -1633,6 +1637,13 @@ private bool tryTwoslashCapture(ref Document doc, in ResolvedTheme theme,
 /// Prose + callout + table styling for the markdown HTML preview, layered over
 /// the theme's syntax stylesheet (`.syn-root` carries the page fg/bg). Callout
 /// accents mirror the GUI preview (blue / green / purple / yellow / red).
+/// Two lowercase hex digits of one channel (CSS color assembly).
+private string hex2(ubyte v) @safe pure nothrow
+{
+    static immutable char[16] d = "0123456789abcdef";
+    return [d[v >> 4], d[v & 0xF]].idup;
+}
+
 private enum markdownPreviewCss =
     ".md { max-width: 48em; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }\n" ~
     ".md pre.code-fence { padding: .75em 1em; overflow-x: auto; border-radius: 6px; }\n" ~
