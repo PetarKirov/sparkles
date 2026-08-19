@@ -98,37 +98,46 @@ not.
 
 ## Requirements
 
-| ID   | Requirement                                                                                                                                                                                                                                                                                     | Status                | Traces to                                                                  |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------- |
-| GUT1 | Per-line chrome must be a **`GutterChannel`** — a stable `id`, an `enabled` flag, a width in cells, and cells of `(text, slot, background, hitId)` — placed as a sibling of the content. No producer may offset content by a chrome width, and no `columnOffset`-shaped parameter may reappear. | shipped (`6cb7deaef`) | `sparkles.ui.components.gutter`; `columnOffset` deleted in `c90f8f1fe`     |
-| GUT2 | A cell must own its text **inline**, so rebuilding a document's chrome on every reflow allocates nothing. Building a channel must be `@nogc`.                                                                                                                                                   | shipped (`6cb7deaef`) | `SmallBuffer!(char, gutterCellInline)`; `buildingAChannelAllocatesNothing` |
-| GUT3 | Channels must compose **after layout**, one cell per _visual row_ — a wrapped line numbered on its first row only (`NUM1`), a row with no source identity numbering nothing rather than inheriting a neighbour.                                                                                 | shipped (`715bc5075`) | `withGutterColumns`; `ViewerModel.gutter` two-pass                         |
-| GUT4 | A channel's width must be **reserved** from the file, never derived from the data, so a late-arriving artifact never widens the gutter under the reader.                                                                                                                                        | shipped (`85dcc4cec`) | `ViewerModel.reservedChannels`; coverage reserves `maxCountWidth`          |
-| GUT5 | Every channel must be **toggleable by `id`**. A disabled channel must contribute no width and emit no widget — it must not render an empty lane.                                                                                                                                                | shipped (`6cb7deaef`) | `GutterChannel.enabled`; `disabledChannelsLeaveNoStrip`                    |
-| GUT6 | Icon providers must share **one merged slot** resolved by an explicit priority order, not a lane each; the winning provider must take the cell's `hitId` with it, so whoever owns the pixels owns the click.                                                                                    | shipped (`b41d21488`) | `mergedCells`/`IconClaim`; folds are its only provider (`9f2dfc8ae`)       |
-| GUT7 | The gutter must be **budgeted** against the pane, and an over-budget gutter must drop whole channels lowest-priority-first. A channel must never be narrowed below its content.                                                                                                                 | shipped (`1f86bc3e9`) | `withinBudget`; hue budgets at a third of the pane                         |
-| GUT8 | Chrome must be excluded from **content search and copy**: `DocRow.text` is the full rendering, `DocRow.sourceText` the identity-bearing spans only, and search reads the latter by default.                                                                                                     | shipped (`6bb2f93c7`) | `documentRows`; `sourceTextExcludesChrome`                                 |
-| GUT9 | A channel's cells must be addressable by its `id`, so a later **per-channel search scope** (search one channel, several, or channels + content) is a filter over the existing model rather than a new one.                                                                                      | seam only             | `GutterChannel.id`; no scope UI yet                                        |
+| ID    | Requirement                                                                                                                                                                                                                                                                                     | Status                | Traces to                                                                        |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------- |
+| GUT1  | Per-line chrome must be a **`GutterChannel`** — a stable `id`, an `enabled` flag, a width in cells, and cells of `(text, slot, background, hitId)` — placed as a sibling of the content. No producer may offset content by a chrome width, and no `columnOffset`-shaped parameter may reappear. | shipped (`6cb7deaef`) | `sparkles.ui.components.gutter`; `columnOffset` deleted in `c90f8f1fe`           |
+| GUT2  | A cell must own its text **inline**, so rebuilding a document's chrome on every reflow allocates nothing. Building a channel must be `@nogc`.                                                                                                                                                   | shipped (`6cb7deaef`) | `SmallBuffer!(char, gutterCellInline)`; `buildingAChannelAllocatesNothing`       |
+| GUT3  | Channels must compose **after layout**, one cell per _visual row_ — a wrapped line numbered on its first row only (`NUM1`), a row with no source identity numbering nothing rather than inheriting a neighbour.                                                                                 | shipped (`715bc5075`) | `withGutterColumns`; `ViewerModel.gutter` two-pass                               |
+| GUT4  | A channel's width must be **reserved** from the file, never derived from the data, so a late-arriving artifact never widens the gutter under the reader.                                                                                                                                        | shipped (`85dcc4cec`) | `ViewerModel.reservedChannels`; coverage reserves `maxCountWidth`                |
+| GUT5  | Every channel must be **toggleable by `id`**. A disabled channel must contribute no width and emit no widget — it must not render an empty lane.                                                                                                                                                | shipped (`eb4df89c0`) | `GutterChannel.enabled`; `GutterSelection.parse`; `disabledChannelsLeaveNoStrip` |
+| GUT6  | Icon providers must share **one merged slot** resolved by an explicit priority order, not a lane each; the winning provider must take the cell's `hitId` with it, so whoever owns the pixels owns the click.                                                                                    | shipped (`b41d21488`) | `mergedCells`/`IconClaim`; folds are its only provider (`9f2dfc8ae`)             |
+| GUT7  | The gutter must be **budgeted** against the pane, and an over-budget gutter must drop whole channels lowest-priority-first. A channel must never be narrowed below its content.                                                                                                                 | shipped (`1f86bc3e9`) | `withinBudget`; hue budgets at a third of the pane                               |
+| GUT8  | Chrome must be excluded from **content search and copy**: `DocRow.text` is the full rendering, `DocRow.sourceText` the identity-bearing spans only, and search reads the latter by default.                                                                                                     | shipped (`6bb2f93c7`) | `documentRows`; `sourceTextExcludesChrome`                                       |
+| GUT9  | A channel's cells must be addressable by its `id`, so a **selection** names channels rather than growing one flag per strip, and a later **per-channel search scope** (search one channel, several, or channels + content) is a filter over the existing model rather than a new one.           | partial (`eb4df89c0`) | `--gutter all/none/<names>`, `<leader>vg`; no search scope yet                   |
+| GUT10 | The chrome must not scroll sideways with the content. A host that pans one display list takes the line numbers off the left edge with the code; the horizontal camera splits at the pinned width instead, and the pointer mapping splits with it.                                               | shipped (`22a0ab764`) | `ViewerModel.pinnedCols`; `contentColOf`; two paint passes per host              |
 
 ## Open questions
 
-- **Horizontal scroll.** Both hosts pan the whole display list by the
-  horizontal offset, and the channels are now part of it — so a gutter that
-  used to be painted outside the document will pan off the left edge with the
-  code. Pinning it needs a sticky-column notion the layout does not have. The
-  exposure is narrow today (the code views wrap; only an unbreakable token or a
-  wide table engages the bar) but the shape is wrong, and it is the one thing
-  the move out of the backend cost.
-- **Per-datum staleness.** The research argues staleness belongs _in the
-  decoration type_, per datum. Coverage today refuses a whole artifact on an
-  mtime comparison (`COV4`), which is a per-channel binary — a mostly-valid
-  listing renders nothing rather than rendering marked.
 - **Colour collision.** Coverage red/green and diff red/green want the same
-  semantics in the same strip, and neither is colourblind-safe. Untouched.
+  semantics in the same strip, and neither is colourblind-safe. Untouched, and
+  the one cross-cutting problem from the research this model does not address at
+  all — it decides _which_ strip renders, never what colour it is.
+- **Per-channel search scope** (`GUT9`) is a seam, not a feature: channels are
+  addressable by `id` and `--gutter` selects them by name, but nothing yet
+  offers to search one channel rather than the content.
 - **Not everything is a line decoration.** Multi-range, cross-file, ordered
   objects (taint paths, sanitizer origin↔fault pairs) cannot be expressed as
   `(row, cell)` at all. The channel model is deliberately not the answer to
   those; see [`OVL1`](../hue/overlays.md).
+
+### Resolved since the first draft
+
+- **Horizontal scroll** now pins the chrome (`GUT10`). Both hosts split the
+  horizontal camera at `pinnedCols` rather than panning one display list, so a
+  wide table scrolls under a gutter that stays put. It also fixed a bug the
+  document tint had all along: it never subtracted the horizontal offset, so
+  every selection and search tint sat under the wrong columns once scrolled.
+- **Per-datum staleness** landed as re-anchoring ([`COV5`](../hue/overlays.md)),
+  which is a stronger answer than marking. A `.lst` records the source it
+  counted, so lines that survived an edit keep their counters at their new
+  numbers and only the ones that changed lose theirs. The research asked for
+  staleness in the decoration type; the evidence in the artifact allowed
+  something better — most of the decorations stop being stale at all.
 
 ## Who traces here
 
