@@ -451,14 +451,19 @@ struct FrameSync
     /**
     Destroy every object created here.
 
-    Pending work must have finished first. A resize waits with
-    $(LREF waitAll); teardown goes through `vkDeviceWaitIdle`, which
-    $(D VulkanContext.destroy) also does.
+    Waits for the queue first: `renderFinished` may still be the wait of an
+    in-flight present, and destroying it before that present completes is
+    `VUID-vkDestroySemaphore-semaphore-01137`. A resize uses $(LREF reap)
+    after the same wait rather than destroying the whole object; teardown
+    still comes through here.
     */
     void destroy(ref VulkanContext vk) @system nothrow
     {
         if (vk.device.device is null)
             return;
+
+        if (vk.device.queueWaitIdle !is null && vk.queue !is null)
+            cast(void) vk.device.queueWaitIdle(vk.queue);
 
         if (vk.device.destroySemaphore !is null)
         {

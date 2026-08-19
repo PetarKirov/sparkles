@@ -191,6 +191,33 @@ struct Window
             : ok!string(PixelSize(w, h));
     }
 
+    /**
+    The current display's size in pixels.
+
+    Used to pad a surface-defined swapchain so a resize that stays inside
+    the display is a viewport change, not a create. Logical `w`/`h` times
+    `pixel_density` — the same conversion `pixelSize` does for the window.
+    */
+    SdlExpected!PixelSize displayPixelSize() @trusted nothrow
+    {
+        if (_handle is null)
+            return err!PixelSize("Window.displayPixelSize: window is not open");
+
+        const display = SDL_GetDisplayForWindow(_handle);
+        if (display == 0)
+            return err!PixelSize("SDL_GetDisplayForWindow: " ~ sdlError());
+
+        const mode = SDL_GetCurrentDisplayMode(display);
+        if (mode is null)
+            return err!PixelSize("SDL_GetCurrentDisplayMode: " ~ sdlError());
+
+        const density = mode.pixel_density > 0 ? mode.pixel_density : 1.0f;
+        return ok!string(PixelSize(
+            width: cast(int)(mode.w * density),
+            height: cast(int)(mode.h * density),
+        ));
+    }
+
     /// The current `SDL_WINDOW_*` state, which SDL updates as the user acts.
     WindowFlags flags() const @trusted nothrow
         => cast(WindowFlags) SDL_GetWindowFlags(cast(SDL_Window*) _handle);
