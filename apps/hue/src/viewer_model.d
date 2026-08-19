@@ -432,6 +432,22 @@ struct ViewerModel
     wraps identically in both passes — the cells are indexed by visual row, and
     a row count that changed between them would slide every one.
     */
+    /**
+    The leading columns that must not scroll sideways with the content.
+
+    The gutter is inside the document tree, which is what gives every backend
+    the same chrome from one producer — and it is also why a host cannot simply
+    pan the whole display list any more. Panning it takes the line numbers off
+    the left edge with the code, which is exactly the thing a line-number gutter
+    must never do.
+
+    So the horizontal camera is split at this column: ops entirely left of it
+    are painted unscrolled, everything else is panned. Both hosts read it, and
+    it is `0` whenever the gutter is off — in which case the split is a no-op
+    and the paint is one pass, as it was.
+    */
+    int pinnedCols() => gutterWidth(channels);
+
     /// The width the document itself is laid out at: the pane minus the chrome
     /// the reserved channels take. Every producer that wraps its own content
     /// asks for this rather than subtracting a gutter width it would first have

@@ -266,6 +266,36 @@ struct GuiRunState
 /// `paintWindowFrame` out of the loop turned each captured local into an
 /// "undefined identifier", so the compiler enumerated the seam exactly. This is
 /// what the component's `view` phase will hand its `paint` phase (`HST13`).
+/**
+The document column a pane pixel names, honouring the pinned gutter.
+
+The horizontal camera is split (see `ViewerModel.pinnedCols`), so the inverse
+mapping is too: a pointer over a pinned strip addresses that strip, not the code
+scrolled underneath it. Without the split a click on the line numbers of a
+sideways-scrolled document resolves to whatever column the code had panned to.
+*/
+int contentColOf(int px, int gutterPx, int cellW, int dhx, int pinned)
+    @safe pure nothrow @nogc
+{
+    const c = (px - gutterPx) / cellW;
+    return pinned > 0 && c < pinned ? c : c + dhx;
+}
+
+@("gui.contentColOf.pinnedStripsAddressThemselves")
+@safe pure nothrow @nogc
+unittest
+{
+    // Unscrolled: the identity mapping, whatever the gutter is.
+    assert(contentColOf(100, 20, 10, 0, 0) == 8);
+    assert(contentColOf(100, 20, 10, 0, 5) == 8);
+
+    // Scrolled by 12 with a 5-cell gutter: the first five columns are the
+    // chrome and name themselves; the sixth onward is code, offset.
+    assert(contentColOf(20, 20, 10, 12, 5) == 0);
+    assert(contentColOf(60, 20, 10, 12, 5) == 4);
+    assert(contentColOf(70, 20, 10, 12, 5) == 17);
+}
+
 struct FrameGeom
 {
     // Cell and window metrics, from the font set and the window.
@@ -288,6 +318,11 @@ struct FrameGeom
     int docRight;
     int rightPad;        // scrollbar gutter reserved on the right
     int dhx;             // horizontal scroll offset, cells
+    // Leading columns the horizontal scroll must not move: the gutter channels,
+    // which live inside the document tree and would otherwise pan off the left
+    // edge with the code. Zero unless the content is actually scrolled sideways,
+    // so the unscrolled case stays exactly one paint pass and one hit mapping.
+    int pinned;
     size_t total;        // total document rows
     size_t topLine;      // first visible document row
     long maxTop;         // the document's last legal top
@@ -1225,15 +1260,19 @@ int runGui(GuiArgs guiArgs) @system
         // The one painter: the active tree's precomputed ops through the
         // raylib canvas, offset by the scroll position and culled to the
         // viewport rows (raylib clips px; the cull skips dead draw calls).
+        //
+        // Two passes when the content is scrolled sideways past a pinned
+        // gutter (`pinned`), because the chrome is inside the document tree
+        // and panning the whole list would carry the line numbers off the
+        // left edge with the code. The clips do the partitioning — the chrome
+        // pass sees only `[0, pinned)` and the document pass only what starts
+        // at `pinned`, so neither needs to know which ops are whose. With no
+        // horizontal scroll `pinned` is 0 and this is the single pass it was.
+        void paintOps(float originPx, in Rect clip)
         {
             auto canvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
-                cast(float)(gutterPx - dhx * cellW),
-                cast(float)(docY0 - vm.top * cellH));
-            // The pane's base clip: content (an unwrappable code line inside
-            // a fence, a wide table) never bleeds past the pane or under the
-            // header — the same rule the tree pane follows.
-            canvas.pushClip(Rect(dhx, cast(int) vm.top,
-                (docRight - rightPad - gutterPx) / cellW, docRows));
+                originPx, cast(float)(docY0 - vm.top * cellH));
+            canvas.pushClip(clip);
             foreach (ref sourceOp; vm.ops)
             {
                 const oy = sourceOp.rect.y;
@@ -1271,7 +1310,17 @@ int runGui(GuiArgs guiArgs) @system
                 paint(canvas, (&op)[0 .. 1]);
             }
             canvas.popClip();
-
+        }
+        {
+            // The pane's base clip: content (an unwrappable code line inside
+            // a fence, a wide table) never bleeds past the pane or under the
+            // header — the same rule the tree pane follows.
+            const visCols = (docRight - rightPad - gutterPx) / cellW;
+            if (pinned > 0)
+                paintOps(cast(float) gutterPx,
+                    Rect(0, cast(int) vm.top, pinned, docRows));
+            paintOps(cast(float)(gutterPx - dhx * cellW),
+                Rect(pinned + dhx, cast(int) vm.top, visCols - pinned, docRows));
         }
 
         flash.copiedFlash = flash.copiedFlash.stepped(frameMs(window.frameSeconds), copiedCfg);
@@ -1285,10 +1334,18 @@ int runGui(GuiArgs guiArgs) @system
             if (screenRow < 0 || screenRow >= docRows || wCols <= 0)
                 return;
             // Content-anchored and whole-cell, so it says so: the gutter
-            // and the first document row are both cell multiples (UIA2).
-            const x0 = gutterPx / cellW + xStartCol;
+            // and the first document row are both cell multiples (UIA2). Panned
+            // with the code, and stopped at the pinned gutter — a tint that
+            // ignored the horizontal scroll sat under the wrong columns, and one
+            // that ignored the pin painted over the line numbers.
+            auto start = xStartCol - dhx;
+            const end = start + wCols;
+            if (start < pinned)
+                start = pinned;
+            const base = gutterPx / cellW;
             const lastCol = (docRight - rightPad) / cellW;
-            const x1 = x0 + wCols > lastCol ? lastCol : x0 + wCols;
+            const x0 = base + start;
+            const x1 = base + end > lastCol ? lastCol : base + end;
             if (x1 <= x0)
                 return;
             chrome.fillRect(Rect(x0, cast(int)(docY0 / cellH + screenRow),
@@ -1383,7 +1440,7 @@ int runGui(GuiArgs guiArgs) @system
             if (mp.x >= gutterPx)
             {
                 const off = sourceOffsetAt(vm.tree, vm.frames,
-                    Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
+                    Point(contentColOf(cast(int) mp.x, gutterPx, cellW, dhx, pinned),
                         cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH))));
                 if (off >= 0)
                     foreach (ni, ref const n; vm.tw.nodes)
@@ -2057,6 +2114,7 @@ int runGui(GuiArgs guiArgs) @system
         const total = vm.rows.length;
         const maxTop = total > docRows ? cast(long)(total - docRows) : 0;
         const dhx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
+        const pinned = dhx > 0 ? vm.pinnedCols : 0;
 
         // F11 toggles borderless fullscreen on the window's vm.current monitor;
         // active in any input mode. Reflow-on-resize keeps working because the
@@ -2834,7 +2892,7 @@ int runGui(GuiArgs guiArgs) @system
             import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
 
             const mpf = inp.fin.pos;
-            const dpf = Point(cast(int)((mpf.x - gutterPx) / cellW) + dhx,
+            const dpf = Point(contentColOf(cast(int) mpf.x, gutterPx, cellW, dhx, pinned),
                 cast(int)(vm.top + cast(long)((mpf.y - docY0) / cellH)));
 
             // The bar this frame concerns: the grabbed owner's, else the
@@ -2979,7 +3037,7 @@ int runGui(GuiArgs guiArgs) @system
         // (Views without hit targets — raw, twoslash — have an empty list.)
         {
             const mp = inp.fin.pos;
-            const dp = Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
+            const dp = Point(contentColOf(cast(int) mp.x, gutterPx, cellW, dhx, pinned),
                 cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH)));
             if (mp.x >= gutterPx && clickPressed())
                 foreach_reverse (ref const tgt; vm.targets)
@@ -3078,7 +3136,7 @@ int runGui(GuiArgs guiArgs) @system
             Hit h;
             if (my < 0)
                 return h;
-            const cx = cast(int)((mx - gutterPx) / cellW) + dhx;
+            const cx = contentColOf(cast(int) mx, gutterPx, cellW, dhx, pinned);
             const cy = vm.top + cast(long)((my - docY0) / cellH);
             if (mx < gutterPx || cy < 0 || cy >= cast(long) vm.rows.length)
                 return h; // left of the content (tree/gutter) hits nothing
@@ -3239,7 +3297,7 @@ int runGui(GuiArgs guiArgs) @system
             visibleRows: visibleRows, screenCols: screenCols, screenRows: screenRows,
             docRows: docRows, docY0: docY0, hdrY: hdrY,
             gcols: gcols, gutterPx: gutterPx, docRight: docRightPx(),
-            rightPad: rightPad, dhx: dhx,
+            rightPad: rightPad, dhx: dhx, pinned: pinned,
             total: total, topLine: topLine, maxTop: maxTop,
             treeTopRows: treeTopRows, treePaneRows: treePaneRows,
             treeMaxTop: treeMaxTop,
