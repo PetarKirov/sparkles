@@ -290,16 +290,18 @@ struct Sdl3Events
             // producer delivers the typed character there, and a consumer that
             // switches on `ch` must not go deaf the moment a target upgrades
             // to the full grade.
-            size_t count;
-            dchar only;
-            foreach (c; text.byDchar)
-            {
-                only = c;
-                if (++count > 1)
-                    break;
-            }
-            if (count == 1)
-                _pending.ch = only;
+            //
+            // Asked as "one, then none" rather than with a counter, and not
+            // only because it reads better: a bare `size_t` here does not
+            // compile on macOS. This module imports an ImportC surface, which
+            // brings its own `size_t` alongside `object`'s — glibc collapses
+            // the two, darwin does not — so the name is ambiguous there and
+            // nowhere else. See the note in `sparkles.ui_sdl3`.
+            auto rest = text.byDchar;
+            const first = rest.front;
+            rest.popFront();
+            if (rest.empty)
+                _pending.ch = first;
 
             flush(sink);
             return;
