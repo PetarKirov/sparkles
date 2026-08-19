@@ -477,15 +477,13 @@ private string optionHeader(T)(Option optionInfo, string field)
 /// types yield a single descriptor like `any string`.
 private string[] optionValues(T)(Option optionInfo)
 {
-    import std.conv : to;
-    import std.traits : EnumMembers;
-
     static if (is(T == enum))
     {
-        string[] values;
-        static foreach (m; EnumMembers!T)
-            values ~= m.to!string;
-        return values;
+        // Same table `parseValue` matches against: `@WireCase` recasing and
+        // `@WireName` renames, not the D identifier.
+        import sparkles.wired.policy : AnyFormat, resolveCaseStyle, wireNames;
+
+        return wireNames!(AnyFormat, T, resolveCaseStyle!(AnyFormat, T)).dup;
     }
     else static if (is(T == bool))
         return ["true, yes  (or bare flag)", "false, no"];
