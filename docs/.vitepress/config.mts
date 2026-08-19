@@ -3198,6 +3198,14 @@ export default withMermaid(
                       text: 'bevy-inspector-egui',
                       link: '/research/property-tree/bevy-inspector-egui',
                     },
+                    {
+                      text: 'Unity SerializedProperty',
+                      link: '/research/property-tree/unity-serializedproperty',
+                    },
+                    {
+                      text: 'Derive-Macro Inspectors (Rust)',
+                      link: '/research/property-tree/derive-macro-inspectors',
+                    },
                   ],
                 },
                 {
