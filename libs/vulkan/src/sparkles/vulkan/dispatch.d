@@ -182,6 +182,33 @@ private enum CommandSet[] deviceSets = [
         "EndCommandBuffer",
         "ResetCommandBuffer",
         "CmdPipelineBarrier",
+        // Render targets. A swapchain image is a bare `VkImage`; a view is
+        // what an attachment can be, and the render pass plus framebuffer are
+        // what Vulkan 1.0 needs to render into one. Skia records its own
+        // passes, so these are for the callers that draw directly — the
+        // triangle example, and anything blitting into a presentable image.
+        "CreateImageView",
+        "DestroyImageView",
+        "CreateRenderPass",
+        "DestroyRenderPass",
+        "CreateFramebuffer",
+        "DestroyFramebuffer",
+        // Pipelines.
+        "CreateShaderModule",
+        "DestroyShaderModule",
+        "CreatePipelineLayout",
+        "DestroyPipelineLayout",
+        "CreateGraphicsPipelines",
+        "DestroyPipeline",
+        // Recording a draw. Viewport and scissor are set dynamically rather
+        // than baked into the pipeline, so a resize rebuilds the swapchain
+        // without rebuilding every pipeline built against it.
+        "CmdBeginRenderPass",
+        "CmdEndRenderPass",
+        "CmdBindPipeline",
+        "CmdSetViewport",
+        "CmdSetScissor",
+        "CmdDraw",
     ]),
     CommandSet(khrSwapchain, [
         "CreateSwapchainKHR",
@@ -339,6 +366,15 @@ struct DeviceCommands
         == PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR));
     static assert(is(typeof(DeviceCommands.acquireNextImageKHR) == PFN_vkAcquireNextImageKHR));
     static assert(is(typeof(DeviceCommands.queuePresentKHR) == PFN_vkQueuePresentKHR));
+
+    // The rendering commands are core, so a device that resolves the swapchain
+    // extension and not these has a broken loader rather than a narrow one —
+    // which is why they sit in the core set and count toward `complete`.
+    static assert(is(typeof(DeviceCommands.createRenderPass) == PFN_vkCreateRenderPass));
+    static assert(is(typeof(DeviceCommands.createGraphicsPipelines)
+        == PFN_vkCreateGraphicsPipelines));
+    static assert(is(typeof(DeviceCommands.cmdBeginRenderPass) == PFN_vkCmdBeginRenderPass));
+    static assert(is(typeof(DeviceCommands.cmdDraw) == PFN_vkCmdDraw));
 }
 
 @("vulkan.dispatch.handleTravelsWithTheTable")
