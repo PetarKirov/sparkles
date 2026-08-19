@@ -141,7 +141,7 @@ struct Swapchain
             vk.physicalDevice, vk.surface, &caps).check;
         if (queried.hasError)
             return err!void("vkGetPhysicalDeviceSurfaceCapabilitiesKHR: "
-                ~ resultName(queried.error));
+                ~ describeResult(queried.error));
 
         auto formats = queryVkList!VkSurfaceFormatKHR(
             vk.instance.getPhysicalDeviceSurfaceFormatsKHR, vk.physicalDevice, vk.surface);
@@ -192,7 +192,7 @@ struct Swapchain
             vk.device.destroySwapchainKHR(vk.device.device, previous, null);
 
         if (created.hasError)
-            return err!void("vkCreateSwapchainKHR: " ~ resultName(created.error));
+            return err!void("vkCreateSwapchainKHR: " ~ describeResult(created.error));
 
         sc.images = queryVkList!VkImage(
             vk.device.getSwapchainImagesKHR, vk.device.device, sc.handle);
