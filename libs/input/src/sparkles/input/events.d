@@ -208,6 +208,57 @@ struct WheelEvent
 /// notch-derived and continuous scroll events arrive commensurable (`INP12`).
 enum int linesPerNotch = 3;
 
+/**
+Folds a (possibly fractional) wheel delta into `accum` and returns the whole
+steps now due, keeping the remainder.
+
+Every pixel backend needs this and none of them can skip it: a high-resolution
+wheel or trackpad reports sub-step deltas, and truncating each one to an `int`
+turns a slow scroll into no scroll at all.
+
+The unit is $(B notches), not cells — a producer multiplies the result by
+$(LREF linesPerNotch) before it reaches a $(LREF WheelEvent), because the
+producer owns that multiplication (`INP12`). Anything reading this directly is
+one step short of a scroll distance.
+
+Pure, so the accumulation is testable with no window in sight.
+*/
+int wheelSteps(ref float accum, float delta) @safe pure nothrow @nogc
+{
+    accum += delta;
+    const steps = cast(int) accum;
+    accum -= steps;
+    return steps;
+}
+
+@("input.events.wheelStepsAccumulation")
+@safe pure nothrow @nogc
+unittest
+{
+    float a = 0;
+    // Sub-step deltas accumulate; the whole step fires once, remainder kept.
+    assert(wheelSteps(a, 0.4f) == 0);
+    assert(wheelSteps(a, 0.4f) == 0);
+    assert(wheelSteps(a, 0.4f) == 1);
+    assert(a > 0.19f && a < 0.21f);
+    // A fast flick delivers every whole step at once.
+    assert(wheelSteps(a, 3.0f) == 3);
+    // Opposite-direction deltas cancel the remainder first.
+    float b = 0;
+    assert(wheelSteps(b, -0.6f) == 0);
+    assert(wheelSteps(b, -0.6f) == -1);
+
+    // The unit is notches: one notch is `linesPerNotch` cells of scroll, and
+    // the producer applies that factor. Pinned because the two conventions
+    // merged from opposite directions — the accumulator counts notches while
+    // `INP12` moved the multiplier to the producer — and a consumer that
+    // multiplied again (or a producer that stopped) would silently scroll by
+    // the wrong distance.
+    float c = 0;
+    assert(wheelSteps(c, 1.0f) * linesPerNotch == linesPerNotch);
+    static assert(linesPerNotch > 1);
+}
+
 /// Keyboard focus entered (`focused`) or left the surface.
 struct FocusEvent
 {

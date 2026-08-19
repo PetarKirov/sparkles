@@ -362,51 +362,6 @@ struct RaylibEvents
     }
 }
 
-/**
-Folds a (possibly fractional) wheel delta into `accum` and returns the whole
-steps now due, keeping the remainder — pure, so testable without a window
-(M14).
-
-The unit is $(B notches), not cells: `poll` multiplies the result by
-`linesPerNotch` before it reaches a `WheelEvent`, because the producer owns
-that multiplication (`INP12`). Anything reading this directly is one step
-short of a scroll distance.
-*/
-int wheelSteps(ref float accum, float delta) @safe pure nothrow @nogc
-{
-    accum += delta;
-    const steps = cast(int) accum;
-    accum -= steps;
-    return steps;
-}
-
-@("ui_raylib.events.wheelStepsAccumulation")
-@safe pure nothrow @nogc
-unittest
-{
-    float a = 0;
-    // Sub-step deltas accumulate; the whole step fires once, remainder kept.
-    assert(wheelSteps(a, 0.4f) == 0);
-    assert(wheelSteps(a, 0.4f) == 0);
-    assert(wheelSteps(a, 0.4f) == 1);
-    assert(a > 0.19f && a < 0.21f);
-    // A fast flick delivers every whole step at once.
-    assert(wheelSteps(a, 3.0f) == 3);
-    // Opposite-direction deltas cancel the remainder first.
-    float b = 0;
-    assert(wheelSteps(b, -0.6f) == 0);
-    assert(wheelSteps(b, -0.6f) == -1);
-
-    // The unit is notches: one notch is `linesPerNotch` cells of scroll, and
-    // `poll` applies that factor. Pinned because the two conventions merged
-    // from opposite directions — M14 accumulates notches, INP12 moved the
-    // multiplier to the producer — and a consumer that multiplied again (or
-    // a producer that stopped) would silently scroll by the wrong distance.
-    float c = 0;
-    assert(wheelSteps(c, 1.0f) * linesPerNotch == linesPerNotch);
-    static assert(linesPerNotch > 1);
-}
-
 /// Maps raylib's named keys onto the shared `Key` vocabulary (printable input
 /// arrives through `GetCharPressed` instead; unmapped keys are `Key.none`).
 // The physical keys the full-keyboard grade polls each frame: letters,
