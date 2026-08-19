@@ -24,7 +24,7 @@ the dismissal chain (`IXN6`).
 */
 module systems.input;
 
-import sparkles.input : Event, Gesture, GestureEvent, InputCapabilities, isDismiss,
+import sparkles.input : Event, Gesture, GestureEvent, InputCapabilities,
     Key, KeyAction, KeyEvent, match, Mods, PointerAction, PointerButton,
     PointerEvent, WheelEvent;
 import sparkles.ui.geometry : Point, Rect, Size;
@@ -33,6 +33,7 @@ import sparkles.ui_app.backend : Backend;
 
 import camera : Camera, contentBounds, fitContent, scaleBase, minimapDivisor,
     minimapToWorld;
+import keymap : commandFor, DiagramCommand, DiagramContext;
 import sparkles.ui.components.grid_backdrop : GridPreset;
 
 import world : Capture, Entity, liveBounds, noEntity, Tool, World;
@@ -51,6 +52,10 @@ enum int zoomOutRatio = 91;
 
 /// Keyboard pan step, in screen cells (`IXN3`).
 enum int panStepCells = 2;
+
+/// How many grid fixtures the settings panel cycles through (`GRD9`) — the
+/// enum's own length, so adding a preset never leaves a hardcoded 3 behind.
+enum size_t gridPresetCount = __traits(allMembers, GridPreset).length;
 
 /// Chrome sizes shared with the render systems (`RND1`): one toolbar row, one
 /// status row, a fixed minimap panel in the board's bottom-right.
@@ -235,11 +240,19 @@ bool systemInput(ref World w, ref Camera cam, ref CaptureState cap, in Event e,
 
 // ── keys (`IXN2`–`IXN4`, dismissal) ─────────────────────────────────────────
 
+/**
+Dispatches one key through the board's table (`IXN2`–`IXN4`, dismissal).
+
+The policy is $(MREF keymap); this is only the effects. What used to be the
+chain's shape — a label edit claiming the keyboard, grid settings taking first
+refusal, the tools and camera below them — is now scope order in the table,
+and what used to be `'v' || 'V'` at every row is normalisation done once.
+*/
 private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
     in KeyEvent k, in InputView view) @safe pure nothrow @nogc
 {
     // Space release only when the target reports it — otherwise Space is a
-    // sticky arm (see `World.spaceDown`).
+    // sticky arm (see `World.spaceDown`). A release is not table business.
     if (k.action == KeyAction.release)
     {
         if (view.capabilities.keyRelease && isSpace(k))
@@ -247,158 +260,108 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
         return false;
     }
 
-    // Label edit captures the keyboard (`IXN5`): printable types, backspace
-    // erases, Enter commits, Esc cancels. Nothing else runs until it ends.
-    if (w.isEditing)
-        return onEditKey(w, k);
+    const c = commandFor(k, DiagramContext(isEditing: w.isEditing,
+        gridSettingsOpen: w.gridSettingsOpen));
 
-    // Grid settings captures 1/2/3 and arrows while open (`GRD9`).
-    if (w.gridSettingsOpen && onGridSettingsKey(w, k))
-        return false;
-
-    // Tool switch cancels a pending connect half and any open drag.
-    if (k.key == Key.char_)
+    final switch (c.cmd) with (DiagramCommand)
     {
-        if (k.ch == 'v' || k.ch == 'V')
-        {
+        case none:
+            // In a label edit an unbound printable is text (`IXN5`) — and it
+            // is the RAW character that gets typed, not the case-folded one
+            // the table matched against.
+            if (w.isEditing && k.key == Key.char_)
+                w.editType(k.ch);
+            return false;
+
+        case quit:
+            return true;
+        case dismiss:
+            return .dismiss(w, cap);
+
+        // Tool switch cancels a pending connect half and any open drag.
+        case toolSelect:
             setTool(w, cap, Tool.select);
             return false;
-        }
-        if (k.ch == 'r' || k.ch == 'R')
-        {
+        case toolRect:
             setTool(w, cap, Tool.rect);
             return false;
-        }
-        if (k.ch == 'c' || k.ch == 'C')
-        {
+        case toolConnect:
             setTool(w, cap, Tool.connect);
             return false;
-        }
-        if (k.ch == 'q' || k.ch == 'Q')
-            return true;
-        if (k.ch == 'm' || k.ch == 'M')
-        {
-            w.minimapVisible = !w.minimapVisible;
+
+        case fitAll:
+            .fitAll(w, cam, view.viewport);
             return false;
-        }
-        if (k.ch == 'f' || k.ch == 'F')
-        {
-            fitAll(w, cam, view.viewport);
-            return false;
-        }
-        if (k.ch == '0')
-        {
+        case zoomReset:
             cam.resetZoom();
             return false;
-        }
-        if (k.ch == '+' || k.ch == '=')
-        {
+        case zoomIn:
             cam.zoomAt(1, boardPivot(view.viewport));
             return false;
-        }
-        if (k.ch == '-' || k.ch == '_')
-        {
+        case zoomOut:
             cam.zoomAt(-1, boardPivot(view.viewport));
             return false;
-        }
-        // WASD pan — one step per press/repeat, never a held-key continuous
-        // move, so a terminal without releases can pan too (`IXN3`).
-        if (k.ch == 'w' || k.ch == 'W')
-        {
+        case panUp:
             cam.panBy(0, panStepCells);
             return false;
-        }
-        if (k.ch == 's' || k.ch == 'S')
-        {
+        case panDown:
             cam.panBy(0, -panStepCells);
             return false;
-        }
-        if (k.ch == 'a' || k.ch == 'A')
-        {
+        case panLeft:
             cam.panBy(panStepCells, 0);
             return false;
-        }
-        if (k.ch == 'd' || k.ch == 'D')
-        {
+        case panRight:
             cam.panBy(-panStepCells, 0);
             return false;
-        }
-        if (k.ch == 'g' || k.ch == 'G')
-        {
-            cast(void) w.groupSelection();
-            return false;
-        }
-        if (k.ch == 'u' || k.ch == 'U')
-        {
-            w.ungroupSelection();
-            return false;
-        }
-        if (isSpace(k))
-        {
+        case panArm:
             // Hold where releases exist; sticky toggle where they do not.
             if (view.capabilities.keyRelease)
                 w.spaceDown = true;
             else
                 w.spaceDown = !w.spaceDown;
             return false;
-        }
-    }
 
-    if (k.key == Key.delete_ || k.key == Key.backspace)
-    {
-        if (w.selectionCount > 0)
-            w.deleteSelection();
-        return false;
-    }
+        case toggleMinimap:
+            w.minimapVisible = !w.minimapVisible;
+            return false;
+        case groupSelection:
+            cast(void) w.groupSelection();
+            return false;
+        case ungroupSelection:
+            w.ungroupSelection();
+            return false;
+        case deleteSelection:
+            if (w.selectionCount > 0)
+                w.deleteSelection();
+            return false;
 
-    if (k.key == Key.up)
-    {
-        cam.panBy(0, panStepCells);
-        return false;
-    }
-    if (k.key == Key.down)
-    {
-        cam.panBy(0, -panStepCells);
-        return false;
-    }
-    if (k.key == Key.left)
-    {
-        cam.panBy(panStepCells, 0);
-        return false;
-    }
-    if (k.key == Key.right)
-    {
-        cam.panBy(-panStepCells, 0);
-        return false;
-    }
+        case editCommit:
+            w.editCommit();
+            return false;
+        case editCancel:
+            w.editCancel();
+            return false; // cancel the edit, do not climb the rest of the chain
+        case editErase:
+            w.editErase();
+            return false;
 
-    if (isDismiss(k))
-        return dismiss(w, cap);
-
-    return false;
-}
-
-/// Keys while a label edit is open (`IXN5`).
-private bool onEditKey(ref World w, in KeyEvent k) @safe pure nothrow @nogc
-{
-    if (k.key == Key.enter)
-    {
-        w.editCommit();
-        return false;
+        // Grid settings (`GRD9`): the ranged row's `arg` is the preset.
+        case gridPreset:
+            w.applyGridPreset(cast(GridPreset) c.arg);
+            return false;
+        case gridPrev:
+            w.applyGridPreset(cast(GridPreset)
+                (w.gridPresetIndex > 0 ? w.gridPresetIndex - 1 : gridPresetCount - 1));
+            return false;
+        case gridNext:
+            w.applyGridPreset(cast(GridPreset)
+                ((w.gridPresetIndex + 1) % gridPresetCount));
+            return false;
+        case gridApply:
+            w.applyGridPreset(cast(GridPreset) (w.gridPresetIndex % gridPresetCount));
+            w.gridSettingsOpen = false;
+            return false;
     }
-    if (isDismiss(k))
-    {
-        w.editCancel();
-        return false; // cancel edit, do not climb the rest of the chain yet
-    }
-    if (k.key == Key.backspace)
-    {
-        w.editErase();
-        return false;
-    }
-    if (k.key == Key.char_)
-        w.editType(k.ch);
-    return false;
 }
 
 /**
@@ -608,50 +571,6 @@ private void runMenuItem(ref World w, ref Camera, ref CaptureState cap,
             w.gridSettingsOpen = true;
             return;
     }
-}
-
-private bool onGridSettingsKey(ref World w, in KeyEvent k) @safe pure nothrow @nogc
-{
-    if (k.key == Key.char_)
-    {
-        if (k.ch == '1')
-        {
-            w.applyGridPreset(GridPreset.defaultLines);
-            return true;
-        }
-        if (k.ch == '2')
-        {
-            w.applyGridPreset(GridPreset.stripeBands);
-            return true;
-        }
-        if (k.ch == '3')
-        {
-            w.applyGridPreset(GridPreset.dotPaper);
-            return true;
-        }
-    }
-    if (k.key == Key.up)
-    {
-        if (w.gridPresetIndex > 0)
-            w.gridPresetIndex--;
-        else
-            w.gridPresetIndex = 2;
-        w.applyGridPreset(cast(GridPreset) w.gridPresetIndex);
-        return true;
-    }
-    if (k.key == Key.down)
-    {
-        w.gridPresetIndex = cast(ubyte) ((w.gridPresetIndex + 1) % 3);
-        w.applyGridPreset(cast(GridPreset) w.gridPresetIndex);
-        return true;
-    }
-    if (k.key == Key.enter)
-    {
-        w.applyGridPreset(cast(GridPreset) (w.gridPresetIndex % 3));
-        w.gridSettingsOpen = false;
-        return true;
-    }
-    return false;
 }
 
 private bool hitGridSettings(ref World w, in PointerEvent p, in InputView view)
