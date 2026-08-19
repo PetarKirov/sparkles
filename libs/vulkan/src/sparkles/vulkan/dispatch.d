@@ -33,7 +33,14 @@ module sparkles.vulkan.dispatch;
 
 import sparkles.vulkan.vulkan_c;
 
-/// `CreateInstance` → `createInstance`, the field spelling for a command name.
+/**
+`CreateInstance` → `createInstance`, the field spelling for a command name.
+
+Lowering one letter, not recasing: `convertCase!(CaseStyle.camelCase)` in
+$(MREF sparkles,base,text,case_style) would split the identifier into words and
+title-case each, turning `GetPhysicalDeviceSurfaceCapabilitiesKHR` into
+`...Khr` — renaming a field every call site spells the Vulkan way.
+*/
 private string lowerFirst(string s) @safe pure nothrow
     => s.length == 0 ? s
         : (s[0] >= 'A' && s[0] <= 'Z' ? cast(char)(s[0] - 'A' + 'a') : s[0]) ~ s[1 .. $];
@@ -380,12 +387,8 @@ struct DeviceCommands
         "GetPhysicalDeviceQueueFamilyProperties", "GetPhysicalDeviceMemoryProperties",
         "GetPhysicalDeviceFormatProperties", "EnumerateDeviceExtensionProperties",
         "CreateDevice", "GetDeviceProcAddr"])
-        mixin("i." ~ name[0 .. 1].toLowerAscii ~ name[1 .. $]
-            ~ " = cast(typeof(i." ~ name[0 .. 1].toLowerAscii ~ name[1 .. $] ~ ")) &i;");
+        mixin("i." ~ lowerFirst(name) ~ " = cast(typeof(i." ~ lowerFirst(name) ~ ")) &i;");
 
     assert(i.complete, "core-only table must be complete");
     assert(!i.has!khrSurface, "surface commands are absent and must report so");
 }
-
-private string toLowerAscii(string s) @safe pure nothrow
-    => s.length && s[0] >= 'A' && s[0] <= 'Z' ? cast(char)(s[0] + 32) ~ s[1 .. $] : s;
