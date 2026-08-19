@@ -44,24 +44,24 @@ One row per surveyed system, ordered by layout paradigm. **Paradigm** is the bre
 mechanism (developed in [`theory/`][theory]); **input** is what the formatter reads;
 **output contract** is document vs edits, the axis [the D decision turns on][cmp6].
 
-| System                | Ecosystem         | Paradigm                           | Input                   | Output contract    | Deep-dive                    |
-| --------------------- | ----------------- | ---------------------------------- | ----------------------- | ------------------ | ---------------------------- |
-| gofmt                 | Go                | author's-breaks + elastic tabstops | AST + comment map       | document           | [gofmt][gofmt]               |
-| zig fmt               | Zig               | source-hint (trailing comma)       | AST + token index       | document           | [zig fmt][zig-fmt]           |
-| Roslyn                | C#/VB             | local rule chain                   | full-fidelity CST       | **`TextEdit[]`**   | [Roslyn][roslyn]             |
-| prettier              | JS/TS/CSS/…       | combinator group/flat              | AST + attached comments | document           | [prettier][prettier]         |
-| swift-format          | Swift             | combinator                         | SwiftSyntax CST         | document           | [swift-format][swift-format] |
-| ocamlformat           | OCaml             | combinator                         | AST + attached comments | document           | [ocamlformat][ocamlformat]   |
-| ruff / Biome / dprint | Python, JS, …     | combinator (ports)                 | AST                     | document           | [the Rust wave][rust-reimpl] |
-| black                 | Python            | greedy + magic trailing comma      | AST                     | document           | [long tail][long-tail]       |
-| google-java-format    | Java              | combinator (`Op` → `Doc`)          | AST                     | document           | [long tail][long-tail]       |
-| rustfmt               | Rust              | heuristic budget (`Shape`)         | AST + source spans      | document           | [rustfmt][rustfmt]           |
-| clang-format          | C/C++/…           | cost-minimizing search             | **token stream**        | **`Replacements`** | [clang-format][clang-format] |
-| dfmt                  | **D**             | cost search, capped                | **token stream**        | document           | [dfmt][dfmt]                 |
-| sdfmt                 | **D**             | cost search, memoized              | own parser → chunks     | document           | [D landscape][d-landscape]   |
-| dart_style            | Dart              | n-way constraint solver            | AST → `Piece` tree      | document           | [dart_style][dart-style]     |
-| scalafmt              | Scala             | best-first search                  | AST → `Split`s          | document           | [cost & search][cost-search] |
-| topiary               | any (tree-sitter) | declarative from foreign CST       | tree-sitter CST         | document           | [topiary][topiary]           |
+| System                | Ecosystem         | Paradigm                           | Input                   | Output contract    | Deep-dive                                              |
+| --------------------- | ----------------- | ---------------------------------- | ----------------------- | ------------------ | ------------------------------------------------------ |
+| gofmt                 | Go                | author's-breaks + elastic tabstops | AST + comment map       | document           | [gofmt][gofmt]                                         |
+| zig fmt               | Zig               | source-hint (trailing comma)       | AST + token index       | document           | [zig fmt][zig-fmt]                                     |
+| Roslyn                | C#/VB             | local rule chain                   | full-fidelity CST       | **`TextEdit[]`**   | [Roslyn][roslyn]                                       |
+| prettier              | JS/TS/CSS/…       | combinator group/flat              | AST + attached comments | document           | [prettier][prettier] · [decisions][prettier-decisions] |
+| swift-format          | Swift             | combinator                         | SwiftSyntax CST         | document           | [swift-format][swift-format]                           |
+| ocamlformat           | OCaml             | combinator                         | AST + attached comments | document           | [ocamlformat][ocamlformat]                             |
+| ruff / Biome / dprint | Python, JS, …     | combinator (ports)                 | AST                     | document           | [the Rust wave][rust-reimpl]                           |
+| black                 | Python            | greedy + magic trailing comma      | AST                     | document           | [long tail][long-tail]                                 |
+| google-java-format    | Java              | combinator (`Op` → `Doc`)          | AST                     | document           | [long tail][long-tail]                                 |
+| rustfmt               | Rust              | heuristic budget (`Shape`)         | AST + source spans      | document           | [rustfmt][rustfmt]                                     |
+| clang-format          | C/C++/…           | cost-minimizing search             | **token stream**        | **`Replacements`** | [clang-format][clang-format]                           |
+| dfmt                  | **D**             | cost search, capped                | **token stream**        | document           | [dfmt][dfmt]                                           |
+| sdfmt                 | **D**             | cost search, memoized              | own parser → chunks     | document           | [D landscape][d-landscape]                             |
+| dart_style            | Dart              | n-way constraint solver            | AST → `Piece` tree      | document           | [dart_style][dart-style]                               |
+| scalafmt              | Scala             | best-first search                  | AST → `Split`s          | document           | [cost & search][cost-search]                           |
+| topiary               | any (tree-sitter) | declarative from foreign CST       | tree-sitter CST         | document           | [topiary][topiary]                                     |
 
 ---
 
@@ -166,7 +166,8 @@ depth-1 clones. See [the theory index's footnote](./theory/index.md#milestones).
 **"I am designing the D formatter."**
 [The substrate][baseline] first — it changes the assumptions — then
 [the D landscape][d-landscape], [comparison's delta table][delta], and
-[the proposal][proposal].
+[the proposal][proposal]. To argue about individual rules rather than architecture,
+[prettier's decisions, extracted][prettier-decisions] — 134 rows, each scored for D.
 
 **"I have five minutes."**
 [The Hughes remark][hughes-remark], [the incompleteness budget][budget], and
@@ -211,6 +212,7 @@ checked.
 [baseline]: ./dmd-lsp-baseline.md
 [proposal]: ./dmd-fmt-proposal.md
 [prettier]: ./prettier.md
+[prettier-decisions]: ./prettier-decisions.md
 [clang-format]: ./clang-format.md
 [rustfmt]: ./rustfmt.md
 [gofmt]: ./gofmt.md
