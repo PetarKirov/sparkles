@@ -198,6 +198,20 @@
         # Pre-commit hooks
         pkgs.prek
         pkgs.lychee
+
+        # GLSL → SPIR-V, for regenerating the shaders under
+        # `libs/ui-sdl3/examples/shaders/` (each `.vert`/`.frag` carries its
+        # own `glslangValidator` line). Deliberately *not* in `ciPackages`:
+        # the compiled `.spv` is committed beside its source, so no CI job
+        # needs a shader compiler to build an example that uses one.
+        pkgs.glslang
+
+        # Vulkan's validation layers, including synchronization validation —
+        # the semaphore/fence reuse rules in `sparkles.ui_sdl3.frame` are the
+        # kind that only a layer catches, and `--validation` is a no-op
+        # without them installed.
+        pkgs.vulkan-validation-layers
+
         # Profiling
         pkgs.tracy
         pkgs.capstone
@@ -311,6 +325,17 @@
       #     the ci tier at all.
       devShellHook = ''
         export GITHUB_TOKEN="$(gh auth token)"
+
+        # Where the Khronos loader looks for explicit layers. The package is
+        # inert without it: the loader searches system directories, and a nix
+        # store path is not one of them, so `--validation` on the ui-sdl3
+        # examples would silently enable nothing. Dev tier, not CI — no job
+        # runs a Vulkan example, and interpolating the path here would pull
+        # the layers into the CI shell's closure.
+        #
+        # Defaulted rather than assigned, so a developer testing against a
+        # locally built layer can set it before entering the shell.
+        export VK_LAYER_PATH="''${VK_LAYER_PATH:-${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d}"
 
         # Pinned corpora for the wired runtime JSON bench
         # (libs/wired/bench/runtime; its --data-dir flag overrides this).

@@ -47,6 +47,15 @@ charset = unset
 end_of_line = unset
 insert_final_newline = unset
 
+# Compiled SPIR-V, checked in beside the GLSL it was generated from so no CI
+# job needs a shader compiler (see libs/ui-sdl3/examples/shaders/). Binary, and
+# a stream of 32-bit words rather than lines.
+[*.spv]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+
 # Disable indent checking for markdown - code blocks may have intentional
 # spacing for visual output examples
 [*.md]
