@@ -1,8 +1,8 @@
 # Handoff: drop SDL, native Wayland live-resize
 
-**Status:** decision taken, implementation **not started**.
+**Status:** decision taken, implementation **not started**. Working tree is **clean**.
 **Date:** 2026-08-20.
-**Branch:** `feat/ui-sdl3-input` (9 commits ahead of `origin/feat/ui-sdl3-input`, plus **uncommitted** X11-good resize work — see [§3 Working tree](#3-working-tree)).
+**Branch:** `feat/ui-sdl3-input`. The measured X11-good loop (`32c323f71`) and the Darwin `events.d` fix (`1faff458a`) are **committed** — see [§3 Working tree](#3-working-tree).
 **This document is for the next agent.** Read [§0](#0-read-this-first) then [§1](#1-mission). Do not re-run the SDL/libdecor experiments in [§5](#5-chronology--every-step-we-took).
 
 ---
@@ -17,7 +17,7 @@ You are continuing a measured investigation, not starting a green-field windowin
 4. The owner’s decision: **drop SDL on this path** (to avoid libdecor) and write a **native Wayland** triangle.
 5. Live triangle tracking **beats** prettier create counts. Slack, debounce, and pad-to-display were tried and **vetoed**.
 6. **Do not delete** the SDL triangle until the native one is CI-green and HITL-verified on Mutter.
-7. **Do not mix** the unstaged `events.d` macOS `size_t` fix into this work.
+7. The Darwin `events.d` `size_t` fix is already on the branch (`1faff458a`). It is unrelated to resize; do not fold further WSI work into it.
 
 If a sentence in this file and a sentence in the current source disagree, **trust the source** and update this file. File:line anchors below are from 2026-08-20.
 
@@ -47,17 +47,17 @@ One example first. Promote a `sparkles:ui-wayland` library only after the loop i
 
 ## 2. First 30 minutes
 
-Completion criterion: you can rebuild the current SDL triangle, you know which files are dirty, and you have not started a native window yet.
+Completion criterion: you can rebuild the current SDL triangle, `git status` is clean, and you have not started a native window yet.
 
-1. Confirm branch and dirty files:
+1. Confirm branch and that the tree is clean:
 
    ```bash
    git rev-parse --abbrev-ref HEAD   # expect feat/ui-sdl3-input
-   git status
+   git status                        # expect clean
    git log --oneline origin/feat/ui-sdl3-input..HEAD
    ```
 
-2. **Commit or stash the uncommitted X11/SDL work first** (see [§3](#3-working-tree)). Do not start native work on a tree that also has `events.d`.
+2. The X11-good loop is already committed (`32c323f71`). Do not rewind it. Start native work from a clean tree (see [§3](#3-working-tree)).
 
 3. Build and glance at `--help` so the CLI contract is in your head:
 
@@ -91,40 +91,26 @@ Completion criterion: you can rebuild the current SDL triangle, you know which f
 
 ## 3. Working tree
 
-**Already on the branch** (`feat/ui-sdl3-input`, 9 commits):
+**Clean as of 2026-08-20.** Nothing left uncommitted from the SDL resize session.
 
-| SHA         | Subject                                                                          |
-| ----------- | -------------------------------------------------------------------------------- |
-| `fcdd49745` | `feat(ui-sdl3): retire swapchain and present semaphores instead of idling`       |
-| `bf9f3ae3c` | `feat(ui-sdl3/examples): rebuild the triangle swapchain without idling`          |
-| `904eece94` | `feat(vulkan.dispatch): load optional dynamic-rendering commands`                |
-| `e6d0d7bbe` | `feat(ui-sdl3): grow-only swapchains, dynamic rendering, idle before teardown`   |
-| `13afb9c2c` | `feat(ui-sdl3/examples): dynamic-render the triangle and skip shrink rebuilds`   |
-| `68b615b68` | `fix(ui-sdl3/examples): release color-attachment read after the acquire barrier` |
-| `c8f178744` | `feat(ui-sdl3): add --present-mode for the triangle swapchain`                   |
-| `b24020abe` | `feat(core-cli.args): parse enums through sparkles:wired wire names`             |
-| `326f2016d` | `feat(ui-sdl3/examples): spell present mode as a wired enum`                     |
+**On the branch** (`feat/ui-sdl3-input`):
 
-**Uncommitted as of 2026-08-20** (this is the measured X11-good loop — **do not discard**):
+| SHA         | Subject                                                                            |
+| ----------- | ---------------------------------------------------------------------------------- |
+| `fcdd49745` | `feat(ui-sdl3): retire swapchain and present semaphores instead of idling`         |
+| `bf9f3ae3c` | `feat(ui-sdl3/examples): rebuild the triangle swapchain without idling`            |
+| `904eece94` | `feat(vulkan.dispatch): load optional dynamic-rendering commands`                  |
+| `e6d0d7bbe` | `feat(ui-sdl3): grow-only swapchains, dynamic rendering, idle before teardown`     |
+| `13afb9c2c` | `feat(ui-sdl3/examples): dynamic-render the triangle and skip shrink rebuilds`     |
+| `68b615b68` | `fix(ui-sdl3/examples): release color-attachment read after the acquire barrier`   |
+| `c8f178744` | `feat(ui-sdl3): add --present-mode for the triangle swapchain`                     |
+| `b24020abe` | `feat(core-cli.args): parse enums through sparkles:wired wire names`               |
+| `326f2016d` | `feat(ui-sdl3/examples): spell present mode as a wired enum`                       |
+| `83ed01c7f` | `docs(specs/ui-sdl3): hand off native Wayland live-resize`                         |
+| `32c323f71` | `feat(ui-sdl3): grow-only live resize with amortized reap` — **the X11-good loop** |
+| `1faff458a` | `fix(ui-sdl3.events): disambiguate size_t on Darwin` — unrelated; already landed   |
 
-| File                                                  | What                                                                                                                                                                                                     | Action                                            |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `libs/ui-sdl3/examples/vulkan-triangle.d`             | +~500 lines: `--trace-ms`, `--decor`, `--video-driver`, pump+peep, mailbox 2 ms pace, live-resize watch, grow-only + `drawableExtent`, ASCII title, amortized `reap(limit)`, 10-point policy in the loop | **Commit** as its own `feat(ui-sdl3/examples): …` |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/swapchain.d`       | `recreate(..., growOnly=false)` explicit; `reap(vk, limit)`                                                                                                                                              | Commit with the triangle **or** with the library  |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/frame.d`           | `reap(vk, limit)`                                                                                                                                                                                        | Same                                              |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/events.d`          | Unrelated macOS `size_t` / `byDchar` fix (ImportC `size_t` clash on Darwin)                                                                                                                              | **Leave unstaged** or land separately             |
-| `docs/.vitepress/config.mts`                          | “UI SDL3” sidebar item                                                                                                                                                                                   | Commit with this handoff                          |
-| `docs/specs/ui-sdl3/native-wayland-resize-handoff.md` | This file                                                                                                                                                                                                | Commit with the sidebar                           |
-
-Suggested first commit (docs only is also fine):
-
-```bash
-git add docs/specs/ui-sdl3/native-wayland-resize-handoff.md docs/.vitepress/config.mts
-# then, separately, the X11-good loop — not events.d:
-git add libs/ui-sdl3/examples/vulkan-triangle.d \
-        libs/ui-sdl3/src/sparkles/ui_sdl3/swapchain.d \
-        libs/ui-sdl3/src/sparkles/ui_sdl3/frame.d
-```
+`32c323f71` is what used to sit uncommitted: `--trace-ms`, `--decor`, `--video-driver`, pump+peep, mailbox 2 ms pace, live-resize watch, grow-only + `drawableExtent`, ASCII title, `Swapchain.recreate(..., growOnly=false)`, `reap(vk, limit)` on both `Swapchain` and `FrameSync`.
 
 Keep `--trace-ms` / `RunReport` until the native example has the **same columns**. That is how we will compare X11 vs native Wayland in one glance.
 
@@ -169,7 +155,7 @@ dub build --single vulkan-triangle.d -b debug
 | `--present-mode mailbox\|fifo\|fifo-relaxed\|immediate\|auto` | Wired enum; values = `VkPresentModeKHR`. `auto` = mailbox if offered.                      |
 | `--trace-ms N`                                                | Log any frame whose wall time is ≥ N ms, then a `RunReport` on close.                      |
 | `--video-driver x11\|wayland\|auto`                           | Sets `SDL_VIDEODRIVER` **before** `SDL_Init`.                                              |
-| `--decor none\|cairo\|auto`                                   | libdecor policy. Default in the uncommitted tree is `none`. Irrelevant once SDL is gone.   |
+| `--decor none\|cairo\|auto`                                   | libdecor policy. Default is `none`. Irrelevant once SDL is gone.                           |
 | `--resize-stress`                                             | `SDL_SetWindowSize` grow+shrink band. **Does not reproduce** the 100–1000 ms Mutter stall. |
 | `--validation`                                                | Khronos layer. **Do not mix with `MANGOHUD=1`.**                                           |
 | `--no-color`                                                  | For pasting `RunReport`.                                                                   |
@@ -352,7 +338,7 @@ X11 `currentExtent` **is** the window. You **cannot** create a swapchain larger 
 | + 16 ms min gap between grows                                                       | ~322              | Still 20–30 ms on grow                  | Grow events are already &gt;16 ms apart; throttle never fired                 |
 | + 64 px grow slack                                                                  | 92                | **“Feels worse”**                       | Stats prettier, triangle late by up to 64 px. **Reverted.**                   |
 
-**Settled X11 algorithm** (uncommitted `vulkan-triangle.d` today):
+**Settled X11 algorithm** (`32c323f71`, current `vulkan-triangle.d`):
 
 1. `SDL_PumpEvents` once, then `SDL_PeepEvents` (do **not** `PollEvent` in a loop).
 2. Optional watch present on `PIXEL_SIZE` / `EXPOSED` — **non-blocking** (`waitForFences` / acquire timeout 0), **never rebuild** in the watch.
@@ -453,7 +439,7 @@ while running:
 
 Fence reset is in `beginFrame`, **not** `waitForFrame`. Resetting early deadlocks if acquire bails.
 
-### 7.2 Library APIs added this session (uncommitted `reap(limit)`)
+### 7.2 Library APIs added this session (`32c323f71`)
 
 ```d
 // swapchain.d / frame.d
@@ -657,7 +643,7 @@ Each step has a completion criterion. Do not start the next step until it is met
 
 | #   | Step                                                                                                                                    | Completion criterion                                                                                                          |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| 0   | Commit uncommitted SDL/X11 triangle + `reap(limit)` / `growOnly`. Leave `events.d`.                                                     | `git status` clean except `events.d` (or that too, separately). `dub build --single vulkan-triangle.d` still works.           |
+| 0   | ~~Commit the SDL/X11 triangle + `reap(limit)` / `growOnly`.~~ **Done** (`32c323f71`, `1faff458a`). Tree is clean.                       | `git status` clean. `dub build --single vulkan-triangle.d` still works.                                                       |
 | 1   | Skeleton window: ImportC + scanner, registry, `xdg_toplevel`, first configure, **ack**, commit empty, print configure sizes. No Vulkan. | Runs on Mutter; prints sizes while you drag; `SKIP:` + 0 with `env -u WAYLAND_DISPLAY`. Compare to `os-apis/wayland/example`. |
 | 2   | Vulkan surface on that `wl_surface`. One swapchain, one static triangle, no resize.                                                     | Window shows the navy clear + triangle. `--help` works. `--frames 120` presents 120 frames and exits.                         |
 | 3   | Resize: pending size from toplevel, ack + recreate (or grow-only) **after** dispatch, then draw. `--trace-ms 20`.                       | HITL on Mutter **before** decorations or input. Fast-drag dispatch ≤ 20 ms. Triangle tracks.                                  |
@@ -695,7 +681,7 @@ The research Wayland example’s `dub.sdl` is only `libs "wayland-client"` — i
 | `libs/ui-sdl3/src/sparkles/ui_sdl3/frame.d`                        | `FrameSync`, `decideAcquire`. Reuse.                                                                                                              |
 | `libs/ui-sdl3/src/sparkles/ui_sdl3/vulkan_context.d`               | Instance / device / **SDL** surface. Needs a Wayland-native create path.                                                                          |
 | `libs/ui-sdl3/src/sparkles/ui_sdl3/window.d`                       | SDL window + `PixelSize`. Do not use the window for the native app.                                                                               |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/events.d`                       | SDL → `sparkles:input`. Unrelated dirty macOS fix.                                                                                                |
+| `libs/ui-sdl3/src/sparkles/ui_sdl3/events.d`                       | SDL → `sparkles:input`. Darwin `size_t` fix is `1faff458a`.                                                                                       |
 | `libs/vulkan/src/sparkles/vulkan/vulkan_c.c`                       | `VK_NO_PROTOTYPES`, **no** `VK_USE_PLATFORM_*`                                                                                                    |
 | `libs/vulkan/src/sparkles/vulkan/loader.d`                         | `vkGetInstanceProcAddr` without SDL                                                                                                               |
 | `libs/vulkan/src/sparkles/vulkan/dispatch.d`                       | Has `khrSurface` + swapchain; **no** wayland surface                                                                                              |
