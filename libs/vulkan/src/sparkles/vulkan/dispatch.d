@@ -217,6 +217,18 @@ private enum CommandSet[] deviceSets = [
         "AcquireNextImageKHR",
         "QueuePresentKHR",
     ]),
+    // Optional: a 1.1 device with the extension, or 1.3 where the KHR
+    // names remain as aliases. Not core — a 1.1 ICD without the
+    // extension must still produce a complete table.
+    CommandSet(khrDynamicRendering, [
+        "CmdBeginRenderingKHR",
+        "CmdEndRenderingKHR",
+    ]),
+    // Core in 1.3. Optional here so a 1.1 table stays complete.
+    CommandSet(vkVersion13, [
+        "CmdBeginRendering",
+        "CmdEndRendering",
+    ]),
 ];
 
 /**
@@ -241,6 +253,10 @@ package bool matchesHeaderMacro(scope const(char)[] name, scope const(char)[] ma
 enum string khrSurface = "VK_KHR_surface";
 /// ditto
 enum string khrSwapchain = "VK_KHR_swapchain";
+/// ditto
+enum string khrDynamicRendering = "VK_KHR_dynamic_rendering";
+/// ditto — not an extension name, a `has` key for the 1.3 core aliases.
+enum string vkVersion13 = "VK_VERSION_1_3";
 /**
 Tier 1: the commands available before any instance exists.
 
@@ -345,6 +361,8 @@ struct DeviceCommands
     // own macros rather than to a second hand-written literal.
     static assert(matchesHeaderMacro(khrSurface, VK_KHR_SURFACE_EXTENSION_NAME));
     static assert(matchesHeaderMacro(khrSwapchain, VK_KHR_SWAPCHAIN_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrDynamicRendering,
+        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME));
 
     // The trimming itself, since the whole point is that it differs by
     // compiler and only one of these two shapes is exercised per build.
