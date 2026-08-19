@@ -54,10 +54,12 @@
  * shader's three vertex colours, and its centroid is their mean.
  *
  * Under validation, add the synchronization-validation feature — it is what
- * catches the semaphore-reuse class of bug this design exists to avoid:
+ * catches the semaphore-reuse class of bug this design exists to avoid.
+ * `--resize-stress` rebuilds the swapchain every frame, which is the path
+ * that used to `vkDeviceWaitIdle` and destroy objects a present still held:
  *
  * ---
- * VK_LAYER_VALIDATE_SYNC=1 ./build/vulkan_triangle --frames 300 --validation
+ * VK_LAYER_VALIDATE_SYNC=1 ./build/vulkan_triangle --frames 300 --validation --resize-stress
  * ---
  *
  * (The older spelling is a `VK_LAYER_ENABLES` naming
@@ -100,6 +102,10 @@ struct VulkanTriangle
     @(Option("no-color", description: "Disable colored output"))
     bool noColor;
 
+    @(Option("resize-stress",
+        description: "Change the window size every frame (exercises swapchain rebuild)"))
+    bool resizeStress;
+
     Expected!(void, string) run()
     {
         Window window;
@@ -121,7 +127,7 @@ struct VulkanTriangle
         if (brought.hasError)
             return skip("cannot bring up Vulkan", brought.error);
 
-        auto drawn = draw(vk, window, frames);
+        auto drawn = draw(vk, window, frames, resizeStress);
         if (drawn.hasError)
             return err!void(drawn.error);
 
@@ -158,8 +164,8 @@ struct RunReport
 // The frame loop
 // -----------------------------------------------------------------------------
 
-Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window, int frameBudget)
-    @system
+Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
+    int frameBudget, bool resizeStress = false) @system
 {
     RunReport report = { device: vk.deviceName };
 
@@ -168,41 +174,82 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window, int f
     FrameSync sync;
     CommandPool pool;
     Pipeline pipeline;
+    // Quiet frames since the last swapchain build. Retired present
+    // semaphores are reaped once this passes framesInFlight, so the wait
+    // is already satisfied and a drag never serialises on vsync.
+    uint framesSinceRebuild;
 
-    // Everything sized by the swapchain is rebuilt together, so there is one
-    // place a resize can go wrong instead of five.
-    Expected!(void, string) rebuild()
+    // A resize is the swapchain and the views/framebuffers that name its
+    // images. The render pass, pipeline, command pool and per-frame sync
+    // outlive it: they do not depend on extent. Per-image renderFinished is
+    // replaced rather than reused — a present may still be waiting on the
+    // old set — and reaped a few quiet frames later. Waiting for in-flight
+    // fences (not vkDeviceWaitIdle) is enough for the GPU work; oldSwapchain
+    // lets the presentation engine keep scanning the old images out.
+    //
+    // `force` is the acquire/present OUT_OF_DATE path: same pixel size still
+    // rebuilds, because the driver has retired this handle. PIXEL_SIZE_CHANGED
+    // leaves it false so a drag that reports the same size twice is a no-op.
+    Expected!(void, string) rebuild(bool force = false)
     {
-        auto idle = check(vk.device.deviceWaitIdle(vk.device.device));
-        if (idle.hasError)
-            return err!void("vkDeviceWaitIdle: " ~ describeResult(idle.error));
-
-        target.destroy(vk);
-        sync.destroy(vk);
-
         auto px = window.pixelSize;
         if (px.hasError)
             return err!void(px.error);
 
-        auto made = Swapchain.create(sc, vk, px.value, sc.handle);
-        if (made.hasError)
-            return err!void(made.error);
+        // Minimised: keep the old swapchain and stop drawing. Creating a
+        // zero-area swapchain is invalid; destroying the old one would make
+        // the restore more expensive than it needs to be.
+        if (px.value.width <= 0 || px.value.height <= 0)
+            return ok!string();
 
-        auto retargeted = RenderTarget.create(target, vk, sc);
+        if (!force && sc.handle !is null
+            && sc.extent.width == cast(uint) px.value.width
+            && sc.extent.height == cast(uint) px.value.height)
+            return ok!string();
+
+        auto waited = sync.waitAll(vk);
+        if (waited.hasError)
+            return err!void("vkWaitForFences: " ~ describeResult(waited.error));
+
+        auto updated = Swapchain.recreate(sc, vk, px.value, force);
+        if (updated.hasError)
+            return err!void(updated.error);
+        if (updated.value != SwapchainResize.rebuilt)
+            return ok!string();
+
+        auto retargeted = target.renderPass is null
+            ? RenderTarget.create(target, vk, sc)
+            : target.rebind(vk, sc);
         if (retargeted.hasError)
             return retargeted;
 
-        auto resynced = FrameSync.create(sync, vk, cast(uint) sc.images.length);
-        if (resynced.hasError)
-            return resynced;
+        const images = cast(uint) sc.images.length;
+        if (sync.imageCount == 0)
+        {
+            auto resynced = FrameSync.create(sync, vk, images);
+            if (resynced.hasError)
+                return resynced;
+        }
+        else
+        {
+            // New renderFinished, not a reuse: a present may still be
+            // waiting on the old set. replaceImages retires them; they
+            // are destroyed a few quiet frames later once the queue is idle.
+            auto replaced = sync.replaceImages(vk, images);
+            if (replaced.hasError)
+                return replaced;
+        }
 
         report.swapchainsBuilt++;
+        framesSinceRebuild = 0;
         return ok!string();
     }
 
     auto started = rebuild();
     if (started.hasError)
         return err!RunReport(started.error);
+    if (sc.handle is null)
+        return err!RunReport("swapchain extent is zero (window minimised?)");
 
     scope (exit)
     {
@@ -215,8 +262,7 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window, int f
     }
 
     // The pipeline outlives a resize: viewport and scissor are dynamic state,
-    // and the render pass it is built against is format-compatible with every
-    // one a rebuild produces (same surface, so the same format).
+    // and the render pass is kept (format does not change with the window).
     auto built = Pipeline.create(pipeline, vk, target.renderPass);
     if (built.hasError)
         return err!RunReport(built.error);
@@ -233,17 +279,46 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window, int f
 
     while (frameBudget == 0 || report.framesPresented < frameBudget)
     {
+        if (resizeStress)
+        {
+            const i = report.framesPresented;
+            SDL_SetWindowSize(window.handle,
+                480 + cast(int)(i % 50) * 8,
+                270 + cast(int)(i % 40) * 6);
+        }
+
         SDL_Event ev;
         bool quit;
+        // One flag for the whole drain: a drag produces many PIXEL_SIZE_CHANGED
+        // events per pump, and only the last size SDL reports is worth building.
+        bool sizeChanged;
         while (SDL_PollEvent(&ev))
+        {
             if (ev.type == SDL_EventType.SDL_EVENT_QUIT
                 || ev.type == SDL_EventType.SDL_EVENT_WINDOW_CLOSE_REQUESTED)
                 quit = true;
+            else if (ev.type == SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+                sizeChanged = true;
+        }
         if (quit)
         {
             report.exitedBecause = "window closed";
             break;
         }
+
+        // Rebuild before acquire so this frame is already at the new size —
+        // waiting for OUT_OF_DATE keeps presenting a stretched old swapchain
+        // for the rest of the drag.
+        if (sizeChanged)
+        {
+            auto again = rebuild();
+            if (again.hasError)
+                return err!RunReport(again.error);
+        }
+
+        // No surface to draw into (still starting, or minimised).
+        if (sc.handle is null || sc.extent.width == 0 || sc.extent.height == 0)
+            continue;
 
         auto waited = sync.waitForFrame(vk);
         if (waited.hasError)
@@ -263,7 +338,7 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window, int f
         {
             if (decision.recreate)
             {
-                auto again = rebuild();
+                auto again = rebuild(true);
                 if (again.hasError)
                     return err!RunReport(again.error);
             }
@@ -289,17 +364,33 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window, int f
         const presented = sc.present(vk, index, sync.renderFinished(index));
         sync.advance();
         report.framesPresented++;
+        framesSinceRebuild++;
 
-        if (presented.hasError || Swapchain.needsRecreation(presented.value)
-            || decision.recreate)
+        // Old presents have had a couple of vsyncs to finish; queueWaitIdle
+        // is then a no-op rather than a stall on the drag.
+        if ((sync.hasRetired || sc.hasRetired)
+            && framesSinceRebuild == sync.framesInFlight + 1)
+        {
+            cast(void) vk.device.queueWaitIdle(vk.queue);
+            sync.reap(vk);
+            sc.reap(vk);
+        }
+
+        // Skip a second rebuild when PIXEL_SIZE_CHANGED already did this
+        // tick: present is often SUBOPTIMAL for the same size, and waiting
+        // the fence we just submitted would stall on a vsync for nothing.
+        if (!sizeChanged && (presented.hasError
+            || Swapchain.needsRecreation(presented.value) || decision.recreate))
         {
             if (presented.hasError && !Swapchain.needsRecreation(presented.error))
                 return err!RunReport("vkQueuePresentKHR: " ~ describeResult(presented.error));
 
-            auto again = rebuild();
+            auto again = rebuild(true);
             if (again.hasError)
                 return err!RunReport(again.error);
         }
+        else if (presented.hasError && !Swapchain.needsRecreation(presented.error))
+            return err!RunReport("vkQueuePresentKHR: " ~ describeResult(presented.error));
     }
 
     report.extent = format("%dx%d", sc.extent.width, sc.extent.height);
@@ -423,8 +514,30 @@ struct RenderTarget
         if (pass.hasError)
             return err!void("vkCreateRenderPass: " ~ describeResult(pass.error));
 
-        t.views = new VkImageView[sc.images.length];
-        t.framebuffers = new VkFramebuffer[sc.images.length];
+        return t.createViews(vk, sc);
+    }
+
+    /**
+    Rebuild the views and framebuffers for a new swapchain.
+
+    The render pass stays: it depends on the format, which a resize does not
+    change, and the pipeline was built against this handle. Recreating it
+    would be legal (compatible render passes) and a waste.
+    */
+    Expected!(void, string) rebind(ref VulkanContext vk, ref Swapchain sc) @system
+    {
+        destroyViews(vk);
+        return createViews(vk, sc);
+    }
+
+    private Expected!(void, string) createViews(ref VulkanContext vk, ref Swapchain sc)
+        @system
+    {
+        if (views.length != sc.images.length)
+        {
+            views = new VkImageView[sc.images.length];
+            framebuffers = new VkFramebuffer[sc.images.length];
+        }
 
         foreach (i, image; sc.images)
         {
@@ -440,16 +553,16 @@ struct RenderTarget
             ));
 
             auto view = vk.device.createImageView(
-                vk.device.device, &viewInfo, null, &t.views[i]).check;
+                vk.device.device, &viewInfo, null, &views[i]).check;
             if (view.hasError)
             {
-                t.destroy(vk);
+                destroy(vk);
                 return err!void("vkCreateImageView: " ~ describeResult(view.error));
             }
 
-            auto attachment = t.views[i];
+            auto attachment = views[i];
             auto fbInfo = vkInfo(VkFramebufferCreateInfo(
-                renderPass: t.renderPass,
+                renderPass: renderPass,
                 attachmentCount: 1,
                 pAttachments: &attachment,
                 width: sc.extent.width,
@@ -458,10 +571,10 @@ struct RenderTarget
             ));
 
             auto fb = vk.device.createFramebuffer(
-                vk.device.device, &fbInfo, null, &t.framebuffers[i]).check;
+                vk.device.device, &fbInfo, null, &framebuffers[i]).check;
             if (fb.hasError)
             {
-                t.destroy(vk);
+                destroy(vk);
                 return err!void("vkCreateFramebuffer: " ~ describeResult(fb.error));
             }
         }
@@ -474,20 +587,33 @@ struct RenderTarget
         if (vk.device.device is null)
             return;
 
-        foreach (fb; framebuffers)
-            if (fb !is null)
-                vk.device.destroyFramebuffer(vk.device.device, fb, null);
-        foreach (v; views)
-            if (v !is null)
-                vk.device.destroyImageView(vk.device.device, v, null);
+        destroyViews(vk);
         if (renderPass !is null)
         {
             vk.device.destroyRenderPass(vk.device.device, renderPass, null);
             renderPass = null;
         }
+    }
 
-        framebuffers = null;
-        views = null;
+    /// Views and framebuffers only — the render pass outlives a resize.
+    private void destroyViews(ref VulkanContext vk) @system nothrow
+    {
+        foreach (ref fb; framebuffers)
+        {
+            if (fb !is null)
+            {
+                vk.device.destroyFramebuffer(vk.device.device, fb, null);
+                fb = null;
+            }
+        }
+        foreach (ref v; views)
+        {
+            if (v !is null)
+            {
+                vk.device.destroyImageView(vk.device.device, v, null);
+                v = null;
+            }
+        }
     }
 }
 
