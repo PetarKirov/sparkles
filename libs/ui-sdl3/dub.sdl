@@ -13,6 +13,10 @@ dflags "-preview=in" "-preview=dip1000"
 libs "SDL3"
 
 dependency "sparkles:vulkan" path="../.."
+// The shared input vocabulary every `sparkles:ui` target speaks. SDL's event
+// queue is translated into it in `events.d`; nothing above that boundary ever
+// sees an `SDL_Event`.
+dependency "sparkles:input" path="../.."
 dependency "expected" version="~>0.4.1"
 
 configuration "library" {

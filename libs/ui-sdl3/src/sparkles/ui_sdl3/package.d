@@ -26,6 +26,7 @@ module sparkles.ui_sdl3;
 public import sparkles.ui_sdl3.sdl3_c;
 public import sparkles.ui_sdl3.commands;
 public import sparkles.ui_sdl3.error;
+public import sparkles.ui_sdl3.events;
 public import sparkles.ui_sdl3.frame;
 public import sparkles.ui_sdl3.swapchain;
 public import sparkles.ui_sdl3.vulkan_context;
