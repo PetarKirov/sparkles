@@ -273,6 +273,59 @@ class DeltaTimeLogger : CoreLogger
         put(w, '\n');
         w.flush();
     }
+
+    /// Elapsed since this logger was installed (`Δt` on each line).
+    Duration sinceStart() const @safe nothrow @nogc
+        => durationFromTicks(MonoTime.currTime.ticks - startTicks);
+
+    /// Elapsed since the previous log or $(LREF takeDelta) (`Δtᵢ`).
+    Duration sincePrev() const @safe nothrow @nogc
+        => durationFromTicks(MonoTime.currTime.ticks
+            - atomicLoad!(MemoryOrder.raw)(prevTicks));
+
+    /// Snapshot `Δt` / `Δtᵢ` and advance the previous-mark, the same way a
+    /// log line does, so the next mark's `Δtᵢ` is measured from this call.
+    LogDelta takeDelta() @safe nothrow @nogc
+    {
+        const now = MonoTime.currTime.ticks;
+        const prev = atomicExchange!(MemoryOrder.raw)(&prevTicks, now);
+        return LogDelta(
+            durationFromTicks(now - startTicks),
+            durationFromTicks(now - prev),
+        );
+    }
+}
+
+/// One `Δt` / `Δtᵢ` pair, matching the columns on a $(LREF DeltaTimeLogger) line.
+struct LogDelta
+{
+    Duration sinceStart; /// `Δt` — since the logger was installed
+    Duration sincePrev;  /// `Δtᵢ` — since the previous log or take
+}
+
+/// $(LREF DeltaTimeLogger.takeDelta) on the process logger, or a zero pair
+/// when the installed logger is not a delta-time one.
+LogDelta takeLogDelta() @safe nothrow @nogc
+{
+    if (auto logger = sharedCoreLog)
+    {
+        auto d = () @trusted { return cast(DeltaTimeLogger) cast() logger; }();
+        if (d !is null)
+            return d.takeDelta();
+    }
+    return LogDelta.init;
+}
+
+/// `Δt 33.6s | Δtᵢ 30.0s` — the same padded durations the log prefix uses.
+void writeLogDelta(Writer)(ref Writer w, in LogDelta d)
+{
+    import sparkles.base.text.writers : writeDurationPadded;
+    import std.range.primitives : put;
+
+    put(w, "Δt ");
+    writeDurationPadded(w, d.sinceStart, 5);
+    put(w, " | Δtᵢ ");
+    writeDurationPadded(w, d.sincePrev, 5);
 }
 
 /**
@@ -939,4 +992,38 @@ unittest
 
     assert(sharedLog !is null);
     assert(sharedCoreLog is logger);
+}
+
+@("logger.deltaTimeLogger.takeDeltaAdvancesPrev")
+@safe
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    lockLoggerGlobalTests();
+    auto oldLogger = sharedCoreLog;
+    scope (exit)
+    {
+        sharedCoreLog = oldLogger;
+        unlockLoggerGlobalTests();
+    }
+
+    auto logger = new DeltaTimeLogger(LogLevel.info);
+    auto sharedLogger = () @trusted { return cast(shared) logger; }();
+    sharedCoreLog = sharedLogger;
+
+    const a = takeLogDelta();
+    assert(a.sinceStart >= Duration.zero);
+    assert(a.sincePrev >= Duration.zero);
+
+    const b = takeLogDelta();
+    assert(b.sinceStart >= a.sinceStart);
+    // The second mark's Δtᵢ is from the first mark, not from construction.
+    assert(b.sincePrev <= b.sinceStart);
+
+    SmallBuffer!(char, 32) buf;
+    writeLogDelta(buf, b);
+    assert(buf[].canFind("Δt "));
+    assert(buf[].canFind("Δtᵢ "));
 }
