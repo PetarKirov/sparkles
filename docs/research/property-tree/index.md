@@ -117,15 +117,30 @@ compiled.
 
 ## Runnable examples
 
-Four single-file `dub` programs, compiled and run by the repository's `ci` helper, each backing a
-claim the prose makes:
+Eleven single-file `dub` programs, compiled and run by the repository's `ci` helper. The first
+four back a claim the prose makes; the last seven are the **design spikes** written after the
+survey, against the real `sparkles:ui` components, and two of them retract a survey claim.
 
-| Example                                                        | Backs                                                                                                                                                                                             |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`examples/reflect-descent.d`](./examples/reflect-descent.d)   | compile-time descent yields a manifest row plan; a recursive type is a **build error** without a visited-type set                                                                                 |
-| [`examples/sumtype-variants.d`](./examples/sumtype-variants.d) | variant switching in D: `.init` makes constructability nearly free, but `SumType.opAssign` is `@system` when another member has indirections                                                      |
-| [`examples/uda-metadata.d`](./examples/uda-metadata.d)         | what a UDA channel answers at compile time, and why a value-dependent condition must be carried as data                                                                                           |
-| ★ [`examples/erased-descent.d`](./examples/erased-descent.d)   | the Tier-2 escape: put an **erasure boundary** in the child walk and a self-referential type compiles, descends by **budget**, and cuts with an Expand affordance — at one delegate per open node |
+| Example                                                        | Backs                                                                                                                                                                                                        |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`examples/reflect-descent.d`](./examples/reflect-descent.d)   | compile-time descent yields a manifest row plan; a recursive type is a **build error** without a visited-type set                                                                                            |
+| [`examples/sumtype-variants.d`](./examples/sumtype-variants.d) | variant switching in D: `.init` makes constructability nearly free, but `SumType.opAssign` is `@system` when another member has indirections                                                                 |
+| [`examples/uda-metadata.d`](./examples/uda-metadata.d)         | what a UDA channel answers at compile time, and why a value-dependent condition must be carried as data                                                                                                      |
+| ★ [`examples/erased-descent.d`](./examples/erased-descent.d)   | the Tier-2 escape as first understood: an **erasure boundary** in the child walk, descent by budget, a cut with an Expand affordance — **superseded** on the cost claim by `type-only-instantiation.d` below |
+
+### Design spikes
+
+Written while designing the component, so each one names the fork it settles:
+
+| Spike                                                                        | Settles                                                                                                                                                                                       |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`examples/open-set-descent.d`](./examples/open-set-descent.d)               | descent driven by the **opened set** over the real `TreeData`/`DisclosureState`: a cyclic subject terminates, expansion survives rebuild, and `DisclosureState.allOpen()` needs a depth cap   |
+| [`examples/type-only-instantiation.d`](./examples/type-only-instantiation.d) | **retracts** the build-failure claim: the CTFE limit was path-parameterised instantiation, not recursion — a type-only walk yields a compile-time manifest **for a cyclic type**, no delegate |
+| [`examples/leaf-dispatch.d`](./examples/leaf-dispatch.d)                     | D2/D4: a closed `static if` ladder to `LeafKind`, a UDA vocabulary, `@ShowIf("expr")` as a typed `@safe` predicate, and the opaque-value escape                                               |
+| [`examples/path-addressing.d`](./examples/path-addressing.d)                 | D3: `a.b[2].c` resolved at compile time (a `ref`-returning access) and at run time (a generated walk), proved equal by differential test — and index paths shown to be positional             |
+| [`examples/edit-commands.d`](./examples/edit-commands.d)                     | D5: an edit is a value, applying it returns its **inverse**, `@readOnly` and the read-only policy refuse inside the dispatch — and the `SumType` `@system` rule is shown to be directional    |
+| [`examples/erased-subject.d`](./examples/erased-subject.d)                   | D1's dynamic half: one walk over a subject that is half static, half type-erased, with `propChildren`/`propExpandable`/`propText` detected by presence                                        |
+| [`examples/tree-adapter.d`](./examples/tree-adapter.d)                       | the component as an **adapter** over `TreeData` + `TreeViewState` + `activate`/`collapseOrUp`/`treeText` — and the one toolkit gap: `hasChildren` is structural                               |
 
 ## Suggested reading paths
 
