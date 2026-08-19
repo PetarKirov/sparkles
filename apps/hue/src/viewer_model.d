@@ -20,7 +20,7 @@ import sparkles.syntax.md.model : codeLineCount, fenceBody, MdBlock,
 import sparkles.syntax.md.render_widgets : FenceScroll, isWrap, OverflowPolicy,
     TableScroll,
     foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
-    viewMarkdown;
+    viewMarkdownInto;
 import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocumentInto;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
     GutterChannel, gutterWidth, withGutterColumns;
@@ -300,7 +300,6 @@ struct ViewerModel
     size_t themeIdx;
     ResolvedTheme current;
     RgbColor pageFg, pageBg, gutterFg;
-    RgbColor gutterBg;              /// the gutter strip's theme-derived band
     RgbColor[quoteBarCycle] quoteBars;
     RgbColor sbTrack, sbThumb;      /// link-tinted scrollbar chrome
     /// The slot palette every buildDisplayList call resolves against — the
@@ -372,6 +371,11 @@ struct ViewerModel
     /// Whether the file line-number channel is on (`NUM2`; `l` toggles it).
     bool lineNumbers = true;
 
+    /// Whether the shared icon channel is on. Off leaves no strip at all, so
+    /// the code moves one column left — every channel is toggleable and none
+    /// renders an empty lane when disabled.
+    bool foldColumn = true;
+
     /// The channels this document shows, with their widths but no cells yet.
     ///
     /// Widths are **reserved**, never derived from the data. A channel's data
@@ -384,6 +388,12 @@ struct ViewerModel
     GutterChannel[] reservedChannels()
     {
         GutterChannel[] chans;
+        // The shared icon slot, one cell wide. Reserved only when the document
+        // has foldable regions, because folds are its sole provider today —
+        // once a second one exists the condition becomes "any provider has
+        // something to say about this file", not "this file folds".
+        if (foldColumn && foldable.length)
+            chans ~= GutterChannel(id: iconChannelId, width: 1);
         // `NUM3`: from the source line count, so wrapping never changes it.
         if (lineNumbers && srcTotal > 0)
             chans ~= GutterChannel(id: lineNumberChannelId,
@@ -407,6 +417,12 @@ struct ViewerModel
     wraps identically in both passes — the cells are indexed by visual row, and
     a row count that changed between them would slide every one.
     */
+    /// The width the document itself is laid out at: the pane minus the chrome
+    /// the reserved channels take. Every producer that wraps its own content
+    /// asks for this rather than subtracting a gutter width it would first have
+    /// to know about.
+    int contentWidthCols() => widthCols - gutterWidth(reservedChannels());
+
     WidgetTree gutter(ref Builder b, uint docRoot)
     {
         channels = reservedChannels();
@@ -431,6 +447,16 @@ struct ViewerModel
                 ch.cells = lineNumberCells(rows, ch.width, &lineOf);
             else if (ch.id == coverageChannelId)
                 ch.cells = coverageChannel(coverage, rows, &lineOf).cells;
+            else if (ch.id == iconChannelId)
+            {
+                // Derived here rather than left to `derive`: the arrows are
+                // indexed by visual row, and the rows only exist once the
+                // document has been laid out. `derive` recomputes the same
+                // list from the final tree for the host's other readers.
+                foldMarkers = foldMarkersOf(rows, foldable, folds);
+                ch.cells = iconCells(foldMarkers, rows.length, ch.width,
+                    foldHitBase);
+            }
         }
     }
 
@@ -653,17 +679,6 @@ struct ViewerModel
         sbTrack = mix(pageBg, linkC, 0.22);
         sbThumb = mix(pageBg, linkC, 0.5);
         palette = themes[i].effectivePalette;
-        // The document gutter's band comes from the SAME slot the fence
-        // gutters paint with (`Slot.gutterBand`), so both strips share one
-        // tone — distinct from the page and from a code panel's surface. The
-        // default (non-derived) palette carries it as a translucent wash, so
-        // composite over the page here.
-        {
-            const gb = palette.bg[Slot.gutterBand];
-            gutterBg = gb.kind == Color.Kind.rgb
-                ? mix(pageBg, gb.rgb, palette.bgAlpha[Slot.gutterBand] / 255.0)
-                : mix(pageBg, pageFg, 0.04);
-        }
         palette.fg[Slot.track] = Color.fromRgb(sbTrack);
         palette.fgAlpha[Slot.track] = 0xFF;
         palette.fg[Slot.thumb] = Color.fromRgb(sbThumb);
@@ -911,6 +926,7 @@ struct ViewerModel
 
             // DVM5: per-file re-highlight of the known sides; the view
             // layers the diff tints over the syntax colors.
+            foldable = null;   // the diff view has its own channels; see above
             DiffViewOptions dopt;
             dopt.foldFormattingOnly = !showFormattingHunks;
             dopt.layout = diffLayout;
@@ -932,7 +948,6 @@ struct ViewerModel
             cells = keyedRects(tree, frames);
             fences.length = 0;
             cellList.length = 0;
-            foldable = null;
             return;
         }
         if (showPreview && tw.code.length)
@@ -943,10 +958,15 @@ struct ViewerModel
             // renders the same file — so it carries the same channels. Live
             // types arrive asynchronously and switch to this producer a second
             // or two after open; without this the gutter vanished exactly then.
+            //
+            // Cleared BEFORE the channels are reserved, not after the build:
+            // `reservedChannels` reads it, and the previous document's regions
+            // would reserve an icon strip this view puts no arrows in.
+            foldable = null;
             auto b = Builder();
             const docRoot = viewTwoslashDocumentInto(b, tw, events,
                 thisCurrent(), pageFg, cache,
-                widthCols - gutterWidth(reservedChannels()),
+                contentWidthCols,
                 CodeViewOptions(
                     tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
             tree = gutter(b, docRoot);
@@ -958,7 +978,6 @@ struct ViewerModel
             cells = null;
             fences.length = 0;
             cellList.length = 0;
-            foldable = null;
             return;
         }
         if (!showPreview || !preview.present)
@@ -1044,7 +1063,15 @@ struct ViewerModel
             diffBlocks: preview.decorations, // `DVN6`
         };
         foldable = foldableSpans(preview.doc);
-        tree = viewMarkdown(preview.doc, opt);
+        // The preview shares the file's chrome with every other view: the same
+        // line numbers over the same source, and the same icon strip carrying
+        // the same fold arrows. `maxWidth` above is the CONTENT width, which is
+        // what sizes the per-fence scrollbars — it must match the width the
+        // first pass lays out at or the two passes wrap differently.
+        opt.maxWidth = contentWidthCols;
+        auto mb = Builder();
+        const mdRoot = viewMarkdownInto(mb, preview.doc, opt);
+        tree = gutter(mb, mdRoot);
         frames = layout(tree, Constraints(maxW: widthCols));
         ops = buildDisplayList(tree, frames,
             palette, pageFg, pageBg);
@@ -1094,25 +1121,7 @@ struct ViewerModel
         rebuildMatchRects();
         rebuildInspectRects();
 
-        // Gutter fold markers: the row each foldable region begins on.
-        // Both lists are ordered by source position, so one two-pointer
-        // pass suffices; same-row nested starts keep the outermost. The
-        // marker lands on the FIRST identity-carrying row at-or-after the
-        // region's start that still lies inside it — a markdown section
-        // starts at `##` while its heading row's identity starts after the
-        // marker text, and a fence's opening line renders as a header row.
-        foldMarkers = null;
-        size_t ri = 0;
-        foreach (sp; foldable)
-        {
-            while (ri < rows.length && (rows[ri].srcStart == size_t.max
-                || rows[ri].srcEnd <= sp.start))
-                ++ri;
-            if (ri < rows.length && rows[ri].srcStart != size_t.max
-                && rows[ri].srcStart < sp.end
-                && (!foldMarkers.length || foldMarkers[$ - 1].row != ri))
-                foldMarkers ~= FoldMarker(ri, sp.start, folds.isOpen(sp.start));
-        }
+        foldMarkers = foldMarkersOf(rows, foldable, folds);
     }
 
     // The address of `current` for the view functions — a small @trusted
@@ -2374,9 +2383,19 @@ struct ViewerModel
     assert(vm.rows.length < openRows);
     bool sawPlaceholder;
     foreach (ref const r; vm.rows)
-        if (r.text.canFind("lines") && !r.text.canFind("▸"))
-            sawPlaceholder = true; // unobstructed: the ▸ lives in the gutter
+        if (r.text.canFind("lines"))
+            sawPlaceholder = true;
     assert(sawPlaceholder, "fold placeholder rendered");
+
+    // The ▸ is the icon channel's cell, so it is a one-cell hit target of its
+    // own carrying `foldHitBase + key`. That target is what replaced the host's
+    // pixel-column fold hit test: the gutter arrow and the placeholder's own
+    // inline marker now resolve through one path instead of two.
+    bool sawGutterArrow;
+    foreach (ref const t; vm.targets)
+        if (t.hitId >= ViewerModel.foldHitBase && t.rect.width == 1)
+            sawGutterArrow = true;
+    assert(sawGutterArrow, "the gutter arrow is clickable");
 
     // The folded region's marker flips to ▸ on the placeholder row.
     bool sawFolded;
@@ -2892,6 +2911,78 @@ version (unittest)
 
 /// The file line-number channel's stable name.
 enum lineNumberChannelId = "chrome.line-numbers";
+
+/// The merged icon channel's stable name. Not `chrome.folds`: the strip is the
+/// shared icon slot (`sparkles.ui.components.gutter`), and folds are merely its
+/// only occupant here — a breakpoint or a diagnostic badge joins it rather than
+/// claiming a column of its own.
+enum iconChannelId = "chrome.icons";
+
+/**
+The visual row each foldable region begins on.
+
+Both lists are ordered by source position, so one two-pointer pass suffices;
+same-row nested starts keep the outermost. The marker lands on the FIRST
+identity-carrying row at-or-after the region's start that still lies inside it
+— a markdown section starts at `##` while its heading row's identity starts
+after the marker text, and a fence's opening line renders as a header row.
+*/
+FoldMarker[] foldMarkersOf(in DocRow[] rows, const(Span)[] foldable,
+    in DisclosureState!size_t folds) @safe
+{
+    FoldMarker[] markers;
+    size_t ri = 0;
+    foreach (sp; foldable)
+    {
+        while (ri < rows.length && (rows[ri].srcStart == size_t.max
+            || rows[ri].srcEnd <= sp.start))
+            ++ri;
+        if (ri < rows.length && rows[ri].srcStart != size_t.max
+            && rows[ri].srcStart < sp.end
+            && (!markers.length || markers[$ - 1].row != ri))
+            markers ~= FoldMarker(ri, sp.start, folds.isOpen(sp.start));
+    }
+    return markers;
+}
+
+/**
+The icon channel's cells: a fold arrow on each foldable region's first row.
+
+Folds go in through $(REF mergedCells, sparkles,ui,components,gutter) rather
+than straight into a channel of their own, which is the whole point — the strip
+is shared, and `foldPriority` is the bottom of the order. When a breakpoint or a
+diagnostic provider lands it claims the same rows at a higher rank and takes the
+cell, including the click, with no change here.
+*/
+GutterCell[] iconCells(in FoldMarker[] markers, size_t rowCount, int width,
+    size_t hitBase) @safe
+{
+    import sparkles.ui.components.gutter : foldPriority, IconClaim, mergedCells;
+
+    IconClaim[] claims;
+    foreach (ref const fm; markers)
+        claims ~= IconClaim(row: fm.row, priority: foldPriority,
+            glyph: fm.open ? "\u25be" : "\u25b8", hitId: hitBase + fm.key);
+    return mergedCells(claims, rowCount, width);
+}
+
+@("viewer_model.iconCells.foldArrowsLandOnTheirRowsAndCarryTheirIds")
+@safe unittest
+{
+    // `FLD5` as a channel: the arrow shows the region's state, and its hit id
+    // is the fold key offset by the base — which is what lets the ONE
+    // `foldHitBase` path in the host serve both the gutter arrow and the
+    // inline placeholder, instead of a second column-shaped hit test.
+    enum base = 1000;
+    const markers = [FoldMarker(row: 0, key: 7, open: true),
+        FoldMarker(row: 3, key: 42, open: false)];
+    const cells = iconCells(markers, 5, 1, base);
+
+    assert(cells.length == 5);
+    assert(cells[0].text[] == "\u25be" && cells[0].hitId == base + 7);
+    assert(cells[3].text[] == "\u25b8" && cells[3].hitId == base + 42);
+    assert(cells[1].text[] == " " && cells[1].hitId == 0, "inert between them");
+}
 
 /// Decimal digits in `n`, so a channel's width comes from the line count
 /// (`NUM3`) rather than from whatever is on screen.

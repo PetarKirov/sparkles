@@ -1206,12 +1206,6 @@ int runGui(GuiArgs guiArgs) @system
             chrome.fillPixels(treePx(), 0, screenW - treePx(), screenH, vm.pageBg);
         }
 
-        // The gutter strip (the fold column + line numbers) sits on its own
-        // theme-derived band, visually distinct from the document.
-        if (!flashDebug)
-            chrome.fillPixels(treePx(), docY0, gutterPx - treePx(),
-                screenH - docY0, vm.gutterBg);
-
         // The document pane's header — the SHARED chrome (headerBar +
         // Slot.chromeFocused + bold title), same look as the TUI's.
         {
@@ -1277,21 +1271,6 @@ int runGui(GuiArgs guiArgs) @system
                 paint(canvas, (&op)[0 .. 1]);
             }
             canvas.popClip();
-
-            // Fold markers in the gutter's fold column (FLD5): ▾ on an
-            // open region's first row, ▸ on a folded one's placeholder;
-            // click toggles. The placeholder itself renders unobstructed —
-            // its inline marker is disabled (inlineFoldMarker: false), so
-            // the column is the one fold affordance.
-            foreach (ref const fm; vm.foldMarkers)
-            {
-                if (fm.row < topLine || fm.row >= topLine + docRows)
-                    continue;
-                drawText(fonts, cstrOf(buf, fm.open ? "▾" : "▸"),
-                    cast(float)(treePx() + 2),
-                    docY0 + (fm.row - topLine) * cast(float) cellH,
-                    TextStyle(0), vm.gutterFg);
-            }
 
         }
 
@@ -3002,23 +2981,13 @@ int runGui(GuiArgs guiArgs) @system
             const mp = inp.fin.pos;
             const dp = Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
                 cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH)));
-            // The fold column: a click on a marker toggles its region.
-            if (mp.x >= treePx() && mp.x < treePx() + cellW
-                && clickPressed())
-            {
-                const row = vm.top + cast(long)((mp.y - docY0) / cellH);
-                foreach (ref const fm; vm.foldMarkers)
-                    if (cast(long) fm.row == row)
-                    {
-                        vm.folds = vm.folds.toggled(fm.key);
-                        vm.rebuild();
-                        copyClicked = true; // not a selection
-                        break;
-                    }
-            }
             if (mp.x >= gutterPx && clickPressed())
                 foreach_reverse (ref const tgt; vm.targets)
                 {
+                    // Both fold affordances, one path: the gutter's icon cell
+                    // and the folded placeholder's inline marker carry the same
+                    // `foldHitBase + key` id, so the column needs no hit test of
+                    // its own (it used to have one, keyed on pixels).
                     if (tgt.hitId >= vm.foldHitBase && tgt.rect.contains(dp))
                     {
                         vm.folds = vm.folds.toggled(tgt.hitId - vm.foldHitBase);
