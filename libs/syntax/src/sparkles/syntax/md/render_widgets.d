@@ -254,6 +254,11 @@ struct MdTableExtras
     /// (`TableViewportSpec.pinHeader`, `DSG2`). Sugar for
     /// `freezeTopRows = 1` (the md table's one header row).
     bool pinHeader;
+    /// Per-VIEW-column header badges (`DSS1`'s rank chrome, e.g. `1▲`):
+    /// rendered as an extra span after the header cell's text, carrying NO
+    /// source identity — so selection skips it and copies never include it.
+    /// "" / a column past the array = no badge.
+    const(char[])[] headerBadges;
     /// Freeze panes (`TableViewportSpec.freeze*`): first/last grid rows and
     /// columns held at the viewport edges while the interior scrolls —
     /// frozen rows still scroll horizontally, frozen columns vertically.
@@ -1459,6 +1464,12 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         cellOpt.emph);
                     fillDiffTints(spans); // the cell path is not a prose row
                     trimCellEdges(spans); // measured text sizes the track
+                    // The sort-rank badge (`DSS1`): chrome, not content —
+                    // no srcStart, so it neither selects nor copies.
+                    if (ri == 0 && ci < opt.tableExtras.headerBadges.length
+                        && opt.tableExtras.headerBadges[ci].length)
+                        spans ~= TextSpan(opt.tableExtras.headerBadges[ci],
+                            Slot.info, noBreak: true);
                     // Stub columns are chrome (`DSG5`): unkeyed — a drag
                     // cannot anchor a grid selection there — and stripped of
                     // source identity, so text-regime selection skips them
