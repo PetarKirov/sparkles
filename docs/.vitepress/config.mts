@@ -3206,6 +3206,18 @@ export default withMermaid(
                       text: 'Derive-Macro Inspectors (Rust)',
                       link: '/research/property-tree/derive-macro-inspectors',
                     },
+                    {
+                      text: 'VS Code Settings Editor',
+                      link: '/research/property-tree/vscode-settings-ui',
+                    },
+                    {
+                      text: 'react-jsonschema-form',
+                      link: '/research/property-tree/react-jsonschema-form',
+                    },
+                    {
+                      text: 'Chrome DevTools Object Inspector',
+                      link: '/research/property-tree/devtools-object-inspector',
+                    },
                   ],
                 },
                 {
