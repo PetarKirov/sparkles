@@ -927,6 +927,7 @@ export default withMermaid(
                 { text: 'Layout (decision)', link: '/specs/ui/layout' },
                 { text: 'Theme (planned)', link: '/specs/ui/theme' },
                 { text: 'Widgets', link: '/specs/ui/widgets' },
+                { text: 'Gutter channels', link: '/specs/ui/gutter' },
                 {
                   text: 'Containers (planned)',
                   link: '/specs/ui/containers',
