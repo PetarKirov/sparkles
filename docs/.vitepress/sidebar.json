@@ -2431,6 +2431,10 @@
                 "link": "/research/code-formatting/prettier"
               },
               {
+                "text": "Prettier's Decisions",
+                "link": "/research/code-formatting/prettier-decisions"
+              },
+              {
                 "text": "swift-format",
                 "link": "/research/code-formatting/swift-format"
               },
