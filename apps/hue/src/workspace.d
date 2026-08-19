@@ -2309,6 +2309,38 @@ unittest
         assert(w.picker.get.state.selection == sel + 1,
             "wheel over the list moves the selection");
         assert(w.handle(Event(KeyEvent(key: Key.up)))); // back for the typing
+
+        // The focus bands are PAINTED, not just declared: with the prompt
+        // focused, its row's background differs from an idle row's, and the
+        // selected row carries its tint.
+        {
+            import sparkles.ui.style : Slot;
+            import sparkles.ui.widget : WidgetKind;
+
+            auto view2 = w.picker.get.buildView(geometry);
+            auto frames2 = layout(view2,
+                Constraints(maxW: 2 * geometry.panelCols));
+            Rect promptRect;
+            foreach (i, ref node; view2.nodes)
+                if (node.kind == WidgetKind.row
+                    && node.slot == Slot.chromeFocused)
+                    promptRect = frames2[i].rect;
+            assert(promptRect.width > 0, "the focused prompt declares a band");
+
+            Grid g2;
+            g2.resize(80, 24);
+            w.paint(g2);
+            const bandX = cast(ushort)(ox + promptRect.x + 1);
+            const promptBg = g2[bandX,
+                cast(ushort)(1 + promptRect.y)].style.bg;
+            const selectedBg = g2[bandX,
+                cast(ushort)(1 + promptRect.y + 1)].style.bg;
+            const idleBg = g2[bandX,
+                cast(ushort)(1 + promptRect.y + 2)].style.bg;
+            assert(promptBg != idleBg, "the prompt's band is painted");
+            assert(selectedBg != idleBg, "…and the selection's tint");
+            assert(promptBg != selectedBg, "…and the two are distinct");
+        }
     }
 
     // Typing narrows; Enter opens the accepted file in the viewer pane.
