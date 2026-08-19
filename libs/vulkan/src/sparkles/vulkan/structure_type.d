@@ -128,6 +128,16 @@ T vkInfo(T)(T value = T.init) @safe pure nothrow @nogc
         == VkStructureType.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2);
     static assert(structureTypeOf!VkPhysicalDeviceVulkan11Features
         == VkStructureType.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES);
+    static assert(structureTypeOf!VkRenderingInfo
+        == VkStructureType.VK_STRUCTURE_TYPE_RENDERING_INFO);
+    static assert(structureTypeOf!VkPipelineRenderingCreateInfo
+        == VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO);
+    static assert(structureTypeOf!VkPhysicalDeviceDynamicRenderingFeatures
+        == VkStructureType.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES);
+    static assert(structureTypeOf!VkRenderingAttachmentInfo
+        == VkStructureType.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
+    static assert(structureTypeOf!VkImageMemoryBarrier
+        == VkStructureType.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER);
 }
 
 @("vulkan.structure_type.vkInfoTagsTheStruct")
