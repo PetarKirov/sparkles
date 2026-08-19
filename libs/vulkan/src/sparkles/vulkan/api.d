@@ -32,11 +32,15 @@ enum uint apiVersion13 = makeApiVersion(0, 1, 3, 0); /// `VK_API_VERSION_1_3`
 enum uint apiVersion14 = makeApiVersion(0, 1, 4, 0); /// `VK_API_VERSION_1_4`
 
 /**
-A packed API version as `"major.minor.patch"`.
+A packed API version as `"major.minor.patch"`, into `w`.
 
 The variant field is dropped: it is 0 for every Vulkan implementation and
 non-zero only for a differently-specified API sharing the encoding, which this
 binding does not target.
+
+Written into an output range rather than built with `std.conv.text`, so a
+`@nogc` caller can render one into its own buffer — the string form below is
+the same digits plus an allocation.
 
 $(B Not for `VkPhysicalDeviceProperties.driverVersion`.) Only `apiVersion` is
 guaranteed to use this packing. Vendors encode their driver version how they
@@ -44,12 +48,45 @@ like — NVIDIA and Intel both differ — so rendering one through here produces
 plausible and wrong three-part number. Decoding those needs a per-vendor table
 keyed on `vendorID`, which this binding does not carry.
 */
+void writeApiVersion(Writer)(ref Writer w, uint packed)
+{
+    import std.range.primitives : put;
+
+    import sparkles.base.text.writers : writeInteger;
+
+    writeInteger(w, apiVersionMajor(packed));
+    put(w, '.');
+    writeInteger(w, apiVersionMinor(packed));
+    put(w, '.');
+    writeInteger(w, apiVersionPatch(packed));
+}
+
+/// ditto, as a `string`, for a caller that is not holding a buffer.
 string formatApiVersion(uint packed) @safe pure nothrow
 {
-    import std.conv : text;
+    import sparkles.base.smallbuffer : SmallBuffer;
 
-    return text(apiVersionMajor(packed), ".", apiVersionMinor(packed),
-        ".", apiVersionPatch(packed));
+    // 7-, 10- and 12-bit fields: `127.1023.4095` is the longest possible.
+    SmallBuffer!(char, 16) buf;
+    writeApiVersion(buf, packed);
+    return buf[].idup;
+}
+
+@("vulkan.api.writeApiVersionIsNogc")
+@safe pure nothrow @nogc unittest
+{
+    // The reason for the writer form: rendering a version must not force an
+    // allocation on a caller that already has a buffer.
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 16) buf;
+    buf.writeApiVersion(makeApiVersion(0, 1, 3, 290));
+    assert(buf[] == "1.3.290");
+
+    // The widest each field can be: 7, 10 and 12 bits.
+    SmallBuffer!(char, 16) widest;
+    widest.writeApiVersion(makeApiVersion(0, 127, 1023, 4095));
+    assert(widest[] == "127.1023.4095");
 }
 
 @("vulkan.api.formatApiVersionRendersTheThreeParts")
