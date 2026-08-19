@@ -1224,7 +1224,12 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
                 codeMaxLines: opt.codeMaxLines < 0 ? 0 : opt.codeMaxLines,
                 tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
-                tableMaxLines: opt.tableMaxLines < 0 ? 0 : opt.tableMaxLines,
+                // The pager case (`DSG6`): a DSV document IS its grid, and a
+                // non-interactive emit can never scroll — the whole grid
+                // emits, ignoring any vertical clamp (which stays honored
+                // for tables embedded in markdown documents).
+                tableMaxLines: doc.kind == ContentKind.dsv ? 0
+                    : opt.tableMaxLines < 0 ? 0 : opt.tableMaxLines,
                 tableExtras: doc.preview.tableExtras,
             };
             auto tree = viewMarkdown(doc.preview.doc, mopt);
