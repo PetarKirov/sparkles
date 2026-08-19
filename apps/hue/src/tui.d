@@ -177,9 +177,12 @@ struct PreviewTui
         const line = vm.top + (p.y - 1);
         if (line < 0 || line >= cast(long) vm.rows.length)
             return -1;
+        // Pinned-aware (see `ViewerModel.pinnedCols`): a pointer over a gutter
+        // strip addresses that strip, not the code scrolled underneath it.
         const hx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
+        const pinned = hx > 0 ? vm.pinnedCols : 0;
         const off = sourceOffsetAt(vm.tree, vm.frames,
-            Point(p.x + hx, cast(int) line));
+            Point(p.x < pinned ? p.x : p.x + hx, cast(int) line));
         if (off >= 0)
             return off;
         const r = vm.rows[cast(size_t) line];
@@ -679,9 +682,19 @@ struct PreviewTui
     {
         const rows = bodyRows();
         const hx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
+        const pinned = hx > 0 ? vm.pinnedCols : 0;
         const contentWidth = externalScroll ? width : width - 1;
+        // Two passes when the content is scrolled sideways past a pinned
+        // gutter: the chrome is inside the document tree, so panning the whole
+        // op list would carry the line numbers off the left edge with the code.
+        // The clips partition the ops — `[0, pinned)` is chrome, everything
+        // from `pinned` on is document — so neither pass filters anything. With
+        // `hx == 0`, `pinned` is 0 and this is the single pass it was.
+        if (pinned > 0)
+            paintGrid(g, pageBg, mdOps, originX, cast(int)(1 - top),
+                Rect(0, cast(int) top, pinned, rows));
         paintGrid(g, pageBg, mdOps, originX - hx, cast(int)(1 - top),
-            Rect(hx, cast(int) top, contentWidth, rows));
+            Rect(pinned + hx, cast(int) top, contentWidth - pinned, rows));
 
         // The horizontal bar (IXB2): the last body row, when wide content
         // (a fence line, a table) clips — the same component/machine as
@@ -2629,4 +2642,63 @@ version (HueDmdFmt)
     t.relayout();
     assert(t.top == parked,
         "a taller terminal scrolled the document back to fill itself");
+}
+
+@("tui.gutter.pinnedChannelsSurviveHorizontalScroll")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import std.array : replicate;
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+
+    // The gutter lives inside the document tree, so a host that pans the whole
+    // display list takes the line numbers off the left edge with the code —
+    // the one thing a line-number gutter must never do. This is that case: a
+    // token too long to wrap, so the document genuinely overflows sideways.
+    const src = "alpha\nbeta\n" ~ "Z".replicate(200) ~ "\ndelta\n";
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 8;
+    t.relayout();
+    t.setDocument("wide.d", src, [HighlightEvent.sourceSpan(0, src.length)],
+        PreviewModel.init, startPreview: false);
+
+    assert(t.vm.hOverflows(), "precondition: the long token overflows the pane");
+    assert(t.vm.pinnedCols > 0, "precondition: there is chrome to pin");
+
+    Grid g;
+    string row(ushort y)
+    {
+        string s;
+        foreach (x; 0 .. g.cols)
+            s ~= g[cast(ushort) x, y].grapheme;
+        return s;
+    }
+
+    g.resize(40, 8);
+    t.paint(g);
+    assert(row(1).startsWith("1 "), row(1));
+    assert(row(3).canFind("ZZZ"), row(3));
+
+    // Scroll past the whole gutter and then some. The numbers stay put; the
+    // code underneath them does not.
+    assert(t.handle(Event(WheelEvent(dx: 12))));
+    assert(t.vm.hsb.offset == 12, "the document scrolled sideways");
+
+    g.resize(40, 8);
+    t.paint(g);
+    assert(row(1).startsWith("1 "), row(1));
+    assert(row(2).startsWith("2 "), row(2));
+    assert(row(3).startsWith("3 "), row(3));
+    // And the chrome is chrome, not a stale copy of it: the code beside the
+    // numbers is the scrolled text, so the two cameras really are separate.
+    assert(row(3).canFind("ZZZ"), row(3));
+    assert(!row(1).canFind("alpha"), "line 1's text scrolled out from under it");
 }
