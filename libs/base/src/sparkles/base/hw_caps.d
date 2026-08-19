@@ -34,6 +34,18 @@ both are asked at worker start rather than in a hot path — so a syscall per ca
 is free and a stale cache is a bug waiting to happen. Nothing here re-reads, so
 a mid-run affinity change is simply not observed.
 
+$(B Memory and load are part of the same decision.) A CPU count is not "how
+wide may we usefully run" on an overcommitted host. GitHub-hosted macOS VMs
+are the motivating case: they advertise a handful of vCPUs and ~7–14 GiB of
+RAM, and the hypervisor can steal both. Extra workers there do not go faster;
+they compete for the same pages and start swapping. $(LREF hwParallelism)
+therefore also consults available RAM, swap-in-use, and the 1-minute load
+average (see $(LREF applyResourceCaps)). The probes are
+$(LREF hwMemoryBytes), $(LREF hwAvailableMemoryBytes),
+$(LREF hwSwapUsedBytes), and $(LREF hwLoadAverageCenti). Callers that know
+their own working set (a compiler farm budgeting 2 GiB per job) still apply
+a tighter cap on top.
+
 $(B Not QoS-aware, yet.) On Apple silicon the kernel's answer is per-QoS: the
 background class is confined to the efficiency cluster, so
 `pthread_qos_max_parallelism` reports far fewer CPUs for it than for any other
@@ -46,16 +58,19 @@ module sparkles.base.hw_caps;
 /**
 How many workers this process may usefully run in parallel.
 
-The smaller of "CPUs we are allowed to run on" and "CPUs our quota pays for",
-never less than 1. On a host with neither restriction this is the online CPU
-count, so it is a safe drop-in for `std.parallelism.totalCPUs`.
+The smaller of "CPUs we are allowed to run on", "CPUs our quota pays for",
+and the memory/load/swap cap ($(LREF applyResourceCaps)), never less than 1.
+On a host with no restriction and no pressure this is the online CPU count,
+so it is a safe drop-in for `std.parallelism.totalCPUs`.
 */
 uint hwParallelism() @trusted nothrow @nogc
 {
     const allowed = allowedCpuCount();
     const quota = quotaCpuCount();
     const n = quota > 0 && quota < allowed ? quota : allowed;
-    return n > 0 ? n : 1;
+    const cpu = n > 0 ? n : 1;
+    return applyResourceCaps(
+        cpu, hwAvailableMemoryBytes(), hwLoadAverageCenti(), hwSwapUsedBytes());
 }
 
 /**
@@ -106,7 +121,238 @@ uint nthAllowedCpu(uint i) @trusted nothrow @nogc
     return online > 0 ? i % online : i;
 }
 
+/// Online CPUs the OS reports, or 0 when that cannot be answered.
+uint hwOnlineCpuCount() @trusted nothrow @nogc => onlineCpuCount();
+
+/// Total physical RAM in bytes, or 0 when unknown.
+ulong hwMemoryBytes() @trusted nothrow @nogc
+{
+    version (Posix)
+    {
+        import core.sys.posix.unistd : _SC_PAGESIZE, _SC_PHYS_PAGES, sysconf;
+
+        const pages = sysconf(_SC_PHYS_PAGES);
+        const page = sysconf(_SC_PAGESIZE);
+        if (pages > 0 && page > 0)
+            return cast(ulong) pages * cast(ulong) page;
+    }
+    return 0;
+}
+
+/**
+Currently available RAM in bytes, or 0 when unknown.
+
+Linux reads `MemAvailable` (reclaimable cache included). Darwin sums free +
+inactive + speculative pages. A fallback of `_SC_AVPHYS_PAGES` is used only
+when the platform-specific probe is silent.
+*/
+ulong hwAvailableMemoryBytes() @trusted nothrow @nogc
+{
+    version (linux)
+    {
+        char[2048] buf = void;
+        auto s = readSmallFile("/proc/meminfo", buf[]);
+        const kb = parseMeminfoKb(s, "MemAvailable");
+        if (kb > 0)
+            return kb * 1024;
+    }
+    else version (OSX)
+    {
+        const page = sysctlULong("hw.pagesize");
+        if (page > 0)
+        {
+            const pages = sysctlULong("vm.page_free_count")
+                + sysctlULong("vm.page_inactive_count")
+                + sysctlULong("vm.page_speculative_count");
+            if (pages > 0)
+                return pages * page;
+        }
+    }
+
+    version (Posix)
+    {
+        import core.sys.posix.unistd : _SC_AVPHYS_PAGES, _SC_PAGESIZE, sysconf;
+
+        const pages = sysconf(_SC_AVPHYS_PAGES);
+        const page = sysconf(_SC_PAGESIZE);
+        if (pages > 0 && page > 0)
+            return cast(ulong) pages * cast(ulong) page;
+    }
+    return 0;
+}
+
+/// Swap currently in use, in bytes. 0 when there is no swap, none is used,
+/// or the figure cannot be read.
+ulong hwSwapUsedBytes() @trusted nothrow @nogc
+{
+    version (linux)
+    {
+        char[2048] buf = void;
+        auto s = readSmallFile("/proc/meminfo", buf[]);
+        const total = parseMeminfoKb(s, "SwapTotal");
+        const free_ = parseMeminfoKb(s, "SwapFree");
+        if (total >= free_)
+            return (total - free_) * 1024;
+    }
+    else version (OSX)
+    {
+        XswUsage xsw;
+        size_t n = xsw.sizeof;
+        if (sysctlbyname("vm.swapusage", &xsw, &n, null, 0) == 0
+            && n >= XswUsage.xsu_used.offsetof + ulong.sizeof)
+            return xsw.xsu_used;
+    }
+    return 0;
+}
+
+/// Sentinel for $(LREF hwLoadAverageCenti): the 1-minute load average could
+/// not be read. Distinct from a genuine 0.00 load.
+enum uint hwLoadUnknown = uint.max;
+
+/**
+1-minute load average in hundredths of a CPU (`250` = 2.50), or
+$(LREF hwLoadUnknown).
+*/
+uint hwLoadAverageCenti() @trusted nothrow @nogc
+{
+    version (Posix)
+    {
+        double[3] load = void;
+        if (getloadavg(load.ptr, 1) >= 1 && load[0] >= 0)
+        {
+            const c = load[0] * 100.0 + 0.5;
+            if (c >= hwLoadUnknown)
+                return hwLoadUnknown - 1;
+            return cast(uint) c;
+        }
+    }
+    return hwLoadUnknown;
+}
+
+/**
+Fold memory pressure, swap, and load into a CPU count so a pool is not
+wider than the host can usefully run.
+
+$(LIST
+    * Below 2 GiB available → at most 1 worker; below 4 GiB → at most 2.
+        That is the GitHub-hosted macOS shape (~7 GiB advertised, often half
+        of it already gone) and any ballooned VM. Above 4 GiB this clamp is
+        silent — a 16-core workstation is not punished for having RAM.
+    * ≥ 1 GiB of swap in use *and* less than 8 GiB available → at most 2
+        workers. Already paging *and* tight on RAM; more workers make it
+        worse. Swap alone is not a signal: a workstation with tens of GiB
+        free will happily hold idle pages on swap.
+    * A 1-minute load of `L` on `N` CPUs leaves `max(1, N - floor(L))`
+        spare workers. Inside a VM this is the *guest* load (other guests
+        on the host do not appear), so it catches "this VM is already busy"
+        rather than hypervisor steal.
+)
+
+Unknown inputs (`availableBytes == 0`, `loadCenti == hwLoadUnknown`) are
+skipped, never treated as zero. The result is never less than 1 and never
+greater than `cpuCount` (or 1 when `cpuCount` is 0).
+*/
+uint applyResourceCaps(
+    uint cpuCount,
+    ulong availableBytes,
+    uint loadCenti,
+    ulong swapUsedBytes = 0,
+) @safe pure nothrow @nogc
+{
+    uint n = cpuCount > 0 ? cpuCount : 1;
+
+    if (availableBytes > 0)
+    {
+        uint memCap = uint.max;
+        if (availableBytes < (2UL << 30))
+            memCap = 1;
+        else if (availableBytes < (4UL << 30))
+            memCap = 2;
+        if (memCap < n)
+            n = memCap;
+    }
+
+    // Swap-in-use only bites when RAM is also tight. A 60 GiB workstation
+    // with some swapped-out idle pages is not the GitHub-macOS case.
+    if (swapUsedBytes >= (1UL << 30)
+        && availableBytes > 0 && availableBytes < (8UL << 30) && n > 2)
+        n = 2;
+
+    if (loadCenti != hwLoadUnknown && cpuCount > 0)
+    {
+        const busy = loadCenti / 100;
+        const spare = cpuCount > busy ? cpuCount - busy : 1;
+        if (spare < n)
+            n = spare;
+    }
+
+    return n > 0 ? n : 1;
+}
+
+@("base.hw_caps.applyResourceCaps.memoryLoadAndSwap")
+@safe pure nothrow @nogc
+unittest
+{
+    // No extra info: the CPU count stands (or 1, when the caller had none).
+    assert(applyResourceCaps(8, 0, hwLoadUnknown) == 8);
+    assert(applyResourceCaps(0, 0, hwLoadUnknown) == 1);
+
+    // Tight available RAM — the GitHub-hosted macOS case.
+    assert(applyResourceCaps(8, 3UL << 30, hwLoadUnknown) == 2); // 3 GiB
+    assert(applyResourceCaps(8, (2UL << 30) - 1, hwLoadUnknown) == 1);
+    assert(applyResourceCaps(8, 8UL << 30, hwLoadUnknown) == 8); // 8 GiB: no clamp
+
+    // Swap + less than 8 GiB free: do not keep a wide pool. Swap with
+    // plenty of RAM is ignored (idle pages on a workstation).
+    assert(applyResourceCaps(8, 5UL << 30, hwLoadUnknown, 1UL << 30) == 2);
+    assert(applyResourceCaps(8, 16UL << 30, hwLoadUnknown, 1UL << 30) == 8);
+    assert(applyResourceCaps(1, 5UL << 30, hwLoadUnknown, 1UL << 30) == 1);
+
+    // Load 0.10 on 4 CPUs → 4 spare; load 2.50 → 2 spare; load 8.00 → 1.
+    assert(applyResourceCaps(4, 0, 10) == 4);
+    assert(applyResourceCaps(4, 0, 250) == 2);
+    assert(applyResourceCaps(4, 0, 800) == 1);
+
+    // The tightest cap wins.
+    assert(applyResourceCaps(8, 3UL << 30, 800) == 1);
+}
+
 private:
+
+version (Posix)
+{
+    extern (C) int getloadavg(double* loadavg, int nelem) @nogc nothrow;
+}
+
+version (OSX)
+{
+    extern (C) int sysctlbyname(
+        const(char)* name, void* oldp, size_t* oldlenp, void* newp, size_t newlen,
+    ) @nogc nothrow;
+
+    /// `struct xsw_usage` from Darwin's `sys/vmmeter.h`.
+    struct XswUsage
+    {
+        ulong xsu_total;
+        ulong xsu_avail;
+        ulong xsu_used;
+        uint xsu_pagesize;
+        int xsu_encrypted;
+    }
+
+    ulong sysctlULong(const(char)* name) @trusted nothrow @nogc
+    {
+        ulong v;
+        size_t n = v.sizeof;
+        if (sysctlbyname(name, &v, &n, null, 0) != 0 || n == 0)
+            return 0;
+        if (n == 8)
+            return v;
+        if (n == 4)
+            return *cast(uint*)&v;
+        return 0;
+    }
+}
 
 version (linux)
 {
@@ -314,41 +560,83 @@ version (linux)
         const n = read(fd, buf.ptr, buf.length);
         return n > 0 ? cast(const(char)[]) buf[0 .. n] : null;
     }
+}
 
-    /// Leading unsigned decimal, advancing `s`. Non-digits stop it.
-    ulong readULong(ref const(char)[] s) @safe pure nothrow @nogc
+/// Leading unsigned decimal, advancing `s`. Non-digits stop it.
+ulong readULong(ref const(char)[] s) @safe pure nothrow @nogc
+{
+    ulong v;
+    while (s.length && s[0] >= '0' && s[0] <= '9')
     {
-        ulong v;
-        while (s.length && s[0] >= '0' && s[0] <= '9')
-        {
-            v = v * 10 + (s[0] - '0');
-            s = s[1 .. $];
-        }
-        return v;
+        v = v * 10 + (s[0] - '0');
+        s = s[1 .. $];
     }
+    return v;
+}
 
-    void skipSpaces(ref const(char)[] s) @safe pure nothrow @nogc
-    {
-        while (s.length && (s[0] == ' ' || s[0] == '\t'))
-            s = s[1 .. $];
-    }
+void skipSpaces(ref const(char)[] s) @safe pure nothrow @nogc
+{
+    while (s.length && (s[0] == ' ' || s[0] == '\t'))
+        s = s[1 .. $];
+}
 
-    @("base.hw_caps.readULong.parsesCgroupPairs")
+/**
+Kilobyte value of `key:` in a `/proc/meminfo` blob, or 0 when the key is
+absent. `key` is the label without the colon (`"MemAvailable"`).
+*/
+ulong parseMeminfoKb(scope const(char)[] text, scope const(char)[] key)
     @safe pure nothrow @nogc
-    unittest
+{
+    auto s = text;
+    while (s.length)
     {
-        // The shape cgroup v2 writes: two numbers separated by a space.
-        const(char)[] s = "200000 100000\n";
-        assert(readULong(s) == 200_000);
-        skipSpaces(s);
-        assert(readULong(s) == 100_000);
+        size_t eol = 0;
+        while (eol < s.length && s[eol] != '\n')
+            ++eol;
+        auto line = s[0 .. eol];
+        s = eol < s.length ? s[eol + 1 .. $] : null;
 
-        // A non-numeric field yields 0 without advancing, which `quotaToCpus`
-        // then reads as "no answer" rather than as a zero-CPU quota.
-        const(char)[] m = "max 100000\n";
-        assert(readULong(m) == 0);
-        assert(m.length == "max 100000\n".length);
+        if (line.length <= key.length || line[0 .. key.length] != key
+            || line[key.length] != ':')
+            continue;
+        auto rest = line[key.length + 1 .. $];
+        skipSpaces(rest);
+        return readULong(rest);
     }
+    return 0;
+}
+
+@("base.hw_caps.readULong.parsesCgroupPairs")
+@safe pure nothrow @nogc
+unittest
+{
+    // The shape cgroup v2 writes: two numbers separated by a space.
+    const(char)[] s = "200000 100000\n";
+    assert(readULong(s) == 200_000);
+    skipSpaces(s);
+    assert(readULong(s) == 100_000);
+
+    // A non-numeric field yields 0 without advancing, which `quotaToCpus`
+    // then reads as "no answer" rather than as a zero-CPU quota.
+    const(char)[] m = "max 100000\n";
+    assert(readULong(m) == 0);
+    assert(m.length == "max 100000\n".length);
+}
+
+@("base.hw_caps.parseMeminfoKb.readsAvailableAndSwap")
+@safe pure nothrow @nogc
+unittest
+{
+    enum sample =
+        "MemTotal:       16384000 kB\n" ~
+        "MemAvailable:    4096000 kB\n" ~
+        "SwapTotal:       2048000 kB\n" ~
+        "SwapFree:        1024000 kB\n";
+    assert(parseMeminfoKb(sample, "MemAvailable") == 4_096_000);
+    assert(parseMeminfoKb(sample, "SwapTotal") == 2_048_000);
+    assert(parseMeminfoKb(sample, "SwapFree") == 1_024_000);
+    assert(parseMeminfoKb(sample, "Nope") == 0);
+    assert(parseMeminfoKb("", "MemAvailable") == 0);
 }
 
 @("base.hw_caps.hwParallelism.isAtLeastOneAndNoWiderThanOnline")
@@ -358,11 +646,31 @@ unittest
     const n = hwParallelism();
     assert(n >= 1, "a machine always has at least one usable CPU");
 
-    // The whole point: never *wider* than what the OS says exists. A quota or
-    // an affinity mask may make it narrower; nothing may make it wider.
+    // The whole point: never *wider* than what the OS says exists. A quota,
+    // an affinity mask, tight RAM, or a high load may make it narrower;
+    // nothing may make it wider.
     const online = onlineCpuCount();
     if (online > 0)
         assert(n <= online);
+    assert(hwOnlineCpuCount() == online);
+}
+
+@("base.hw_caps.hwMemoryBytes.reportsThisHost")
+@safe nothrow @nogc
+unittest
+{
+    version (Posix)
+    {
+        const n = hwMemoryBytes();
+        assert(n >= (64UL << 20), "a POSIX host has at least 64 MiB of RAM");
+        const avail = hwAvailableMemoryBytes();
+        // Available can be 0 if the probe failed; when it works it cannot
+        // exceed total.
+        if (avail > 0)
+            assert(avail <= n);
+        const load = hwLoadAverageCenti();
+        assert(load == hwLoadUnknown || load < 100_000);
+    }
 }
 
 @("base.hw_caps.nthAllowedCpu.wrapsAndStaysInsideTheMask")
