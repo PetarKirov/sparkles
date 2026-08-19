@@ -23,8 +23,8 @@ import diff_session : buildDiffSession, DiffSession;
 import diff_commutative : CommutativeKind, defaultCommutativeKinds;
 import diff_structural : StructuralPolicy;
 import sparkles.code_instrumentation : CoverageFormat, CoverageGutterItem,
-    CoveragePlan, CoverageReport, FileCoverage, formatFromExtension, LineState,
-    loadCoverage, maxCountWidth, planCoverage;
+    CoveragePlan, CoverageReport, detectFormat, dmdListingText, FileCoverage,
+    formatFromExtension, LineState, loadCoverage, maxCountWidth, planCoverage;
 import sparkles.diff : DiffDoc, DiffOptions, diffText, emitPatch, FileEntry,
     parsePatch, RowKind, WhitespaceMode;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
@@ -37,6 +37,7 @@ import sparkles.ui.style : Slot;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
 import coverage_discovery : findCoverageArtifact;
+import coverage_rebase : rebasedCoverage;
 import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, dsvStatusNote;
 import gui_preview : PreviewModel;
 
@@ -236,9 +237,15 @@ GutterChannel coverageChannel(const CoveragePlan plan, in DocRow[] rows,
         if (auto at = line in byLine)
         {
             const item = plan.gutterItems[*at];
-            cells[i] = cellOf(item.countText, cast(int) maxCountWidth,
-                coverageSlot(item.state),
-                paintBackground: item.state != LineState.nonCode);
+            // A line the run can no longer speak for shows a dot, not a blank.
+            // "Suppressed must render differently from absent, or trust in the
+            // channel collapses" — a reader who edits a line and sees the count
+            // simply vanish cannot tell that from a line with no code in it.
+            cells[i] = item.stale
+                ? cellOf("·", cast(int) maxCountWidth)
+                : cellOf(item.countText, cast(int) maxCountWidth,
+                    coverageSlot(item.state),
+                    paintBackground: item.state != LineState.nonCode);
         }
     }
     ch.cells = cells;
@@ -423,8 +430,18 @@ struct DocumentPipeline
             return;
         }
 
-        doc.coverage = planCoverage(*match);
+        // Re-anchor onto the file as it is now (`COV5`). A `.lst` records the
+        // source it counted, so an edit costs the lines it touched rather than
+        // the whole artifact — which is what refusing on an mtime used to do.
+        // Only this format carries the evidence; for the rest `dmdListingText`
+        // is empty and the rebase is the identity.
+        const recorded = detectFormat(covPath, contents) == CoverageFormat.dmdLst
+            ? dmdListingText(contents) : null;
+        doc.coverage = planCoverage(
+            rebasedCoverage(*match, recorded, doc.source));
         doc.hasCoverage = true;
+        if (doc.coverage.staleLines > 0)
+            info(i"coverage re-anchored onto $(doc.title): $(doc.coverage.staleLines) line(s) edited since the run");
     }
 
     /// The kind `path` will load as. `forceTwoslash` is the `--twoslash`

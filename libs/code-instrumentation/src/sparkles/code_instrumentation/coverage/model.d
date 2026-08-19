@@ -27,6 +27,19 @@ struct LineCoverage
     LineState state;         /// Coverage state
     uint branchesTaken;      /// Branches taken on this line
     uint branchesTotal;      /// Total branches on this line
+
+    /**
+    The record describes text this line no longer holds.
+
+    Set by a consumer that re-anchored an artifact onto an edited file: the
+    line survives, its counter does not. It is deliberately a property of the
+    $(I datum) rather than of the report, because that is the granularity the
+    truth has — an edit invalidates the lines it touched, not the file. A
+    report that decorates a changed line with the count its old text earned is
+    worse than one that says nothing there, and a report that drops a whole
+    file because three lines moved throws away the ninety that did not.
+    */
+    bool stale;
 }
 
 /// Sub-line / AST block byte range coverage (e.g. from V8 or LLVM region coverage).
