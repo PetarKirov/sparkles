@@ -24,7 +24,9 @@ or use the fixed-width type the API actually wants (Vulkan counts in `uint`).
 module sparkles.ui_sdl3;
 
 public import sparkles.ui_sdl3.sdl3_c;
+public import sparkles.ui_sdl3.commands;
 public import sparkles.ui_sdl3.error;
+public import sparkles.ui_sdl3.frame;
 public import sparkles.ui_sdl3.swapchain;
 public import sparkles.ui_sdl3.vulkan_context;
 public import sparkles.ui_sdl3.window;
