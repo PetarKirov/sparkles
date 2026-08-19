@@ -152,6 +152,29 @@ struct Window
     bool isOpen() const @safe pure nothrow @nogc => _handle !is null;
 
     /**
+    Start or stop delivering `SDL_EVENT_TEXT_INPUT` for this window.
+
+    $(B Off by default, and the failure mode is silent.) Without this, SDL
+    sends key events and no text events at all: named keys keep working,
+    modifiers keep working, and typing produces nothing — which reads as a
+    broken keymap rather than a missing call. It exists as a switch because on
+    a phone it is what raises and dismisses the on-screen keyboard, so it
+    cannot simply be left on.
+
+    Text arrives as $(REF KeyEvent, sparkles,input,events) through
+    $(MREF sparkles,ui_sdl3,events).
+    */
+    SdlExpected!() textInput(bool enabled) @trusted nothrow
+    {
+        if (_handle is null)
+            return err!void("Window.textInput: window is not open");
+
+        return check(enabled ? SDL_StartTextInput(_handle)
+            : SDL_StopTextInput(_handle),
+            enabled ? "SDL_StartTextInput" : "SDL_StopTextInput");
+    }
+
+    /**
     The drawable size in pixels.
 
     Not the same as the requested size on a HiDPI display, which is the whole
