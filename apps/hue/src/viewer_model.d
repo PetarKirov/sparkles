@@ -21,12 +21,14 @@ import sparkles.syntax.md.render_widgets : FenceScroll, isWrap, OverflowPolicy,
     TableScroll,
     foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
     viewMarkdown;
-import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocument;
-import sparkles.ui.components.gutter : GutterChannel;
+import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocumentInto;
+import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
+    GutterChannel, gutterWidth, withGutterColumns;
+import sparkles.code_instrumentation : maxCountWidth;
 import sparkles.syntax.ts.highlighter : ParsedLayer;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
-import sparkles.twoslash.render_widgets : viewTwoslashDocument;
+import sparkles.twoslash.render_widgets : viewTwoslashDocumentInto;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Rect;
@@ -38,13 +40,13 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_color : Color;
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
     schemeForBackground, Slot, TextStyle;
-import sparkles.ui.widget : TextSpan, WidgetKind, WidgetTree;
+import sparkles.ui.widget : Builder, TextSpan, WidgetKind, WidgetTree;
 
 import ansi_model : AnsiLine, Attr;
 import diff_session : DiffSession;
 import diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
     FileTypes, isDiffGapKey, isDiffHunkKey, viewDiffDoc;
-import document : coverageChannel, coverageTintedRanges, DiffEmphasis,
+import document : coverageChannel, coverageChannelId, coverageTintedRanges, DiffEmphasis,
     DiffSides, Document, hueFenceRenderer;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
 import gui_text : buildLineStarts, findMatches, lineCount, Match;
@@ -367,19 +369,68 @@ struct ViewerModel
 
 @system:
 
-    /// Rebuilds the gutter channels for the current document.
+    /// Whether the file line-number channel is on (`NUM2`; `l` toggles it).
+    bool lineNumbers = true;
+
+    /// The channels this document shows, with their widths but no cells yet.
     ///
-    /// Once per document, not per frame: a channel's width comes from the file
-    /// (`NUM3`), and recomputing it under the layout is how a gutter
-    /// oscillates as the pane resizes.
-    void rebuildChannels()
+    /// Widths are **reserved**, never derived from the data. A channel's data
+    /// arrives asynchronously — a coverage artifact is read after the first
+    /// paint, live types a second later — and a gutter that sizes itself to
+    /// what it happens to hold widens when the data lands, shifting every line
+    /// of code sideways under the reader. Reserving is also structural here:
+    /// the document is laid out at the content width *before* its rows exist,
+    /// so the chrome's width has to be known first.
+    GutterChannel[] reservedChannels()
     {
-        channels = null;
+        GutterChannel[] chans;
+        // `NUM3`: from the source line count, so wrapping never changes it.
+        if (lineNumbers && srcTotal > 0)
+            chans ~= GutterChannel(id: lineNumberChannelId,
+                width: digitCount(srcTotal));
         if (hasCoverage)
+            chans ~= GutterChannel(id: coverageChannelId,
+                width: cast(int) maxCountWidth);
+        return chans;
+    }
+
+    /**
+    Composes the document's gutter around `docRoot`, in two layout passes.
+
+    The chrome cannot be built before the document is laid out: which visual
+    row carries which source line is not knowable until then, and a wrapped
+    line must be numbered once rather than per row (`NUM1`). So the document is
+    laid out alone at the *content* width, its rows are read back, the channels
+    are filled from them, and the same arena is re-rooted around it.
+
+    The content width is `widthCols` minus the reserved chrome, so the document
+    wraps identically in both passes — the cells are indexed by visual row, and
+    a row count that changed between them would slide every one.
+    */
+    WidgetTree gutter(ref Builder b, uint docRoot)
+    {
+        channels = reservedChannels();
+        const chrome = gutterWidth(channels);
+        auto pass1 = b.finish(docRoot);
+        const rows1 = documentRows(pass1,
+            layout(pass1, Constraints(maxW: widthCols - chrome)));
+        if (channels.length == 0)
+            return pass1;
+        fillChannels(channels, rows1);
+        return b.finish(withGutterColumns(b, channels, rows1.length, docRoot));
+    }
+
+    /// Fills `chans` from the laid-out rows.
+    void fillChannels(ref GutterChannel[] chans, in DocRow[] rows)
+    {
+        size_t lineOf(size_t off) @safe => srcLineOf(lineStarts, off);
+
+        foreach (ref ch; chans)
         {
-            auto cov = coverageChannel(coverage, srcTotal);
-            if (cov.enabled)
-                channels ~= cov;
+            if (ch.id == lineNumberChannelId)
+                ch.cells = lineNumberCells(rows, ch.width, &lineOf);
+            else if (ch.id == coverageChannelId)
+                ch.cells = coverageChannel(coverage, rows, &lineOf).cells;
         }
     }
 
@@ -418,7 +469,6 @@ struct ViewerModel
         coverage = coverage_;
         hasCoverage = hasCoverage_;
         srcTotal = lineCount(source);
-        rebuildChannels();
         lineStarts = buildLineStarts(source);
         showPreview = preview.present || tw.code.length != 0
             || diff.files.length != 0;
@@ -893,10 +943,13 @@ struct ViewerModel
             // renders the same file — so it carries the same channels. Live
             // types arrive asynchronously and switch to this producer a second
             // or two after open; without this the gutter vanished exactly then.
-            tree = viewTwoslashDocument(tw, events, thisCurrent(), pageFg,
-                cache, widthCols,
-                CodeViewOptions(channels: channels,
+            auto b = Builder();
+            const docRoot = viewTwoslashDocumentInto(b, tw, events,
+                thisCurrent(), pageFg, cache,
+                widthCols - gutterWidth(reservedChannels()),
+                CodeViewOptions(
                     tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
+            tree = gutter(b, docRoot);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
                 defaultTwoslashPalette(schemeForBackground(pageBg)),
@@ -933,15 +986,16 @@ struct ViewerModel
             const(HighlightEvent)[] evs = plainSyntax
                 ? [HighlightEvent.sourceSpan(0, source.length)] : events;
 
-            tree = viewCodeDocument(source, evs,
+            auto b = Builder();
+            const docRoot = viewCodeDocumentInto(b, source, evs,
                 thisCurrent(), pageFg,
                 CodeViewOptions(foldedRegions: closed,
                     foldHitBase: foldHitBase, tabWidth: tabWidth,
                     listWhitespace: listWhitespace,
                     whitespaceFg: gutterFg, hasWhitespaceFg: true,
                     inlineFoldMarker: inlineFoldMarker,
-                    channels: channels,
                     tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
+            tree = gutter(b, docRoot);
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
                 palette, pageFg, pageBg);
@@ -2834,4 +2888,108 @@ version (unittest)
         [HighlightEvent.sourceSpan(0, other.length)], PreviewModel.init,
         TwoslashReturn.init, "d");
     assert(vm.top == 0, "a new document opens at its first line");
+}
+
+/// The file line-number channel's stable name.
+enum lineNumberChannelId = "chrome.line-numbers";
+
+/// Decimal digits in `n`, so a channel's width comes from the line count
+/// (`NUM3`) rather than from whatever is on screen.
+int digitCount(size_t n) @safe pure nothrow @nogc
+{
+    int d = 1;
+    while (n >= 10)
+    {
+        n /= 10;
+        d++;
+    }
+    return d;
+}
+
+/// The source (physical) line containing byte `off` — a binary search over the
+/// line-start offsets. The gutter's row → line mapping.
+size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
+    @safe pure nothrow @nogc
+{
+    size_t lo = 0, hi = lineStarts.length;
+    while (lo + 1 < hi)
+    {
+        const mid = (lo + hi) / 2;
+        if (lineStarts[mid] <= off)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+/**
+One line number per visual row, blank on a wrapped line's continuations.
+
+`NUM1`, and the reason the gutter is composed after layout: which visual row
+carries which source line is not knowable before the document is laid out, and
+a row that carries none — a below-line block, an interline annotation — must
+number nothing rather than repeat its neighbour.
+*/
+GutterCell[] lineNumberCells(in DocRow[] rows, int width,
+    scope size_t delegate(size_t) @safe lineOf) @safe
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeInteger;
+
+    auto cells = new GutterCell[](rows.length);
+    size_t prev = size_t.max;
+    foreach (i, ref row; rows)
+    {
+        if (row.srcStart == size_t.max)
+        {
+            cells[i] = blankCell(width);
+            prev = size_t.max;
+            continue;
+        }
+        const line = lineOf(row.srcStart);
+        if (line == prev)
+        {
+            cells[i] = blankCell(width);   // a continuation row
+            continue;
+        }
+        prev = line;
+        SmallBuffer!(char, 16) buf;
+        writeInteger(buf, line + 1);
+        cells[i] = cellOf(buf[], width);
+    }
+    return cells;
+}
+
+@("viewer_model.lineNumberCells.numbersPhysicalLinesOncePerWrap")
+@safe unittest
+{
+    import sparkles.ui.state : DocRow;
+
+    // `NUM1`: number by physical source line, once, on the row that starts it.
+    // The three cases that differ, and each of which a reader would notice:
+    //   - a blank source line is still a line and carries its number (the
+    //     backend painter used to skip these, which no editor does);
+    //   - a wrapped line's continuation rows carry nothing, or the same number
+    //     repeats down the page;
+    //   - a row with no source identity at all — a below-line annotation, an
+    //     interline block — numbers nothing rather than inheriting a neighbour.
+    const lineStarts = [0UL, 6, 7, 20];   // line 2 (index 1) is blank
+    size_t lineOf(size_t off) @safe => srcLineOf(lineStarts, off);
+
+    const rows = [
+        DocRow(srcStart: 0, srcEnd: 5),      // line 1
+        DocRow(srcStart: 6, srcEnd: 6),      // line 2, blank source line
+        DocRow(srcStart: 7, srcEnd: 14),     // line 3
+        DocRow(srcStart: 14, srcEnd: 19),    // line 3 continued (wrapped)
+        DocRow.init,                          // no identity at all
+        DocRow(srcStart: 20, srcEnd: 24),    // line 4
+    ];
+
+    const cells = lineNumberCells(rows, 2, &lineOf);
+    string[] shown;
+    foreach (ref c; cells)
+        shown ~= c.text[].idup;
+
+    assert(shown == [" 1", " 2", " 3", "  ", "  ", " 4"]);
 }

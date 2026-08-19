@@ -30,7 +30,6 @@ module sparkles.twoslash.render_widgets;
 import sparkles.base.term_color : RgbColor, toRgb;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
 import sparkles.syntax.render.widgets : applyTints, CodeViewOptions;
-import sparkles.ui.components.gutter : withGutter;
 import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
@@ -232,11 +231,25 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
     RgbColor pageFg, TsConfigCache* cache = null, int maxWidth = 0,
     CodeViewOptions decorations = CodeViewOptions.init)
 {
+    auto b = Builder();
+    return b.finish(viewTwoslashDocumentInto(b, tw, events, theme, pageFg,
+        cache, maxWidth, decorations));
+}
+
+/**
+As $(LREF viewTwoslashDocument), but appended to an existing builder — so a
+caller can compose around the document after laying it out (a file gutter is
+built from the rows, which do not exist until then).
+*/
+uint viewTwoslashDocumentInto(ref Builder b, const TwoslashReturn tw,
+    const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
+    RgbColor pageFg, TsConfigCache* cache = null, int maxWidth = 0,
+    CodeViewOptions decorations = CodeViewOptions.init)
+{
     import sparkles.ui.canvas : LineStyle;
     import sparkles.ui.geometry : Point, SizeSpec;
 
     auto plan = planTwoslash(tw);
-    auto b = Builder();
 
     // With a grammar cache, a `^?` query's type signature renders as resolved
     // syntax-colored spans — the widget model carries the color, so no backend
@@ -276,17 +289,15 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
         // row, `withGutter` makes that row a child of a `row`, and the layout
         // engine places both. A below-line block is its own row and takes a
         // blank strip of the same width, so its caret stays under the token.
-        rows ~= withGutter(b, decorations.channels, line,
-            decorateCodeRow(b, code, tw, plan, line));
+        rows ~= decorateCodeRow(b, code, tw, plan, line);
 
         foreach (ref const blk; plan.belowBlocks)
             if (blk.line == line)
-                rows ~= withGutter(b, decorations.channels, size_t.max,
-                    buildBelowBlock(b, tw.nodes[blk.node], blk.node,
-                        sigSpans(tw.nodes[blk.node]), maxWidth));
+                rows ~= buildBelowBlock(b, tw.nodes[blk.node], blk.node,
+                    sigSpans(tw.nodes[blk.node]), maxWidth);
     }
 
-    return b.finish(b.container(WidgetKind.column, rows));
+    return b.container(WidgetKind.column, rows);
 }
 
 /**
@@ -1709,92 +1720,55 @@ version (unittest)
     assert(sawFirst && sawSecond && !sawNewlineGlyph);
 }
 
-@("render_widgets.viewTwoslashDocument.carriesTheGutterAndTintChannels")
+@("render_widgets.viewTwoslashDocument.tintsTheInlineChannel")
 @safe unittest
 {
     import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, resolveTheme;
     import sparkles.syntax.render.widgets : TintedRange;
-    import sparkles.ui.components.gutter : cellOf, GutterChannel;
     import sparkles.ui.style : Slot;
-    import std.string : strip;
 
-    // The regression this pins: live D types land a payload a second or two
-    // after a `.d` file opens, the viewer switches from `viewCodeDocument` to
-    // this producer, and a coverage gutter attached to the *file* used to
-    // disappear at that moment — the second overlay silently replacing the
-    // first.
+    // The inline channel is still this view's business: a byte range of the
+    // *source* washed with a slot. The gutter is not — that is chrome beside
+    // the document, composed by whoever owns the document.
     const code = "int a;\nint b;\n";
     const tw = TwoslashReturn(code: code);
     const ev = [HighlightEvent.sourceSpan(0, code.length)];
     const labels = LabelSet.standard();
     const rt = resolveTheme(builtinDark, labels);
 
-    auto cells = [
-        cellOf("5", 1, Slot.covCovered, alignEnd: true, paintBackground: true),
-        cellOf("0", 1, Slot.covUncovered, alignEnd: true, paintBackground: true),
-    ];
-    auto opts = CodeViewOptions(
-        channels: [GutterChannel(id: "cov", width: 1, cells: cells)],
-        tintedRanges: [TintedRange(start: 7, end: 13, slot: Slot.covUncovered)],
-    );
     auto tree = viewTwoslashDocument(tw, ev, (() @trusted => &rt)(),
-        RgbColor(0xcc, 0xcc, 0xcc), null, 0, opts);
+        RgbColor(0xcc, 0xcc, 0xcc), null, 0,
+        CodeViewOptions(
+            tintedRanges: [TintedRange(start: 7, end: 13, slot: Slot.covUncovered)]));
 
-    bool sawFive, sawZero, sawTint;
+    bool sawTint;
     foreach (ref const n; tree.nodes)
-    {
-        // The badges are their own widgets beside the code rather than spans
-        // inside it — which is what keeps them out of the row's content and
-        // out of the decorations' coordinate space.
-        if (n.kind == WidgetKind.text)
-        {
-            if (n.text.strip == "5" && n.slot == Slot.covCovered)
-                sawFive = true;
-            if (n.text.strip == "0" && n.slot == Slot.covUncovered)
-                sawZero = true;
-        }
-        if (n.kind != WidgetKind.rich)
-            continue;
-        foreach (ref const sp; n.spans)
-        {
-            assert(sp.slot != Slot.covCovered, "no badge leaked into the code");
-            // The inline channel washes a byte range of the source itself.
-            if (sp.slot == Slot.covUncovered && sp.srcStart != size_t.max)
-                sawTint = true;
-        }
-    }
-    assert(sawFive, "the covered line's badge reached the twoslash view");
-    assert(sawZero, "and the uncovered one");
-    assert(sawTint, "as did the sub-line tint");
+        if (n.kind == WidgetKind.rich)
+            foreach (ref const sp; n.spans)
+                if (sp.slot == Slot.covUncovered && sp.srcStart != size_t.max)
+                    sawTint = true;
+    assert(sawTint, "the second line is washed");
 
     // Without decorations the view is exactly what it was.
     auto plain = viewTwoslashDocument(tw, ev, (() @trusted => &rt)(),
         RgbColor(0xcc, 0xcc, 0xcc));
     foreach (ref const n; plain.nodes)
-    {
-        assert(n.kind != WidgetKind.text || n.slot != Slot.covCovered,
-            "no gutter appears unless one is asked for");
         if (n.kind == WidgetKind.rich)
             foreach (ref const sp; n.spans)
-                assert(sp.slot != Slot.covCovered && sp.slot != Slot.covUncovered,
-                    "and no tint either");
-    }
+                assert(sp.slot != Slot.covUncovered, "no tint unless asked for");
 }
 
-@("render_widgets.viewTwoslashDocument.decorationsShiftWithTheGutter")
+@("render_widgets.viewTwoslashDocument.decorationsSitAtTheirOwnColumn")
 @safe unittest
 {
     import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, resolveTheme;
-    import sparkles.ui.components.gutter : cellOf, GutterChannel, gutterWidth;
     import sparkles.ui.canvas : OpKind;
     import sparkles.ui.style : Slot;
 
-    // A decoration is positioned by *source column*, and a row that carries
-    // chrome before its code has to place it that much further right — which is
-    // what a coverage gutter got wrong for every hover on the file. Nothing in
-    // this module arranges it any more: the chrome is a sibling widget and the
-    // layout engine moves the code, so this asserts the *result* rather than an
-    // argument being threaded correctly.
+    // A decoration is positioned by source column in the row's *own*
+    // coordinates, and stops there. Whatever a caller puts beside the row, the
+    // layout moves the row and the decoration together — which is why this
+    // view no longer takes, computes or threads an offset.
     const code = "const x = 1\n";
     const tw = TwoslashReturn(code: code, nodes: [
         Node(type: NodeType.hover, start: 6, length: 1, line: 0, character: 6,
@@ -1804,27 +1778,16 @@ version (unittest)
     const labels = LabelSet.standard();
     const rt = resolveTheme(builtinDark, labels);
 
-    int underlineX(CodeViewOptions opt)
-    {
-        auto tree = viewTwoslashDocument(tw, ev, (() @trusted => &rt)(),
-            RgbColor(0xcc, 0xcc, 0xcc), null, 0, opt);
-        auto ops = buildDisplayList(tree, layout(tree), defaultTwoslashPalette(),
-            RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
-        foreach (ref op; ops)
-            if (op.kind == OpKind.fillRect && op.slot == Slot.hoverUnderline)
-                return op.rect.x;
-        assert(false, "no hover underline was drawn");
-    }
+    auto tree = viewTwoslashDocument(tw, ev, (() @trusted => &rt)(),
+        RgbColor(0xcc, 0xcc, 0xcc));
+    auto ops = buildDisplayList(tree, layout(tree), defaultTwoslashPalette(),
+        RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
 
-    auto cells = [cellOf("5", 2, Slot.covCovered)];
-    const chans = [GutterChannel(id: "cov", width: 2, cells: cells)];
-    const chrome = gutterWidth(chans);   // 2 cells and the separator
-
-    const bare = underlineX(CodeViewOptions.init);
-    const gutterd = underlineX(CodeViewOptions(channels: chans));
-
-    assert(chrome == 3);
-    assert(bare == 6, "the underline sits at the token's own column");
-    assert(gutterd == bare + chrome,
-        "and moves right by exactly the chrome the row gained, no more");
+    foreach (ref op; ops)
+        if (op.kind == OpKind.fillRect && op.slot == Slot.hoverUnderline)
+        {
+            assert(op.rect.x == 6, "the underline sits at the token's column");
+            return;
+        }
+    assert(false, "no hover underline was drawn");
 }

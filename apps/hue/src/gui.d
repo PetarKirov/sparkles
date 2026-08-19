@@ -404,9 +404,11 @@ int runGui(GuiArgs guiArgs) @system
     vm.fenceHotGlyphs = true; // resolves the semantic bar's hot thumb color
 
 
-    // Line-number gutter width in cells (0 when off) — a stable size from the
-    // source line count so toggling wrapping never oscillates the layout.
-    int gutterCols() => lineNumbers ? digitCount(vm.srcTotal) + 1 : 0;
+    // The line-number column is a gutter channel inside the document's widget
+    // tree (`NUM1`-`NUM3`), not a band this backend paints beside it — so the
+    // backend reserves no cells for it and the tree is laid out at the full
+    // pane width. `gutterPx` is now just the tree pane plus the left padding.
+    int gutterCols() => 0;
 
     // Two structural columns contain the animated 1.5-cell rail at every font
     // size. The dock carves them before content layout, live or dormant.
@@ -508,7 +510,7 @@ int runGui(GuiArgs guiArgs) @system
 
     int widthCols()
     {
-        const w = paneContent(docPane).width - 1 - gutterCols();
+        const w = paneContent(docPane).width - 1;
         return w < 8 ? 8 : w;
     }
 
@@ -1291,31 +1293,6 @@ int runGui(GuiArgs guiArgs) @system
                     TextStyle(0), vm.gutterFg);
             }
 
-            // Source line numbers in the gutter — from the row's source
-            // range (first visual row of each source line only). Coverage
-            // counts are NOT drawn here: they are a column inside the
-            // document's widget tree, so every backend gets them from one
-            // producer instead of this one painting its own.
-            if (gcols > 0)
-            {
-                size_t prevLine = size_t.max;
-                foreach (row; 0 .. docRows)
-                {
-                    const vi = topLine + row;
-                    if (vi >= vm.rows.length)
-                        break;
-                    if (vm.rows[vi].srcStart == size_t.max)
-                        continue;
-                    const ln = srcLineOf(vm.lineStarts, vm.rows[vi].srcStart);
-                    if (ln == prevLine)
-                        continue;
-                    prevLine = ln;
-                    const s = cstrOf(buf, uintToBuf(ln + 1));
-                    drawText(fonts, s,
-                        gutterPx - (s.length + 1) * cast(float) cellW,
-                        docY0 + row * cast(float) cellH, TextStyle(0), vm.gutterFg);
-                }
-            }
         }
 
         flash.copiedFlash = flash.copiedFlash.stepped(frameMs(window.frameSeconds), copiedCfg);
@@ -2063,7 +2040,7 @@ int runGui(GuiArgs guiArgs) @system
                             copySelection();
                         else
                         {
-                            lineNumbers = !lineNumbers;
+                            vm.lineNumbers = !vm.lineNumbers;
                             vm.widthCols = -1;
                             relayout();
                         }
@@ -2549,8 +2526,8 @@ int runGui(GuiArgs guiArgs) @system
                     copySelection();
                     break;
                 case Command.toggleLineNumbers:
-                    lineNumbers = !lineNumbers;
-                    vm.widthCols = -1; // gutter width changed → reflow
+                    vm.lineNumbers = !vm.lineNumbers;
+                    vm.widthCols = -1; // the channel appears/disappears → reflow
                     relayout();
                     break;
                 case Command.toggleCodeLineNumbers:
@@ -3339,6 +3316,9 @@ int runGui(GuiArgs guiArgs) @system
         arrangePanes();
         applyTheme(vm.themeIdx); // resolves the theme before the first document
         vm.anchorMode = scrollAnchor; // `NAV5`: what a resize re-finds
+        // `NUM2`: the CLI's initial state for the line-number channel, which
+        // the model owns now that the column lives in the widget tree.
+        vm.lineNumbers = lineNumbers;
         vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
             source, events, preview, twoslash, docLang, initialDiff,
             initialDiffSides, initialDiffSession, DiffEmphasis.init,

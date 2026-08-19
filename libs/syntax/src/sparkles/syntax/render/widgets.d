@@ -16,7 +16,6 @@ import sparkles.syntax.color : toRgb;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
 import sparkles.syntax.md.model : Span;
 import sparkles.syntax.theme : ResolvedTheme, StyleSpec;
-import sparkles.ui.components.gutter : cellOf, GutterChannel, withGutter;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
@@ -59,17 +58,6 @@ struct CodeViewOptions
     RgbColor whitespaceFg;
     bool hasWhitespaceFg;
 
-    /// The chrome strips left of the code, in left-to-right order (`OVL7`) —
-    /// line numbers, coverage, diff markers, fold arrows, blame.
-    ///
-    /// This view neither places nor measures them: it hands each row to
-    /// $(REF withGutter, sparkles,ui,components,gutter) and the layout engine
-    /// puts the code past them. That is deliberate. While the chrome lived in
-    /// the row's own span list, every decoration positioned by a source column
-    /// had to be told how far the code had been pushed right, and this module
-    /// had to know a layout offset in order to tell it. Empty is the default,
-    /// and costs nothing.
-    const(GutterChannel)[] channels;
 
     /// Source byte ranges to tint, for decorations finer than a line
     /// (`OVL1`'s inline-span channel). Ranges are applied in order, so a
@@ -185,6 +173,24 @@ TextSpan[] applyTints(TextSpan[] spans, const(TintedRange)[] ranges) @safe
 }
 
 WidgetTree viewCodeDocument(const(char)[] source,
+    const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
+    RgbColor pageFg, CodeViewOptions opt = CodeViewOptions())
+{
+    auto b = Builder();
+    return b.finish(viewCodeDocumentInto(b, source, events, theme, pageFg, opt));
+}
+
+/**
+As $(LREF viewCodeDocument), but appended to an existing builder and returning
+its root — the shape $(REF viewMarkdownInto, sparkles,syntax,md,render_widgets)
+and hue's `viewDiffInto` already use.
+
+A caller composing around the document needs this: a file's gutter is built
+from the laid-out rows, so it lays the document out, reads its rows back, and
+re-roots the *same* arena around it. Returning a finished tree would force a
+copy to do that.
+*/
+uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
     const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
     RgbColor pageFg, CodeViewOptions opt = CodeViewOptions())
 {
@@ -356,7 +362,6 @@ WidgetTree viewCodeDocument(const(char)[] source,
 
     size_t lineEnd(size_t li) => li + 1 < n ? starts[li + 1] : source.length;
 
-    auto b = Builder();
     auto rows = new uint[](0);
     for (size_t li = 0; li < n; ++li)
     {
@@ -390,10 +395,9 @@ WidgetTree viewCodeDocument(const(char)[] source,
                 srcStart: starts[first], srcEnd: clampedEnd);
             ph ~= TextSpan("  ⋯ " ~ cnt[].idup ~ " lines", Slot.gutter,
                 noBreak: true);
-            rows ~= withGutter(b, opt.channels, first,
-                b.add(Widget(kind: WidgetKind.rich, spans: ph,
-                    slot: Slot.code,
-                    hitId: foldHitBase != 0 ? foldHitBase + fr.start : 0)));
+            rows ~= b.add(Widget(kind: WidgetKind.rich, spans: ph,
+                slot: Slot.code,
+                hitId: foldHitBase != 0 ? foldHitBase + fr.start : 0));
             continue;
         }
         const blank = !byLine[li].length;
@@ -433,11 +437,10 @@ WidgetTree viewCodeDocument(const(char)[] source,
         spans = applyTints(spans, opt.tintedRanges);
         // A blank row never wraps: the greedy breaker consumes a lone space
         // (a break eats its space), which would drop the row's identity.
-        rows ~= withGutter(b, opt.channels, li,
-            b.add(Widget(kind: WidgetKind.rich, spans: spans,
-                slot: Slot.code, wrap: blank ? TextWrap.none : wrap)));
+        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
+            slot: Slot.code, wrap: blank ? TextWrap.none : wrap));
     }
-    return b.finish(b.container(WidgetKind.column, rows));
+    return b.container(WidgetKind.column, rows);
 }
 
 ///
@@ -483,73 +486,6 @@ WidgetTree viewCodeDocument(const(char)[] source,
                 sawKw = true;
             }
     assert(sawKw);
-}
-
-@("render.widgets.viewCodeDocument.gutterColumn")
-@safe unittest
-{
-    import sparkles.syntax.label : LabelSet;
-    import sparkles.syntax.theme : resolveTheme;
-    import sparkles.syntax.themes : builtinDark;
-    import sparkles.ui.layout : layout;
-    import sparkles.ui.state : documentRows;
-
-    const src = "a;\nb;\nc;\n";
-    const labels = LabelSet.standard();
-    const rt = resolveTheme(builtinDark, labels);
-    const ev = [HighlightEvent.sourceSpan(0, src.length)];
-
-    auto cells = [
-        cellOf("12", 4, Slot.covCovered),
-        cellOf("0", 4, Slot.covUncovered),
-        // Line 3 is deliberately absent: a producer describes only the lines
-        // it knows about, and the column still lines up.
-    ];
-    CodeViewOptions opt;
-    opt.channels = [GutterChannel(id: "cov", width: 4, cells: cells)];
-
-    auto tree = viewCodeDocument(src, ev, (() @trusted => &rt)(),
-        RgbColor(0xcc, 0xcc, 0xcc), opt);
-    auto frames = layout(tree);
-
-    // The gutter is chrome: it must not disturb the rows' source identity,
-    // which is what selection, copy and goto-line walk.
-    // `srcEnd` excludes the newline, as it does without a gutter.
-    auto rows = documentRows(tree, frames);
-    assert(rows.length == 3);
-    assert(rows[0].srcStart == 0 && rows[0].srcEnd == 2);
-    assert(rows[1].srcStart == 3 && rows[1].srcEnd == 5);
-    assert(rows[2].srcStart == 6);
-    assert(rows[0].sourceText == "a;", "and it stays out of the content");
-
-    // The chrome is a sibling of the code, not a span inside it: the code
-    // rows carry only the source, and the cells are their own widgets.
-    TextSpan[][] rowSpans;
-    foreach (ref node; tree.nodes)
-        if (node.kind == WidgetKind.rich)
-            rowSpans ~= node.spans;
-    assert(rowSpans.length == 3);
-    assert(rowSpans[0][0].text == "a;", "no gutter span prefixes the code");
-
-    string[] cellText;
-    uint[] cellIdx;
-    foreach (i, ref node; tree.nodes)
-        if (node.kind == WidgetKind.text)
-        {
-            cellText ~= node.text.idup;
-            cellIdx ~= cast(uint) i;
-        }
-    // Right-aligned in the channel's own width; the separator is the row's gap.
-    assert(cellText == ["  12", "   0", ""],
-        "a line the producer said nothing about is blank, not a hole");
-    assert(tree.nodes[cellIdx[0]].slot == Slot.covCovered);
-    assert(tree.nodes[cellIdx[1]].slot == Slot.covUncovered);
-    assert(tree.nodes[cellIdx[2]].slot == Slot.gutter);
-
-    // And the code starts past the chrome — 4 cells plus the separator.
-    foreach (i, ref node; tree.nodes)
-        if (node.kind == WidgetKind.rich)
-            assert(frames[i].rect.x == 5, "the layout placed the code, not us");
 }
 
 @("render.widgets.viewCodeDocument.tintedRanges")
