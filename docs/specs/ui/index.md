@@ -49,6 +49,7 @@ the _decision_.
 | [Input](./input.md)                                 | the abstract event vocabulary, the tier-0/1/2 capability ladder, and the backend adapter contracts                                                                                                                                                                                |
 | [State machines](./state-machines.md)               | presentation-free behavior: scrollbar, selection, hover, focus, disclosure, timeline                                                                                                                                                                                              |
 | [Keymap & lantern](./keymap.md)                     | keyboard policy as data — `Binding!(Cmd, Scope)` tables over app-supplied enums, scope-order precedence with marker UDAs, two-direction resolution (`resolve`/`bindingsAt`), and the which-key-style guide machine + panel — `KEY`/`LTN` (moved from hue with the extraction)     |
+| [Gutter channels](./gutter.md)                      | the per-line chrome model — line numbers, coverage counts, fold arrows, diff markers and blame as one set of layout channels beside the content, composed after layout, width-reserved, priority-merged and budgeted — `GUT`                                                      |
 | [Containers](./containers.md)                       | the container tier: `ScrollView` (owned scrolling) and the single-window docking layout (splits, tabbed groups, drag-to-redock, focus/capture ownership) — `SCV`/`DCK`                                                                                                            |
 | [Inspector](./inspector.md)                         | the generic **inspector component** — a tree over a subject + details pane + the adapter-defined selection/extent contract, with the widget-tree adapter (toolkit self-inspection) — `INS`                                                                                        |
 | [Anchored overlays](./popup.md) _(proposed)_        | the one anchored-overlay primitive behind every floating surface: the anchor value, the placement solve, the ordered top-layer arena that fills `DCK13`'s rung, triggers, dismissal, layering and modality — `POP`/`ANC`/`PLC`/`TRG`/`DSM`/`LYR`/`MDL`                            |
@@ -106,7 +107,8 @@ Requirement IDs are `<AREA><n>` — a short area mnemonic plus a number, unique
 within a document (e.g. `LAY4`, `WGT2`, `TGT1`). Areas: `UIA`/`PKG`/`NFR`
 (library-wide), `PRN` (principles), `LAY` (layout), `THM` (theme), `WGT`/`VMD`
 (widgets and view models), `INP` (input), `STM` (state machines), `INS`
-(inspector), `TGT` (backends), `MIG` (migration), and — for
+(inspector), `GUT` (gutter channels), `TGT` (backends), `MIG` (migration),
+and — for
 [anchored overlays](./popup.md) — `POP` (the primitive), `ANC` (anchors),
 `PLC` (placement), `TRG` (triggers), `DSM` (dismissal), `LYR` (layering) and
 `MDL` (modality and focus). Each area's mnemonic is expanded at its section
@@ -140,6 +142,7 @@ own it, so coverage is auditable in both directions: requirement → code (the
 | `libs/ui/src/sparkles/ui/interp/html.d`                 | [backends](./backends.md) — `TGT4`, `TGT7`                                                |
 | `libs/ui/src/sparkles/ui/components/`                   | [widgets](./widgets.md) — `VMD*`, `WGT7`+                                                 |
 | `libs/ui/src/sparkles/ui/components/inspector.d`        | [inspector](./inspector.md) — `INS1`–`INS5`                                               |
+| `libs/ui/src/sparkles/ui/components/gutter.d`           | [gutter channels](./gutter.md) — `GUT1`–`GUT9`                                            |
 | `libs/input/src/sparkles/input/`                        | [input](./input.md) — `INP1`–`INP9`                                                       |
 | `libs/ui-tui/src/`                                      | [backends](./backends.md) — `TGT6`                                                        |
 | `libs/ui-raylib/src/`                                   | [backends](./backends.md) — `TGT6`                                                        |
