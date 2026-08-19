@@ -94,6 +94,15 @@ struct VulkanContext
     /// The selected device's properties, for logging and capability decisions.
     VkPhysicalDeviceProperties properties;
 
+    /**
+    `VK_KHR_dynamic_rendering` is enabled and its commands loaded.
+
+    The triangle (and any other direct-draw consumer) can then skip the
+    render pass and the per-image framebuffers; a resize only rebuilds
+    image views. Graphite does not use this — it records its own passes.
+    */
+    bool dynamicRendering;
+
     @disable this(this);
 
     ~this() @trusted nothrow
@@ -249,12 +258,39 @@ struct VulkanContext
             pQueuePriorities: &priority,
         ));
 
+        auto advertised = queryVkList!VkExtensionProperties(
+            instance.enumerateDeviceExtensionProperties, physicalDevice, null);
+        const wantPortability = advertised.hasExtension(khrPortabilitySubset);
+        // The instance version we asked for, not the device's maximum —
+        // enabling a 1.3 feature on a 1.1 instance is invalid even when
+        // the hardware could do it.
+        const major = apiVersionMajor(req.apiVersion);
+        const minor = apiVersionMinor(req.apiVersion);
+        const atLeast12 = major > 1 || (major == 1 && minor >= 2);
+        const atLeast13 = major > 1 || (major == 1 && minor >= 3);
+        // 1.3: core, no extra extension. 1.2: the KHR extension (its
+        // dependencies were promoted). 1.1: skip — the dependency chain
+        // is four extensions and the render-pass fallback is fine.
+        const wantDynamicExt = !atLeast13 && atLeast12
+            && advertised.hasExtension(khrDynamicRendering);
+        const wantDynamicFeat = atLeast13 || wantDynamicExt;
+
         // On a portability ICD the subset extension is mandatory, not
         // optional — VUID-VkDeviceCreateInfo-pProperties-04451.
-        const(char)*[2] deviceExts = [khrSwapchain.ptr, khrPortabilitySubset.ptr];
-        const deviceExtCount = needsPortabilitySubset(instance, physicalDevice) ? 2 : 1;
+        const(char)*[3] deviceExts = void;
+        uint deviceExtCount;
+        deviceExts[deviceExtCount++] = khrSwapchain.ptr;
+        if (wantPortability)
+            deviceExts[deviceExtCount++] = khrPortabilitySubset.ptr;
+        if (wantDynamicExt)
+            deviceExts[deviceExtCount++] = khrDynamicRendering.ptr;
+
+        auto dynFeat = vkInfo(VkPhysicalDeviceDynamicRenderingFeatures(
+            dynamicRendering: VK_TRUE,
+        ));
 
         auto deviceInfo = vkInfo(VkDeviceCreateInfo(
+            pNext: wantDynamicFeat ? &dynFeat : null,
             queueCreateInfoCount: 1,
             pQueueCreateInfos: &queueInfo,
             enabledExtensionCount: deviceExtCount,
@@ -273,6 +309,8 @@ struct VulkanContext
         if (!device.has!khrSwapchain)
             return err!void("VK_KHR_swapchain commands did not load");
 
+        dynamicRendering = wantDynamicFeat
+            && (device.has!vkVersion13 || device.has!khrDynamicRendering);
         device.getDeviceQueue(handle, queueFamily, 0, &queue);
         return ok!string();
     }
