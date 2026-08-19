@@ -905,15 +905,21 @@ private CliExpected!T parseValue(T)(string value, Option optionInfo)
         return ok(value);
     else static if (is(T == enum))
     {
-        try
-            return ok(value.to!T);
-        catch (Exception)
-        {
-            return error!T(CliError(
-                kind: CliError.Kind.parse,
-                message: "Invalid value `" ~ value ~ "` for " ~ T.stringof,
-            ));
-        }
+        // `wireNames` is the D identifier when the type has no `@WireCase`,
+        // and the kebab/snake/renamed form when it does — so a
+        // `--present-mode fifo-relaxed` matches `PresentMode.fifoRelaxed`
+        // the same way `fromJSON` would, without quoting JSON around it.
+        import sparkles.wired.policy : AnyFormat, resolveCaseStyle, wireNames;
+
+        alias names = wireNames!(AnyFormat, T, resolveCaseStyle!(AnyFormat, T));
+        static foreach (i, m; __traits(allMembers, T))
+            if (value == names[i])
+                return ok(__traits(getMember, T, m));
+        return error!T(CliError(
+            kind: CliError.Kind.parse,
+            message: "Invalid value `" ~ value ~ "`; expected one of: "
+                ~ names.join(", "),
+        ));
     }
     else
     {
@@ -2086,6 +2092,46 @@ unittest
     assert(help.canFind("trace"));
     assert(help.canFind("info"));
     assert(help.canFind("warn"));
+}
+
+@("args.parseCli.wiredEnumUsesKebabWireNames")
+@system
+unittest
+{
+    import sparkles.wired : CaseStyle, WireCase, WireName;
+
+    @WireCase(CaseStyle.kebabCase)
+    enum Mode
+    {
+        auto_,
+        fifoRelaxed,
+        @WireName("box") mailbox,
+    }
+
+    @(Command("draw"))
+    struct Cli
+    {
+        @(Option("present-mode"))
+        Mode mode;
+    }
+
+    auto parsed = parseCli!Cli(["draw", "--present-mode", "fifo-relaxed"]);
+    assert(parsed);
+    assert(parsed.value.mode == Mode.fifoRelaxed);
+
+    auto autoParsed = parseCli!Cli(["draw", "--present-mode=auto"]);
+    assert(autoParsed);
+    assert(autoParsed.value.mode == Mode.auto_);
+
+    auto renamed = parseCli!Cli(["draw", "--present-mode=box"]);
+    assert(renamed);
+    assert(renamed.value.mode == Mode.mailbox);
+
+    auto help = parseCli!Cli(["draw", "--present-mode=help"]);
+    assert(!help);
+    assert(help.error.help.canFind("fifo-relaxed"));
+    assert(help.error.help.canFind("auto"));
+    assert(!help.error.help.canFind("fifoRelaxed"));
 }
 
 @("args.optionHelp.bool")

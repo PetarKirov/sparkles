@@ -7,6 +7,7 @@ license "BSL-1.0"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
+dependency "sparkles:wired" path="../.."
 dependency "expected" version="~>0.4.1"
 
 // The UI components moved to the canvas-first toolkit; `core-cli` keeps
