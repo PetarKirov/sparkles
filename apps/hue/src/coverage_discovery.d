@@ -24,7 +24,7 @@ module coverage_discovery;
 import std.file : DirEntry, dirEntries, exists, isDir, isFile, SpanMode, timeLastModified;
 import std.path : absolutePath, buildPath, dirName;
 
-import sparkles.base.logger : info, warning;
+import sparkles.base.logger : info;
 import sparkles.code_instrumentation : dmdListingSource;
 
 /// Where `ci --test` leaves its merged listings, relative to the repository root.
@@ -192,15 +192,15 @@ string findCoverageArtifact(string sourcePath) @safe
     if (match is null)
         return null;
 
-    // An artifact older than the file describes text that has since moved, so
-    // its line numbers point at the wrong rows. Saying so and rendering plain
-    // beats decorating confidently from stale data — the same call `OVL6`
-    // makes for an artifact that will not parse.
+    // An artifact older than the file is *not* refused here any more. Its line
+    // numbers do point at the wrong rows — but a `.lst` records the source it
+    // counted, so `coverage_rebase` can say exactly which lines moved and which
+    // were rewritten, and the reader keeps the ninety lines that did not change
+    // instead of losing the file over three that did. What is still worth
+    // saying is that the run is behind the file, because a rebased overlay
+    // describes the last run and not the current one.
     if (!isFresh(match.artifact, sourcePath))
-    {
-        warning(i"coverage for $(sourcePath) is older than the file; run `ci --test` again");
-        return null;
-    }
+        info(i"coverage for $(sourcePath) predates the file; re-anchoring onto the current text");
     return match.artifact;
 }
 
@@ -294,11 +294,15 @@ unittest
 
     assert(findCoverageArtifact(src).length, "a fresh artifact is found");
 
-    // Touch the source into the future: the artifact now describes text that
-    // has moved, and must not be attached.
+    // Touch the source into the future. The artifact now predates the file,
+    // which used to mean "attach nothing" — the overlay went dark on the first
+    // keystroke. It is still found: what the listing recorded is evidence the
+    // rebase can use, and only the lines that actually changed lose their
+    // counters (`coverage_rebase`).
     import std.datetime : Clock, seconds;
 
     const later = Clock.currTime + 60.seconds;
     src.setTimes(later, later);
-    assert(findCoverageArtifact(src) is null, "a stale artifact is refused");
+    assert(findCoverageArtifact(src).length,
+        "an out-of-date artifact is rebased, not refused");
 }

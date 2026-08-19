@@ -82,6 +82,66 @@ ParseExpected!FileCoverage parseDmdCoverage(const(char)[] contents,
 }
 
 /**
+The source text a listing recorded, one line per counted record.
+
+A `.lst` is the only artifact in this library that carries the code it counted:
+every record is `<count>|<source line>`. That makes it the one format whose
+records can be re-anchored onto an edited file, because the text is the evidence
+for which line each counter belongs to. Without it "line 42" is a number that
+means whatever line 42 happens to be now.
+
+Params:
+    contents = the whole listing
+
+Returns: the recorded source, newline-joined, with no trailing newline; empty
+    when the listing has no counted records.
+*/
+string dmdListingText(const(char)[] contents) @safe
+{
+    import std.array : appender;
+
+    auto text = appender!string;
+    bool first = true;
+    auto scanner = RecordScanner(contents);
+    while (scanner.next)
+    {
+        const split = splitOnce(scanner.line, '|');
+        if (!split.found)
+            continue;                       // the trailer, or a stray line
+        if (!first)
+            text ~= '\n';
+        first = false;
+        // `trimmed` would eat significant leading indentation, so only the
+        // CR of a CRLF listing comes off.
+        const(char)[] line = split.after;
+        if (line.length && line[$ - 1] == '\r')
+            line = line[0 .. $ - 1];
+        text ~= line;
+    }
+    return text[];
+}
+
+@("coverage.formats.dmd.dmdListingText")
+@safe
+unittest
+{
+    enum listing = "      5|int add(int a, int b)\n"
+        ~ "       |{\n"
+        ~ "      5|    return a + b;\n"
+        ~ "       |}\n"
+        ~ "src/math.d is 100% covered\n";
+
+    // Indentation is part of the evidence — a line diff over de-indented text
+    // matches lines that are not the same line.
+    assert(dmdListingText(listing)
+        == "int add(int a, int b)\n{\n    return a + b;\n}");
+
+    assert(dmdListingText("") == "");
+    assert(dmdListingText("src/m.d has no code\n") == "");
+    assert(dmdListingText("      1|x();\r\nsrc/a.d is 100% covered\r\n") == "x();");
+}
+
+/**
 The source path a listing's trailer names, read from the end of `contents`
 without parsing the counter columns.
 

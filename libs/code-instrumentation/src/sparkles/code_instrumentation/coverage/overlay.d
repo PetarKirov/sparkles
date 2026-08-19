@@ -14,6 +14,9 @@ struct CoverageGutterItem
     LineState state;         /// Covered / uncovered / partial / nonCode
     ulong executionCount;    /// Exact count
     string countText;        /// Compact formatted string (e.g. "5", "164k", "0", "")
+    /// The line was re-anchored onto text it no longer holds; `countText` is
+    /// empty and a renderer must not claim a state for it.
+    bool stale;
 }
 
 /// An inline span highlight for sub-line execution or uncovering.
@@ -34,6 +37,9 @@ struct CoveragePlan
     double branchPercent;
     size_t coveredLines;
     size_t coverableLines;
+    /// How many lines the report describes but can no longer speak for. Non-zero
+    /// only after a consumer re-anchored the artifact onto an edited file.
+    size_t staleLines;
 }
 
 /**
@@ -77,7 +83,12 @@ CoveragePlan planCoverage(in FileCoverage file) @safe pure
         item.lineNumber = l.lineNumber;
         item.state = l.state;
         item.executionCount = l.executionCount;
-        item.countText = formatCount(l.state, l.executionCount);
+        item.stale = l.stale;
+        // A stale line gets no count and no state to paint: whatever the
+        // counter says, it is not about the text that is there now.
+        item.countText = l.stale ? "" : formatCount(l.state, l.executionCount);
+        if (l.stale)
+            plan.staleLines++;
         plan.gutterItems ~= item;
     }
 
@@ -89,6 +100,10 @@ CoveragePlan planCoverage(in FileCoverage file) @safe pure
             isBlockCoverage: sp.isBlockCoverage
         );
     }
+
+    if (plan.staleLines > 0)
+        plan.summaryBanner ~= format!" — %s line(s) edited since the run"(
+            plan.staleLines);
 
     return plan;
 }
