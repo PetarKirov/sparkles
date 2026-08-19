@@ -1751,6 +1751,25 @@ int runGui(GuiArgs guiArgs) @system
                 blitPaneGrid(*paneGrid,
                     cast(float)((pkOriginX + hole.x) * cellW),
                     cast(float)((1 + hole.y) * cellH));
+
+                // The preview's bar is the pane's OWN machine (`vm.scroll`),
+                // drawn through the same animated px painter as the document
+                // pane's — one look, one animation, whichever pane you read.
+                const lay = filePickerDoc.bars;
+                if (lay.vLive)
+                {
+                    const sv = filePickerDoc.pane.vm.scroll;
+                    drawBar(Rect(
+                        (pkOriginX + hole.x + lay.vTrack.x) * cellW,
+                        (1 + hole.y + lay.vTrack.y) * cellH,
+                        lay.vTrack.width * cellW,
+                        lay.vTrack.height * cellH),
+                        RuleEdge.right, lay.vExtents.content,
+                        lay.vExtents.viewport, sv.v.offset,
+                        sv.vAnim.percent,
+                        sv.v.hovered || sv.v.dragging,
+                        vm.sbTrack, vm.sbThumb);
+                }
             }
         }
 
@@ -2106,6 +2125,7 @@ int runGui(GuiArgs guiArgs) @system
         {
             filePickerDoc.select(filePicker.get.selectedPath);
             filePickerDoc.syncTheme(vm.themeIdx);
+            filePickerDoc.caps = caps; // the same profile the dock eases with
             cast(void) filePickerDoc.tick();
         }
 

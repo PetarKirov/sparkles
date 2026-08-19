@@ -477,6 +477,29 @@ struct WorkspaceTui
                     = (*pane)[cast(ushort) px, cast(ushort) y];
             }
         }
+
+        // The preview's bar is the pane's OWN machine (`vm.scroll`), painted
+        // the same way `paintDockScrollbars` paints the viewer's — one look,
+        // one animation, whichever pane you are reading.
+        const lay = pickerDoc.bars;
+        if (lay.vLive)
+        {
+            import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+            import sparkles.ui.widget : Builder;
+
+            const sv = pickerDoc.pane.vm.scroll;
+            auto b = Builder();
+            const bar = scrollbar(b, sv.v,
+                lay.vExtents.content, lay.vExtents.viewport,
+                lay.vExtents.track, ScrollbarGlyphs('█', '░'),
+                expandPercent: cast(ubyte) sv.vAnim.percent,
+                gutter: lay.vTrack.width,
+                trackLit: sv.v.hovered || sv.v.dragging);
+            auto t = b.finish(bar);
+            paintGrid(g, pageBg, buildDisplayList(t, layout(t),
+                pickerDoc.pane.vm.palette, pageFg, pageBg),
+                originX_ + hole.x + lay.vTrack.x, 1 + hole.y + lay.vTrack.y);
+        }
     }
 
     /// Paints the semantic bars the dock routed. The terminal degradation is
@@ -933,6 +956,7 @@ struct WorkspaceTui
         pickerDoc.pane.labels = viewer.labels;
         pickerDoc.pane.vm.cache = viewer.vm.cache;
         pickerDoc.pane.vm.decodeAnsi = viewer.vm.decodeAnsi;
+        pickerDoc.caps = mousePointer; // the same profile the dock eases with
         pickerDoc.syncTheme(viewer.themeIndex);
         picker.get.open(tree.root.length ? tree.root : ".",
             tree.includeGlobs, tree.excludeGlobs);

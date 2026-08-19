@@ -25,7 +25,13 @@ module picker_preview;
 import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.searching : endsWith;
 
-import sparkles.input.events : Event, KeyEvent;
+import sparkles.input.capability : cellPointer, InputCapabilities;
+import sparkles.input.events : Event, KeyEvent, match, PointerAction,
+    PointerEvent;
+import sparkles.ui.components.scroll_view : ScrollArea, ScrollAreaAxis,
+    ScrollLayout, scrollLayout;
+import sparkles.ui.geometry : Rect;
+import sparkles.ui.state : CaptureState;
 import sparkles.ui_tui : Grid;
 
 import document : Document;
@@ -46,8 +52,15 @@ struct PickerDocPane
     Duration overlayDelay = 2.seconds;
     /// Master switch for the dwell-started oracle (tests turn it off).
     bool liveOverlays = true;
+    /// What the host's pointer can do — feeds the bars' hover/expand easing
+    /// (`IXB10`). The window host overrides with its own profile.
+    InputCapabilities caps = cellPointer;
 
     private Grid grid;
+    private CaptureState barCap;
+    private MonoTime lastEase;
+    private bool easeArmed;
+    private bool barsEasing;
     private string wantedPath;
     private string shownPath;
     private MonoTime wantedAt;
@@ -120,6 +133,24 @@ struct PickerDocPane
             liveStarted = true;
             startLive();
         }
+        // The bars' hover/expand easing (`IXB10`) — run on the pane's OWN
+        // machines (`vm.scroll`), so the hosts paint the preview's bars
+        // exactly as they paint the main document pane's and the two cannot
+        // look different again.
+        if (easeArmed && pane.themes.length)
+        {
+            const vBefore = pane.vm.scroll.vAnim.percent;
+            const hBefore = pane.vm.scroll.hAnim.percent;
+            const dt = cast(float)((now - lastEase).total!"hnsecs")
+                / 10_000_000.0f;
+            pane.vm.scroll.easeV(caps, dt);
+            pane.vm.scroll.easeH(caps, dt);
+            barsEasing = pane.vm.scroll.vAnim.percent != vBefore
+                || pane.vm.scroll.hAnim.percent != hBefore;
+            changed |= barsEasing;
+        }
+        lastEase = now;
+        easeArmed = true;
         changed |= pollLive();
         return changed;
     }
@@ -129,7 +160,7 @@ struct PickerDocPane
     Duration nextDeadline() @system
     {
         const now = MonoTime.currTime;
-        Duration result = Duration.max;
+        Duration result = barsEasing ? 33.msecs : Duration.max;
         if (loadPending)
         {
             const elapsed = now - wantedAt;
@@ -156,6 +187,8 @@ struct PickerDocPane
     */
     ref Grid paint(int cols, int rows) @system
     {
+        import sparkles.ui_tui : CellStyle, Color;
+
         grid.resize(cast(ushort)(cols > 0 ? cols : 1),
             cast(ushort)(rows > 0 ? rows : 1));
         if (pane.themes.length == 0)
@@ -164,11 +197,36 @@ struct PickerDocPane
         colsShown = cols;
         rowsShown = rows;
         pane.originX = 0;
-        pane.resize(cols, rows);
+        // The host owns the bar (parity with the main document pane): the
+        // pane paints no bar of its own, and the last column is its
+        // reserved gutter — background here, the host's bar over it.
+        pane.externalScroll = true;
+        const paneCols = cols > 1 ? cols - 1 : cols;
+        pane.resize(paneCols, rows);
         if (resized && shownPath.length)
             pane.relayout();
         pane.paint(grid);
+        if (cols > 1)
+            grid.fillRect(cast(ushort)(cols - 1), 0, 1,
+                cast(ushort)(rows > 0 ? rows : 1),
+                CellStyle(bg: Color.fromRgb(pane.vm.pageBg)));
         return grid;
+    }
+
+    /**
+    The bar geometry the hosts paint and this pane routes pointers through
+    (`SCV7`) — hole-local, one derivation for both, over the pane's own
+    `vm.scroll` machines. Vertical only: the preview is a glance, and its
+    horizontal overflow stays on the keys (`zh`/`zl`) and the shifted wheel.
+    */
+    ScrollLayout bars() @system
+    {
+        const rows = rowsShown > 2 ? rowsShown - 2 : rowsShown;
+        return scrollLayout(ScrollArea(
+            rect: Rect(0, 1, colsShown, rows),
+            v: ScrollAreaAxis(content: pane.docRows,
+                viewport: pane.docViewRows, gutter: 1),
+            h: ScrollAreaAxis(content: 0, viewport: 0, gutter: 0)));
     }
 
     private int colsShown, rowsShown;
@@ -185,9 +243,30 @@ struct PickerDocPane
     */
     void forward(in Event e) @system
     {
-        cast(void) pane.handle(e);
+        // The bar rung first (`DCK13`'s shape): a pointer over the gutter —
+        // or owned by a bar grab — drives the pane's own `vm.scroll`
+        // machines through the shared step, exactly as the dock drives the
+        // main pane's; everything else is the pane's.
+        bool routed;
+        e.match!(
+            (in PointerEvent p) { routed = stepBars(p); },
+            (_) {});
+        if (!routed)
+            cast(void) pane.handle(e);
         pane.pickerRequested = false;
         pane.inspectorToggleRequested = false;
+    }
+
+    private bool stepBars(in PointerEvent p) @system
+    {
+        const lay = bars();
+        const overV = lay.vPointer(p).over;
+        const wasGrab = pane.vm.scroll.grabbing;
+        barCap = pane.vm.scroll.stepV(barCap, 1, p, pane.vm.top, lay);
+        if (p.action == PointerAction.release)
+            barCap = barCap.released(); // the central release (`STM11`)
+        pane.vm.top = pane.vm.scroll.v.offset;
+        return overV || wasGrab || pane.vm.scroll.grabbing;
     }
 
     /// ditto
@@ -299,5 +378,69 @@ unittest
     preview.select("b.d");
     assert(preview.tick());
     assert(loads == ["a.d", "b.d"]);
+    preview.shutdown();
+}
+
+@("picker.preview.hostOwnedBarsDriveThePane")
+@system
+unittest
+{
+    import core.time : Duration;
+    import sparkles.input.events : PointerButton;
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, Theme;
+    import sparkles.ui.geometry : Point;
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+
+    PickerDocPane preview;
+    preview.liveOverlays = false;
+    preview.loadDelay = Duration.zero;
+    preview.pane.names = names[];
+    preview.pane.themes = themes[];
+    preview.pane.labels = LabelSet.standard();
+    preview.load = delegate Document(string path) @system {
+        Document doc;
+        doc.title = path;
+        foreach (i; 0 .. 40)
+            doc.source ~= "int line;\n";
+        doc.events = [HighlightEvent.sourceSpan(0, doc.source.length)];
+        return doc;
+    };
+    preview.select("long.d");
+    assert(preview.tick());
+    cast(void) preview.paint(40, 12);
+
+    // The bar geometry is host-shared and hole-local: the reserved gutter is
+    // the last column, spanning the body rows.
+    const lay = preview.bars;
+    assert(lay.vLive, "an overflowing document has a live bar");
+    assert(lay.vTrack == Rect(39, 1, 1, 10));
+
+    // A press on the thumb and a drag scroll the DOCUMENT, through the
+    // pane's own `vm.scroll` machine — the same one the main document pane
+    // runs, which is the whole parity point.
+    const before = preview.pane.vm.top;
+    preview.forward(Event(PointerEvent(pos: Point(39, 1),
+        action: PointerAction.press, button: PointerButton.left)));
+    assert(preview.pane.vm.scroll.grabbing, "a thumb press grabs");
+    preview.forward(Event(PointerEvent(pos: Point(39, 6),
+        action: PointerAction.drag, button: PointerButton.left)));
+    assert(preview.pane.vm.top > before, "a bar drag scrolls the document");
+    preview.forward(Event(PointerEvent(pos: Point(39, 6),
+        action: PointerAction.release, button: PointerButton.left)));
+    assert(!preview.pane.vm.scroll.grabbing, "the release ends the grab");
+
+    // The easing clock runs on the pane's own anim machines, so the hosts
+    // can paint the same hover/expand animation the document pane has.
+    preview.pane.vm.scroll.v = preview.pane.vm.scroll.v.hoveredNow(true);
+    cast(void) preview.tick(); // arms the clock
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    Thread.sleep(20.msecs);
+    cast(void) preview.tick();
+    assert(preview.pane.vm.scroll.vAnim.percent > 0,
+        "the hover expansion eases");
     preview.shutdown();
 }
