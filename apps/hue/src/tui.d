@@ -121,6 +121,14 @@ struct PreviewTui
     BackgroundMode background;      // (kept for the caller; the viewer paints full-bg)
     ColorDepth depth;               // (unused: the cell renderer emits truecolor)
 
+    /// The scroll extents an external bar owner reads (`SCV1`): the
+    /// document's total visual rows and the body viewport — what the
+    /// picker's preview needs to run the pane's own `vm.scroll` machines
+    /// from outside.
+    long docRows() const @safe pure nothrow @nogc => lineCount;
+    /// ditto
+    int docViewRows() const @safe pure nothrow @nogc => bodyRows();
+
     /// The vertical scrollbar machine — the model's ScrollView axis
     /// (SCV1: one value, both backends), kept under its pane-local name;
     /// the workspace reads `sb.dragging`/`sb.shape` for capture/pointers.
