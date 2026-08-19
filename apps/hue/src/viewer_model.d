@@ -23,7 +23,7 @@ import sparkles.syntax.md.render_widgets : FenceScroll, isWrap, OverflowPolicy,
     viewMarkdownInto;
 import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocumentInto;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
-    GutterChannel, gutterWidth, withGutterColumns;
+    GutterChannel, gutterWidth, withGutterColumns, withinBudget;
 import sparkles.code_instrumentation : maxCountWidth;
 import sparkles.syntax.ts.highlighter : ParsedLayer;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -393,16 +393,31 @@ struct ViewerModel
         // once a second one exists the condition becomes "any provider has
         // something to say about this file", not "this file folds".
         if (foldColumn && foldable.length)
-            chans ~= GutterChannel(id: iconChannelId, width: 1);
+            chans ~= GutterChannel(id: iconChannelId, width: 1,
+                priority: iconChannelPriority);
         // `NUM3`: from the source line count, so wrapping never changes it.
         if (lineNumbers && srcTotal > 0)
             chans ~= GutterChannel(id: lineNumberChannelId,
-                width: digitCount(srcTotal));
+                width: digitCount(srcTotal), priority: lineNumberChannelPriority);
         if (hasCoverage)
             chans ~= GutterChannel(id: coverageChannelId,
-                width: cast(int) maxCountWidth);
-        return chans;
+                width: cast(int) maxCountWidth, priority: coverageChannelPriority);
+        return withinBudget(chans, gutterBudget);
     }
+
+    /// The cells the gutter may occupy on the current pane.
+    ///
+    /// A third, which is a judgement rather than a derivation — but a bounded
+    /// one. Three strips already come to nine or ten cells and a blame lane
+    /// would roughly double that, so on a split pane the chrome can outgrow the
+    /// code it annotates. A share rather than a constant because the thing
+    /// being protected is the *reader's text*, and how much of it a fixed nine
+    /// cells costs depends entirely on how wide the pane is.
+    ///
+    /// Before the first layout there is no pane to take a share of, so nothing
+    /// is dropped — the channels are reserved in full and the next relayout
+    /// applies the budget for real.
+    int gutterBudget() const => widthCols <= 0 ? int.max : widthCols / 3;
 
     /**
     Composes the document's gutter around `docRoot`, in two layout passes.
@@ -2912,6 +2927,18 @@ version (unittest)
 /// The file line-number channel's stable name.
 enum lineNumberChannelId = "chrome.line-numbers";
 
+/// What survives when the gutter will not fit its share of the pane, highest
+/// last to go. Ranked by what the reader loses: line numbers are the document's
+/// coordinate system and everything else is spoken about in terms of them; the
+/// icon strip is one cell and carries the actionable things; coverage is a
+/// whole extra column of a single overlay's data. A blame lane, when it lands,
+/// goes below coverage — it is the widest and the most optional.
+enum int lineNumberChannelPriority = 30;
+/// ditto
+enum int iconChannelPriority = 20;
+/// ditto
+enum int coverageChannelPriority = 10;
+
 /// The merged icon channel's stable name. Not `chrome.folds`: the strip is the
 /// shared icon slot (`sparkles.ui.components.gutter`), and folds are merely its
 /// only occupant here — a breakpoint or a diagnostic badge joins it rather than
@@ -3083,4 +3110,39 @@ GutterCell[] lineNumberCells(in DocRow[] rows, int width,
         shown ~= c.text[].idup;
 
     assert(shown == [" 1", " 2", " 3", "  ", "  ", " 4"]);
+}
+
+@("viewer_model.reservedChannels.budgetDropsTheWidestOverlayFirst")
+@system unittest
+{
+    // The policy the ranks encode, on a pane narrow enough to force the choice.
+    ViewerModel vm;
+    vm.srcTotal = 393;            // three digits
+    vm.hasCoverage = true;
+    vm.foldable = [Span(0, 10)];  // one foldable region, so the icon strip exists
+    vm.widthCols = 120;
+
+    // 1 + 3 + 4, two separators and one before the code.
+    assert(gutterWidth(vm.reservedChannels()) == 11);
+    assert(vm.reservedChannels().length == 3);
+
+    // A split pane: a third of 30 is 10, one short. Coverage is a whole column
+    // for one overlay's data and goes first, whole rather than clipped — a
+    // count cut to fit would read as a different number.
+    vm.widthCols = 30;
+    auto squeezed = vm.reservedChannels();
+    assert(squeezed.length == 3, "dropped means disabled, not removed");
+    assert(squeezed[2].id == coverageChannelId && !squeezed[2].enabled);
+    assert(squeezed[0].enabled && squeezed[1].enabled);
+
+    // Narrower still, and only the document's coordinate system survives.
+    vm.widthCols = 12;
+    auto narrow = vm.reservedChannels();
+    assert(narrow[1].id == lineNumberChannelId && narrow[1].enabled);
+    assert(!narrow[0].enabled && !narrow[2].enabled);
+
+    // Before the first layout there is no pane to take a share of, so the
+    // channels are reserved in full rather than being dropped against a -1.
+    vm.widthCols = -1;
+    assert(gutterWidth(vm.reservedChannels()) == 11);
 }

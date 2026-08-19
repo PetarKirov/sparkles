@@ -136,10 +136,106 @@ struct GutterChannel
     /// under another.
     int width;
 
+    /// What survives a squeeze. When the enabled channels do not fit their
+    /// budget, $(LREF withinBudget) turns off the lowest-priority ones until
+    /// they do — so this is $(I not) the icon slot's $(LREF foldPriority),
+    /// which decides who owns a cell. One ranks providers inside a strip; this
+    /// ranks strips against the pane.
+    int priority;
+
     /// By 0-based source line. A short array is not an error: lines past its
     /// end show blank, which is what a channel that only describes part of a
     /// file does.
     const(GutterCell)[] cells;
+}
+
+/**
+`channels` with its lowest-priority strips switched off until the rest fit
+`budget` cells.
+
+$(B Whole strips, never partial ones.) A gutter has no natural stopping width:
+line numbers, a fold arrow and a coverage count already come to nine cells
+before anything interesting arrives, and a blame lane — a short hash, a date, an
+author — roughly doubles that on its own. On an eighty-column pane that is a
+quarter of the reader's text gone to chrome, and on a split pane it is most of
+it.
+
+The lever is which strips render, not how wide they are. A channel narrowed
+below its content lies: a line number cut to two digits reads as a different
+line, a truncated hash resolves to a different commit, and both look exactly
+like the truth. So a channel that does not fit is turned off, which is legible —
+the reader sees that the column is gone, and toggling something else back brings
+it in.
+
+Ties drop the rightmost first, so the strips nearest the code go before the ones
+framing the pane and the ordering is deterministic rather than incidental.
+
+Params:
+    channels = the reserved channels, mutated in place and returned
+    budget = the cells the gutter may occupy, separators included
+    separator = the cells between adjacent strips and before the code
+
+Returns: `channels`, for chaining onto a builder call.
+*/
+GutterChannel[] withinBudget(return GutterChannel[] channels, int budget,
+    int separator = 1) @safe pure nothrow @nogc
+{
+    while (gutterWidth(channels, separator) > budget)
+    {
+        // The lowest-priority enabled strip, last one winning a tie.
+        size_t victim = size_t.max;
+        int worst;
+        foreach (i, ref ch; channels)
+        {
+            if (!ch.enabled || ch.width <= 0)
+                continue;
+            if (victim == size_t.max || ch.priority <= worst)
+            {
+                victim = i;
+                worst = ch.priority;
+            }
+        }
+        if (victim == size_t.max)
+            break;      // nothing left to drop; the budget was under one strip
+        channels[victim].enabled = false;
+    }
+    return channels;
+}
+
+@("ui.components.gutter.withinBudgetDropsWholeStripsLowestFirst")
+@safe pure nothrow @nogc
+unittest
+{
+    static GutterChannel[3] make()
+    {
+        return [
+            GutterChannel(id: "icons", width: 1, priority: 20),
+            GutterChannel(id: "line", width: 3, priority: 30),
+            GutterChannel(id: "cov", width: 4, priority: 10),
+        ];
+    }
+
+    // 1 + 3 + 4 + two separators + one before the code == 11.
+    auto full = make();
+    assert(gutterWidth(full[]) == 11);
+    assert(gutterWidth(withinBudget(full[], 11)) == 11, "a fit changes nothing");
+
+    // One cell short, and coverage is the cheapest thing to lose.
+    auto tight = make();
+    withinBudget(tight[], 10);
+    assert(!tight[2].enabled && tight[0].enabled && tight[1].enabled);
+    assert(gutterWidth(tight[]) == 6);
+
+    // Squeezed to nothing but the reader's coordinate system.
+    auto narrow = make();
+    withinBudget(narrow[], 4);
+    assert(narrow[1].enabled && !narrow[0].enabled && !narrow[2].enabled);
+
+    // A budget under even one strip leaves no gutter rather than a clipped one
+    // — the loop terminates instead of spinning on an empty list.
+    auto none = make();
+    withinBudget(none[], 0);
+    assert(gutterWidth(none[]) == 0);
 }
 
 /// The enabled channels among `channels`.
