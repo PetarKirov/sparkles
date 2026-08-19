@@ -588,3 +588,113 @@ uint withGutterColumns(ref Builder b, const(GutterChannel)[] channels,
     assert(out_[0].sourceText == "aaaa bbbb");
     assert(out_[1].sourceText == "cccc");
 }
+
+/**
+The order in which providers win the shared icon slot, highest first.
+
+$(B Why an order exists at all.) Most channels are lanes: coverage counts and
+line numbers each own a strip and never contend. Icons are not. A breakpoint,
+a fold arrow, a diagnostic badge and a bookmark all want the same one cell, and
+giving each a lane of its own converts contention into width — five providers
+would push the code five columns right on a file where at most one of them ever
+has something to say on a given line. So they share a strip and the strip needs
+a rule.
+
+The rule is $(I actionability): what the reader would lose by not seeing it.
+A stopped debugger is the most urgent thing on the screen and a fold arrow the
+least — the arrow's information is also carried by the code's own shape, and
+a folded region shows a placeholder besides.
+
+Only $(LREF foldPriority) has a producer in this repository today; the rest name
+the slots the design reserves, so a later provider picks an existing rank rather
+than inventing one and quietly outranking everything.
+*/
+enum int debugCursorPriority = 60;  /// the instruction pointer, while stopped
+enum int breakpointPriority  = 50;  /// set, conditional, or a logpoint
+enum int diagnosticPriority  = 40;  /// the row's most severe diagnostic
+enum int bookmarkPriority    = 30;  /// a reader's own mark
+enum int foldPriority        = 10;  /// a foldable region's arrow
+
+/**
+One provider's claim on one row of a merged channel.
+
+A claim carries the text rather than a built cell so that merging never copies
+a `GutterCell` — the losing claims are dropped without ever having allocated,
+and the winner is rendered to the channel's width once.
+*/
+struct IconClaim
+{
+    size_t row;             /// the visual row claimed
+    int priority;           /// higher wins; see $(LREF foldPriority) and friends
+    const(char)[] glyph;    /// what to show, one cell wide by convention
+    Slot slot = Slot.gutter;
+    size_t hitId;           /// `0` for a decorative icon
+}
+
+/**
+`claims` resolved to one cell per row — the merged-slot counterpart to a
+channel whose cells a single producer fills.
+
+Ties keep the $(I first) claim at that priority, so a provider that emits its
+own rows in a deterministic order gets a deterministic slot. Claims past
+`rowCount` are dropped rather than being an error: a provider that describes
+the whole file may run past a folded document's rows.
+
+Params:
+    claims = every provider's claims, in any order
+    rowCount = the document's height in visual rows
+    width = the channel's width in cells
+    alignEnd = right-align the glyph in the strip; icons left-align by default
+
+Returns: `rowCount` cells, blank where nothing was claimed.
+*/
+GutterCell[] mergedCells(scope const(IconClaim)[] claims, size_t rowCount,
+    int width, bool alignEnd = false)
+{
+    auto cells = new GutterCell[](rowCount);
+    foreach (i; 0 .. rowCount)
+        cells[i] = blankCell(width);
+
+    auto won = new int[](rowCount);
+    won[] = int.min;
+    foreach (ref const claim; claims)
+    {
+        if (claim.row >= rowCount || claim.priority <= won[claim.row])
+            continue;
+        won[claim.row] = claim.priority;
+        cells[claim.row] = cellOf(claim.glyph, width, claim.slot,
+            alignEnd: alignEnd, paintBackground: false, hitId: claim.hitId);
+    }
+    return cells;
+}
+
+@("ui.components.gutter.mergedCellsResolveTheSharedSlotByPriority")
+@safe unittest
+{
+    // The contention the merged slot exists for: three providers, one cell.
+    const claims = [
+        IconClaim(row: 0, priority: foldPriority, glyph: "▾", hitId: 7),
+        IconClaim(row: 0, priority: breakpointPriority, glyph: "●", hitId: 9),
+        IconClaim(row: 1, priority: foldPriority, glyph: "▸", hitId: 8),
+        IconClaim(row: 9, priority: breakpointPriority, glyph: "●"),
+    ];
+    const cells = mergedCells(claims, 3, 1);
+
+    assert(cells.length == 3);
+    // The breakpoint outranks the fold arrow, and takes its hit id with it —
+    // the winner owns the click as well as the pixels.
+    assert(cells[0].text[] == "●" && cells[0].hitId == 9);
+    assert(cells[1].text[] == "▸" && cells[1].hitId == 8);
+    assert(cells[2].text[] == " " && cells[2].hitId == 0);
+
+    // A claim past the document's rows is dropped, not an error.
+    assert(mergedCells([IconClaim(row: 5, priority: 1, glyph: "x")], 2, 1)
+        .length == 2);
+
+    // Ties keep the first claim, so a provider's own order decides.
+    const tied = mergedCells([
+        IconClaim(row: 0, priority: 5, glyph: "a"),
+        IconClaim(row: 0, priority: 5, glyph: "b"),
+    ], 1, 1);
+    assert(tied[0].text[] == "a");
+}
