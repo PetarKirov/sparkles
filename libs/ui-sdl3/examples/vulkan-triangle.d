@@ -439,10 +439,18 @@ Expected!(void, string) record(ref VulkanContext vk, ref CommandPool pool,
         // srcStage is COLOR_ATTACHMENT_OUTPUT to match the acquire
         // semaphore wait — TOP_OF_PIPE races the layout transition
         // against the presentation engine (SYNC-HAZARD-WRITE-AFTER-READ).
+        //
+        // dstAccess is READ|WRITE, not WRITE alone: we CLEAR (a write),
+        // but an overlay layer (MangoHud) then BeginRenderPass-es with
+        // LOAD to composite the HUD, and that is a color-attachment
+        // *read* of the same view. Releasing only WRITE is
+        // SYNC-HAZARD-READ-AFTER-WRITE on every frame the layer is on.
         transition(vk, cmd, sc.images[imageIndex],
             VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED,
             VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            0, VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            0,
+            VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                | VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
             VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
             VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
 
@@ -500,7 +508,8 @@ Expected!(void, string) record(ref VulkanContext vk, ref CommandPool pool,
         transition(vk, cmd, sc.images[imageIndex],
             VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             VkImageLayout.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0,
+            VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VkAccessFlagBits.VK_ACCESS_MEMORY_READ_BIT,
             VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
             VkPipelineStageFlagBits.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
     }
@@ -613,7 +622,10 @@ struct RenderTarget
             srcStageMask: VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
             dstStageMask: VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
             srcAccessMask: 0,
-            dstAccessMask: VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            // READ as well as WRITE: a LOAD (MangoHud's overlay pass)
+            // is a color-attachment read of the same image.
+            dstAccessMask: VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                | VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
         );
 
         auto passInfo = vkInfo(VkRenderPassCreateInfo(
