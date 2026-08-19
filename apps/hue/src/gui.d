@@ -81,6 +81,7 @@ import dsv_view : DsvCopy, DsvInfo, resolveTableCopy, serializeGridCopy;
 import sparkles.syntax : HighlightEvent, LabelId, LabelSet, Theme, StyleSpec, TextAttr, UnderlineStyle,
     ResolvedTheme, RgbColor, toRgb;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.logger : warning;
 import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_color : mix;
 import sparkles.base.unique : makeUnique;
@@ -210,6 +211,7 @@ struct GuiArgs
     // them — the desktop build was dropping both.
     GuiOptions gui;
     bool lineNumbers = true;
+    string gutter = "all";
     bool codeLineNumbers = true;
     bool ansiCopyStrip = false;          // --ansi-copy=strip (SEL7/CLI10); default raw
     TableCopyFormat tableCopy = TableCopyFormat.tsv; // --table-copy (TBL2/CLI11), resolved
@@ -2567,6 +2569,12 @@ int runGui(GuiArgs guiArgs) @system
                     vm.widthCols = -1; // the channel appears/disappears → reflow
                     relayout();
                     break;
+                case Command.toggleGutterIcons:
+                    vm.foldColumn = !vm.foldColumn;
+                    vm.inlineFoldMarker = !vm.foldColumn; // one affordance, not two
+                    vm.widthCols = -1;
+                    relayout();
+                    break;
                 case Command.toggleCodeLineNumbers:
                     codeLineNumbers = !codeLineNumbers;
                     vm.codeLineNumbers = codeLineNumbers;
@@ -3345,7 +3353,11 @@ int runGui(GuiArgs guiArgs) @system
         vm.anchorMode = scrollAnchor; // `NAV5`: what a resize re-finds
         // `NUM2`: the CLI's initial state for the line-number channel, which
         // the model owns now that the column lives in the widget tree.
-        vm.lineNumbers = lineNumbers;
+        // The channel selection first, then `--line-numbers` as the shorthand
+        // layered over it (`GUT5`).
+        if (!vm.setGutterChannels(gutter))
+            warning(i"unknown gutter channel in `$(gutter)`; showing what was recognized");
+        vm.lineNumbers = vm.lineNumbers && lineNumbers;
         vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
             source, events, preview, twoslash, docLang, initialDiff,
             initialDiffSides, initialDiffSession, DiffEmphasis.init,

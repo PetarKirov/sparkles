@@ -376,6 +376,37 @@ struct ViewerModel
     /// renders an empty lane when disabled.
     bool foldColumn = true;
 
+    /// Whether the coverage counts get a strip. Separate from `hasCoverage`:
+    /// one says an artifact was found, this says the reader wants the column.
+    bool coverageColumn = true;
+
+    /**
+    Applies a `--gutter` selection, addressing channels by name.
+
+    Channels are addressable by `id` (`GUT5`/`GUT9`), so the selection is a list
+    of them rather than one flag per strip — which is what keeps the surface
+    from growing a `--blame-column` and a `--diagnostics-column` as providers
+    land. The short names are the ids without their `chrome.`/`overlay.` prefix,
+    and the full id is accepted too so what the model calls a channel and what
+    the reader types are the same word.
+
+    Params:
+        spec = `all`, `none`, or a comma-separated list of channel names
+
+    Returns: `false` when a name matched nothing, having applied the rest — the
+        caller reports it; an unknown channel is a typo worth a message, not a
+        reason to render no gutter at all.
+    */
+    bool setGutterChannels(const(char)[] spec)
+    {
+        GutterSelection sel;
+        const ok = sel.parse(spec);
+        lineNumbers = sel.numbers;
+        foldColumn = sel.icons;
+        coverageColumn = sel.coverage;
+        return ok;
+    }
+
     /// The channels this document shows, with their widths but no cells yet.
     ///
     /// Widths are **reserved**, never derived from the data. A channel's data
@@ -399,7 +430,7 @@ struct ViewerModel
         if (lineNumbers && srcTotal > 0)
             chans ~= GutterChannel(id: lineNumberChannelId,
                 width: digitCount(srcTotal), priority: lineNumberChannelPriority);
-        if (hasCoverage)
+        if (coverageColumn && hasCoverage)
             chans ~= GutterChannel(id: coverageChannelId,
                 width: cast(int) maxCountWidth, priority: coverageChannelPriority);
         return withinBudget(chans, gutterBudget);
@@ -2955,6 +2986,75 @@ enum int iconChannelPriority = 20;
 /// ditto
 enum int coverageChannelPriority = 10;
 
+/**
+Which gutter channels a `--gutter` selection asked for.
+
+A value rather than three flags on the viewer, because the static ANSI and HTML
+writers need the same answer and have no viewer to ask. One parser, one set of
+names, wherever the gutter is built.
+*/
+struct GutterSelection
+{
+    bool numbers = true;
+    bool icons = true;
+    bool coverage = true;
+
+    /// Whether the reader named channels rather than taking the default. The
+    /// stream backends read it: their output *is* text someone pipes and
+    /// copies, so they leave the line numbers out until asked for by name,
+    /// where an interactive pane shows them from the start.
+    bool explicit;
+
+    /**
+    Params:
+        spec = `all`, `none`, or a comma-separated list of channel names —
+            the short name (`numbers`, `icons`, `coverage`) or the full
+            channel id
+
+    Returns: `false` when a name matched nothing, having applied the rest — an
+        unknown channel is a typo worth reporting, not a reason to render no
+        gutter at all.
+    */
+    bool parse(const(char)[] spec) @safe
+    {
+        // Not `scope`/`in`: `splitter` over a scope slice is rejected under
+        // dip1000 (the range's own methods are not `scope`), a clash the
+        // guidelines call out and answer with a plain `const(char)[]`.
+        import std.algorithm.iteration : splitter;
+        import std.string : strip;
+
+        const trimmed = spec.strip;
+        if (trimmed == "all" || trimmed.length == 0)
+            return true;
+
+        numbers = icons = coverage = false;
+        explicit = trimmed != "none";
+        if (!explicit)
+            return true;
+
+        bool ok = true;
+        foreach (name; trimmed.splitter(','))
+        {
+            switch (name.strip)
+            {
+                case "numbers", "line-numbers", lineNumberChannelId:
+                    numbers = true;
+                    break;
+                case "icons", "folds", iconChannelId:
+                    icons = true;
+                    break;
+                case "coverage", coverageChannelId:
+                    coverage = true;
+                    break;
+                default:
+                    ok = false;
+                    break;
+            }
+        }
+        return ok;
+    }
+}
+
 /// The merged icon channel's stable name. Not `chrome.folds`: the strip is the
 /// shared icon slot (`sparkles.ui.components.gutter`), and folds are merely its
 /// only occupant here — a breakpoint or a diagnostic badge joins it rather than
@@ -3161,4 +3261,37 @@ GutterCell[] lineNumberCells(in DocRow[] rows, int width,
     // channels are reserved in full rather than being dropped against a -1.
     vm.widthCols = -1;
     assert(gutterWidth(vm.reservedChannels()) == 11);
+}
+
+@("viewer_model.setGutterChannels.addressesChannelsByName")
+@system unittest
+{
+    ViewerModel vm;
+    vm.srcTotal = 100;
+    vm.hasCoverage = true;
+    vm.foldable = [Span(0, 10)];
+    vm.widthCols = 120;
+
+    assert(vm.setGutterChannels("all"));
+    assert(vm.reservedChannels().length == 3);
+
+    // `none` leaves no strip at all, rather than three empty ones.
+    assert(vm.setGutterChannels("none"));
+    assert(gutterWidth(vm.reservedChannels()) == 0);
+
+    // A subset, by short name — the id without its `chrome.`/`overlay.` prefix.
+    assert(vm.setGutterChannels("numbers,coverage"));
+    const some = vm.reservedChannels();
+    assert(some.length == 2);
+    assert(some[0].id == lineNumberChannelId && some[1].id == coverageChannelId);
+
+    // The full id is the same word the model uses, so it is accepted too.
+    assert(vm.setGutterChannels(iconChannelId));
+    assert(vm.reservedChannels()[0].id == iconChannelId);
+
+    // A typo is reported, and the names around it still apply — an unknown
+    // channel is worth a message, not a reason to render no gutter.
+    assert(!vm.setGutterChannels("numbers,blame"));
+    assert(vm.reservedChannels().length == 1);
+    assert(vm.reservedChannels()[0].id == lineNumberChannelId);
 }

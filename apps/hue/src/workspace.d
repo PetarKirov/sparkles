@@ -19,6 +19,7 @@ import std.path : dirName;
 import format_preview : formatPreviewPump, formatPreviewRulerDragging,
     formatPreviewStart;
 
+import sparkles.base.logger : warning;
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.unique : makeUnique;
 import sparkles.syntax.md.render_widgets : OverflowPolicy;
@@ -1503,7 +1504,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     bool formatPreview = false, int formatWidth = 0,
     string formatterName = null,
     string tableCopyFlag = "auto",
-    ScrollAnchorMode scrollAnchor = ScrollAnchorMode.segment) @system
+    ScrollAnchorMode scrollAnchor = ScrollAnchorMode.segment,
+    string gutter = "all", bool lineNumbers = true) @system
 {
     WorkspaceTui w;
     // The picker's worker pool and the preview's oracle must stop before the
@@ -1512,6 +1514,13 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     scope (exit) if (w.pickerDoc !is null) w.pickerDoc.shutdown();
     w.loadDoc = loadDoc;
     w.tableCopyFlag = tableCopyFlag;
+    // The gutter selection reaches the terminal too, now that the terminal has
+    // one (`GUT5`). `--line-numbers=false` stays a shorthand layered over the
+    // channel list rather than a fourth thing to reconcile.
+    if (!w.viewer.vm.setGutterChannels(gutter))
+        warning(i"unknown gutter channel in `$(gutter)`; showing what was recognized");
+    if (!lineNumbers)
+        w.viewer.vm.lineNumbers = false;
     // `DST2`: after a patch is applied the diff on screen is stale — the rows
     // just staged are no longer part of it. Only the host owns the loader
     // that produced the document, so it hands one back.

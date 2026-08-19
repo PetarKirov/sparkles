@@ -911,7 +911,8 @@ struct ExplorerTui
             case Command.matchNext: case Command.matchPrev:
             case Command.setNext: case Command.setPrev: case Command.setIndex:
             case Command.toggleView: case Command.copySelection:
-            case Command.toggleLineNumbers: case Command.toggleCodeLineNumbers:
+            case Command.toggleLineNumbers: case Command.toggleGutterIcons:
+            case Command.toggleCodeLineNumbers:
             case Command.toggleAnsiCopy: case Command.toggleTableCopy:
             case Command.toggleFormatPreview: case Command.formatterNext:
             case Command.formatWidthNarrower: case Command.formatWidthWider:

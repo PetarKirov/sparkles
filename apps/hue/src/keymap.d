@@ -217,6 +217,7 @@ enum Command : ubyte
     toggleView,            /// `Tab`
     copySelection,         /// `Ctrl-C`
     toggleLineNumbers,     /// `l`
+    toggleGutterIcons,     /// `<leader>vg` — the shared icon strip (folds today)
     toggleCodeLineNumbers, /// `c`
     toggleAnsiCopy,        /// `<leader>uy`
     toggleFormatPreview,   /// `<leader>vf` — the in-memory format preview
@@ -608,6 +609,12 @@ immutable Binding[] hueBindings = [
         Command.toggleLineNumbers, "line numbers"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('c'),
         Command.toggleCodeLineNumbers, "code line numbers"),
+    // The icon strip gets a leader binding rather than a bare letter: it is one
+    // channel of several, and the rest are selected with `--gutter` by name. A
+    // single-letter key per channel does not survive blame and diagnostics
+    // arriving.
+    bind(Scope_.shared_, chord(leader), chord('v'), chord('g'),
+        Command.toggleGutterIcons, "gutter icons"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('i'),
         Command.toggleInspector, "tree-sitter inspector"),
     // Lowercase + ShiftReq, never `'F'` (`normalise` folds capitals).
