@@ -122,6 +122,7 @@ struct VulkanTriangle
         VulkanContext vk;
         auto brought = VulkanContext.create(vk, window, ContextRequest(
             applicationName: "sparkles-vulkan-triangle",
+            apiVersion: apiVersion13,
             validation: validation,
         ));
         if (brought.hasError)
@@ -157,6 +158,7 @@ struct RunReport
     string extent;
     uint framesPresented;
     uint swapchainsBuilt;
+    string rendering;
     string exitedBecause;
 }
 
@@ -179,13 +181,15 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
     // is already satisfied and a drag never serialises on vsync.
     uint framesSinceRebuild;
 
-    // A resize is the swapchain and the views/framebuffers that name its
-    // images. The render pass, pipeline, command pool and per-frame sync
-    // outlive it: they do not depend on extent. Per-image renderFinished is
-    // replaced rather than reused — a present may still be waiting on the
-    // old set — and reaped a few quiet frames later. Waiting for in-flight
-    // fences (not vkDeviceWaitIdle) is enough for the GPU work; oldSwapchain
-    // lets the presentation engine keep scanning the old images out.
+    // A resize is the swapchain and the views that name its images. Dynamic
+    // rendering drops the framebuffers entirely; the render-pass fallback
+    // keeps the pass and only rebuilds FBs when the swapchain actually
+    // changes. Per-image renderFinished is replaced rather than reused — a
+    // present may still be waiting on the old set — and reaped a few quiet
+    // frames later. Waiting for in-flight fences (not vkDeviceWaitIdle) is
+    // enough for the GPU work; oldSwapchain lets the presentation engine
+    // keep scanning the old images out. A shrink into a display-padded
+    // swapchain is a viewport/compositor scale, not a create.
     //
     // `force` is the acquire/present OUT_OF_DATE path: same pixel size still
     // rebuilds, because the driver has retired this handle. PIXEL_SIZE_CHANGED
@@ -202,22 +206,34 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         if (px.value.width <= 0 || px.value.height <= 0)
             return ok!string();
 
+        // Same size, or a shrink into a padded swapchain: viewport-only.
         if (!force && sc.handle !is null
-            && sc.extent.width == cast(uint) px.value.width
-            && sc.extent.height == cast(uint) px.value.height)
+            && cast(uint) px.value.width <= sc.extent.width
+            && cast(uint) px.value.height <= sc.extent.height)
             return ok!string();
 
         auto waited = sync.waitAll(vk);
         if (waited.hasError)
             return err!void("vkWaitForFences: " ~ describeResult(waited.error));
 
-        auto updated = Swapchain.recreate(sc, vk, px.value, force);
+        // Pad to the display on a surface-defined (Wayland) resize so
+        // subsequent shrinks stay inside the allocation. First create
+        // stays exact so a --frames N run at 960×540 still reports that.
+        PixelSize minAlloc;
+        if (sc.handle !is null)
+        {
+            auto display = window.displayPixelSize;
+            if (!display.hasError)
+                minAlloc = display.value;
+        }
+
+        auto updated = Swapchain.recreate(sc, vk, px.value, force, minAlloc);
         if (updated.hasError)
             return err!void(updated.error);
         if (updated.value != SwapchainResize.rebuilt)
             return ok!string();
 
-        auto retargeted = target.renderPass is null
+        auto retargeted = target.views.length == 0
             ? RenderTarget.create(target, vk, sc)
             : target.rebind(vk, sc);
         if (retargeted.hasError)
@@ -263,7 +279,7 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
 
     // The pipeline outlives a resize: viewport and scissor are dynamic state,
     // and the render pass is kept (format does not change with the window).
-    auto built = Pipeline.create(pipeline, vk, target.renderPass);
+    auto built = Pipeline.create(pipeline, vk, sc.format, target.renderPass);
     if (built.hasError)
         return err!RunReport(built.error);
 
@@ -275,6 +291,7 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
     report.presentMode = presentModeName(sc.presentMode);
     report.imageCount = cast(uint) sc.images.length;
     report.framesInFlight = sync.framesInFlight;
+    report.rendering = vk.dynamicRendering ? "dynamic" : "render-pass";
     report.exitedBecause = "frame budget reached";
 
     while (frameBudget == 0 || report.framesPresented < frameBudget)
@@ -316,8 +333,12 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
                 return err!RunReport(again.error);
         }
 
-        // No surface to draw into (still starting, or minimised).
-        if (sc.handle is null || sc.extent.width == 0 || sc.extent.height == 0)
+        // No surface to draw into (still starting, or minimised). A
+        // padded swapchain can outlive a 0×0 window — we still must not
+        // present into it until the window is a real size again.
+        auto pxNow = window.pixelSize;
+        if (sc.handle is null || sc.extent.width == 0 || sc.extent.height == 0
+            || (!pxNow.hasError && (pxNow.value.width <= 0 || pxNow.value.height <= 0)))
             continue;
 
         auto waited = sync.waitForFrame(vk);
@@ -411,20 +432,55 @@ Expected!(void, string) record(ref VulkanContext vk, ref CommandPool pool,
     VkClearValue clear;
     clear.color.float32 = [0.05f, 0.05f, 0.08f, 1.0f];
 
-    auto passInfo = vkInfo(VkRenderPassBeginInfo(
-        renderPass: target.renderPass,
-        framebuffer: target.framebuffers[imageIndex],
-        renderArea: VkRect2D(VkOffset2D(0, 0), sc.extent),
-        clearValueCount: 1,
-        pClearValues: &clear,
-    ));
+    if (target.dynamicRendering)
+    {
+        // Dynamic rendering does not do the render-pass layout dance, so
+        // the acquire→colour and colour→present transitions are ours.
+        // srcStage is COLOR_ATTACHMENT_OUTPUT to match the acquire
+        // semaphore wait — TOP_OF_PIPE races the layout transition
+        // against the presentation engine (SYNC-HAZARD-WRITE-AFTER-READ).
+        transition(vk, cmd, sc.images[imageIndex],
+            VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED,
+            VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            0, VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
 
-    vk.device.cmdBeginRenderPass(cmd, &passInfo,
-        VkSubpassContents.VK_SUBPASS_CONTENTS_INLINE);
+        auto colour = vkInfo(VkRenderingAttachmentInfo(
+            imageView: target.views[imageIndex],
+            imageLayout: VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            loadOp: VkAttachmentLoadOp.VK_ATTACHMENT_LOAD_OP_CLEAR,
+            storeOp: VkAttachmentStoreOp.VK_ATTACHMENT_STORE_OP_STORE,
+            clearValue: clear,
+        ));
+        auto rendering = vkInfo(VkRenderingInfo(
+            renderArea: VkRect2D(VkOffset2D(0, 0), sc.extent),
+            layerCount: 1,
+            colorAttachmentCount: 1,
+            pColorAttachments: &colour,
+        ));
+        beginRendering(vk, cmd, rendering);
+    }
+    else
+    {
+        auto passInfo = vkInfo(VkRenderPassBeginInfo(
+            renderPass: target.renderPass,
+            framebuffer: target.framebuffers[imageIndex],
+            renderArea: VkRect2D(VkOffset2D(0, 0), sc.extent),
+            clearValueCount: 1,
+            pClearValues: &clear,
+        ));
+        vk.device.cmdBeginRenderPass(cmd, &passInfo,
+            VkSubpassContents.VK_SUBPASS_CONTENTS_INLINE);
+    }
+
     vk.device.cmdBindPipeline(cmd,
         VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle);
 
-    // Dynamic, so a resize rebuilds the swapchain and not the pipeline.
+    // Always the swapchain extent: a padded allocation presents the whole
+    // image and the compositor scales it to the window. A viewport smaller
+    // than the image would draw the triangle into a corner of a large
+    // present, which then scales down looking like a stamp.
     auto viewport = VkViewport(
         x: 0, y: 0,
         width: sc.extent.width, height: sc.extent.height,
@@ -437,7 +493,19 @@ Expected!(void, string) record(ref VulkanContext vk, ref CommandPool pool,
     // Three vertices, no buffers: the shader indexes constants by
     // `gl_VertexIndex`. See `shaders/triangle.vert`.
     vk.device.cmdDraw(cmd, 3, 1, 0, 0);
-    vk.device.cmdEndRenderPass(cmd);
+
+    if (target.dynamicRendering)
+    {
+        endRendering(vk, cmd);
+        transition(vk, cmd, sc.images[imageIndex],
+            VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VkImageLayout.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0,
+            VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VkPipelineStageFlagBits.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    }
+    else
+        vk.device.cmdEndRenderPass(cmd);
 
     auto ended = pool.end(vk, frame);
     if (ended.hasError)
@@ -446,13 +514,56 @@ Expected!(void, string) record(ref VulkanContext vk, ref CommandPool pool,
     return ok!string();
 }
 
+private void beginRendering(ref VulkanContext vk, VkCommandBuffer cmd,
+    ref VkRenderingInfo info) @system
+{
+    if (vk.device.cmdBeginRendering !is null)
+        vk.device.cmdBeginRendering(cmd, &info);
+    else
+        vk.device.cmdBeginRenderingKHR(cmd, &info);
+}
+
+private void endRendering(ref VulkanContext vk, VkCommandBuffer cmd) @system
+{
+    if (vk.device.cmdEndRendering !is null)
+        vk.device.cmdEndRendering(cmd);
+    else
+        vk.device.cmdEndRenderingKHR(cmd);
+}
+
+/// One colour-attachment layout transition. Dynamic rendering's substitute
+/// for the render-pass `initialLayout` / `finalLayout` pair.
+private void transition(ref VulkanContext vk, VkCommandBuffer cmd, VkImage image,
+    VkImageLayout from, VkImageLayout to,
+    VkAccessFlags srcAccess, VkAccessFlags dstAccess,
+    VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage) @system
+{
+    auto barrier = vkInfo(VkImageMemoryBarrier(
+        srcAccessMask: srcAccess,
+        dstAccessMask: dstAccess,
+        oldLayout: from,
+        newLayout: to,
+        srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
+        dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
+        image: image,
+        subresourceRange: VkImageSubresourceRange(
+            aspectMask: VkImageAspectFlagBits.VK_IMAGE_ASPECT_COLOR_BIT,
+            levelCount: 1,
+            layerCount: 1,
+        ),
+    ));
+    vk.device.cmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, null, 0, null, 1, &barrier);
+}
+
 // -----------------------------------------------------------------------------
-// Render target: what Vulkan 1.0 needs to draw into a swapchain image
+// Render target: views, and (only without dynamic rendering) a pass + FBs
 // -----------------------------------------------------------------------------
 
-/// Image views, a render pass, and one framebuffer per swapchain image.
+/// Image views, plus a render pass and framebuffers when dynamic rendering
+/// is not available.
 struct RenderTarget
 {
+    bool dynamicRendering;
     VkRenderPass renderPass;
     VkImageView[] views;
     VkFramebuffer[] framebuffers;
@@ -462,6 +573,11 @@ struct RenderTarget
     static Expected!(void, string) create(out RenderTarget t, ref VulkanContext vk,
         ref Swapchain sc) @system
     {
+        t.dynamicRendering = vk.dynamicRendering;
+        if (t.dynamicRendering)
+            return t.createViews(vk, sc);
+
+
         // One colour attachment, cleared each frame and left in PRESENT_SRC.
         // `initialLayout: UNDEFINED` says the previous contents may be
         // discarded, which is what makes the clear free on tiled hardware.
@@ -536,7 +652,8 @@ struct RenderTarget
         if (views.length != sc.images.length)
         {
             views = new VkImageView[sc.images.length];
-            framebuffers = new VkFramebuffer[sc.images.length];
+            if (!dynamicRendering)
+                framebuffers = new VkFramebuffer[sc.images.length];
         }
 
         foreach (i, image; sc.images)
@@ -559,6 +676,9 @@ struct RenderTarget
                 destroy(vk);
                 return err!void("vkCreateImageView: " ~ describeResult(view.error));
             }
+
+            if (dynamicRendering)
+                continue;
 
             auto attachment = views[i];
             auto fbInfo = vkInfo(VkFramebufferCreateInfo(
@@ -662,7 +782,7 @@ struct Pipeline
     @disable this(this);
 
     static Expected!(void, string) create(out Pipeline p, ref VulkanContext vk,
-        VkRenderPass renderPass) @system
+        VkFormat colorFormat, VkRenderPass renderPass = null) @system
     {
         VkShaderModule vert, frag;
         auto vertMade = createModule(vk, triangleVert, vert);
@@ -750,7 +870,14 @@ struct Pipeline
         if (layoutMade.hasError)
             return err!void("vkCreatePipelineLayout: " ~ describeResult(layoutMade.error));
 
+        auto format = colorFormat;
+        auto rendering = vkInfo(VkPipelineRenderingCreateInfo(
+            colorAttachmentCount: 1,
+            pColorAttachmentFormats: &format,
+        ));
+
         auto info = vkInfo(VkGraphicsPipelineCreateInfo(
+            pNext: renderPass is null ? &rendering : null,
             stageCount: stages.length,
             pStages: stages.ptr,
             pVertexInputState: &vertexInput,
