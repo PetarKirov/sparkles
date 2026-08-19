@@ -1309,11 +1309,10 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             // The cost is that a plain `hue file.d` now expands tabs and pads
             // rows to the grid width, as markdown and diff always have.
             {
-                import document : coverageChannel, coverageTintedRanges;
-                import gui_text : lineCount;
+                import document : coverageTintedRanges;
                 import sparkles.syntax.render.widgets : CodeViewOptions,
-                    viewCodeDocument;
-                import sparkles.ui.components.gutter : GutterChannel;
+                    viewCodeDocumentInto;
+                import sparkles.ui.widget : Builder;
                 import sparkles.ui.display_list : buildDisplayList;
                 import sparkles.ui.geometry : Constraints;
                 import sparkles.ui.interp.cells : BgEmit, CellGrid;
@@ -1327,17 +1326,17 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
 
                 CodeViewOptions copt;
                 if (doc.hasCoverage)
-                {
-                    auto cov = coverageChannel(doc.coverage, lineCount(doc.source));
-                    if (cov.enabled)
-                        copt.channels = [cov];
                     copt.tintedRanges = coverageTintedRanges(doc.coverage);
-                }
                 // A writer emitting to a stream has no pane to reflow to.
                 copt.wrap = TextWrap.none;
 
-                auto tree = viewCodeDocument(doc.source, doc.events,
+                // The gutter is composed after the document is laid out (its
+                // cells are indexed by *visual* row), so the same builder is
+                // re-rooted rather than a second tree being built.
+                auto b = Builder();
+                const docRoot = viewCodeDocumentInto(b, doc.source, doc.events,
                     (() @trusted => &theme)(), pageFg, copt);
+                auto tree = staticGutter(b, docRoot, doc);
                 // Unconstrained, so the grid is as wide as the longest line.
                 // Constraining it to `previewWidth()` with wrapping off does
                 // not fit a long line — it CLIPS it, losing the tail silently.
@@ -1386,6 +1385,40 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
     return 0;
 }
 
+/**
+The gutter for a static sink: coverage only, composed after layout.
+
+A writer emitting to a stream shows no line numbers — that is the interactive
+views' chrome, and adding it here would change the output of every plain
+`hue view`. Coverage is here because the reader asked for it.
+
+Laid out unconstrained in both passes: a stream has no pane to wrap to, so the
+row count cannot change between them.
+*/
+private auto staticGutter(B)(ref B b, uint docRoot, in Document doc) @system
+{
+    import sparkles.ui.widget : Builder, WidgetTree;
+    import document : coverageChannel;
+    import gui_text : buildLineStarts;
+    import sparkles.code_instrumentation : maxCountWidth;
+    import sparkles.ui.components.gutter : GutterChannel, withGutterColumns;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : documentRows;
+    import viewer_model : srcLineOf;
+
+    auto pass1 = b.finish(docRoot);
+    if (!doc.hasCoverage)
+        return pass1;
+
+    const rows = documentRows(pass1, layout(pass1, Constraints()));
+    auto starts = buildLineStarts(doc.source);
+    size_t lineOf(size_t off) @safe => srcLineOf(starts, off);
+
+    auto chans = [coverageChannel(doc.coverage, rows, &lineOf)];
+    return b.finish(withGutterColumns(b, chans, rows.length, docRoot));
+}
+
 /// Static HTML to stdout.
 private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
     ref GrammarRegistry registry, ref TsConfigCache cache,
@@ -1410,11 +1443,10 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             // page rather than a `<pre>` fragment, which is what `--diff`
             // already did. The gallery keeps its own fragment writer.
             {
-                import document : coverageChannel, coverageTintedRanges;
-                import gui_text : lineCount;
+                import document : coverageTintedRanges;
                 import sparkles.syntax.render.widgets : CodeViewOptions,
-                    viewCodeDocument;
-                import sparkles.ui.components.gutter : GutterChannel;
+                    viewCodeDocumentInto;
+                import sparkles.ui.widget : Builder;
                 import sparkles.ui.interp.html : writeWidgetHtmlPage;
                 import sparkles.ui.style : defaultTwoslashPalette;
                 import sparkles.ui.wrap : TextWrap;
@@ -1424,18 +1456,14 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
 
                 CodeViewOptions copt;
                 if (doc.hasCoverage)
-                {
-                    auto cov = coverageChannel(doc.coverage, lineCount(doc.source));
-                    if (cov.enabled)
-                        copt.channels = [cov];
                     copt.tintedRanges = coverageTintedRanges(doc.coverage);
-                }
                 copt.wrap = TextWrap.none;   // a document, not a pane
 
                 SmallBuffer!char htmlOut;
-                writeWidgetHtmlPage(htmlOut,
-                    viewCodeDocument(doc.source, doc.events,
-                        (() @trusted => &theme)(), pageFg, copt),
+                auto b = Builder();
+                const docRoot = viewCodeDocumentInto(b, doc.source, doc.events,
+                    (() @trusted => &theme)(), pageFg, copt);
+                writeWidgetHtmlPage(htmlOut, staticGutter(b, docRoot, doc),
                     defaultTwoslashPalette(), pageFg, pageBg, doc.title);
                 write(htmlOut[]);
                 return 0;

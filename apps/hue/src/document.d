@@ -22,9 +22,9 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import diff_session : buildDiffSession, DiffSession;
 import diff_commutative : CommutativeKind, defaultCommutativeKinds;
 import diff_structural : StructuralPolicy;
-import sparkles.code_instrumentation : CoverageFormat, CoveragePlan,
-    CoverageReport, FileCoverage, formatFromExtension, LineState, loadCoverage,
-    planCoverage;
+import sparkles.code_instrumentation : CoverageFormat, CoverageGutterItem,
+    CoveragePlan, CoverageReport, FileCoverage, formatFromExtension, LineState,
+    loadCoverage, maxCountWidth, planCoverage;
 import sparkles.diff : DiffDoc, DiffOptions, diffText, emitPatch, FileEntry,
     parsePatch, RowKind, WhitespaceMode;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
@@ -32,6 +32,7 @@ import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
 import sparkles.syntax.render.widgets : TintedRange;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
     GutterChannel;
+import sparkles.ui.state : DocRow;
 import sparkles.ui.style : Slot;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
@@ -175,59 +176,77 @@ consumer — the up-front document, set navigation, the gallery — runs the sam
 pipeline. Load failures throw; the CLI shell reports them once.
 */
 /**
-Builds the coverage gutter channel for a document.
+The coverage gutter channel for a document, filled from its laid-out rows.
 
-`CoveragePlan.gutterItems` lists the lines the report *described*, not one
-entry per source line: only a DMD `.lst` is dense, while lcov, gcov and
-llvm-cov each describe a subset. Placing them by array position put every
-count on the wrong line for those three — each item carries the line number it
-belongs to, and this is the one place that gets honoured.
+`CoveragePlan.gutterItems` lists the lines the report *described*, not one entry
+per source line: only a DMD `.lst` is dense, while lcov, gcov and llvm-cov each
+describe a subset. Each item carries the line number it belongs to, and this is
+the one place that gets honoured.
 
-Shared by the interactive viewer and the static ANSI writer so the channel is
-produced once and every backend paints the same thing (`OVL2`/`OVL7`).
+Filled per $(I visual) row rather than per source line, because that is the only
+thing a gutter can be indexed by: a wrapped line is several rows and must be
+counted once, on the first. `rows` comes from
+$(REF documentRows, sparkles,ui,state) after the document's first layout pass.
 
-The channel's width is the widest count actually present rather than a fixed
-figure, so a file whose counts are all single digits does not pay four columns
-and a `18446744073G` is not clipped. It is stable for the document either way,
-which is what stops toggling one channel reflowing the code under another
-(`NUM3`).
+The width is `maxCountWidth` regardless of what the plan holds, not the widest
+count actually present. Deriving it would be tighter by a cell or two and would
+make the gutter *reflow when coverage arrives* — an artifact loads after the
+first paint, and a gutter that widens under the reader shifts every line of code
+sideways. `formatCount` is bounded, so reserving its bound costs at most three
+cells and buys a layout that never moves.
 
 Params:
     plan = the planned overlay
-    lineCount = the document's source line count
+    rows = the document's visual rows, from its first layout pass
+    lineOf = maps a row's source byte offset to its 0-based source line
 
-Returns: the channel, disabled when the plan says nothing.
+Returns: the channel; its cells are empty when the plan says nothing, and its
+    width is reserved either way.
 */
-GutterChannel coverageChannel(in CoveragePlan plan, size_t lineCount) @safe
+GutterChannel coverageChannel(const CoveragePlan plan, in DocRow[] rows,
+    scope size_t delegate(size_t) @safe lineOf) @safe
 {
-    if (plan.gutterItems.length == 0 || lineCount == 0)
-        return GutterChannel(id: coverageChannelId, enabled: false);
+    GutterChannel ch = {id: coverageChannelId, width: cast(int) maxCountWidth};
+    if (plan.gutterItems.length == 0 || rows.length == 0)
+        return ch;
 
-    size_t widest;
-    foreach (ref item; plan.gutterItems)
-        if (item.lineNumber != 0 && item.lineNumber <= lineCount
-            && item.countText.length > widest)
-            widest = item.countText.length;
-    if (widest == 0)
-        return GutterChannel(id: coverageChannelId, enabled: false);
+    // Line → the item's index, so a row can ask about the line it carries.
+    // Indices rather than pointers: the plan is borrowed, and an address taken
+    // into it would outlive the call.
+    size_t[size_t] byLine;
+    foreach (i, ref item; plan.gutterItems)
+        if (item.lineNumber != 0)
+            byLine[item.lineNumber - 1] = i;
 
-    const width = cast(int) widest;
-    auto cells = new GutterCell[](lineCount);
-    foreach (i; 0 .. cells.length)
-        cells[i] = blankCell(width);
-    foreach (ref item; plan.gutterItems)
+    auto cells = new GutterCell[](rows.length);
+    size_t prev = size_t.max;
+    foreach (i, ref row; rows)
     {
-        if (item.lineNumber == 0 || item.lineNumber > cells.length)
-            continue;   // a report describing lines this file does not have
-        cells[item.lineNumber - 1] = cellOf(item.countText, width,
-            coverageSlot(item.state),
-            paintBackground: item.state != LineState.nonCode);
+        cells[i] = blankCell(cast(int) maxCountWidth);
+        if (row.srcStart == size_t.max)
+        {
+            prev = size_t.max;
+            continue;
+        }
+        const line = lineOf(row.srcStart);
+        // A wrapped line is several rows; its count belongs on the first.
+        if (line == prev)
+            continue;
+        prev = line;
+        if (auto at = line in byLine)
+        {
+            const item = plan.gutterItems[*at];
+            cells[i] = cellOf(item.countText, cast(int) maxCountWidth,
+                coverageSlot(item.state),
+                paintBackground: item.state != LineState.nonCode);
+        }
     }
-    return GutterChannel(id: coverageChannelId, width: width, cells: cells);
+    ch.cells = cells;
+    return ch;
 }
 
 /// The coverage channel's stable name — what a toggle addresses.
-enum coverageChannelId = "coverage";
+enum coverageChannelId = "overlay.coverage";
 
 /**
 The sub-line ranges worth washing, from a plan's inline spans.
