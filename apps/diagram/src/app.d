@@ -60,10 +60,12 @@ int main(string[] args)
         pointerUnit: PointerUnit.pixels,
     };
 
-    DiagramApp app;
     // Same theme the host uses for the page fill (`RND5`): board slots resolve
-    // against it, so `--theme` reaches the nodes as well as the page.
-    app.theme = appThemeOf(gui);
+    // against it, so `--theme` reaches the nodes as well as the page. The
+    // board itself is heap-only (~3 MiB — see `DiagramApp`); `create` is the
+    // only way to build one, and `owner` frees it on the way out.
+    auto owner = DiagramApp.create(appThemeOf(gui));
+    ref DiagramApp app() => owner.get();
     if (parsed.value.configFile.length)
     {
         import std.stdio : stderr;
