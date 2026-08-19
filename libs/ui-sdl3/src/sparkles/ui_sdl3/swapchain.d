@@ -316,14 +316,16 @@ struct Swapchain
 
     `minAlloc` pads a surface-defined extent up to the display size so a
     shrink is a viewport change, not a create. Ignored when the surface
-    names its own `currentExtent`. `growOnly` (implied whenever the surface
-    is the "you decide" sentinel) keeps a larger swapchain when the window
-    shrinks.
+    names its own `currentExtent`. `growOnly` keeps a larger swapchain when
+    the window shrinks; the default is off so a shrink rebuilds to the
+    window (a scaled pad letterboxes or stamps on compositors that scale
+    the whole image).
     */
     static SdlExpected!SwapchainResize recreate(ref Swapchain sc, ref VulkanContext vk,
         in PixelSize windowPixels, bool force = false,
         in PixelSize minAlloc = PixelSize.init,
-        VkPresentModeKHR preferredPresentMode = anyPresentMode) @system nothrow
+        VkPresentModeKHR preferredPresentMode = anyPresentMode,
+        bool growOnly = false) @system nothrow
     {
         VkSurfaceCapabilitiesKHR caps;
         auto queried = vk.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
@@ -331,8 +333,6 @@ struct Swapchain
         if (queried.hasError)
             return err!SwapchainResize("vkGetPhysicalDeviceSurfaceCapabilitiesKHR: "
                 ~ describeResult(queried.error));
-
-        const surfaceDefined = caps.currentExtent.width == uint.max;
 
         if (sc.handle is null)
         {
@@ -348,7 +348,7 @@ struct Swapchain
         }
 
         const extent = chooseExtent(caps, windowPixels, minAlloc);
-        auto action = decideResize(true, sc.extent, extent, force, surfaceDefined);
+        auto action = decideResize(true, sc.extent, extent, force, growOnly);
         if (action != SwapchainResize.rebuilt)
             return ok!string(action);
 
@@ -401,20 +401,27 @@ struct Swapchain
     /**
     Destroy swapchains retired by $(LREF recreate).
 
-    The queue must already be idle — those handles may still be the source
-    of an in-flight present. $(LREF FrameSync.reap) has the same contract;
-    wait once, then reap both.
+    The queue must already be done with those images — wait a few quiet
+    frames after the last rebuild, or `queueWaitIdle` first. `limit` caps
+    how many handles this call destroys so a pile of 5K swapchains is not
+    torn down in one frame. $(LREF FrameSync.reap) has the same contract.
     */
-    void reap(ref VulkanContext vk) @system nothrow
+    void reap(ref VulkanContext vk, uint limit = uint.max) @system nothrow
     {
         if (_retired.length == 0 || vk.device.device is null
             || vk.device.destroySwapchainKHR is null)
             return;
 
+        uint n;
         foreach (h; _retired)
+        {
+            if (n >= limit)
+                break;
             if (h !is null)
                 vk.device.destroySwapchainKHR(vk.device.device, h, null);
-        _retired = null;
+            n++;
+        }
+        _retired = n >= _retired.length ? null : _retired[n .. $];
     }
 
     /**
