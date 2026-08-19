@@ -1,42 +1,52 @@
 # Comparison
 
-The cross-subject synthesis: one scannable matrix, then what the field actually disagrees about, the architectural families the disagreements cluster into, the forks a Sparkles design will have to take, and the things that were not obvious before reading the source.
+The cross-subject synthesis over the whole corpus — the Tier-1 five and the Tier-2 four: two scannable matrices, what the field actually disagrees about, the architectural families the disagreements cluster into, the forks a Sparkles design will have to take, what Tier 2 **retracted** from the Tier-1 reading, and the things that were not obvious before reading the source.
 
-**Last reviewed:** August 18, 2026
+**Last reviewed:** August 19, 2026
 
 > [!NOTE]
-> Four subjects were read at pinned revisions ([Qt][qt], [Godot][godot], [WinForms][winforms],
-> [bevy][bevy]). [Unreal][unreal] was read from archived API documentation only — its source
-> requires an authenticated account — and every Unreal claim here inherits that weaker status.
-> Statements that are analysis rather than observation are marked **INFERENCE**.
+> Eight subjects were read from source at pinned revisions ([Qt][qt], [Godot][godot],
+> [WinForms][winforms], [bevy][bevy], [Unity][unity], the [derive-macro crates][derive],
+> [VS Code][vscode], [rjsf][rjsf], [DevTools][devtools]). [Unreal][unreal] was read from
+> archived API documentation only — its source requires an authenticated account — and every
+> Unreal claim inherits that weaker status. Statements that are analysis rather than
+> observation are marked **INFERENCE**.
 
 ---
 
-## Comparison matrix
+## Matrix I — architecture
 
-|                              | [Qt Property Browser][qt]             | [Godot `EditorInspector`][godot]                    | [WinForms `PropertyGrid`][winforms]                                                       | [Unreal Details][unreal] (docs)                       | [`bevy-inspector-egui`][bevy]                           | [`sparkles:ui` today][baseline]                                    |
-| ---------------------------- | ------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
-| **Where the tree lives**     | data model, browser-independent       | the widget tree itself                              | retained entry model                                                                      | node tree behind handles                              | nowhere — a stack frame                                 | widget tree rebuilt per frame + explicit state values              |
-| **Node address**             | `QtProperty*`                         | `(object, "path/string")`                           | `GridEntry`, re-matched structurally                                                      | `IPropertyHandle` (+ `IsValidHandle`)                 | hashed structural path (`egui::Id`)                     | adapter-minted `Key`                                               |
-| **Survives rebuild**         | no rebuild exists                     | selection/focus restored by hand; caret lost        | children diffed with `EqualsIgnoreParent`                                                 | yes, that is the handle's job                         | recomputed identically                                  | yes — `TreeViewState(Key)`                                         |
-| **Metadata**                 | none (caller builds tree)             | runtime `PropertyInfo` stream                       | runtime `TypeDescriptor` attributes                                                       | `UPROPERTY` + `meta=` map, class **and** instance     | type registry of option objects                         | UDAs (compile-time) — unused for this                              |
-| **Descent decision**         | `hasValue()` on the manager           | `Variant` type + hint                               | `TypeConverter.GetPropertiesSupported`                                                    | handle has children                                   | `ReflectMut` discriminant                               | —                                                                  |
-| **Children come from**       | hand-written per composite manager    | a nested inspector, or a composite widget           | `TypeConverter.GetProperties`                                                             | child handles / `AddChildStructure`                   | the reflected value's fields                            | —                                                                  |
-| **Materialisation**          | eager, whole subtree                  | lazy — sub-inspector built only when unfolded       | lazy on expand                                                                            | not determined                                        | per frame, only inside open regions                     | `flatten` descends only into open nodes                            |
-| **Cycles**                   | **impossible** — checked on insert    | no guard; user-driven recursion                     | no guard; opt-in converters limit exposure                                                | not determined                                        | impossible via `&mut` aliasing                          | compile-time descent **fails to build** without a visited-type set |
-| **Editor dispatch**          | factory per manager                   | plugin chain, last wins                             | `UITypeEditor` → standard values → converter                                              | customization by class and by type                    | registry by concrete type → short-circuit → structure   | none                                                               |
-| **Mutation**                 | editor → manager setter, live         | `emit_changed` → undo transaction                   | setter inside a designer transaction                                                      | through the handle (transaction included)             | `&mut` in place                                         | —                                                                  |
-| **Undo**                     | none                                  | `EditorUndoRedoManager`, `MERGE_ENDS`               | delegated to `IDesignerHost`                                                              | automatic via handle                                  | none                                                    | none                                                               |
-| **Transient vs committed**   | none                                  | `changing` flag (suppresses rebuild, not the write) | commit on Enter/blur; conversion at commit                                                | `SetValue` flags + `NotifyFinishedChangingProperties` | none                                                    | none                                                               |
-| **Validation**               | editor widget only                    | none                                                | converter throws → modal dialog, text kept                                                | `SetIgnoreValidation` per subtree                     | none                                                    | none                                                               |
-| **Collections**              | none                                  | paged rows, add/remove/reorder                      | array index rows; richer → modal editor                                                   | `AsArray`/`AsMap`/`AsSet`                             | inline add/remove/move                                  | table core, read-only                                              |
-| **Sum types / polymorphism** | enum + flags only                     | `EditorResourcePicker`; subtree replaced            | none                                                                                      | `GeneratePossibleValues` + restrictions               | variant combo, unconstructable entries disabled         | none                                                               |
-| **Optional / unset**         | none                                  | null resource; checkable rows                       | `ResetValue` / `[DefaultValue]`                                                           | not determined                                        | `Option` is just an enum                                | none                                                               |
-| **Multi-object**             | none                                  | intersection; **first object's value shown**        | merged descriptors; blank when `allEqual == false`                                        | per-object values, first-class                        | `ui_for_reflect_many` + projector                       | none                                                               |
-| **Grouping**                 | insertion order + group properties    | category/group/subgroup pseudo-rows + name prefixes | `[Category]` + `PropertySort`                                                             | categories via customization                          | declaration order                                       | declaration order                                                  |
-| **Filter**                   | none                                  | rebuild; **folding disabled while filtering**       | none                                                                                      | not determined                                        | none in `reflect_inspector`                             | filter owned by `TreeViewState`, rebuild reported                  |
-| **Escape hatches**           | manager / factory / browser           | plugin at 4 granularities                           | `[Editor]` → `UITypeEditor` → `[TypeConverter]` → `ICustomTypeDescriptor` → `PropertyTab` | `IDetailCustomization` / `IPropertyTypeCustomization` | type impl → short-circuit → call the functions yourself | DbI capability-by-presence, adapters                               |
-| **Row cost**                 | one item + one heap property per node | one `Control` per row                               | zero widgets per row (one shared editor)                                                  | not determined                                        | zero retained, re-walked per frame                      | zero retained; `viewSlice` windows rows                            |
+Subjects as rows. Tier-2 subjects are marked ★.
+
+| Subject                                 | Where the tree lives                   | Node address                                  | Survives a rebuild by                                       | Metadata source                     | Descent decision                         |
+| --------------------------------------- | -------------------------------------- | --------------------------------------------- | ----------------------------------------------------------- | ----------------------------------- | ---------------------------------------- |
+| [Qt Property Browser][qt]               | independent data model                 | `QtProperty*`                                 | there being no rebuild                                      | none — caller builds the tree       | `hasValue()` on the manager              |
+| [Godot `EditorInspector`][godot]        | the widget tree itself                 | `(object, "path/string")`                     | restoring selection/focus by hand; fold state on the object | flat `PropertyInfo` stream          | `Variant` type + hint                    |
+| [WinForms `PropertyGrid`][winforms]     | retained entry model                   | `GridEntry`                                   | re-matching children structurally                           | `TypeDescriptor` attributes         | `TypeConverter.GetPropertiesSupported`   |
+| [Unreal Details][unreal] _(docs)_       | node tree behind handles               | `IPropertyHandle`                             | the handle, with `IsValidHandle()`                          | `UPROPERTY` + `meta=` map           | handle has children                      |
+| [`bevy-inspector-egui`][bevy]           | nowhere — a stack frame                | hashed structural path (`egui::Id`)           | recomputing the same id                                     | `bevy_reflect` + type registry      | `ReflectMut` discriminant                |
+| ★ [Unity `SerializedProperty`][unity]   | serialized mirror + cursor             | mutable cursor **plus** `propertyPath` string | `isExpanded` living in the serialized data                  | serialization system + attributes   | the cursor's `enterChildren`             |
+| ★ [Derive-macro crates][derive]         | the call graph of generated impls      | call-site id                                  | being the same call graph next frame                        | **attributes on the type**          | associated const / overridden visitor    |
+| ★ [VS Code settings][vscode]            | settings tree model                    | `sanitizeId(parent + key)`                    | the model outliving the view                                | JSON-schema contributions           | none — two levels of grouping, flat rows |
+| ★ [`react-jsonschema-form`][rjsf]       | nowhere — fields recurse per render    | field path **plus synthetic row keys**        | React reconciliation over those keys                        | a JSON Schema document + `uiSchema` | the schema's `type`                      |
+| ★ [DevTools object inspector][devtools] | the other process                      | remote `objectId` (a lease) + `path()`        | refetching on expansion                                     | CDP property descriptors            | every value with children                |
+| [`sparkles:ui` today][baseline]         | per-frame tree + explicit state values | adapter-minted `Key`                          | `TreeViewState(Key)`                                        | — (UDAs unused for this)            | —                                        |
+
+## Matrix II — behaviour
+
+| Subject                   | Materialisation                                         | Cycles                                                          | Mutation                                     | Transient vs committed                                | Collections                                    | Sum types                                                                | Multi-object                                               | Filter                              | Row cost                           |
+| ------------------------- | ------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------- | ----------------------------------- | ---------------------------------- |
+| [Qt][qt]                  | eager, whole subtree                                    | **forbidden at insert**                                         | editor → manager setter, live                | none                                                  | none                                           | enum/flags only                                                          | none                                                       | none                                | item + heap property per node      |
+| [Godot][godot]            | lazy — sub-inspector on unfold                          | no guard                                                        | undo transaction (`MERGE_ENDS`)              | `changing` suppresses the _rebuild_                   | paged rows, add/remove/reorder                 | resource picker; subtree replaced                                        | intersection, **first object's value**                     | rebuild; folding disabled           | one `Control` per row              |
+| [WinForms][winforms]      | lazy on expand                                          | no guard                                                        | designer transaction                         | commit on Enter/blur; modal error keeps text          | array index rows; modal editor                 | none                                                                     | merged descriptors, **blank when mixed**                   | none                                | zero widgets (one shared editor)   |
+| [Unreal][unreal] _(docs)_ | not determined                                          | not determined                                                  | through the handle (transaction included)    | `SetValue` flags + `NotifyFinishedChangingProperties` | `AsArray`/`AsMap`/`AsSet`                      | `GeneratePossibleValues` + restrictions                                  | per-object values, first-class                             | not determined                      | not determined                     |
+| [bevy][bevy]              | per frame, only inside open regions                     | impossible (`&mut` aliasing)                                    | `&mut` in place                              | none                                                  | inline add/remove/move                         | variant combo; unconstructable entries disabled                          | `ui_for_reflect_many`                                      | none                                | zero retained; re-walked per frame |
+| ★ [Unity][unity]          | traversal skips collapsed subtrees                      | **visited set — in expand-all only**                            | mirror + `ApplyModifiedProperties` (undo)    | none at the C# layer                                  | reorderable list, keyed by path                | `[SerializeReference]`; subtree rebuilt on type change                   | `hasMultipleDifferentValues` (+ per-bit), `showMixedValue` | table views only                    | IMGUI, per-visible-row             |
+| ★ [derive crates][derive] | per frame, open regions                                 | impossible (`&mut`)                                             | `&mut` in place                              | none                                                  | positional rows, add/remove/move               | derive **generates** construction — non-`Default` field is a build error | none                                                       | none                                | zero retained                      |
+| ★ [VS Code][vscode]       | model built once, tree virtualizes                      | n/a (flat key space)                                            | configuration service writes `settings.json` | per control                                           | inline widgets for arrays/maps; else `Complex` | none — `Complex`                                                         | n/a (scope selector instead)                               | **model swap**, expansion untouched | virtualized, recycled templates    |
+| ★ [rjsf][rjsf]            | per render                                              | **tagged, rendered as Expand**                                  | immutable `onChange`; host owns data         | per keystroke into `formData`                         | add/remove/reorder, **stable row keys**        | `oneOf` picker; **data survives via name+type match**                    | none                                                       | none                                | whole DOM                          |
+| ★ [DevTools][devtools]    | per expansion — a network fetch                         | none needed (no automatic walk)                                 | remote evaluation                            | none                                                  | recursive `[from … to]` buckets; 200-row limit | read-only                                                                | none                                                       | over materialised rows only         | fetched rows only                  |
+| [`sparkles:ui`][baseline] | `flatten` descends into open nodes; `viewSlice` windows | compile-time walk **fails to build** without a visited-type set | —                                            | —                                                     | table core, read-only                          | —                                                                        | none                                                       | filter owned by `TreeViewState`     | zero retained                      |
 
 ---
 
@@ -44,199 +54,378 @@ The cross-subject synthesis: one scannable matrix, then what the field actually 
 
 ### 1. Where the tree lives, and what it costs
 
-Three distinct approaches, and the cost is paid in exactly one place each.
+Four approaches now, not three.
 
-**A model independent of any view** ([Qt][qt], [Unreal][unreal]). Buys presentation-independence outright: Qt drives a tree browser, a group-box browser and a button browser from the same properties, and the model never learns which. The cost is a second structure — Qt materialises a `QtBrowserItem` per _occurrence_ per browser and fans every change out over the occurrence list — and the discipline of keeping model and subject in sync, since the manager, not the application object, holds the value.
+**A model independent of any view** ([Qt][qt], [Unreal][unreal], ★[VS Code][vscode]). Buys
+presentation-independence: Qt drives three browsers from one model; VS Code renders its model
+through a virtualized tree and swaps the whole model for search. The cost is a second structure
+to maintain — Qt materialises an item per _occurrence_ and fans changes out over the list.
 
-**The widget tree as the only tree** ([Godot][godot]). Buys directness: a plugin manipulates rows because rows are objects. The cost is that any structural change is a teardown, and the source says so — `update_tree()` saves selection and focus around `_clear()` and openly notes that the caret position is not saved ([`editor_inspector.cpp:4396`][godot-todo]). Godot then has to push the one piece of state it cannot afford to lose — expansion — **onto the edited object** (`editor_set_section_unfold`), which makes fold state part of the saved scene.
+**The widget tree as the only tree** ([Godot][godot]). Buys directness, costs a teardown per
+structural change, and forces the state that must survive onto the edited object
+([`editor_inspector.cpp:4396`][godot-todo] admits the caret is lost).
 
-**No tree at all** ([bevy][bevy]). Buys the elimination of an entire class of problems: no rebuild, no invalidation, no change notification, no stale model. The cost is that everything persistent must be keyed by a structurally-derived id in the UI library's side table — and that identity is positional, so mutating a collection shuffles the state of everything after the mutation point.
+**No tree at all** ([bevy][bevy], ★[derive crates][derive], ★[rjsf][rjsf]). Buys the
+elimination of rebuild, invalidation and change notification. Costs positional identity — except
+in rjsf, which pays one synthetic key per array row to get identity back ([`ArrayField.tsx:44`][rjsf-rowid]).
 
-[WinForms][winforms] sits between the first and second: a retained entry model, but one owned by the grid and rebuilt from the root, with identity reconstructed by structural equality (`EqualsIgnoreParent`) rather than preserved.
+**A mirror of the subject** (★[Unity][unity]). The inspector edits a serialized copy, pulled by
+`Update()` and pushed by `ApplyModifiedProperties()` — which is also where undo is registered
+([`SerializedObject.bindings.cs:122`][unity-apply]). This is the only subject that decouples
+editing from the object _without_ building a node model: the mirror is the model.
 
-**The pattern:** every subject that rebuilds has to name the state that must survive, and each names a _different_ set. Godot names expansion (and loses the caret). WinForms names expansion (via child diffing) and nothing else. bevy names everything at once by making the id derivable. Nobody preserves in-progress text across a structural rebuild — [Godot][godot] avoids the question by suppressing rebuilds while `changing > 0`.
+★[DevTools][devtools] is the limiting case of all four: the tree is in another process, so the
+inspector holds leases and refetches.
 
 ### 2. Metadata
 
-Four runtime channels and one compile-time one, and the split that matters is not runtime-vs-compile-time but **type-scoped vs instance-scoped**. [Unreal][unreal] is alone in offering both (`GetMetaData` vs `GetInstanceMetaData`), which is what lets a customization attach information to one occurrence of a type. [Godot][godot] gets the same effect differently: the whole property list is regenerated per rebuild, and a script may rewrite it per object (`_get_property_list`) or per property (`_validate_property`), so metadata is inherently per-instance and inherently transient.
+Five channels: none ([Qt][qt]), runtime attribute tables ([WinForms][winforms], ★[Unity][unity]),
+a runtime stream ([Godot][godot]), a type registry ([bevy][bevy]), a document
+(★[VS Code][vscode], ★[rjsf][rjsf]) — and, new in Tier 2, **attributes consumed at compile
+time** (★[derive crates][derive]).
 
-The deeper structural finding is Godot's: metadata arrives as a **flat ordered stream with pseudo-entries**, and the hierarchy is recovered by prefix matching on names ([`editor_inspector.cpp:4715`][godot-prefix]). Grouping is a naming convention, re-derived every rebuild. That is cheap and open — a script can produce any tree — and it means the panel can never trust its own structure.
+The compile-time channel changes the failure mode rather than the expressiveness: a misspelled
+attribute is a build error, and a per-field custom renderer is a function name resolved at
+compile time. What it cannot express is a condition over the _value_ — which the document-driven
+subjects get for free (`if`/`then`/`else`, `dependencies` in JSON Schema) and which
+[`uda-metadata.d`](./examples/uda-metadata.d) shows a D UDA channel must carry as data and
+evaluate per frame.
+
+★[Unity][unity] adds one distinction nobody else has at the API level: metadata is readable at
+**class scope and instance scope** (`GetMetaData` vs `GetInstanceMetaData` in [Unreal][unreal];
+`SerializedProperty` + drawer attributes in Unity), so per-occurrence metadata is possible.
+
+★[VS Code][vscode] adds **provenance**: a row carries `scopeValue`, `defaultValue`,
+`defaultValueSource`, `isConfigured`, `hasPolicyValue`, per-language overrides
+([`settingsTreeModels.ts:113`][vscode-element]). No other subject models _why_ a value is what
+it is.
 
 ### 3. Descent, and who owns it
 
-The most consequential divergence in the corpus. [WinForms][winforms] puts the decision **on the model type**: `TypeConverter.GetPropertiesSupported` says whether a value expands, and `GetProperties` says into what. The grid contains no knowledge of nesting at all. That is the most extensible answer — any type becomes inspectable everywhere by shipping a converter — and the most obscure: three unrelated hooks (`GetPropertiesSupported`, `GetCreateInstanceSupported`, `[NotifyParentProperty]`) must agree or a nested edit silently does nothing.
+Unchanged in shape — model type ([WinForms][winforms]), value kind ([bevy][bevy]), manager
+([Qt][qt]), runtime type+hint ([Godot][godot]) — with two Tier-2 additions.
 
-[bevy][bevy] puts it in the **value's structural kind**, with a leaf-editor registry consulted _first_ so that `Vec3` renders as three drag boxes rather than a struct. Ordering matters: registry → short-circuit → structure. [Qt][qt] puts it in the manager and pays for it in code volume — every composite type is a hand-written manager, which is why one file runs to 6,611 lines.
+★[Derive crates][derive] put it on the **trait, at compile time**: an associated const
+(`SIMPLE`) or simply whether the impl overrides the child visitor. That is the same
+capability-by-presence idiom `sparkles:ui` already uses for inspector adapters.
 
-**The pattern:** whoever owns the descent decision owns the extension story. Model-side ownership (WinForms) means new types work everywhere without touching the component; component-side ownership (Qt) means the component is in control and grows without bound.
+★[VS Code][vscode] declines the question: nested values are typed `Complex` and handed to the
+text editor ("Edit in settings.json", [`settingsTree.ts:1203`][vscode-json]). A GUI that refuses
+to descend, and offers the serialization format instead, is a legitimate answer nobody in Tier 1
+considered.
 
-### 4. Cycles
+### 4. Cycles — the rule the corpus was missing
 
-The finding here is that **nobody solves cycles; they arrange not to have them**.
+Tier 1 concluded that nobody solves cycles; they arrange not to have them. Tier 2 supplies the
+**rule** two independent subjects state in opposite directions:
 
-- [Qt][qt] forbids them at the model boundary, with an explicit descendant walk on every insert ([`qtpropertybrowser.cpp:403`][qt-cycle]). It can afford the check because insertion is caller-driven and rare.
-- [bevy][bevy] gets cycle-freedom from Rust's aliasing rules; the reference graph that _would_ cycle is pushed out of the walk entirely, into `RestrictedWorldView`.
-- [Godot][godot] and [WinForms][winforms] have no guard at all. They survive because materialisation is lazy and recursion is driven by clicks — a self-referential value can be unfolded forever, one level per click, and no one has complained loudly enough for a guard to appear.
-- A **compile-time** descent in D cannot take any of those positions: without a visited-type set the build fails outright at 500 levels of template recursion, verified in [`reflect-descent.d`](./examples/reflect-descent.d) on both compilers.
+> ★ Managed reference objects can form a cyclical graph, so need to track visited objects
+>
+> — [Unity][unity], inside `SetExpandedRecurse` ([`EditorGUI.cs:7841`][unity-visited])
+
+> ★ Should only be `true` when called from an **object-property** context, because object
+> properties are always rendered (creating an infinite loop), whereas array items and
+> anyOf/oneOf branches are data-driven.
+>
+> — [rjsf][rjsf] on when to tag a `$ref` cycle ([`retrieveSchema.ts:366`][rjsf-cyclecomment])
+
+**Guard the walk that is neither user-driven nor data-driven.** Unity's visited set is in
+expand-all, not in painting. rjsf's cycle tag is for object properties, which are always
+rendered, and not for array items or `oneOf` branches, which the data terminates. [DevTools][devtools]
+needs no guard because it has no automatic walk at all. [Qt][qt] forbids cycles at the model
+boundary; [bevy][bevy] and the ★[derive crates][derive] get freedom from `&mut` aliasing;
+[Godot][godot] and [WinForms][winforms] rely on the reader stopping.
+
+rjsf also contributes the best _presentation_ of a cut: `CyclicSchemaField` renders a
+placeholder with an **Expand** button that opens exactly one more level
+([`CyclicSchemaField.tsx:25`][rjsf-cyclic]) — the cut is visible and actionable rather than
+silent. [`erased-descent.d`](./examples/erased-descent.d) reproduces that shape in D.
+
+For Sparkles the constraint is sharper than for anyone surveyed: a CTFE walk **fails to build**
+on a recursive type ([`reflect-descent.d`](./examples/reflect-descent.d)), and the escape is to
+put an **erasure boundary** in the child walk — which is precisely what the ★[derive crates][derive]
+do with `&mut dyn`, and what [`erased-descent.d`](./examples/erased-descent.d) measures the cost
+of (one delegate per open node, one virtual call per descent).
 
 ### 5. Editing, commitment and undo
 
-Undo is present in exactly the two subjects embedded in an application that already had an undo stack ([Godot][godot]'s `EditorUndoRedoManager`, [WinForms][winforms]'s designer transaction) plus the one that made it the handle's job ([Unreal][unreal]). Both standalone libraries ([Qt][qt], [bevy][bevy]) have none. **INFERENCE:** undo is a host concern, and a property component that invents its own is likely to be fighting the host's.
+Undo is present in exactly the subjects embedded in a host that already had an undo stack
+([Godot][godot], [WinForms][winforms], [Unreal][unreal], ★[Unity][unity] — where
+`ApplyModifiedProperties()` _is_ the undo boundary). Every standalone library has none:
+[Qt][qt], [bevy][bevy], all four ★[derive crates][derive], ★[rjsf][rjsf] (which hands
+`formData` to the host), ★[DevTools][devtools]. **Nine subjects, no counterexample: undo
+belongs to the host.**
 
-The transient/committed distinction is where the corpus is most instructive and most misread. Godot's `changing` flag looks like "don't commit yet" and is not — the source comment says it exists for properties "that trigger events as typing occurs" ([`editor_inspector.cpp:5829`][godot-changing]), and its effect is to suppress the rebuild that would destroy the widget being typed into. The value is written on every keystroke; what is deferred is the _refresh_. Only [Unreal][unreal] separates the two at the API level, with set flags plus an explicit `NotifyFinishedChangingProperties`.
+The transient/committed distinction remains rare and remains misread. [Godot's][godot]
+`changing` flag suppresses the rebuild, not the write ([`editor_inspector.cpp:5829`][godot-changing]).
+Only [Unreal][unreal] separates the two at the API. ★[Unity][unity] has no equivalent at the C#
+layer — its merge happens in the native undo system.
 
-[WinForms][winforms] is alone in taking validation seriously, and its answer is worth stating as a pattern: convert at commit, show the exception, **block the navigation that triggered the commit**, and let the reader choose between reverting and continuing to edit their text ([`PropertyGridView.cs:5046`][wf-revert]).
+Validation gained a second data point: [WinForms][winforms] blocks navigation with a modal and
+keeps the reader's text; ★[VS Code][vscode] renders the message **inline in the row**
+([`settingsTree.ts:1215`][vscode-validation]); ★[rjsf][rjsf] makes validation a designed stage
+whose `errorSchema` is addressed by the same path as the data.
 
 ### 6. Polymorphic and sum-typed values
 
-The axis the brief flagged, and the corpus's answers are unusually far apart.
+The corpus now shows the full spread of "what happens on a variant switch":
 
-[bevy][bevy] is the only subject that treats a variant switch as a **construction problem**: the picker enables a variant only if every field type has a registered default, and a disabled entry explains which types blocked it ([`mod.rs:1889`][bevy-constructable]). Switching builds a `DynamicEnum` of defaults and applies it — the old variant's data is gone.
+| Approach                                                                       | Subject                  | On switch                                                                                                                        |
+| ------------------------------------------------------------------------------ | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime constructability check, unconstructable variants disabled with reasons | [bevy][bevy]             | old data discarded                                                                                                               |
+| Derive **generates** the construction                                          | ★[derive crates][derive] | old data discarded; a non-`Default` field is a **build error**                                                                   |
+| Concrete type name is part of the value                                        | ★[Unity][unity]          | subtree torn down when `managedReferenceFullTypename` changes ([`PropertyField.cs:249`][unity-pf])                               |
+| Picker over allowed classes                                                    | [Godot][godot]           | value replaced; subtree is whatever the new object reports                                                                       |
+| Metadata-driven options with restrictions                                      | [Unreal][unreal]         | not determined                                                                                                                   |
+| **Schema `oneOf` with data migration**                                         | ★[rjsf][rjsf]            | **data survives**: keys whose name and resolved type match are carried over ([`sanitizeDataForNewSchema.ts:117`][rjsf-sanitize]) |
 
-[Unreal][unreal] generalises the same shape to classes and enums (`GeneratePossibleValues` returning values, tooltips **and** a restricted flag per entry), and adds reasons a value is unavailable.
-
-[Godot][godot] has a picker for `Resource` subclasses and simply replaces the value; the subtree becomes whatever the new object reports. [WinForms][winforms] has no type picker at all — a polymorphic field is whatever its converter says. [Qt][qt] has none.
-
-**Nobody attempts to carry per-field state across a variant switch.** The subtree is discarded and rebuilt in all three subjects that support switching. For D that is a stronger statement than it looks: [`sumtype-variants.d`](./examples/sumtype-variants.d) shows that constructability is nearly free (every type has `.init`), so the picker's hard question is not "can I build it?" but "may I assign it?" — Phobos' `SumType.opAssign` is `@system` whenever another member has indirections.
+The last row is a Tier-1 retraction (see [Retractions](#retractions-what-tier-2-changed)). For D
+specifically the obstacle is neither construction nor migration: it is `@safe`
+([`sumtype-variants.d`](./examples/sumtype-variants.d)).
 
 ### 7. Multi-object editing
 
-Three positions, and the architecture consequences are visible in each.
+Four positions, and the Tier-2 addition is the cheapest one for the view:
 
-- **Designed in from the start** ([Unreal][unreal]): a handle addresses N objects, every read returns a result code beside the value, and "they disagree" is a normal answer. The whole API is shaped by it.
-- **Bolted on cleanly** ([WinForms][winforms]): merge N `PropertyDescriptor`s into one `MergePropertyDescriptor` whose `GetValue` reports `allEqual`, and the rest of the grid never learns that N > 1. The cost is a parallel entry class, a merged-collection type, and event lookups that have to unpack the array.
-- **Bolted on and left incomplete** ([Godot][godot]): `MultiNodeEdit` intersects the property lists and then returns **the first node's value**, with no mixed-value indication ([`multi_node_edit.cpp:144`][godot-mne]).
+- **Designed in** ([Unreal][unreal]): the handle addresses N objects; every read returns a result code.
+- **Merged descriptors** ([WinForms][winforms]): `allEqual` out-parameter; a mixed row renders blank.
+- **★ Ambient flag** ([Unity][unity]): `hasMultipleDifferentValues` per property — including a
+  **per-bit** variant for masks — and a global `EditorGUI.showMixedValue` that every control
+  consults, drawing an em-dash ([`EditorGUI.cs:273`][unity-showmixed]). Cheapest for the view,
+  most demanding of the model, which must maintain an invalidatable comparison cache.
+- **Incomplete** ([Godot][godot]): intersect the property lists, then show the first object's value.
 
-**The pattern:** multi-object editing is cheap to add to a design where the address is already an indirection (a handle, a descriptor) and expensive where the address is "this object, this field".
+★[VS Code][vscode] shows the adjacent problem — one row, several underlying values — solved by a
+**scope selector** instead of a merge: pick which one you are editing.
 
 ### 8. Presentation, filtering, performance
 
-Filtering interacts with expansion in exactly one interesting way, and [Godot][godot] is the only subject that has it: while a filter is active, folding is **disabled entirely** so every match is visible ([`editor_inspector.cpp:4464`][godot-filter]), and the reader's fold state is untouched because it lives on the object rather than in the panel.
+Filtering has three answers now. [Godot][godot] rebuilds and disables folding while a filter is
+active; `sparkles:ui`'s tree asks its adapter to rebuild; ★[VS Code][vscode] **swaps in a
+different model** ([`settingsEditor2.ts:453`][vscode-model]), so filtering and expansion never
+interact at all. The last is the cleanest and costs a second model to keep behaviourally
+consistent.
 
-On performance the corpus splits by widget cost, not by row count. [WinForms][winforms] paints rows itself and keeps one shared edit box, so rows are nearly free. [Godot][godot] spends a `Control` per row and, having no virtualization, answers large collections with **pagination**. [bevy][bevy] pays per visible row per frame and nothing when closed. [Qt][qt] retains an item per node but only one editor widget at a time.
+On scale the corpus splits by what a row costs. [WinForms][winforms] and ★[VS Code][vscode]
+virtualize (zero widgets per unrendered row). [Godot][godot] pays a `Control` per row and answers
+size with **pagination**. ★[DevTools][devtools] answers it with **fetch policy** — 200 visible
+children, then a "show all"; arrays above 100 elements become recursive `[from … to]` buckets
+([`ObjectPropertiesSection.ts:2528`][devtools-thresholds]) — which is cheaper than virtualization
+because unfetched rows do not exist. `sparkles:ui` already windows rows with `viewSlice`.
 
 ---
 
 ## Cross-cutting: the frame model
 
-Which of these designs survives a per-frame rebuild of the presented tree?
+| Feature                       | Survives per-frame rebuild?                                  | Evidence                                                                                                                               |
+| ----------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Expansion                     | **yes**, if identity is derivable or stored outside the view | [Godot][godot] on the object; ★[Unity][unity] in the serialized data; [bevy][bevy] from the id; `sparkles:ui`'s `DisclosureState(Key)` |
+| Selection / focus             | **yes**, with explicit save-restore                          | [Godot][godot] around `_clear()`                                                                                                       |
+| In-progress text              | **no** in practice                                           | [Godot][godot] loses the caret; [bevy][bevy] keeps it only via a stable id                                                             |
+| Element state in a collection | **only with a synthetic key**                                | ★[rjsf][rjsf] alone; everyone else keys by index                                                                                       |
+| Drag-transient edits          | yes, if the write is per-frame anyway                        | [bevy][bevy]; [Unreal][unreal] flags them instead                                                                                      |
+| Virtualization                | yes — orthogonal                                             | [WinForms][winforms], ★[VS Code][vscode], `sparkles:ui`                                                                                |
+| Undo grouping                 | **no** — needs "the same interaction"                        | [Godot][godot]'s `MERGE_ENDS`, [Unreal][unreal]'s set flags                                                                            |
 
-| Feature              | Survives per-frame rebuild?                                  | Evidence                                                                                                                                                                              |
-| -------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Expansion            | **yes**, if identity is derivable or stored outside the view | [Godot][godot] stores it on the object; [bevy][bevy] derives it from the id; `sparkles:ui` has `DisclosureState(Key)`                                                                 |
-| Selection / focus    | **yes**, with explicit save-restore                          | [Godot][godot] does exactly this around `_clear()`                                                                                                                                    |
-| In-progress text     | **no** in practice                                           | [Godot][godot] loses the caret ([`editor_inspector.cpp:4396`][godot-todo]) and suppresses rebuilds while typing; [bevy][bevy] keeps it only because egui holds it against a stable id |
-| Drag-transient edits | **yes**, if the write is per-frame anyway                    | [bevy][bevy] drags write continuously; [Unreal][unreal] flags them instead                                                                                                            |
-| Virtualization       | **yes** — orthogonal                                         | [WinForms][winforms] and `sparkles:ui` both window rows without retaining them                                                                                                        |
-| Undo grouping        | **no** — needs a notion of "the same interaction"            | [Godot][godot]'s `MERGE_ENDS`, [Unreal][unreal]'s set flags                                                                                                                           |
-
-**INFERENCE:** the only features that genuinely _force_ retention are the ones tied to an interaction that spans frames — in-progress text and undo grouping. Everything else survives a rebuild provided node identity is either derivable from the path or stored as a value outside the view. That is precisely the position `sparkles:ui` is already in ([baseline][baseline]).
+**INFERENCE:** the features that genuinely force retention are those tied to an interaction that
+spans frames — in-progress text and undo grouping — plus collection element state, which needs a
+key that is not the index.
 
 ## Cross-cutting: surface independence
 
-What each design assumes about its surface, and what the cell grid / HTML / terminal targets would cost:
+Tier 2 adds two data points to the same reasoning:
 
-- **A pointer and hover.** [WinForms][winforms]' expansion glyph, drop-down buttons and `…` modal buttons are all pointer affordances; [Godot's][godot] rows carry hover-only revert/keying/pin/favourite icons. A terminal has no hover, so any affordance that only appears on hover has to become always-visible or keyboard-reachable — the same conclusion the [anchored-overlays][overlays] survey reached for tooltips.
-- **Pixels.** [Godot's][godot] split-ratio label/value divider and [WinForms'][winforms] draggable column splitter are sub-cell geometry. In integer cells the split is a column count, which also means the label column is a layout decision rather than a drag.
-- **A modal window.** [WinForms][winforms] pushes collection editing and validation errors into modal dialogs; [Qt][qt] uses a colour/font dialog for two of its editor factories. On a terminal or a script-free HTML page there is no modal to push to, so those cases must be inline (an expandable subtree) or absent.
-- **A frame clock and a live runtime.** [bevy's][bevy] entire model assumes both. The script-free HTML target has neither — it has no runtime at all — so a property tree that is only defined as "a function run every frame" has no meaning there. What it can express is the **read-only presentation** of the same row model, which is what makes a presentation-free row model (as opposed to a per-frame function) load-bearing for this repo rather than a matter of taste.
-- **One editor widget at a time.** [Qt][qt]'s delegate and [WinForms][winforms]' shared text box both assume exactly one row is being edited. That assumption is target-independent and cheap, and it is the one performance trick in the corpus that transfers unchanged.
+- **A GUI may legitimately refuse.** ★[VS Code's][vscode] `Complex` → "edit the JSON" says a
+  property editor need not be total over its value space, provided the escape lands somewhere
+  real. For the script-free HTML target that is the whole design: render what the row model can
+  express, and let the underlying format be edited elsewhere.
+- **Fetch policy is a portable substitute for virtualization.** ★[DevTools'][devtools] limits are
+  policy, not layout — they work identically in a cell grid, and they bound work before it
+  reaches the renderer.
+
+Unchanged: pointer/hover affordances ([Godot's][godot] hover-only row icons), sub-cell geometry
+([WinForms'][winforms] draggable splitter), modal escapes ([WinForms'][winforms] collection
+editor), and a live runtime ([bevy][bevy], ★[derive crates][derive]) all assume things a
+terminal or a static page does not have.
 
 ---
 
 ## Architectural families
 
-The corpus falls into three coherent families. Adopting one commits a design to its consequences as a package.
+Three families in Tier 1; Tier 2 adds a fourth and populates the others.
 
-### Family A — Model-first (Qt, Unreal)
+### Family A — Model-first ([Qt][qt], [Unreal][unreal], ★[VS Code][vscode])
 
-A presentation-free node model that outlives any view, addressed by a stable handle, with the view as a subscriber.
+A presentation-free model outlives any view; the view subscribes.
+**Commits you to:** a second structure and its lifetime. **Buys you:** several presentations,
+model-level search (VS Code swaps models), multi-object addressing as an indirection you already
+have.
 
-**Commits you to:** a second structure to maintain and fan changes out over; a node lifetime question; mirroring or mediating access to the real subject. **Buys you:** several simultaneous presentations, multi-object addressing as an indirection you already have, undo attached to the mediating layer, and node identity that needs no derivation.
+### Family B — View-first with external state ([Godot][godot], [WinForms][winforms], ★[Unity][unity])
 
-### Family B — View-first with external state (Godot, WinForms)
+The presented rows are the structure; what must survive lives elsewhere — on the object
+([Godot][godot]), in the serialized data (★[Unity][unity]), or reconstructed by matching
+([WinForms][winforms]).
+**Commits you to:** naming every piece of surviving state, and losing what you fail to name.
+**Buys you:** directness and no synchronisation problem.
 
-The presented rows are the structure; whatever must survive a refresh is either stored outside the view (Godot: on the object) or reconstructed by matching (WinForms: entry diffing).
+### Family C — Function-first ([bevy][bevy], ★[derive crates][derive], ★[rjsf][rjsf])
 
-**Commits you to:** naming, one by one, every piece of state that must survive — and accepting that anything you fail to name is lost, in-progress text first. **Buys you:** directness (rows are objects a plugin can manipulate), and no synchronisation problem, because there is nothing to keep in sync.
+The tree is a recursive function; persistence is a side table keyed by a derived id.
+**Commits you to:** positional identity (unless you mint keys, as rjsf does) and a frame clock.
+**Buys you:** no rebuild, no invalidation, no notification.
 
-### Family C — Function-first (bevy)
+### ★ Family D — Handle-first over a foreign graph (★[DevTools][devtools])
 
-The tree is a recursive function over the value; identity is a hash of the structural path; persistence is a side table keyed by that hash.
+The value is not yours: you hold leases, fetch on expansion, and bound by policy.
+**Commits you to:** asynchrony everywhere, staleness, and never knowing the row count.
+**Buys you:** the ability to inspect something unbounded, live and hostile — and a clean split
+between _displaying_ and _evaluating_ (getters stay uninvoked).
 
-**Commits you to:** positional identity (collection edits shuffle state); no place for state that is not id-keyed; a surface that has a frame clock. **Buys you:** the elimination of rebuild, invalidation and change-notification entirely — measurably the smallest implementation in the corpus.
-
-`sparkles:ui` today is **Family C's frame model with Family B's state discipline**: the tree is rebuilt per frame like bevy's, but there is no ambient id-keyed memory, so every persistent thing is a named value the host owns ([baseline][baseline]). The design question is not which family to join — the toolkit has already chosen — but whether the property tree needs a Family A model _on top of_ that, and for which capabilities.
+`sparkles:ui` remains **Family C's frame model with Family B's state discipline**: rebuilt per
+frame, but with no ambient id-keyed memory, so every persistent thing is a named value the host
+owns ([baseline][baseline]).
 
 ---
 
 ## Decisions we will have to make
 
-Each fork, with what each option forecloses. No recommendation is offered.
+Eight forks, re-run against the Tier-2 evidence. Options and what each forecloses; no
+recommendation.
 
 ### D1. Is there a node model at all, or is the tree a function of `T`?
 
-- **A row model built per rebuild** (a `TreeData` of reflected rows) — makes the row set inspectable, testable and paintable read-only on the HTML target; forecloses nothing structurally, but costs a build step that must be invalidated by something.
-- **A pure function walked per frame** — smallest, matches the frame model exactly; forecloses a read-only HTML rendering that is not "run the function", and forecloses any consumer that wants to ask "how many rows does `T` have?" without painting.
+- **A row model built per rebuild** — inspectable, testable, paintable read-only on the HTML target.
+- **A pure function walked per frame** — smallest, matches the frame model; forecloses asking
+  "how many rows does `T` have?" without painting.
+
+_Tier-2 evidence:_ ★[VS Code][vscode] shows a model buys **search as a model swap**, which is
+the cleanest filter/expansion story in the corpus. ★[DevTools][devtools] shows that when the row
+count is unknowable, a model is impossible — irrelevant for a typed subject, decisive for a live
+foreign one.
 
 ### D2. Where does the descent decision live?
 
-- **On the type, at compile time** (`static if` over `isAggregateType` + opt-out UDAs) — total, checkable, no registry; forecloses per-instance decisions ("this `Config` expands, that one does not") and makes every consumer of a type agree.
-- **On an adapter the host supplies** — per-use flexibility, matches `sparkles:ui`'s existing adapter idiom; forecloses "any `T` just works" and pushes the work onto every host.
+- **On the type, at compile time** — total, checkable, no registry; forecloses per-instance decisions.
+- **On an adapter the host supplies** — per-use flexibility; forecloses "any `T` just works".
+
+_Tier-2 evidence:_ the ★[derive crates][derive] prove the compile-time option works at scale
+(associated const / overridden visitor), and prove its cost: **the orphan rule**. A type you do
+not own cannot be given a rendering without a wrapper. A registry ([WinForms][winforms]) has no
+such limit.
 
 ### D3. What is a node's address?
 
-- **A dotted path string** ([Godot's][godot] answer) — human-readable, easy to persist, trivially stable across rebuilds; forecloses cheap comparison and allocates.
-- **A compile-time row index into the flattened plan** — free, exact; forecloses variant switches and collection edits changing the row set, unless the index is recomputed and remapped.
-- **An adapter-minted `Key`, as `TreeViewState(Key)` already expects** — consistent with the toolkit; forecloses nothing, but defers the question to whoever writes the adapter.
+- **A dotted path string** — readable, persistable, stable; allocates.
+- **A compile-time row index** — free and exact; breaks on variant switches and collection edits.
+- **An adapter-minted `Key`** — consistent with `TreeViewState(Key)`; defers the question.
+
+_Tier-2 evidence:_ ★[Unity][unity] runs **cursor + path string** and keeps per-row side tables
+keyed by the path — the pattern works, at the cost of stringly-typed lookups. ★[rjsf][rjsf]
+demonstrates the one case an index cannot serve: **collection element state needs a synthetic
+key**, or deleting element 0 shifts every later row's state.
 
 ### D4. How does a leaf editor get chosen?
 
-- **Compile-time dispatch** (a `static if` ladder, plus per-field UDA overrides) — no registry, `@nogc`-compatible, everything is known at build time; forecloses a host adding an editor for a type it does not own, and forecloses runtime-chosen editors.
-- **A runtime registry** (the corpus's universal answer) — open extension; would be `sparkles:ui`'s **first** dynamic dispatch surface, against the toolkit's whole DbI idiom.
+- **Compile-time dispatch** (`static if` ladder + per-field UDA overrides) — no registry, `@nogc`-compatible.
+- **A runtime registry** — open extension; would be `sparkles:ui`'s first dynamic dispatch surface.
+
+_Tier-2 evidence:_ the ★[derive crates][derive] show compile-time dispatch is viable _and_ that
+its escape hatch is cheap — a per-field function name (`custom_func_mut`, `as angle`) resolved at
+compile time. ★[VS Code][vscode] shows the opposite pole working too: a **closed** renderer set
+where extensions contribute data, not presentation.
 
 ### D5. What is the mutation contract?
 
-- **Write through a reference, immediately** ([bevy's][bevy] position) — simplest; forecloses undo, transient edits and multi-object editing, and inherits the `@system` `SumType` assignment problem for variant switches.
-- **Emit an edit command the host applies** — undo and multi-object become the host's, and the component stays `@safe pure`; costs a command vocabulary and a way to name the target field generically (which is D3 again).
+- **Write through a reference, immediately** — simplest; forecloses undo, transient edits and
+  multi-object editing, and inherits the `@system` `SumType` assignment problem.
+- **Emit an edit command the host applies** — undo and multi-object become the host's; costs a
+  command vocabulary and a way to name the target field.
+
+_Tier-2 evidence:_ ★[Unity's][unity] mirror is a third option — edit a copy, commit at a
+boundary (`ApplyModifiedProperties`) — and that boundary is exactly where undo attaches.
+★[rjsf][rjsf] is a fourth: the component owns nothing and the host holds the data. Across nine
+subjects, **every standalone library delegates undo to a host**; none invents its own.
 
 ### D6. Does the component support editing at all in v1?
 
-- **Read-only inspection first** — deliverable now, serves the [inspector spec's][inspector] details pane and the HTML target, and does not block on the unstarted [editor component][editorspec].
-- **Editable from the start** — blocks on that component for every string field; every other target-specific decision (commit point, validation display) then has to be made without an existing text-editing machine to make it against.
+- **Read-only inspection first** — deliverable now, serves the [inspector spec's][inspector]
+  details pane and the HTML target, does not block on the unstarted [editor component][editorspec].
+- **Editable from the start** — blocks on that component for every string field.
+
+_Tier-2 evidence:_ ★[DevTools][devtools] is a fully useful, widely used property tree that is
+**almost entirely read-only**, and its most interesting decisions (fetch bounds, buckets,
+uninvoked getters) are all on the read path.
 
 ### D7. Which "unset" does D's Optional row mean?
 
-`Nullable!T`, `T*`, `Expected!(T, E)` and a `SumType` with a unit variant are four different representations with four different transitions. Handling one forecloses nothing; handling all four means a vocabulary for "the unset transition" that none of the corpus has.
+`Nullable!T`, `T*`, `Expected!(T, E)`, a `SumType` with a unit variant.
+
+_Tier-2 evidence:_ this is the axis Tier 2 changed most. ★[rjsf][rjsf] has explicit
+present-vs-absent controls ([`OptionalDataControlsField.tsx:46`][rjsf-optional]); ★[VS Code][vscode]
+distinguishes **not-set-here-but-inherited** from set-here (`isConfigured`) and shows the
+provenance of the inherited value. Both are _user-facing states_, not type distinctions — so the
+fork is really "how many kinds of unset does the row model name?", independently of how D spells
+them.
 
 ### D8. Multi-subject editing: now, later, or never?
 
-The corpus says this is cheap when the address is already an indirection and expensive otherwise ([§7](#7-multi-object-editing)). Deciding "never" is a decision about D3, not a feature cut.
+_Tier-2 evidence:_ ★[Unity][unity] shows the cheapest known implementation — one ambient
+`showMixedValue` flag plus a per-property "do they differ?" predicate — but it is cheap only
+because the _model_ maintains the comparison. Deciding "never" is still a decision about D3.
+
+---
+
+## Retractions: what Tier 2 changed
+
+Claims from the Tier-1 pass that did not survive, and their narrowed replacements.
+
+| Tier-1 claim                                                         | Status                   | Replacement                                                                                                                                                                                  |
+| -------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Nobody attempts to carry per-field state across a variant switch."  | **Retracted**            | ★[rjsf][rjsf] migrates data on `oneOf` change, keeping keys whose name and resolved type match ([`sanitizeDataForNewSchema.ts:117`][rjsf-sanitize]). The type-driven subjects still discard. |
+| "The only cycle check in the entire corpus is Qt's."                 | **Retracted**            | ★[Unity][unity] has a runtime visited set in `SetExpandedRecurse`, and ★[rjsf][rjsf] tags `$ref` cycles during schema resolution. Qt's remains the only _insert-time structural_ one.        |
+| "Nobody in the corpus uses a visited set over values."               | **Retracted**            | ★[Unity][unity] keys one by `managedReferenceId`.                                                                                                                                            |
+| "Element identity is positional everywhere."                         | **Retracted**            | ★[rjsf][rjsf] mints a synthetic row key per element and keeps it beside the data.                                                                                                            |
+| "Recursion is user-driven, so no guard is needed."                   | **Narrowed**             | True only for walks the user or the data drives. An automatic walk (expand-all, schema resolution) needs a guard — stated independently by ★[Unity][unity] and ★[rjsf][rjsf].                |
+| "Validation is a modal, or absent."                                  | **Narrowed**             | ★[VS Code][vscode] renders it inline per row; ★[rjsf][rjsf] makes it a stage with path-addressed errors.                                                                                     |
+| "Undo belongs to a host."                                            | **Upheld, strengthened** | Nine subjects, no counterexample.                                                                                                                                                            |
+| "No subject preserves in-progress text across a structural rebuild." | **Upheld**               | Unity avoids the question the same way as the rest: nothing is rebuilt while typing.                                                                                                         |
 
 ---
 
 ## Surprises
 
-Things that were not obvious before reading the source.
-
-1. **Qt's model is a DAG, and the browser knows it.** `items(property)` returns a _list_ because one property can be presented in several places at once; every change notification fans out over that list. The "one value shown twice" case is designed for, not a bug — and it is the only subject that does so.
-2. **Nesting in WinForms is not implemented by the grid.** `TypeConverter.GetPropertiesSupported` decides expandability and `GetProperties` supplies the children, so the whole recursion lives on the model types. The corollary is a silent failure mode: without `[NotifyParentProperty]`, editing a child of a value type appears to work and never reaches the object.
-3. **Godot's `changing` flag does not defer the commit.** It suppresses the _rebuild_. The value is written on every keystroke; the source comment says as much ([`editor_inspector.cpp:5829`][godot-changing]).
-4. **Godot's fold state lives on the edited object, not the panel** — which is what makes its full-rebuild architecture viable, and also means expansion is serialized with the scene.
-5. **Godot's multi-selection shows the first node's value** with no mixed-value marker, despite intersecting the property lists carefully ([`multi_node_edit.cpp:144`][godot-mne]). The careful part and the sloppy part are three files apart.
-6. **Godot's answer to big collections is pagination, not virtualization** — a direct consequence of one widget per row.
-7. **The only cycle check in the entire corpus is Qt's, and it runs on insert** ([`qtpropertybrowser.cpp:403`][qt-cycle]). Everyone else relies on laziness plus a human getting bored.
-8. **bevy's cycle-freedom is a borrow-checker artifact**, not a design decision — and the cost is that every cross-object reference has to exit the reflection walk through `RestrictedWorldView`.
-9. **bevy disables variant entries it cannot construct, and says which field types blocked it.** It is the only subject that treats "you may not switch to this variant" as information rather than as an error after the fact.
-10. **A compile-time descent in D turns the cycle problem into a build failure.** Verified on both compilers at 500 levels of template recursion ([`reflect-descent.d`](./examples/reflect-descent.d)) — the field's "we just let the user stop clicking" answer is unavailable here.
-11. **In D the variant-switch obstacle is `@safe`, not constructability.** Every type has `.init`, but `SumType.opAssign` is `@system` whenever another member type has indirections ([`sumtype-variants.d`](./examples/sumtype-variants.d)) — an obstacle no surveyed subject has an analogue for.
-12. **Not one subject preserves in-progress text across a structural rebuild.** They avoid the question instead: Godot suppresses rebuilds while typing, WinForms blocks the navigation that would commit, bevy has no rebuild. If a design wants that guarantee, it will be the first.
+1. **Qt's model is a DAG, and the browser knows it** — `items(property)` returns a list of occurrences.
+2. **Nesting in WinForms is not implemented by the grid** — the converter decides and supplies children; without `[NotifyParentProperty]` a nested edit silently does nothing.
+3. **Godot's `changing` flag does not defer the commit** — it defers the rebuild.
+4. **Godot's fold state lives on the edited object**, so it is serialized with the scene.
+5. **Godot's multi-selection shows the first node's value** with no mixed marker.
+6. **Godot's answer to big collections is pagination, not virtualization.**
+7. **Qt is the only subject that forbids cycles structurally**, at insert time.
+8. **bevy's cycle-freedom is a borrow-checker artifact**, and the price is that cross-object references leave the walk entirely.
+9. **bevy disables variant entries it cannot construct, and says which field types blocked it.**
+10. **A compile-time descent in D turns the cycle problem into a build failure** — verified on both compilers.
+11. **In D the variant-switch obstacle is `@safe`, not constructability.**
+12. **Not one subject preserves in-progress text across a structural rebuild.**
+13. ★ **Unity's expansion state lives in the serialized data**, not in the window — one step beyond Godot: it survives selection changes and domain reloads because it is part of the object's serialized form.
+14. ★ **Unity caps custom-drawer recursion with a nesting-indexed drawer list** — a drawer cannot draw its own type forever; past the list's end the default field takes over.
+15. ★ **The corpus's two visited sets are both in walks nobody clicked** — expand-all and schema resolution. That, not "reflective editors need visited sets", is the rule.
+16. ★ **rjsf renders a cycle as an Expand button**, making an infinite structure finite and legible instead of silently cut.
+17. ★ **rjsf migrates data across a variant switch** by name-and-type matching — the only subject that tries, and it is a heuristic that can carry a same-named field into a different meaning.
+18. ★ **A settings row is not (label, value)** — VS Code's carries scope, default, default _source_, policy lock and per-language overrides, i.e. why the value is what it is.
+19. ★ **VS Code answers search by swapping the model**, so filtering never touches expansion.
+20. ★ **DevTools refuses to invoke getters** — the only subject that treats displaying and evaluating as different acts.
+21. ★ **DevTools bounds by fetch policy, not rendering policy** (200 children, 100-element buckets, recursive ranges), which is cheaper than virtualization because unfetched rows do not exist.
+22. ★ **The derive family's recursion terminates because of an erasure boundary**, not because of Rust — the same boundary in D turns our build error into a runtime walk, at the price of a delegate per open node ([`erased-descent.d`](./examples/erased-descent.d)).
 
 ---
 
 ## Sources
 
-The per-subject sources are in each deep-dive: [Qt][qt], [Godot][godot], [WinForms][winforms], [Unreal][unreal], [bevy][bevy], [Sparkles baseline][baseline]. Revisions are recorded in the [revision ledger][ledger].
+Per-subject sources are in each deep-dive: [Qt][qt], [Godot][godot], [WinForms][winforms],
+[Unreal][unreal], [bevy][bevy], ★[Unity][unity], ★[derive crates][derive], ★[VS Code][vscode],
+★[rjsf][rjsf], ★[DevTools][devtools], [Sparkles baseline][baseline]. Revisions are recorded in
+the [revision ledger][ledger].
 
 <!-- References -->
 
@@ -245,16 +434,28 @@ The per-subject sources are in each deep-dive: [Qt][qt], [Godot][godot], [WinFor
 [winforms]: ./winforms-propertygrid.md
 [bevy]: ./bevy-inspector-egui.md
 [unreal]: ./unreal-details-panel.md
+[unity]: ./unity-serializedproperty.md
+[derive]: ./derive-macro-inspectors.md
+[vscode]: ./vscode-settings-ui.md
+[rjsf]: ./react-jsonschema-form.md
+[devtools]: ./devtools-object-inspector.md
 [baseline]: ./sparkles-baseline.md
 [ledger]: ./index.md#revision-ledger
-[overlays]: ../anchored-overlays/index.md
 [inspector]: ../../specs/ui/inspector.md
 [editorspec]: ../../specs/ui/editor.md
 [godot-todo]: https://github.com/godotengine/godot/blob/944a3c6cbbbb88284feebcb0603464cb175fa18e/editor/inspector/editor_inspector.cpp#L4396
-[godot-prefix]: https://github.com/godotengine/godot/blob/944a3c6cbbbb88284feebcb0603464cb175fa18e/editor/inspector/editor_inspector.cpp#L4715
 [godot-changing]: https://github.com/godotengine/godot/blob/944a3c6cbbbb88284feebcb0603464cb175fa18e/editor/inspector/editor_inspector.cpp#L5829
-[godot-filter]: https://github.com/godotengine/godot/blob/944a3c6cbbbb88284feebcb0603464cb175fa18e/editor/inspector/editor_inspector.cpp#L4464
-[godot-mne]: https://github.com/godotengine/godot/blob/944a3c6cbbbb88284feebcb0603464cb175fa18e/editor/inspector/multi_node_edit.cpp#L144
-[qt-cycle]: https://github.com/qtproject/qt-solutions/blob/777e95ba69952f11eaec0adfb0cb987fabcdecb3/qtpropertybrowser/src/qtpropertybrowser.cpp#L403
-[wf-revert]: https://github.com/dotnet/winforms/blob/af0c793d58f30c92a3e42b5fabb8fee1ffe14796/src/System.Windows.Forms/System/Windows/Forms/Controls/PropertyGrid/PropertyGridInternal/PropertyGridView.cs#L5046
-[bevy-constructable]: https://github.com/jakobhellermann/bevy-inspector-egui/blob/ac6729854a97a9abcd7657b29d7356bdea63c568/crates/bevy-inspector-egui/src/reflect_inspector/mod.rs#L1889
+[unity-visited]: https://github.com/Unity-Technologies/UnityCsReference/blob/225b0fbdb57cc17d094e8056b71f8314aba56f73/Editor/Mono/EditorGUI.cs#L7841
+[unity-showmixed]: https://github.com/Unity-Technologies/UnityCsReference/blob/225b0fbdb57cc17d094e8056b71f8314aba56f73/Editor/Mono/EditorGUI.cs#L273
+[unity-apply]: https://github.com/Unity-Technologies/UnityCsReference/blob/225b0fbdb57cc17d094e8056b71f8314aba56f73/Editor/Mono/SerializedObject.bindings.cs#L122
+[unity-pf]: https://github.com/Unity-Technologies/UnityCsReference/blob/225b0fbdb57cc17d094e8056b71f8314aba56f73/Editor/Mono/UIElements/Controls/PropertyField.cs#L249
+[rjsf-rowid]: https://github.com/rjsf-team/react-jsonschema-form/blob/c8723f5f39d030776909667e74d217572757483c/packages/core/src/components/fields/ArrayField.tsx#L44
+[rjsf-sanitize]: https://github.com/rjsf-team/react-jsonschema-form/blob/c8723f5f39d030776909667e74d217572757483c/packages/utils/src/schema/sanitizeDataForNewSchema.ts#L117
+[rjsf-cyclic]: https://github.com/rjsf-team/react-jsonschema-form/blob/c8723f5f39d030776909667e74d217572757483c/packages/core/src/components/fields/CyclicSchemaField.tsx#L25
+[rjsf-cyclecomment]: https://github.com/rjsf-team/react-jsonschema-form/blob/c8723f5f39d030776909667e74d217572757483c/packages/utils/src/schema/retrieveSchema.ts#L366
+[rjsf-optional]: https://github.com/rjsf-team/react-jsonschema-form/blob/c8723f5f39d030776909667e74d217572757483c/packages/core/src/components/fields/OptionalDataControlsField.tsx#L46
+[vscode-element]: https://github.com/microsoft/vscode/blob/474a349ad5b745e512ef86b864d1c74f7264dd7a/src/vs/workbench/contrib/preferences/browser/settingsTreeModels.ts#L113
+[vscode-json]: https://github.com/microsoft/vscode/blob/474a349ad5b745e512ef86b864d1c74f7264dd7a/src/vs/workbench/contrib/preferences/browser/settingsTree.ts#L1203
+[vscode-validation]: https://github.com/microsoft/vscode/blob/474a349ad5b745e512ef86b864d1c74f7264dd7a/src/vs/workbench/contrib/preferences/browser/settingsTree.ts#L1215
+[vscode-model]: https://github.com/microsoft/vscode/blob/474a349ad5b745e512ef86b864d1c74f7264dd7a/src/vs/workbench/contrib/preferences/browser/settingsEditor2.ts#L453
+[devtools-thresholds]: https://github.com/ChromeDevTools/devtools-frontend/blob/788f6469296bf2420bd95bb6d73d28a21439f345/front_end/ui/legacy/components/object_ui/ObjectPropertiesSection.ts#L2528
