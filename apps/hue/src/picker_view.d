@@ -94,10 +94,15 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     Scope_ focus = Scope_.pickerInput)
 {
     auto builder = Builder();
-    // The focused pane's panel carries the accent chrome; the list dims its
-    // selection while the preview owns the keyboard (`PKL7` — the reader
-    // must see where keys go).
+    // The focused pane's panel carries the accent chrome, and INSIDE the
+    // files panel the backgrounds say which half owns the keyboard (`PKL7`
+    // — the reader must see where keys go): the prompt row lights its band
+    // while the input is focused (the `DockHeader` `chromeFocused`
+    // convention), the selection bar brightens while the list is, dims to
+    // a tint while the prompt types, and rests while the preview reads.
     const previewFocused = focus == Scope_.pickerPreview;
+    const inputFocused = focus == Scope_.pickerInput;
+    const listFocused = focus == Scope_.pickerList;
 
     // ── the prompt row: `› query▏` left, `matched/total` right ────────────
     TextSpan[] promptSpans;
@@ -119,7 +124,9 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
             text: text(state.matchedTotal, "/", state.corpusTotal),
             slot: Slot.muted));
     const promptRow = builder.add(Widget(kind: WidgetKind.row,
-        children: promptChildren, width: SizeSpec.grow()));
+        children: promptChildren, width: SizeSpec.grow(),
+        slot: inputFocused ? Slot.chromeFocused : Slot.inherit,
+        paintBackground: inputFocused));
 
     // ── the ranked rows: icon · dimmed directory · filename · match marks ─
     uint[] body;
@@ -138,14 +145,18 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         }
         else
             spans ~= TextSpan(text: "(stale row)", slot: Slot.muted);
-        // The selection keeps its bar only while the list side owns the
-        // keyboard — snacks dims its cursorline the same way when focus
-        // leaves the list.
-        const selected = i == state.selection && !previewFocused;
+        // The selection bar's strength follows the focus — snacks dims its
+        // cursorline the same way when focus leaves the list: bright while
+        // the list owns the keyboard, a tint while the prompt types, at
+        // rest while the preview reads.
+        const selected = i == state.selection;
+        const rowSlot = !selected ? Slot.inherit
+            : listFocused ? Slot.selection
+                : inputFocused ? Slot.highlight : Slot.inherit;
         body ~= builder.add(Widget(kind: WidgetKind.rich,
             spans: spans,
-            slot: selected ? Slot.selection : Slot.inherit,
-            paintBackground: selected,
+            slot: rowSlot,
+            paintBackground: rowSlot != Slot.inherit,
             hitId: ranked.corpusIndex + 1,
             width: SizeSpec.grow()));
     }
@@ -370,55 +381,77 @@ unittest
     RankedResult[1] rows;
     state.publish(rows[], 1, false);
 
-    // Panel chrome and caret per focused pane (`PKL7`): the pane that owns
-    // the keyboard gets the highlight border and the accent title, the
-    // caret lives only in the prompt, and the list's selection bar drops
-    // while the preview reads.
-    static void scan(in WidgetTree tree, out Slot filesTitle,
-        out Slot previewTitle, out bool caret, out bool selectionBar,
-        out Slot filesBorder, out Slot previewBorder) @safe
+    // Panel chrome, caret, and the in-panel backgrounds per focused pane
+    // (`PKL7`): the pane that owns the keyboard gets the highlight border
+    // and the accent title; INSIDE the files panel the prompt's band lights
+    // while the input is focused and the selection bar brightens while the
+    // list is — the flip that shows which half `Tab` landed on.
+    static struct Seen
     {
+        Slot filesTitle, previewTitle, filesBorder, previewBorder;
+        bool caret, promptBand, brightBar, dimBar;
+    }
+
+    static Seen scan(in WidgetTree tree) @safe
+    {
+        Seen s;
         int panels;
         foreach (node; tree.nodes)
         {
             if (node.text == " Files ")
-                filesTitle = node.slot;
+                s.filesTitle = node.slot;
             if (node.kind == WidgetKind.text && node.text.canFind("app.d"))
-                previewTitle = node.slot;
+                s.previewTitle = node.slot;
             if (node.decoration.borderWidth.left > 0)
             {
                 // The panels appear in build order: files first, preview
                 // second (`titledPanel` call order in `pickerView`).
                 if (panels == 0)
-                    filesBorder = node.decoration.borderSlot;
+                    s.filesBorder = node.decoration.borderSlot;
                 else
-                    previewBorder = node.decoration.borderSlot;
+                    s.previewBorder = node.decoration.borderSlot;
                 ++panels;
             }
+            if (node.kind == WidgetKind.row
+                && node.slot == Slot.chromeFocused && node.paintBackground)
+                s.promptBand = true;
             if (node.slot == Slot.selection && node.paintBackground)
-                selectionBar = true;
+                s.brightBar = true;
+            if (node.slot == Slot.highlight && node.paintBackground)
+                s.dimBar = true;
             foreach (span; node.spans)
-                caret |= span.text == "▏";
+                s.caret |= span.text == "▏";
         }
+        return s;
     }
 
-    Slot ft, pt, fb, pb;
-    bool caret, bar;
     const geometry = PickerGeometry(panelCols: 40, panelRows: 12);
 
-    scan(pickerView(state, snapshot, null, "app.d", geometry,
-        PickerLayout.default_, Scope_.pickerInput), ft, pt, caret, bar, fb, pb);
-    assert(ft == Slot.chromeAccent && pt == Slot.muted);
-    assert(fb == Slot.highlightBorder && pb == Slot.border);
-    assert(caret, "the prompt pane shows its caret");
-    assert(bar, "…and the selection bar");
+    const inp = scan(pickerView(state, snapshot, null, "app.d", geometry,
+        PickerLayout.default_, Scope_.pickerInput));
+    assert(inp.filesTitle == Slot.chromeAccent && inp.previewTitle == Slot.muted);
+    assert(inp.filesBorder == Slot.highlightBorder
+        && inp.previewBorder == Slot.border);
+    assert(inp.caret, "the prompt pane shows its caret");
+    assert(inp.promptBand, "…and its band lights");
+    assert(inp.dimBar && !inp.brightBar,
+        "the selection is a tint while the prompt types");
 
-    scan(pickerView(state, snapshot, null, "app.d", geometry,
-        PickerLayout.default_, Scope_.pickerPreview), ft, pt, caret, bar, fb, pb);
-    assert(ft == Slot.muted && pt == Slot.chromeAccent,
+    const lst = scan(pickerView(state, snapshot, null, "app.d", geometry,
+        PickerLayout.default_, Scope_.pickerList));
+    assert(!lst.promptBand, "the band follows the focus to the list");
+    assert(lst.brightBar && !lst.dimBar, "…where the selection brightens");
+    assert(!lst.caret, "no caret while the list owns the keys");
+    assert(lst.filesBorder == Slot.highlightBorder,
+        "the files panel stays the focused one");
+
+    const pv = scan(pickerView(state, snapshot, null, "app.d", geometry,
+        PickerLayout.default_, Scope_.pickerPreview));
+    assert(pv.filesTitle == Slot.muted && pv.previewTitle == Slot.chromeAccent,
         "focus swaps the titles");
-    assert(fb == Slot.border && pb == Slot.highlightBorder,
-        "…and the borders");
-    assert(!caret, "no caret while the keys go to the preview");
-    assert(!bar, "the selection bar dims with the list");
+    assert(pv.filesBorder == Slot.border
+        && pv.previewBorder == Slot.highlightBorder, "…and the borders");
+    assert(!pv.caret, "no caret while the keys go to the preview");
+    assert(!pv.promptBand && !pv.brightBar && !pv.dimBar,
+        "every band rests while the preview reads");
 }
