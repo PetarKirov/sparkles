@@ -1678,6 +1678,7 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             tableCopyFlag: opt.tableCopy,
             dsvText: doc.dsvText,
             dsvInfo: doc.dsvInfo,
+            dsvNote: doc.dsvNote,
             codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
             codeMaxLines: opt.codeMaxLines,
             tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),

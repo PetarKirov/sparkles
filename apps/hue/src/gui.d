@@ -73,7 +73,9 @@ import sparkles.ui.components.tree_view : viewSlice;
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
 import sparkles.ui.components.table : GridHit;
 import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
-import dsv_view : DsvCopy, DsvInfo, resolveTableCopy, serializeGridCopy;
+import dsv_browser : DsvBrowser, fuzzyRowMask;
+import dsv_view : adaptDsv, DsvCopy, DsvInfo, dsvStatusNote, flagsOf,
+    resolveTableCopy, serializeGridCopy;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
@@ -223,6 +225,7 @@ struct GuiArgs
     string tableCopyFlag = "auto";       // the raw flag, re-resolved on doc swap (DSC2)
     string dsvText;                      // DSV: the original bytes (DSC2/DSC4)
     DsvInfo dsvInfo;                     // DSV: dialect/header/chrome facts
+    string dsvNote;                      // DSV: the DSK5 status readout
     OverflowPolicy codeOverflow; // --code-overflow
     int codeMaxLines = -1;               // --code-max-lines (COD6; -1 = auto)
     OverflowPolicy tableOverflow;        // --table-overflow (TBL7)
@@ -367,6 +370,7 @@ int runGui(GuiArgs guiArgs) @system
     // through `with`.
     GuiRunState gs;
     DsvCopy dsvCopy; // the current document's grid-copy state (DSC2/DSC4)
+    DsvBrowser dsvBrowser; // the data-browser projection state (DSB)
     with (gs)
     {
     import std.string : toStringz;
@@ -807,11 +811,13 @@ int runGui(GuiArgs guiArgs) @system
         }
 
         vm.widthCols = widthCols();
-        vm.setDocument(name, summary, doc.source, doc.events, doc.preview,
+        vm.setDocument(name, doc.dsvNote.length ? doc.dsvNote : summary,
+            doc.source, doc.events, doc.preview,
             doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides, doc.diffSession,
             doc.diffEmphasis, doc.coverage, doc.hasCoverage);
         vm.docPath = path; // .editorconfig discovery + {path} (format preview)
         dsvCopy = DsvCopy.of(doc.dsvText, doc.dsvInfo);
+        dsvBrowser = DsvBrowser.init; // a new document starts unprojected (DSB2)
         cm.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
         inp.query.clear();
         inp.mode = Mode.normal;
@@ -819,6 +825,37 @@ int runGui(GuiArgs guiArgs) @system
         pn.tree.reveal(path); // the explorer follows the open document (XPL3/4)
         startLive(path, vm.tw.code.length != 0);
         return true;
+    }
+
+    /// `DSB1` in the GUI: re-render the current DSV document under the
+    /// browser's projection — re-adapt (no re-sniff: the resolved dialect is
+    /// replayed), rebuild the preview, re-arm the copy state, and compose the
+    /// `DSK5` chrome into the status bar's summary segment. Scroll and search
+    /// reset; the copy format and document identity survive.
+    void applyDsvBrowser()
+    {
+        import gui_preview : previewOf;
+
+        auto st = dsvCopy;
+        if (!st.info.present)
+            return;
+        auto proj = dsvBrowser.projection(st.info.columns);
+        proj.rowMask = fuzzyRowMask(st.rawText, st.info, dsvBrowser.fuzzyParts);
+        auto adapted = adaptDsv(st.rawText, "", flagsOf(st.info), proj);
+        auto pm = previewOf(*vm.cache, adapted.doc);
+        pm.tableExtras = adapted.extras;
+        auto ev = new HighlightEvent[](1);
+        ev[0] = HighlightEvent.sourceSpan(0, adapted.text.length);
+        const fmt = cm.tableFmt;
+        const path = vm.docPath;
+        const chrome = dsvBrowser.chromeNote;
+        vm.setDocument(vm.title,
+            dsvStatusNote(adapted.info)
+                ~ (chrome.length ? " · " ~ chrome : ""),
+            adapted.text, ev, pm, TwoslashReturn.init);
+        vm.docPath = path;
+        dsvCopy = DsvCopy.of(st.rawText, adapted.info, proj);
+        cm.tableFmt = fmt;
     }
 
     // Enter/l/double-click on a tree row opens a file (or toggles a dir).
@@ -1350,6 +1387,11 @@ int runGui(GuiArgs guiArgs) @system
                 vm.title,
                 text(names[vm.themeIdx], " · ",
                     fchip.length ? fchip
+                    // A DSV grid's mode segment is the `DSK5` readout (plus
+                    // the browser chrome once projected) — carried on the
+                    // summary — rather than the generic "preview".
+                    : vm.showPreview && dsvCopy.present && vm.summary.length
+                    ? vm.summary
                     : vm.showPreview ? "preview"
                     : vm.plainSyntax ? "plain" : "raw"),
                 text(vm.top + 1, "/", total),
@@ -1787,6 +1829,8 @@ int runGui(GuiArgs guiArgs) @system
             chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
             auto lineText = inp.mode == Mode.search
                 ? text("/", inp.query[], "   ", vm.matches.length, " matches")
+                : inp.mode == Mode.dsvFilter
+                ? text("⌕ ", inp.query[], "▏")
                 : text(":", inp.query[]);
             drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), vm.pageBg);
         }
@@ -2444,6 +2488,20 @@ int runGui(GuiArgs guiArgs) @system
                         i => vm.visualOfMatch(vm.matches[i]))(
                         vm.matches.length, vm.top), visibleRows);
                 }
+                else if (inp.mode == Mode.dsvFilter)
+                {
+                    // `DSF1`/`DSF5`: apply through the browser; a parse error
+                    // keeps the previous filter and surfaces as a toast.
+                    if (dsvBrowser.setFilter(inp.query[].idup,
+                            dsvCopy.headerNames))
+                        applyDsvBrowser();
+                    else
+                    {
+                        flash.copyModeMsg = "filter: " ~ dsvBrowser.filterError;
+                        flash.toast = Timeline.triggered(toastCfg);
+                    }
+                    inp.query.clear();
+                }
                 else if (inp.query.length) // gotoLine → the source line's visual row
                 {
                     // The parse half is the tested `parseGotoLine`; the jump
@@ -2496,6 +2554,7 @@ int runGui(GuiArgs guiArgs) @system
                 hasDiffSession: vm.showPreview && !vm.diffSession.empty,
                 showPreview: vm.showPreview,
                 formatPreviewActive: formatPreviewActive(vm),
+                hasDsvGrid: vm.showPreview && dsvCopy.present,
             );
 
             // The key sequence's delay runs on wall time, not a frame count:
@@ -2815,8 +2874,13 @@ int runGui(GuiArgs guiArgs) @system
                     flash.toast = Timeline.triggered(toastCfg);
                     break;
                 case Command.dsvFilter:
+                    inp.mode = Mode.dsvFilter;
+                    inp.query.clear();
+                    break;
                 case Command.dsvReset:
-                    break; // the GUI browser wiring is pending (spec DSB)
+                    dsvBrowser.reset();
+                    applyDsvBrowser();
+                    break;
                 case Command.startSearch:
                     inp.mode = Mode.search;
                     inp.query.clear();
@@ -3502,7 +3566,18 @@ int runGui(GuiArgs guiArgs) @system
                 // The lifecycle decisions live on the state (`gui_state`,
                 // tested); what stays here is the capture, which is the
                 // frame's to take.
-                if (drag.begin(hitAt(mp.x, mp.y)))
+                const phit = hitAt(mp.x, mp.y);
+                // `DSS1` via the mouse: a header-row hit on a data column
+                // cycles that column's sort (Shift appends); body cells fall
+                // through to selection, exactly as in the TUI.
+                if (dsvCopy.present && phit.table && phit.cell.row == 0
+                    && phit.cell.col > 0)
+                {
+                    dsvBrowser.cycleSort(cast(uint)(phit.cell.col - 1),
+                        shiftMod);
+                    applyDsvBrowser();
+                }
+                else if (drag.begin(phit))
                     inp.capture = inp.capture.capturedBy(capSelection);
             }
             if (drag.selecting && inp.fin.leftDown)
@@ -3568,7 +3643,8 @@ int runGui(GuiArgs guiArgs) @system
         if (!vm.setGutterChannels(gutter))
             warning(i"unknown gutter channel in `$(gutter)`; showing what was recognized");
         vm.lineNumbers = vm.lineNumbers && lineNumbers;
-        vm.setDocument(title, set !is null && !set.empty ? set.current.summary : "",
+        vm.setDocument(title, dsvNote.length ? dsvNote
+            : set !is null && !set.empty ? set.current.summary : "",
             source, events, preview, twoslash, docLang, initialDiff,
             initialDiffSides, initialDiffSession, DiffEmphasis.init,
             initialCoverage, initialHasCoverage);
