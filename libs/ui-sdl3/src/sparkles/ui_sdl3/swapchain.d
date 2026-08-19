@@ -108,6 +108,40 @@ uint chooseImageCount(in VkSurfaceCapabilitiesKHR caps) @safe pure nothrow @nogc
 }
 
 /**
+What a resize should do with the swapchain we already have.
+
+`wanted` is $(LREF chooseExtent)'s answer, so a minimised window on X11/Win32
+is `0×0` here and a Wayland surface that reports the "you decide" sentinel has
+already been clamped to the window's pixels (or to `minImageExtent`).
+
+$(UL
+$(LI $(D paused) — zero area. Keep the old swapchain; the caller stops drawing.)
+$(LI $(D unchanged) — already at this extent. Skip the create. $(D force)
+    disables this: an `OUT_OF_DATE` acquire at the same size (restore, rotation)
+    still has to retire the handle the driver rejected.)
+$(LI $(D rebuilt) — create a new swapchain, passing the old one as
+    `oldSwapchain`.))
+*/
+enum SwapchainResize
+{
+    paused,
+    unchanged,
+    rebuilt,
+}
+
+/// ditto
+SwapchainResize decideResize(bool hasSwapchain, VkExtent2D current, VkExtent2D wanted,
+    bool force = false) @safe pure nothrow @nogc
+{
+    if (wanted.width == 0 || wanted.height == 0)
+        return SwapchainResize.paused;
+    if (hasSwapchain && !force && current.width == wanted.width
+        && current.height == wanted.height)
+        return SwapchainResize.unchanged;
+    return SwapchainResize.rebuilt;
+}
+
+/**
 A swapchain and the images it owns.
 
 Not RAII over the device: teardown needs the `DeviceCommands` that created it,
@@ -124,16 +158,24 @@ struct Swapchain
     /// The presentable images. Owned by the swapchain, not by us.
     VkImage[] images;
 
+    /**
+    Previous handles retired by $(LREF recreate). A present may still be
+    scanning their images, so they cannot be destroyed until the queue is
+    idle — see $(LREF reap).
+    */
+    private VkSwapchainKHR[] _retired;
+
     @disable this(this);
 
     /**
     Create a swapchain sized for `windowPixels`.
 
     `previous` is passed to the driver as `oldSwapchain` so a resize can reuse
-    its resources; it is destroyed here once the new one exists, which is the
-    only order the spec allows.
+    its resources. Prefer $(LREF recreate) for a live swapchain: it retires
+    the old handle instead of destroying it while a present may still hold
+    its images.
     */
-    static SdlExpected!() create(out Swapchain sc, ref VulkanContext vk,
+    static SdlExpected!() create(ref Swapchain sc, ref VulkanContext vk,
         in PixelSize windowPixels, VkSwapchainKHR previous = null) @system nothrow
     {
         VkSurfaceCapabilitiesKHR caps;
@@ -203,6 +245,122 @@ struct Swapchain
     }
 
     /**
+    Rebuild this swapchain for a new window size, without re-asking the
+    surface what it can do.
+
+    Format, colour space and present mode do not change with the window, so
+    the two enumerations `create` does are skipped. Capabilities are still
+    queried — `currentExtent` / `currentTransform` / the image-count bounds
+    are the resize. `oldSwapchain` is this handle, so the driver can keep
+    presenting the old images until it has finished with them. The old
+    handle is not destroyed here —
+    `VUID-vkDestroySwapchainKHR-swapchain-01282` forbids that while a
+    present is still using its images. $(LREF reap) destroys the retired
+    set once the queue is idle.
+
+    `force` is the acquire/present `OUT_OF_DATE` path: same pixel size still
+    recreates, because the driver has retired this handle. A `PIXEL_SIZE_CHANGED`
+    drain leaves it false so a drag that reports the same size twice does not
+    build a swapchain for nothing.
+
+    The caller must have waited for every in-flight fence before this returns
+    $(D rebuilt). Views and framebuffers name the old images; creating the new
+    swapchain does not wait for them.
+    */
+    static SdlExpected!SwapchainResize recreate(ref Swapchain sc, ref VulkanContext vk,
+        in PixelSize windowPixels, bool force = false) @system nothrow
+    {
+        VkSurfaceCapabilitiesKHR caps;
+        auto queried = vk.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
+            vk.physicalDevice, vk.surface, &caps).check;
+        if (queried.hasError)
+            return err!SwapchainResize("vkGetPhysicalDeviceSurfaceCapabilitiesKHR: "
+                ~ describeResult(queried.error));
+
+        if (sc.handle is null)
+        {
+            auto first = decideResize(false, VkExtent2D.init,
+                chooseExtent(caps, windowPixels), force);
+            if (first != SwapchainResize.rebuilt)
+                return ok!string(first);
+
+            auto made = create(sc, vk, windowPixels);
+            return made.hasError
+                ? err!SwapchainResize(made.error)
+                : ok!string(SwapchainResize.rebuilt);
+        }
+
+        const extent = chooseExtent(caps, windowPixels);
+        auto action = decideResize(true, sc.extent, extent, force);
+        if (action != SwapchainResize.rebuilt)
+            return ok!string(action);
+
+        auto previous = sc.handle;
+        auto info = vkInfo(VkSwapchainCreateInfoKHR(
+            surface: vk.surface,
+            minImageCount: chooseImageCount(caps),
+            imageFormat: sc.format,
+            imageColorSpace: sc.colorSpace,
+            imageExtent: extent,
+            imageArrayLayers: 1,
+            imageUsage: VkImageUsageFlagBits.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            imageSharingMode: VkSharingMode.VK_SHARING_MODE_EXCLUSIVE,
+            preTransform: caps.currentTransform,
+            compositeAlpha: VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            presentMode: sc.presentMode,
+            clipped: VK_TRUE,
+            oldSwapchain: previous,
+        ));
+
+        VkSwapchainKHR next;
+        auto created = vk.device.createSwapchainKHR(
+            vk.device.device, &info, null, &next).check;
+
+        // Retired either way: on success the driver has taken what it wanted,
+        // and on failure the spec still retires oldSwapchain. Destroying it
+        // here would race any present still scanning its images.
+        sc._retired ~= previous;
+        sc.handle = null;
+        sc.images = null;
+
+        if (created.hasError)
+            return err!SwapchainResize("vkCreateSwapchainKHR: "
+                ~ describeResult(created.error));
+
+        sc.handle = next;
+        sc.extent = extent;
+        sc.images = queryVkList!VkImage(
+            vk.device.getSwapchainImagesKHR, vk.device.device, sc.handle);
+        if (sc.images.length == 0)
+            return err!SwapchainResize("swapchain reports no images");
+
+        return ok!string(SwapchainResize.rebuilt);
+    }
+
+    /// `true` when $(LREF reap) has retired swapchains to destroy.
+    bool hasRetired() const @safe pure nothrow @nogc => _retired.length > 0;
+
+    /**
+    Destroy swapchains retired by $(LREF recreate).
+
+    The queue must already be idle — those handles may still be the source
+    of an in-flight present. $(LREF FrameSync.reap) has the same contract;
+    wait once, then reap both.
+    */
+    void reap(ref VulkanContext vk) @system nothrow
+    {
+        if (_retired.length == 0 || vk.device.device is null
+            || vk.device.destroySwapchainKHR is null)
+            return;
+
+        foreach (h; _retired)
+            if (h !is null)
+                vk.device.destroySwapchainKHR(vk.device.device, h, null);
+        _retired = null;
+    }
+
+    /**
     Acquire the next image index, signalling `available` when it is ready.
 
     `VK_ERROR_OUT_OF_DATE_KHR` and `VK_SUBOPTIMAL_KHR` both mean "recreate",
@@ -243,6 +401,7 @@ struct Swapchain
     /// Destroy the swapchain. The images go with it; they were never ours.
     void destroy(ref VulkanContext vk) @system nothrow
     {
+        reap(vk);
         if (handle !is null && vk.device.destroySwapchainKHR !is null)
         {
             vk.device.destroySwapchainKHR(vk.device.device, handle, null);
@@ -351,4 +510,37 @@ struct Swapchain
         assert(!Swapchain.needsRecreation(VK_SUCCESS));
         assert(!Swapchain.needsRecreation(VK_ERROR_DEVICE_LOST));
     }
+}
+
+@("ui_sdl3.swapchain.decideResizePausesOnZeroAndSkipsAMatchingExtent")
+@safe pure nothrow @nogc unittest
+{
+    const at = VkExtent2D(800, 600);
+
+    // No swapchain yet: a real size builds, a minimise does not.
+    assert(decideResize(false, VkExtent2D.init, at) == SwapchainResize.rebuilt);
+    assert(decideResize(false, VkExtent2D.init, VkExtent2D(0, 0))
+        == SwapchainResize.paused);
+    assert(decideResize(true, at, VkExtent2D(0, 540)) == SwapchainResize.paused);
+
+    // The hot path during a drag: PIXEL_SIZE_CHANGED for a size we already
+    // built. Recreating would wait on in-flight fences for nothing.
+    assert(decideResize(true, at, at) == SwapchainResize.unchanged);
+    assert(decideResize(true, at, VkExtent2D(1280, 720)) == SwapchainResize.rebuilt);
+
+    // OUT_OF_DATE at the same pixel size (restore, rotation) still rebuilds —
+    // the driver has retired this handle, matching extent or not.
+    assert(decideResize(true, at, at, true) == SwapchainResize.rebuilt);
+    assert(decideResize(true, at, VkExtent2D(0, 0), true) == SwapchainResize.paused);
+}
+
+@("ui_sdl3.swapchain.hasRetiredTracksTheRetiredList")
+@safe nothrow unittest
+{
+    Swapchain sc;
+    assert(!sc.hasRetired);
+    sc._retired = new VkSwapchainKHR[2];
+    assert(sc.hasRetired);
+    sc._retired = null;
+    assert(!sc.hasRetired);
 }

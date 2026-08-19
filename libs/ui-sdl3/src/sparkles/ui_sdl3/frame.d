@@ -104,9 +104,10 @@ AcquireDecision decideAcquire(VkResult r) @safe pure nothrow @nogc
 /**
 The per-frame and per-image synchronisation objects for one swapchain.
 
-Sized from the swapchain's image count, so it is recreated alongside it. The
-intended order of a frame, which is the order the members are written to
-enforce:
+Sized from the swapchain's image count. A resize keeps the per-frame
+slots (`imageAvailable`, `inFlight`) and replaces only `renderFinished`
+— a present may still be waiting on the old set. The intended order of
+a frame, which is the order the members are written to enforce:
 
 ---
 sync.waitForFrame(vk);                       // slot's previous submit is done
@@ -137,6 +138,12 @@ struct FrameSync
 
     /// Per swapchain image.
     private VkSemaphore[] _renderFinished;
+
+    /**
+    `renderFinished` retired by a resize. A present may still be waiting on
+    them, so they cannot be destroyed (or reused) until the queue is idle.
+    */
+    private VkSemaphore[] _retired;
 
     /**
     Which frame's fence, if any, is still guarding each image.
@@ -342,10 +349,110 @@ struct FrameSync
     }
 
     /**
+    Wait for every in-flight submit to finish.
+
+    This is the wait a resize needs — not `vkDeviceWaitIdle`. Idle waits for
+    the presentation engine as well, which on FIFO is a vsync, and a drag
+    that rebuilds every size would then crawl. The fences only wait for the
+    GPU work we submitted; `oldSwapchain` keeps the old images alive until
+    the display has finished with them.
+
+    A no-op when nothing has been created yet, so the first `rebuild` can
+    call it unconditionally.
+    */
+    VkExpected!() waitAll(ref VulkanContext vk, ulong timeout = ulong.max)
+        @system nothrow
+    {
+        if (_inFlight.length == 0)
+            return check(VkResult.VK_SUCCESS);
+
+        return check(vk.device.waitForFences(
+            vk.device.device, cast(uint) _inFlight.length, _inFlight.ptr,
+            VK_TRUE, timeout));
+    }
+
+    /**
+    Drop the association between images and fences.
+
+    The images belong to a swapchain that is about to be retired. The fences
+    themselves stay — they are per frame slot, not per image — but they no
+    longer guard anything a subsequent `waitForImage` should wait on.
+    */
+    void forgetImages() @safe pure nothrow @nogc
+    {
+        foreach (ref guard; _imageGuard)
+            guard = null;
+    }
+
+    /**
+    Replace the per-image semaphores for a new swapchain.
+
+    The old `renderFinished` set is not destroyed here. `vkQueuePresentKHR`
+    may still be waiting on it — $(LREF waitAll) only waits for the submit
+    that *signalled* those semaphores, not for the present that waits on
+    them — and signalling one again is
+    `VUID-vkQueueSubmit-pSignalSemaphores-00067`. The old set is retired
+    and $(LREF reap) destroys it once the queue is idle.
+
+    Frame slots (`imageAvailable`, `inFlight`) are reused: `waitAll` has
+    already waited the submits those belong to.
+    */
+    SdlExpected!() replaceImages(ref VulkanContext vk, uint imageCount)
+        @system nothrow
+    in (imageCount > 0, "a swapchain always has at least one image")
+    {
+        _retired ~= _renderFinished;
+        _renderFinished = new VkSemaphore[imageCount];
+        _imageGuard = new VkFence[imageCount];
+
+        auto semInfo = vkInfo(VkSemaphoreCreateInfo());
+        foreach (i; 0 .. imageCount)
+        {
+            auto s = vk.device.createSemaphore(
+                vk.device.device, &semInfo, null, &_renderFinished[i]).check;
+            if (s.hasError)
+            {
+                foreach (created; _renderFinished[0 .. i])
+                    if (created !is null)
+                        vk.device.destroySemaphore(vk.device.device, created, null);
+                _renderFinished = null;
+                return err!void("vkCreateSemaphore: " ~ describeResult(s.error));
+            }
+        }
+
+        return ok!string();
+    }
+
+    /// `true` when $(LREF reap) has retired semaphores to destroy.
+    bool hasRetired() const @safe pure nothrow @nogc => _retired.length > 0;
+
+    /**
+    Destroy semaphores retired by $(LREF replaceImages).
+
+    The queue must already be idle — those semaphores may still be the wait
+    of an in-flight present. Call a few frames after the last rebuild so
+    the wait is already satisfied; do not call during a drag, where an idle
+    would serialise every size on FIFO vsync. $(LREF Swapchain.reap) has
+    the same contract; wait once, then reap both.
+    */
+    void reap(ref VulkanContext vk) @system nothrow
+    {
+        if (_retired.length == 0 || vk.device.device is null)
+            return;
+
+        if (vk.device.destroySemaphore !is null)
+            foreach (s; _retired)
+                if (s !is null)
+                    vk.device.destroySemaphore(vk.device.device, s, null);
+
+        _retired = null;
+    }
+
+    /**
     Destroy every object created here.
 
-    The device must be idle first — these are the objects pending work points
-    at. Callers rebuilding a swapchain go through `vkDeviceWaitIdle`, which
+    Pending work must have finished first. A resize waits with
+    $(LREF waitAll); teardown goes through `vkDeviceWaitIdle`, which
     $(D VulkanContext.destroy) also does.
     */
     void destroy(ref VulkanContext vk) @system nothrow
@@ -361,6 +468,9 @@ struct FrameSync
             foreach (s; _renderFinished)
                 if (s !is null)
                     vk.device.destroySemaphore(vk.device.device, s, null);
+            foreach (s; _retired)
+                if (s !is null)
+                    vk.device.destroySemaphore(vk.device.device, s, null);
         }
 
         if (vk.device.destroyFence !is null)
@@ -370,6 +480,7 @@ struct FrameSync
 
         _imageAvailable = null;
         _renderFinished = null;
+        _retired = null;
         _inFlight = null;
         _imageGuard = null;
         _frame = 0;
@@ -438,6 +549,44 @@ struct FrameSync
     assert(sync.frame == 1);
     sync.advance();
     assert(sync.frame == 0, "frame slots wrap at framesInFlight, not at imageCount");
+}
+
+@("ui_sdl3.frame.waitAllOnEmptySyncIsANoOp")
+@system nothrow unittest
+{
+    // First rebuild, or a destroy that already ran: no fences, so no device
+    // call. A null device would be a crash if this waited unconditionally.
+    VulkanContext vk;
+    FrameSync sync;
+    const r = sync.waitAll(vk);
+    assert(!r.hasError);
+}
+
+@("ui_sdl3.frame.forgetImagesClearsGuardsAndKeepsTheSlots")
+@system nothrow unittest
+{
+    FrameSync sync;
+    sync._inFlight = new VkFence[2];
+    sync._imageGuard = new VkFence[3];
+    sync._imageGuard[0] = cast(VkFence) 1;
+    sync._imageGuard[2] = cast(VkFence) 2;
+
+    sync.forgetImages();
+    assert(sync._imageGuard.length == 3);
+    foreach (g; sync._imageGuard)
+        assert(g is null);
+    assert(sync.framesInFlight == 2, "frame slots are not the images");
+}
+
+@("ui_sdl3.frame.hasRetiredTracksTheRetiredList")
+@safe nothrow unittest
+{
+    FrameSync sync;
+    assert(!sync.hasRetired);
+    sync._retired = new VkSemaphore[2];
+    assert(sync.hasRetired);
+    sync._retired = null;
+    assert(!sync.hasRetired);
 }
 
 @("ui_sdl3.frame.destroyIsIdempotentOnAHalfBuiltSync")
