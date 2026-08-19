@@ -5,6 +5,7 @@
     dependency "sparkles:vulkan" path="../../.."
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:base" path="../../.."
+    dependency "sparkles:wired" path="../../.."
     dependency "expected" version="~>0.4.1"
     stringImportPaths "shaders"
     targetPath "build"
@@ -78,6 +79,25 @@ import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 import sparkles.core_cli.args;
 import sparkles.ui_sdl3;
 import sparkles.vulkan;
+import sparkles.wired;
+
+/**
+CLI / report spelling of a present mode, including `auto`.
+
+`@WireCase` kebab-cases the identifiers (`fifoRelaxed` → `fifo-relaxed`);
+the trailing underscore on `auto_` is a word separator, so the wire name
+is `auto`. Values match `VkPresentModeKHR` so a non-`auto` choice is a
+cast, not a table. Same shape as `VendorId` in `vulkaninfo.d`.
+*/
+@WireCase(CaseStyle.kebabCase)
+enum PresentMode : uint
+{
+    immediate   = VkPresentModeKHR.VK_PRESENT_MODE_IMMEDIATE_KHR,
+    mailbox     = VkPresentModeKHR.VK_PRESENT_MODE_MAILBOX_KHR,
+    fifo        = VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR,
+    fifoRelaxed = VkPresentModeKHR.VK_PRESENT_MODE_FIFO_RELAXED_KHR,
+    auto_       = uint.max,
+}
 
 int main(string[] args) => runCli!VulkanTriangle(args);
 
@@ -107,9 +127,8 @@ struct VulkanTriangle
     bool resizeStress;
 
     @(Option("present-mode",
-        allowedValues: ["auto", "fifo", "fifo-relaxed", "mailbox", "immediate"],
         description: "Swapchain present mode (auto = mailbox if offered, else fifo)"))
-    string presentMode = "auto";
+    PresentMode presentMode = PresentMode.auto_;
 
     Expected!(void, string) run()
     {
@@ -133,9 +152,9 @@ struct VulkanTriangle
         if (brought.hasError)
             return skip("cannot bring up Vulkan", brought.error);
 
-        VkPresentModeKHR preferred = anyPresentMode;
-        if (presentMode != "auto" && !tryPresentMode(presentMode, preferred))
-            return err!void("unknown present mode `" ~ presentMode ~ "`");
+        const preferred = presentMode == PresentMode.auto_
+            ? anyPresentMode
+            : cast(VkPresentModeKHR) presentMode;
 
         auto drawn = draw(vk, window, frames, resizeStress, preferred);
         if (drawn.hasError)

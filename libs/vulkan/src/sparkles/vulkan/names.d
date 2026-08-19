@@ -65,33 +65,6 @@ string presentModeName(VkPresentModeKHR m) @safe pure nothrow @nogc
     => vkName!(VkPresentModeKHR, enumCommonPrefix!VkPresentModeKHR, "_KHR")(m, "other");
 
 /**
-The inverse of $(LREF presentModeName) for the four modes a CLI can name.
-
-Walks the known enumerators rather than switching on the string, so a
-new header member that `presentModeName` already renders is picked up
-here by adding it to the list — not by a second spelling of the kebab.
-*/
-bool tryPresentMode(string name, out VkPresentModeKHR mode) @safe pure nothrow @nogc
-{
-    with (VkPresentModeKHR)
-    {
-        static immutable VkPresentModeKHR[4] known = [
-            VK_PRESENT_MODE_IMMEDIATE_KHR,
-            VK_PRESENT_MODE_MAILBOX_KHR,
-            VK_PRESENT_MODE_FIFO_KHR,
-            VK_PRESENT_MODE_FIFO_RELAXED_KHR,
-        ];
-        foreach (m; known)
-            if (presentModeName(m) == name)
-            {
-                mode = m;
-                return true;
-            }
-    }
-    return false;
-}
-
-/**
 What choosing `m` costs, for a report that has room to say.
 
 The name alone loses what the four modes actually differ on, which is the only
@@ -182,20 +155,4 @@ string presentModeHint(VkPresentModeKHR m) @safe pure nothrow @nogc
         // A mode with nothing to add says nothing, like `resultHint`.
         assert(presentModeHint(cast(VkPresentModeKHR) 9999) is null);
     }
-}
-
-@("vulkan.names.tryPresentModeInvertsTheDisplayName")
-@safe pure nothrow @nogc unittest
-{
-    VkPresentModeKHR mode;
-    assert(tryPresentMode("mailbox", mode)
-        && mode == VkPresentModeKHR.VK_PRESENT_MODE_MAILBOX_KHR);
-    assert(tryPresentMode("fifo-relaxed", mode)
-        && mode == VkPresentModeKHR.VK_PRESENT_MODE_FIFO_RELAXED_KHR);
-    assert(tryPresentMode("immediate", mode)
-        && mode == VkPresentModeKHR.VK_PRESENT_MODE_IMMEDIATE_KHR);
-    assert(tryPresentMode("fifo", mode)
-        && mode == VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR);
-    assert(!tryPresentMode("auto", mode));
-    assert(!tryPresentMode("MAILBOX", mode), "the display name is lowercase kebab");
 }
