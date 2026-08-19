@@ -28,22 +28,28 @@ Several Wayland and RADV paths report exactly that, and a swapchain that trusts
 it asks for a four-billion-pixel image. The window's pixel size is the answer
 there, clamped to what the surface will actually accept.
 */
-VkExtent2D chooseExtent(in VkSurfaceCapabilitiesKHR caps, in PixelSize windowPixels)
+VkExtent2D chooseExtent(in VkSurfaceCapabilitiesKHR caps, in PixelSize windowPixels,
+    in PixelSize minAlloc = PixelSize.init)
     @safe pure nothrow @nogc
 {
     if (caps.currentExtent.width != uint.max)
         return caps.currentExtent;
 
+    // The surface has no size of its own. `minAlloc` is the display-sized
+    // pad: a swapchain created at that size can shrink with the window by
+    // viewport alone, and only has to grow when the window exceeds it.
+    auto width = maxU(cast(uint) windowPixels.width, cast(uint) minAlloc.width);
+    auto height = maxU(cast(uint) windowPixels.height, cast(uint) minAlloc.height);
     return VkExtent2D(
-        width: clamp(cast(uint) windowPixels.width,
-            caps.minImageExtent.width, caps.maxImageExtent.width),
-        height: clamp(cast(uint) windowPixels.height,
-            caps.minImageExtent.height, caps.maxImageExtent.height),
+        width: clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width),
+        height: clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height),
     );
 }
 
 private uint clamp(uint v, uint lo, uint hi) @safe pure nothrow @nogc
     => v < lo ? lo : (v > hi ? hi : v);
+
+private uint maxU(uint a, uint b) @safe pure nothrow @nogc => a > b ? a : b;
 
 /**
 The surface format to render into.
@@ -116,7 +122,8 @@ already been clamped to the window's pixels (or to `minImageExtent`).
 
 $(UL
 $(LI $(D paused) — zero area. Keep the old swapchain; the caller stops drawing.)
-$(LI $(D unchanged) — already at this extent. Skip the create. $(D force)
+$(LI $(D unchanged) — already at this extent, or $(D growOnly) and the
+    wanted size fits inside the one we have. Skip the create. $(D force)
     disables this: an `OUT_OF_DATE` acquire at the same size (restore, rotation)
     still has to retire the handle the driver rejected.)
 $(LI $(D rebuilt) — create a new swapchain, passing the old one as
@@ -131,12 +138,15 @@ enum SwapchainResize
 
 /// ditto
 SwapchainResize decideResize(bool hasSwapchain, VkExtent2D current, VkExtent2D wanted,
-    bool force = false) @safe pure nothrow @nogc
+    bool force = false, bool growOnly = false) @safe pure nothrow @nogc
 {
     if (wanted.width == 0 || wanted.height == 0)
         return SwapchainResize.paused;
-    if (hasSwapchain && !force && current.width == wanted.width
-        && current.height == wanted.height)
+    if (!hasSwapchain || force)
+        return SwapchainResize.rebuilt;
+    if (current.width == wanted.width && current.height == wanted.height)
+        return SwapchainResize.unchanged;
+    if (growOnly && wanted.width <= current.width && wanted.height <= current.height)
         return SwapchainResize.unchanged;
     return SwapchainResize.rebuilt;
 }
@@ -176,7 +186,8 @@ struct Swapchain
     its images.
     */
     static SdlExpected!() create(ref Swapchain sc, ref VulkanContext vk,
-        in PixelSize windowPixels, VkSwapchainKHR previous = null) @system nothrow
+        in PixelSize windowPixels, VkSwapchainKHR previous = null,
+        in PixelSize minAlloc = PixelSize.init) @system nothrow
     {
         VkSurfaceCapabilitiesKHR caps;
         auto queried = vk.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
@@ -198,7 +209,7 @@ struct Swapchain
         sc.format = surfaceFormat.format;
         sc.colorSpace = surfaceFormat.colorSpace;
         sc.presentMode = choosePresentMode(modes);
-        sc.extent = chooseExtent(caps, windowPixels);
+        sc.extent = chooseExtent(caps, windowPixels, minAlloc);
 
         // A zero-area swapchain is invalid. It happens while a window is
         // minimised, and the caller's answer is to stop drawing, not to fail.
@@ -266,9 +277,16 @@ struct Swapchain
     The caller must have waited for every in-flight fence before this returns
     $(D rebuilt). Views and framebuffers name the old images; creating the new
     swapchain does not wait for them.
+
+    `minAlloc` pads a surface-defined extent up to the display size so a
+    shrink is a viewport change, not a create. Ignored when the surface
+    names its own `currentExtent`. `growOnly` (implied whenever the surface
+    is the "you decide" sentinel) keeps a larger swapchain when the window
+    shrinks.
     */
     static SdlExpected!SwapchainResize recreate(ref Swapchain sc, ref VulkanContext vk,
-        in PixelSize windowPixels, bool force = false) @system nothrow
+        in PixelSize windowPixels, bool force = false,
+        in PixelSize minAlloc = PixelSize.init) @system nothrow
     {
         VkSurfaceCapabilitiesKHR caps;
         auto queried = vk.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
@@ -277,21 +295,23 @@ struct Swapchain
             return err!SwapchainResize("vkGetPhysicalDeviceSurfaceCapabilitiesKHR: "
                 ~ describeResult(queried.error));
 
+        const surfaceDefined = caps.currentExtent.width == uint.max;
+
         if (sc.handle is null)
         {
             auto first = decideResize(false, VkExtent2D.init,
-                chooseExtent(caps, windowPixels), force);
+                chooseExtent(caps, windowPixels, minAlloc), force);
             if (first != SwapchainResize.rebuilt)
                 return ok!string(first);
 
-            auto made = create(sc, vk, windowPixels);
+            auto made = create(sc, vk, windowPixels, null, minAlloc);
             return made.hasError
                 ? err!SwapchainResize(made.error)
                 : ok!string(SwapchainResize.rebuilt);
         }
 
-        const extent = chooseExtent(caps, windowPixels);
-        auto action = decideResize(true, sc.extent, extent, force);
+        const extent = chooseExtent(caps, windowPixels, minAlloc);
+        auto action = decideResize(true, sc.extent, extent, force, surfaceDefined);
         if (action != SwapchainResize.rebuilt)
             return ok!string(action);
 
@@ -430,6 +450,15 @@ struct Swapchain
     // ... still clamped to what the surface will accept.
     assert(chooseExtent(caps, PixelSize(99_999, 99_999)) == VkExtent2D(4096, 4096));
     assert(chooseExtent(caps, PixelSize(0, 0)) == VkExtent2D(1, 1));
+
+    // A display-sized pad: the window is 800×600, we pre-allocate 1920×1080
+    // so a later shrink is a viewport change. The surface-defined sentinel
+    // is what makes this legal; a named currentExtent still wins.
+    assert(chooseExtent(caps, PixelSize(800, 600), PixelSize(1920, 1080))
+        == VkExtent2D(1920, 1080));
+    caps.currentExtent = VkExtent2D(800, 600);
+    assert(chooseExtent(caps, PixelSize(800, 600), PixelSize(1920, 1080))
+        == VkExtent2D(800, 600));
 }
 
 @("ui_sdl3.swapchain.formatPrefersUnormOverSrgb")
@@ -532,6 +561,14 @@ struct Swapchain
     // the driver has retired this handle, matching extent or not.
     assert(decideResize(true, at, at, true) == SwapchainResize.rebuilt);
     assert(decideResize(true, at, VkExtent2D(0, 0), true) == SwapchainResize.paused);
+
+    // growOnly: a shrink fits inside the padded swapchain; a grow does not.
+    assert(decideResize(true, at, VkExtent2D(640, 480), false, true)
+        == SwapchainResize.unchanged);
+    assert(decideResize(true, at, VkExtent2D(1280, 720), false, true)
+        == SwapchainResize.rebuilt);
+    assert(decideResize(true, at, VkExtent2D(640, 480), true, true)
+        == SwapchainResize.rebuilt, "force still wins over growOnly");
 }
 
 @("ui_sdl3.swapchain.hasRetiredTracksTheRetiredList")
