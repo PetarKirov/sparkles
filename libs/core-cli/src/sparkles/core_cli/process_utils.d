@@ -146,6 +146,7 @@ struct CapturedResult
     int status;     /// child exit code (`127` when the process could not be spawned)
     string stdout;  /// everything the child wrote to stdout
     string stderr;  /// everything the child wrote to stderr
+    ResourceUsage usage; /// wall time of the wait; CPU/RSS when a sampler ran
 
     /// True when the child exited successfully.
     bool succeeded() const @safe pure nothrow @nogc => status == 0;
@@ -305,22 +306,29 @@ CapturedResult runCaptured(
 
 /**
 Peak resource use of a spawned process and its descendants, sampled while it
-runs. `peakRssBytes` is the largest summed resident-set size observed across
-the whole process tree (a `dub` build, say, plus the `ldc2` child it spawns —
-which is usually where the memory lives). `cpuTime` is a best-effort estimate
-(the largest tree-summed user+system CPU seen at a sample; a child's CPU is
-lost from the sum once it exits, so treat it as a lower bound).
+runs.
 
-`sampled` is `false` on platforms without `/proc` (currently every non-Linux
-target): there $(LREF executeMonitored) still runs the process and returns its
-output, but collects no resource figures.
+`peakRssBytes` is the largest summed resident-set size observed across the
+whole process tree (a `dub` build, say, plus the `ldc2` child it spawns —
+which is usually where the memory lives). `userTime` / `systemTime` are
+best-effort tree-summed user and kernel CPU (a child's CPU is lost from the
+live sum once it exits, so treat them as a lower bound). `cpuTime` is their
+sum, kept so existing callers do not have to add. `wallTime` is the
+elapsed clock time of the wait, always filled.
+
+`sampled` is `false` when no per-tree sampler is available (currently
+everything but Linux and Darwin): $(LREF executeMonitored) still runs the
+process and returns its output, and `wallTime` is still set.
 */
 struct ResourceUsage
 {
     size_t peakRssBytes;   /// max summed RSS over the process tree
-    Duration cpuTime;      /// best-effort summed user+system CPU (lower bound)
+    Duration wallTime;     /// elapsed wall clock of the wait (always set)
+    Duration userTime;     /// best-effort tree-summed user CPU (lower bound)
+    Duration systemTime;   /// best-effort tree-summed kernel CPU (lower bound)
+    Duration cpuTime;      /// `userTime + systemTime` (compat alias)
     size_t sampleCount;    /// number of samples taken
-    bool sampled;          /// false when no sampler is available (non-Linux)
+    bool sampled;          /// false when no sampler is available
 }
 
 /// The outcome of $(LREF executeMonitored): the child's exit status, its
@@ -371,10 +379,12 @@ the resident-set size and CPU of the whole process tree every `sampleInterval`
 while it runs, so a memory blow-up can be attributed to a specific process.
 
 `onSample`, if given, is invoked after each sample with the running
-$(LREF ResourceUsage) (its `peakRssBytes` updated, `cpuTime` carrying the
-latest tree total), letting the caller log a live trace. Sampling is
-Linux-only (it reads `/proc`); elsewhere the process still runs and its output
-is returned, but `usage.sampled` is `false` and no figures are collected.
+$(LREF ResourceUsage) (its `peakRssBytes` updated, `userTime`/`systemTime`
+carrying the latest tree totals), letting the caller log a live trace.
+Sampling walks the live process tree on Linux (`/proc`) and Darwin
+(`proc_pid_rusage` + `proc_listchildpids`); elsewhere the process still
+runs and its output is returned, `wallTime` is set, but `usage.sampled`
+is `false`.
 
 Output is redirected to a temp file (not a pipe) so a chatty child cannot
 deadlock against an undrained pipe while we sample.
@@ -415,8 +425,11 @@ MonitoredResult executeMonitored(
     // replace it, and a caller setting one variable does not mean to drop the
     // rest (see `runStreaming`).
     auto pid = spawnProcess(resolvedArgv(args), childIn, sink, sink, env);
+    const childPid = pid.processID;
 
     version (linux)
+        result.usage.sampled = true;
+    else version (OSX)
         result.usage.sampled = true;
 
     // Poll tightly at first and back off towards `sampleInterval`, because the
@@ -435,20 +448,14 @@ MonitoredResult executeMonitored(
 
     for (;;)
     {
-        const w = tryWait(pid);
-
+        // Sample *before* reaping so a just-exited child is still a zombie
+        // with /proc (or a Darwin `proc_pid_rusage` target) intact.
         version (linux)
-        {
-            const rss = treeRssBytes(pid.processID);
-            if (rss > result.usage.peakRssBytes)
-                result.usage.peakRssBytes = rss;
-            const cpu = treeCpuTime(pid.processID);
-            if (cpu > result.usage.cpuTime)
-                result.usage.cpuTime = cpu;
-            result.usage.sampleCount++;
-            if (onSample !is null)
-                onSample(result.usage);
-        }
+            sampleLinuxTree(childPid, result.usage, onSample);
+        else version (OSX)
+            sampleDarwinTree(childPid, result.usage, onSample);
+
+        const w = tryWait(pid);
 
         if (w.terminated)
         {
@@ -476,6 +483,9 @@ MonitoredResult executeMonitored(
         }
     }
 
+    result.usage.wallTime = MonoTime.currTime - started;
+    result.usage.cpuTime = result.usage.userTime + result.usage.systemTime;
+
     sink.close();
     result.output = readText(logPath);
     try
@@ -484,6 +494,30 @@ MonitoredResult executeMonitored(
     {
     }                                    // best-effort cleanup
     return result;
+}
+
+/// CPU time of this process's *waited-for* children (`getrusage(RUSAGE_CHILDREN)`).
+///
+/// A sequential runner snapshots this before and after one spawn; the
+/// difference is that child's user/system time (including descendants the
+/// child itself waited for). `sampled` is false off POSIX.
+ResourceUsage childrenCpuUsage() @trusted
+{
+    ResourceUsage u;
+    version (Posix)
+    {
+        import core.sys.posix.sys.resource : RUSAGE_CHILDREN, getrusage, rusage;
+
+        rusage ru;
+        if (getrusage(RUSAGE_CHILDREN, &ru) == 0)
+        {
+            u.userTime = timevalDuration(ru.ru_utime.tv_sec, ru.ru_utime.tv_usec);
+            u.systemTime = timevalDuration(ru.ru_stime.tv_sec, ru.ru_stime.tv_usec);
+            u.cpuTime = u.userTime + u.systemTime;
+            u.sampled = true;
+        }
+    }
+    return u;
 }
 
 /// `ChildStdin.empty` makes the child see a non-terminal, already-EOF stdin.
@@ -527,6 +561,12 @@ unittest
         // Deliberately loose — the assertion is "nowhere near the interval",
         // not a latency budget, so a loaded machine cannot make it flaky.
         assert(sw.peek < 2.seconds, "a coarse sampleInterval floored a fast child");
+        assert(r.usage.wallTime >= Duration.zero);
+        assert(r.usage.wallTime < 2.seconds);
+        version (linux)
+            assert(r.usage.sampled);
+        else version (OSX)
+            assert(r.usage.sampled);
     }
 }
 
@@ -554,7 +594,7 @@ unittest
     }
 }
 
-/// Current resident-set size of this process in bytes (`0` off Linux).
+/// Current resident-set size of this process in bytes (`0` when unknown).
 version (linux)
 size_t selfRssBytes() @trusted
 {
@@ -567,6 +607,16 @@ size_t selfRssBytes() @trusted
     }
     catch (Exception)
         return 0;
+}
+else version (OSX)
+size_t selfRssBytes() @trusted
+{
+    import core.sys.posix.unistd : getpid;
+
+    DarwinRusageInfo info;
+    if (proc_pid_rusage(getpid(), darwinRusageInfoV4, &info) == 0)
+        return cast(size_t) info.ri_resident_size;
+    return 0;
 }
 else
 size_t selfRssBytes() @safe => 0;
@@ -759,8 +809,8 @@ version (linux)
         return total;
     }
 
-    /// Summed user+system CPU of `rootPid`'s process tree.
-    private Duration treeCpuTime(int rootPid) @trusted
+    /// Summed user and kernel CPU of `rootPid`'s process tree.
+    private TreeCpu treeCpuParts(int rootPid) @trusted
     {
         import std.file : readText;
         import std.conv : text;
@@ -768,9 +818,9 @@ version (linux)
 
         const clk = sysconf(_SC_CLK_TCK);
         if (clk <= 0)
-            return Duration.zero;
+            return TreeCpu.init;
 
-        ulong ticks;
+        ulong userTicks, sysTicks;
         foreach (pid; collectTreePids(rootPid))
         {
             try
@@ -778,14 +828,175 @@ version (linux)
                 const c = parseCpuTicksFromStat(
                     readText(text("/proc/", pid, "/stat")));
                 if (c.hasValue)
-                    ticks += c.value.total;
+                {
+                    userTicks += c.value.utime;
+                    sysTicks += c.value.stime;
+                }
             }
             catch (Exception)
             {
             }
         }
-        return msecs(cast(long)(ticks * 1000 / clk));
+        TreeCpu cpu;
+        cpu.user = msecs(cast(long)(userTicks * 1000 / clk));
+        cpu.system = msecs(cast(long)(sysTicks * 1000 / clk));
+        return cpu;
     }
+
+    private void sampleLinuxTree(
+        int rootPid,
+        ref ResourceUsage usage,
+        scope void delegate(in ResourceUsage sample) @safe onSample,
+    )
+    {
+        const rss = treeRssBytes(rootPid);
+        if (rss > usage.peakRssBytes)
+            usage.peakRssBytes = rss;
+        const cpu = treeCpuParts(rootPid);
+        if (cpu.user > usage.userTime)
+            usage.userTime = cpu.user;
+        if (cpu.system > usage.systemTime)
+            usage.systemTime = cpu.system;
+        usage.cpuTime = usage.userTime + usage.systemTime;
+        usage.sampleCount++;
+        if (onSample !is null)
+            onSample(usage);
+    }
+}
+
+version (OSX)
+{
+    extern (C) private int proc_pid_rusage(int pid, int flavor, void* buffer)
+        @nogc nothrow;
+    extern (C) private int proc_listchildpids(int ppid, void* buffer, int buffersize)
+        @nogc nothrow;
+
+    private enum int darwinRusageInfoV4 = 4;
+
+    /// xnu `struct rusage_info_v4` (16-byte uuid + 35 × uint64 = 296).
+    /// Layout matches `sparkles.test_runner.perf` / the macOS SDK header.
+    private struct DarwinRusageInfo
+    {
+        ubyte[16] ri_uuid;
+        ulong ri_user_time;
+        ulong ri_system_time;
+        ulong ri_pkg_idle_wkups;
+        ulong ri_interrupt_wkups;
+        ulong ri_pageins;
+        ulong ri_wired_size;
+        ulong ri_resident_size;
+        ulong ri_phys_footprint;
+        ulong ri_proc_start_abstime;
+        ulong ri_proc_exit_abstime;
+        ulong ri_child_user_time;
+        ulong ri_child_system_time;
+        ulong ri_child_pkg_idle_wkups;
+        ulong ri_child_interrupt_wkups;
+        ulong ri_child_pageins;
+        ulong ri_child_elapsed_abstime;
+        ulong ri_diskio_bytesread;
+        ulong ri_diskio_byteswritten;
+        ulong ri_cpu_time_qos_default;
+        ulong ri_cpu_time_qos_maintenance;
+        ulong ri_cpu_time_qos_background;
+        ulong ri_cpu_time_qos_utility;
+        ulong ri_cpu_time_qos_legacy;
+        ulong ri_cpu_time_qos_user_initiated;
+        ulong ri_cpu_time_qos_user_interactive;
+        ulong ri_billed_system_time;
+        ulong ri_serviced_system_time;
+        ulong ri_logical_writes;
+        ulong ri_lifetime_max_phys_footprint;
+        ulong ri_instructions;
+        ulong ri_cycles;
+        ulong ri_billed_energy;
+        ulong ri_serviced_energy;
+        ulong ri_interval_max_phys_footprint;
+        ulong ri_runnable_time;
+    }
+
+    static assert(DarwinRusageInfo.sizeof == 296,
+        "rusage_info_v4 must match xnu bsd/sys/resource.h");
+
+    private void sampleDarwinTree(
+        int rootPid,
+        ref ResourceUsage usage,
+        scope void delegate(in ResourceUsage sample) @safe onSample,
+    )
+    {
+        import core.time : nsecs;
+
+        ulong userNs, sysNs;
+        size_t rss;
+        int[64] pending = void;
+        size_t nPending = 1;
+        pending[0] = rootPid;
+        int[128] seen = void;
+        size_t nSeen;
+
+        while (nPending)
+        {
+            const pid = pending[--nPending];
+            bool already;
+            foreach (s; seen[0 .. nSeen])
+                if (s == pid)
+                {
+                    already = true;
+                    break;
+                }
+            if (already)
+                continue;
+            if (nSeen < seen.length)
+                seen[nSeen++] = pid;
+
+            DarwinRusageInfo info;
+            if (proc_pid_rusage(pid, darwinRusageInfoV4, &info) != 0)
+                continue;
+
+            // Own time plus waited descendants. Live children are walked
+            // below and are *not* in `ri_child_*` yet, so they are not
+            // double-counted.
+            userNs += info.ri_user_time + info.ri_child_user_time;
+            sysNs += info.ri_system_time + info.ri_child_system_time;
+            rss += cast(size_t) info.ri_resident_size;
+
+            int[64] kids = void;
+            const bytes = proc_listchildpids(pid, kids.ptr, cast(int) kids.sizeof);
+            if (bytes > 0)
+            {
+                const nk = bytes / cast(int) int.sizeof;
+                foreach (k; kids[0 .. nk])
+                    if (k > 0 && nPending < pending.length)
+                        pending[nPending++] = k;
+            }
+        }
+
+        const user = nsecs(userNs > long.max ? long.max : cast(long) userNs);
+        const sys = nsecs(sysNs > long.max ? long.max : cast(long) sysNs);
+        if (user > usage.userTime)
+            usage.userTime = user;
+        if (sys > usage.systemTime)
+            usage.systemTime = sys;
+        if (rss > usage.peakRssBytes)
+            usage.peakRssBytes = rss;
+        usage.cpuTime = usage.userTime + usage.systemTime;
+        usage.sampleCount++;
+        if (onSample !is null)
+            onSample(usage);
+    }
+}
+
+private struct TreeCpu
+{
+    Duration user;
+    Duration system;
+}
+
+private Duration timevalDuration(long sec, long usec) @safe pure nothrow @nogc
+{
+    import core.time : dur;
+
+    return dur!"seconds"(sec) + dur!"usecs"(usec);
 }
 
 // ---------------------------------------------------------------------------
@@ -861,6 +1072,7 @@ CapturedResult runStreaming(Sink)(
 
     CapturedResult result;
     auto all = appender!string;
+    const started = MonoTime.currTime;
     try
     {
         // `env` *adds to* the inherited environment rather than replacing it
@@ -884,6 +1096,7 @@ CapturedResult runStreaming(Sink)(
         result.stdout = all[];
         result.stderr = e.msg;
     }
+    result.usage.wallTime = MonoTime.currTime - started;
     return result;
 }
 

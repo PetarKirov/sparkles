@@ -108,10 +108,12 @@ module app;
 import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
 import std.array : array, join, split;
 import std.conv : text, to;
-import core.time : Duration, msecs, seconds;
+import core.time : Duration, MonoTime, msecs, seconds;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
-import std.parallelism : TaskPool, totalCPUs;
-import sparkles.base.hw_caps : hwParallelism;
+import std.parallelism : TaskPool;
+import sparkles.base.hw_caps :
+    hwAvailableMemoryBytes, hwLoadAverageCenti, hwLoadUnknown,
+    hwMemoryBytes, hwOnlineCpuCount, hwParallelism, hwSwapUsedBytes;
 import std.path : baseName, buildPath, globMatch;
 import std.process : environment, execute;
 import std.range : iota;
@@ -123,8 +125,8 @@ import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight,
 import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
 import sparkles.base.logger : error, info, initLogger, LogLevel, trace, warning;
 import sparkles.core_cli.process_utils :
-    ChildStdin, executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes,
-    timedOutStatus;
+    ChildStdin, childrenCpuUsage, executeMonitored, MonitoredResult, ResourceUsage,
+    selfRssBytes, timedOutStatus;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.styled_template : styledText, styledWritelnErr;
 import sparkles.base.text.writers : writeDuration;
@@ -353,6 +355,7 @@ struct ExecutionResult
     bool success;
     string programOutput; // ANSI-stripped
     string rawOutput;     // with ANSI codes for display
+    ResourceUsage usage;
 }
 
 enum StandaloneExampleMode
@@ -408,6 +411,12 @@ private __gshared immutable refDefRegex = ctRegex!(r"^\[([^\]]+)\]:\s+(https?://
 
 int ciMain(string[] args)
 {
+    // Install the logger *before* parsing so a slow CLI parse still has a
+    // timestamped breadcrumb. Default `--log-level` is info; honour a
+    // requested level once the flags are in.
+    initLogger(LogLevel.info);
+    info(i"ci starting{dim :} $(args.length > 1 ? args[1 .. $].join(" ") : "(no args)")");
+
     auto parsed = parseCli!CliParams(
         args,
         HelpInfo(
@@ -418,7 +427,11 @@ int ciMain(string[] args)
     if (!parsed)
         return reportCliError(parsed.error);
     auto cli = parsed.value;
-    initLogger(cli.logLevel);
+    if (cli.logLevel != LogLevel.info)
+        applyLogLevel(cli.logLevel);
+
+    info(i"cli parsed");
+    logHostResources();
 
     const positionalArgs = cli.positionals.idup;
     const modeError = validateCliMode(cli, positionalArgs);
@@ -429,6 +442,7 @@ int ciMain(string[] args)
     }
 
     const mode = resolveProgramMode(cli);
+    info(i"mode {cyan $(programModeName(mode))}{dim , fail-fast=$(cli.failFast), coverage=$(cli.coverage)}");
 
     if (mode == ProgramMode.checkCommitScope)
     {
@@ -622,6 +636,28 @@ private ProgramMode resolveProgramMode(in CliParams cli)
         return ProgramMode.checkBlobPaths;
 
     return ProgramMode.runExamples;
+}
+
+/// Flag-shaped name for a log line (`--test`, `--example-files`, …).
+private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
+{
+    final switch (mode)
+    {
+        case ProgramMode.runExamples:        return "examples";
+        case ProgramMode.verifyExamples:     return "--verify";
+        case ProgramMode.updateExamples:     return "--update";
+        case ProgramMode.runExampleFiles:    return "--example-files";
+        case ProgramMode.runDubTests:        return "--test";
+        case ProgramMode.runExtractedTests:  return "--test-extracted";
+        case ProgramMode.checkReferenceLinks: return "--dedup-reference-links";
+        case ProgramMode.fixReferenceLinks:  return "--fix-reference-links";
+        case ProgramMode.checkCommitScope:   return "--check-commit-scope";
+        case ProgramMode.checkVcsUrls:       return "--check-vcs-urls";
+        case ProgramMode.checkDocsSidebar:   return "--check-docs-sidebar";
+        case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
+        case ProgramMode.ciStats:            return "--ci-stats";
+        case ProgramMode.auditFences:        return "--audit-fences";
+    }
 }
 
 private bool isReferenceMode(in ProgramMode mode)
@@ -1147,14 +1183,17 @@ private uint exampleJobCount()
     }
 
     // What this host will actually let us run in parallel: a CI container's
-    // CPU quota is invisible to `totalCPUs`, and over-subscribing it just
-    // adds context switches to an already build-bound job.
+    // CPU quota, a ballooned VM's available RAM, and a high load average are
+    // all invisible to `totalCPUs`. `hwParallelism` folds those in.
     uint jobs = hwParallelism();
 
-    // Budget ~2 GiB of headroom per concurrent build.
-    if (const memGiB = totalMemoryGiB())
+    // Compiler jobs are hungrier than a generic worker: budget ~2 GiB of
+    // *total* RAM per concurrent build. Available-RAM clamps already applied
+    // above; this one catches a 7 GiB GitHub-hosted macOS VM that still
+    // reports 3–4 CPUs.
+    if (const mem = hwMemoryBytes())
     {
-        const byMem = cast(uint)(memGiB / 2);
+        const byMem = cast(uint)(mem / (2UL << 30));
         if (byMem >= 1 && byMem < jobs)
             jobs = byMem;
     }
@@ -1189,28 +1228,52 @@ private Duration exampleTimeout()
     return 300.seconds;
 }
 
-/// Total physical memory in GiB, or 0 when it cannot be determined (non-Linux,
-/// or `/proc/meminfo` unavailable) — callers treat 0 as "no memory-based cap".
-private size_t totalMemoryGiB()
+/// Re-apply the Sparkles + Phobos log level without resetting the
+/// `DeltaTimeLogger` clock, so `--log-level` after the early `initLogger`
+/// does not drop the timestamps already emitted.
+private void applyLogLevel(LogLevel level) @safe
 {
-    version (linux)
-    {
-        import std.ascii : isDigit;
+    import std.logger : globalLogLevel;
 
-        if (!"/proc/meminfo".exists)
-            return 0;
+    globalLogLevel = level;
+    import sparkles.base.logger : coreGlobalLogLevel, sharedCoreLog;
+    coreGlobalLogLevel = level;
+    if (auto logger = sharedCoreLog)
+        () @trusted {
+            auto l = cast() logger;
+            l.coreLogLevel = level;
+            l.logLevel = level;
+        }();
+}
 
-        foreach (line; "/proc/meminfo".readText.lineSplitter)
-        {
-            if (!line.startsWith("MemTotal:"))
-                continue;
+/// One host-resource snapshot: the breadcrumb that tells a slow CI log
+/// whether the runner was already tight on RAM/CPUs before any work started.
+private void logHostResources()
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeBytes, writeFixedPoint;
 
-            auto digits = line.filter!isDigit.to!string; // value is in kB
-            return digits.length ? digits.to!size_t / (1024 * 1024) : 0;
-        }
-    }
+    SmallBuffer!(char, 24) total, avail, swap;
+    writeBytes(total, hwMemoryBytes());
+    writeBytes(avail, hwAvailableMemoryBytes());
+    writeBytes(swap, hwSwapUsedBytes());
 
-    return 0;
+    SmallBuffer!(char, 16) loadBuf;
+    const load = hwLoadAverageCenti();
+    if (load == hwLoadUnknown)
+        loadBuf ~= "?";
+    else
+        writeFixedPoint(loadBuf, load, 2);
+
+    info(i"host: workers=$(hwParallelism()) online=$(hwOnlineCpuCount()) load=$(loadBuf[]) mem=$(avail[])/$(total[]) swap=$(swap[])");
+}
+
+/// GitHub Actions (and any other piped sink) fully-buffers stdout. A hang
+/// after writing a header then produces an empty log — flush so the last
+/// completed step is always visible.
+private void flushStdout()
+{
+    stdout.flush();
 }
 
 /// Executes every example concurrently, returning results in input order.
@@ -1250,7 +1313,7 @@ private ExecutionResult[] executeExamplesParallel(Example[] examples, string rep
     // reported core count is not what the job may actually use: a CI runner
     // that applies a cgroup CPU limit still reports the *host's* cores here,
     // so the pool silently oversubscribes. `SPARKLES_CI_JOBS` is the override.
-    info(i"{dim Examples:} $(examples.length){dim , parallel jobs:} $(jobs){dim , totalCPUs:} $(totalCPUs)");
+    info(i"{dim Examples:} $(examples.length){dim , parallel jobs:} $(jobs){dim , hwParallelism:} $(hwParallelism()){dim , online:} $(hwOnlineCpuCount())");
 
     // The calling thread no longer participates in the work (it polls), so the
     // pool holds all `jobs` workers.
@@ -1968,6 +2031,7 @@ ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqu
         success: result.status == 0,
         programOutput: cleaned,
         rawOutput: result.output,
+        usage: result.usage,
     );
 }
 
@@ -2011,39 +2075,37 @@ private MonitoredResult executeLogged(
     import sparkles.base.smallbuffer : SmallBuffer;
     import sparkles.base.text.writers : writeBytes, writeDuration;
 
-    if (globalLogLevel > LogLevel.trace)
-        return noteIfTimedOut(
-            executeMonitored(args, 5.seconds, null, ChildStdin.empty, timeout, env),
-            timeout);
-
     const cmd = args.join(" ");
-    trace(i"{dim ▸ $(label):} {dim $(cmd)}");
+    const tracing = globalLogLevel <= LogLevel.trace;
+    if (tracing)
+        trace(i"{dim ▸ $(label):} {dim $(cmd)}");
 
-    // Log only when the peak climbs by a notable step, so a long compile does
-    // not flood the trace with flat-line samples.
+    // Sample often enough that a compile's peak RSS is not a 5s-interval
+    // miss — the figures feed the result-box footer, not just the trace.
     enum size_t logStep = 256UL << 20;   // 256 MiB
     size_t lastLogged;
-    auto res = executeMonitored(args, 500.msecs, (in ResourceUsage u) @safe {
-        if (u.peakRssBytes >= lastLogged + logStep)
-        {
-            lastLogged = u.peakRssBytes;
-            SmallBuffer!(char, 24) rss, cpu;
-            writeBytes(rss, u.peakRssBytes);
-            writeDuration(cpu, u.cpuTime);
-            trace(i"{dim   $(label)} rss=$(rss[]) cpu=$(cpu[])");
-        }
-    }, ChildStdin.empty, timeout, env);
+    auto res = executeMonitored(args, 250.msecs, (in ResourceUsage u) @safe {
+        if (!tracing || u.peakRssBytes < lastLogged + logStep)
+            return;
+        lastLogged = u.peakRssBytes;
+        SmallBuffer!(char, 24) rss, cpu;
+        writeBytes(rss, u.peakRssBytes);
+        writeDuration(cpu, u.cpuTime);
+        trace(i"{dim   $(label)} rss=$(rss[]) cpu=$(cpu[])");
+    }, ChildStdin.empty, timeout, withLdcThreadEnv(env));
 
-    if (res.usage.sampled)
+    if (tracing)
     {
-        SmallBuffer!(char, 24) peak, cpu, ciRss;
-        writeBytes(peak, res.usage.peakRssBytes);
-        writeDuration(cpu, res.usage.cpuTime);
-        writeBytes(ciRss, selfRssBytes());
-        trace(i"{dim ◂ $(label):} peak_rss=$(peak[]) cpu=$(cpu[]) exit=$(res.status) (ci_rss=$(ciRss[]))");
+        auto stats = formatResourceStats(res.usage);
+        if (res.usage.sampled)
+        {
+            SmallBuffer!(char, 24) ciRss;
+            writeBytes(ciRss, selfRssBytes());
+            trace(i"{dim ◂ $(label):} $(stats) exit=$(res.status) (ci_rss=$(ciRss[]))");
+        }
+        else
+            trace(i"{dim ◂ $(label):} $(stats) exit=$(res.status)");
     }
-    else
-        trace(i"{dim ◂ $(label):} exit=$(res.status) (resource sampling unavailable here)");
 
     return noteIfTimedOut(res, timeout);
 }
@@ -2070,6 +2132,7 @@ private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
     i"Checking $(exampleFiles.length) standalone example file(s)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
+    flushStdout();
 
     const repoRoot = detectRepoRoot();
 
@@ -2167,6 +2230,7 @@ private ExecutionResult executeStandaloneExampleFile(
         success: result.status == 0,
         programOutput: cleaned,
         rawOutput: result.output,
+        usage: result.usage,
     );
 }
 
@@ -2176,6 +2240,7 @@ private struct PackageRun
     int status;
     string output;
     bool coverageCollected;
+    ResourceUsage usage;
 }
 
 /**
@@ -2329,25 +2394,36 @@ private string resolvedCompiler(string repoRoot, in string[] subPackages)
 
 private int runDubTestsMode(bool failFast, bool coverage)
 {
+    info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
     {
         error(i"Could not detect repository root");
         return 1;
     }
+    info(i"repository root: $(repoRoot)");
 
+    info(i"parsing dub.sdl sub-packages");
     auto subPackages = parseSubPackages(repoRoot);
     if (subPackages.length == 0)
     {
         error(i"No sub-packages found in dub.sdl");
         return 1;
     }
+    info(i"$(subPackages.length) sub-package(s) to test");
+    if (compilerIsLdc(environment.get("DC", "")))
+        info(i"ldc codegen threads capped at $(hwParallelism())");
 
+    if (coverage)
+        info(i"preparing coverage (dub describe + listings dir)");
     const cov = prepareCoverage(repoRoot, coverage, subPackages);
+    if (coverage)
+        info(i"coverage ready at $(cov.dir)");
 
     i"Testing $(subPackages.length) sub-package(s)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
+    flushStdout();
 
     // On a tty a live checklist (with the running package's dub output in a
     // bounded tail pane) replaces the per-package result boxes; piped output
@@ -2371,28 +2447,29 @@ private int runDubTestsMode(bool failFast, bool coverage)
         const progress = i"[$(i + 1)/$(subPackages.length)]".text;
         const header = styledText(i"{dim $(progress)} {cyan $(pkgName)} {dim › dub test :$(pkgName)}");
 
+        info(i"starting {cyan dub test :$(pkgName)} {dim $(progress)}");
         mkdirRecurse(buildPath(repoRoot, pkg, "build"));
         // Honour `$DC` so the sub-package tests use the CI matrix's compiler
         // (the dev shell provides both dmd and ldc). Example verification keeps
         // `ci`'s own embedded compiler; only the test suite is compiler-matrixed.
-        auto testCmd = ["dub", "--root", repoRoot, "test", ":" ~ pkgName];
-        const dc = environment.get("DC", "");
-        if (dc.length)
-            testCmd ~= "--compiler=" ~ dc;
+        auto testCmd = dubTestCommand(repoRoot, pkgName);
         auto result = runPackageTests(testCmd, cov,
             (const(string)[] cmd, const string[string] env)
             {
                 auto r = executeLogged(cmd, "test " ~ pkgName, Duration.zero, env);
-                return PackageRun(r.status, r.output);
+                return PackageRun(r.status, r.output, usage: r.usage);
             });
         if (cov.enabled && !result.coverageCollected && result.status == 0)
             uncovered ~= pkgName;
+        const stats = formatResourceStats(result.usage);
+        info(i"finished {cyan :$(pkgName)} {dim $(stats.length ? stats : "done")}");
 
         auto outputLines = result.output.lineSplitter
             .map!(l => l.to!string)
             .array;
 
-        displayResultBox(outputLines, header, result.status == 0);
+        displayResultBox(outputLines, header, result.status == 0, result.usage);
+        flushStdout();
 
         if (result.status != 0)
         {
@@ -2403,7 +2480,7 @@ private int runDubTestsMode(bool failFast, bool coverage)
                 failureReplay = FailureReplay(
                     header: header,
                     outputLines: outputLines.formatOutputLines(24, keepTail: true).array,
-                    footer: styledText(i"{red ✗ FAILED}"),
+                    footer: resultFooter(false, result.usage),
                 );
                 stoppedEarly = true;
                 processed = i + 1;
@@ -2613,13 +2690,16 @@ private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
 /// success having run nothing.
 private int runExtractedTestsMode(bool failFast)
 {
+    info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
     {
         error(i"Could not detect repository root");
         return 1;
     }
+    info(i"repository root: $(repoRoot)");
 
+    info(i"scanning sub-packages for @betterC / @wasm");
     auto subPackages = parseSubPackages(repoRoot);
     if (subPackages.length == 0)
     {
@@ -2655,6 +2735,7 @@ private int runExtractedTestsMode(bool failFast)
     i"Running $(jobs.length) extracted-test mode(s)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
+    flushStdout();
 
     int failures = 0;
     size_t processed = 0;
@@ -2665,17 +2746,19 @@ private int runExtractedTestsMode(bool failFast)
             i"{dim $(progress)} {cyan $(job.packageName)} {dim › dub test :$(job.packageName) -- $(job.flag)}");
 
         mkdirRecurse(buildPath(repoRoot, job.packagePath, "build"));
-        auto cmd = ["dub", "--root", repoRoot, "test", ":" ~ job.packageName];
-        const dc = environment.get("DC", "");
-        if (dc.length)
-            cmd ~= "--compiler=" ~ dc;
         // `--self-test` also covers the runner's own extracted tests, which are
         // the ones exercising the `selfContained` opt-out.
-        cmd ~= ["--", job.flag, "--self-test", "--require-toolchain"];
+        auto cmd = dubTestCommand(
+            repoRoot, job.packageName,
+            ["--", job.flag, "--self-test", "--require-toolchain"]);
 
+        info(i"starting {cyan dub test :$(job.packageName) -- $(job.flag)} {dim $(progress)}");
         auto result = executeLogged(cmd, job.flag ~ " " ~ job.packageName);
+        const stats = formatResourceStats(result.usage);
+        info(i"finished {cyan :$(job.packageName) $(job.flag)} {dim $(stats.length ? stats : "done")}");
         auto outputLines = result.output.lineSplitter.map!(l => l.to!string).array;
-        displayResultBox(outputLines, header, result.status == 0);
+        displayResultBox(outputLines, header, result.status == 0, result.usage);
+        flushStdout();
 
         processed = i + 1;
         if (result.status != 0)
@@ -2731,26 +2814,34 @@ private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool fai
     {
         const pkgName = pkg.baseName;
         mkdirRecurse(buildPath(repoRoot, pkg, "build"));
-        auto testCmd = ["dub", "--root", repoRoot, "test", ":" ~ pkgName];
-        const dc = environment.get("DC", "");
-        if (dc.length)
-            testCmd ~= "--compiler=" ~ dc;
+        auto testCmd = dubTestCommand(repoRoot, pkgName);
+
+        info(i"starting {cyan dub test :$(pkgName)} {dim [$(i + 1)/$(subPackages.length)]}");
         tasks.start(ids[i]);
+        const before = childrenCpuUsage();
+        const started = MonoTime.currTime;
         auto result = runPackageTests(testCmd, cov,
             (const(string)[] cmd, const string[string] env)
             {
                 auto r = runStreaming(cmd,
                     (scope const(char)[] line) { tasks.output(ids[i], line); },
-                    null, env);
-                return PackageRun(r.status, r.stdout);
+                    null, withLdcThreadEnv(env));
+                return PackageRun(r.status, r.stdout, usage: r.usage);
             });
         if (cov.enabled && !result.coverageCollected && result.status == 0)
             uncovered ~= pkgName;
+        auto usage = childrenUsageDelta(before, started);
+        if (result.usage.wallTime > usage.wallTime)
+            usage.wallTime = result.usage.wallTime;
+        if (result.usage.sampled)
+            usage = result.usage;
+        const stats = formatResourceStats(usage, includeWall: false);
+        info(i"finished {cyan :$(pkgName)} {dim $(formatResourceStats(usage))}");
         processed = i + 1;
 
         if (result.status == 0)
         {
-            tasks.succeed(ids[i]);
+            tasks.succeed(ids[i], stats);
             continue;
         }
         failures++;
@@ -2779,6 +2870,7 @@ int runDefaultMode(Example[] examples, ExecutionResult[] results, string mdFile,
     i"Running $(examples.length) example(s) from $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
+    flushStdout();
 
     int failures = 0;
     size_t processed = 0;
@@ -2793,7 +2885,7 @@ int runDefaultMode(Example[] examples, ExecutionResult[] results, string mdFile,
             .map!(l => l.to!string)
             .array;
 
-        displayResultBox(outputLines, header, result.success);
+        displayResultBox(outputLines, header, result.success, result.usage);
 
         if (!result.success)
         {
@@ -2828,6 +2920,7 @@ int runVerifyMode(Example[] examples, ExecutionResult[] results, string mdFile, 
     i"Verifying $(examples.length) example(s) from $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
+    flushStdout();
 
     int failures = 0;
     size_t processed = 0;
@@ -3522,6 +3615,84 @@ private string detectRepoRoot()
         : null;
 }
 
+/// `dub test :pkg` argv, honouring `$DC`. LDC codegen threads are bounded
+/// separately via $(LREF withLdcThreadEnv).
+private string[] dubTestCommand(string repoRoot, string pkgName, string[] extra = null)
+{
+    auto cmd = ["dub", "--root", repoRoot, "test", ":" ~ pkgName];
+    const dc = environment.get("DC", "");
+    if (dc.length)
+        cmd ~= "--compiler=" ~ dc;
+    if (extra.length)
+        cmd ~= extra;
+    return cmd;
+}
+
+/// True when `$DC` (or its basename) is LDC.
+private bool compilerIsLdc(string dc) @safe
+{
+    const n = dc.baseName;
+    return n == "ldc2" || n == "ldc"
+        || n.startsWith("ldc2-") || n.startsWith("ldc-");
+}
+
+@("ci.compilerIsLdc")
+@safe
+unittest
+{
+    assert(compilerIsLdc("ldc2"));
+    assert(compilerIsLdc("/nix/store/…/bin/ldc2"));
+    assert(compilerIsLdc("ldc2-1.41.0"));
+    assert(!compilerIsLdc("dmd"));
+    assert(!compilerIsLdc(""));
+}
+
+/// Merge LDC `--threads=N` into a child environment's `DFLAGS`.
+///
+/// Bound to $(REF hwParallelism, sparkles,base,hw_caps) so an overcommitted
+/// macOS runner does not spawn one LLVM thread per advertised vCPU. DMD
+/// does not understand `--threads`, so this is a no-op unless `$DC` is LDC.
+/// An existing `--threads`/`-j` in `DFLAGS` is left alone.
+private string[string] withLdcThreadEnv(const string[string] env)
+{
+    const dc = environment.get("DC", "");
+    string[string] out_;
+    foreach (k, v; env)
+        out_[k] = v;
+    if (!compilerIsLdc(dc))
+        return out_;
+
+    const existing = "DFLAGS" in out_
+        ? out_["DFLAGS"]
+        : environment.get("DFLAGS", "");
+    if (existing.canFind("--threads") || existing.canFind("-j"))
+        return out_;
+
+    const extra = "--threads=" ~ hwParallelism().to!string;
+    out_["DFLAGS"] = existing.length ? existing ~ " " ~ extra : extra;
+    return out_;
+}
+
+/// User/system CPU accrued by waited-for children since `before`, plus wall
+/// time since `started`. RSS is not recoverable from `getrusage` after the
+/// child has been reaped, so it stays 0.
+private ResourceUsage childrenUsageDelta(ResourceUsage before, MonoTime started)
+{
+    auto after = childrenCpuUsage();
+    ResourceUsage u;
+    u.wallTime = MonoTime.currTime - started;
+    if (before.sampled && after.sampled)
+    {
+        u.userTime = after.userTime > before.userTime
+            ? after.userTime - before.userTime : Duration.zero;
+        u.systemTime = after.systemTime > before.systemTime
+            ? after.systemTime - before.systemTime : Duration.zero;
+        u.cpuTime = u.userTime + u.systemTime;
+        u.sampled = true;
+    }
+    return u;
+}
+
 @safe pure
 private string[] dubSingleFileCommand(
     string action,
@@ -3781,20 +3952,94 @@ unittest
     assert(formatOutputLines(lines, 99, keepTail: true) == lines);
 }
 
-/// Displays the result box for an example run.
-private void displayResultBox(string[] outputLines, string header, bool success)
+/// Compact resource line for a result footer:
+/// `12.4s  usr 8.1s  sys 1.2s  842.2MiB`.
+///
+/// Wall is included when known (and `includeWall` is true); usr/sys/rss only
+/// when the sampler actually ran. Empty when there is nothing to show.
+private string formatResourceStats(in ResourceUsage u, bool includeWall = true) @safe
 {
-    auto footer = success
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeBytes, writeDuration;
+
+    if ((!includeWall || u.wallTime <= Duration.zero) && !u.sampled)
+        return null;
+
+    SmallBuffer!(char, 96) buf;
+    if (includeWall && u.wallTime > Duration.zero)
+        writeDuration(buf, u.wallTime);
+    if (u.sampled)
+    {
+        if (buf.length)
+            buf ~= "  ";
+        buf ~= "usr ";
+        writeDuration(buf, u.userTime);
+        buf ~= "  sys ";
+        writeDuration(buf, u.systemTime);
+        if (u.peakRssBytes)
+        {
+            buf ~= "  ";
+            writeBytes(buf, u.peakRssBytes);
+        }
+    }
+    return buf[].idup;
+}
+
+@("ci.formatResourceStats")
+@safe
+unittest
+{
+    import core.time : msecs;
+
+    assert(formatResourceStats(ResourceUsage.init).length == 0);
+
+    auto wallOnly = ResourceUsage(wallTime: 1500.msecs);
+    const wall = formatResourceStats(wallOnly);
+    assert(wall == "1.5s", wall);
+
+    auto full = ResourceUsage(
+        peakRssBytes: 842 * 1024 * 1024,
+        wallTime: 12_400.msecs,
+        userTime: 8100.msecs,
+        systemTime: 1200.msecs,
+        sampled: true,
+    );
+    const s = formatResourceStats(full);
+    assert(s.canFind("12.4s"), s);
+    assert(s.canFind("usr "), s);
+    assert(s.canFind("sys "), s);
+    assert(s.canFind("MiB"), s);
+
+    const noWall = formatResourceStats(full, includeWall: false);
+    assert(!noWall.canFind("12.4s"), noWall);
+    assert(noWall.canFind("usr "), noWall);
+}
+
+private string resultFooter(bool success, in ResourceUsage usage) @safe
+{
+    const stats = formatResourceStats(usage);
+    if (stats.length)
+        return success
+            ? styledText(i"{green ✓ passed} {dim $(stats)}")
+            : styledText(i"{red ✗ FAILED} {dim $(stats)}");
+    return success
         ? styledText(i"{green ✓ passed}")
         : styledText(i"{red ✗ FAILED}");
+}
 
+/// Displays the result box for an example or package-test run.
+private void displayResultBox(
+    string[] outputLines, string header, bool success,
+    ResourceUsage usage = ResourceUsage.init,
+)
+{
     outputLines
         // A failing box keeps the TAIL: a compiler/test-runner puts its
         // diagnosis last, so head-truncation reports the failure while hiding
         // its cause (this box once showed a header and four passing tests for
         // a failure whose error was three lines further down).
         .formatOutputLines(8, keepTail: !success)
-        .drawBox(header, BoxProps(footer: footer))
+        .drawBox(header, resultBox(resultFooter(success, usage)))
         .writeln;
 }
 
