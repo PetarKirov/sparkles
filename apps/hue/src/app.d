@@ -43,6 +43,7 @@ import sparkles.base.term_caps : isTerminal, StdStream;
 
 import ansi_model : BackgroundMode, backgroundOptions;
 import document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
+import viewer_model : GutterSelection;
 import diff_commutative : CommutativeKind;
 import diff_session : AnchoredThread, SessionHeader, ThreadComment;
 import forge : CommentThread, PullRequest, ThreadSide;
@@ -154,6 +155,7 @@ struct ViewRenderOptions
     int tabWidth = 4;
     bool listWhitespace = false;
     bool lineNumbers = true;
+    string gutter = "all";
     bool codeLineNumbers = true;
     string codeOverflow = "scroll";
     int codeMaxLines = -1;
@@ -218,8 +220,11 @@ struct View
     @(Option("list-whitespace", description: "Render whitespace visibly in the raw view, vim's 'list' style."))
     bool listWhitespace;
 
-    @(Option("line-numbers", description: "--gui: show the file line-number gutter (default on)."))
+    @(Option("line-numbers", description: "Show the file line-number gutter (default on). Shorthand for dropping it from --gutter."))
     bool lineNumbers = true;
+
+    @(Option("gutter", description: "Which gutter channels to show: 'all', 'none', or a comma-separated list of numbers, icons, coverage."))
+    string gutter = "all";
 
     @(Option("code-line-numbers", description: "--gui: number the lines inside each code block (default on)."))
     bool codeLineNumbers = true;
@@ -579,6 +584,7 @@ private int executeView(in HueCli root, in View view)
     opt.tabWidth = view.tabWidth;
     opt.listWhitespace = view.listWhitespace;
     opt.lineNumbers = view.lineNumbers;
+    opt.gutter = view.gutter;
     opt.codeLineNumbers = view.codeLineNumbers;
     opt.codeOverflow = view.codeOverflow;
     opt.codeMaxLines = view.codeMaxLines;
@@ -943,7 +949,7 @@ private int renderDocument(Backend backend, in ViewRenderOptions opt, ref Docume
                 docSet, pipeline, dirTarget);
         case Backend.html:
             return runHtmlSink(doc, theme, registry, cache,
-                parseDiffLayout(opt.diffLayout));
+                parseDiffLayout(opt.diffLayout), opt.gutter, opt.lineNumbers);
         case Backend.tui:
             return runTuiSink(opt, doc, labels, theme, cache,
                 docSet, pipeline);
@@ -1242,6 +1248,12 @@ int main(string[] args)
 private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
     in ResolvedTheme theme, ref TsConfigCache cache) @system
 {
+    GutterSelection gutterSel;
+    if (!gutterSel.parse(opt.gutter))
+        warning(i"unknown gutter channel in `$(opt.gutter)`; showing what was recognized");
+    if (!opt.lineNumbers)
+        gutterSel.numbers = false;
+
     if (doc.kind == ContentKind.twoslash && tryTwoslashCapture(doc, theme, cache))
         return 0;
 
@@ -1336,7 +1348,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 auto b = Builder();
                 const docRoot = viewCodeDocumentInto(b, doc.source, doc.events,
                     (() @trusted => &theme)(), pageFg, copt);
-                auto tree = staticGutter(b, docRoot, doc);
+                auto tree = staticGutter(b, docRoot, doc, gutterSel);
                 // Unconstrained, so the grid is as wide as the longest line.
                 // Constraining it to `previewWidth()` with wrapping off does
                 // not fit a long line — it CLIPS it, losing the tail silently.
@@ -1395,35 +1407,68 @@ views' chrome, and adding it here would change the output of every plain
 Laid out unconstrained in both passes: a stream has no pane to wrap to, so the
 row count cannot change between them.
 */
-private auto staticGutter(B)(ref B b, uint docRoot, in Document doc) @system
+private auto staticGutter(B)(ref B b, uint docRoot, in Document doc,
+    in GutterSelection sel) @system
 {
     import sparkles.ui.widget : Builder, WidgetTree;
     import document : coverageChannel;
-    import gui_text : buildLineStarts;
+    import gui_text : buildLineStarts, lineCount;
     import sparkles.code_instrumentation : maxCountWidth;
-    import sparkles.ui.components.gutter : GutterChannel, withGutterColumns;
+    import sparkles.ui.components.gutter : GutterChannel, gutterWidth,
+        withGutterColumns, withinBudget;
     import sparkles.ui.geometry : Constraints;
     import sparkles.ui.layout : layout;
     import sparkles.ui.state : documentRows;
-    import viewer_model : srcLineOf;
+    import viewer_model : digitCount, lineNumberCells, lineNumberChannelId,
+        srcLineOf;
+
+    // Line numbers are opt-in here and on by default in a pane, which is the
+    // one place the two disagree. A stream's output IS the text: a reader pipes
+    // it into a file, a pager or a clipboard, and numbers welded to the left of
+    // every line make it unusable as source. So they render when named
+    // (`--gutter numbers`) and not when the default `all` is in force. The
+    // interactive backends have a selection model — the numbers are chrome
+    // there, outside what a copy takes.
+    const wantNumbers = sel.explicit && sel.numbers;
+    const wantCoverage = sel.coverage && doc.hasCoverage;
 
     auto pass1 = b.finish(docRoot);
-    if (!doc.hasCoverage)
+    if (!wantNumbers && !wantCoverage)
         return pass1;
 
     const rows = documentRows(pass1, layout(pass1, Constraints()));
     auto starts = buildLineStarts(doc.source);
     size_t lineOf(size_t off) @safe => srcLineOf(starts, off);
 
-    auto chans = [coverageChannel(doc.coverage, rows, &lineOf)];
+    // No icon channel: the static sinks have no fold state, so it would have no
+    // provider — reserving a strip for it would be an empty column.
+    GutterChannel[] chans;
+    if (wantNumbers)
+    {
+        const width = digitCount(lineCount(doc.source));
+        auto ch = GutterChannel(id: lineNumberChannelId, width: width);
+        ch.cells = lineNumberCells(rows, width, &lineOf);
+        chans ~= ch;
+    }
+    if (wantCoverage)
+        chans ~= coverageChannel(doc.coverage, rows, &lineOf);
+    if (chans.length == 0)
+        return pass1;
     return b.finish(withGutterColumns(b, chans, rows.length, docRoot));
 }
 
 /// Static HTML to stdout.
 private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
     ref GrammarRegistry registry, ref TsConfigCache cache,
-    DiffLayout diffLayout = DiffLayout.unified) @system
+    DiffLayout diffLayout = DiffLayout.unified, string gutter = "all",
+    bool lineNumbers = true) @system
 {
+    GutterSelection gutterSel;
+    if (!gutterSel.parse(gutter))
+        warning(i"unknown gutter channel in `$(gutter)`; showing what was recognized");
+    if (!lineNumbers)
+        gutterSel.numbers = false;
+
     final switch (doc.kind) with (ContentKind)
     {
         case twoslash:
@@ -1463,7 +1508,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
                 auto b = Builder();
                 const docRoot = viewCodeDocumentInto(b, doc.source, doc.events,
                     (() @trusted => &theme)(), pageFg, copt);
-                writeWidgetHtmlPage(htmlOut, staticGutter(b, docRoot, doc),
+                writeWidgetHtmlPage(htmlOut, staticGutter(b, docRoot, doc, gutterSel),
                     defaultTwoslashPalette(), pageFg, pageBg, doc.title);
                 write(htmlOut[]);
                 return 0;
@@ -1566,7 +1611,8 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             formatWidth: opt.formatWidth,
             formatterName: opt.formatter,
             tableCopyFlag: opt.tableCopy,
-            scrollAnchor: parseScrollAnchor(opt.scrollAnchor));
+            scrollAnchor: parseScrollAnchor(opt.scrollAnchor),
+            gutter: opt.gutter, lineNumbers: opt.lineNumbers);
     }
     else
     {
@@ -1642,6 +1688,7 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             preview: doc.preview,
             gui: gui,
             lineNumbers: opt.lineNumbers,
+            gutter: opt.gutter,
             codeLineNumbers: opt.codeLineNumbers,
             ansiCopyStrip: opt.ansiCopy == "strip",
             tableCopy: resolveTableCopy(opt.tableCopy,

@@ -340,7 +340,10 @@ struct PreviewTui
     /// narrower than the pane — the last column holds the scrollbar.
     void relayout() @system
     {
-        vm.inlineFoldMarker = true; // the placeholder ▸ is the TUI affordance
+        // The placeholder's inline ▸ is the fallback affordance, not the
+        // default one: with the icon channel on, the arrow is in the gutter on
+        // both backends and an inline copy of it is a second thing to click.
+        vm.inlineFoldMarker = !vm.foldColumn;
         const contentWidth = externalScroll ? width : width - 1;
         vm.widthCols = contentWidth < 8 ? 8 : contentWidth;
         vm.viewRows = bodyRows();
@@ -1399,9 +1402,21 @@ struct PreviewTui
 
             case Command.copySelection: copySelection(); break;
 
+            // The gutter is the terminal's now too, so its channels toggle
+            // here rather than being inert (`GUT5`).
+            case Command.toggleLineNumbers:
+                vm.lineNumbers = !vm.lineNumbers;
+                relayout();
+                vm.rebuild();
+                return true;
+            case Command.toggleGutterIcons:
+                vm.foldColumn = !vm.foldColumn;
+                relayout();
+                vm.rebuild();
+                return true;
+
             // Settings the terminal viewer does not own (the workspace and
             // the GUI do), reachable from the guide but inert here.
-            case Command.toggleLineNumbers:
             case Command.toggleCodeLineNumbers:
             case Command.toggleAnsiCopy:
             case Command.toggleTableCopy:
