@@ -279,6 +279,12 @@ unittest
     inp.mode = Mode.gotoLine;
     assert(!inp.typeChar('a'), "goto-line takes digits only");
     assert(inp.typeChar('7'));
+    InputState flt;
+    flt.mode = Mode.dsvFilter;
+    assert(flt.typeChar('q'), "the filter bar takes printable ASCII");
+    assert(flt.typeChar('>'), "operators type through");
+    assert(!flt.typeChar('\x1b'), "control characters still never type");
+    assert(flt.query[] == "q>");
     assert(inp.query[] == "a37");
 }
 
@@ -406,6 +412,7 @@ enum Mode
     normal,
     search,
     gotoLine,
+    dsvFilter, // the DSV grid's filter bar (`DSF1`)
 }
 
 
