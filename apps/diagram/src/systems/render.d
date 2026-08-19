@@ -26,6 +26,7 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
 import sparkles.base.text.writers : writeInteger;
+import sparkles.base.unique : makeUnique;
 import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge, textRunOp;
 import sparkles.ui.components.grid_backdrop : appendGridBackdrop, GridView;
 import sparkles.ui.geometry : Point, Rect, Size;
@@ -713,9 +714,11 @@ version (unittest)
 unittest
 {
     // `DIA5`: the steady-state frame path compiles under the attribute.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
-    FrameOps ops;
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
     cast(void) w.spawn(Rect(0, 0, 4, 2));
     systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
     assert(ops.length > 0);
@@ -728,7 +731,8 @@ unittest
 {
     // `RND2`: an entity outside the camera emits nothing to the board stream
     // and still appears on the minimap — asserted, not an optimisation note.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     // Camera at origin looking at a small viewport-worth of world.
     cam.origin = Point(0, 0);
@@ -739,7 +743,8 @@ unittest
     w.setLabel(near, "near");
     w.setLabel(far, "far");
 
-    FrameOps ops;
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
     systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
 
     // Board paints labels as owned textRuns; minimap paints only fills.
@@ -779,10 +784,12 @@ unittest
     // `RND1`: z-order is append order. A chrome fill (toolbar y=0) must not
     // appear before the board's pushClip, and the minimap panel fill sits
     // between board content and the status row.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     cast(void) w.spawn(Rect(1, 1, 2, 2));
-    FrameOps ops;
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
     systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
 
     size_t firstClip = size_t.max, firstMinimap = size_t.max, firstStatus = size_t.max;
@@ -808,11 +815,13 @@ unittest
 unittest
 {
     // `RND5`: every op names a Slot (or is a clip). The page is the host's.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     cast(void) w.spawn(Rect(0, 0, 4, 2));
     w.selectOnly(0);
-    FrameOps ops;
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
     systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
 
     foreach (ref op; ops[])
@@ -828,9 +837,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
-    FrameOps ops;
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
     w.capture = Capture.marquee;
     w.dragStart = Point(1, 1);
     w.dragNow = Point(10, 8);
@@ -847,7 +858,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     const a = w.spawn(Rect(2, 2, 3, 2));
     const b = w.spawn(Rect(8, 2, 3, 2));
@@ -855,7 +867,8 @@ unittest
     w.select(b);
     assert(w.groupSelection() != 0);
 
-    FrameOps ops;
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
     systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
     size_t infoRules;
     foreach (ref op; ops[])
@@ -868,10 +881,12 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     w.tool = Tool.rect;
-    FrameOps ops;
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
     systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
 
     const btn = toolButton(Tool.rect, Size(80, 24));
@@ -888,12 +903,14 @@ unittest
 unittest
 {
     // `RND3`: edges are orthogonal glyph routes — no OpKind.line.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     const a = w.spawn(Rect(0, 0, 4, 2));
     const b = w.spawn(Rect(12, 6, 4, 2));
     assert(w.connect(a, b));
-    FrameOps ops;
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
     systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
 
     size_t lines, boxGlyphs;
@@ -917,11 +934,13 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     w.menuOpen = true;
     w.menuAt = Point(10, 5);
-    FrameOps ops;
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
     systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
     const panel = menuPanel(w);
     bool found;
@@ -937,11 +956,13 @@ unittest
 {
     // Regression: "Label…" must not be painted as three garbage glyphs
     // (UTF-8 code units). Owned textRun keeps the ellipsis intact.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     w.menuOpen = true;
     w.menuAt = Point(10, 5);
-    FrameOps ops;
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
     systemRender(w, cam, Size(80, 24), testPal(), fg, bg, ops);
 
     bool sawLabel;

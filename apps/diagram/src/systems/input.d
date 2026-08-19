@@ -1050,7 +1050,8 @@ version (unittest)
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1069,7 +1070,8 @@ unittest
 unittest
 {
     // `IXN2`: drag out a box; the new entity is selected.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     auto view = tuiView();
@@ -1092,7 +1094,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1125,7 +1128,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1145,7 +1149,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1169,7 +1174,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1198,7 +1204,8 @@ unittest
 unittest
 {
     // `IXN3`: middle-drag and Space+LMB both pan; WASD/arrows step.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     auto view = guiView(); // key releases available
@@ -1241,7 +1248,8 @@ unittest
 unittest
 {
     // Terminal route: Space toggles the arm; a completed pan spends it.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView(); // keyRelease = false
@@ -1261,7 +1269,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const pivotScreen = Point(30, 1 + 10);
@@ -1288,7 +1297,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1311,7 +1321,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1328,7 +1339,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1350,7 +1362,8 @@ unittest
 {
     // `IXN1`: a create drag that wanders over the minimap still belongs to
     // create — the press owns the drag.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1370,7 +1383,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1406,7 +1420,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1431,7 +1446,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1449,7 +1465,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1476,7 +1493,8 @@ unittest
 {
     import sparkles.ui.components.grid_backdrop : MarkKind;
 
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
@@ -1501,7 +1519,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();

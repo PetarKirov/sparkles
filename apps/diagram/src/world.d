@@ -23,6 +23,7 @@ growing — an infinite canvas is unbounded in coordinates, not in content.
 module world;
 
 import lantern : LanternState;
+import sparkles.base.unique : makeUnique, Unique;
 import sparkles.ui.components.grid_backdrop : gridPreset, GridConfig, GridPreset;
 import sparkles.ui.geometry : Point, Rect;
 
@@ -73,8 +74,27 @@ The whole board and the whole interaction.
 Copyable by value — it is a few hundred kilobytes of static arrays with no
 indirection, so a test can snapshot one and compare.
 */
+/**
+The passkey that makes $(LREF World.create) the only constructor — `private`
+to this module, so no other module can name it. The constructor cannot be
+`private` itself: $(REF makeUnique, sparkles,base,unique) builds the value in
+its own module, where a private constructor is not visible.
+*/
+private struct WorldKey {}
+
 struct World
 {
+    /// No stack instances: a `World` is ~442 KiB of dense columns, and a
+    /// non-main thread's stack is 512 KiB on macOS. `create` is the way in.
+    @disable this();
+
+    /// The real constructor — unreachable without a $(LREF WorldKey).
+    this(WorldKey) @safe pure nothrow @nogc {}
+
+    /// A board on the malloc heap, owned by the returned handle.
+    static Unique!World create() @safe pure nothrow @nogc
+        => makeUnique!World(WorldKey.init);
+
     // ── entity columns (`WLD1`) ─────────────────────────────────────────────
 
     /// Each entity's rectangle in $(B world) cells. The board's only geometry.
@@ -573,7 +593,8 @@ unittest
     // `WLD1`: a free list, so a board churning through nodes does not walk
     // further every time. The recycled index is the same one — which is also
     // why `alive` has to exist.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const a = w.spawn(Rect(0, 0, 4, 2));
     const b = w.spawn(Rect(9, 9, 4, 2));
     assert(a == 0 && b == 1 && w.count == 2 && w.highWater == 2);
@@ -594,7 +615,8 @@ unittest
 {
     // `DIA5`: fixed columns are what make the frame allocation-free, so a
     // full board says no. Growing would move the whole design.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     foreach (_; 0 .. entityCap)
         assert(w.spawn(Rect(0, 0, 1, 1)) != noEntity);
     assert(w.spawn(Rect(0, 0, 1, 1)) == noEntity);
@@ -608,7 +630,8 @@ unittest
     // `WLD3`, and the reason it is not optional: slots are recycled, so an
     // edge to a dead entity would draw a connector to whoever lands there
     // next — worse than a dangling pointer, because it looks deliberate.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const a = w.spawn(Rect(0, 0, 2, 2));
     const b = w.spawn(Rect(8, 0, 2, 2));
     const c = w.spawn(Rect(0, 8, 2, 2));
@@ -628,7 +651,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const a = w.spawn(Rect(0, 0, 2, 2));
     const b = w.spawn(Rect(8, 0, 2, 2));
 
@@ -645,7 +669,8 @@ unittest
 unittest
 {
     // `WLD2`: a flat id, so "move every member" is a column scan.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const a = w.spawn(Rect(0, 0, 4, 2));
     const b = w.spawn(Rect(10, 0, 4, 2));
     const loose = w.spawn(Rect(20, 0, 4, 2));
@@ -675,7 +700,8 @@ unittest
 {
     // A group of one is a node with extra state and an outline nobody asked
     // for; a group of none is nothing at all.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const a = w.spawn(Rect(0, 0, 2, 2));
     assert(w.groupSelection() == 0, "nothing selected");
     w.select(a);
@@ -687,7 +713,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const a = w.spawn(Rect(0, 0, 2, 2));
     const b = w.spawn(Rect(4, 0, 2, 2));
 
@@ -717,7 +744,8 @@ unittest
     // `despawn` deselects, which rewrites the list underneath a walk over it.
     // The bug this guards is silent: a swap-remove during iteration skips
     // whichever entity was moved into the vacated slot.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     Entity[8] made;
     foreach (i; 0 .. 8)
     {
@@ -739,7 +767,8 @@ unittest
 {
     // What a click finds must be what the board painted on top, or the two
     // disagree and every overlap becomes a coin flip.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const under = w.spawn(Rect(0, 0, 10, 6));
     const over = w.spawn(Rect(2, 2, 4, 2));
 
@@ -758,7 +787,8 @@ unittest
 {
     // Intersecting, not contained: a marquee that only took fully-enclosed
     // nodes would refuse to select a node bigger than the screen.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const inside = w.spawn(Rect(2, 2, 2, 2));
     const touching = w.spawn(Rect(9, 9, 6, 6));
     const outside = w.spawn(Rect(40, 40, 2, 2));
@@ -773,7 +803,8 @@ unittest
 {
     // A drag up-and-left is a rectangle, not a negative size — and both ends
     // are inclusive, so a click that never moved is one cell rather than none.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     w.dragStart = Point(10, 10);
     w.dragNow = Point(4, 4);
     assert(w.dragRect == Rect(4, 4, 7, 7));
@@ -789,7 +820,8 @@ unittest
     // What the minimap and fit-all measure. A freed slot keeps its stale
     // rectangle in the column, so a walk that trusted the column would fit
     // the camera to a node that is not there.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const a = w.spawn(Rect(0, 0, 4, 4));
     const b = w.spawn(Rect(100, 100, 4, 4));
     w.despawn(b);
@@ -812,7 +844,8 @@ unittest
 {
     // `IXN5`: LineEditState contract over a fixed slot — type, erase, accept,
     // cancel — without allocating.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const e = w.spawn(Rect(0, 0, 8, 2));
     w.setLabel(e, "ab");
     w.beginEdit(e);
@@ -836,7 +869,8 @@ unittest
     // The drag's one-step: `moveBy` fans out to group members, so a naive
     // walk over the selection would double-move any group with two members
     // selected.
-    World w;
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
     const a = w.spawn(Rect(0, 0, 2, 2));
     const b = w.spawn(Rect(4, 0, 2, 2));
     const loose = w.spawn(Rect(20, 0, 2, 2));

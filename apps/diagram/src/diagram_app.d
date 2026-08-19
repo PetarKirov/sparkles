@@ -18,6 +18,7 @@ arbitration (`IXN1`).
 module diagram_app;
 
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.unique : makeUnique, Unique;
 import sparkles.input : EndOfInput, Event, isEndOfInput, match;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, LanternStyle,
     Placement, viewLantern;
@@ -40,10 +41,40 @@ import world : World;
 /// table is smaller than this, so the panel never scrolls today.
 enum size_t guideRowCap = 64;
 
-/// The application component: state → frames, events → state.
+/**
+The passkey that makes $(LREF DiagramApp.create) the only constructor.
+
+`private` to this module, so no other module can name it — and therefore none
+can reach the constructor that takes one. The constructor itself cannot be
+`private`: $(REF makeUnique, sparkles,base,unique) builds the value in its own
+module, where a private constructor is not visible.
+*/
+private struct AppKey {}
+
+/**
+The application component: state → frames, events → state.
+
+$(B Heap-only, by construction.) A `DiagramApp` is ~3 MiB — the reused op
+buffer (`RND1`) and the world's dense entity arrays (`WLD4`) — while a
+non-main thread's stack is 512 KiB on macOS. A by-value instance is therefore
+not a size problem to keep an eye on, it is a crash: the unittest runner runs
+tests on `std.parallelism` workers, and a factory returning one by value took
+down the whole binary with `SIGBUS` and no output.
+
+So `this()` is disabled, the real constructor takes a key only this module can
+name, and $(LREF create) hands back a
+$(REF Unique, sparkles,base,unique) over the malloc heap — which is also
+move-only, so nobody copies those 3 MiB either.
+*/
 struct DiagramApp
 {
-    World world;           /// the board and every piece of interaction (`WLD4`)
+    // The board is heap-only too (`World` is ~442 KiB of dense columns), so
+    // the app owns a handle rather than the value. `world` borrows it, which
+    // is why every use site — and every system taking `ref World` — reads
+    // exactly as it did when this was a field.
+    private Unique!World _world;
+    /// The board and every piece of interaction (`WLD4`).
+    ref World world() @safe pure nothrow @nogc return => _world.get();
     Camera camera;         /// the viewport onto the world (`CAM`)
     CaptureState capture;  /// toolkit drag arbitration (`IXN1`)
     /**
@@ -57,6 +88,25 @@ struct DiagramApp
     FrameOps frameOps;
     /// The key guide's label storage, reused across frames (`LTN`).
     LabelArena guideLabels;
+
+    /// No stack instances: see the type's note. `create` is the way in.
+    @disable this();
+
+    /// The real constructor — unreachable without an $(LREF AppKey).
+    this(AppKey, in AppTheme th) @safe pure nothrow @nogc
+    {
+        theme = th;
+        _world = World.create();
+    }
+
+    /**
+    The only way to build one: a sole-ownership handle to a heap-allocated
+    board, off the collected heap (`makeUnique`'s allocator is `Mallocator`)
+    and rooted for the references it holds.
+    */
+    static Unique!DiagramApp create(in AppTheme th = AppTheme.init)
+        @safe nothrow
+        => makeUnique!DiagramApp(AppKey.init, th);
 
     /// Empty tree: the board is a display-list application, not a widget tree.
     /// The host still paints the theme's page fill; we paint on top in
@@ -191,15 +241,14 @@ version (unittest)
         => Event(PointerEvent(action: PointerAction.release, button: b,
             pos: Point(x, y)));
 
-    private DiagramApp themedApp() @safe
+    private Unique!DiagramApp themedApp() @safe
     {
-        DiagramApp app;
-        app.theme = appThemeOf(GuiOptions.init);
+        auto th = appThemeOf(GuiOptions.init);
         // Ensure a non-empty palette even if the options resolve to a
         // syntax-only theme — the render path names slots.
-        if (!app.theme.palette.bg[Slot.surface].isSet)
-            app.theme.palette = defaultTwoslashPalette(ColorScheme.dark);
-        return app;
+        if (!th.palette.bg[Slot.surface].isSet)
+            th.palette = defaultTwoslashPalette(ColorScheme.dark);
+        return DiagramApp.create(th);
     }
 }
 
@@ -207,7 +256,8 @@ version (unittest)
 @safe
 unittest
 {
-    auto app = themedApp();
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
     auto rec = runAppRecorded(app, RunConfig(title: "diagram"), [
         charEvent('x'),  // ignored
         charEvent('q'),  // quits
@@ -224,7 +274,8 @@ unittest
 {
     // With nothing open, Esc is the chain's tail: quit (IXN6). A release
     // must not quit a second time — or at all.
-    auto app = themedApp();
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
     auto rec = runAppRecorded(app, RunConfig.init, [
         keyEvent(Key.escape, Mods(), KeyAction.release), // ignored
         keyEvent(Key.escape),
@@ -238,7 +289,8 @@ unittest
 {
     // The host paints the theme's page fill; the board paints on top via the
     // canvas (`RND5` / `HST13`).
-    auto app = themedApp();
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
     auto rec = runAppRecorded(app, RunConfig.init, []);
     assert(rec.frames.length == 1);
     assert(rec.frames[0].ops.length >= 1);
@@ -254,7 +306,8 @@ unittest
 {
     // End-to-end through `runAppRecorded`: the component's world is the one
     // `systemInput` mutated — `WLD4` in one assertion site.
-    auto app = themedApp();
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
     auto rec = runAppRecorded(app, RunConfig(title: "diagram"), [
         charEvent('r'),
         press(4, 1 + 3),
@@ -274,7 +327,8 @@ unittest
 @safe
 unittest
 {
-    auto app = themedApp();
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
     // Pan alone first — a subsequent zoom-at-pivot deliberately moves the
     // origin, so the pan's delta is asserted before that.
     auto rec = runAppRecorded(app, RunConfig.init, [
@@ -286,7 +340,8 @@ unittest
     assert(rec.quitRequested);
     assert(app.camera.origin.x == 10);
 
-    auto app2 = themedApp();
+    auto app2Owner = themedApp();
+    ref DiagramApp app2() => app2Owner.get();
     auto rec2 = runAppRecorded(app2, RunConfig.init, [
         charEvent('+'),
         charEvent('+'),
@@ -304,7 +359,8 @@ unittest
     // `?` reveals the guide (`LTN`), and what it paints comes from the same
     // table the resolver reads — so a key that works is a key that is listed.
     // The panel's rows sit along the bottom edge, below the board's ops.
-    auto app = themedApp();
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
     auto rec = runAppRecorded(app, RunConfig.init, [charEvent('?')]);
 
     assert(rec.frames.length == 2);
@@ -336,7 +392,8 @@ unittest
 
     // A label edit hides the board's scope, so `?` never reaches the guide:
     // it is text, and it lands in the label (`IXN5`).
-    auto typing = themedApp();
+    auto typingOwner = themedApp();
+    ref DiagramApp typing() => typingOwner.get();
     const e = typing.world.spawn(Rect(2, 2, 6, 3));
     typing.world.beginEdit(e);
     cast(void) runAppRecorded(typing, RunConfig.init, [charEvent('?')]);
@@ -349,7 +406,8 @@ unittest
 unittest
 {
     // Series 2 sweep: create two boxes, group via menu, label one, connect.
-    auto app = themedApp();
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
     import systems.input : menuItemRect, MenuItem;
     import sparkles.input : PointerButton;
 
@@ -373,7 +431,8 @@ unittest
 @safe
 unittest
 {
-    auto app = themedApp();
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
     const e = app.world.spawn(Rect(2, 2, 6, 3));
     app.world.setLabel(e, "Box");
     auto rec = runAppRecorded(app, RunConfig.init, []);
