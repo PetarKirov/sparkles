@@ -82,3 +82,23 @@ Close this issue when the toolkit carries a safe-area/inset concept through
 layout, hue's Android surfaces derive their placement from it, and the toolbar
 is confirmed reachable on an Android 16 device with gesture navigation — the
 emulator's default configuration included.
+
+## HUE-O5 — The widget-HTML interpreter cannot lay out positioned stacks {#hue-o5}
+
+`sparkles.ui.interp.html`'s `writeWidgetHtmlPage` renders widget trees as
+document flow, which is correct for the diff view's row/column trees but
+falls apart on the unified table component's widget view: `buildTableWidgets`
+emits a **fixed-size `stack` of absolutely positioned runs** (core-geometry
+placement — the shape rowspans and vanishing rules require), and the flow
+renderer scatters every run onto its own line. hue's DSV `--html` arm hit
+this and was rerouted to the semantic `MdDoc → HTML` emitter (a real
+`<table>`, which `DSG6` wanted anyway), so no shipped surface renders a
+table through the widget-HTML path today — but any future consumer that
+hands `writeWidgetHtmlPage` a tree containing a table (a diff with an
+embedded markdown-preview table, a twoslash doc popup with one) will
+reproduce it.
+
+Close this when the HTML interpreter maps a fixed-size stack to a
+`position: relative` container and its positioned children to
+`position: absolute` offsets (the cell/em grid the page already uses), with
+a table-bearing tree in its round-trip tests.
