@@ -127,7 +127,16 @@ uint hwOnlineCpuCount() @trusted nothrow @nogc => onlineCpuCount();
 /// Total physical RAM in bytes, or 0 when unknown.
 ulong hwMemoryBytes() @trusted nothrow @nogc
 {
-    version (Posix)
+    // Darwin's druntime does not export `_SC_PHYS_PAGES` (the SDK has
+    // `hw.memsize` instead). Importing the missing symbol is a hard error
+    // on aarch64-darwin, not a runtime 0.
+    version (OSX)
+    {
+        const n = sysctlULong("hw.memsize");
+        if (n > 0)
+            return n;
+    }
+    else version (Posix)
     {
         import core.sys.posix.unistd : _SC_PAGESIZE, _SC_PHYS_PAGES, sysconf;
 
@@ -144,7 +153,7 @@ Currently available RAM in bytes, or 0 when unknown.
 
 Linux reads `MemAvailable` (reclaimable cache included). Darwin sums free +
 inactive + speculative pages. A fallback of `_SC_AVPHYS_PAGES` is used only
-when the platform-specific probe is silent.
+on POSIX hosts that are neither, and only when that symbol exists.
 */
 ulong hwAvailableMemoryBytes() @trusted nothrow @nogc
 {
@@ -168,15 +177,22 @@ ulong hwAvailableMemoryBytes() @trusted nothrow @nogc
                 return pages * page;
         }
     }
-
-    version (Posix)
+    else version (Posix)
     {
-        import core.sys.posix.unistd : _SC_AVPHYS_PAGES, _SC_PAGESIZE, sysconf;
+        import core.sys.posix.unistd : sysconf;
 
-        const pages = sysconf(_SC_AVPHYS_PAGES);
-        const page = sysconf(_SC_PAGESIZE);
-        if (pages > 0 && page > 0)
-            return cast(ulong) pages * cast(ulong) page;
+        // `_SC_AVPHYS_PAGES` is Linux/BSD; Darwin's druntime omits it.
+        static if (is(typeof({
+                    import core.sys.posix.unistd : _SC_AVPHYS_PAGES, _SC_PAGESIZE;
+                })))
+        {
+            import core.sys.posix.unistd : _SC_AVPHYS_PAGES, _SC_PAGESIZE;
+
+            const pages = sysconf(_SC_AVPHYS_PAGES);
+            const page = sysconf(_SC_PAGESIZE);
+            if (pages > 0 && page > 0)
+                return cast(ulong) pages * cast(ulong) page;
+        }
     }
     return 0;
 }
