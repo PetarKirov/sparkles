@@ -123,7 +123,8 @@ import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight,
 
 // sparkles packages
 import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
-import sparkles.base.logger : error, info, initLogger, LogLevel, trace, warning;
+import sparkles.base.logger :
+    error, info, initLogger, LogDelta, LogLevel, takeLogDelta, trace, warning, writeLogDelta;
 import sparkles.core_cli.process_utils :
     ChildStdin, childrenCpuUsage, executeMonitored, MonitoredResult, ResourceUsage,
     selfRssBytes, timedOutStatus;
@@ -131,7 +132,7 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.styled_template : styledText, styledWritelnErr;
 import sparkles.base.text.writers : writeDuration;
 import sparkles.core_cli.term_unstyle : unstyle;
-import sparkles.ui.components.box : BoxProps, drawBox, TitleOverflow;
+import sparkles.ui.components.box : BoxProps, drawBox, drawBoxLines, TitleOverflow;
 import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 
 // in-app modules
@@ -2452,21 +2453,21 @@ private int runDubTestsMode(bool failFast, bool coverage)
         // (the dev shell provides both dmd and ldc). Example verification keeps
         // `ci`'s own embedded compiler; only the test suite is compiler-matrixed.
         auto testCmd = dubTestCommand(repoRoot, pkgName);
-        auto result = runPackageTests(testCmd, cov,
-            (const(string)[] cmd, const string[string] env)
-            {
-                auto r = executeLogged(cmd, "test " ~ pkgName, Duration.zero, env);
-                return PackageRun(r.status, r.output, usage: r.usage);
-            });
-        if (cov.enabled && !result.coverageCollected && result.status == 0)
-            uncovered ~= pkgName;
-
-        auto outputLines = result.output.lineSplitter
-            .map!(l => l.to!string)
-            .array;
-
-        displayResultBox(outputLines, header, result.status == 0, result.usage);
-        flushStdout();
+        PackageRun result;
+        streamResultBox(header, {
+            result = runPackageTests(testCmd, cov,
+                (const(string)[] cmd, const string[string] env)
+                {
+                    auto r = executeLogged(cmd, "test " ~ pkgName, Duration.zero, env);
+                    return PackageRun(r.status, r.output, usage: r.usage);
+                });
+            if (cov.enabled && !result.coverageCollected && result.status == 0)
+                uncovered ~= pkgName;
+            return result.output.lineSplitter
+                .map!(l => l.to!string)
+                .array
+                .formatOutputLines(8, keepTail: result.status != 0);
+        }, (LogDelta d) => resultFooter(result.status == 0, result.usage, d));
 
         if (result.status != 0)
         {
@@ -2476,7 +2477,10 @@ private int runDubTestsMode(bool failFast, bool coverage)
             {
                 failureReplay = FailureReplay(
                     header: header,
-                    outputLines: outputLines.formatOutputLines(24, keepTail: true).array,
+                    outputLines: result.output.lineSplitter
+                        .map!(l => l.to!string)
+                        .array
+                        .formatOutputLines(24, keepTail: true),
                     footer: resultFooter(false, result.usage),
                 );
                 stoppedEarly = true;
@@ -2744,10 +2748,14 @@ private int runExtractedTestsMode(bool failFast)
             repoRoot, job.packageName,
             ["--", job.flag, "--self-test", "--require-toolchain"]);
 
-        auto result = executeLogged(cmd, job.flag ~ " " ~ job.packageName);
-        auto outputLines = result.output.lineSplitter.map!(l => l.to!string).array;
-        displayResultBox(outputLines, header, result.status == 0, result.usage);
-        flushStdout();
+        MonitoredResult result;
+        streamResultBox(header, {
+            result = executeLogged(cmd, job.flag ~ " " ~ job.packageName);
+            return result.output.lineSplitter
+                .map!(l => l.to!string)
+                .array
+                .formatOutputLines(8, keepTail: result.status != 0);
+        }, (LogDelta d) => resultFooter(result.status == 0, result.usage, d));
 
         processed = i + 1;
         if (result.status != 0)
@@ -4002,31 +4010,107 @@ unittest
     assert(noWall.canFind("usr "), noWall);
 }
 
-private string resultFooter(bool success, in ResourceUsage usage) @safe
+private string resultFooter(bool success, in ResourceUsage usage,
+    LogDelta delta = LogDelta.init) @safe
 {
-    const stats = formatResourceStats(usage);
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 48) stamp;
+    writeLogDelta(stamp, delta);
+    const stats = formatResourceStats(usage, includeWall: false);
     if (stats.length)
         return success
-            ? styledText(i"{green ✓ passed} {dim $(stats)}")
-            : styledText(i"{red ✗ FAILED} {dim $(stats)}");
+            ? styledText(i"{green ✓ passed} {dim $(stamp[])  $(stats)}")
+            : styledText(i"{red ✗ FAILED} {dim $(stamp[])  $(stats)}");
     return success
-        ? styledText(i"{green ✓ passed}")
-        : styledText(i"{red ✗ FAILED}");
+        ? styledText(i"{green ✓ passed} {dim $(stamp[])}")
+        : styledText(i"{red ✗ FAILED} {dim $(stamp[])}");
 }
 
-/// Displays the result box for an example or package-test run.
+/// Stamp a header with the same `Δt | Δtᵢ` columns the log prefix uses.
+private string withDelta(string header, LogDelta delta) @safe
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 48) stamp;
+    writeLogDelta(stamp, delta);
+    return styledText(i"{dim $(stamp[])} {dim │} $(header)");
+}
+
+/// Content range that does not run `load` until the box has finished emitting
+/// its title — so `drawBoxLines` can paint the header before the command starts.
+private struct DeferredLines
+{
+    private string[] _lines;
+    private size_t _i;
+    private bool _loaded;
+    private string[] delegate() _load;
+
+    this(string[] delegate() load)
+    {
+        _load = load;
+    }
+
+    private void ensure()
+    {
+        if (_loaded)
+            return;
+        _lines = _load();
+        _loaded = true;
+    }
+
+    bool empty()
+    {
+        ensure();
+        return _i >= _lines.length;
+    }
+
+    string front()
+    {
+        ensure();
+        return _lines[_i];
+    }
+
+    void popFront()
+    {
+        ++_i;
+    }
+}
+
+/// Paint the box title immediately, then pull `loadLines` (the command) for
+/// the body, then the footer. Fixed-width `resultBox` is what makes the title
+/// emit before any content pull (`drawBoxLines` streaming path).
+private void streamResultBox(
+    string header,
+    scope string[] delegate() loadLines,
+    scope string delegate(LogDelta) makeFooter,
+)
+{
+    const start = takeLogDelta();
+    auto props = resultBox(null);
+    props.footerNow = () => makeFooter(takeLogDelta());
+    foreach (line; drawBoxLines(DeferredLines(loadLines), withDelta(header, start), props))
+    {
+        writeln(line);
+        stdout.flush();
+    }
+}
+
+/// Displays the result box for an already-finished run (example replay).
 private void displayResultBox(
     string[] outputLines, string header, bool success,
     ResourceUsage usage = ResourceUsage.init,
 )
 {
+    const start = takeLogDelta();
     outputLines
         // A failing box keeps the TAIL: a compiler/test-runner puts its
         // diagnosis last, so head-truncation reports the failure while hiding
         // its cause (this box once showed a header and four passing tests for
         // a failure whose error was three lines further down).
         .formatOutputLines(8, keepTail: !success)
-        .drawBox(header, resultBox(resultFooter(success, usage)))
+        .drawBox(withDelta(header, start),
+            resultBox(resultFooter(success, usage, takeLogDelta())))
         .writeln;
 }
 

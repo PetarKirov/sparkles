@@ -25,6 +25,13 @@ struct BoxProps
     bool omitLeftBorder = false;
     string footer = null;
 
+    /// Called when the bottom border is emitted (after content is exhausted).
+    /// If non-null, its return value is used as `footer` at close time so a
+    /// streaming box can fill in a result that is only known then. Layout
+    /// width still uses `footer` / `minWidth` — set `minWidth` when the final
+    /// footer may be wider than this placeholder.
+    string delegate() footerNow = null;
+
     /// Lower/upper bounds on the box's total visible width (frame included), in the
     /// same units as `HeaderProps.width` — set both equal for a fixed-width box.
     ///
@@ -152,6 +159,21 @@ private struct BoxLayout
     bool canStream;
     string[] preparedRows;
     TopItem[] topItems; // structured top region for drawBoxChunks; `top` is derived from it
+}
+
+/// Bottom border, with or without a footer. Shared by layout-time baking and
+/// the late `footerNow` evaluation on a streaming box.
+private string renderBoxBottom(
+    size_t outputWidth, size_t prefixLen, in BoxProps props, string footer)
+{
+    const footerWidth = footer.length ? footer.visibleWidth : 0;
+    if (footer !is null)
+    {
+        auto rule = props.horizontalLine.repeat(outputWidth + prefixLen - footerWidth - 7);
+        return "╰──╼ %s ╾%s─╯".format(footer, rule);
+    }
+    auto rule = props.horizontalLine.repeat(outputWidth + prefixLen - 10);
+    return "╰────────%s──╯".format(rule);
 }
 
 /// Compute the $(LREF BoxLayout) for `content`/`title`/`props`. When the box is a
@@ -287,17 +309,12 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
     foreach (it; topItems)
         topApp ~= it.lead ~ it.text ~ renderClose(it.close, it.text.visibleWidth);
 
-    string bottomLine;
-    if (props.footer !is null)
-    {
-        auto rule = props.horizontalLine.repeat(outputWidth + prefixLen - footerWidth - 7);
-        bottomLine = "╰──╼ %s ╾%s─╯".format(props.footer, rule);
-    }
-    else
-    {
-        auto rule = props.horizontalLine.repeat(outputWidth + prefixLen - 10);
-        bottomLine = "╰────────%s──╯".format(rule);
-    }
+    // Eager bottom: used when the footer is known at layout. A `footerNow`
+    // callback on a streaming box is evaluated later (see BoxLineRange).
+    string bottomLine = (props.footerNow is null || !canStream)
+        ? renderBoxBottom(outputWidth, prefixLen, props,
+            props.footerNow !is null ? props.footerNow() : props.footer)
+        : null;
 
     return BoxLayout(
         prefix.idup, outputWidth, topApp[].splitLines.idupArray, bottomLine,
@@ -403,7 +420,9 @@ private struct BoxLineRange(Content)
         if (!_bottomDone)
         {
             _bottomDone = true;
-            _front = _bottom;
+            _front = _props.footerNow !is null
+                ? renderBoxBottom(_outputWidth, _prefix.length, _props, _props.footerNow())
+                : _bottom;
             return;
         }
         _empty = true;
@@ -566,7 +585,7 @@ private struct BoxChunkRange(bool lineBuffered, Content)
             // is just its top region and bottom border.
             if (!nextTextChunk(_laText, _laPre))
             {
-                _front = _topFrame ~ _bottom;
+                _front = _topFrame ~ resolvedBottom();
                 _finished = true;
                 return;
             }
@@ -583,10 +602,15 @@ private struct BoxChunkRange(bool lineBuffered, Content)
         {
             // `_laText` was the last content chunk: append the trailing frame (the
             // last row's close, then the bottom border).
-            _front = _laPre ~ _laText ~ _pending ~ _bottom;
+            _front = _laPre ~ _laText ~ _pending ~ resolvedBottom();
             _finished = true;
         }
     }
+
+    private string resolvedBottom()
+        => _props.footerNow !is null
+            ? renderBoxBottom(_outputWidth, _prefix.visibleWidth, _props, _props.footerNow())
+            : _bottom;
 
     // Pull the next content chunk and the frame bytes that must precede it. Frame
     // pieces accumulate in `_pending` across rows (including empty/decoration rows) and
@@ -1214,6 +1238,44 @@ unittest
     auto lazyContent = ["one", "two", "three"].map!(x => x);
     const want = drawBox(["one", "two", "three"], "T", BoxProps(minWidth: 24, maxWidth: 24));
     assert(drawBoxLines(lazyContent, "T", BoxProps(minWidth: 24, maxWidth: 24)).join("\n") == want);
+}
+
+@("drawBox.lines.headerBeforeContentPull")
+@system unittest
+{
+    import std.array : join;
+
+    // A fixed-width box emits its title row without asking the content range
+    // anything. That is what lets a CI result box paint its header before the
+    // command has started.
+    size_t pulls;
+    struct Hold
+    {
+        string[] lines = ["body"];
+        size_t i;
+        bool empty()
+        {
+            pulls++;
+            return i >= lines.length;
+        }
+        string front() => lines[i];
+        void popFront() { i++; }
+    }
+
+    const props = BoxProps(minWidth: 40, maxWidth: 40, footerNow: () => "later");
+    auto box = drawBoxLines(Hold(), "Title", props);
+    assert(pulls == 0, "constructing the range must not pull content");
+    assert(box.front.canFind("Title"), box.front);
+
+    // Footer is evaluated only once the content is exhausted.
+    bool footerCalled;
+    const late = BoxProps(minWidth: 40, maxWidth: 40, footerNow: () {
+        footerCalled = true;
+        return "done";
+    });
+    const rendered = drawBoxLines(["ok"], "T", late).join("\n");
+    assert(footerCalled);
+    assert(rendered.canFind("done"), rendered);
 }
 
 @("drawBox.wrap.preservesInternalWhitespace")
