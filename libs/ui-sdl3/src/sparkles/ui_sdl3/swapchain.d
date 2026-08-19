@@ -87,6 +87,11 @@ The present mode.
 vsync without blocking the submitter — it replaces the queued frame rather than
 waiting — which is what a UI wants when it can render faster than the display.
 `IMMEDIATE` tears and is never chosen automatically.
+
+The one-argument form is that policy. The two-argument form honours
+`preferred` when the surface offers it, and is what a CLI `--present-mode`
+feeds; a missing preferred mode is the caller's error, not a silent
+fallback — $(LREF offersPresentMode) is the check.
 */
 VkPresentModeKHR choosePresentMode(scope const VkPresentModeKHR[] available)
     @safe pure nothrow @nogc
@@ -97,6 +102,28 @@ VkPresentModeKHR choosePresentMode(scope const VkPresentModeKHR[] available)
 
     return VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR;
 }
+
+/// ditto
+VkPresentModeKHR choosePresentMode(scope const VkPresentModeKHR[] available,
+    VkPresentModeKHR preferred) @safe pure nothrow @nogc
+{
+    if (offersPresentMode(available, preferred))
+        return preferred;
+    return choosePresentMode(available);
+}
+
+/// `true` when `mode` is in the surface's list.
+bool offersPresentMode(scope const VkPresentModeKHR[] available, VkPresentModeKHR mode)
+    @safe pure nothrow @nogc
+{
+    foreach (offered; available)
+        if (offered == mode)
+            return true;
+    return false;
+}
+
+/// Sentinel for "no preference": $(LREF choosePresentMode) then picks.
+enum VkPresentModeKHR anyPresentMode = cast(VkPresentModeKHR) uint.max;
 
 /**
 How many images to ask for.
@@ -187,7 +214,8 @@ struct Swapchain
     */
     static SdlExpected!() create(ref Swapchain sc, ref VulkanContext vk,
         in PixelSize windowPixels, VkSwapchainKHR previous = null,
-        in PixelSize minAlloc = PixelSize.init) @system nothrow
+        in PixelSize minAlloc = PixelSize.init,
+        VkPresentModeKHR preferredPresentMode = anyPresentMode) @system nothrow
     {
         VkSurfaceCapabilitiesKHR caps;
         auto queried = vk.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
@@ -208,7 +236,15 @@ struct Swapchain
         const surfaceFormat = chooseSurfaceFormat(formats);
         sc.format = surfaceFormat.format;
         sc.colorSpace = surfaceFormat.colorSpace;
-        sc.presentMode = choosePresentMode(modes);
+        if (preferredPresentMode != anyPresentMode)
+        {
+            if (!offersPresentMode(modes, preferredPresentMode))
+                return err!void("present mode `" ~ presentModeName(preferredPresentMode)
+                    ~ "` is not available");
+            sc.presentMode = preferredPresentMode;
+        }
+        else
+            sc.presentMode = choosePresentMode(modes);
         sc.extent = chooseExtent(caps, windowPixels, minAlloc);
 
         // A zero-area swapchain is invalid. It happens while a window is
@@ -286,7 +322,8 @@ struct Swapchain
     */
     static SdlExpected!SwapchainResize recreate(ref Swapchain sc, ref VulkanContext vk,
         in PixelSize windowPixels, bool force = false,
-        in PixelSize minAlloc = PixelSize.init) @system nothrow
+        in PixelSize minAlloc = PixelSize.init,
+        VkPresentModeKHR preferredPresentMode = anyPresentMode) @system nothrow
     {
         VkSurfaceCapabilitiesKHR caps;
         auto queried = vk.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
@@ -304,7 +341,7 @@ struct Swapchain
             if (first != SwapchainResize.rebuilt)
                 return ok!string(first);
 
-            auto made = create(sc, vk, windowPixels, null, minAlloc);
+            auto made = create(sc, vk, windowPixels, null, minAlloc, preferredPresentMode);
             return made.hasError
                 ? err!SwapchainResize(made.error)
                 : ok!string(SwapchainResize.rebuilt);
@@ -503,6 +540,20 @@ struct Swapchain
         assert(choosePresentMode([VK_PRESENT_MODE_IMMEDIATE_KHR])
             == VK_PRESENT_MODE_FIFO_KHR);
         assert(choosePresentMode([]) == VK_PRESENT_MODE_FIFO_KHR);
+
+        // A named preference wins when the surface offers it, and is
+        // ignored (mailbox-or-fifo) when it does not — the create path
+        // rejects a missing preference before it gets here.
+        assert(choosePresentMode(
+            [VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR],
+            VK_PRESENT_MODE_IMMEDIATE_KHR) == VK_PRESENT_MODE_IMMEDIATE_KHR);
+        assert(choosePresentMode(
+            [VK_PRESENT_MODE_FIFO_KHR],
+            VK_PRESENT_MODE_MAILBOX_KHR) == VK_PRESENT_MODE_FIFO_KHR);
+
+        assert(offersPresentMode([VK_PRESENT_MODE_FIFO_KHR], VK_PRESENT_MODE_FIFO_KHR));
+        assert(!offersPresentMode([VK_PRESENT_MODE_FIFO_KHR], VK_PRESENT_MODE_MAILBOX_KHR));
+        assert(!offersPresentMode([], VK_PRESENT_MODE_FIFO_KHR));
     }
 }
 

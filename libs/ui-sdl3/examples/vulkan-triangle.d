@@ -106,6 +106,11 @@ struct VulkanTriangle
         description: "Change the window size every frame (exercises swapchain rebuild)"))
     bool resizeStress;
 
+    @(Option("present-mode",
+        allowedValues: ["auto", "fifo", "fifo-relaxed", "mailbox", "immediate"],
+        description: "Swapchain present mode (auto = mailbox if offered, else fifo)"))
+    string presentMode = "auto";
+
     Expected!(void, string) run()
     {
         Window window;
@@ -128,7 +133,11 @@ struct VulkanTriangle
         if (brought.hasError)
             return skip("cannot bring up Vulkan", brought.error);
 
-        auto drawn = draw(vk, window, frames, resizeStress);
+        VkPresentModeKHR preferred = anyPresentMode;
+        if (presentMode != "auto" && !tryPresentMode(presentMode, preferred))
+            return err!void("unknown present mode `" ~ presentMode ~ "`");
+
+        auto drawn = draw(vk, window, frames, resizeStress, preferred);
         if (drawn.hasError)
             return err!void(drawn.error);
 
@@ -167,7 +176,8 @@ struct RunReport
 // -----------------------------------------------------------------------------
 
 Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
-    int frameBudget, bool resizeStress = false) @system
+    int frameBudget, bool resizeStress = false,
+    VkPresentModeKHR preferredPresentMode = anyPresentMode) @system
 {
     RunReport report = { device: vk.deviceName };
 
@@ -227,7 +237,8 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
                 minAlloc = display.value;
         }
 
-        auto updated = Swapchain.recreate(sc, vk, px.value, force, minAlloc);
+        auto updated = Swapchain.recreate(sc, vk, px.value, force, minAlloc,
+            preferredPresentMode);
         if (updated.hasError)
             return err!void(updated.error);
         if (updated.value != SwapchainResize.rebuilt)
