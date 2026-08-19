@@ -22,6 +22,7 @@ growing — an infinite canvas is unbounded in coordinates, not in content.
 */
 module world;
 
+import lantern : LanternState;
 import sparkles.ui.components.grid_backdrop : gridPreset, GridConfig, GridPreset;
 import sparkles.ui.geometry : Point, Rect;
 
@@ -126,6 +127,12 @@ struct World
     bool minimapVisible = true;      /// `m` toggles it (`IXN4`)
     /// Board backdrop (`GRD7`). Init is the `RND4` faint line grid.
     GridConfig gridConfig;
+    /**
+    The key guide's machine (`LTN`): which chords are pending and whether the
+    panel shows. Interaction state like every other field here (`WLD4`) — the
+    render side reads it, and a scripted test can assert on it.
+    */
+    LanternState lantern;
     /// Settings panel for the grid (`GRD9`).
     bool gridSettingsOpen;
     /// Which named fixture the settings list highlights (0..2).

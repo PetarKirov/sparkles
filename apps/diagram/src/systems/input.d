@@ -24,7 +24,7 @@ the dismissal chain (`IXN6`).
 */
 module systems.input;
 
-import sparkles.input : Event, Gesture, GestureEvent, InputCapabilities,
+import sparkles.input : Event, Gesture, GestureEvent, InputCapabilities, isDismiss,
     Key, KeyAction, KeyEvent, match, Mods, PointerAction, PointerButton,
     PointerEvent, WheelEvent;
 import sparkles.ui.geometry : Point, Rect, Size;
@@ -33,7 +33,8 @@ import sparkles.ui_app.backend : Backend;
 
 import camera : Camera, contentBounds, fitContent, scaleBase, minimapDivisor,
     minimapToWorld;
-import keymap : commandFor, DiagramCommand, DiagramContext;
+import keymap : DiagramCommand, DiagramContext;
+import lantern : ltnStep = step, StepKind;
 import sparkles.ui.components.grid_backdrop : GridPreset;
 
 import world : Capture, Entity, liveBounds, noEntity, Tool, World;
@@ -260,17 +261,42 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
         return false;
     }
 
-    const c = commandFor(k, DiagramContext(isEditing: w.isEditing,
-        gridSettingsOpen: w.gridSettingsOpen));
+    const ctx = DiagramContext(isEditing: w.isEditing,
+        gridSettingsOpen: w.gridSettingsOpen);
+
+    // Escape closes the guide before it means anything else — otherwise
+    // dismissing the panel would walk the chain underneath it, and on an
+    // empty board that chain ends in quitting (`IXN6`, `LTN9`).
+    if (w.lantern.shown && !w.lantern.active && isDismiss(k))
+    {
+        w.lantern.reset();
+        return false;
+    }
+
+    // Every key goes through the guide (`LTN`): it answers the panel's own
+    // keys, descends a prefix, or hands back the command the table resolved.
+    const st = ltnStep(w.lantern, k, ctx);
+    if (st.kind != StepKind.execute)
+    {
+        // `unbound` means "do whatever you would have done" — which, in a
+        // label edit, is to type the RAW character (`IXN5`), not the
+        // case-folded one the table matched against.
+        if (st.kind == StepKind.unbound && w.isEditing && k.key == Key.char_)
+            w.editType(k.ch);
+        return false;
+    }
+    const c = st.cmd;
 
     final switch (c.cmd) with (DiagramCommand)
     {
         case none:
-            // In a label edit an unbound printable is text (`IXN5`) — and it
-            // is the RAW character that gets typed, not the case-folded one
-            // the table matched against.
-            if (w.isEditing && k.key == Key.char_)
-                w.editType(k.ch);
+            return false;
+
+        case showGuide:
+            // A `reveal` row never reaches here: the guide consumes it and
+            // opens the panel itself. The arm exists so the switch stays
+            // `final` — and so adding a guide command is a compile error
+            // rather than a silent no-op.
             return false;
 
         case quit:

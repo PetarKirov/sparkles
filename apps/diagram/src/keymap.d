@@ -64,6 +64,7 @@ enum DiagramCommand : ubyte
     // The shell.
     quit,        /// `q` — bypasses the dismissal chain
     dismiss,     /// Esc / Back — walks the chain (`IXN6`)
+    showGuide,   /// `?` — the key guide (`LTN`); the guide consumes it
 
     // Tools (`IXN2`).
     toolSelect, toolRect, toolConnect,
@@ -198,6 +199,11 @@ immutable Binding[] diagramBindings = [
         "delete selection"),
 
     // ── the shell ────────────────────────────────────────────────────────
+    // `reveal` (`LTN`): the guide opens the panel instead of dispatching, so
+    // this row's arm in the input system is deliberately empty. Board scope,
+    // not `always` — typing `?` into a label must type it (`IXN5`).
+    bind(DiagramScope.board, chord('?'), DiagramCommand.showGuide,
+        "show all keys", reveal: true),
     bind(DiagramScope.board, chord('q'), DiagramCommand.quit, "quit"),
     bind(DiagramScope.board, chord(Key.escape), DiagramCommand.dismiss, "dismiss"),
     bind(DiagramScope.board, chord(Key.back), DiagramCommand.dismiss, "dismiss"),

@@ -17,18 +17,28 @@ arbitration (`IXN1`).
 */
 module diagram_app;
 
+import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.input : EndOfInput, Event, isEndOfInput, match;
+import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, LanternStyle,
+    Placement, viewLantern;
+import sparkles.ui.display_list : buildDisplayListInto;
+import sparkles.ui.geometry : Constraints, Size;
 import sparkles.ui.interp.immediate : paint;
-import sparkles.ui.layout : Frame;
+import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : CaptureState;
-import sparkles.ui.widget : WidgetTree;
+import sparkles.ui.widget : Builder, WidgetTree;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.run_app : AppTheme;
 
 import camera : Camera;
+import keymap : Binding, bindingsAt, DiagramContext;
 import systems.input : InputView, systemInput;
 import systems.render : FrameOps, systemRender;
 import world : World;
+
+/// How many rows the key guide may list at once (`LTN`). The board's whole
+/// table is smaller than this, so the panel never scrolls today.
+enum size_t guideRowCap = 64;
 
 /// The application component: state → frames, events → state.
 struct DiagramApp
@@ -45,6 +55,8 @@ struct DiagramApp
     AppTheme theme;
     /// Reused op buffer — board + minimap + chrome (`RND1`, `DIA5`).
     FrameOps frameOps;
+    /// The key guide's label storage, reused across frames (`LTN`).
+    LabelArena guideLabels;
 
     /// Empty tree: the board is a display-list application, not a widget tree.
     /// The host still paints the theme's page fill; we paint on top in
@@ -91,9 +103,57 @@ struct DiagramApp
     {
         systemRender(world, camera, h.size, theme.palette, theme.pageFg,
             theme.pageBg, frameOps);
+        paintGuide(h.size);
         // One call on every host: `paint` is `auto ref`, so a recorder field
         // binds by reference and a live by-value handle binds by value.
         .paint(h.canvas, frameOps[]);
+    }
+
+    /**
+    Appends the key guide's panel to the frame, along the bottom edge (`LTN5`).
+
+    The panel is a widget tree — $(REF viewLantern, sparkles,ui,components,lantern_view)
+    builds it from the same $(REF bindingsAt, keymap) the resolver reads, so
+    what it advertises cannot disagree with what a key does. Nothing here
+    measures a label or divides a width.
+
+    $(B The one place the board leaves its op-buffer discipline.) `Builder`
+    and `layout` allocate, so this costs a GC frame — but only on the frames
+    the panel actually shows, and never in $(REF systemRender, systems,render),
+    which stays `@nogc` (`DIA5`).
+    */
+    private void paintGuide(in Size viewport) @safe
+    {
+        if (!world.lantern.shown)
+            return;
+
+        SmallBuffer!(Binding, guideRowCap) listed;
+        bindingsAt(listed, DiagramContext(isEditing: world.isEditing,
+            gridSettingsOpen: world.gridSettingsOpen), world.lantern.pending[]);
+        if (listed.length == 0)
+            return;
+
+        Builder b;
+        BoxLayout box;
+        const root = viewLantern(b, guideLabels, listed[],
+            world.lantern.pending.length, viewport.width, box,
+            Placement.classic, LanternStyle.init, 0, world.lantern.scroll);
+        auto tree = b.finish(root);
+        auto frames = layout(tree, Constraints(maxW: viewport.width));
+
+        // The panel builds at the origin; the frame wants it on the bottom
+        // edge, so the appended ops — and only those — shift down together.
+        const dy = viewport.height - frames[tree.root].rect.height;
+        const start = frameOps.length;
+        buildDisplayListInto(tree, frames, theme.palette, theme.pageFg,
+            theme.pageBg, frameOps);
+        if (dy <= 0)
+            return;
+        foreach (i; start .. frameOps.length)
+        {
+            frameOps[i].rect.origin.y = frameOps[i].rect.origin.y + dy;
+            frameOps[i].to.y = frameOps[i].to.y + dy;
+        }
     }
 }
 
@@ -235,6 +295,53 @@ unittest
     ]);
     assert(rec2.quitRequested);
     assert(app2.camera.zoom == 0 && app2.camera.scalePercent == 100);
+}
+
+@("diagram.app.theGuidePaintsWhatTheTableSays")
+@safe
+unittest
+{
+    // `?` reveals the guide (`LTN`), and what it paints comes from the same
+    // table the resolver reads — so a key that works is a key that is listed.
+    // The panel's rows sit along the bottom edge, below the board's ops.
+    auto app = themedApp();
+    auto rec = runAppRecorded(app, RunConfig.init, [charEvent('?')]);
+
+    assert(rec.frames.length == 2);
+    assert(app.world.lantern.shown, "the reveal row opened the panel");
+
+    // What the panel paints is what the resolver would answer: the rows come
+    // from `bindingsAt` over the same table, so this asserts the tie rather
+    // than a hardcoded label. The board's set is taller than the panel's
+    // window, so only the first rows are guaranteed painted.
+    SmallBuffer!(Binding, guideRowCap) listed;
+    bindingsAt(listed, DiagramContext.init);
+    assert(listed.length > 0);
+    const firstDesc = listed[0].desc;
+
+    // The panel's ops ride the board's own buffer (`RND1`), appended after
+    // the frame the render system built.
+    bool painted;
+    int panelTop = int.max;
+    foreach (ref op; app.frameOps[])
+    {
+        if (op.kind != OpKind.textRun || op.text != firstDesc)
+            continue;
+        painted = true;
+        if (op.rect.y < panelTop)
+            panelTop = op.rect.y;
+    }
+    assert(painted, "the panel lists what the table resolves");
+    assert(panelTop > 1, "…and it hugs the bottom edge, not the toolbar");
+
+    // A label edit hides the board's scope, so `?` never reaches the guide:
+    // it is text, and it lands in the label (`IXN5`).
+    auto typing = themedApp();
+    const e = typing.world.spawn(Rect(2, 2, 6, 3));
+    typing.world.beginEdit(e);
+    cast(void) runAppRecorded(typing, RunConfig.init, [charEvent('?')]);
+    assert(!typing.world.lantern.shown);
+    assert(typing.world.editText == "?", "the guide's key typed into the label");
 }
 
 @("diagram.app.scriptedSessionMenuGroupLabelConnect")
