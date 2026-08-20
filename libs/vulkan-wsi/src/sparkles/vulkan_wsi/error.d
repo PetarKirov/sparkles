@@ -50,6 +50,16 @@ struct VulkanWsiExpectedHook
 alias VulkanWsiResult(T = void) =
     Expected!(T, VulkanWsiError, VulkanWsiExpectedHook);
 
+/**
+Resource-management failures after context bring-up.
+
+This aliases the existing SDL presentation error shape during extraction, so
+`sparkles:ui-sdl3` can consume the shared command/frame/swapchain types without
+an error conversion layer. Context and native-surface failures remain the
+structured $(LREF VulkanWsiError) above.
+*/
+alias PresentationResult(T = void) = Expected!(T, string);
+
 VulkanWsiResult!T vulkanWsiOk(T)(auto ref T value)
 {
     import core.lifetime : forward;

@@ -12,9 +12,11 @@
 **Status:** the `sparkles:wsi` native Wayland lifecycle and Event Horizon
 prepare-read seam are implemented and pass under headless Weston. The first
 `sparkles:vulkan-wsi` bridge now creates a native Wayland `VkSurfaceKHR` and selects a
-present device while holding the shared-display I/O borrow. Swapchain/frame extraction,
-the Vulkan triangle and Mutter live-resize measurement are still pending; keep the SDL
-triangle until those gates pass.
+present device while holding the shared-display I/O borrow. `CommandPool`, `FrameSync`,
+`Swapchain`, resize decisions and retirement now live there; the old SDL modules are
+compatibility re-exports and the SDL triangle builds unchanged. The native Vulkan
+triangle and Mutter live-resize measurement are still pending; keep the SDL triangle
+until those gates pass.
 **Date:** 2026-08-20.
 **Branch:** `feat/ui-sdl3-input`. The measured X11-good loop (`32c323f71`) and the Darwin `events.d` fix (`1faff458a`) are **committed** — see [§3 Working tree](#3-working-tree).
 **This document is for the next agent.** Read [§0](#0-read-this-first) then [§1](#1-mission). Do not re-run the SDL/libdecor experiments in [§5](#5-chronology--every-step-we-took).
@@ -592,9 +594,9 @@ For the native example:
 
    Keep `create(ctx, Window, …)` as the SDL path.
 
-5. `PixelSize` lives in `window.d` (SDL). `Swapchain` imports it. Either pass width/height as two `int`s, copy the 6-line struct into the example, or lift `PixelSize` into `sparkles:ui-sdl3` in a SDL-free module. Do not make the Wayland example import `window.d` if that pulls SDL init.
+5. `Swapchain.chooseExtent` and creation are generic over a width/height value. Native callers pass `sparkles.wsi.PhysicalSize`; SDL callers keep passing `PixelSize`. Do not import the SDL window module from a native app.
 
-6. `Swapchain` / `FrameSync` take `ref VulkanContext`. They do not call SDL. Reuse them as-is once you have a context + surface.
+6. `sparkles.vulkan_wsi.{Swapchain,FrameSync,CommandPool}` are generic over the context shape and do not call SDL. Reuse them directly with the native `VulkanContext`; the `sparkles.ui_sdl3` names only preserve existing source imports.
 
 ### 8.5 Event loop (copy vkcube, not SDL)
 
@@ -695,20 +697,21 @@ The research Wayland example’s `dub.sdl` is only `libs "wayland-client"` — i
 
 ## 9. Repository map
 
-| Path                                                               | Role                                                                                                                                              |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `libs/ui-sdl3/examples/vulkan-triangle.d`                          | Current SDL example. Owns triangle, CLI, frame loop, `RenderTarget`, `Pipeline`. Keep GPU bits.                                                   |
-| `libs/ui-sdl3/examples/shaders/`                                   | `triangle.vert` / `.frag` + SPIR-V                                                                                                                |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/swapchain.d`                    | `chooseExtent` / `choosePresentMode` / `decideResize` / `recreate` / `reap(limit)`. Reuse if the new window feeds `VulkanContext` + a pixel size. |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/frame.d`                        | `FrameSync`, `decideAcquire`. Reuse.                                                                                                              |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/vulkan_context.d`               | Instance / device / **SDL** surface. Needs a Wayland-native create path.                                                                          |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/window.d`                       | SDL window + `PixelSize`. Do not use the window for the native app.                                                                               |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/events.d`                       | SDL → `sparkles:input`. Darwin `size_t` fix is `1faff458a`.                                                                                       |
-| `libs/vulkan/src/sparkles/vulkan/vulkan_c.c`                       | `VK_NO_PROTOTYPES`, **no** `VK_USE_PLATFORM_*`                                                                                                    |
-| `libs/vulkan/src/sparkles/vulkan/loader.d`                         | `vkGetInstanceProcAddr` without SDL                                                                                                               |
-| `libs/vulkan/src/sparkles/vulkan/dispatch.d`                       | Has `khrSurface` + swapchain; **no** wayland surface                                                                                              |
-| `docs/research/window-system-integration/os-apis/wayland/example/` | Registry-only ImportC bootstrap                                                                                                                   |
-| `docs/guidelines/importc-c-libraries.md`                           | How we add C deps                                                                                                                                 |
+| Path                                                               | Role                                                                                                                                         |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `libs/ui-sdl3/examples/vulkan-triangle.d`                          | Current SDL example. Owns triangle, CLI, frame loop, `RenderTarget`, `Pipeline`. Keep GPU bits.                                              |
+| `libs/ui-sdl3/examples/shaders/`                                   | `triangle.vert` / `.frag` + SPIR-V                                                                                                           |
+| `libs/vulkan-wsi/src/sparkles/vulkan_wsi/swapchain.d`              | Shared `chooseExtent` / `choosePresentMode` / `decideResize` / `recreate` / `reap(limit)`; accepts native `PhysicalSize` or SDL `PixelSize`. |
+| `libs/vulkan-wsi/src/sparkles/vulkan_wsi/frame.d`                  | Shared `FrameSync`, `decideAcquire`, fence/semaphore ownership and deferred retirement.                                                      |
+| `libs/vulkan-wsi/src/sparkles/vulkan_wsi/commands.d`               | Shared per-frame command pool/buffers.                                                                                                       |
+| `libs/ui-sdl3/src/sparkles/ui_sdl3/vulkan_context.d`               | Instance / device / **SDL** surface. Needs a Wayland-native create path.                                                                     |
+| `libs/ui-sdl3/src/sparkles/ui_sdl3/window.d`                       | SDL window + `PixelSize`. Do not use the window for the native app.                                                                          |
+| `libs/ui-sdl3/src/sparkles/ui_sdl3/events.d`                       | SDL → `sparkles:input`. Darwin `size_t` fix is `1faff458a`.                                                                                  |
+| `libs/vulkan/src/sparkles/vulkan/vulkan_c.c`                       | `VK_NO_PROTOTYPES`; target-gated native surface ABI/dispatch is now present.                                                                 |
+| `libs/vulkan/src/sparkles/vulkan/loader.d`                         | `vkGetInstanceProcAddr` without SDL                                                                                                          |
+| `libs/vulkan/src/sparkles/vulkan/dispatch.d`                       | Core/swapchain plus target-gated Wayland/XCB/Win32/Metal surface dispatch.                                                                   |
+| `docs/research/window-system-integration/os-apis/wayland/example/` | Registry-only ImportC bootstrap                                                                                                              |
+| `docs/guidelines/importc-c-libraries.md`                           | How we add C deps                                                                                                                            |
 
 `sparkles:ui-skia` / Graphite is out of scope. Same rule as today: prove WSI without Skia.
 

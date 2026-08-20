@@ -175,9 +175,12 @@ entry condition for renderer integration.
 Gate: Vulkan validation clean on Wayland, X11, Win32/Wine and native Windows CI; native
 macOS uses the handle probe here but Metal in M7.
 
-Delivered first slice: target-native surface ABI/dispatch in `sparkles:vulkan`, typed
+Delivered slices: target-native surface ABI/dispatch in `sparkles:vulkan`, typed
 handle-pair validation, instance/surface/device ownership in `sparkles:vulkan-wsi`, and
-a headless-Weston Wayland-to-present-device smoke. Swapchain/frame extraction, the
+a headless-Weston Wayland-to-present-device smoke; then the proven `CommandPool`,
+`FrameSync`, `Swapchain`, resize decisions, and deferred-retirement policy were moved
+from SDL into that bridge. The SDL module names are compatibility re-exports and its
+existing triangle builds unchanged against the shared implementation. The native
 triangle, X11/Win32 runtime surface probes, validation, and HITL resize remain.
 
 ## Milestone M7 — Skia Graphite

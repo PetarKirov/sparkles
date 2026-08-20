@@ -13,6 +13,10 @@ dflags "-preview=in" "-preview=dip1000"
 libs "SDL3"
 
 dependency "sparkles:vulkan" path="../.."
+// Presentation resources are backend-neutral Vulkan objects. SDL only owns
+// its surface/context adapter; both SDL and native sparkles:wsi hosts use the
+// same command-pool, frame-sync and swapchain implementation.
+dependency "sparkles:vulkan-wsi" path="../.."
 // The shared input vocabulary every `sparkles:ui` target speaks. SDL's event
 // queue is translated into it in `events.d`; nothing above that boundary ever
 // sees an `SDL_Event`.
