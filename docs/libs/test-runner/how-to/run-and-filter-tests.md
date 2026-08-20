@@ -48,4 +48,6 @@ dub test :base -- --self-test # base's tests + the runner's, in one process
 ## Exit status
 
 The test binary exits non-zero when any test fails, in every mode — safe for
-CI and `git bisect run`.
+CI and `git bisect run`. A failing run reprints every failed test (name,
+location, throwable, stack trace) after the summary, so a CI log's tail names
+the failures even when hundreds of passing lines came first.

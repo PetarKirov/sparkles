@@ -418,6 +418,60 @@ unittest
         ~ "1 workloads (run with --bench) in 12.0ms");
 }
 
+/// A recap of every failed test, printed after the summary so a long parallel
+/// run still names each failure (and its throwable) at the end of the log.
+/// Empty when nothing failed. Traces are always verbose — this is the
+/// permanent record, not the compact live line.
+string formatFailedRecap(in TestResult[] failed, bool colored) @safe
+{
+    if (!failed.length)
+        return null;
+
+    string result = render(colored,
+        i"\n{bold.red Failed tests} {dim ($(failed.length))}:\n");
+    foreach (i, ref r; failed)
+    {
+        if (i)
+            result ~= "\n";
+        result ~= r.test.traits.isCtfe
+            ? formatCtfeFailedLine(r.test, colored) ~ "\n"
+            : formatResultLine(r, colored, verbose: true, width: 0) ~ "\n";
+        foreach (thrown; r.thrown)
+            result ~= formatThrown(thrown, colored, verbose: true);
+    }
+    return result;
+}
+
+@("formatFailedRecap.plain")
+@safe
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    assert(formatFailedRecap([], false) is null);
+
+    auto boom = TestResult(
+        test: Test(
+            fullName: "pkg.mod.__unittest_L1_C1",
+            name: "case",
+            location: TestLocation(file: "src/mod.d", line: 9, column: 1),
+        ),
+        thrown: [Thrown(
+            type: "core.exception.AssertError",
+            message: "boom",
+            file: "src/mod.d",
+            line: 9,
+            info: ["frame0", "sparkles.test_runner.execution.executeTest"],
+        )],
+    );
+    const recap = formatFailedRecap([boom], false);
+    assert(recap.canFind("Failed tests (1):"), recap);
+    assert(recap.canFind("✗ pkg.mod case"), recap);
+    assert(recap.canFind("[src/mod.d:9]"), recap);
+    assert(recap.canFind("AssertError thrown from src/mod.d:9: boom"), recap);
+    assert(recap.canFind("sparkles.test_runner.execution.executeTest"), recap);
+}
+
 @("formatResultLine.skipped")
 @safe
 unittest
