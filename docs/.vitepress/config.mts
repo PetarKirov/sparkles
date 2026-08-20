@@ -934,6 +934,10 @@ export default withMermaid(
                 },
                 { text: 'Inspector', link: '/specs/ui/inspector' },
                 {
+                  text: 'Property tree (planned)',
+                  link: '/specs/ui/property-tree',
+                },
+                {
                   text: 'Anchored overlays (proposed)',
                   link: '/specs/ui/popup',
                 },
