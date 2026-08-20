@@ -4158,19 +4158,327 @@
               },
               {
                 "text": "Wayland",
-                "link": "/research/window-system-integration/os-apis/wayland/"
+                "link": "/research/window-system-integration/os-apis/wayland/",
+                "items": [
+                  {
+                    "text": "Feature demos",
+                    "collapsed": true,
+                    "items": [
+                      {
+                        "text": "Wayland scaffold — a real `xdg-shell` window",
+                        "link": "/research/window-system-integration/os-apis/wayland/scaffold"
+                      },
+                      {
+                        "text": "F01 first pixel & init cost",
+                        "link": "/research/window-system-integration/os-apis/wayland/f01-first-pixel"
+                      },
+                      {
+                        "text": "F02 resize correctness",
+                        "link": "/research/window-system-integration/os-apis/wayland/f02-resize"
+                      },
+                      {
+                        "text": "F03 modal-loop survival",
+                        "link": "/research/window-system-integration/os-apis/wayland/f03-modal-loop"
+                      },
+                      {
+                        "text": "F04 vsync / frame pacing",
+                        "link": "/research/window-system-integration/os-apis/wayland/f04-frame-pacing"
+                      },
+                      {
+                        "text": "F05 loop wakeup & external fds",
+                        "link": "/research/window-system-integration/os-apis/wayland/f05-loop-wakeup"
+                      },
+                      {
+                        "text": "F06 keyboard & keymap",
+                        "link": "/research/window-system-integration/os-apis/wayland/f06-keyboard"
+                      },
+                      {
+                        "text": "F07 IME / text input",
+                        "link": "/research/window-system-integration/os-apis/wayland/f07-text-input"
+                      },
+                      {
+                        "text": "F08 DPI / runtime rescale",
+                        "link": "/research/window-system-integration/os-apis/wayland/f08-dpi-scaling"
+                      },
+                      {
+                        "text": "F09 Output enumeration & hotplug",
+                        "link": "/research/window-system-integration/os-apis/wayland/f09-outputs"
+                      },
+                      {
+                        "text": "F10 Pointer: relative motion, lock & confine",
+                        "link": "/research/window-system-integration/os-apis/wayland/f10-pointer-capture"
+                      },
+                      {
+                        "text": "F11 Scroll fidelity",
+                        "link": "/research/window-system-integration/os-apis/wayland/f11-scroll"
+                      },
+                      {
+                        "text": "F12 Cursors",
+                        "link": "/research/window-system-integration/os-apis/wayland/f12-cursors"
+                      },
+                      {
+                        "text": "F13 CSD & decoration modes",
+                        "link": "/research/window-system-integration/os-apis/wayland/f13-decorations"
+                      },
+                      {
+                        "text": "F14 Window state & vetoable close",
+                        "link": "/research/window-system-integration/os-apis/wayland/f14-window-state"
+                      },
+                      {
+                        "text": "F15 Popup with grab",
+                        "link": "/research/window-system-integration/os-apis/wayland/f15-popup"
+                      },
+                      {
+                        "text": "F16 Clipboard + drag-and-drop",
+                        "link": "/research/window-system-integration/os-apis/wayland/f16-clipboard-dnd"
+                      },
+                      {
+                        "text": "F17 threading probes",
+                        "link": "/research/window-system-integration/os-apis/wayland/f17-threading"
+                      }
+                    ]
+                  }
+                ]
               },
               {
                 "text": "X11 / Xlib",
-                "link": "/research/window-system-integration/os-apis/x11/"
+                "link": "/research/window-system-integration/os-apis/x11/",
+                "items": [
+                  {
+                    "text": "Feature demos",
+                    "collapsed": true,
+                    "items": [
+                      {
+                        "text": "X11 scaffold — findings",
+                        "link": "/research/window-system-integration/os-apis/x11/scaffold"
+                      },
+                      {
+                        "text": "F01 first pixel & init cost",
+                        "link": "/research/window-system-integration/os-apis/x11/f01-first-pixel"
+                      },
+                      {
+                        "text": "F02 resize correctness",
+                        "link": "/research/window-system-integration/os-apis/x11/f02-resize"
+                      },
+                      {
+                        "text": "F03 modal-loop survival",
+                        "link": "/research/window-system-integration/os-apis/x11/f03-modal-loop"
+                      },
+                      {
+                        "text": "F04 vsync / frame pacing (the Present extension)",
+                        "link": "/research/window-system-integration/os-apis/x11/f04-frame-pacing"
+                      },
+                      {
+                        "text": "F05 loop wakeup & external fds",
+                        "link": "/research/window-system-integration/os-apis/x11/f05-loop-wakeup"
+                      },
+                      {
+                        "text": "F06 keyboard & keymap",
+                        "link": "/research/window-system-integration/os-apis/x11/f06-keyboard"
+                      },
+                      {
+                        "text": "F07 IME / text input (XIM)",
+                        "link": "/research/window-system-integration/os-apis/x11/f07-text-input"
+                      },
+                      {
+                        "text": "F08 DPI / runtime rescale (the absence proof)",
+                        "link": "/research/window-system-integration/os-apis/x11/f08-dpi-scaling"
+                      },
+                      {
+                        "text": "F09 output enumeration & hotplug — findings",
+                        "link": "/research/window-system-integration/os-apis/x11/f09-outputs"
+                      },
+                      {
+                        "text": "F10 pointer capture — findings",
+                        "link": "/research/window-system-integration/os-apis/x11/f10-pointer-capture"
+                      },
+                      {
+                        "text": "F11 scroll fidelity — findings",
+                        "link": "/research/window-system-integration/os-apis/x11/f11-scroll"
+                      },
+                      {
+                        "text": "F12 cursors — findings",
+                        "link": "/research/window-system-integration/os-apis/x11/f12-cursors"
+                      },
+                      {
+                        "text": "F14 window state & vetoable close",
+                        "link": "/research/window-system-integration/os-apis/x11/f14-window-state"
+                      },
+                      {
+                        "text": "F15 popup with grab",
+                        "link": "/research/window-system-integration/os-apis/x11/f15-popup"
+                      },
+                      {
+                        "text": "F16 clipboard + file drag-and-drop",
+                        "link": "/research/window-system-integration/os-apis/x11/f16-clipboard-dnd"
+                      },
+                      {
+                        "text": "F17 threading probes",
+                        "link": "/research/window-system-integration/os-apis/x11/f17-threading"
+                      }
+                    ]
+                  }
+                ]
               },
               {
                 "text": "Windows (Win32)",
-                "link": "/research/window-system-integration/os-apis/win32/"
+                "link": "/research/window-system-integration/os-apis/win32/",
+                "items": [
+                  {
+                    "text": "Feature demos",
+                    "collapsed": true,
+                    "items": [
+                      {
+                        "text": "Win32 scaffold — findings",
+                        "link": "/research/window-system-integration/os-apis/win32/scaffold"
+                      },
+                      {
+                        "text": "Win32 — F01: first pixel & init cost",
+                        "link": "/research/window-system-integration/os-apis/win32/f01-first-pixel"
+                      },
+                      {
+                        "text": "Win32 — F02: resize correctness",
+                        "link": "/research/window-system-integration/os-apis/win32/f02-resize"
+                      },
+                      {
+                        "text": "F03 modal-loop survival",
+                        "link": "/research/window-system-integration/os-apis/win32/f03-modal-loop"
+                      },
+                      {
+                        "text": "F04 vsync / frame pacing",
+                        "link": "/research/window-system-integration/os-apis/win32/f04-frame-pacing"
+                      },
+                      {
+                        "text": "Win32 — F05: loop wakeup & external handles",
+                        "link": "/research/window-system-integration/os-apis/win32/f05-loop-wakeup"
+                      },
+                      {
+                        "text": "Win32 — F06: keyboard & keymap",
+                        "link": "/research/window-system-integration/os-apis/win32/f06-keyboard"
+                      },
+                      {
+                        "text": "Win32 — F07: IME / text input",
+                        "link": "/research/window-system-integration/os-apis/win32/f07-text-input"
+                      },
+                      {
+                        "text": "Win32 — F08: DPI / runtime rescale",
+                        "link": "/research/window-system-integration/os-apis/win32/f08-dpi-scaling"
+                      },
+                      {
+                        "text": "Win32 — F09: Output enumeration & hotplug",
+                        "link": "/research/window-system-integration/os-apis/win32/f09-outputs"
+                      },
+                      {
+                        "text": "Win32 — F10: Pointer — relative motion, lock & confine",
+                        "link": "/research/window-system-integration/os-apis/win32/f10-pointer-capture"
+                      },
+                      {
+                        "text": "Win32 — F11: Scroll fidelity",
+                        "link": "/research/window-system-integration/os-apis/win32/f11-scroll"
+                      },
+                      {
+                        "text": "Win32 — F12: Cursors",
+                        "link": "/research/window-system-integration/os-apis/win32/f12-cursors"
+                      },
+                      {
+                        "text": "F14 window state & vetoable close",
+                        "link": "/research/window-system-integration/os-apis/win32/f14-window-state"
+                      },
+                      {
+                        "text": "F15 popup with grab",
+                        "link": "/research/window-system-integration/os-apis/win32/f15-popup"
+                      },
+                      {
+                        "text": "F16 clipboard + drag-and-drop",
+                        "link": "/research/window-system-integration/os-apis/win32/f16-clipboard-dnd"
+                      },
+                      {
+                        "text": "F17 threading probes",
+                        "link": "/research/window-system-integration/os-apis/win32/f17-threading"
+                      }
+                    ]
+                  }
+                ]
               },
               {
                 "text": "macOS (AppKit)",
-                "link": "/research/window-system-integration/os-apis/appkit/"
+                "link": "/research/window-system-integration/os-apis/appkit/",
+                "items": [
+                  {
+                    "text": "Feature demos",
+                    "collapsed": true,
+                    "items": [
+                      {
+                        "text": "AppKit scaffold — findings",
+                        "link": "/research/window-system-integration/os-apis/appkit/scaffold"
+                      },
+                      {
+                        "text": "F01 first pixel & init cost",
+                        "link": "/research/window-system-integration/os-apis/appkit/f01-first-pixel"
+                      },
+                      {
+                        "text": "F02 resize correctness",
+                        "link": "/research/window-system-integration/os-apis/appkit/f02-resize"
+                      },
+                      {
+                        "text": "F03 modal-loop survival",
+                        "link": "/research/window-system-integration/os-apis/appkit/f03-modal-loop"
+                      },
+                      {
+                        "text": "F04 vsync / frame pacing",
+                        "link": "/research/window-system-integration/os-apis/appkit/f04-frame-pacing"
+                      },
+                      {
+                        "text": "F05 loop wakeup & external fds",
+                        "link": "/research/window-system-integration/os-apis/appkit/f05-loop-wakeup"
+                      },
+                      {
+                        "text": "F06 keyboard & keymap",
+                        "link": "/research/window-system-integration/os-apis/appkit/f06-keyboard"
+                      },
+                      {
+                        "text": "F07 IME / text input (`NSTextInputClient`)",
+                        "link": "/research/window-system-integration/os-apis/appkit/f07-text-input"
+                      },
+                      {
+                        "text": "F08 DPI / `backingScaleFactor`",
+                        "link": "/research/window-system-integration/os-apis/appkit/f08-dpi-scaling"
+                      },
+                      {
+                        "text": "F09 Output enumeration & hotplug",
+                        "link": "/research/window-system-integration/os-apis/appkit/f09-outputs"
+                      },
+                      {
+                        "text": "F10 Pointer capture: lock, confine, relative motion",
+                        "link": "/research/window-system-integration/os-apis/appkit/f10-pointer-capture"
+                      },
+                      {
+                        "text": "F11 Scroll fidelity",
+                        "link": "/research/window-system-integration/os-apis/appkit/f11-scroll"
+                      },
+                      {
+                        "text": "F12 Cursors",
+                        "link": "/research/window-system-integration/os-apis/appkit/f12-cursors"
+                      },
+                      {
+                        "text": "F14 Window state & vetoable close",
+                        "link": "/research/window-system-integration/os-apis/appkit/f14-window-state"
+                      },
+                      {
+                        "text": "F15 Popup with grab",
+                        "link": "/research/window-system-integration/os-apis/appkit/f15-popup"
+                      },
+                      {
+                        "text": "F16 clipboard + drag-and-drop",
+                        "link": "/research/window-system-integration/os-apis/appkit/f16-clipboard-dnd"
+                      },
+                      {
+                        "text": "F17 threading probes",
+                        "link": "/research/window-system-integration/os-apis/appkit/f17-threading"
+                      }
+                    ]
+                  }
+                ]
               },
               {
                 "text": "iOS / iPadOS (UIKit)",
