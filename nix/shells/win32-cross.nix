@@ -62,7 +62,19 @@
           microsoftVisualStudioLicenseAccepted = true;
         };
       };
-      winSdk = pkgsUnfree.windows.sdk;
+      # nixpkgs' xwin fixed-output fetch is intentionally tiny and, at this
+      # pin, does not include a CA bundle. xwin 0.9 uses rustls and therefore
+      # fails with "No CA certificates were loaded" before it can fetch the
+      # accepted Microsoft SDK payload. Supply the bundle to the fetch
+      # derivation itself; adding cacert only to the eventual dev shell is too
+      # late because the SDK has already been built by then.
+      winSdkBase = pkgsUnfree.windows.sdk;
+      winSdk = winSdkBase.overrideAttrs (old: {
+        src = old.src.overrideAttrs (fetchOld: {
+          nativeBuildInputs = (fetchOld.nativeBuildInputs or [ ]) ++ [ pkgs.cacert ];
+          SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+        });
+      });
 
       # Windows druntime/phobos import libs from the official LDC release
       # archive — fixed-output fetch, in lockstep with the pinned host LDC.
