@@ -453,6 +453,27 @@ struct KqueueBackend
     }
 
     /**
+    Kqueue descriptor exposed to an OS-owned native run-loop host.
+
+    On Darwin the descriptor becomes readable when `kevent` has results. An
+    AppKit host wraps it in `CFFileDescriptor`, allowing the main CFRunLoop to
+    wait for Cocoa sources and Event Horizon readiness without a helper thread
+    or polling timeout. The opaque pointer is a transport token, not an object
+    that may be dereferenced.
+    */
+    void* nativeHostWaitHandle() @trusted pure nothrow @nogc
+        => cast(void*) cast(size_t) _kq;
+
+    /// Kqueue timers make the descriptor readable, so the host deadline stands.
+    uint nativeHostWaitTimeout(uint requestedMs) @safe pure nothrow @nogc
+        => requestedMs;
+
+    /// Unlike IOCP's mirror event, kqueue readiness needs no reset handshake.
+    void prepareNativeHostDrain() @safe pure nothrow @nogc
+    {
+    }
+
+    /**
     Submits the pending change list and waits for readiness (or `deadline`) in
     $(I one) `kevent(2)`, performs the ready ops' syscalls, and stashes their
     completions for `reap`. Already-stashed completions are delivered without

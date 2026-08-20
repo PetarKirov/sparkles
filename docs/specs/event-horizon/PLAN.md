@@ -280,10 +280,13 @@ foreign-fd and OS-owned-loop seams. If a spike needs a new primitive, it lands i
 Event Horizon first as the smallest backend-neutral host hook; WSI never carries a
 parallel wait or scheduler.
 
-The Win32 acceptance slice is delivered: IOCP's completion-mirror event plus
-`runHostedOnce`/`tickHosted` shares one blocking wait with User32, and the bounded
-Wine smoke runs an HWND lifecycle beside an IOCP timer and foreign-thread waker. The
-AppKit host hook and both Linux fd consumers remain in the WSI M2 work.
+The two OS-owned-loop acceptance slices are delivered. On Win32, IOCP's
+completion-mirror event plus `runHostedOnce`/`tickHosted` shares one blocking wait
+with User32; the bounded Wine smoke runs an HWND lifecycle beside an IOCP timer and
+foreign-thread waker. On AppKit, the same host seam wraps Event Horizon's native
+kqueue descriptor in a `CFFileDescriptor` source; the arm64 macOS smoke runs an
+NSWindow lifecycle, kqueue timer, and foreign-thread waker through one CFRunLoop
+wait. The two Linux foreign-fd consumers remain in the WSI M2 work.
 
 Gate: hue TUI runs with **zero** polling timeouts on an idle document
 (strace-verifiable: the loop makes one blocking ring wait, no 33/150 ms

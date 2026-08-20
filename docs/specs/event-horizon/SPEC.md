@@ -1584,14 +1584,22 @@ The normative native consumer is now [`sparkles:wsi`](../window-system-integrati
 whose [`WSI3`](../window-system-integration/feature-requirements.md#architecture-wsi)
 forbids a second application loop. Linux display fds use §15.1 directly;
 Win32/AppKit attach their OS-owned message/run-loop source through the smallest
-backend-neutral host hook proven by the WSI M2 spikes. The Win32 half is now concrete:
+backend-neutral host hook proven by the WSI M2 spikes. The Win32 path is concrete:
 `EventLoop.runHostedOnce` (and `Sched.tickHosted`) owns reset → non-blocking drain →
 combined wait → dispatch ordering. IOCP mirrors queued completions through one
 manual-reset event and narrows the host timeout to its next timer; the host combines
 that event with User32 through `MsgWaitForMultipleObjectsEx`. One shared event is safe
 despite each overlapped submission resetting `hEvent`: the backend repairs an older
 queued completion after issue, and the hosted loop resets before its closing drain, so
-both sides of the race preserve a wake. The AppKit half remains an M2 acceptance spike.
+both sides of the race preserve a wake.
+
+The AppKit path uses the same seam without duplicating kqueue: the backend exposes its
+native descriptor as an opaque host token, the WSI host wraps that descriptor in a
+`CFFileDescriptor` source installed in `kCFRunLoopCommonModes`, and
+`CFRunLoopRunInMode` is the combined wait. Kqueue timers and `EVFILT_USER` wakes make
+the descriptor readable; the closing zero-time `runOnce` performs `kevent` and
+dispatches completions. `waited.value` counts a native source handled during the wait,
+even when the subsequent non-blocking NSEvent drain has nothing left to dequeue.
 
 WSI supplies only `dispatchPending` and the platform's combined `wait`; it may not
 reproduce IOCP, kqueue, timers, channels, or wake accounting in its own package.
