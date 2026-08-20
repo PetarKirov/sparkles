@@ -1,0 +1,38 @@
+name "wsi"
+description "Native desktop window-system integration over sparkles:event-horizon"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "../../build"
+targetType "library"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// `sparkles:math` is source-imported for the same reason as input: its
+// unittest configuration depends on the repository runner and a normal dub
+// edge would participate in configuration-union cycle detection.
+importPaths "src" "../math/src"
+sourcePaths "src"
+
+dependency "expected" version="~>0.4.1"
+dependency "sparkles:base" path="../.."
+dependency "sparkles:input" path="../.."
+dependency "sparkles:event-horizon" path="../.."
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}

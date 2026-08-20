@@ -25,7 +25,7 @@ to [feature-requirements.md](./feature-requirements.md)._
 | M0        | normative docs, prior-art matrix, cross-spec ownership | `WSI1`–`WSI8`, `INT6`                      | complete    |
 | M1        | shared geometry/input/text primitives                  | `WSI8`, `F06`, `F07`, `F11`, `F12`, `INT5` | in progress |
 | M2        | Event Horizon/native-loop spikes on all four backends  | `WSI3`, `WSI4`, `F03`–`F05`, `F17`         | planned     |
-| M3        | package core and lifecycle (`F01`–`F05`, `F17`)        | `WSI1`–`WSI6`, `F01`–`F05`, `F17`, `INT1`  | planned     |
+| M3        | package core and lifecycle (`F01`–`F05`, `F17`)        | `WSI1`–`WSI6`, `F01`–`F05`, `F17`, `INT1`  | in progress |
 | M4        | input, DPI, outputs, capture and cursors               | `F06`–`F12`                                | planned     |
 | M5        | decorations, state, popup, clipboard and DnD           | `F13`–`F16`                                | planned     |
 | M6        | SDL compatibility and Vulkan bridge                    | `WSI7`, `INT2`                             | planned     |
