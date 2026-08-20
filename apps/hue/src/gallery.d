@@ -346,20 +346,35 @@ struct GalleryOptions
     string blurb = "Rendered by <code>hue</code>."; /// the index's lead paragraph (raw HTML)
 
     /**
-    The page surround (`GAL6`) — pass $(LREF themeBackground) of the theme the
-    fragments were rendered with, so the pane and the surround are one surface.
+    The page chrome (`GAL6`) — pass $(LREF themeChrome) of the theme the
+    fragments were rendered with, so the pane and everything around it are one
+    surface.
 
-    This used to be scraped back out of each fragment's own `<style>` block. A
-    fragment need not carry one any more (`FragmentOptions.embedStyles`), and a
-    scraper that silently falls back to a hardcoded colour turns that into a
-    visual regression no test catches — so the caller states it.
+    The background half of this used to be scraped back out of each fragment's
+    own `<style>` block, and the rest was a catppuccin palette hardcoded in
+    `pageShell`. A fragment need not carry a style block any more
+    (`FragmentOptions.embedStyles`), and a scraper that silently falls back to a
+    fixed colour turns that into a visual regression no test catches — so the
+    caller states it.
     */
-    string background = defaultBackground;
+    ChromePalette chrome = ChromePalette(
+        background: defaultBackground,
+        surface: "#181825",
+        border: "#313244",
+        text: "#cdd6f4",
+        muted: "#a6adc8",
+        faint: "#6c7086",
+        link: "#89b4fa",
+    );
 
-    /// the same, for the dark half of a two-theme run — the surround has to
+    /// the same, for the dark half of a two-theme run — the chrome has to
     /// follow `html.dark` too, or the pane and the page come apart the moment
-    /// the switch is flipped
-    string darkBackground;
+    /// the switch is flipped. Unset leaves the light chrome in both schemes.
+    ChromePalette darkChrome;
+
+    /// `true` iff a dark half was supplied.
+    bool hasDarkChrome() const scope @safe pure nothrow @nogc
+        => darkChrome.background.length != 0;
 
     /**
     Linked from `<head>` when set — the shared stylesheet the fragments leave
@@ -402,7 +417,7 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
 {
     int gutter;
     const body_ = withLineNumbers(fragment, gutter);
-    const bg = opt.background;
+    const c = opt.chrome;
 
     auto w = appender!string;
     w ~= "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n";
@@ -420,22 +435,35 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     }
     w ~= "<style>\n";
     w ~= "  html, body { height: 100%; }\n";
-    w ~= text("  body { margin: 0; background: ", bg, "; color: #cdd6f4;\n");
+    w ~= text("  body { margin: 0; background: ", c.background, "; color: ", c.text, ";\n");
     w ~= "         font: 14px/1.5 system-ui, sans-serif;\n";
     w ~= "         display: flex; flex-direction: column; }\n";
     w ~= "  header { flex: none; display: flex; gap: 0.9em; align-items: baseline;\n";
     w ~= "           flex-wrap: wrap; padding: 0.7em 1em;\n";
-    w ~= "           background: #181825; border-bottom: 1px solid #313244; }\n";
-    w ~= "  header b { font-size: 1.05em; } header .kinds { color: #a6adc8; }\n";
-    w ~= "  header .spacer { flex: 1; } header a { color: #89b4fa; text-decoration: none; }\n";
+    w ~= text("           background: ", c.surface, "; border-bottom: 1px solid ",
+        c.border, "; }\n");
+    w ~= text("  header b { font-size: 1.05em; } header .kinds { color: ", c.muted, "; }\n");
+    w ~= text("  header .spacer { flex: 1; } header a { color: ", c.link,
+        "; text-decoration: none; }\n");
     w ~= "  header a:hover { text-decoration: underline; }\n";
-    w ~= "  header .disabled { color: #45475a; }\n";
+    w ~= text("  header .disabled { color: ", c.faint, "; }\n");
     // The single scroll container: the code pane fills the remaining height, so
     // only ONE scrollbar ever appears (no nested body + pre scrollbars).
-    w ~= text("  main { flex: 1; min-height: 0; overflow: auto; background: ", bg, "; }\n");
-    if (opt.darkBackground.length)
-        w ~= text("  html.dark body, html.dark main { background: ",
-            opt.darkBackground, "; }\n");
+    w ~= text("  main { flex: 1; min-height: 0; overflow: auto; background: ",
+        c.background, "; }\n");
+    if (opt.hasDarkChrome)
+    {
+        const d = opt.darkChrome;
+        w ~= text("  html.dark body, html.dark main { background: ", d.background,
+            "; }\n");
+        w ~= text("  html.dark body { color: ", d.text, "; }\n");
+        w ~= text("  html.dark header { background: ", d.surface,
+            "; border-bottom-color: ", d.border, "; }\n");
+        w ~= text("  html.dark header .kinds { color: ", d.muted, "; }\n");
+        w ~= text("  html.dark header a { color: ", d.link, "; }\n");
+        w ~= text("  html.dark header .disabled { color: ", d.faint, "; }\n");
+        w ~= text("  html.dark .ln::before { color: ", d.faint, "; }\n");
+    }
     w ~= "  main pre.syn-root { margin: 0; padding: 0.6em 1ch; min-height: 100%;\n";
     w ~= "                      box-sizing: border-box; }\n";
     // Line-number gutter: a left pad on <code> holds the numbers; each physical
@@ -449,7 +477,8 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     w ~= "  .ln { position: relative; counter-increment: lineno; }\n";
     w ~= "  .ln::before { content: counter(lineno); position: absolute;\n";
     w ~= text("                left: -", gutter, "ch; width: ", gutter - 1, "ch; text-align: right;\n");
-    w ~= "                color: #6c7086; -webkit-user-select: none; user-select: none; }\n";
+    w ~= text("                color: ", c.faint,
+        "; -webkit-user-select: none; user-select: none; }\n");
     // Selection domains (VSCode-like). The shipped twoslash.css sets the below-line
     // annotations `user-select: none` (code copies cleanly for every consumer). The
     // gallery goes further: a drag is confined to whichever domain it STARTS in —
@@ -607,6 +636,93 @@ private const(char)[][] segments(const(char)[] path) @safe pure nothrow
 
 /// The backdrop for a theme that declares no background of its own.
 enum defaultBackground = "#1e1e2e";
+
+/**
+The page chrome's colours, as `#rrggbb` (`GAL6`/`HTM7`).
+
+Everything outside the code pane — the header bar, its rule, the nav links, the
+line-number gutter — used to be a fixed catppuccin palette written into
+`pageShell`. That is wrong for every other theme: `hue gallery --theme
+github-light` produced a light code pane inside dark chrome, and no test could
+see it because the fragment and the surround were decided in different places.
+
+$(LREF themeChrome) derives one from the theme instead, so the two agree by
+construction; `--chrome=site` will supply the docs site's own palette here
+without `pageShell` learning about either.
+*/
+struct ChromePalette
+{
+    string background;  /// page + pane surround — one surface with the code
+    string surface;     /// the header bar
+    string border;      /// the rule under it
+    string text;        /// body text
+    string muted;       /// a page's summary / kind tally
+    string faint;       /// a disabled nav link, and the line-number gutter
+    string link;        /// prev · index · next
+}
+
+/**
+Derives $(LREF ChromePalette) from `theme`'s own colours.
+
+Only two inputs are load-bearing: the theme's default background and
+foreground. Every neutral is a mix of the two, so the chrome tracks any
+theme — light or dark — without a table of per-theme values to maintain, and
+`background` is $(LREF themeBackground) exactly, so the surround and the pane
+cannot disagree.
+
+The one colour that cannot be mixed is `link`, which needs a hue: it is the
+theme's own `function` style, since a theme that highlights code at all styles
+that one. A theme that does not falls back to `text`, which is legible on
+`surface` by construction.
+*/
+ChromePalette themeChrome(in ResolvedTheme theme) @safe pure
+{
+    RgbColor bg, fg;
+    if (!concreteRgb(theme.defaults.bg, bg))
+        bg = RgbColor(0x1e, 0x1e, 0x2e);
+    if (!concreteRgb(theme.defaults.fg, fg))
+        fg = RgbColor(0xcd, 0xd6, 0xf4);
+
+    RgbColor link = fg;
+    const id = theme.labels.resolve("function");
+    if (id)
+        cast(void) concreteRgb(theme[id].fg, link);
+
+    return ChromePalette(
+        background: hexRgb(bg),
+        surface: hexRgb(mixRgb(bg, fg, 0.06)),
+        border: hexRgb(mixRgb(bg, fg, 0.20)),
+        text: hexRgb(fg),
+        muted: hexRgb(mixRgb(fg, bg, 0.35)),
+        faint: hexRgb(mixRgb(fg, bg, 0.62)),
+        link: hexRgb(link),
+    );
+}
+
+/// `t` of the way from `a` to `b`, per channel.
+private RgbColor mixRgb(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
+{
+    static ubyte lerp(ubyte x, ubyte y, double t) @safe pure nothrow @nogc
+    {
+        const v = x + (cast(double) y - x) * t;
+        return cast(ubyte)(v < 0 ? 0 : (v > 255 ? 255 : v + 0.5));
+    }
+
+    return RgbColor(lerp(a.r, b.r, t), lerp(a.g, b.g, t), lerp(a.b, b.b, t));
+}
+
+/// `#rrggbb`.
+private string hexRgb(RgbColor c) @safe pure
+{
+    import sparkles.base.text.writers : writeHexByte;
+
+    auto w = appender!string;
+    w ~= '#';
+    writeHexByte(w, c.r);
+    writeHexByte(w, c.g);
+    writeHexByte(w, c.b);
+    return w[];
+}
 
 /**
 The background `theme`'s stylesheet puts on `.syn-root`, as `#rrggbb` — the
@@ -862,6 +978,95 @@ unittest
     assert(gutter == 4);
 }
 
+@("gallery.themeChrome.followsTheThemeInsteadOfCatppuccin")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // The bug this exists to prevent: `--theme <a light theme>` used to render a
+    // light code pane inside a fixed dark surround, because the fragment and the
+    // chrome were decided in different places.
+    const light = resolveTheme(
+        Theme(name: "light", defaultFg: Color.fromRgb(0x24, 0x29, 0x2e),
+            defaultBg: Color.fromRgb(0xff, 0xff, 0xff)),
+        LabelSet.fromNames(["keyword", "function"]));
+    const c = themeChrome(light);
+
+    // The surround IS the pane's background — one surface (`GAL6`).
+    assert(c.background == themeBackground(light), c.background);
+    assert(c.background == "#ffffff", c.background);
+    assert(c.text == "#24292e", c.text);
+
+    // Neutrals are mixes of the two, so a light theme gets light chrome: the
+    // header sits just off the page, the rule is darker still, and the text
+    // colours fade *toward* the background (never away from it, which is what a
+    // fixed dark palette did).
+    assert(c.surface == "#f2f2f2", c.surface);   // 6 % of the way to the text
+    assert(c.border == "#d3d4d5", c.border);     // 20 %
+    assert(c.muted == "#717477", c.muted);       // text, 35 % toward the page
+    assert(c.faint == "#acaeb0", c.faint);       // text, 62 % toward the page
+
+    // And the emitted page carries them rather than the old fixed palette.
+    const page = pageShell("f.d", "d · 1 line", "<pre class=\"syn-root\"><code>x</code></pre>",
+        "", "", GalleryOptions(chrome: c));
+    assert(page.canFind("background: #ffffff"), page);
+    assert(!page.canFind("#181825"), "the catppuccin surface leaked");
+    assert(!page.canFind("#cdd6f4"), "the catppuccin text colour leaked");
+    assert(!page.canFind("#6c7086"), "the catppuccin gutter colour leaked");
+}
+
+@("gallery.themeChrome.takesItsLinkHueFromTheThemeAndDegrades")
+@safe pure
+unittest
+{
+    // `link` is the one colour a mix cannot produce, so it comes from the
+    // theme's own `function` style.
+    auto theme = Theme(name: "t", defaultFg: Color.fromRgb(0xcd, 0xd6, 0xf4),
+        defaultBg: Color.fromRgb(0x1e, 0x1e, 0x2e));
+    theme.rules ~= ThemeRule("function", StyleSpec(fg: Color.fromRgb(0x89, 0xb4, 0xfa)));
+    const c = themeChrome(resolveTheme(theme, LabelSet.fromNames(["function"])));
+    assert(c.link == "#89b4fa", c.link);
+
+    // A theme that styles no functions falls back to the body text, which is
+    // legible on `surface` by construction — never to a hardcoded blue.
+    const bare = themeChrome(resolveTheme(
+        Theme(name: "b", defaultFg: Color.fromRgb(0x11, 0x22, 0x33),
+            defaultBg: Color.fromRgb(0xee, 0xee, 0xee)),
+        LabelSet.fromNames(["keyword"])));
+    assert(bare.link == bare.text, bare.link);
+}
+
+@("gallery.pageShell.darkChromeFollowsHtmlDark")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // A two-theme run has to switch the whole surround, not just its
+    // background: header, rule, links and gutter all live outside the fragment.
+    const opt = GalleryOptions(
+        chrome: ChromePalette(background: "#ffffff", surface: "#f0f0f0",
+            border: "#dddddd", text: "#111111", muted: "#555555",
+            faint: "#888888", link: "#0055cc"),
+        darkChrome: ChromePalette(background: "#101010", surface: "#1a1a1a",
+            border: "#2a2a2a", text: "#eeeeee", muted: "#bbbbbb",
+            faint: "#777777", link: "#88aaff"));
+    const page = pageShell("f.d", "s", "<pre class=\"syn-root\"><code>x</code></pre>",
+        "", "", opt);
+
+    foreach (rule; ["html.dark body, html.dark main { background: #101010",
+            "html.dark body { color: #eeeeee", "html.dark header { background: #1a1a1a",
+            "html.dark header a { color: #88aaff",
+            "html.dark .ln::before { color: #777777"])
+        assert(page.canFind(rule), rule ~ " missing from:\n" ~ page);
+
+    // Without a dark half, nothing is emitted under `html.dark` at all.
+    const single = pageShell("f.d", "s", "<pre class=\"syn-root\"><code>x</code></pre>",
+        "", "", GalleryOptions(chrome: opt.chrome));
+    assert(!single.canFind("html.dark"), single);
+}
+
 @("gallery.themeBackground.matchesTheEmittedRule")
 @safe pure
 unittest
@@ -898,7 +1103,8 @@ unittest
 
     const frag = "<pre class=\"syn-root\"><code>x\n</code></pre>\n";
     const page = pageShell("a", "", frag, "", "",
-        GalleryOptions(background: "#ffffff", stylesheetHref: "assets/hue.css"));
+        GalleryOptions(chrome: ChromePalette(background: "#ffffff"),
+            stylesheetHref: "assets/hue.css"));
     assert(page.canFind("<link rel=\"stylesheet\" href=\"assets/hue.css\">"), page);
     assert(page.canFind("background: #ffffff"), page);
 
@@ -916,7 +1122,8 @@ unittest
         ~ "<pre class=\"syn-root\"><code>x\n</code></pre>\n";
     const page = pageShell("02-query", "hover×2 query", frag,
         "01-hover.html", "03-completions.html",
-        GalleryOptions(titlePrefix: "twoslash", background: "#123456"));
+        GalleryOptions(titlePrefix: "twoslash",
+            chrome: ChromePalette(background: "#123456")));
 
     assert(page.canFind("<title>twoslash · 02-query</title>"), page);
     assert(page.canFind("<b>02-query</b>"), page);
