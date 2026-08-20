@@ -59,7 +59,7 @@ Make the common types genuinely common before WSI copies them:
 3. move `CellMetrics` and pixel-to-cell conversion from the SDL/raylib producers into
    one pure input helper;
 4. add allocation-conscious UTF-8/UTF-16 conversion to `sparkles:base`, with malformed
-   sequence, embedded-NUL, surrogate and bounded-buffer tests;
+   sequence, embedded-NUL, surrogate and bounded-buffer tests (**complete**);
 5. add lossless physical/logical key, composition, scroll source/unit/phase, and target
    capability values without breaking the existing simplified toolkit events.
 
