@@ -126,8 +126,9 @@ import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliE
 import sparkles.base.logger :
     error, info, initLogger, LogDelta, LogLevel, takeLogDelta, trace, warning, writeLogDelta;
 import sparkles.core_cli.process_utils :
-    ChildStdin, childrenCpuUsage, executeMonitored, MonitoredResult, ResourceUsage,
-    selfRssBytes, timedOutStatus;
+    ChildStdin, executeMonitored, executeMonitoredLines,
+    MonitoredLineRange, MonitoredResult, ResourceUsage,
+    sampleThisProcessTree, selfAndChildrenCpuUsage, selfRssBytes, timedOutStatus;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.styled_template : styledText, styledWritelnErr;
 import sparkles.base.text.writers : writeDuration;
@@ -2244,6 +2245,160 @@ private struct PackageRun
     ResourceUsage usage;
 }
 
+/// Live line stream of one package's `dub test`, with the coverage-retry
+/// policy of $(LREF runPackageTests). Copies share a class payload so a
+/// streaming box can pull the same child the footer later reads.
+private struct PackageTestStream
+{
+    this(
+        const(string)[] baseCmd,
+        CoverageRun cov,
+        const string[string] extraEnv,
+        Duration interval,
+        void delegate(in ResourceUsage sample) @safe onSample,
+    )
+    {
+        _s = new State(baseCmd, cov, extraEnv, interval, onSample);
+    }
+
+    @property ref PackageRun result()
+    in (_s !is null)
+        => _s.result;
+
+    @property bool empty()
+        => _s is null || _s.empty;
+
+    @property string front()
+        => _s.front;
+
+    void popFront()
+    {
+        _s.popFront();
+    }
+
+private:
+    static final class State
+    {
+        this(
+            const(string)[] baseCmd,
+            CoverageRun cov,
+            const string[string] extraEnv,
+            Duration interval,
+            void delegate(in ResourceUsage sample) @safe onSample,
+        )
+        {
+            this.baseCmd = baseCmd;
+            this.cov = cov;
+            this.extraEnv = extraEnv;
+            this.interval = interval;
+            this.onSample = onSample;
+        }
+
+        bool empty()
+        {
+            if (finished)
+                return true;
+            if (notePending)
+                return false;
+            startFirst();
+            if (!inner.empty)
+                return false;
+            auto first = inner.result;
+            if (cov.enabled && first.status != 0 && !retried)
+            {
+                retried = true;
+                firstResult = first;
+                notePending = true;
+                note = styledText(i"{dim coverage build failed; retrying without -cov}");
+                inner = executeMonitoredLines(
+                    baseCmd, interval, onSample, ChildStdin.empty, Duration.zero,
+                    withLdcThreadEnv(extraEnv));
+                return false;
+            }
+            finishWith(retried ? firstResult : first);
+            return true;
+        }
+
+        string front()
+            => notePending ? note : inner.front;
+
+        void popFront()
+        {
+            if (notePending)
+            {
+                notePending = false;
+                return;
+            }
+            inner.popFront();
+        }
+
+        PackageRun result;
+
+    private:
+        void startFirst()
+        {
+            if (started)
+                return;
+            started = true;
+            if (cov.enabled)
+                inner = executeMonitoredLines(
+                    baseCmd ~ cov.dubArgs ~ cov.runtimeArgs,
+                    interval, onSample, ChildStdin.empty, Duration.zero,
+                    withLdcThreadEnv(mergeEnv(extraEnv, cov.env)));
+            else
+                inner = executeMonitoredLines(
+                    baseCmd, interval, onSample, ChildStdin.empty, Duration.zero,
+                    withLdcThreadEnv(extraEnv));
+        }
+
+        void finishWith(MonitoredResult last)
+        {
+            if (finished)
+                return;
+            finished = true;
+            if (!cov.enabled)
+            {
+                result = PackageRun(last.status, last.output, true, last.usage);
+                return;
+            }
+            if (!retried)
+            {
+                result = PackageRun(last.status, last.output, true, last.usage);
+                return;
+            }
+            auto plain = inner.result;
+            result = plain.status == 0
+                ? PackageRun(0, plain.output, false, plain.usage)
+                : PackageRun(last.status, last.output, false, last.usage);
+        }
+
+        const(string)[] baseCmd;
+        CoverageRun cov;
+        const string[string] extraEnv;
+        Duration interval;
+        void delegate(in ResourceUsage sample) @safe onSample;
+        MonitoredLineRange inner;
+        MonitoredResult firstResult;
+        string note;
+        bool started;
+        bool retried;
+        bool notePending;
+        bool finished;
+    }
+
+    State _s;
+}
+
+private string[string] mergeEnv(const string[string] a, const(string[string]) b)
+{
+    string[string] out_;
+    foreach (k, v; a)
+        out_[k] = v;
+    foreach (k, v; b)
+        out_[k] = v;
+    return out_;
+}
+
 /**
 Runs one package's tests, retrying without coverage if that is what broke.
 
@@ -2426,21 +2581,15 @@ private int runDubTestsMode(bool failFast, bool coverage)
         .writeln("\n");
     flushStdout();
 
-    // On a tty a live checklist (with the running package's dub output in a
-    // bounded tail pane) replaces the per-package result boxes; piped output
-    // keeps today's box-per-package log byte-stable for CI.
+    auto monitor = RunMonitor.start();
+    void onSample(in ResourceUsage) @safe
     {
-        import sparkles.base.term_caps : isTerminal;
-
-        if (isTerminal())
-            return runDubTestsChecklist(repoRoot, subPackages, failFast, cov);
+        monitor.sample();
     }
 
     int failures = 0;
     size_t processed = 0;
     string[] failedPackages, uncovered;
-    FailureReplay failureReplay;
-    bool stoppedEarly = false;
 
     foreach (i, pkg; subPackages)
     {
@@ -2453,39 +2602,21 @@ private int runDubTestsMode(bool failFast, bool coverage)
         // (the dev shell provides both dmd and ldc). Example verification keeps
         // `ci`'s own embedded compiler; only the test suite is compiler-matrixed.
         auto testCmd = dubTestCommand(repoRoot, pkgName);
-        PackageRun result;
-        streamResultBox(header, {
-            result = runPackageTests(testCmd, cov,
-                (const(string)[] cmd, const string[string] env)
-                {
-                    auto r = executeLogged(cmd, "test " ~ pkgName, Duration.zero, env);
-                    return PackageRun(r.status, r.output, usage: r.usage);
-                });
-            if (cov.enabled && !result.coverageCollected && result.status == 0)
-                uncovered ~= pkgName;
-            return result.output.lineSplitter
-                .map!(l => l.to!string)
-                .array
-                .formatOutputLines(8, keepTail: result.status != 0);
-        },
-            () => resultVerdict(result.status == 0),
-            (LogDelta d) => resultFooterRight(result.usage, d));
+        auto lines = PackageTestStream(testCmd, cov, null, 250.msecs, &onSample);
+        streamResultBox(header, lines,
+            () => resultVerdict(lines.result.status == 0),
+            (LogDelta d) => resultFooterRight(lines.result.usage, d));
+        monitor.sample();
 
-        if (result.status != 0)
+        if (cov.enabled && !lines.result.coverageCollected && lines.result.status == 0)
+            uncovered ~= pkgName;
+
+        if (lines.result.status != 0)
         {
             failures++;
             failedPackages ~= pkgName;
             if (failFast)
             {
-                failureReplay = FailureReplay(
-                    header: header,
-                    outputLines: result.output.lineSplitter
-                        .map!(l => l.to!string)
-                        .array
-                        .formatOutputLines(24, keepTail: true),
-                    footer: resultVerdict(false),
-                );
-                stoppedEarly = true;
                 processed = i + 1;
                 writeln();
                 break;
@@ -2496,10 +2627,8 @@ private int runDubTestsMode(bool failFast, bool coverage)
         writeln();
     }
 
-    displaySummary(stoppedEarly ? processed : subPackages.length, failures);
+    displayTestRunSummary(monitor.finish(processed, subPackages.length, failedPackages));
     reportCoverage(subPackages, cov, failedPackages, uncovered);
-    if (stoppedEarly)
-        displayFailureReplay(failureReplay);
     return failures > 0 ? 1 : 0;
 }
 
@@ -2735,8 +2864,15 @@ private int runExtractedTestsMode(bool failFast)
         .writeln("\n");
     flushStdout();
 
+    auto monitor = RunMonitor.start();
+    void onSample(in ResourceUsage) @safe
+    {
+        monitor.sample();
+    }
+
     int failures = 0;
     size_t processed = 0;
+    string[] failedJobs;
     foreach (i, job; jobs)
     {
         const progress = i"[$(i + 1)/$(jobs.length)]".text;
@@ -2750,21 +2886,19 @@ private int runExtractedTestsMode(bool failFast)
             repoRoot, job.packageName,
             ["--", job.flag, "--self-test", "--require-toolchain"]);
 
-        MonitoredResult result;
-        streamResultBox(header, {
-            result = executeLogged(cmd, job.flag ~ " " ~ job.packageName);
-            return result.output.lineSplitter
-                .map!(l => l.to!string)
-                .array
-                .formatOutputLines(8, keepTail: result.status != 0);
-        },
-            () => resultVerdict(result.status == 0),
-            (LogDelta d) => resultFooterRight(result.usage, d));
+        auto lines = executeMonitoredLines(
+            cmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
+            withLdcThreadEnv(null));
+        streamResultBox(header, lines,
+            () => resultVerdict(lines.result.status == 0),
+            (LogDelta d) => resultFooterRight(lines.result.usage, d));
+        monitor.sample();
 
         processed = i + 1;
-        if (result.status != 0)
+        if (lines.result.status != 0)
         {
             failures++;
+            failedJobs ~= job.packageName ~ " " ~ job.flag;
             if (failFast)
             {
                 writeln();
@@ -2776,87 +2910,7 @@ private int runExtractedTestsMode(bool failFast)
 
     // After a fail-fast break the untried jobs never ran, so report what was
     // actually attempted rather than the full list.
-    displaySummary(processed, failures);
-    return failures > 0 ? 1 : 0;
-}
-
-/// The tty variant of `--test`: one checklist row per sub-package, the running
-/// package's dub output streaming through the bounded tail pane, failures
-/// graduating with their output tail, and fail-fast marking the rest skipped.
-private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool failFast,
-    in CoverageRun cov)
-{
-    import sparkles.core_cli.process_utils : runStreaming;
-    import sparkles.base.term_caps : detectTermCaps;
-    import sparkles.ui.components.live : stdoutLiveRegion;
-    import sparkles.ui.components.tasklist : TaskReporter;
-    import sparkles.ui.components.theme : makeTheme;
-
-    static string lastLines(string s, size_t n)
-    {
-        auto lines = s.lineSplitter.map!(l => l.to!string).array;
-        return (lines.length <= n ? lines : lines[$ - n .. $]).join("\n");
-    }
-
-    const theme = makeTheme(detectTermCaps());
-    auto region = stdoutLiveRegion();
-    scope (exit)
-        region.finish();
-    auto tasks = TaskReporter(&region, theme);
-
-    size_t[] ids;
-    foreach (pkg; subPackages)
-        ids ~= tasks.add("dub test :" ~ pkg.baseName);
-
-    int failures = 0;
-    size_t processed = 0;
-    string[] failed, uncovered;
-    foreach (i, pkg; subPackages)
-    {
-        const pkgName = pkg.baseName;
-        mkdirRecurse(buildPath(repoRoot, pkg, "build"));
-        auto testCmd = dubTestCommand(repoRoot, pkgName);
-
-        tasks.start(ids[i]);
-        const before = childrenCpuUsage();
-        const started = MonoTime.currTime;
-        auto result = runPackageTests(testCmd, cov,
-            (const(string)[] cmd, const string[string] env)
-            {
-                auto r = runStreaming(cmd,
-                    (scope const(char)[] line) { tasks.output(ids[i], line); },
-                    null, withLdcThreadEnv(env));
-                return PackageRun(r.status, r.stdout, usage: r.usage);
-            });
-        if (cov.enabled && !result.coverageCollected && result.status == 0)
-            uncovered ~= pkgName;
-        auto usage = childrenUsageDelta(before, started);
-        if (result.usage.wallTime > usage.wallTime)
-            usage.wallTime = result.usage.wallTime;
-        if (result.usage.sampled)
-            usage = result.usage;
-        const stats = formatResourceStats(usage, includeWall: false);
-        processed = i + 1;
-
-        if (result.status == 0)
-        {
-            tasks.succeed(ids[i], stats);
-            continue;
-        }
-        failures++;
-        failed ~= pkgName;
-        tasks.fail(ids[i], lastLines(result.output, 12));
-        if (failFast)
-        {
-            foreach (j; i + 1 .. subPackages.length)
-                tasks.skip(ids[j], "fail-fast");
-            break;
-        }
-    }
-
-    region.finish();
-    displaySummary(processed, failures);
-    reportCoverage(subPackages, cov, failed, uncovered);
+    displayTestRunSummary(monitor.finish(processed, jobs.length, failedJobs));
     return failures > 0 ? 1 : 0;
 }
 
@@ -3664,32 +3718,15 @@ private string[string] withLdcThreadEnv(const string[string] env)
     const existing = "DFLAGS" in out_
         ? out_["DFLAGS"]
         : environment.get("DFLAGS", "");
-    if (existing.canFind("--threads") || existing.canFind("-j"))
-        return out_;
+    string extra;
+    if (!existing.canFind("--threads") && !existing.canFind("-j"))
+        extra ~= "--threads=" ~ hwParallelism().to!string;
+    if (!existing.canFind("-linkonce-templates"))
+        extra ~= (extra.length ? " " : "") ~ "-linkonce-templates";
 
-    const extra = "--threads=" ~ hwParallelism().to!string;
-    out_["DFLAGS"] = existing.length ? existing ~ " " ~ extra : extra;
+    if (extra.length)
+        out_["DFLAGS"] = existing.length ? existing ~ " " ~ extra : extra;
     return out_;
-}
-
-/// User/system CPU accrued by waited-for children since `before`, plus wall
-/// time since `started`. RSS is not recoverable from `getrusage` after the
-/// child has been reaped, so it stays 0.
-private ResourceUsage childrenUsageDelta(ResourceUsage before, MonoTime started)
-{
-    auto after = childrenCpuUsage();
-    ResourceUsage u;
-    u.wallTime = MonoTime.currTime - started;
-    if (before.sampled && after.sampled)
-    {
-        u.userTime = after.userTime > before.userTime
-            ? after.userTime - before.userTime : Duration.zero;
-        u.systemTime = after.systemTime > before.systemTime
-            ? after.systemTime - before.systemTime : Duration.zero;
-        u.cpuTime = u.userTime + u.systemTime;
-        u.sampled = true;
-    }
-    return u;
 }
 
 @safe pure
@@ -4061,54 +4098,16 @@ unittest
     assert(right.canFind("MiB"), right);
 }
 
-/// Content range that does not run `load` until the box has finished emitting
-/// its title — so `drawBoxLines` can paint the header before the command starts.
-private struct DeferredLines
-{
-    private string[] _lines;
-    private size_t _i;
-    private bool _loaded;
-    private string[] delegate() _load;
-
-    this(string[] delegate() load)
-    {
-        _load = load;
-    }
-
-    private void ensure()
-    {
-        if (_loaded)
-            return;
-        _lines = _load();
-        _loaded = true;
-    }
-
-    bool empty()
-    {
-        ensure();
-        return _i >= _lines.length;
-    }
-
-    string front()
-    {
-        ensure();
-        return _lines[_i];
-    }
-
-    void popFront()
-    {
-        ++_i;
-    }
-}
-
-/// Paint the box title immediately, then pull `loadLines` (the command) for
-/// the body, then the footer. Fixed-width `resultBox` is what makes the title
+/// Paint the box title immediately, then pull `lines` (the command) for the
+/// body, then the footer. Fixed-width `resultBox` is what makes the title
 /// emit before any content pull (`drawBoxLines` streaming path). Timing and
 /// resource stats sit on the right of each border; the original title and
-/// verdict stay on the left.
-private void streamResultBox(
+/// verdict stay on the left. `lines` is pulled lazily, so a
+/// $(REF MonitoredLineRange, sparkles,core_cli,process_utils) streams every
+/// child line in real time instead of truncating to a tail.
+private void streamResultBox(Lines)(
     string header,
-    scope string[] delegate() loadLines,
+    auto ref Lines lines,
     scope string delegate() makeFooter,
     scope string delegate(LogDelta) makeFooterRight,
 )
@@ -4122,7 +4121,7 @@ private void streamResultBox(
         return makeFooter();
     };
     props.footerRightNow = () => makeFooterRight(end);
-    foreach (line; drawBoxLines(DeferredLines(loadLines), header, props))
+    foreach (line; drawBoxLines(lines, header, props))
     {
         writeln(line);
         stdout.flush();
@@ -4155,6 +4154,222 @@ private void displayFailureReplay(FailureReplay replay)
     replay.outputLines
         .drawBox(replay.header, BoxProps(footer: replay.footer))
         .writeln;
+}
+
+/// Whole-run stats for a `ci --test` / `--test-extracted` Results box.
+private struct TestRunStats
+{
+    ResourceUsage tree;       /// peak RSS / procs of the `ci` process group
+    ResourceUsage cpu;        /// self+children rusage delta over the run
+    Duration wall;
+    uint workers;             /// `hwParallelism` — the worker cap
+    uint onlineCpus;
+    int peakLoadCenti;        /// peak 1-minute load, or `hwLoadUnknown`
+    string[] failedPackages;
+    size_t processed;
+    size_t total;
+}
+
+/// Samples the `ci` process tree while packages run, so the Results box can
+/// report peak RSS / procs of the whole group, not just the last child.
+private struct RunMonitor
+{
+    ResourceUsage tree;
+    ResourceUsage cpuBefore;
+    MonoTime started;
+    int peakLoadCenti = hwLoadUnknown;
+    uint workers;
+    uint onlineCpus;
+
+    static RunMonitor start()
+    {
+        RunMonitor m;
+        m.started = MonoTime.currTime;
+        m.cpuBefore = selfAndChildrenCpuUsage();
+        m.workers = hwParallelism();
+        m.onlineCpus = hwOnlineCpuCount();
+        m.sample();
+        return m;
+    }
+
+    void sample() @safe
+    {
+        sampleThisProcessTree(tree);
+        const load = hwLoadAverageCenti();
+        if (load == hwLoadUnknown)
+            return;
+        if (peakLoadCenti == hwLoadUnknown || load > peakLoadCenti)
+            peakLoadCenti = load;
+    }
+
+    TestRunStats finish(size_t processed, size_t total, string[] failedPackages)
+    {
+        sample();
+        TestRunStats s;
+        s.tree = tree;
+        s.tree.wallTime = MonoTime.currTime - started;
+        s.cpu = cpuUsageDelta(cpuBefore, selfAndChildrenCpuUsage());
+        s.wall = s.tree.wallTime;
+        s.workers = workers;
+        s.onlineCpus = onlineCpus;
+        s.peakLoadCenti = peakLoadCenti;
+        s.failedPackages = failedPackages;
+        s.processed = processed;
+        s.total = total;
+        return s;
+    }
+}
+
+private ResourceUsage cpuUsageDelta(in ResourceUsage before, in ResourceUsage after)
+    @safe pure nothrow @nogc
+{
+    ResourceUsage u;
+    if (!before.sampled || !after.sampled)
+        return u;
+    u.userTime = after.userTime > before.userTime
+        ? after.userTime - before.userTime : Duration.zero;
+    u.systemTime = after.systemTime > before.systemTime
+        ? after.systemTime - before.systemTime : Duration.zero;
+    u.cpuTime = u.userTime + u.systemTime;
+    u.sampled = true;
+    return u;
+}
+
+/// Right-side Results title: `Δt … | workers=N online=M load=…`.
+private string formatRunTitleRight(in TestRunStats s, in LogDelta delta) @safe
+{
+    import sparkles.base.text.writers : writeFixedPoint, writeInteger;
+
+    SmallBuffer!(char, 96) buf;
+    writeLogDelta(buf, delta);
+    buf ~= " | workers=";
+    writeInteger(buf, s.workers);
+    buf ~= " online=";
+    writeInteger(buf, s.onlineCpus);
+    if (s.peakLoadCenti != hwLoadUnknown)
+    {
+        buf ~= " load=";
+        writeFixedPoint(buf, s.peakLoadCenti, 2);
+    }
+    return styledText(i"{dim $(buf[])}");
+}
+
+/// Right-side Results footer: `(usr …/sys …) | RSS | N procs | R×`.
+private string formatRunFooterRight(in TestRunStats s) @safe
+{
+    import sparkles.base.text.writers : writeBytes, writeDuration, writeFixedPoint,
+        writeInteger;
+
+    SmallBuffer!(char, 96) buf;
+    const cpu = s.cpu.sampled ? s.cpu : s.tree;
+    if (cpu.sampled)
+    {
+        buf ~= "(usr ";
+        writeDuration(buf, cpu.userTime);
+        buf ~= "/sys ";
+        writeDuration(buf, cpu.systemTime);
+        buf ~= ")";
+    }
+    if (s.tree.peakRssBytes)
+    {
+        if (buf.length)
+            buf ~= " | ";
+        writeBytes(buf, s.tree.peakRssBytes);
+    }
+    if (s.tree.peakProcs)
+    {
+        if (buf.length)
+            buf ~= " | ";
+        writeInteger(buf, s.tree.peakProcs);
+        buf ~= " procs";
+    }
+    if (s.wall > Duration.zero && cpu.cpuTime > Duration.zero)
+    {
+        const wallH = s.wall.total!"hnsecs";
+        const cpuH = cpu.cpuTime.total!"hnsecs";
+        if (wallH > 0)
+        {
+            if (buf.length)
+                buf ~= " | ";
+            writeFixedPoint(buf, cast(ulong)(cpuH * 100 / wallH), 2);
+            buf ~= "×";
+        }
+    }
+    return buf.length ? styledText(i"{dim $(buf[])}") : null;
+}
+
+@("ci.formatRunChrome")
+@safe
+unittest
+{
+    auto stats = TestRunStats(
+        tree: ResourceUsage(
+            peakRssBytes: 16UL << 20,
+            peakProcs: 14,
+            sampled: true,
+        ),
+        cpu: ResourceUsage(
+            userTime: 2500.msecs,
+            systemTime: 500.msecs,
+            cpuTime: 3000.msecs,
+            sampled: true,
+        ),
+        wall: 1500.msecs,
+        workers: 8,
+        onlineCpus: 32,
+        peakLoadCenti: 1497,
+        processed: 35,
+        total: 35,
+    );
+    const title = unstyle(formatRunTitleRight(stats, LogDelta(
+        sinceStart: 1500.msecs, sincePrev: 100.msecs)));
+    assert(title.canFind("workers=8"), title);
+    assert(title.canFind("online=32"), title);
+    assert(title.canFind("load=14.97"), title);
+
+    const footer = unstyle(formatRunFooterRight(stats));
+    assert(footer.canFind("(usr "), footer);
+    assert(footer.canFind("/sys "), footer);
+    assert(footer.canFind("MiB"), footer);
+    assert(footer.canFind("14 procs"), footer);
+    assert(footer.canFind("×"), footer);
+}
+
+/// The `--test` Results box: pass/fail counts and failed names on the left,
+/// whole-run resource stats on the right.
+private void displayTestRunSummary(in TestRunStats stats)
+{
+    writeln();
+    const failed = stats.failedPackages.length;
+    const passed = stats.processed - failed;
+    const success = failed == 0;
+    const delta = takeLogDelta();
+
+    auto props = resultBox(success
+        ? styledText(i"{green ✓ $(passed) passed}")
+        : styledText(i"{red ✗ $(failed) failed}"));
+    props.titleRight = formatRunTitleRight(stats, delta);
+    props.footerRight = formatRunFooterRight(stats);
+
+    string[] body;
+    if (success)
+    {
+        body ~= styledText(i"{green ✓} All packages passed!");
+        body ~= styledText(i"{dim $(passed)/$(stats.processed) passed}");
+    }
+    else
+    {
+        body ~= styledText(i"{red ✗} $(failed) package(s) failed");
+        body ~= styledText(i"{dim $(passed)/$(stats.processed) passed}");
+        if (stats.failedPackages.length)
+            body ~= styledText(i"{dim failed:} {red $(stats.failedPackages.join(", "))}");
+        if (stats.processed < stats.total)
+            body ~= styledText(
+                i"{dim $(stats.total - stats.processed) not run (fail-fast)}");
+    }
+    writeln(body.drawBox(
+        success ? styledText(i"{green Results}") : styledText(i"{red Results}"),
+        props));
 }
 
 /// Displays the results summary.
