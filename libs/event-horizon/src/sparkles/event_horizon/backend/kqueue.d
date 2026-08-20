@@ -150,6 +150,8 @@ public:
 /// The kqueue backend. Thread-affine (one kqueue per loop thread).
 struct KqueueBackend
 {
+    enum bool terminalCancelCompletions = true;
+
     @disable this(this);
 
     /// Creates the kqueue and the pending-op slab.

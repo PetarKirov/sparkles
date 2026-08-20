@@ -499,6 +499,8 @@ if (isCompletionBackend!Backend)
     IoResult!OpHandle submitAt(MonoTime deadline, OpCallback cb, void* ctx);
 
     IoResult!void cancel(OpHandle h);      // fire-and-forget; see §8.5
+    static if (hasTerminalCancel!Backend)
+        IoResult!void cancelAndWait(OpHandle h); // owner-thread teardown barrier
     void detach(OpHandle h);               // callback never runs; silent recycle
 
     Waker waker();                         // the only off-thread door
@@ -940,6 +942,12 @@ armed ──────────────────── terminal CQE 
 - the original op's terminal CQE always still arrives: `-ECANCELED` if the
   cancel won, the real result if it raced. Either way the parked frame — and
   the buffer it holds — outlives kernel use.
+- `cancelAndWait` is the owner-thread teardown barrier for a callback that borrows a
+  foreign resource owner. It drives `runOnce` until the target and every outstanding
+  internal cancel CQE are terminal; it may dispatch unrelated ready completions and
+  therefore may not run from a completion callback. Plain `cancel` remains
+  fire-and-forget. The method is capability-gated to uring/kqueue while IOCP lacks
+  terminal `CancelIoEx` lowering.
 - provenance disambiguates `-ECANCELED`: interrupt provenance → the verb's
   caller sees the interrupt (outcome `Cause.interrupted`); linked-timeout
   provenance → a typed `IoError` deadline failure on the Fail channel.
@@ -1624,6 +1632,12 @@ dispatch) and re-arms. This is deliberately the winit/calloop
 "loop-as-pollable-fd" integration inverted: event-horizon does not export
 its fd for a foreign loop to poll — foreign fds join _this_ loop, which is
 what "owning the event loop" means.
+
+The first normative foreign-fd consumer is the X11 adapter in `sparkles:wsi`. It
+uses a single-shot poll because XCB can also hold already-buffered events after a
+reply read: each integrated iteration drains `xcb_poll_for_event` before it may
+block, services the readiness completion, and re-arms. Its synchronous detach calls
+`cancelAndWait` before the X connection and callback context can be destroyed.
 
 ### 15.2 Wake, pace, hand off
 

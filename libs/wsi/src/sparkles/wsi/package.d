@@ -16,4 +16,6 @@ version (Windows)
     public import sparkles.wsi.platform.win32;
 version (OSX)
     public import sparkles.wsi.platform.appkit;
+version (linux)
+    public import sparkles.wsi.platform.x11;
 public import sparkles.wsi.types;
