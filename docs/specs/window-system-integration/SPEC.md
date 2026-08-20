@@ -135,6 +135,13 @@ The Wayland display fd or X11 connection fd is submitted through Event Horizon's
 dispatch sequence when readiness completes. It never blocks inside
 `wl_display_dispatch`, `xcb_wait_for_event`, or an equivalent foreign pump.
 
+XCB has two readiness locations: bytes on its connection fd and events it already
+copied into its private queue while receiving a synchronous reply. The X11 adapter
+therefore drains `xcb_poll_for_event` before every possible Event Horizon wait as well
+as after an `OpPollAdd` completion, then re-arms the single-shot poll. Detach uses
+Event Horizon's synchronous cancellation barrier before disconnecting, so the poll
+callback cannot outlive the WSI owner.
+
 Wayland obeys the prepare-read protocol exactly: dispatch pending events, prepare the
 read, flush requests, let Event Horizon wait, then read and dispatch; cancellation
 cancels the prepared read. A writable poll is armed only while `wl_display_flush`

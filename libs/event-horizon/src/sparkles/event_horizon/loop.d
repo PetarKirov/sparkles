@@ -196,12 +196,44 @@ if (isCompletionBackend!Backend)
     a no-op.
     */
     IoResult!void cancel(OpHandle h)
+        => requestCancel(h);
+
+    static if (hasTerminalCancel!Backend)
+    {
+        /**
+        Cancels `h` and drives the loop until both the target and its internal
+        cancellation request have reached terminal completions.
+
+        This is the synchronous teardown barrier for foreign resources whose
+        completion callback borrows their owner (for example a window-system
+        connection watch). Like every loop-driving operation it belongs on the
+        owner thread and may dispatch unrelated ready completions; it must not
+        be called from a completion callback.
+        */
+        IoResult!void cancelAndWait(OpHandle h)
+        in (!_dispatching,
+            "cancelAndWait cannot run from a completion callback")
+        {
+            auto requested = requestCancel(h);
+            if (requested.hasError)
+                return requested;
+            while (_slab.resolve(h.token) !is null || _cancelInFlight != 0)
+            {
+                auto ran = runOnce();
+                if (ran.hasError)
+                    return ioErr!void(ran.error);
+            }
+            return ioOk();
+        }
+    }
+
+    private IoResult!void requestCancel(OpHandle h)
     {
         auto slot = _slab.resolve(h.token);
         if (slot is null || slot.state != OpState.armed)
             return ioOk(); // already completed / already cancel-requested
 
-        const cancelToken = _slab.acquire(OpKind.cancel, OpClass.internal, null, null);
+        auto cancelToken = _slab.acquire(OpKind.cancel, OpClass.internal, null, null);
         if (!cancelToken)
             return ioErr!void(ENOBUFS, OpKind.cancel, IoErrorStage.cancel,
                 "op slab full");
@@ -217,6 +249,7 @@ if (isCompletionBackend!Backend)
         }
         slot.state = OpState.cancelRequested;
         slot.provenance = CancelProvenance.explicit_;
+        ++_cancelInFlight;
         return ioOk();
     }
 
@@ -517,6 +550,9 @@ private:
         // Internal completions (cancel bookkeeping) are consumed silently.
         if (slot.cls == OpClass.internal)
         {
+            assert(_cancelInFlight != 0,
+                "internal cancellation completion accounting underflow");
+            --_cancelInFlight;
             _slab.release(token);
             return;
         }
@@ -676,6 +712,7 @@ private:
     bool _stopRequested;
     bool _wakeArmed;
     bool _wakeShutdown;
+    uint _cancelInFlight;
     static if (fdWaker)
     {
         int _wakeReadFd = -1;
@@ -835,6 +872,34 @@ unittest
     assert(!r.hasError);
     assert(fired == 0, "detached op's callback must never run");
     assert(loop.inFlight == 0);
+}
+
+@("loop.cancelAndWait.isTeardownBarrier")
+@safe nothrow @nogc
+unittest
+{
+    import core.stdc.errno : ECANCELED;
+    import core.time : minutes;
+
+    DefaultLoop loop;
+    createOrSkip(loop);
+
+    static void onTimer(void* ctx, ref Completion done) nothrow @nogc
+    {
+        assert(done.res == -ECANCELED);
+        ++*cast(int*) ctx;
+    }
+
+    int calls;
+    auto h = (() @trusted => loop.submitAfter(1.minutes,
+        &onTimer, &calls))();
+    assert(h.hasValue);
+    assert(!loop.cancel(h.value).hasError,
+        "the barrier also joins an already-requested cancellation");
+    assert(!loop.cancelAndWait(h.value).hasError);
+    assert(calls == 1);
+    assert(loop.inFlight == 0,
+        "target and internal cancel completions form one teardown barrier");
 }
 
 @("loop.read.pipeDeliversBytes")

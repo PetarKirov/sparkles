@@ -286,7 +286,11 @@ with User32; the bounded Wine smoke runs an HWND lifecycle beside an IOCP timer 
 foreign-thread waker. On AppKit, the same host seam wraps Event Horizon's native
 kqueue descriptor in a `CFFileDescriptor` source; the arm64 macOS smoke runs an
 NSWindow lifecycle, kqueue timer, and foreign-thread waker through one CFRunLoop
-wait. The two Linux foreign-fd consumers remain in the WSI M2 work.
+wait. The direct X11/XCB consumer is now delivered: it drains XCB's buffered queue,
+waits on the connection fd through single-shot `OpPollAdd`, and uses
+`cancelAndWait` as its borrowed-callback teardown barrier. Wayland's prepare-read
+consumer remains in the WSI M2 work; XIM remains the unresolved part of the X11
+input path.
 
 Gate: hue TUI runs with **zero** polling timeouts on an idle document
 (strace-verifiable: the loop makes one blocking ring wait, no 33/150 ms

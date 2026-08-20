@@ -102,7 +102,7 @@ missing Sparkles targets visible.
 
 | Subject           | Wayland         | X11             | Win32           | AppKit          | Cross-platform fallback/delegation                       |
 | ----------------- | --------------- | --------------- | --------------- | --------------- | -------------------------------------------------------- |
-| `sparkles:wsi`    | planned native  | planned native  | native partial  | native partial  | SDL only as explicit separate package                    |
+| `sparkles:wsi`    | planned native  | native partial  | native partial  | native partial  | SDL only as explicit separate package                    |
 | GLFW 3            | native          | native          | native          | native          | optional Wayland libdecor decoration helper              |
 | raylib            | delegated GLFW  | delegated GLFW  | delegated GLFW  | delegated GLFW  | GLFW default; other ports exist outside this desktop row |
 | SDL3              | native          | native          | native          | native          | runtime video-driver selection                           |
@@ -197,3 +197,4 @@ behavioral rationale remains in the linked research deep-dives.
 | 2026-08-21 | M1 bounded UTF conversion                | no `F` cell changed; added shared allocation-free UTF-8/UTF-16 conversion for the future Win32 IMM32 and AppKit adapters, including safe NUL-terminated variants                                           | `dub test :base` (461 tests; 6 UTF-16 conversion cases)                                                                         |
 | 2026-08-21 | M2–M4 Win32 lifecycle, input + host wait | `F01`, `F02`, `F05`, `F06`, `F07`, and `F17` → `partial`; added native HWND lifecycle, typed handle, metrics, queued key/text/IMM32 events, and the Event Horizon User32/IOCP hosted wait                  | cross-compile plus Wine/Xvfb HWND/resize/close, scan-code + UTF-16 input, IMM32 pre-edit/commit, IOCP timer/foreign-waker smoke |
 | 2026-08-21 | M2/M3 AppKit lifecycle + host wait       | no `F` cell state changed; extended partial `F01`, `F02`, `F05`, and `F17` coverage with native NSWindow lifecycle, typed handles, point/pixel metrics, and the Event Horizon CFRunLoop/kqueue hosted wait | arm64 macOS NSWindow first draw/resize/close, main-thread rejection, kqueue timer/foreign-waker smoke                           |
+| 2026-08-21 | M2/M3 X11 lifecycle + foreign fd         | no `F` cell state changed; extended partial `F01`, `F02`, `F05`, and `F17` coverage with native XCB lifecycle, typed handles, ordered metrics/close events, and the Event Horizon `OpPollAdd` path         | Xvfb XCB create/expose/resize/close/destroy, wrong-thread rejection, timer/foreign-waker smoke; `cancelAndWait` unit            |
