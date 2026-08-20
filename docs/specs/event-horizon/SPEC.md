@@ -1641,6 +1641,10 @@ its stricter state machine: pending dispatch → `prepare_read` → flush → po
 one of `read_events`/`cancel_read` → pending dispatch. Writable interest is included
 only while flush is backpressured. Both synchronous detach paths call
 `cancelAndWait` before the native connection and callback context can be destroyed.
+The same cancellation barrier temporarily lends Wayland's shared display to renderer
+APIs such as Mesa Vulkan WSI: `beginNativeIo` cancels the outstanding prepared read,
+the foreign call may round-trip on the owner thread, and `endNativeIo` restores the
+prepare/read poll. A raw handle does not authorize two simultaneous display readers.
 
 ### 15.2 Wake, pace, hand off
 

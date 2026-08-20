@@ -1,0 +1,37 @@
+name "vulkan-wsi"
+description "Native sparkles:wsi to Vulkan surface and presentation bridge"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "../../build"
+targetType "sourceLibrary"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// The source-imported Vulkan ABI still needs the target header include path.
+// `vulkan.pc` supplies it as well as the loader link used by the smoke tests.
+libs "vulkan"
+
+dependency "expected" version="~>0.4.1"
+dependency "sparkles:vulkan" path="../.."
+dependency "sparkles:wsi" path="../.."
+
+configuration "library" {
+    // ImportC needs `vulkan.pc`'s `-I`; dub skips pkg-config for static
+    // libraries, so follow `sparkles:vulkan` and distribute source here.
+    targetType "sourceLibrary"
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}

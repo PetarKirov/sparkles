@@ -32,6 +32,7 @@ generated from it.
 module sparkles.vulkan.dispatch;
 
 import sparkles.vulkan.vulkan_c;
+import sparkles.vulkan.platform;
 
 /**
 `CreateInstance` → `createInstance`, the field spelling for a command name.
@@ -131,6 +132,29 @@ private enum CommandSet[] globalSets = [
 ];
 
 /// Instance-level commands. `VK_KHR_surface` resolves only if it was enabled.
+private enum CommandSet[] platformInstanceSets = () {
+    version (Windows)
+        return [CommandSet(khrWin32Surface, [
+            "CreateWin32SurfaceKHR",
+            "GetPhysicalDeviceWin32PresentationSupportKHR",
+        ])];
+    else version (OSX)
+        return [CommandSet(extMetalSurface, ["CreateMetalSurfaceEXT"])];
+    else version (linux)
+        return [
+            CommandSet(khrWaylandSurface, [
+                "CreateWaylandSurfaceKHR",
+                "GetPhysicalDeviceWaylandPresentationSupportKHR",
+            ]),
+            CommandSet(khrXcbSurface, [
+                "CreateXcbSurfaceKHR",
+                "GetPhysicalDeviceXcbPresentationSupportKHR",
+            ]),
+        ];
+    else
+        return [];
+}();
+
 private enum CommandSet[] instanceSets = [
     CommandSet(null, [
         "DestroyInstance",
@@ -153,7 +177,7 @@ private enum CommandSet[] instanceSets = [
         "GetPhysicalDeviceSurfaceFormatsKHR",
         "GetPhysicalDeviceSurfacePresentModesKHR",
     ]),
-];
+] ~ platformInstanceSets;
 
 /// Device-level commands: the queue, frame synchronisation, and the swapchain.
 private enum CommandSet[] deviceSets = [
@@ -257,6 +281,16 @@ enum string khrSwapchain = "VK_KHR_swapchain";
 enum string khrDynamicRendering = "VK_KHR_dynamic_rendering";
 /// ditto — not an extension name, a `has` key for the 1.3 core aliases.
 enum string vkVersion13 = "VK_VERSION_1_3";
+/// Native instance-surface extension names, available on their target only.
+version (linux)
+{
+    enum string khrWaylandSurface = "VK_KHR_wayland_surface";
+    enum string khrXcbSurface = "VK_KHR_xcb_surface";
+}
+else version (Windows)
+    enum string khrWin32Surface = "VK_KHR_win32_surface";
+else version (OSX)
+    enum string extMetalSurface = "VK_EXT_metal_surface";
 /**
 Tier 1: the commands available before any instance exists.
 
@@ -363,6 +397,17 @@ struct DeviceCommands
     static assert(matchesHeaderMacro(khrSwapchain, VK_KHR_SWAPCHAIN_EXTENSION_NAME));
     static assert(matchesHeaderMacro(khrDynamicRendering,
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME));
+    version (linux)
+    {
+        static assert(matchesHeaderMacro(khrWaylandSurface,
+            VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME));
+        static assert(matchesHeaderMacro(khrXcbSurface,
+            VK_KHR_XCB_SURFACE_EXTENSION_NAME));
+    }
+    else version (Windows)
+        static assert(khrWin32Surface == "VK_KHR_win32_surface");
+    else version (OSX)
+        static assert(extMetalSurface == "VK_EXT_metal_surface");
 
     // The trimming itself, since the whole point is that it differs by
     // compiler and only one of these two shapes is exercised per build.
@@ -382,6 +427,19 @@ struct DeviceCommands
     static assert(is(typeof(InstanceCommands.createDevice) == PFN_vkCreateDevice));
     static assert(is(typeof(InstanceCommands.getPhysicalDeviceSurfaceCapabilitiesKHR)
         == PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR));
+    version (linux)
+    {
+        static assert(is(typeof(InstanceCommands.createWaylandSurfaceKHR)
+            == PFN_vkCreateWaylandSurfaceKHR));
+        static assert(is(typeof(InstanceCommands.createXcbSurfaceKHR)
+            == PFN_vkCreateXcbSurfaceKHR));
+    }
+    else version (Windows)
+        static assert(is(typeof(InstanceCommands.createWin32SurfaceKHR)
+            == PFN_vkCreateWin32SurfaceKHR));
+    else version (OSX)
+        static assert(is(typeof(InstanceCommands.createMetalSurfaceEXT)
+            == PFN_vkCreateMetalSurfaceEXT));
     static assert(is(typeof(DeviceCommands.acquireNextImageKHR) == PFN_vkAcquireNextImageKHR));
     static assert(is(typeof(DeviceCommands.queuePresentKHR) == PFN_vkQueuePresentKHR));
 

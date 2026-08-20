@@ -73,6 +73,7 @@ struct WaylandWsi
     private bool pollArmed_;
     private bool pollCompleted_;
     private bool preparedRead_;
+    private bool nativeIoBorrowed_;
     private bool detaching_;
     private int pollResult_;
 
@@ -284,6 +285,46 @@ struct WaylandWsi
         return wsiOk(handles);
     }
 
+    /**
+    Suspend Event Horizon's prepared read while a native-handle consumer calls
+    an API that may itself read the shared `wl_display`.
+
+    Vulkan surface capability and swapchain calls are the motivating consumer:
+    Mesa may perform a private Wayland round trip. Leaving WSI's
+    `wl_display_prepare_read` outstanding would make that round trip wait on a
+    read the scheduler cannot complete until the call returns. Calls must be
+    paired with $(LREF endNativeIo) on this owner thread.
+    */
+    WsiResult!void beginNativeIo()
+    {
+        auto owner = requireOwner!void(WsiOperation.queryHandle);
+        if (owner.hasError)
+            return owner;
+        if (nativeIoBorrowed_)
+            return waylandFailure!void(WsiOperation.queryHandle, 0,
+                "Wayland native I/O is already borrowed",
+                WsiErrorKind.reentrant);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        nativeIoBorrowed_ = true;
+        return wsiOk();
+    }
+
+    /// Re-arm Event Horizon after $(LREF beginNativeIo).
+    WsiResult!void endNativeIo()
+    {
+        auto owner = requireOwner!void(WsiOperation.queryHandle);
+        if (owner.hasError)
+            return owner;
+        if (!nativeIoBorrowed_)
+            return waylandFailure!void(WsiOperation.queryHandle, 0,
+                "Wayland native I/O is not borrowed",
+                WsiErrorKind.invalidArgument);
+        nativeIoBorrowed_ = false;
+        return prepareAndArm();
+    }
+
     /** Drives the sole Event Horizon wait and services completed Wayland I/O. */
     IoResult!RunStatus runIntegratedOnce(ref DefaultLoop loop,
         Duration timeout = Duration.max)
@@ -372,7 +413,7 @@ struct WaylandWsi
 
     private WsiResult!void prepareAndArm()
     {
-        if (detaching_ || loop_ is null)
+        if (detaching_ || nativeIoBorrowed_ || loop_ is null)
             return wsiOk();
         if (hasStickyError_)
             return wsiErr!void(stickyError_);
