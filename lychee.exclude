@@ -117,3 +117,16 @@ apps/hue/twoslash
 # connectivity.fb.com (Facebook's ent ORM home, cited in research/sql/ent.md)
 # redirects to facebook.com/connectivity, which 400s automated checkers.
 ^https?://([^/]+\.)?fb\.com
+
+# www.freedesktop.org/wiki/ answers 418 "I'm a teapot" — but only to the
+# browser User-Agent this config spoofs. Probed directly: the same URL returns
+# 200 to lychee's own `lychee/<ver>` agent and 418 to
+# `Mozilla/5.0 … Firefox/128.0`, so the anti-bot rule fires on a UA that claims
+# to be a browser without behaving like one. The spoof exists for the
+# Cloudflare-fronted hosts documented in lychee.toml and is worth more than
+# this one host, and per-host UA overrides do not exist, so exclude the wiki
+# instead. Reproduces locally, hence the shared list rather than
+# lychee.ci.exclude. Scoped to /wiki/: specifications.freedesktop.org and
+# gitlab.freedesktop.org are cited elsewhere and both pass. Cited for the XDND
+# spec from os-apis/x11/f16-clipboard-dnd.md.
+^https?://(www\.)?freedesktop\.org/wiki/
