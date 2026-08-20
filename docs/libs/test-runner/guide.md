@@ -52,7 +52,10 @@ Summary: 1 passed, 0 failed in 0.2ms
 ```
 
 A failing test prints the throwable, its `file:line`, and a stack trace
-truncated at the runner's own frames; the process exits non-zero.
+truncated at the runner's own frames (`-v` keeps the full trace). After the
+summary, every failure is reprinted as a `Failed tests (N):` recap — names,
+locations, and traces — so a long parallel run still ends on the failures
+rather than burying them between passing lines. The process exits non-zero.
 
 ## Run and filter
 

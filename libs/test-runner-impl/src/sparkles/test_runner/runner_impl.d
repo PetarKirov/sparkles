@@ -31,8 +31,8 @@ import sparkles.test_runner.model : Test, TestResult;
 import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
     formatBenchTable, formatCapabilityBlock, formatCtfeFailedLine, formatCtfeLine,
     formatWorkloadTable,
-    formatMetricCatalog, formatResultLine, formatSummary, formatThrown,
-    progressEnabled, RunTotals, TableGeometry;
+    formatFailedRecap, formatMetricCatalog, formatResultLine, formatSummary,
+    formatThrown, progressEnabled, RunTotals, TableGeometry;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point — called across the extern(C) seam by the registration shim,
@@ -434,7 +434,7 @@ private DriverOptions toDriverOptions(const RunnerOptions options)
 /// (`__ctfeWrite` text, error trails), and updates `totals`.
 private void runCtfeStage(
     in Test[] ctfeTests, in Test[] allTests, in RunnerOptions options,
-    bool colored, uint width, ref RunTotals totals)
+    bool colored, uint width, ref RunTotals totals, ref TestResult[] failures)
 {
     import std.algorithm.searching : canFind;
     import std.stdio : stderr, stdout;
@@ -462,6 +462,7 @@ private void runCtfeStage(
         {
             stdout.writeln(formatCtfeFailedLine(test, colored, width));
             totals.failed++;
+            failures ~= TestResult(test: test, succeeded: false);
         }
         else
         {
@@ -612,6 +613,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
 
     RunTotals totals;
     const started = MonoTime.currTime;
+    TestResult[] failures;
 
     foreach (test; tests)
     {
@@ -624,7 +626,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     }
 
     runCtfeStage(tests.filter!(t => t.traits.isCtfe).array, tests,
-        options, colored, width, totals);
+        options, colored, width, totals, failures);
 
     auto runnable = tests
         .filter!(t => !t.traits.isCtfe && !t.traits.isBenchmark && !t.traits.isWorkload)
@@ -642,27 +644,36 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
         if (progressEnabled(options.noColors, stderrStream: false))
         {
             runParallelLive(runnable, options, colored, width, threads,
-                passed, failed, skipped);
+                passed, failed, skipped, failures);
             ranLive = true;
         }
     }
-    if (!ranLive) with (new TaskPool(threads - 1))
+    if (!ranLive)
     {
-        foreach (test; parallel(runnable))
+        import core.sync.mutex : Mutex;
+
+        auto mutex = new Mutex;
+        with (new TaskPool(threads - 1))
         {
-            const result = executeTest(test);
+            foreach (test; parallel(runnable))
+            {
+                const result = executeTest(test);
 
-            auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
-            foreach (thrown; result.thrown)
-                output ~= formatThrown(thrown, colored, options.verbose);
-            stdout.lockingTextWriter.put(output);
+                auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
+                foreach (thrown; result.thrown)
+                    output ~= formatThrown(thrown, colored, options.verbose);
+                stdout.lockingTextWriter.put(output);
 
-            if (result.skipped)
-                atomicOp!"+="(skipped, size_t(1));
-            else
-                atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
+                if (result.skipped)
+                    atomicOp!"+="(skipped, size_t(1));
+                else
+                    atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
+                if (!result.succeeded && !result.skipped)
+                    synchronized (mutex)
+                        failures ~= result;
+            }
+            finish(true);
         }
-        finish(true);
     }
 
     totals.passed = passed;
@@ -674,6 +685,13 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
 
     stdout.writeln;
     stdout.writeln(formatSummary(totals, MonoTime.currTime - started, colored));
+    if (failures.length)
+    {
+        import std.algorithm.sorting : sort;
+
+        failures.sort!((a, b) => a.test.fullName < b.test.fullName);
+        stdout.write(formatFailedRecap(failures, colored));
+    }
 
     const executed = totals.passed + totals.failed + totals.ctfePassed;
     return UnitTestResult(executed, totals.passed + totals.ctfePassed, false, false);
@@ -1332,7 +1350,7 @@ static if (hasLiveRegion)
 private void runParallelLive(
     Test[] runnable, in RunnerOptions options, bool colored, uint width,
     size_t threads, ref shared size_t passed, ref shared size_t failed,
-    ref shared size_t skipped)
+    ref shared size_t skipped, ref TestResult[] failures)
 {
     import core.atomic : atomicLoad, atomicOp;
     import core.sync.mutex : Mutex;
@@ -1359,7 +1377,11 @@ private void runParallelLive(
         foreach (thrown; result.thrown)
             output ~= formatThrown(thrown, colored, options.verbose);
         synchronized (mutex)
+        {
             pendingOutput ~= output;
+            if (!result.succeeded && !result.skipped)
+                failures ~= result;
+        }
         // Same three buckets as the plain path: a skip (yellow ⊘ line) counts
         // in neither passed nor failed, so it never fails the run.
         if (result.skipped)
