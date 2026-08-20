@@ -21,6 +21,9 @@ module live_types;
 
 version (Posix):
 
+import core.time : Duration, msecs, seconds;
+
+import std.algorithm.iteration : map;
 import std.json : JSONType, JSONValue, parseJSON;
 
 import expected : err, Expected, ok;
@@ -166,6 +169,17 @@ batch gallery path: `--dub` for the enclosing project, `--quiet` so a
 private enum extractorFlags = ["--dub", "--quiet", "--unittest"];
 
 /**
+How long one batch extraction may take before it is killed.
+
+DMD-as-a-library analyses one file per process and `--dub` shells out to
+`dub describe` first, so a single pathological input can wedge. Without a
+deadline that wedge is the whole gallery: a 615-file docs build would hang
+until CI's job cap and report a timeout rather than a bad file. Generous
+enough that a cold `dub describe` on a large project is not mistaken for one.
+*/
+enum Duration extractTimeout = 120.seconds;
+
+/**
 Batch-extracts an eager twoslash payload for `filePath` — the same binary
 and `--dub --quiet --unittest` flags as $(LREF LiveTypesSession.start), but
 `--stdout` instead of `--serve`: one process, one JSON line, then exit.
@@ -174,49 +188,147 @@ The static HTML gallery has no oracle to resolve tips later, so this path
 does not pass `--lazy`. Failures are a reason string, never an exception
 (`PRJ15` / `GAL9`).
 */
-Expected!(TwoslashReturn, string) extractTwoslash(string filePath) @system
+Expected!(TwoslashReturn, string) extractTwoslash(string filePath,
+    Duration timeout = extractTimeout) @system
 {
     const bin = liveTypesBinary();
     if (!bin.length)
         return err!TwoslashReturn("twoslash-extract not found on PATH " ~
             "(build it, or set $SPARKLES_TWOSLASH_EXTRACT)");
-    return extractTwoslashWith([bin, filePath, "--stdout"] ~ extractorFlags);
+    return extractTwoslashWith([bin, filePath, "--stdout"] ~ extractorFlags,
+        timeout);
 }
 
 /// ditto — with an explicit command line (the seam a test drives a scripted
 /// extractor through).
-Expected!(TwoslashReturn, string) extractTwoslashWith(const(string)[] argv) @system
+Expected!(TwoslashReturn, string) extractTwoslashWith(const(string)[] argv,
+    Duration timeout = extractTimeout) @system
 {
-    import std.array : appender;
     import std.conv : text;
-    import std.process : pipeProcess, Redirect, wait;
+    import std.process : kill, pipeProcess, Redirect, wait;
     import std.string : strip;
 
     try
     {
-        auto pipes = pipeProcess(argv, Redirect.stdout);
-        auto buf = appender!string;
-        int status = 1;
-        try
+        // Both streams are captured, never inherited. The child's stderr is
+        // where `--dub`'s "no dub.sdl above <path>" notices and DMD's own
+        // chatter go; inheriting it interleaves one or more lines per file
+        // into the gallery's progress output (365 of them for this repo), and
+        // routing it to /dev/null instead would throw away the only
+        // explanation a failure has. Captured, it is silent on success and
+        // becomes the error text on failure.
+        auto pipes = pipeProcess(argv, Redirect.stdout | Redirect.stderr);
+        auto drained = drainWithDeadline(pipes, timeout);
+        if (!drained.finished)
         {
-            foreach (chunk; pipes.stdout.byChunk(4096))
-                buf ~= cast(const char[]) chunk;
-        }
-        finally
-        {
-            pipes.stdout.close();
-            status = wait(pipes.pid);
-        }
-        if (status != 0)
+            kill(pipes.pid);
+            wait(pipes.pid);
             return err!TwoslashReturn(text(
-                "twoslash-extract exited (status ", status, ")"));
-        auto res = parseTwoslash(buf[].strip);
+                "twoslash-extract timed out after ", timeout, " (killed)"));
+        }
+        const status = wait(pipes.pid);
+        if (status != 0)
+            return err!TwoslashReturn(text("twoslash-extract exited (status ",
+                status, ")", detail(drained.err)));
+        auto res = parseTwoslash(drained.out_.strip);
         if (res.hasError)
-            return err!TwoslashReturn("twoslash-extract: " ~ res.error.toString);
+            return err!TwoslashReturn("twoslash-extract: " ~
+                res.error.toString ~ detail(drained.err));
         return ok(res.value);
     }
     catch (Exception e)
         return err!TwoslashReturn("could not start twoslash-extract: " ~ e.msg);
+}
+
+/// What one drain produced: the two streams, and whether the child closed both
+/// before the deadline.
+private struct Drained
+{
+    string out_;
+    string err;
+    bool finished;
+}
+
+/**
+Reads both pipes until EOF or `timeout`, whichever comes first.
+
+`poll(2)` rather than a blocking read per stream, for two reasons. A blocking
+read cannot be interrupted, so a wedged child would ignore the deadline
+entirely — the thing this exists to prevent. And draining one stream to EOF
+before touching the other deadlocks the moment the child fills the pipe it is
+not being read from: a DMD error cascade on stderr is exactly that case.
+*/
+private Drained drainWithDeadline(P)(ref P pipes, Duration timeout) @trusted
+{
+    import core.stdc.errno : EINTR, errno;
+    import core.sys.posix.poll : POLLERR, POLLHUP, POLLIN, poll, pollfd;
+    import core.sys.posix.unistd : read;
+    import std.array : appender;
+    import std.datetime.stopwatch : StopWatch;
+
+    auto outBuf = appender!string;
+    auto errBuf = appender!string;
+    int[2] fds = [pipes.stdout.fileno, pipes.stderr.fileno];
+    auto sinks = [&outBuf, &errBuf];
+    bool[2] open_ = [true, true];
+
+    StopWatch sw;
+    sw.start();
+    ubyte[4096] chunk;
+    while (open_[0] || open_[1])
+    {
+        const left = timeout - sw.peek;
+        if (left <= Duration.zero)
+            return Drained(outBuf[], errBuf[], false);
+
+        pollfd[2] pfd;
+        int n;
+        foreach (i; 0 .. 2)
+            if (open_[i])
+            {
+                pfd[n].fd = fds[i];
+                pfd[n].events = POLLIN;
+                pfd[n].revents = 0;
+                ++n;
+            }
+
+        const ms = cast(int) left.total!"msecs";
+        const ready = poll(pfd.ptr, n, ms > 0 ? ms : 1);
+        if (ready < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (ready == 0)
+            return Drained(outBuf[], errBuf[], false);
+
+        foreach (j; 0 .. n)
+        {
+            if ((pfd[j].revents & (POLLIN | POLLHUP | POLLERR)) == 0)
+                continue;
+            const i = pfd[j].fd == fds[0] ? 0 : 1;
+            const got = read(pfd[j].fd, chunk.ptr, chunk.length);
+            if (got > 0)
+                *sinks[i] ~= cast(const(char)[]) chunk[0 .. got];
+            else
+                open_[i] = false;   // EOF, or an error we treat as one
+        }
+    }
+    return Drained(outBuf[], errBuf[], true);
+}
+
+/// The child's own last words, appended to a failure reason. Trimmed to the
+/// final line so a DMD error cascade does not become the error message.
+private string detail(string stderrText) @safe
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
+    import std.string : lineSplitter, strip;
+
+    auto lines = stderrText.lineSplitter.map!(l => l.strip)
+        .filter!(l => l.length).array;
+    return lines.length ? ": " ~ lines[$ - 1] : "";
 }
 
 /**
@@ -517,6 +629,83 @@ private struct StderrSilencer
     auto garbage = extractTwoslashWith(["sh", "-c", "printf 'not json\n'"]);
     assert(garbage.hasError);
     assert(garbage.error.length, "a parse failure names the reason");
+}
+
+@("live_types.extractTwoslash.timesOutAndKillsAWedgedChild")
+@system unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+    import std.datetime.stopwatch : StopWatch;
+
+    if (!isInPath("sh"))
+        skipTest("no `sh` for the scripted extractor");
+
+    // A child that never writes and never exits. Without a deadline this is
+    // the whole gallery hanging on one bad file.
+    StopWatch sw;
+    sw.start();
+    auto res = extractTwoslashWith(["sh", "-c", "sleep 30"], 300.msecs);
+    const elapsed = sw.peek;
+
+    assert(res.hasError);
+    assert(res.error == "twoslash-extract timed out after 300 ms (killed)",
+        res.error);
+    // The point is that it returns promptly, not that it waits for the child.
+    assert(elapsed < 5.seconds, "the deadline did not fire");
+}
+
+@("live_types.extractTwoslash.childStderrExplainsAFailureAndNeverLeaks")
+@system unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+    import std.algorithm.searching : canFind;
+
+    if (!isInPath("sh"))
+        skipTest("no `sh` for the scripted extractor");
+
+    // Captured, not inherited: the reason reaches the caller as text rather
+    // than landing on hue's own stderr one line per file.
+    auto failed = extractTwoslashWith(
+        ["sh", "-c", "printf 'boom: no dub.sdl above x.d\n' >&2; exit 3"]);
+    assert(failed.hasError);
+    assert(failed.error.canFind("status 3"), failed.error);
+    assert(failed.error.canFind("boom: no dub.sdl above x.d"), failed.error);
+
+    // Only the last line survives, so a DMD cascade cannot become the message.
+    auto cascade = extractTwoslashWith(
+        ["sh", "-c", "printf 'first\nsecond\nlast\n' >&2; exit 1"]);
+    assert(cascade.hasError);
+    assert(cascade.error.canFind("last"), cascade.error);
+    assert(!cascade.error.canFind("first"), cascade.error);
+
+    // A successful run's stderr is discarded, not folded into the payload.
+    enum payload = `{"code":"int x;","offsetEncoding":"utf-8",` ~
+        `"language":"d","nodes":[]}`;
+    auto noisy = extractTwoslashWith(["sh", "-c",
+        `printf 'chatter\n' >&2; printf '%s\n' '` ~ payload ~ `'`]);
+    assert(noisy.hasValue, noisy.hasError ? noisy.error : "");
+    assert(noisy.value.code == "int x;");
+}
+
+@("live_types.extractTwoslash.drainsBothPipesWithoutDeadlocking")
+@system unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!isInPath("sh"))
+        skipTest("no `sh` for the scripted extractor");
+
+    // More stderr than a pipe buffer holds, written BEFORE the payload. A
+    // drain that read stdout to EOF first would block here forever, because
+    // the child blocks writing stderr that nobody is reading.
+    enum payload = `{"code":"x","offsetEncoding":"utf-8","language":"d","nodes":[]}`;
+    enum script = `i=0; while [ $i -lt 4000 ]; do ` ~
+        `printf 'a very long diagnostic line to fill the pipe buffer %d\n' $i >&2; ` ~
+        `i=$((i+1)); done; printf '%s\n' '` ~ payload ~ `'`;
+
+    auto res = extractTwoslashWith(["sh", "-c", script], 60.seconds);
+    assert(res.hasValue, res.hasError ? res.error : "expected a payload");
+    assert(res.value.code == "x");
 }
 
 @("live_types.classifyServeLine.answerErrorAndGarbage")
