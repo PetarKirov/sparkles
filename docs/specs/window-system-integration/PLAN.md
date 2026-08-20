@@ -79,6 +79,12 @@ timer and wake, and shuts down without a second blocking loop.
 | Win32   | `PeekMessage` drain progresses beside IOCP; move/size modal loop still wakes and queues    |
 | AppKit  | `CFRunLoopSource`/observer plus kqueue waker coexist on the main thread                    |
 
+The OS-owned-loop half of M2 is delivered on both platforms: Win32 combines User32
+with an IOCP completion-mirror event; AppKit wraps Event Horizon's native kqueue
+descriptor in a `CFFileDescriptor` source in the main CFRunLoop. Their platform
+smokes each run a real window lifecycle, timer, and foreign-thread waker without a
+polling timeout or second scheduler. Wayland and X11 foreign-fd consumers remain.
+
 If an Event Horizon generic native-host primitive is missing, add the smallest
 backend-neutral operation there and update its spec. Do not put a second IOCP, kqueue,
 timer wheel, channel, or worker scheduler in WSI.

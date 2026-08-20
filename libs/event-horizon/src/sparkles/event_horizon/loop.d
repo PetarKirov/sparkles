@@ -324,7 +324,8 @@ if (isCompletionBackend!Backend)
                 return after;
             if (after.value == RunStatus.stopped)
                 return after;
-            return ioOk(hostWork || after.value == RunStatus.dispatched
+            return ioOk(waited.value || hostWork
+                    || after.value == RunStatus.dispatched
                 ? RunStatus.dispatched : RunStatus.timedOut);
         }
     }

@@ -336,6 +336,9 @@ new variants only in a versioned API change; field reinterpretation is forbidden
 ### 9.4 AppKit
 
 - All AppKit work runs on the process main thread.
+- Event Horizon remains the application loop: non-blocking NSEvent drains surround a
+  single CFRunLoop wait whose `CFFileDescriptor` source observes Event Horizon's native
+  kqueue descriptor. No helper thread, duplicate kqueue, or polling timeout is used.
 - The content `NSView` supplies a layer suitable for Metal and exposes its pixel size
   from backing conversion, not logical bounds alone.
 - Keyboard text and composition implement `NSTextInputClient`; key events remain
