@@ -16,6 +16,7 @@ import core.sys.windows.imm : ATTR_CONVERTED, ATTR_FIXEDCONVERTED,
     GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR,
     ISC_SHOWUICOMPOSITIONWINDOW, WM_IME_CHAR, WM_IME_COMPOSITION,
     WM_IME_ENDCOMPOSITION, WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION;
+import std.math : isFinite;
 
 import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16z;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
@@ -131,10 +132,17 @@ struct Win32Wsi
             return win32Failure!WindowId(WsiOperation.createWindow, 0,
                 "WSI is closed", WsiErrorKind.closed);
         if (config.logicalSize.width < 0 || config.logicalSize.height < 0
+            || !config.logicalSize.width.isFinite
+            || !config.logicalSize.height.isFinite
             || config.logicalSize.width > int.max
             || config.logicalSize.height > int.max)
             return win32Failure!WindowId(WsiOperation.createWindow, 0,
                 "invalid logical window size", WsiErrorKind.invalidArgument);
+        if (config.transparent
+            || config.state == WindowStartupState.fullscreen)
+            return win32Failure!WindowId(WsiOperation.createWindow, 0,
+                "requested Win32 startup configuration is not implemented",
+                WsiErrorKind.unsupported);
 
         size_t index = size_t.max;
         foreach (i, ref slot; windows_)
@@ -213,9 +221,8 @@ struct Win32Wsi
                     ShowWindow(hwnd, SW_SHOWMAXIMIZED);
                     break;
                 case WindowStartupState.fullscreen:
-                    // Fullscreen state is delivered in the F14 slice; do not
-                    // silently manufacture a borderless monitor-sized window.
-                    ShowWindow(hwnd, SW_SHOW);
+                    // Rejected before native creation; retained for the
+                    // exhaustive enum switch.
                     break;
             }
         }
