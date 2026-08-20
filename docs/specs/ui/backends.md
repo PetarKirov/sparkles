@@ -113,13 +113,15 @@ the existing ones **without editing `sparkles:ui`**. That holds only if:
 
 ## Relationship to existing specs
 
-| Piece                                           | Role                                                         |
-| ----------------------------------------------- | ------------------------------------------------------------ |
-| [layout.md](./layout.md) `LAY3`, `LAY5`         | the integer-unit rule and the injected measurement primitive |
-| [input.md](./input.md) `INP6`–`INP9`            | the input half of a target's capabilities and its adapters   |
-| [theme.md](./theme.md) `THM3`                   | the resolved appearance a canvas consumes                    |
-| [principles.md](./principles.md) `PRN8`, `PRN9` | the shared-semantics and semantic-state boundary             |
-| [open-issues.md](./open-issues.md) `UI-O3`      | the missing native pointer grab in the window/input backend  |
-| `sparkles:tui`, `sparkles:raylib-text`          | the drawing substrates the adapters wrap                     |
+| Piece                                                  | Role                                                                                                            |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| [layout.md](./layout.md) `LAY3`, `LAY5`                | the integer-unit rule and the injected measurement primitive                                                    |
+| [input.md](./input.md) `INP6`–`INP9`                   | the input half of a target's capabilities and its adapters                                                      |
+| [theme.md](./theme.md) `THM3`                          | the resolved appearance a canvas consumes                                                                       |
+| [principles.md](./principles.md) `PRN8`, `PRN9`        | the shared-semantics and semantic-state boundary                                                                |
+| [open-issues.md](./open-issues.md) `UI-O3`             | the missing native pointer grab in the window/input backend                                                     |
+| `sparkles:tui`, `sparkles:raylib-text`                 | the drawing substrates the adapters wrap                                                                        |
+| [`sparkles:wsi`](../window-system-integration/SPEC.md) | future native window/input/handle substrate; it remains outside `sparkles:ui` and does not implement `isCanvas` |
+| `sparkles:ui-skia`                                     | future Graphite `isCanvas` sibling; Vulkan/Metal and WSI stay below its adapter boundary                        |
 
 → [Overview](./index.md) · [Layout](./layout.md) · [Input](./input.md)

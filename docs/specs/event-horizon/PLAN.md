@@ -273,6 +273,13 @@ package's `tui_loop.d`/`gui_loop.d` arms are the natural final home of
 these loops (`HST9`); the adapters land the machinery so either migration
 order works.
 
+Native desktop windowing follows the separate
+[`sparkles:wsi` delivery plan](../window-system-integration/PLAN.md). Its M2
+Wayland/X11/Win32/AppKit spikes are the acceptance tests for this section's
+foreign-fd and OS-owned-loop seams. If a spike needs a new primitive, it lands in
+Event Horizon first as the smallest backend-neutral host hook; WSI never carries a
+parallel wait or scheduler.
+
 Gate: hue TUI runs with **zero** polling timeouts on an idle document
 (strace-verifiable: the loop makes one blocking ring wait, no 33/150 ms
 tick wakeups); the `apps/terminal` render-CPU benchmark's idle scenario

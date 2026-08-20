@@ -31,6 +31,14 @@ subject it copies (or the mistake it avoids), and carries its trade-off out loud
 
 **Last reviewed:** June 8, 2026
 
+> [!NOTE]
+> These recommendations are now adopted and refined by the normative
+> [`sparkles:wsi` specification](../../specs/window-system-integration/SPEC.md).
+> One sequencing exception is deliberate: the first Win32 IME milestone uses IMM32
+> because it is substantially simpler and better exercised by the local Wine lane;
+> TSF remains the post-native/Graphite/`ui-app` milestone behind the same public
+> composition contract.
+
 ---
 
 ## 1. Master recommendation table

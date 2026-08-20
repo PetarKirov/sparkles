@@ -31,6 +31,13 @@ faces today** (the [delta table](#part-5-the-delta-table) that bridges into
 
 **Last reviewed:** June 8, 2026
 
+> [!NOTE]
+> The normative implementation delta now lives in the
+> [`sparkles:wsi` supported-feature matrix](../../specs/window-system-integration/comparison.md),
+> which adds source-pinned GLFW, raylib, SDL3, SFML, Qt QPA, Gio, winit,
+> raw-window-handle, and OpenTK 5 columns and is updated with each WSI capability
+> commit. This research page remains the broader fifteen-toolkit synthesis.
+
 ---
 
 ## Part 1 — The systems at a glance

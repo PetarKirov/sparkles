@@ -1,5 +1,14 @@
 # Handoff: drop SDL, native Wayland live-resize
 
+> [!IMPORTANT]
+> **Superseded as an implementation plan by the
+> [`sparkles:wsi` specification](../window-system-integration/SPEC.md) and
+> [delivery plan](../window-system-integration/PLAN.md).** The measurements,
+> vetoed workarounds, and immediate-ack requirement below remain primary evidence.
+> Native Wayland is now one vertical slice of a four-backend WSI library integrated
+> with Event Horizon; SDL remains an explicitly named compatibility backend rather
+> than being deleted globally.
+
 **Status:** decision taken, implementation **not started**. Working tree is **clean**.
 **Date:** 2026-08-20.
 **Branch:** `feat/ui-sdl3-input`. The measured X11-good loop (`32c323f71`) and the Darwin `events.d` fix (`1faff458a`) are **committed** — see [§3 Working tree](#3-working-tree).

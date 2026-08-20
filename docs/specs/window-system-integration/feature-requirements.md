@@ -1,0 +1,65 @@
+# `sparkles:wsi` — Feature requirements
+
+_Normative requirement ledger for [SPEC.md](./SPEC.md). `planned` means the contract is
+accepted but has no implementation evidence; `partial` names the missing platform or
+semantic edge; `verified` requires the evidence described in
+[SPEC §11](./SPEC.md#_11-testing-and-evidence)._
+
+**Last reviewed:** August 20, 2026
+
+## Architecture (`WSI`)
+
+| ID   | Requirement                                                                                                                                                                                       | Status  | Traces to                                                   |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ----------------------------------------------------------- |
+| WSI1 | The native desktop package is named `sparkles:wsi` and has no third-party cross-platform windowing, widget, or renderer dependency. Native platform client libraries are permitted.               | planned | `libs/wsi`; [SPEC §1](./SPEC.md#_1-purpose-and-scope)       |
+| WSI2 | Wayland, X11, Win32, and AppKit are peer native backends behind one value-level contract. No supported desktop silently falls through to SDL.                                                     | planned | `platform.*`; [SPEC §9](./SPEC.md#_9-platform-contracts)    |
+| WSI3 | Event Horizon is the only application event loop, scheduler, timer source, blocking wait, and cross-thread wake path.                                                                             | planned | `loop`; [SPEC §4](./SPEC.md#_4-the-single-integrated-loop)  |
+| WSI4 | The UI/main thread owns all windows and native callbacks; cross-thread work is value commands plus a coalescing waker.                                                                            | planned | `loop`; [SPEC §3](./SPEC.md#_3-ownership-and-threading)     |
+| WSI5 | WSI events, ids, configurations, and commands are Regular values with explicit lifetime and generation rules.                                                                                     | planned | `types`, `events`                                           |
+| WSI6 | Platform and renderer failures use typed `WsiError`/`Expected`, not assertions, sentinel handles, or `IoError`.                                                                                   | planned | `types`                                                     |
+| WSI7 | SDL 3 compatibility, Vulkan surface/swapchain integration, and Skia Graphite live in separate packages above native WSI.                                                                          | planned | [SPEC §10](./SPEC.md#_10-compatibility-and-renderer-layers) |
+| WSI8 | Shared Sparkles primitives are reused or moved to the lowest owning package; WSI does not introduce parallel geometry, pointer-shape, cell-metric, UTF conversion, or event-loop implementations. | planned | [PLAN M1](./PLAN.md#milestone-m1-shared-foundations)        |
+
+## Desktop feature baseline (`F01`–`F17`)
+
+Every row applies independently to Wayland, X11, Win32, and AppKit unless the row says
+otherwise. The first implementation may stage platforms, but the native baseline does
+not complete until all four columns are verified.
+
+| ID  | Requirement                                                                                                                                                                                                                             | Status  | Principal evidence                                |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------- |
+| F01 | **First pixel and initialization:** create one window, deliver authoritative logical/physical metrics and stable renderer handles, and reach a presentable first frame without an avoidable round trip or created-at-wrong-scale frame. | planned | first-frame traces per platform                   |
+| F02 | **Resize:** preserve continuous live resize, report every authoritative surface-size transition in order, acknowledge protocol requests promptly, and never resize a swapchain from logical size.                                       | planned | latency/trace harness; Mutter, Win32, AppKit HITL |
+| F03 | **Modal-loop survival:** continue native replies, input queuing, repaint opportunities, and Event Horizon wake progress during move/size/menu/modal tracking loops.                                                                     | planned | modal-loop scenarios per platform                 |
+| F04 | **Frame pacing:** expose native frame opportunities/presentation timing where available and an Event Horizon deadline fallback without sleeping inside WSI.                                                                             | planned | cadence/jitter trace                              |
+| F05 | **Loop wakeup and external sources:** integrate native readiness with Event Horizon, provide a contention-safe coalesced cross-thread wake, and never run a second blocking application loop.                                           | planned | wake-race and zero-idle tests                     |
+| F06 | **Keyboard and keymap:** report physical and logical key identity, location, modifiers, press/repeat/release, keymap/layout changes, and unknown native codes without inventing text.                                                   | planned | layout/repeat/keymap matrix                       |
+| F07 | **IME and text input:** separate UTF-8 commit from keys; report pre-edit, selection and cursor/segments; position candidate UI; use text-input-v3, XIM, IMM32 first, and `NSTextInputClient`.                                           | planned | native IME scenarios; Wine smoke for IMM32        |
+| F08 | **DPI and runtime rescale:** use logical public geometry plus authoritative physical surface size and scale; handle mixed-DPI movement atomically where the platform permits.                                                           | planned | mixed-output scale test                           |
+| F09 | **Outputs:** enumerate, add/change/remove displays with identity, geometry/work area, scale, modes and refresh; report the active output set of each window.                                                                            | planned | hotplug/topology test                             |
+| F10 | **Pointer capture:** support capture/confinement and raw relative motion as distinct capabilities; preserve releases outside content and unwind capture on focus loss/destruction.                                                      | planned | drag-outside/raw-motion test                      |
+| F11 | **Scroll fidelity:** preserve pixel/logical delta, discrete steps, source, phase/momentum and natural-direction metadata where supplied; normalization happens above WSI.                                                               | planned | mouse/trackpad trace fixtures                     |
+| F12 | **Cursors:** support standard shapes through the shared `PointerShape`, custom images/hotspots, visibility and scale changes; report unsupported shapes.                                                                                | planned | cursor catalog/manual pass                        |
+| F13 | **Decorations:** on Wayland request `xdg-decoration` SSD and provide renderer-drawn CSD fallback without libdecor; report frame actions and correct input regions. Other platforms use their native equivalent.                         | planned | GNOME and SSD compositor passes                   |
+| F14 | **Window state and vetoable close:** report minimize/maximize/fullscreen/focus/occlusion and allow close requests to be accepted or vetoed without duplicate destruction.                                                               | planned | state-transition model tests                      |
+| F15 | **Grabbed popup:** create anchored/gravity-constrained native popups with a compositor/server grab, reposition feedback and outside-dismiss semantics.                                                                                  | planned | nested/reposition/dismiss scenarios               |
+| F16 | **Clipboard and drag-and-drop:** offer and receive typed data incrementally, negotiate MIME/format choices, handle large transfers without blocking, and implement both drag source and target.                                         | planned | round-trip/large-transfer matrix                  |
+| F17 | **Threading and reentrancy:** enforce the UI/main-thread rule, never call application code re-entrantly from native callbacks, and make shutdown/cancellation race-safe.                                                                | planned | wrong-thread/reentrant/shutdown tests             |
+
+## Handoff and integration (`INT`)
+
+| ID   | Requirement                                                                                                                                                          | Status  | Traces to                                               |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------- |
+| INT1 | `NativeHandles` is a closed typed sum with only backend-valid fields and a documented ready-to-destroy lifetime.                                                     | planned | `handles`; [SPEC §8](./SPEC.md#_8-typed-native-handles) |
+| INT2 | `sparkles:vulkan-wsi` creates native Vulkan surfaces and reuses the loader, command tables, error vocabulary, and proven frame/swapchain retirement policy.          | planned | `libs/vulkan-wsi`; `libs/ui-sdl3` extraction            |
+| INT3 | Skia Graphite uses Vulkan on Linux/Windows and Metal on macOS without WSI importing Skia or either graphics API.                                                     | planned | `libs/ui-skia`                                          |
+| INT4 | `sparkles:ui-app` exposes `tui`, `gui-skia` (default GUI), `gui-skia-sdl`, `gui-raylib`, and `full` configurations while application source remains backend-neutral. | planned | `libs/ui-app/dub.sdl`                                   |
+| INT5 | The UI adapter converts the lossless WSI vocabulary into `sparkles:input` once, using shared cell-metric and capability policies.                                    | planned | `ui-app`/`input` adapter                                |
+| INT6 | Every capability-bearing commit updates the supported-feature matrix and points at its automated and HITL evidence.                                                  | planned | [comparison.md](./comparison.md)                        |
+
+## Deferred (`POST`)
+
+| ID    | Requirement                                                                                      | Status   | Entry condition                                                 |
+| ----- | ------------------------------------------------------------------------------------------------ | -------- | --------------------------------------------------------------- |
+| POST1 | Replace or augment Win32 IMM32 with TSF without changing the public composition/commit contract. | deferred | native `F01`–`F17`, Graphite, and `ui-app` integration verified |
+| POST2 | Add Android/iOS backends without weakening the callback/lifecycle and typed-handle contracts.    | deferred | desktop baseline verified                                       |
