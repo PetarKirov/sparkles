@@ -6,7 +6,7 @@ than the fifteen-library [research synthesis](../../research/window-system-integ
 what can an application obtain through each subject's window-system-facing API across
 the four Sparkles desktop targets?
 
-**Last reviewed:** August 20, 2026
+**Last reviewed:** August 21, 2026
 
 > [!IMPORTANT]
 > An internal backend implementation is not automatically a public capability. `Qt QPA`
@@ -194,3 +194,4 @@ behavioral rationale remains in the linked research deep-dives.
 | 2026-08-20 | `5c17ddf21`                 | initialized all `F01`–`F17` cells as `planned`; no implementation credit claimed                                                                                                       | normative spec plus pinned source audit                              |
 | 2026-08-20 | M1 shared-input preparation | no `F` cell changed; consolidated geometry, cell conversion, and pointer-shape imports before the WSI package consumes them                                                            | `dub test :input`, `:ui-sdl3`, `:ui-raylib`                          |
 | 2026-08-20 | M3 core working tree        | no native `F` cell changed; added unit-explicit values, generation ids, lossless events, typed handles/errors, pure backend selection, and a bounded non-reentrant recording lifecycle | `dub test :wsi` (11 tests); checked build; `win32-ldc2` core compile |
+| 2026-08-21 | M1 bounded UTF conversion   | no `F` cell changed; added shared allocation-free UTF-8/UTF-16 conversion for the future Win32 IMM32 and AppKit adapters, including safe NUL-terminated variants                       | `dub test :base` (461 tests; 6 UTF-16 conversion cases)              |
