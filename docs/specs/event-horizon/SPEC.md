@@ -1633,11 +1633,14 @@ dispatch) and re-arms. This is deliberately the winit/calloop
 its fd for a foreign loop to poll — foreign fds join _this_ loop, which is
 what "owning the event loop" means.
 
-The first normative foreign-fd consumer is the X11 adapter in `sparkles:wsi`. It
+The normative foreign-fd consumers are the Linux adapters in `sparkles:wsi`. X11
 uses a single-shot poll because XCB can also hold already-buffered events after a
 reply read: each integrated iteration drains `xcb_poll_for_event` before it may
-block, services the readiness completion, and re-arms. Its synchronous detach calls
-`cancelAndWait` before the X connection and callback context can be destroyed.
+block, services the readiness completion, and re-arms. Wayland uses the same op for
+its stricter state machine: pending dispatch → `prepare_read` → flush → poll → exactly
+one of `read_events`/`cancel_read` → pending dispatch. Writable interest is included
+only while flush is backpressured. Both synchronous detach paths call
+`cancelAndWait` before the native connection and callback context can be destroyed.
 
 ### 15.2 Wake, pace, hand off
 

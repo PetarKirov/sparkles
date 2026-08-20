@@ -9,10 +9,11 @@ targetType "library"
 
 dflags "-preview=in" "-preview=dip1000"
 libs "imm32" platform="windows"
-libs "xcb" platform="linux"
+libs "wayland-client" "xcb" platform="linux"
 lflags "-framework" "AppKit" "-framework" "CoreFoundation" platform="osx"
 
 sourceFiles "src/xcb_native.c" platform="linux"
+sourceFiles "src/wayland_native.c" platform="linux"
 
 // `sparkles:math` is source-imported for the same reason as input: its
 // unittest configuration depends on the repository runner and a normal dub

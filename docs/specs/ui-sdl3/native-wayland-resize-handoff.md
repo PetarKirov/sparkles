@@ -9,7 +9,10 @@
 > with Event Horizon; SDL remains an explicitly named compatibility backend rather
 > than being deleted globally.
 
-**Status:** decision taken, implementation **not started**. Working tree is **clean**.
+**Status:** the `sparkles:wsi` native Wayland lifecycle and Event Horizon
+prepare-read seam are implemented and pass under headless Weston. The Vulkan triangle
+renderer consumer and Mutter live-resize measurement are still pending; keep the SDL
+triangle until those gates pass.
 **Date:** 2026-08-20.
 **Branch:** `feat/ui-sdl3-input`. The measured X11-good loop (`32c323f71`) and the Darwin `events.d` fix (`1faff458a`) are **committed** — see [§3 Working tree](#3-working-tree).
 **This document is for the next agent.** Read [§0](#0-read-this-first) then [§1](#1-mission). Do not re-run the SDL/libdecor experiments in [§5](#5-chronology--every-step-we-took).
