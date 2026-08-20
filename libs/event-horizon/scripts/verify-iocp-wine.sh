@@ -20,6 +20,8 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 eh="$repo/libs/event-horizon/src"
 base="$repo/libs/base/src"
+test_runner="$repo/libs/test-runner/src"
+test_runner_impl="$repo/libs/test-runner-impl/src"
 # The `expected` runtime dep, resolved from the dub package cache.
 exp="$(find "$HOME/.dub/packages/expected" -name expected.d -path '*source*' | sort -V | tail -1)"
 exp_src="$(dirname "$exp")"
@@ -31,15 +33,17 @@ cd "$work"
 ehm="$eh/sparkles/event_horizon"
 echo ">> building dependency closure (no -unittest) ..."
 win32-ldc2 -lib -preview=in -preview=dip1000 \
-  -I"$eh" -I"$base" -I"$exp_src" \
+  -I"$eh" -I"$base" -I"$test_runner" -I"$test_runner_impl" -I"$exp_src" \
   "$ehm/errors.d" "$ehm/op.d" "$ehm/buffer.d" "$ehm/net.d" \
   "$ehm/capability.d" "$ehm/cause.d" \
-  "$ehm/backend/concept.d" "$ehm/backend/probe.d" "$exp_src/expected.d" \
+  "$ehm/backend/concept.d" "$ehm/backend/probe.d" \
+  "$base/sparkles/base/lifetime.d" \
+  "$test_runner_impl/sparkles/test_runner/skip.d" "$exp_src/expected.d" \
   -of=deps.lib
 
 echo ">> linking the IOCP data-path test ..."
 win32-ldc2 -unittest -main -g -preview=in -preview=dip1000 \
-  -I"$eh" -I"$base" -I"$exp_src" \
+  -I"$eh" -I"$base" -I"$test_runner" -I"$test_runner_impl" -I"$exp_src" \
   "$ehm/backend/iocp.d" deps.lib -of=iocptest.exe
 
 echo ">> running under Wine ..."

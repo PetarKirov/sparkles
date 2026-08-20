@@ -77,6 +77,11 @@ extern (Windows) nothrow @nogc
         void* lpCompletionRoutine);
     int PostQueuedCompletionStatus(HANDLE port, DWORD bytes, ULONG_PTR key,
         OVERLAPPED* ov);
+    HANDLE CreateEventW(void* attributes, int manualReset, int initialState,
+        const(wchar)* name);
+    int SetEvent(HANDLE event);
+    int ResetEvent(HANDLE event);
+    DWORD WaitForSingleObject(HANDLE handle, DWORD milliseconds);
     int CloseHandle(HANDLE h); // @nogc-declared here (winbase's isn't marked)
     ulong GetTickCount64(); // monotonic milliseconds since boot
 
@@ -263,6 +268,16 @@ struct IocpBackend
             return ioErr!void(1, OpKind.none, IoErrorStage.setup,
                 "CreateIoCompletionPort failed");
         }
+        // Manual-reset: one signal represents any number of queued IOCP
+        // completions. This is the handle a native Win32 message host folds
+        // into MsgWaitForMultipleObjectsEx.
+        _hostEvent = CreateEventW(null, TRUE, FALSE, null);
+        if (_hostEvent is null)
+        {
+            close();
+            return ioErr!void(1, OpKind.none, IoErrorStage.setup,
+                "CreateEventW(host bridge) failed");
+        }
 
         // A backend-owned op-context slab, freelist-linked.
         const cap = cfg.cqEntries != 0 ? cfg.cqEntries : 2 * cfg.sqEntries;
@@ -318,6 +333,11 @@ struct IocpBackend
             CloseHandle(_port);
             _port = null;
         }
+        if (_hostEvent !is null)
+        {
+            CloseHandle(_hostEvent);
+            _hostEvent = null;
+        }
         _regSet.terminate();
         WSACleanup();
     }
@@ -367,6 +387,7 @@ struct IocpBackend
             return false;
         op.token = token.raw;
         PostQueuedCompletionStatus(_port, 0, 0, &op.ov);
+        SetEvent(_hostEvent);
         return true;
     }
 
@@ -383,7 +404,8 @@ struct IocpBackend
             return Waker.init;
         op.token = token.raw;
         op.kind = IoKind.wake;
-        Waker w = {port: cast(void*) _port, ov: cast(void*) &op.ov};
+        Waker w = {port: cast(void*) _port, ov: cast(void*) &op.ov,
+            event: cast(void*) _hostEvent};
         return w;
     }
 
@@ -404,6 +426,7 @@ struct IocpBackend
             release(op);
             return false;
         }
+        repairHostSignalAfterIssue();
         return true;
     }
 
@@ -424,6 +447,7 @@ struct IocpBackend
             release(op);
             return false;
         }
+        repairHostSignalAfterIssue();
         return true;
     }
 
@@ -472,6 +496,7 @@ struct IocpBackend
             release(op);
             return false;
         }
+        repairHostSignalAfterIssue();
         return true;
     }
 
@@ -501,11 +526,45 @@ struct IocpBackend
             release(op);
             return false;
         }
+        repairHostSignalAfterIssue();
         return true;
     }
 
     /// No submission queue on IOCP — calls issue inline. `flush` is a no-op.
     IoResult!uint flush() @safe nothrow @nogc => ioOk(0u);
+
+    /** Event that mirrors IOCP completions for a foreign native host wait. */
+    void* nativeHostWaitHandle() @trusted pure nothrow @nogc
+        => cast(void*) _hostEvent;
+
+    /**
+    Narrows a host-requested timeout to the next Event Horizon timer.
+
+    `uint.max` means infinite, matching the Win32 wait APIs.
+    */
+    uint nativeHostWaitTimeout(uint requestedMs) @trusted nothrow @nogc
+    {
+        ulong waitMs = requestedMs;
+        const now = GetTickCount64();
+        foreach (i; 0 .. _timerCount)
+        {
+            const rem = _timers[i].deadlineMs > now
+                ? _timers[i].deadlineMs - now : 0;
+            if (rem < waitMs)
+                waitMs = rem;
+        }
+        return waitMs > uint.max ? uint.max : cast(uint) waitMs;
+    }
+
+    /**
+    Resets the level signal before the loop performs its closing non-blocking
+    drain. A completion racing after the reset sets it again; one queued
+    before the reset is found by that drain. This is the lost-wake repair.
+    */
+    void prepareNativeHostDrain() @trusted nothrow @nogc
+    {
+        ResetEvent(_hostEvent);
+    }
 
     /**
     Waits for at least one completion (or until `deadline`), draining it and
@@ -587,6 +646,33 @@ struct IocpBackend
     bool trySubmitCancel(OpToken, OpToken) @safe nothrow @nogc => true;
 
 private:
+    /**
+    Starting an overlapped operation resets its `hEvent`. If an older
+    completion had already signalled the shared event, that reset would hide
+    it from the host. Repair by remembering one already-queued completion and
+    restoring the level signal. A completion racing after this zero-time
+    probe signals the event itself.
+    */
+    void repairHostSignalAfterIssue() @trusted nothrow @nogc
+    {
+        if (_hasPending)
+        {
+            SetEvent(_hostEvent);
+            return;
+        }
+
+        DWORD bytes;
+        ULONG_PTR key;
+        OVERLAPPED* ov;
+        const ok = GetQueuedCompletionStatus(_port, &bytes, &key, &ov, 0);
+        if (ov !is null)
+        {
+            _pending = ovToCompletion(ov, bytes, ok != FALSE);
+            _hasPending = true;
+            SetEvent(_hostEvent);
+        }
+    }
+
     /// Moves any now-due timers into the synthesized-completion buffer.
     void expireTimers() @trusted nothrow @nogc
     {
@@ -602,7 +688,8 @@ private:
         _timerCount = w;
     }
 
-    RawCompletion ovToCompletion(OVERLAPPED* ov, DWORD bytes, bool ok) @trusted nothrow
+    RawCompletion ovToCompletion(OVERLAPPED* ov, DWORD bytes, bool ok)
+        @trusted nothrow @nogc
     {
         auto op = cast(IocpOp*) ov; // ov is the first field of IocpOp
         const token = op.token;
@@ -651,6 +738,7 @@ private:
         auto op = &_ops[_freeHead];
         _freeHead = op.nextFree;
         *op = IocpOp.init;
+        op.ov.hEvent = _hostEvent;
         op.inUse = true;
         return op;
     }
@@ -672,6 +760,7 @@ private:
     }
 
     HANDLE _port;
+    HANDLE _hostEvent;
     LPFN_ACCEPTEX _acceptEx;
     LPFN_CONNECTEX _connectEx;
     RegSet _regSet; // lazily-associated sockets (open-addressing hash set)
@@ -707,7 +796,9 @@ version (unittest)
 /// The M11 data-path gate (runs under Wine): drive a real WSASend through the
 /// IOCP port on a loopback pair and confirm the peer receives the bytes, and
 /// a WSARecv through the port receives the peer's reply — proving the
-/// OVERLAPPED→token completion mapping end to end.
+/// OVERLAPPED→token completion mapping end to end. It intentionally reaps
+/// through the native-host mirror event rather than blocking on GQCS, proving
+/// that real socket completions wake a User32-compatible hosted wait.
 @("iocp.dataPath.sendRecvThroughPort")
 @system
 unittest
@@ -772,11 +863,13 @@ unittest
     assert(b.trySubmit(OpRecv(cast(int) server), OpToken.pack(1, 1, OpClass.user), rxSlot));
     uint recvBytes;
     ulong recvToken;
-    for (int spins = 0; spins < 100 && recvBytes == 0; ++spins)
-    {
-        cast(void) b.submitAndWait(1, null);
-        b.reap((ref const RawCompletion c) { recvBytes = cast(uint) c.res; recvToken = c.userData; });
-    }
+    assert(WaitForSingleObject(cast(HANDLE) b.nativeHostWaitHandle(), 2_000) == 0,
+        "WSARecv signalled the native-host completion mirror");
+    b.prepareNativeHostDrain();
+    b.reap((ref const RawCompletion c) {
+        recvBytes = cast(uint) c.res;
+        recvToken = c.userData;
+    });
     assert(recvBytes == 5, "server received the 5-byte greeting via IOCP");
     assert(rxSlot.pinned[][0 .. 5] == cast(const(ubyte)[]) "hello");
 
@@ -788,11 +881,10 @@ unittest
     txSlot.pinned = () @trusted { import core.lifetime : move; return move(txBuf); }();
     assert(b.trySubmit(OpSend(cast(int) server), OpToken.pack(2, 1, OpClass.user), txSlot));
     uint sentBytes;
-    for (int spins = 0; spins < 100 && sentBytes == 0; ++spins)
-    {
-        cast(void) b.submitAndWait(1, null);
-        b.reap((ref const RawCompletion c) { sentBytes = cast(uint) c.res; });
-    }
+    assert(WaitForSingleObject(cast(HANDLE) b.nativeHostWaitHandle(), 2_000) == 0,
+        "WSASend signalled the native-host completion mirror");
+    b.prepareNativeHostDrain();
+    b.reap((ref const RawCompletion c) { sentBytes = cast(uint) c.res; });
     assert(sentBytes == 5, "server echoed 5 bytes via IOCP");
 
     client.join();

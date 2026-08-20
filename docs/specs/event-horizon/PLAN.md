@@ -280,6 +280,11 @@ foreign-fd and OS-owned-loop seams. If a spike needs a new primitive, it lands i
 Event Horizon first as the smallest backend-neutral host hook; WSI never carries a
 parallel wait or scheduler.
 
+The Win32 acceptance slice is delivered: IOCP's completion-mirror event plus
+`runHostedOnce`/`tickHosted` shares one blocking wait with User32, and the bounded
+Wine smoke runs an HWND lifecycle beside an IOCP timer and foreign-thread waker. The
+AppKit host hook and both Linux fd consumers remain in the WSI M2 work.
+
 Gate: hue TUI runs with **zero** polling timeouts on an idle document
 (strace-verifiable: the loop makes one blocking ring wait, no 33/150 ms
 tick wakeups); the `apps/terminal` render-CPU benchmark's idle scenario

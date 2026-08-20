@@ -262,6 +262,12 @@ produce no text. UTF-8 is the public encoding. Shared UTF-8/UTF-16 conversion be
 in `sparkles:base`, is allocation-conscious, and rejects ill-formed input without
 silently replacing it at a system boundary.
 
+All composition cursor, selection, and segment offsets are byte offsets into the
+event's owned UTF-8 pre-edit value. A backend converts native UTF-16 code-unit or
+platform-string indices before enqueueing the event; consumers never reinterpret
+those fields as code points or native indices. Segments are ordered, non-overlapping,
+and may be coalesced when adjacent native spans have the same public style.
+
 The `sparkles:ui-app` adapter is the sole normalizer into `sparkles:input`: it applies
 cell metrics, scroll policy, and capability degradation once. Pure conversion helpers
 live in `sparkles:input` so SDL and raylib compatibility producers use the same rules.

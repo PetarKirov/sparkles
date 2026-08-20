@@ -11,4 +11,7 @@ public import sparkles.wsi.events;
 public import sparkles.wsi.handles;
 public import sparkles.wsi.loop;
 public import sparkles.wsi.platform.select;
+
+version (Windows)
+    public import sparkles.wsi.platform.win32;
 public import sparkles.wsi.types;

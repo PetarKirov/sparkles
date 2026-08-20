@@ -95,6 +95,7 @@ version (Windows)
 {
     private extern (Windows) int PostQueuedCompletionStatus(
         void* port, uint bytes, size_t key, void* ov) nothrow @nogc;
+    private extern (Windows) int SetEvent(void* event) nothrow @nogc;
 }
 
 version (OSX)
@@ -138,6 +139,7 @@ struct Waker
     {
         package void* port; /// the completion port
         package void* ov;   /// the persistent wake op's `OVERLAPPED*`
+        package void* event;/// host-wait mirror event, when one is installed
     }
     else
     {
@@ -162,7 +164,12 @@ struct Waker
         version (Windows)
         {
             if (port !is null)
-                cast(void) PostQueuedCompletionStatus(port, 0, 0, ov);
+            {
+                cast(void) PostQueuedCompletionStatus(
+                    cast(void*) port, 0, 0, cast(void*) ov);
+                if (event !is null)
+                    cast(void) SetEvent(cast(void*) event);
+            }
         }
         else
         {
@@ -209,6 +216,22 @@ struct Waker
 /// portable fd path (O29).
 enum bool hasNativeWake(B) = __traits(compiles, {
     Waker w = lvalueOf!B.nativeWaker(OpToken.init);
+});
+
+/**
+Optional native-host wait bridge.
+
+Some UI hosts own a readiness source that cannot join the backend's ordinary
+blocking call. Win32 is the first consumer: a message queue can be waited with
+`MsgWaitForMultipleObjectsEx`, while an IOCP cannot. The IOCP backend therefore
+offers one event that mirrors queued completions plus the timeout of its next
+software timer. `EventLoop.runHostedOnce` owns the reset/drain/wait ordering;
+the host only combines this handle with its native source.
+*/
+enum bool hasNativeHostWait(B) = __traits(compiles, {
+    void* handle = lvalueOf!B.nativeHostWaitHandle();
+    uint timeout = lvalueOf!B.nativeHostWaitTimeout(1u);
+    lvalueOf!B.prepareNativeHostDrain();
 });
 
 version (Posix)

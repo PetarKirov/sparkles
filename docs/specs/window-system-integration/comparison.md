@@ -37,7 +37,7 @@ under `$REPOS/<lang>` are reused; no flat `$REPOS` clones are introduced.
 
 | Subject           | Revision reviewed                                                                                                                                                                                   | Local evidence root                         | Positioning                                                        |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------ |
-| `sparkles:wsi`    | this branch                                                                                                                                                                                         | `libs/wsi`, this spec tree                  | planned native WSI                                                 |
+| `sparkles:wsi`    | this branch                                                                                                                                                                                         | `libs/wsi`, this spec tree                  | native WSI implementation in progress                              |
 | GLFW 3            | [`1e59848`](https://github.com/glfw/glfw/tree/1e59848ba2856c25515a80f52e97c78d5412395e) (after 3.5.1)                                                                                               | `$REPOS/c/glfw`                             | focused window/input library                                       |
 | raylib            | [`dbc56a8`](https://github.com/raysan5/raylib/tree/dbc56a87da87d973a9c5baa4e7438a9d20121d28) (6.0)                                                                                                  | `$REPOS/c/raylib`                           | game framework; desktop WSI delegated to GLFW by default           |
 | SDL3              | [`b53f1b0`](https://github.com/libsdl-org/SDL/tree/b53f1b06447cfe699e2649afc52a1a54e5f19f71)                                                                                                        | `$REPOS/c/sdl`                              | broad public platform abstraction                                  |
@@ -58,13 +58,13 @@ missing Sparkles targets visible.
 
 | ID                             | `sparkles:wsi` | GLFW 3 | raylib | SDL3 | SFML 3 | Qt QPA   | Gio | winit | raw-window-handle | OpenTK 5 |
 | ------------------------------ | -------------- | ------ | ------ | ---- | ------ | -------- | --- | ----- | ----------------- | -------- |
-| F01 first pixel/init           | planned        | ✓      | ◇      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
-| F02 resize                     | planned        | ✓      | ◇      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
+| F01 first pixel/init           | partial        | ✓      | ◇      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
+| F02 resize                     | partial        | ✓      | ◇      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
 | F03 modal-loop survival        | planned        | ◐      | ◇      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
 | F04 frame pacing               | planned        | ◐      | ◐      | ◐    | ◐      | internal | ✓   | ◐     | N/A               | ◐        |
-| F05 loop wake/external sources | planned        | ◐      | —      | ◐    | —      | internal | ◐   | ◐     | N/A               | ✓        |
-| F06 keyboard/keymap            | planned        | ✓      | ✓      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
-| F07 IME/text input             | planned        | ◐      | ◐      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
+| F05 loop wake/external sources | partial        | ◐      | —      | ◐    | —      | internal | ◐   | ◐     | N/A               | ✓        |
+| F06 keyboard/keymap            | partial        | ✓      | ✓      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
+| F07 IME/text input             | partial        | ◐      | ◐      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
 | F08 DPI/runtime rescale        | planned        | ◐      | ◐      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
 | F09 outputs/hotplug            | planned        | ✓      | ◐      | ✓    | ◐      | internal | ◐   | ✓     | N/A               | ✓        |
 | F10 pointer capture/raw        | planned        | ✓      | ✓      | ✓    | ◐      | internal | ◐   | ✓     | N/A               | ◐        |
@@ -74,7 +74,7 @@ missing Sparkles targets visible.
 | F14 state/vetoable close       | planned        | ✓      | ◐      | ✓    | ✓      | internal | ✓   | ✓     | N/A               | ✓        |
 | F15 grabbed popup              | planned        | —      | —      | ✓    | —      | internal | —   | —     | N/A               | —        |
 | F16 clipboard + DnD            | planned        | ◐      | ◐      | ◐    | ◐      | internal | ◐   | ◐     | N/A               | ◐        |
-| F17 threading/reentrancy       | planned        | ✓      | ◇      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
+| F17 threading/reentrancy       | partial        | ✓      | ◇      | ✓    | ◐      | internal | ✓   | ✓     | N/A               | ◐        |
 
 ### Reading the dense rows
 
@@ -102,7 +102,7 @@ missing Sparkles targets visible.
 
 | Subject           | Wayland         | X11             | Win32           | AppKit          | Cross-platform fallback/delegation                       |
 | ----------------- | --------------- | --------------- | --------------- | --------------- | -------------------------------------------------------- |
-| `sparkles:wsi`    | planned native  | planned native  | planned native  | planned native  | SDL only as explicit separate package                    |
+| `sparkles:wsi`    | planned native  | planned native  | native partial  | planned native  | SDL only as explicit separate package                    |
 | GLFW 3            | native          | native          | native          | native          | optional Wayland libdecor decoration helper              |
 | raylib            | delegated GLFW  | delegated GLFW  | delegated GLFW  | delegated GLFW  | GLFW default; other ports exist outside this desktop row |
 | SDL3              | native          | native          | native          | native          | runtime video-driver selection                           |
@@ -189,9 +189,10 @@ behavioral rationale remains in the linked research deep-dives.
 
 ## Sparkles evidence log
 
-| Date       | Revision                    | Matrix changes                                                                                                                                                                         | Evidence                                                             |
-| ---------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| 2026-08-20 | `5c17ddf21`                 | initialized all `F01`–`F17` cells as `planned`; no implementation credit claimed                                                                                                       | normative spec plus pinned source audit                              |
-| 2026-08-20 | M1 shared-input preparation | no `F` cell changed; consolidated geometry, cell conversion, and pointer-shape imports before the WSI package consumes them                                                            | `dub test :input`, `:ui-sdl3`, `:ui-raylib`                          |
-| 2026-08-20 | M3 core working tree        | no native `F` cell changed; added unit-explicit values, generation ids, lossless events, typed handles/errors, pure backend selection, and a bounded non-reentrant recording lifecycle | `dub test :wsi` (11 tests); checked build; `win32-ldc2` core compile |
-| 2026-08-21 | M1 bounded UTF conversion   | no `F` cell changed; added shared allocation-free UTF-8/UTF-16 conversion for the future Win32 IMM32 and AppKit adapters, including safe NUL-terminated variants                       | `dub test :base` (461 tests; 6 UTF-16 conversion cases)              |
+| Date       | Revision                                 | Matrix changes                                                                                                                                                                            | Evidence                                                                                                                        |
+| ---------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-20 | `5c17ddf21`                              | initialized all `F01`–`F17` cells as `planned`; no implementation credit claimed                                                                                                          | normative spec plus pinned source audit                                                                                         |
+| 2026-08-20 | M1 shared-input preparation              | no `F` cell changed; consolidated geometry, cell conversion, and pointer-shape imports before the WSI package consumes them                                                               | `dub test :input`, `:ui-sdl3`, `:ui-raylib`                                                                                     |
+| 2026-08-20 | M3 core working tree                     | no native `F` cell changed; added unit-explicit values, generation ids, lossless events, typed handles/errors, pure backend selection, and a bounded non-reentrant recording lifecycle    | `dub test :wsi` (11 tests); checked build; `win32-ldc2` core compile                                                            |
+| 2026-08-21 | M1 bounded UTF conversion                | no `F` cell changed; added shared allocation-free UTF-8/UTF-16 conversion for the future Win32 IMM32 and AppKit adapters, including safe NUL-terminated variants                          | `dub test :base` (461 tests; 6 UTF-16 conversion cases)                                                                         |
+| 2026-08-21 | M2–M4 Win32 lifecycle, input + host wait | `F01`, `F02`, `F05`, `F06`, `F07`, and `F17` → `partial`; added native HWND lifecycle, typed handle, metrics, queued key/text/IMM32 events, and the Event Horizon User32/IOCP hosted wait | cross-compile plus Wine/Xvfb HWND/resize/close, scan-code + UTF-16 input, IMM32 pre-edit/commit, IOCP timer/foreign-waker smoke |
