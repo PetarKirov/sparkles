@@ -83,6 +83,16 @@ sparkles:ui-app  → ui, input, core-cli        config "tui":  + ui-tui
 `sparkles:ui` gains no dependency and no knowledge of the host — the direction of
 [`PKG1`](../ui/feature-requirements.md) is preserved.
 
+### Native WSI and Graphite evolution
+
+The graph above is the shipped phase-1 raylib host. The accepted next graph is
+specified by [`sparkles:wsi`](../window-system-integration/SPEC.md): native Wayland,
+X11, Win32, and AppKit windowing joins this host's existing Event Horizon loop, then
+Skia Graphite supplies Vulkan rendering on Linux/Windows and Metal on macOS. SDL 3
+and raylib remain explicit compatibility configurations; they are never silent
+fallbacks behind the native selection. Applications still call the same `runApp`
+contract and do not import a window system or renderer.
+
 ## Documentation map
 
 | Page                                              | What it covers                                                                                                                         |
@@ -134,12 +144,14 @@ requirement direction; the "Traces to" column of each row is the reverse.
 
 ## Relationship to existing specs
 
-| Spec                                               | Relationship                                                                                                         |
-| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| [`sparkles:ui`](../ui/index.md)                    | the toolkit this hosts; `PKG1`/`TGT6` are the constraints that make the host a sibling rather than a layer inside it |
-| [`sparkles:ui` backends](../ui/backends.md)        | the `isCanvas` targets the host instantiates; `TGT5` capability declaration is what the host forwards to the app     |
-| [`sparkles:input`](../ui/input.md)                 | the event vocabulary the host drains; phase 0 extends it with key levels and the frame fold                          |
-| [hue UI architecture](../hue/ui-architecture.md)   | `UIA7`/`UIA8` named the window and terminal seams; this spec is the layer above them                                 |
-| [hue GUI](../hue/gui.md), [hue TUI](../hue/tui.md) | the two hosts being migrated onto this contract                                                                      |
+| Spec                                                   | Relationship                                                                                                                            |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| [`sparkles:ui`](../ui/index.md)                        | the toolkit this hosts; `PKG1`/`TGT6` are the constraints that make the host a sibling rather than a layer inside it                    |
+| [`sparkles:ui` backends](../ui/backends.md)            | the `isCanvas` targets the host instantiates; `TGT5` capability declaration is what the host forwards to the app                        |
+| [`sparkles:input`](../ui/input.md)                     | the event vocabulary the host drains; phase 0 extends it with key levels and the frame fold                                             |
+| [`sparkles:wsi`](../window-system-integration/SPEC.md) | the future native GUI window/input source; its events are normalized here and its sources attach to this host's Event Horizon scheduler |
+| [`sparkles:event-horizon`](../event-horizon/SPEC.md)   | the one scheduler, wait, timer, wake, and background-work loop shared by TUI and every GUI host                                         |
+| [hue UI architecture](../hue/ui-architecture.md)       | `UIA7`/`UIA8` named the window and terminal seams; this spec is the layer above them                                                    |
+| [hue GUI](../hue/gui.md), [hue TUI](../hue/tui.md)     | the two hosts being migrated onto this contract                                                                                         |
 
 → [Feature requirements](./feature-requirements.md) · [Delivery plan](./PLAN.md) · [Open issues](./open-issues.md)

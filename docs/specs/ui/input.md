@@ -20,6 +20,14 @@ in one vocabulary, in a package both the toolkit and the terminal library can
 depend on. Value-based notification is also what the architecture catalog
 prescribes over callback webs.
 
+The native [`sparkles:wsi`](../window-system-integration/SPEC.md) boundary is
+intentionally richer than this toolkit vocabulary: it preserves logical and physical
+positions, physical/logical keys, IME pre-edit, scroll source/phase, and native output
+identity. The `ui-app` adapter converts that lossless `WindowEvent` once into these
+cell-space application values. Shared `PointerShape`, geometry aliases, cell metrics,
+and conversion helpers live here so WSI, SDL and raylib producers cannot drift, but
+platform window lifecycle and raw handles do not.
+
 ### Why a capability ladder
 
 The three targets are not equally capable, and the binding constraint is
