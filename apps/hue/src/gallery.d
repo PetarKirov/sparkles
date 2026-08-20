@@ -427,6 +427,8 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     w ~= " · ";
     escapeInto(w, name);
     w ~= "</title>\n";
+    if (opt.hasDarkChrome)
+        w ~= noFlashScript;
     if (opt.stylesheetHref.length)
     {
         w ~= "<link rel=\"stylesheet\" href=\"";
@@ -447,6 +449,15 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
         "; text-decoration: none; }\n");
     w ~= "  header a:hover { text-decoration: underline; }\n";
     w ~= text("  header .disabled { color: ", c.faint, "; }\n");
+    // Gated with the button itself — a single-theme page has no toggle, so
+    // shipping its rules on every page would be dead CSS.
+    if (opt.hasDarkChrome)
+    {
+        w ~= text("  #hue-appearance { background: none; border: 1px solid ", c.border,
+            "; color: ", c.link, ";\n");
+        w ~= "                    border-radius: 4px; cursor: pointer; font-size: 1em;\n";
+        w ~= "                    line-height: 1; padding: 0.15em 0.45em; }\n";
+    }
     // The single scroll container: the code pane fills the remaining height, so
     // only ONE scrollbar ever appears (no nested body + pre scrollbars).
     w ~= text("  main { flex: 1; min-height: 0; overflow: auto; background: ",
@@ -463,6 +474,8 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
         w ~= text("  html.dark header a { color: ", d.link, "; }\n");
         w ~= text("  html.dark header .disabled { color: ", d.faint, "; }\n");
         w ~= text("  html.dark .ln::before { color: ", d.faint, "; }\n");
+        w ~= text("  html.dark #hue-appearance { border-color: ", d.border,
+            "; color: ", d.link, "; }\n");
     }
     w ~= "  main pre.syn-root { margin: 0; padding: 0.6em 1ch; min-height: 100%;\n";
     w ~= "                      box-sizing: border-box; }\n";
@@ -503,6 +516,8 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     escapeInto(w, summary);
     w ~= "</span><span class=\"spacer\"></span><a href=\"index.html\">all</a>";
     navLink(w, next, "next →", "next");
+    if (opt.hasDarkChrome)
+        w ~= themeToggleButton;
     w ~= "</header>\n<main>";
     w ~= body_;
     w ~= "</main>\n";
@@ -519,9 +534,79 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     w ~= "  document.body.classList.toggle('sel-anno', !!a);\n";
     w ~= "  document.body.classList.toggle('sel-code', !a);\n";
     w ~= "});\n";
+    if (opt.hasDarkChrome)
+        w ~= themeToggleScript;
     w ~= "</script>\n</body></html>\n";
     return w[];
 }
+
+/**
+The appearance key, and why it is VitePress's.
+
+A generated listing sits *inside* the docs site: a reader follows a link from a
+VitePress page to a hue page and back. Two independent preferences would mean
+the theme flipping at that boundary, twice per round trip. Writing the key
+VitePress already owns means one preference for the whole site, and it survives
+the SPA boundary in both directions.
+
+`auto` is VitePress's third state (follow the OS), and the value it stores when
+the reader has never chosen — so an absent key and a literal `"auto"` have to
+behave identically.
+*/
+private enum appearanceKey = "vitepress-theme-appearance";
+
+/// Applies the stored appearance before first paint.
+///
+/// In `<head>`, deliberately: run after the body renders and the page paints
+/// light, then repaints dark — the flash the docs site does not have. Wrapped
+/// in `try` because a `file://` page with cookies blocked throws on
+/// `localStorage` access, and an exception here would abort the rest of the
+/// document.
+private enum noFlashScript =
+    "<script>
+" ~
+    "try {
+" ~
+    "  const p = localStorage.getItem('" ~ appearanceKey ~ "');
+" ~
+    "  const dark = p === 'dark' || ((!p || p === 'auto') &&
+" ~
+    "    matchMedia('(prefers-color-scheme: dark)').matches);
+" ~
+    "  document.documentElement.classList.toggle('dark', dark);
+" ~
+    "} catch (e) {}
+" ~
+    "</script>
+";
+
+/// The header control. `aria-pressed` rather than an icon swap alone, so the
+/// state is announced rather than only drawn.
+private enum themeToggleButton =
+    `<button id="hue-appearance" type="button" aria-pressed="false"` ~
+    ` title="Toggle dark mode">◐</button>`;
+
+/// Flips the class and stores the choice under `appearanceKey`.
+private enum themeToggleScript =
+    "const T = document.getElementById('hue-appearance');
+" ~
+    "const sync = () => T.setAttribute('aria-pressed',
+" ~
+    "  String(document.documentElement.classList.contains('dark')));
+" ~
+    "sync();
+" ~
+    "T.addEventListener('click', () => {
+" ~
+    "  const dark = document.documentElement.classList.toggle('dark');
+" ~
+    "  try { localStorage.setItem('" ~ appearanceKey ~
+    "', dark ? 'dark' : 'light'); } catch (e) {}
+" ~
+    "  sync();
+" ~
+    "});
+";
 
 /// A header nav link, or a disabled span when there is no such neighbour.
 private void navLink(ref Appender!string w, scope const(char)[] href,
@@ -976,6 +1061,45 @@ unittest
     int gutter;
     assert(withLineNumbers(frag, gutter) is frag);
     assert(gutter == 4);
+}
+
+@("gallery.pageShell.appearanceToggleUsesVitePressKeyAndOnlyWhenDual")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind, countUntil;
+
+    const dual = GalleryOptions(
+        chrome: ChromePalette(background: "#ffffff", border: "#dddddd",
+            text: "#111111", link: "#0055cc"),
+        darkChrome: ChromePalette(background: "#101010", border: "#2a2a2a",
+            text: "#eeeeee", link: "#88aaff"));
+    const page = pageShell("f.d", "s", "<pre class=\"syn-root\"><code>x</code></pre>",
+        "", "", dual);
+
+    // VitePress's own key, so following a link from the docs site into a
+    // listing and back does not flip the theme twice per round trip.
+    assert(page.canFind("vitepress-theme-appearance"), page);
+    // `auto` is VitePress's "follow the OS" state and what it stores before the
+    // reader has chosen, so it must behave exactly like an absent key.
+    assert(page.canFind("!p || p === 'auto'"), page);
+
+    // The class has to be applied from <head>: after </head> the page paints
+    // light first and repaints dark — a flash the docs site does not have.
+    const applied = page.countUntil("classList.toggle('dark'");
+    const headEnd = page.countUntil("</head>");
+    assert(applied >= 0 && applied < headEnd,
+        "the no-flash script must run before the body");
+
+    assert(page.canFind(`id="hue-appearance"`), page);
+
+    // A single-theme run has nothing to toggle: no button, no script, and no
+    // rules for either — dead CSS on every page otherwise.
+    const single = pageShell("f.d", "s", "<pre class=\"syn-root\"><code>x</code></pre>",
+        "", "", GalleryOptions(chrome: dual.chrome));
+    assert(!single.canFind("hue-appearance"), single);
+    assert(!single.canFind("vitepress-theme-appearance"), single);
+    assert(!single.canFind("html.dark"), single);
 }
 
 @("gallery.themeChrome.followsTheThemeInsteadOfCatppuccin")
