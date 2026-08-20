@@ -189,7 +189,8 @@ behavioral rationale remains in the linked research deep-dives.
 
 ## Sparkles evidence log
 
-| Date       | Revision                    | Matrix changes                                                                                                              | Evidence                                    |
-| ---------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| 2026-08-20 | `5c17ddf21`                 | initialized all `F01`–`F17` cells as `planned`; no implementation credit claimed                                            | normative spec plus pinned source audit     |
-| 2026-08-20 | M1 shared-input preparation | no `F` cell changed; consolidated geometry, cell conversion, and pointer-shape imports before the WSI package consumes them | `dub test :input`, `:ui-sdl3`, `:ui-raylib` |
+| Date       | Revision                    | Matrix changes                                                                                                                                                                         | Evidence                                                             |
+| ---------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 2026-08-20 | `5c17ddf21`                 | initialized all `F01`–`F17` cells as `planned`; no implementation credit claimed                                                                                                       | normative spec plus pinned source audit                              |
+| 2026-08-20 | M1 shared-input preparation | no `F` cell changed; consolidated geometry, cell conversion, and pointer-shape imports before the WSI package consumes them                                                            | `dub test :input`, `:ui-sdl3`, `:ui-raylib`                          |
+| 2026-08-20 | M3 core working tree        | no native `F` cell changed; added unit-explicit values, generation ids, lossless events, typed handles/errors, pure backend selection, and a bounded non-reentrant recording lifecycle | `dub test :wsi` (11 tests); checked build; `win32-ldc2` core compile |
