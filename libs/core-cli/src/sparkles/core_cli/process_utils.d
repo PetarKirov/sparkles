@@ -310,7 +310,9 @@ runs.
 
 `peakRssBytes` is the largest summed resident-set size observed across the
 whole process tree (a `dub` build, say, plus the `ldc2` child it spawns —
-which is usually where the memory lives). `userTime` / `systemTime` are
+which is usually where the memory lives). `peakProcs` is the largest number
+of live processes in that tree (root included) — how many instances were
+actually running in parallel at the peak. `userTime` / `systemTime` are
 best-effort tree-summed user and kernel CPU (a child's CPU is lost from the
 live sum once it exits, so treat them as a lower bound). `cpuTime` is their
 sum, kept so existing callers do not have to add. `wallTime` is the
@@ -323,6 +325,7 @@ process and returns its output, and `wallTime` is still set.
 struct ResourceUsage
 {
     size_t peakRssBytes;   /// max summed RSS over the process tree
+    size_t peakProcs;      /// max live process count in the tree (root included)
     Duration wallTime;     /// elapsed wall clock of the wait (always set)
     Duration userTime;     /// best-effort tree-summed user CPU (lower bound)
     Duration systemTime;   /// best-effort tree-summed kernel CPU (lower bound)
@@ -496,6 +499,431 @@ MonitoredResult executeMonitored(
     return result;
 }
 
+/**
+Fold one live sample of `rootPid`'s process tree into `usage` (peak RSS, peak
+process count, CPU lower bound). No-op on hosts without a tree sampler; those
+leave `sampled` false.
+*/
+void sampleProcessTree(int rootPid, ref ResourceUsage usage) @trusted
+{
+    version (linux)
+    {
+        usage.sampled = true;
+        sampleLinuxTree(rootPid, usage, null);
+    }
+    else version (OSX)
+    {
+        usage.sampled = true;
+        sampleDarwinTree(rootPid, usage, null);
+    }
+}
+
+/// $(LREF sampleProcessTree) for this process — the whole group a parent like
+/// `ci --test` cares about (`ci` plus every live descendant).
+void sampleThisProcessTree(ref ResourceUsage usage) @trusted
+{
+    import std.process : thisProcessID;
+
+    sampleProcessTree(thisProcessID, usage);
+}
+
+/// Input range of a child's combined stdout+stderr lines, sampled like
+/// $(LREF executeMonitored) while it runs.
+///
+/// Spawn is lazy: the process starts on the first `empty`/`front` pull, so a
+/// streaming box can paint its title before the command begins. Copies share
+/// the same child (a class payload). After the range is exhausted,
+/// $(LREF result) holds the exit status, the full combined output, and the
+/// tree $(LREF ResourceUsage). Dropping the range mid-stream kills the child.
+struct MonitoredLineRange
+{
+    /// The finished child's outcome. Valid after `empty` is true.
+    @property ref MonitoredResult result() return
+    in (_s !is null)
+        => _s.result;
+
+    /// Range primitives (input range of lines, terminators stripped).
+    @property bool empty()
+    {
+        if (_s is null)
+            return true;
+        if (_s.haveFront)
+            return false;
+        return !_s.pullLine();
+    }
+
+    /// ditto
+    @property string front()
+    in (_s !is null && _s.haveFront)
+        => _s.front;
+
+    /// ditto
+    void popFront()
+    in (_s !is null && _s.haveFront)
+    {
+        _s.haveFront = false;
+        _s.front = null;
+    }
+
+    private MonitoredLineState _s;
+}
+
+/// Like $(LREF executeMonitored), but as a lazy line range for live display.
+///
+/// stdout and stderr are merged (same contract as `execute`); each complete
+/// line is yielded as soon as it hits the capture file. Sampling still walks
+/// the live process tree on Linux and Darwin. `onSample`, if given, runs after
+/// each sample. `ChildStdin.empty` is the default — batch work must not
+/// inherit a TTY.
+MonitoredLineRange executeMonitoredLines(
+    const(string)[] args,
+    Duration sampleInterval = 250.msecs,
+    void delegate(in ResourceUsage sample) @safe onSample = null,
+    ChildStdin childStdin = ChildStdin.empty,
+    Duration timeout = Duration.zero,
+    const string[string] env = null,
+)
+{
+    auto state = new MonitoredLineState(
+        args, sampleInterval, onSample, childStdin, timeout, env);
+    MonitoredLineRange range;
+    range._s = state;
+    return range;
+}
+
+/// Payload of $(LREF MonitoredLineRange). Do not construct this directly.
+private final class MonitoredLineState
+{
+    this(
+        const(string)[] args,
+        Duration sampleInterval,
+        void delegate(in ResourceUsage sample) @safe onSample,
+        ChildStdin childStdin,
+        Duration timeout,
+        const string[string] env,
+    )
+    {
+        this.args = args;
+        this.sampleInterval = sampleInterval;
+        this.onSample = onSample;
+        this.childStdin = childStdin;
+        this.timeout = timeout;
+        this.env = env;
+        this.pollDelay = 1.msecs;
+    }
+
+    ~this()
+    {
+        try
+            abandon();
+        catch (Exception)
+        {
+        }
+    }
+
+    bool pullLine()
+    {
+        ensureSpawned();
+        if (failedToSpawn)
+        {
+            if (spawnError.length)
+            {
+                const msg = spawnError;
+                spawnError = null;
+                return emit(msg);
+            }
+            return false;
+        }
+
+        for (;;)
+        {
+            if (takeLine())
+                return true;
+            ingest();
+            if (takeLine())
+                return true;
+
+            if (!reaped)
+            {
+                sampleTree();
+                import std.process : kill, tryWait, wait;
+
+                const w = tryWait(pid);
+                if (w.terminated)
+                {
+                    reaped = true;
+                    result.status = w.status;
+                    if (sink.isOpen)
+                        sink.close();
+                    ingest();
+                    continue;
+                }
+                if (timeout > Duration.zero
+                    && MonoTime.currTime - origin >= timeout)
+                {
+                    kill(pid);
+                    wait(pid);
+                    reaped = true;
+                    result.status = timedOutStatus;
+                    result.timedOut = true;
+                    if (sink.isOpen)
+                        sink.close();
+                    ingest();
+                    continue;
+                }
+                import core.thread : Thread;
+
+                Thread.sleep(pollDelay);
+                if (pollDelay < sampleInterval)
+                {
+                    pollDelay *= 2;
+                    if (pollDelay > sampleInterval)
+                        pollDelay = sampleInterval;
+                }
+                continue;
+            }
+
+            if (leftover.length)
+            {
+                const last = sanitizeLine(leftover);
+                leftover = null;
+                return emit(last);
+            }
+            finalizeRun();
+            return false;
+        }
+    }
+
+    bool haveFront;
+    string front;
+    MonitoredResult result;
+
+private:
+    bool emit(string line)
+    {
+        front = line;
+        haveFront = true;
+        result.output ~= line;
+        result.output ~= '\n';
+        return true;
+    }
+
+    bool takeLine()
+    {
+        import core.stdc.string : memchr;
+
+        if (leftover.length == 0)
+            return false;
+        auto ptr = memchr(leftover.ptr, '\n', leftover.length);
+        if (ptr is null)
+            return false;
+        const nl = cast(size_t)(cast(const(ubyte)*) ptr - leftover.ptr);
+        auto lineBytes = leftover[0 .. nl];
+        if (lineBytes.length && lineBytes[$ - 1] == '\r')
+            lineBytes = lineBytes[0 .. $ - 1];
+        leftover = leftover[nl + 1 .. $];
+        return emit(sanitizeLine(lineBytes));
+    }
+
+    static string sanitizeLine(const(ubyte)[] bytes)
+    {
+        import std.utf : validate, UTFException;
+
+        auto s = cast(const(char)[]) bytes;
+        try
+        {
+            validate(s);
+            return s.idup;
+        }
+        catch (UTFException)
+        {
+            import std.array : appender;
+
+            auto app = appender!string();
+            app.reserve(bytes.length);
+            size_t i = 0;
+            while (i < bytes.length)
+            {
+                import std.utf : decode, UseReplacementDchar;
+                size_t nextI = i;
+                dchar d = decode!(UseReplacementDchar.yes)(s, nextI);
+                import std.utf : encode;
+                char[4] buf;
+                const len = encode(buf, d);
+                app.put(buf[0 .. len]);
+                i = nextI;
+            }
+            return app.data;
+        }
+    }
+
+    void ingest()
+    {
+        if (!reader.isOpen)
+            return;
+        // A FILE* that has already seen EOF stays there until the offset is
+        // touched — `seek(0, SEEK_CUR)` is the portable clearerr, so bytes
+        // the child appends after our last empty read become visible.
+        import core.stdc.stdio : SEEK_CUR;
+
+        try
+            reader.seek(0, SEEK_CUR);
+        catch (Exception)
+            return;
+        ubyte[4096] tmp = void;
+        for (;;)
+        {
+            auto got = reader.rawRead(tmp[]);
+            if (got.length == 0)
+                break;
+            leftover ~= got;
+        }
+    }
+
+    void sampleTree()
+    {
+        version (linux)
+            sampleLinuxTree(childPid, result.usage, onSample);
+        else version (OSX)
+            sampleDarwinTree(childPid, result.usage, onSample);
+        else if (onSample !is null)
+            onSample(result.usage);
+    }
+
+    void ensureSpawned()
+    {
+        if (spawned || failedToSpawn)
+            return;
+        spawned = true;
+        origin = MonoTime.currTime;
+
+        import core.atomic : atomicOp;
+        import std.conv : text;
+        import std.file : tempDir;
+        import std.path : buildPath;
+        import std.process : spawnProcess, thisProcessID;
+        import std.stdio : File, stdin;
+
+        static shared size_t counter;
+        const id = atomicOp!"+="(counter, 1);
+        logPath = buildPath(tempDir,
+            text("sparkles-mon-lines-", thisProcessID, "-", id, ".log"));
+
+        version (Windows)
+            enum nullDevice = "NUL";
+        else
+            enum nullDevice = "/dev/null";
+
+        try
+        {
+            sink = File(logPath, "w");
+            auto childIn = childStdin == ChildStdin.empty
+                ? File(nullDevice, "r") : stdin;
+            pid = spawnProcess(resolvedArgv(args), childIn, sink, sink, env);
+            childPid = pid.processID;
+            reader = File(logPath, "rb");
+            version (linux)
+                result.usage.sampled = true;
+            else version (OSX)
+                result.usage.sampled = true;
+        }
+        catch (Exception e)
+        {
+            failedToSpawn = true;
+            reaped = true;
+            result.status = 127;
+            spawnError = e.msg;
+        }
+    }
+
+    void finalizeRun()
+    {
+        if (finalized)
+            return;
+        finalized = true;
+        result.usage.wallTime = MonoTime.currTime - origin;
+        result.usage.cpuTime = result.usage.userTime + result.usage.systemTime;
+        closeAndRemove();
+    }
+
+    void abandon()
+    {
+        if (spawned && !reaped)
+        {
+            import std.process : kill, wait;
+
+            try
+            {
+                kill(pid);
+                wait(pid);
+            }
+            catch (Exception)
+            {
+            }
+            reaped = true;
+        }
+        closeAndRemove();
+    }
+
+    void closeAndRemove()
+    {
+        if (sink.isOpen)
+        {
+            try
+                sink.close();
+            catch (Exception)
+            {
+            }
+        }
+        if (reader.isOpen)
+        {
+            try
+                reader.close();
+            catch (Exception)
+            {
+            }
+        }
+        if (logPath.length)
+        {
+            import std.file : exists, remove;
+
+            try
+            {
+                if (logPath.exists)
+                    remove(logPath);
+            }
+            catch (Exception)
+            {
+            }
+            logPath = null;
+        }
+    }
+
+    const(string)[] args;
+    Duration sampleInterval;
+    void delegate(in ResourceUsage sample) @safe onSample;
+    ChildStdin childStdin;
+    Duration timeout;
+    const string[string] env;
+
+    import std.process : Pid;
+    import std.stdio : File;
+
+    Pid pid;
+    int childPid;
+    File sink;
+    File reader;
+    string logPath;
+    ubyte[] leftover;
+    string spawnError;
+    bool spawned;
+    bool reaped;
+    bool failedToSpawn;
+    bool finalized;
+    Duration pollDelay;
+    MonoTime origin;
+}
+
 /// CPU time of this process's *waited-for* children (`getrusage(RUSAGE_CHILDREN)`).
 ///
 /// A sequential runner snapshots this before and after one spawn; the
@@ -516,6 +944,33 @@ ResourceUsage childrenCpuUsage() @trusted
             u.cpuTime = u.userTime + u.systemTime;
             u.sampled = true;
         }
+    }
+    return u;
+}
+
+/// User+system CPU of this process plus every waited-for child
+/// (`RUSAGE_SELF` + `RUSAGE_CHILDREN`). Snapshot before and after a run; the
+/// difference is the process group's CPU, including descendants that have
+/// already been reaped (which a live tree walk would miss). `sampled` is false
+/// off POSIX.
+ResourceUsage selfAndChildrenCpuUsage() @trusted
+{
+    ResourceUsage u;
+    version (Posix)
+    {
+        import core.sys.posix.sys.resource : RUSAGE_CHILDREN, RUSAGE_SELF,
+            getrusage, rusage;
+
+        rusage self, kids;
+        if (getrusage(RUSAGE_SELF, &self) != 0
+            || getrusage(RUSAGE_CHILDREN, &kids) != 0)
+            return u;
+        u.userTime = timevalDuration(self.ru_utime.tv_sec, self.ru_utime.tv_usec)
+            + timevalDuration(kids.ru_utime.tv_sec, kids.ru_utime.tv_usec);
+        u.systemTime = timevalDuration(self.ru_stime.tv_sec, self.ru_stime.tv_usec)
+            + timevalDuration(kids.ru_stime.tv_sec, kids.ru_stime.tv_usec);
+        u.cpuTime = u.userTime + u.systemTime;
+        u.sampled = true;
     }
     return u;
 }
@@ -592,6 +1047,71 @@ unittest
         // overshot 20s by ~12s, which this would catch.
         assert(sw.peek < 5.seconds, "the timeout overshot its deadline badly");
     }
+}
+
+@("process_utils.executeMonitoredLines.streamsBeforeExit")
+@system
+unittest
+{
+    version (Posix)
+    {
+        import core.time : msecs;
+        import std.conv : text;
+
+        auto lines = executeMonitoredLines(
+            ["sh", "-c", "echo one; sleep 0.25; echo two"],
+            20.msecs, null, ChildStdin.empty);
+        string[] seen;
+        MonoTime t1, t2;
+        while (!lines.empty)
+        {
+            seen ~= lines.front;
+            if (lines.front == "one")
+                t1 = MonoTime.currTime;
+            else if (lines.front == "two")
+                t2 = MonoTime.currTime;
+            lines.popFront;
+        }
+        assert(seen == ["one", "two"], seen.text);
+        assert(lines.result.status == 0);
+        assert(lines.result.output == "one\ntwo\n");
+        // The first line must have arrived while `sleep` was still running,
+        // not as a pair at process exit (the whole point of the line range).
+        assert(t1 != MonoTime.init && t2 != MonoTime.init);
+        assert(t2 - t1 >= 100.msecs, "lines were buffered until exit");
+        version (linux)
+            assert(lines.result.usage.sampled && lines.result.usage.peakProcs >= 1);
+        else version (OSX)
+            assert(lines.result.usage.sampled && lines.result.usage.peakProcs >= 1);
+    }
+}
+
+@("process_utils.executeMonitoredLines.spawnFailure")
+@system
+unittest
+{
+    auto lines = executeMonitoredLines(
+        ["sparkles-nonexistent-binary-xyzzy-123"],
+        50.msecs, null, ChildStdin.empty);
+    string[] seen;
+    while (!lines.empty)
+    {
+        seen ~= lines.front;
+        lines.popFront;
+    }
+    assert(lines.result.status == 127);
+    assert(seen.length <= 1);
+}
+
+@("process_utils.selfAndChildrenCpuUsage.sampledOnPosix")
+@safe
+unittest
+{
+    auto u = selfAndChildrenCpuUsage();
+    version (Posix)
+        assert(u.sampled);
+    else
+        assert(!u.sampled);
 }
 
 /// Current resident-set size of this process in bytes (`0` when unknown).
@@ -852,6 +1372,9 @@ version (linux)
         const rss = treeRssBytes(rootPid);
         if (rss > usage.peakRssBytes)
             usage.peakRssBytes = rss;
+        const n = collectTreePids(rootPid).length;
+        if (n > usage.peakProcs)
+            usage.peakProcs = n;
         const cpu = treeCpuParts(rootPid);
         if (cpu.user > usage.userTime)
             usage.userTime = cpu.user;
@@ -979,6 +1502,8 @@ version (OSX)
             usage.systemTime = sys;
         if (rss > usage.peakRssBytes)
             usage.peakRssBytes = rss;
+        if (nSeen > usage.peakProcs)
+            usage.peakProcs = nSeen;
         usage.cpuTime = usage.userTime + usage.systemTime;
         usage.sampleCount++;
         if (onSample !is null)
