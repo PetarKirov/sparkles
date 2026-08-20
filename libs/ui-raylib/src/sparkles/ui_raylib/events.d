@@ -80,6 +80,8 @@ struct RaylibEvents
     void poll(Sink)(scope Sink sink, int cellW, int cellH,
         int originX = 0, int originY = 0) @system
     {
+        const metrics = CellMetrics(cellW, cellH, originX, originY);
+
         // -- window state ------------------------------------------------
         if (IsWindowResized())
             sink(Event(ResizeEvent())); // zero size: the caller re-queries
@@ -95,9 +97,7 @@ struct RaylibEvents
         const mp = GetMousePosition();
         const inside = mp.x >= 0 && mp.y >= 0
             && mp.x < GetScreenWidth() && mp.y < GetScreenHeight();
-        const pos = Point(
-            (cast(int) mp.x - originX) / (cellW > 0 ? cellW : 1),
-            (cast(int) mp.y - originY) / (cellH > 0 ? cellH : 1));
+        const pos = metrics.toCell(mp.x, mp.y);
         const mods = currentMods();
 
         if (!inside && wasInside)
@@ -186,9 +186,7 @@ struct RaylibEvents
             // the adapter owns the conversion to cells (GST4). Gesture and tap
             // positions carry the ANCHOR — a tap acts where it began.
             const anchor = gestures.anchor();
-            const anchorCell = Point(
-                (cast(int) anchor.x - originX) / (cellW > 0 ? cellW : 1),
-                (cast(int) anchor.y - originY) / (cellH > 0 ? cellH : 1));
+            const anchorCell = metrics.toCell(anchor.x, anchor.y);
             for (auto e = gestures.next(); !isNoEvent(e); e = gestures.next())
                 sink(withPosition(e, anchorCell, mods));
         }

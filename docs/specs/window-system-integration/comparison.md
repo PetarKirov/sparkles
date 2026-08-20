@@ -189,6 +189,7 @@ behavioral rationale remains in the linked research deep-dives.
 
 ## Sparkles evidence log
 
-| Date       | Revision        | Matrix changes                                                                   | Evidence                                |
-| ---------- | --------------- | -------------------------------------------------------------------------------- | --------------------------------------- |
-| 2026-08-20 | M0 working tree | initialized all `F01`–`F17` cells as `planned`; no implementation credit claimed | normative spec plus pinned source audit |
+| Date       | Revision                    | Matrix changes                                                                                                              | Evidence                                    |
+| ---------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| 2026-08-20 | `5c17ddf21`                 | initialized all `F01`–`F17` cells as `planned`; no implementation credit claimed                                            | normative spec plus pinned source audit     |
+| 2026-08-20 | M1 shared-input preparation | no `F` cell changed; consolidated geometry, cell conversion, and pointer-shape imports before the WSI package consumes them | `dub test :input`, `:ui-sdl3`, `:ui-raylib` |
