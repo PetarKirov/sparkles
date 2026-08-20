@@ -288,9 +288,10 @@ kqueue descriptor in a `CFFileDescriptor` source; the arm64 macOS smoke runs an
 NSWindow lifecycle, kqueue timer, and foreign-thread waker through one CFRunLoop
 wait. The direct X11/XCB consumer is now delivered: it drains XCB's buffered queue,
 waits on the connection fd through single-shot `OpPollAdd`, and uses
-`cancelAndWait` as its borrowed-callback teardown barrier. Wayland's prepare-read
-consumer remains in the WSI M2 work; XIM remains the unresolved part of the X11
-input path.
+`cancelAndWait` as its borrowed-callback teardown barrier. The Wayland consumer is
+also delivered without a bootstrap round-trip: registry sync, prepare-read pairing,
+flush backpressure, configure/ack and cancellation all run through the same
+single-shot poll. XIM remains the unresolved part of the X11 input path.
 
 Gate: hue TUI runs with **zero** polling timeouts on an idle document
 (strace-verifiable: the loop makes one blocking ring wait, no 33/150 ms

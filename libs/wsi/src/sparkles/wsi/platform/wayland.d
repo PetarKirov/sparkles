@@ -1,0 +1,811 @@
+/**
+Native Wayland lifecycle integrated through Event Horizon's foreign-fd path.
+
+The adapter owns one `wl_display`, never calls a blocking Wayland dispatch
+function, acknowledges each `xdg_surface.configure` inside its listener, and
+observes the mandatory `prepare_read`/`read_events|cancel_read` pairing.  The
+renderer receives the `wl_surface` only after the initial configure.
+*/
+module sparkles.wsi.platform.wayland;
+
+version (linux):
+
+import core.stdc.errno : EAGAIN, errno;
+import core.stdc.string : strcmp;
+import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
+import core.time : Duration;
+import std.math : isFinite;
+
+import sparkles.base.text.utf8 : validateUtf8;
+import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
+    ioErr, ioOk;
+import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
+import sparkles.event_horizon.op : Completion, OpHandle, OpPollAdd, PollEvents;
+import sparkles.wsi.events;
+import sparkles.wsi.handles;
+import sparkles.wsi.loop : EventQueue;
+import sparkles.wsi.types;
+
+import wayland_native;
+
+/** One UI-thread Wayland connection and its bounded native event queue. */
+struct WaylandWsi
+{
+    enum maxWindows = 16;
+    enum maxEvents = 128;
+
+    @disable this(this);
+
+    private struct Slot
+    {
+        WaylandWsi* owner;
+        wl_surface* surface;
+        xdg_surface* xdgSurface;
+        xdg_toplevel* toplevel;
+        wl_callback* frameCallback;
+        uint generation;
+        bool live;
+        bool ready;
+        int pendingWidth;
+        int pendingHeight;
+        LogicalSize requestedSize;
+        SurfaceMetrics metrics;
+    }
+
+    private wl_display* display_;
+    private wl_registry* registry_;
+    private wl_compositor* compositor_;
+    private xdg_wm_base* wmBase_;
+    private wl_callback* bootstrapSync_;
+    private pthread_t ownerThread_;
+    private Slot[maxWindows] windows_;
+    private EventQueue!maxEvents events_;
+    private ulong nextSequence_ = 1;
+    private ulong nextFrameToken_ = 1;
+    private bool bootstrapComplete_;
+    private bool open_;
+    private bool closed_;
+    private bool hasStickyError_;
+    private WsiError stickyError_;
+
+    private DefaultLoop* loop_;
+    private OpHandle pollHandle_;
+    private bool pollArmed_;
+    private bool pollCompleted_;
+    private bool preparedRead_;
+    private bool detaching_;
+    private int pollResult_;
+
+    /**
+    Opens the compositor connection and attaches it without a round trip.
+
+    Registry enumeration is completed asynchronously through `loop`; callers
+    drive `runIntegratedOnce` until `bootstrapComplete` before creating a
+    window. Event Horizon performs the first and every subsequent wait.
+    */
+    static WsiResult!void open(out WaylandWsi wsi, ref DefaultLoop loop)
+    {
+        wsi.display_ = wl_display_connect(null);
+        if (wsi.display_ is null)
+            return waylandFailure!void(WsiOperation.open, errno,
+                "wl_display_connect failed", WsiErrorKind.unavailable);
+
+        wsi.ownerThread_ = pthread_self();
+        wsi.open_ = true;
+        wsi.loop_ = &loop;
+        wsi.registry_ = wsi_wayland_display_get_registry(wsi.display_);
+        if (wsi.registry_ is null
+            || wsi_wayland_registry_add_listener(wsi.registry_,
+                &registryListener, &wsi) != 0)
+        {
+            wsi.closeConnectionOnly();
+            return waylandFailure!void(WsiOperation.open, 0,
+                "failed to install Wayland registry listener");
+        }
+        wsi.bootstrapSync_ = wsi_wayland_display_sync(wsi.display_);
+        if (wsi.bootstrapSync_ is null
+            || wsi_wayland_callback_add_listener(wsi.bootstrapSync_,
+                &bootstrapListener, &wsi) != 0)
+        {
+            wsi.closeConnectionOnly();
+            return waylandFailure!void(WsiOperation.open, 0,
+                "failed to arm asynchronous registry sync");
+        }
+
+        auto armed = wsi.prepareAndArm();
+        if (armed.hasError)
+        {
+            wsi.closeConnectionOnly();
+            return armed;
+        }
+        return wsiOk();
+    }
+
+    bool bootstrapComplete() const pure nothrow @nogc
+        => bootstrapComplete_;
+
+    bool canCreateWindows() const pure nothrow @nogc
+        => bootstrapComplete_ && compositor_ !is null && wmBase_ !is null
+            && !hasStickyError_;
+
+    WsiResult!WindowId createWindow(in WindowConfig config)
+    {
+        auto owner = requireOwner!WindowId(WsiOperation.createWindow);
+        if (owner.hasError)
+            return owner;
+        if (closed_)
+            return waylandFailure!WindowId(WsiOperation.createWindow, 0,
+                "WSI is closed", WsiErrorKind.closed);
+        if (!bootstrapComplete_)
+            return waylandFailure!WindowId(WsiOperation.createWindow, 0,
+                "Wayland registry bootstrap is still in flight",
+                WsiErrorKind.unavailable);
+        if (compositor_ is null || wmBase_ is null)
+            return waylandFailure!WindowId(WsiOperation.createWindow, 0,
+                "compositor lacks wl_compositor or xdg_wm_base",
+                WsiErrorKind.unavailable);
+        if (config.logicalSize.width <= 0 || config.logicalSize.height <= 0
+            || !config.logicalSize.width.isFinite
+            || !config.logicalSize.height.isFinite
+            || config.logicalSize.width > int.max
+            || config.logicalSize.height > int.max)
+            return waylandFailure!WindowId(WsiOperation.createWindow, 0,
+                "invalid Wayland logical window size",
+                WsiErrorKind.invalidArgument);
+        if (!config.visible || config.parent.valid || config.transparent
+            || config.state == WindowStartupState.minimized
+            || config.decorations == DecorationPreference.server)
+            return waylandFailure!WindowId(WsiOperation.createWindow, 0,
+                "requested Wayland startup configuration is not implemented",
+                WsiErrorKind.unsupported);
+        if (validateUtf8(config.title.value).hasError)
+            return waylandFailure!WindowId(WsiOperation.createWindow, 0,
+                "window title is not valid UTF-8",
+                WsiErrorKind.invalidArgument);
+
+        size_t index = size_t.max;
+        foreach (i, ref slot; windows_)
+            if (!slot.live && slot.surface is null)
+            {
+                index = i;
+                break;
+            }
+        if (index == size_t.max)
+            return waylandFailure!WindowId(WsiOperation.createWindow, 0,
+                "Wayland window capacity reached", WsiErrorKind.capacity);
+
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return wsiErr!WindowId(paused.error);
+
+        ref slot = windows_[index];
+        ++slot.generation;
+        if (slot.generation == 0)
+            ++slot.generation;
+        slot.owner = &this;
+        slot.live = true;
+        slot.ready = false;
+        slot.requestedSize = config.logicalSize;
+        slot.surface = wsi_wayland_compositor_create_surface(compositor_);
+        if (slot.surface !is null)
+            slot.xdgSurface = wsi_wayland_wm_base_get_xdg_surface(
+                wmBase_, slot.surface);
+        if (slot.xdgSurface !is null)
+            slot.toplevel = wsi_wayland_xdg_surface_get_toplevel(
+                slot.xdgSurface);
+        if (slot.surface is null || slot.xdgSurface is null
+            || slot.toplevel is null
+            || wsi_wayland_xdg_surface_add_listener(slot.xdgSurface,
+                &xdgSurfaceListener, &slot) != 0
+            || wsi_wayland_toplevel_add_listener(slot.toplevel,
+                &toplevelListener, &slot) != 0)
+        {
+            destroyNative(slot);
+            cast(void) prepareAndArm();
+            return waylandFailure!WindowId(WsiOperation.createWindow, 0,
+                "failed to construct Wayland toplevel object tree");
+        }
+
+        char[257] title;
+        title[0 .. config.title.length] = config.title.value;
+        title[config.title.length] = '\0';
+        wsi_wayland_toplevel_set_title(slot.toplevel, title.ptr);
+        wsi_wayland_toplevel_set_app_id(slot.toplevel, "sparkles-wsi");
+        if (!config.resizable)
+        {
+            const width = cast(int) config.logicalSize.width;
+            const height = cast(int) config.logicalSize.height;
+            wsi_wayland_toplevel_set_min_size(slot.toplevel, width, height);
+            wsi_wayland_toplevel_set_max_size(slot.toplevel, width, height);
+        }
+        if (config.state == WindowStartupState.maximized)
+            wsi_wayland_toplevel_set_maximized(slot.toplevel);
+        else if (config.state == WindowStartupState.fullscreen)
+            wsi_wayland_toplevel_set_fullscreen(slot.toplevel);
+
+        // Mandatory no-buffer initial commit. The configure listener acks
+        // immediately; only then does the renderer receive the wl_surface.
+        wsi_wayland_surface_commit(slot.surface);
+        auto rearmed = prepareAndArm();
+        if (rearmed.hasError)
+        {
+            destroyNative(slot);
+            return wsiErr!WindowId(rearmed.error);
+        }
+        return wsiOk(idAt(index));
+    }
+
+    WsiResult!void setMaximized(WindowId id, bool maximized)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        ref slot = windows_[checked.value];
+        if (maximized)
+            wsi_wayland_toplevel_set_maximized(slot.toplevel);
+        else
+            wsi_wayland_toplevel_unset_maximized(slot.toplevel);
+        return prepareAndArm();
+    }
+
+    WsiResult!void destroyWindow(WindowId id)
+    {
+        auto checked = checkedSlot(id, WsiOperation.close);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        ref slot = windows_[checked.value];
+        destroyNative(slot);
+        auto queued = emit(id, DestroyedEvent());
+        auto rearmed = prepareAndArm();
+        if (queued.hasError)
+            return queued;
+        return rearmed;
+    }
+
+    WsiResult!NativeHandles nativeHandles(WindowId id)
+    {
+        auto checked = checkedSlot(id, WsiOperation.queryHandle);
+        if (checked.hasError)
+            return wsiErr!NativeHandles(checked.error);
+        ref slot = windows_[checked.value];
+        if (!slot.ready)
+            return waylandFailure!NativeHandles(WsiOperation.queryHandle, 0,
+                "wl_surface is not configured yet",
+                WsiErrorKind.unavailable);
+        NativeHandles handles;
+        handles.display = DisplayHandle(WaylandDisplayHandle(display_));
+        handles.window = WindowHandle(WaylandWindowHandle(slot.surface));
+        return wsiOk(handles);
+    }
+
+    /** Drives the sole Event Horizon wait and services completed Wayland I/O. */
+    IoResult!RunStatus runIntegratedOnce(ref DefaultLoop loop,
+        Duration timeout = Duration.max)
+    {
+        if (loop_ !is &loop)
+            return ioErr!RunStatus(0, OpKind.pollAdd, IoErrorStage.submit,
+                "Wayland WSI used with a different Event Horizon loop");
+
+        bool nativeWork;
+        if (!servicePoll(nativeWork))
+            return ioErr!RunStatus(cast(int) stickyError_.nativeCode,
+                OpKind.pollAdd, IoErrorStage.completion,
+                "Wayland dispatch/re-arm failed");
+        if (nativeWork)
+            return ioOk(RunStatus.dispatched);
+
+        auto result = loop.runOnce(timeout);
+        if (result.hasError)
+            return result;
+        if (!servicePoll(nativeWork))
+            return ioErr!RunStatus(cast(int) stickyError_.nativeCode,
+                OpKind.pollAdd, IoErrorStage.completion,
+                "Wayland dispatch/re-arm failed");
+        return nativeWork && result.value != RunStatus.stopped
+            ? ioOk(RunStatus.dispatched) : result;
+    }
+
+    WsiResult!size_t drain(Sink)(scope Sink sink) => events_.drain(sink);
+
+    size_t pendingEvents() const pure nothrow @nogc => events_.length;
+
+    WsiResult!void detach()
+    {
+        auto owner = requireOwner!void(WsiOperation.attach);
+        if (owner.hasError)
+            return owner;
+        if (loop_ is null)
+            return wsiOk();
+        detaching_ = true;
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        loop_ = null;
+        return wsiOk();
+    }
+
+    WsiResult!void close()
+    {
+        auto owner = requireOwner!void(WsiOperation.close);
+        if (owner.hasError)
+            return owner;
+        if (closed_)
+            return wsiOk();
+
+        auto detached = detach();
+        if (detached.hasError)
+            return detached;
+        foreach (ref slot; windows_)
+            if (slot.live)
+                destroyNative(slot);
+        closeConnectionOnly();
+        closed_ = true;
+        open_ = false;
+        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
+
+    private WsiResult!void pausePoll()
+    {
+        if (pollArmed_)
+        {
+            auto cancelled = loop_.cancelAndWait(pollHandle_);
+            if (cancelled.hasError)
+                return waylandFailure!void(WsiOperation.attach,
+                    cancelled.error.errnoValue,
+                    "failed to cancel and reap Wayland display poll");
+        }
+        if (preparedRead_)
+        {
+            wl_display_cancel_read(display_);
+            preparedRead_ = false;
+        }
+        pollArmed_ = false;
+        pollCompleted_ = false;
+        return wsiOk();
+    }
+
+    private WsiResult!void prepareAndArm()
+    {
+        if (detaching_ || loop_ is null)
+            return wsiOk();
+        if (hasStickyError_)
+            return wsiErr!void(stickyError_);
+        if (pollArmed_ || preparedRead_)
+            return waylandFailure!void(WsiOperation.attach, 0,
+                "Wayland read/poll already armed",
+                WsiErrorKind.reentrant);
+
+        while (wl_display_prepare_read(display_) != 0)
+        {
+            if (wl_display_dispatch_pending(display_) < 0)
+                return connectionFailure(WsiOperation.dispatch,
+                    "wl_display_dispatch_pending failed");
+            if (hasStickyError_)
+                return wsiErr!void(stickyError_);
+        }
+        preparedRead_ = true;
+
+        PollEvents interests = PollEvents.readable;
+        if (wl_display_flush(display_) < 0)
+        {
+            if (errno == EAGAIN)
+                interests |= PollEvents.writable;
+            else
+            {
+                wl_display_cancel_read(display_);
+                preparedRead_ = false;
+                return connectionFailure(WsiOperation.dispatch,
+                    "wl_display_flush failed");
+            }
+        }
+        auto submitted = loop_.submit(OpPollAdd(wl_display_get_fd(display_),
+            interests, false), &onPollReady, &this);
+        if (submitted.hasError)
+        {
+            wl_display_cancel_read(display_);
+            preparedRead_ = false;
+            return waylandFailure!void(WsiOperation.attach,
+                submitted.error.errnoValue,
+                "OpPollAdd(Wayland fd) failed");
+        }
+        pollHandle_ = submitted.value;
+        pollArmed_ = true;
+        return wsiOk();
+    }
+
+    private static void onPollReady(void* context,
+        ref Completion completion) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) context;
+        owner.pollArmed_ = false;
+        owner.pollCompleted_ = true;
+        owner.pollResult_ = completion.res;
+    }
+
+    private bool servicePoll(out bool nativeWork)
+    {
+        nativeWork = false;
+        if (!pollCompleted_)
+            return true;
+        pollCompleted_ = false;
+
+        if (pollResult_ < 0)
+        {
+            if (preparedRead_)
+            {
+                wl_display_cancel_read(display_);
+                preparedRead_ = false;
+            }
+            if (detaching_)
+                return true;
+            remember(wsiError(WsiErrorKind.nativeFailure,
+                WsiOperation.dispatch, BackendKind.wayland, -pollResult_,
+                "Wayland descriptor poll failed"));
+            return false;
+        }
+
+        const ready = cast(PollEvents) cast(ushort) pollResult_;
+        if ((ready & PollEvents.readable) != 0)
+        {
+            if (wl_display_read_events(display_) < 0)
+            {
+                preparedRead_ = false;
+                rememberConnectionFailure(WsiOperation.dispatch,
+                    "wl_display_read_events failed");
+                return false;
+            }
+            preparedRead_ = false;
+            const dispatched = wl_display_dispatch_pending(display_);
+            if (dispatched < 0)
+            {
+                rememberConnectionFailure(WsiOperation.dispatch,
+                    "wl_display_dispatch_pending failed");
+                return false;
+            }
+            nativeWork = dispatched > 0;
+        }
+        else
+        {
+            // A timer/waker cannot complete this poll op; reaching here means
+            // writable/error/hangup won, so the prepared read must be paired
+            // with cancellation before flushing/re-arming.
+            if (preparedRead_)
+            {
+                wl_display_cancel_read(display_);
+                preparedRead_ = false;
+            }
+        }
+
+        if ((ready & (PollEvents.error | PollEvents.hangup)) != 0)
+        {
+            rememberConnectionFailure(WsiOperation.dispatch,
+                "Wayland connection reported poll error/hangup");
+            return false;
+        }
+        auto armed = prepareAndArm();
+        if (armed.hasError)
+        {
+            remember(armed.error);
+            return false;
+        }
+        return true;
+    }
+
+    private void closeConnectionOnly() nothrow @nogc
+    {
+        if (bootstrapSync_ !is null)
+        {
+            wsi_wayland_callback_destroy(bootstrapSync_);
+            bootstrapSync_ = null;
+        }
+        if (wmBase_ !is null)
+        {
+            wsi_wayland_wm_base_destroy(wmBase_);
+            wmBase_ = null;
+        }
+        if (compositor_ !is null)
+        {
+            wl_proxy_destroy(cast(wl_proxy*) compositor_);
+            compositor_ = null;
+        }
+        if (registry_ !is null)
+        {
+            wl_proxy_destroy(cast(wl_proxy*) registry_);
+            registry_ = null;
+        }
+        if (display_ !is null)
+        {
+            wl_display_disconnect(display_);
+            display_ = null;
+        }
+    }
+
+    private static void destroyNative(ref Slot slot) nothrow @nogc
+    {
+        if (slot.frameCallback !is null)
+            wsi_wayland_callback_destroy(slot.frameCallback);
+        if (slot.toplevel !is null)
+            wsi_wayland_toplevel_destroy(slot.toplevel);
+        if (slot.xdgSurface !is null)
+            wsi_wayland_xdg_surface_destroy(slot.xdgSurface);
+        if (slot.surface !is null)
+            wsi_wayland_surface_destroy(slot.surface);
+        const generation = slot.generation;
+        slot = Slot.init;
+        slot.generation = generation;
+    }
+
+    private WsiResult!size_t checkedSlot(WindowId id,
+        WsiOperation operation)
+    {
+        auto owner = requireOwner!size_t(operation);
+        if (owner.hasError)
+            return owner;
+        if (!id.valid || id.slot > maxWindows)
+            return waylandFailure!size_t(operation, 0,
+                "invalid Wayland window id", WsiErrorKind.staleId);
+        size_t index = cast(size_t) id.slot - 1;
+        const slot = windows_[index];
+        if (!slot.live || slot.generation != id.generation)
+            return waylandFailure!size_t(operation, 0,
+                "stale Wayland window id", WsiErrorKind.staleId);
+        return wsiOk(index);
+    }
+
+    private WindowId idAt(size_t index) const pure nothrow @nogc
+        => WindowId(cast(uint) index + 1, windows_[index].generation);
+
+    private size_t indexOfSlot(const Slot* slot) const pure nothrow @nogc
+    {
+        foreach (i; 0 .. windows_.length)
+            if (&windows_[i] is slot)
+                return i;
+        return size_t.max;
+    }
+
+    private WsiResult!T requireOwner(T)(WsiOperation operation)
+    {
+        if (!open_ && !closed_)
+            return waylandFailure!T(operation, 0,
+                "Wayland WSI is not open", WsiErrorKind.closed);
+        if (pthread_equal(ownerThread_, pthread_self()) == 0)
+            return waylandFailure!T(operation, 0,
+                "Wayland WSI called from a non-owner thread",
+                WsiErrorKind.wrongThread);
+        static if (is(T == void))
+            return wsiOk();
+        else
+            return wsiOk(T.init);
+    }
+
+    private WsiResult!void emit(Payload)(WindowId id,
+        Payload payload) nothrow @nogc
+    {
+        auto result = events_.push(WindowEvent(nextSequence_, id,
+            WindowEventPayload(payload)));
+        if (result.hasError)
+        {
+            remember(result.error);
+            return wsiErr!void(stickyError_);
+        }
+        ++nextSequence_;
+        return wsiOk();
+    }
+
+    private WsiResult!void connectionFailure(WsiOperation operation,
+        scope const(char)[] diagnostic) nothrow @nogc
+    {
+        const displayCode = display_ is null ? 0
+            : wl_display_get_error(display_);
+        const code = displayCode != 0 ? displayCode : errno;
+        return waylandFailure!void(operation, code, diagnostic);
+    }
+
+    private void rememberConnectionFailure(WsiOperation operation,
+        scope const(char)[] diagnostic) nothrow @nogc
+    {
+        auto failed = connectionFailure(operation, diagnostic);
+        remember(failed.error);
+    }
+
+    private void remember(WsiError error) nothrow @nogc
+    {
+        if (!hasStickyError_)
+        {
+            error.backend = BackendKind.wayland;
+            stickyError_ = error;
+            hasStickyError_ = true;
+        }
+    }
+
+    private extern (C) static void onRegistryGlobal(void* data,
+        wl_registry* registry, uint name, const(char)* interfaceName,
+        uint advertisedVersion) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        if (strcmp(interfaceName, wl_compositor_interface.name) == 0
+            && owner.compositor_ is null)
+        {
+            const version_ = advertisedVersion < 4 ? advertisedVersion : 4;
+            owner.compositor_ = cast(wl_compositor*)
+                wsi_wayland_registry_bind(registry, name,
+                    &wl_compositor_interface, version_);
+        }
+        else if (strcmp(interfaceName, xdg_wm_base_interface.name) == 0
+            && owner.wmBase_ is null)
+        {
+            owner.wmBase_ = cast(xdg_wm_base*) wsi_wayland_registry_bind(
+                registry, name, &xdg_wm_base_interface, 1);
+            if (owner.wmBase_ !is null
+                && wsi_wayland_wm_base_add_listener(owner.wmBase_,
+                    &wmBaseListener, owner) != 0)
+                owner.remember(wsiError(WsiErrorKind.nativeFailure,
+                    WsiOperation.open, BackendKind.wayland, 0,
+                    "failed to install xdg_wm_base listener"));
+        }
+    }
+
+    private extern (C) static void onRegistryGlobalRemove(void*,
+        wl_registry*, uint) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onBootstrapDone(void* data,
+        wl_callback* callback, uint) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        wsi_wayland_callback_destroy(callback);
+        owner.bootstrapSync_ = null;
+        owner.bootstrapComplete_ = true;
+    }
+
+    private extern (C) static void onWmBasePing(void*, xdg_wm_base* base,
+        uint serial) nothrow @nogc
+    {
+        // This synchronous protocol reply is the only work performed inside
+        // the native callback; application code remains deferred to drain().
+        wsi_wayland_wm_base_pong(base, serial);
+    }
+
+    private extern (C) static void onXdgSurfaceConfigure(void* data,
+        xdg_surface* surface, uint serial) nothrow @nogc
+    {
+        auto slot = cast(Slot*) data;
+        auto owner = slot.owner;
+
+        // The resize handoff's load-bearing rule: acknowledge before event
+        // allocation, renderer notification, or any potentially deferred work.
+        wsi_wayland_xdg_surface_ack_configure(surface, serial);
+
+        const width = slot.pendingWidth > 0
+            ? cast(uint) slot.pendingWidth
+            : cast(uint) slot.requestedSize.width;
+        const height = slot.pendingHeight > 0
+            ? cast(uint) slot.pendingHeight
+            : cast(uint) slot.requestedSize.height;
+        const metrics = SurfaceMetrics(LogicalSize(width, height),
+            PhysicalSize(width, height), ScaleFactor(1));
+        const index = owner.indexOfSlot(slot);
+        if (index == size_t.max)
+            return;
+        const id = owner.idAt(index);
+
+        if (!slot.ready)
+        {
+            slot.ready = true;
+            slot.metrics = metrics;
+            cast(void) owner.emit(id, ReadyEvent(metrics));
+            cast(void) owner.emit(id, ExposedEvent());
+            // Initial configure is the renderer's opportunity to make its
+            // first buffer commit; later cadence comes from frame callbacks.
+            cast(void) owner.emit(id,
+                FrameReadyEvent(owner.nextFrameToken_++, 0));
+            owner.armFrameCallback(*slot);
+        }
+        else
+        {
+            if (metrics != slot.metrics)
+                cast(void) owner.emit(id,
+                    SurfaceMetricsChangedEvent(metrics));
+            slot.metrics = metrics;
+            cast(void) owner.emit(id, ExposedEvent());
+        }
+    }
+
+    private extern (C) static void onToplevelConfigure(void* data,
+        xdg_toplevel*, int width, int height, wl_array*) nothrow @nogc
+    {
+        auto slot = cast(Slot*) data;
+        slot.pendingWidth = width;
+        slot.pendingHeight = height;
+    }
+
+    private extern (C) static void onToplevelClose(void* data,
+        xdg_toplevel*) nothrow @nogc
+    {
+        auto slot = cast(Slot*) data;
+        auto owner = slot.owner;
+        const index = owner.indexOfSlot(slot);
+        if (index != size_t.max)
+            cast(void) owner.emit(owner.idAt(index), CloseRequestedEvent());
+    }
+
+    private extern (C) static void onToplevelConfigureBounds(void*,
+        xdg_toplevel*, int, int) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onToplevelWmCapabilities(void*,
+        xdg_toplevel*, wl_array*) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onFrameDone(void* data,
+        wl_callback* callback, uint) nothrow @nogc
+    {
+        auto slot = cast(Slot*) data;
+        auto owner = slot.owner;
+        wsi_wayland_callback_destroy(callback);
+        slot.frameCallback = null;
+        const index = owner.indexOfSlot(slot);
+        if (index == size_t.max || !slot.live)
+            return;
+        cast(void) owner.emit(owner.idAt(index), FrameReadyEvent(
+            owner.nextFrameToken_++, 0));
+        owner.armFrameCallback(*slot);
+    }
+
+    private void armFrameCallback(ref Slot slot) nothrow @nogc
+    {
+        if (!slot.live || slot.surface is null
+            || slot.frameCallback !is null)
+            return;
+        slot.frameCallback = wsi_wayland_surface_frame(slot.surface);
+        if (slot.frameCallback is null
+            || wsi_wayland_callback_add_listener(slot.frameCallback,
+                &frameListener, &slot) != 0)
+        {
+            if (slot.frameCallback !is null)
+                wsi_wayland_callback_destroy(slot.frameCallback);
+            slot.frameCallback = null;
+            remember(wsiError(WsiErrorKind.nativeFailure,
+                WsiOperation.dispatch, BackendKind.wayland, 0,
+                "failed to arm wl_surface.frame callback"));
+        }
+    }
+}
+
+private __gshared wl_registry_listener registryListener = {
+    &WaylandWsi.onRegistryGlobal, &WaylandWsi.onRegistryGlobalRemove
+};
+private __gshared wl_callback_listener bootstrapListener = {
+    &WaylandWsi.onBootstrapDone
+};
+private __gshared xdg_wm_base_listener wmBaseListener = {
+    &WaylandWsi.onWmBasePing
+};
+private __gshared xdg_surface_listener xdgSurfaceListener = {
+    &WaylandWsi.onXdgSurfaceConfigure
+};
+private __gshared xdg_toplevel_listener toplevelListener = {
+    &WaylandWsi.onToplevelConfigure, &WaylandWsi.onToplevelClose,
+    &WaylandWsi.onToplevelConfigureBounds,
+    &WaylandWsi.onToplevelWmCapabilities
+};
+private __gshared wl_callback_listener frameListener = {
+    &WaylandWsi.onFrameDone
+};
+
+private WsiResult!T waylandFailure(T)(WsiOperation operation,
+    long nativeCode, scope const(char)[] diagnostic,
+    WsiErrorKind kind = WsiErrorKind.nativeFailure) nothrow @nogc
+{
+    return wsiErr!T(wsiError(kind, operation, BackendKind.wayland,
+        nativeCode, diagnostic));
+}

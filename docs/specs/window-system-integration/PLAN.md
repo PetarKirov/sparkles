@@ -83,11 +83,12 @@ The OS-owned-loop half of M2 is delivered on both platforms: Win32 combines User
 with an IOCP completion-mirror event; AppKit wraps Event Horizon's native kqueue
 descriptor in a `CFFileDescriptor` source in the main CFRunLoop. Their platform
 smokes each run a real window lifecycle, timer, and foreign-thread waker without a
-polling timeout or second scheduler. The X11 foreign-fd half is also delivered: one
-XCB connection is drained without waiting, its fd is armed with `OpPollAdd`, and an
-Xvfb smoke runs resize/close beside the same timer and waker. XIM still has to prove
-that it preserves this single connection/event queue. Wayland remains the final
-foreign-fd consumer.
+polling timeout or second scheduler. Both Linux foreign-fd lifecycles are delivered:
+X11 drains one XCB connection around `OpPollAdd`; Wayland asynchronously discovers
+globals, pairs every successful `prepare_read` with `read_events` or `cancel_read`,
+handles flush backpressure, and acks configure inside the listener. Their Xvfb and
+headless-Weston smokes run resize/configure beside the same timer and waker. XIM still
+has to prove that it preserves X11's single connection/event queue.
 
 If an Event Horizon generic native-host primitive is missing, add the smallest
 backend-neutral operation there and update its spec. Do not put a second IOCP, kqueue,
