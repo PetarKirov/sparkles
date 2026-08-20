@@ -91,6 +91,17 @@ enum bool hasMultishot(B) = __traits(compiles, {
     bool r = lvalueOf!B.supportsMultishot(OpKind.init);
 });
 
+/// The backend guarantees terminal CQEs for both a cancelled target and the
+/// internal cancellation request, so the loop can offer a synchronous owner
+/// teardown barrier. IOCP deliberately omits this until `CancelIoEx` is wired.
+template hasTerminalCancel(B)
+{
+    static if (__traits(hasMember, B, "terminalCancelCompletions"))
+        enum bool hasTerminalCancel = B.terminalCancelCompletions;
+    else
+        enum bool hasTerminalCancel = false;
+}
+
 version (Windows)
 {
     private extern (Windows) int PostQueuedCompletionStatus(

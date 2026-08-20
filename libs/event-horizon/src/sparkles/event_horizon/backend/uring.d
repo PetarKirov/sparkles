@@ -54,6 +54,8 @@ import core.stdc.errno : ETIME;
 /// non-copyable (`SINGLE_ISSUER` made structural, SPEC §5.1).
 struct UringBackend
 {
+    enum bool terminalCancelCompletions = true;
+
     @disable this(this);
 
     /**
