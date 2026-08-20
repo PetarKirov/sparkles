@@ -787,6 +787,35 @@ unittest { /* ... */ }
 - Background research → `docs/research/<topic>/` as a cross-linked catalog; follow
   [Writing Research Docs](./research-docs.md). Design specs → `docs/specs/`.
 
+### The docs sidebar is data
+
+The VitePress sidebar tree and the `srcExclude` list live in **JSON data files**,
+not in `config.mts`:
+
+| File                               | Holds                                             |
+| ---------------------------------- | ------------------------------------------------- |
+| `docs/.vitepress/sidebar.json`     | the sidebar tree (`themeConfig.sidebar` verbatim) |
+| `docs/.vitepress/docs-config.json` | `srcExclude` — the pages the site does not build  |
+
+These files are the **single source of truth**. Two consumers read them:
+
+- `docs/.vitepress/config.mts` imports them
+  (`import sidebar from './sidebar.json' with { type: 'json' }`) and passes them
+  through to `themeConfig.sidebar` / `srcExclude`.
+- `ci --check-docs-sidebar` (`apps/ci/src/docs_config.d` +
+  `docs_sidebar.d`) decodes them with `sparkles:wired` and checks both
+  directions: every published page is linked, and every link resolves to a page.
+
+**To add a page:** add `{ "text": "…", "link": "/route" }` to the right group in
+`sidebar.json` — a group is `{ "text": …, "collapsed": true, "items": [ … ] }`
+and nests arbitrarily. The link is the site route (leading `/`, no `.md`, and
+`/dir/` for a `dir/index.md`). Run `ci --check-docs-sidebar` afterwards; the
+pre-commit hook of the same name runs on any change under `docs/`.
+
+**Never** re-inline this data into `config.mts` and never re-derive it by parsing
+`config.mts` from another language — that text-scraping is exactly what these
+files replaced.
+
 ### Runnable README examples
 
 When adding a feature, add a runnable example to `README.md` as a dub single-file
@@ -1013,7 +1042,9 @@ Hooks run on commit and will modify or block your changes:
   `SKIP=check-vcs-urls git commit …` or `git commit --no-verify`; run
   `nix run .#ci -- --check-vcs-urls` to audit all tracked markdown files.
 - **check-docs-sidebar** ensures the VitePress sidebar in
-  `docs/.vitepress/config.mts` is consistent with published pages in both
+  `docs/.vitepress/sidebar.json` (see
+  [The docs sidebar is data](#the-docs-sidebar-is-data)) is consistent with
+  published pages in both
   directions: every published `docs/**/*.md` page is linked from the sidebar
   (pages → sidebar), and every sidebar `link` resolves to an existing published
   page (sidebar → pages). It respects `srcExclude` (internal grounding/QA pages

@@ -1,24 +1,24 @@
 /++
-Verify the VitePress sidebar in `docs/.vitepress/config.mts` is consistent
-with the published markdown pages under `docs/`:
+Verify the VitePress sidebar — `docs/.vitepress/sidebar.json`, the data file
+`config.mts` imports (see `docs_config`) — is consistent with the published
+markdown pages under `docs/`:
 
 $(LIST
     $(ITEM pages → sidebar: every published page is linked from the sidebar)
     $(ITEM sidebar → pages: every sidebar link points at an existing published page)
 )
 
-Split out from `app.d` so the pure parsers and matchers can be unit-tested
-(the main source file is excluded from the auto-generated test runner).
+Split out from `app.d` so the pure matchers can be unit-tested (the main source
+file is excluded from the auto-generated test runner).
 +/
 module docs_sidebar;
 
+import docs_config : SidebarItem, sidebarLinks;
+
 import std.algorithm : canFind, sort;
 import std.array : appender;
-import std.regex : ctRegex, matchAll, matchFirst, regex;
-import std.string : endsWith, indexOf, startsWith, strip;
-
-/// Default config path relative to the repository root.
-enum defaultVitePressConfig = "docs/.vitepress/config.mts";
+import std.regex : matchFirst, regex;
+import std.string : endsWith, startsWith, strip;
 
 /// Route key for the VitePress home page (`docs/index.md`).
 /// It is reachable as `/` even when not listed in the sidebar.
@@ -59,105 +59,6 @@ string normalizeDocsRoute(string path)
     while (s.endsWith("/"))
         s = s[0 .. $ - 1];
     return s.idup;
-}
-
-/// Extract the text of a top-level array field like `sidebar: [` … `]` or
-/// `srcExclude: [` … `]` from a VitePress config source string. Skips
-/// bracket characters that appear inside single- or double-quoted strings
-/// so nested `items: [` arrays do not confuse the depth counter.
-/// Returns `null` when the field is missing or unbalanced.
-@safe pure
-string extractArrayField(string configText, string fieldName)
-{
-    const needle = fieldName ~ ":";
-    const fieldIdx = configText.indexOf(needle);
-    if (fieldIdx < 0)
-        return null;
-
-    size_t i = fieldIdx + needle.length;
-    while (i < configText.length && (configText[i] == ' ' || configText[i] == '\t'
-            || configText[i] == '\n' || configText[i] == '\r'))
-        i++;
-
-    if (i >= configText.length || configText[i] != '[')
-        return null;
-
-    const start = i;
-    int depth = 0;
-    bool inSingle = false;
-    bool inDouble = false;
-    bool escaped = false;
-
-    for (; i < configText.length; i++)
-    {
-        const c = configText[i];
-
-        if (escaped)
-        {
-            escaped = false;
-            continue;
-        }
-        if (c == '\\' && (inSingle || inDouble))
-        {
-            escaped = true;
-            continue;
-        }
-        if (c == '\'' && !inDouble)
-        {
-            inSingle = !inSingle;
-            continue;
-        }
-        if (c == '"' && !inSingle)
-        {
-            inDouble = !inDouble;
-            continue;
-        }
-        if (inSingle || inDouble)
-            continue;
-
-        if (c == '[')
-            depth++;
-        else if (c == ']')
-        {
-            depth--;
-            if (depth == 0)
-                return configText[start .. i + 1].idup;
-        }
-    }
-    return null;
-}
-
-/// Collect every relative-path `link: '…'` / `link: "…"` from a sidebar
-/// (or other) array section. External URLs (`http…`) are ignored.
-///
-/// Not `@pure`: `ctRegex` storage is mutable static data.
-@safe
-string[] extractSidebarLinks(string sidebarSection)
-{
-    static linkRe = ctRegex!(`link:\s*['"]([^'"]+)['"]`);
-    auto result = appender!(string[]);
-    foreach (m; sidebarSection.matchAll(linkRe))
-    {
-        const link = m.captures[1].idup;
-        if (link.startsWith("http://") || link.startsWith("https://"))
-            continue;
-        if (link.startsWith("/"))
-            result.put(link);
-    }
-    return result[];
-}
-
-/// Collect string-literal entries from a `srcExclude: [ … ]` section.
-///
-/// Not `@pure`: `ctRegex` storage is mutable static data.
-@safe
-string[] extractSrcExcludePatterns(string srcExcludeSection)
-{
-    static strRe = ctRegex!(`['"]([^'"]+)['"]`);
-    auto result = appender!(string[]);
-    foreach (m; srcExcludeSection.matchAll(strRe))
-        result.put(m.captures[1].idup);
-    return result[];
 }
 
 /// Convert a VitePress/micromatch-style glob (`**`, `*`, `?`) to a D regex
@@ -331,33 +232,20 @@ string[] findDanglingSidebarLinks(
     return result;
 }
 
-/// Parse a full VitePress config source and return unlinked docs pages
-/// (pages → sidebar direction only). Prefer `checkDocsSidebarFromConfig`
-/// for the bidirectional check used by the CLI.
+/// Run both directions of the sidebar consistency check for a decoded
+/// `sidebar.json` tree, the site's `srcExclude` globs, and the docs markdown
+/// inventory (repo-relative `docs/…/*.md` paths).
 @safe
-string[] unlinkedDocsFromConfig(string configText, string[] mdFiles)
+DocsSidebarReport checkDocsSidebar(
+    in SidebarItem[] sidebar,
+    string[] srcExclude,
+    string[] mdFiles,
+)
 {
-    return checkDocsSidebarFromConfig(configText, mdFiles).unlinkedPages;
-}
-
-/// Parse a full VitePress config source and run both directions of the
-/// sidebar consistency check against the given docs markdown inventory.
-@safe
-DocsSidebarReport checkDocsSidebarFromConfig(string configText, string[] mdFiles)
-{
-    const sidebarSection = extractArrayField(configText, "sidebar");
-    string[] links;
-    if (sidebarSection !is null)
-        links = extractSidebarLinks(sidebarSection);
-
-    const srcExcludeSection = extractArrayField(configText, "srcExclude");
-    string[] excludes;
-    if (srcExcludeSection !is null)
-        excludes = extractSrcExcludePatterns(srcExcludeSection);
-
+    auto links = sidebarLinks(sidebar);
     return DocsSidebarReport(
-        unlinkedPages: findUnlinkedDocsPages(mdFiles, links, excludes),
-        danglingLinks: findDanglingSidebarLinks(mdFiles, links, excludes),
+        unlinkedPages: findUnlinkedDocsPages(mdFiles, links, srcExclude),
+        danglingLinks: findDanglingSidebarLinks(mdFiles, links, srcExclude),
     );
 }
 
@@ -377,66 +265,37 @@ unittest
     assert(normalizeDocsRoute("docs/overview.md") == "overview");
 }
 
-@("docs_sidebar.extractArrayField.sidebar")
-@safe
+// `@system`: wired's decode of the recursive `SidebarItem` tree infers
+// `@system` (see docs_config); the link collection itself is `@safe pure`.
+@("docs_sidebar.sidebarJsonLinks")
+@system
 unittest
 {
-    // Indent with multiples of 4 so editorconfig-checker accepts the fixture.
-    const cfg = q"EOS
-export default {
-    themeConfig: {
-        nav: [{ text: 'Docs', link: '/overview' }],
-        sidebar: [
-            {
-                text: 'Overview',
-                items: [{ text: 'Package Overview', link: '/overview' }],
-            },
-            {
-                text: 'Base',
-                link: '/libs/base/',
-                items: [
-                    { text: 'API', link: '/libs/base/reference/api' },
-                ],
-            },
-        ],
-        socialLinks: [
-            { icon: 'github', link: 'https://github.com/example/repo' },
-        ],
-    },
-};
-EOS";
+    import sparkles.wired.json : fromJSON;
 
-    const section = extractArrayField(cfg, "sidebar");
-    assert(section !is null);
-    assert(section.canFind("/overview"));
-    assert(section.canFind("/libs/base/"));
-    // Must not include socialLinks (outside the sidebar array).
-    assert(!section.canFind("github.com"));
+    // The shape `sidebar.json` actually has: nested groups, group headings
+    // that carry a link of their own, and leaf entries.
+    const json = `[
+        {
+            "text": "Overview",
+            "collapsed": false,
+            "items": [{ "text": "Package Overview", "link": "/overview" }]
+        },
+        {
+            "text": "Base",
+            "link": "/libs/base/",
+            "collapsed": true,
+            "items": [{ "text": "API", "link": "/libs/base/reference/api" }]
+        }
+    ]`;
 
-    const links = extractSidebarLinks(section);
-    assert(links == [
+    auto decoded = fromJSON!(SidebarItem[])(json);
+    assert(!decoded.hasError, decoded.error.reason);
+    assert(sidebarLinks(decoded.value) == [
         "/overview",
         "/libs/base/",
         "/libs/base/reference/api",
     ]);
-}
-
-@("docs_sidebar.extractSrcExcludePatterns")
-@safe
-unittest
-{
-    const cfg = q"EOS
-    srcExclude: [
-        '**/research/parsing/grounding/**',
-        "**/research/iroh/prompt.md",
-    ],
-EOS";
-    const section = extractArrayField(cfg, "srcExclude");
-    assert(section !is null);
-    const patterns = extractSrcExcludePatterns(section);
-    assert(patterns.length == 2);
-    assert(patterns[0] == "**/research/parsing/grounding/**");
-    assert(patterns[1] == "**/research/iroh/prompt.md");
 }
 
 @("docs_sidebar.globToRegexPattern / isSrcExcluded")
@@ -513,29 +372,23 @@ unittest
     ]);
 }
 
-@("docs_sidebar.checkDocsSidebarFromConfig.bidirectional")
+@("docs_sidebar.checkDocsSidebar.bidirectional")
 @safe
 unittest
 {
-    const cfg = q"EOS
-export default defineConfig({
-    srcExclude: ['**/secret/**'],
-    themeConfig: {
-        sidebar: [
-            { text: 'Home-ish', link: '/overview' },
-            { text: 'Ghost', link: '/does-not-exist' },
-            { text: 'Hidden', link: '/secret/hidden' },
-        ],
-    },
-});
-EOS";
+    const sidebar = [
+        SidebarItem(text: "Home-ish", link: "/overview"),
+        SidebarItem(text: "Ghost", link: "/does-not-exist"),
+        SidebarItem(text: "Hidden", link: "/secret/hidden"),
+        SidebarItem(text: "Upstream", link: "https://example.com/"),
+    ];
     const mdFiles = [
         "docs/index.md",
         "docs/overview.md",
         "docs/missing.md",
         "docs/secret/hidden.md",
     ];
-    const report = checkDocsSidebarFromConfig(cfg, mdFiles.dup);
+    const report = checkDocsSidebar(sidebar, ["**/secret/**"], mdFiles.dup);
     assert(report.unlinkedPages == ["docs/missing.md"]);
     assert(report.danglingLinks == [
         "/does-not-exist",
@@ -544,28 +397,28 @@ EOS";
     assert(!report.ok);
 }
 
-@("docs_sidebar.unlinkedDocsFromConfig")
+@("docs_sidebar.checkDocsSidebar.clean")
 @safe
 unittest
 {
-    const cfg = q"EOS
-export default defineConfig({
-    srcExclude: ['**/secret/**'],
-    themeConfig: {
-        sidebar: [
-            { text: 'Home-ish', link: '/overview' },
-        ],
-    },
-});
-EOS";
+    // A tree that links every published page — the state the CLI requires.
+    const sidebar = [
+        SidebarItem(text: "Overview", items: [
+            SidebarItem(text: "Package Overview", link: "/overview"),
+        ]),
+        SidebarItem(text: "Base", link: "/libs/base/"),
+    ];
     const mdFiles = [
         "docs/index.md",
         "docs/overview.md",
-        "docs/missing.md",
+        "docs/libs/base/index.md",
         "docs/secret/hidden.md",
+        "docs/public/asset.md",
     ];
-    const missing = unlinkedDocsFromConfig(cfg, mdFiles.dup);
-    assert(missing == ["docs/missing.md"]);
+    const report = checkDocsSidebar(sidebar, ["**/secret/**"], mdFiles.dup);
+    assert(report.unlinkedPages.length == 0);
+    assert(report.danglingLinks.length == 0);
+    assert(report.ok);
 }
 
 @("docs_sidebar.DocsSidebarReport.ok")
