@@ -29,8 +29,22 @@ struct BoxProps
     /// If non-null, its return value is used as `footer` at close time so a
     /// streaming box can fill in a result that is only known then. Layout
     /// width still uses `footer` / `minWidth` — set `minWidth` when the final
-    /// footer may be wider than this placeholder.
+    /// footer may be wider than this placeholder. Evaluated before
+    /// $(LREF footerRightNow).
     string delegate() footerNow = null;
+
+    /// Right-aligned label on the top border:
+    /// `╭──╼ {title} ╾────╼ {titleRight} ╾──╮`. Empty = today's single-sided title.
+    string titleRight = null;
+
+    /// Right-aligned label on the bottom border:
+    /// `╰──╼ {footer} ╾────╼ {footerRight} ╾──╯`. Empty = today's single-sided footer.
+    string footerRight = null;
+
+    /// Late `footerRight`, same contract as $(LREF footerNow). Evaluated after
+    /// `footerNow` so a caller can snapshot a clock in the left callback and
+    /// read it here.
+    string delegate() footerRightNow = null;
 
     /// Lower/upper bounds on the box's total visible width (frame included), in the
     /// same units as `HeaderProps.width` — set both equal for a fixed-width box.
@@ -161,20 +175,43 @@ private struct BoxLayout
     TopItem[] topItems; // structured top region for drawBoxChunks; `top` is derived from it
 }
 
-/// Bottom border, with or without a footer. Shared by layout-time baking and
-/// the late `footerNow` evaluation on a streaming box.
+/// Bottom border, with or without a footer and optional right-side label.
+/// Shared by layout-time baking and the late `footerNow` evaluation.
 private string renderBoxBottom(
-    size_t outputWidth, size_t prefixLen, in BoxProps props, string footer)
+    size_t outputWidth, size_t prefixLen, in BoxProps props,
+    string footer, string footerRight = null)
 {
-    const footerWidth = footer.length ? footer.visibleWidth : 0;
-    if (footer !is null)
+    const leftW = footer !is null ? footer.visibleWidth : 0;
+    const rightW = footerRight.length ? footerRight.visibleWidth : 0;
+    if (footer is null && rightW == 0)
     {
-        auto rule = props.horizontalLine.repeat(outputWidth + prefixLen - footerWidth - 7);
+        auto rule = props.horizontalLine.repeat(outputWidth + prefixLen - 10);
+        return "╰────────%s──╯".format(rule);
+    }
+    if (rightW == 0)
+    {
+        auto rule = props.horizontalLine.repeat(outputWidth + prefixLen - leftW - 7);
         return "╰──╼ %s ╾%s─╯".format(footer, rule);
     }
-    auto rule = props.horizontalLine.repeat(outputWidth + prefixLen - 10);
-    return "╰────────%s──╯".format(rule);
+    const left = footer is null ? "" : footer;
+    auto rule = props.horizontalLine.repeat(
+        outputWidth + prefixLen >= 12 + leftW + rightW
+            ? outputWidth + prefixLen - 12 - leftW - rightW : 0);
+    const right = footerRight.canFind('\x1b') ? footerRight ~ "\x1b[0m" : footerRight;
+    return "╰──╼ %s ╾%s╼ %s ╾──╯".format(left, rule, right);
 }
+
+/// True when the bottom border must be rendered after the content is exhausted
+/// (a late left and/or right footer).
+private bool hasLateFooter(in BoxProps props) @safe pure nothrow @nogc
+    => props.footerNow !is null || props.footerRightNow !is null;
+
+/// Evaluate `footerNow` then `footerRightNow` (falling back to the static
+/// fields) and render the bottom border. Shared by the line and chunk ranges.
+private string renderLateBottom(size_t outputWidth, size_t prefixLen, in BoxProps props)
+    => renderBoxBottom(outputWidth, prefixLen, props,
+        props.footerNow !is null ? props.footerNow() : props.footer,
+        props.footerRightNow !is null ? props.footerRightNow() : props.footerRight);
 
 /// Compute the $(LREF BoxLayout) for `content`/`title`/`props`. When the box is a
 /// fixed width (`canStream`) the content is left untouched for the caller to stream;
@@ -197,15 +234,26 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
     const contentMin = props.minWidth > frameOverhead ? props.minWidth - frameOverhead : 0;
 
     const footerWidth = props.footer !is null ? props.footer.visibleWidth : 0;
-    const minFooterWidth = footerWidth > 0 ? footerWidth + 9 : 10;  // ╰──╼ {footer} ╾──╯ or ╰──────────╯
+    const footerRightWidth = props.footerRight.visibleWidth;
+    const titleRightWidth = props.titleRight.visibleWidth;
+    // Dual-sided chrome is `╭──╼ {left} ╾{rule}╼ {right} ╾──╮` — 14 columns plus
+    // the two labels (`+5` over the single-sided `╭──╼ … ╾──╮`). Same extras on
+    // the footer (`╰──╼ … ╾──╯` is +9).
+    const dualTitleExtra = titleRightWidth ? titleRightWidth + 5 : 0;
+    const minFooterWidth = footerRightWidth > 0
+        ? footerWidth + footerRightWidth + 14
+        : (footerWidth > 0 ? footerWidth + 9 : 10);
 
     // Lay out the title. By default it is one line and the box grows to fit it; with
     // a `maxWidth` cap, `ellipsis`/`wrap` keep the box within it. A single-line
     // title-bound box is `titleWidth + 11` wide and a nested title box `+ 8`, so
     // `singleCap` is the widest a title line may be on a plain top, `nestedCap` the
-    // widest inside the nested box.
+    // widest inside the nested box. A `titleRight` label lives on that same top
+    // row, so it shrinks `singleCap` and forbids nesting (the right label would
+    // have nowhere to go on a nested title box).
     const capped = props.maxWidth > 0;
-    const singleCap = props.maxWidth >= 12 ? props.maxWidth - 11 : 1;
+    const singleCap = props.maxWidth >= 11 + dualTitleExtra
+        ? props.maxWidth - 11 - dualTitleExtra : 1;
     const nestedCap = props.maxWidth >= 9 ? props.maxWidth - 8 : 1;
     const titleWidth = title.visibleWidth;
 
@@ -220,8 +268,9 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
                 titleLines = [ellipsizeTitle(title, singleCap)];
             break;
         case TitleOverflow.wrap:
-            // No left frame to grow the ┤/├ handles from -> fall back to ellipsis.
-            if (prefixLen == 0)
+            // No left frame to grow the ┤/├ handles from, or a right-side label
+            // that has to stay on the same row -> fall back to ellipsis.
+            if (prefixLen == 0 || titleRightWidth > 0)
             {
                 if (titleWidth > singleCap)
                     titleLines = [ellipsizeTitle(title, singleCap)];
@@ -250,7 +299,9 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
 
     // Width floors that do not depend on the content (title, footer, minWidth).
     const effTitleWidth = titleLines.map!(x => x.visibleWidth).maxElement;
-    const titleFloor = nested ? effTitleWidth + 4 : (effTitleWidth + 9) - prefixLen;
+    const titleFloor = nested
+        ? effTitleWidth + 4
+        : (effTitleWidth + 9 + dualTitleExtra) - prefixLen;
     const footerFloor = minFooterWidth - prefixLen;
     const baseWidth = max(titleFloor, footerFloor, contentMin);
 
@@ -293,6 +344,21 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
     TopItem[] topItems;
     if (nested)
         topItems = nestedTitleItems(titleLines, outputWidth, prefix, props);
+    else if (props.titleRight.length)
+    {
+        // `╭──╼ {t0} ╾{rule}╼ {titleRight} ╾──╮`. The right label is in the close
+        // so the left title still streams first.
+        const right = props.titleRight.canFind('\x1b')
+            ? props.titleRight ~ "\x1b[0m" : props.titleRight;
+        const rightW = props.titleRight.visibleWidth;
+        topItems = [TopItem(
+            "╭──╼ ",
+            titleLines[0],
+            CloseSpec(" ╾", props.horizontalLine,
+                outputWidth + prefixLen >= 12 + rightW
+                    ? outputWidth + prefixLen - 12 - rightW : 0,
+                "╼ " ~ right ~ " ╾──╮\n"))];
+    }
     else
         // Single-line title: `╭──╼ {t0} ╾{rule}─╮`. The right side (` ╾…─╮`) is held in
         // the close so it streams only once the title text is complete. An empty title
@@ -309,12 +375,11 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
     foreach (it; topItems)
         topApp ~= it.lead ~ it.text ~ renderClose(it.close, it.text.visibleWidth);
 
-    // Eager bottom: used when the footer is known at layout. A `footerNow`
-    // callback on a streaming box is evaluated later (see BoxLineRange).
-    string bottomLine = (props.footerNow is null || !canStream)
-        ? renderBoxBottom(outputWidth, prefixLen, props,
-            props.footerNow !is null ? props.footerNow() : props.footer)
-        : null;
+    // Eager bottom: used when the footer is known at layout. Late callbacks on
+    // a streaming box are evaluated later (see BoxLineRange / BoxChunkRange).
+    string bottomLine = (hasLateFooter(props) && canStream)
+        ? null
+        : renderLateBottom(outputWidth, prefixLen, props);
 
     return BoxLayout(
         prefix.idup, outputWidth, topApp[].splitLines.idupArray, bottomLine,
@@ -420,8 +485,8 @@ private struct BoxLineRange(Content)
         if (!_bottomDone)
         {
             _bottomDone = true;
-            _front = _props.footerNow !is null
-                ? renderBoxBottom(_outputWidth, _prefix.length, _props, _props.footerNow())
+            _front = hasLateFooter(_props)
+                ? renderLateBottom(_outputWidth, _prefix.length, _props)
                 : _bottom;
             return;
         }
@@ -608,8 +673,8 @@ private struct BoxChunkRange(bool lineBuffered, Content)
     }
 
     private string resolvedBottom()
-        => _props.footerNow !is null
-            ? renderBoxBottom(_outputWidth, _prefix.visibleWidth, _props, _props.footerNow())
+        => hasLateFooter(_props)
+            ? renderLateBottom(_outputWidth, _prefix.visibleWidth, _props)
             : _bottom;
 
     // Pull the next content chunk and the frame bytes that must precede it. Frame
@@ -947,6 +1012,116 @@ private TopItem[] nestedTitleItems(
         "╰──╼ \x1b[32m✓ OK\x1b[39m ╾────╯");
 }
 
+@("drawBox.props.titleRight")
+@system unittest
+{
+    import sparkles.test_utils.string : outdent;
+    import std.string : splitLines;
+
+    // Right-aligned label on the top border; every row stays the same width.
+    const box = ["Hi"].drawBox("Left", BoxProps(titleRight: "Right"));
+    assert(box == `
+        ╭──╼ Left ╾──╼ Right ╾──╮
+        │ Hi                    │
+        ╰───────────────────────╯`.outdent(2), box);
+    foreach (line; box.splitLines)
+        assert(line.visibleWidth == box.splitLines.front.visibleWidth);
+}
+
+@("drawBox.props.footerRight")
+@system unittest
+{
+    import sparkles.test_utils.string : outdent;
+    import std.string : splitLines;
+
+    const box = ["Hi"].drawBox("T", BoxProps(footer: "ok", footerRight: "stats"));
+    assert(box == `
+        ╭──╼ T ╾──────────────╮
+        │ Hi                  │
+        ╰──╼ ok ╾──╼ stats ╾──╯`.outdent(2), box);
+    foreach (line; box.splitLines)
+        assert(line.visibleWidth == box.splitLines.front.visibleWidth);
+}
+
+@("drawBox.props.dualSidedChrome")
+@system unittest
+{
+    import sparkles.test_utils.string : outdent;
+    import std.string : splitLines;
+
+    // The CI result-box shape: original title/verdict on the left, new info
+    // on the right, both borders sharing one fill between `╾` and `╼`.
+    const box = ["body"].drawBox("ci › dub test :ci", BoxProps(
+        titleRight: "Δt 1.0s | Δtᵢ 1.0s",
+        footer: "✓ passed",
+        footerRight: "Δt 2.0s | Δtᵢ 1.0s (usr 1.0s/sys 1.0ms) | 1.0MiB",
+        minWidth: 88, maxWidth: 88));
+    const lines = box.splitLines;
+    assert(lines.length == 3);
+    assert(lines[0].canFind("ci › dub test :ci"));
+    assert(lines[0].canFind("Δt 1.0s | Δtᵢ 1.0s"));
+    assert(lines[2].canFind("✓ passed"));
+    assert(lines[2].canFind("(usr 1.0s/sys 1.0ms)"));
+    assert(lines[2].canFind("1.0MiB"));
+    foreach (line; lines)
+        assert(line.visibleWidth == 88, line);
+}
+
+@("drawBox.props.titleRight.ellipsisKeepsRightLabel")
+@system unittest
+{
+    import std.string : splitLines;
+
+    // A long left title must yield the right label, not nest into a title box.
+    const props = BoxProps(
+        maxWidth: 40,
+        titleOverflow: TitleOverflow.wrap,
+        titleRight: "Δt 1s");
+    const box = ["x"].drawBox("This title is far too long to fit with the right label", props);
+    const top = box.splitLines.front;
+    assert(top.canFind("Δt 1s"), top);
+    assert(top.canFind("…"), top);
+    assert(!box.canFind("┤") && !box.canFind("├"), box);
+    assert(top.visibleWidth == 40, top);
+}
+
+@("drawBox.props.footerRightNow")
+@system unittest
+{
+    import std.array : join;
+
+    bool leftCalled, rightCalled;
+    string lastLeft;
+    const props = BoxProps(minWidth: 48, maxWidth: 48,
+        footerNow: () {
+            leftCalled = true;
+            lastLeft = "✓ passed";
+            return lastLeft;
+        },
+        footerRightNow: () {
+            rightCalled = true;
+            assert(leftCalled, "footerNow must run before footerRightNow");
+            return "Δt 1s";
+        });
+    const rendered = drawBoxLines(["ok"], "T", props).join("\n");
+    assert(leftCalled && rightCalled);
+    assert(rendered.canFind("✓ passed"), rendered);
+    assert(rendered.canFind("Δt 1s"), rendered);
+}
+
+@("drawBox.props.titleRight.styledWidth")
+@system unittest
+{
+    import sparkles.base.term_style : Style, stylize;
+    import std.string : splitLines;
+
+    auto styled = "Right".stylize(Style.cyan);
+    const plain = ["Hi"].drawBox("Left", BoxProps(titleRight: "Right"));
+    const colored = ["Hi"].drawBox("Left", BoxProps(titleRight: styled));
+    assert(plain.splitLines.front.visibleWidth == colored.splitLines.front.visibleWidth);
+    assert(colored.canFind("\x1b["));
+}
+
 @("drawBox.styled.contentWithAnsiCodes")
 @system unittest
 {
@@ -1216,6 +1391,7 @@ unittest
     static foreach (args; [
         tuple(["Hello"], "T", BoxProps.init),
         tuple(["Content"], "Title", BoxProps(footer: "Done")),
+        tuple(["Hi"], "Left", BoxProps(titleRight: "Right", footer: "ok", footerRight: "stats")),
         tuple(["Body content line one"], "This is a very long multi-line title here.",
             BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap)),
     ])
@@ -1262,10 +1438,12 @@ unittest
         void popFront() { i++; }
     }
 
-    const props = BoxProps(minWidth: 40, maxWidth: 40, footerNow: () => "later");
+    const props = BoxProps(minWidth: 40, maxWidth: 40,
+        titleRight: "Δt 1s", footerNow: () => "later");
     auto box = drawBoxLines(Hold(), "Title", props);
     assert(pulls == 0, "constructing the range must not pull content");
     assert(box.front.canFind("Title"), box.front);
+    assert(box.front.canFind("Δt 1s"), box.front);
 
     // Footer is evaluated only once the content is exhausted.
     bool footerCalled;
@@ -1318,6 +1496,7 @@ unittest
         tuple(["Hello"], "T", BoxProps.init),
         tuple(["Line 1", "Line 2", "Line 3"], "Title", BoxProps.init),
         tuple(["Content"], "Title", BoxProps(footer: "Done")),
+        tuple(["Hi"], "Left", BoxProps(titleRight: "Right", footer: "ok", footerRight: "stats")),
         tuple(["Content"], "", BoxProps.init),
         tuple(["Body content line one"], "This is a very long multi-line title here.",
             BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap)),
