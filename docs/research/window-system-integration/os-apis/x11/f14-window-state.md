@@ -285,4 +285,4 @@ prints `SKIP: no X11 display` and exits 0.
 [icccm]: https://tronche.com/gui/x/icccm/sec-4.html
 [xlib-focus]: https://tronche.com/gui/x/xlib/events/input-focus/
 [xiconify]: https://tronche.com/gui/x/xlib/ICC/client-to-window-manager/XIconifyWindow.html
-[icewm-src]: https://github.com/ice-wm/icewm/blob/master/src/wmframe.cc
+[icewm-src]: https://github.com/ice-wm/icewm/blob/17907bdef5de6d18f9002a11d5c11abb8c1f6a42/src/wmframe.cc

@@ -374,4 +374,4 @@ font path). No reachable display prints `SKIP: no X11 display` and exits 0.
 [gotchas-x11]: ../../platform-gotchas.md#x11
 [xlib-i18n]: https://www.x.org/releases/current/doc/libX11/libX11/libX11.html
 [xopenim-man]: https://xorg.freedesktop.org/archive/X11R7.7/doc/man/man3/XOpenIM.3.xhtml
-[fcitx-xim]: https://github.com/fcitx/fcitx5/blob/master/src/frontend/xim/xim.cpp
+[fcitx-xim]: https://github.com/fcitx/fcitx5/blob/442edbc9b1880c766ff9cc9a9ac67e864b200595/src/frontend/xim/xim.cpp
