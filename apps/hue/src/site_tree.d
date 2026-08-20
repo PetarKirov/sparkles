@@ -176,7 +176,7 @@ string directoryIndex(in DirNode dir, in SiteOptions opt = SiteOptions.init) @sa
     else
         escapeInto(w, opt.indexTitle.length ? opt.indexTitle : opt.heading);
     w ~= "</title>\n<style>\n";
-    w ~= indexCss;
+    w ~= indexCss(opt);
     w ~= "</style></head><body>\n<h1>";
     if (nested)
     {
@@ -234,17 +234,39 @@ private void writeParentLinks(Writer)(ref Writer w, size_t depth) @safe pure
     }
 }
 
-/// The index chrome. Shared by every directory index (and, through
-/// `gallery.galleryIndex`, the flat one) so a set looks the same at every depth.
-private enum indexCss =
-    "  body { margin: 0 auto; max-width: 48em; padding: 2em 1.5em;\n" ~
-    "         background: #11111b; color: #cdd6f4; font: 15px/1.6 system-ui, sans-serif; }\n" ~
-    "  h1 { font-size: 1.4em; } p { color: #a6adc8; }\n" ~
-    "  ul { list-style: none; padding: 0; }\n" ~
-    "  li { padding: 0.5em 0; border-bottom: 1px solid #1e1e2e; }\n" ~
-    "  a { color: #89b4fa; text-decoration: none; font-weight: 600; }\n" ~
-    "  a:hover { text-decoration: underline; }\n" ~
-    "  code { color: #a6adc8; font-size: 0.9em; margin-left: 0.6em; }\n";
+/**
+The index chrome. Shared by every directory index (and, through
+`gallery.galleryIndex`, the flat one) so a set looks the same at every depth —
+and derived from the same $(D ChromePalette) the file pages use, so an index is
+not a dark island in a light gallery.
+*/
+private string indexCss(in SiteOptions opt) @safe pure
+{
+    import std.array : appender;
+    import std.conv : text;
+
+    const c = opt.chrome;
+    auto w = appender!string;
+    w ~= "  body { margin: 0 auto; max-width: 48em; padding: 2em 1.5em;\n";
+    w ~= text("         background: ", c.background, "; color: ", c.text,
+        "; font: 15px/1.6 system-ui, sans-serif; }\n");
+    w ~= text("  h1 { font-size: 1.4em; } p { color: ", c.muted, "; }\n");
+    w ~= "  ul { list-style: none; padding: 0; }\n";
+    w ~= text("  li { padding: 0.5em 0; border-bottom: 1px solid ", c.border, "; }\n");
+    w ~= text("  a { color: ", c.link, "; text-decoration: none; font-weight: 600; }\n");
+    w ~= "  a:hover { text-decoration: underline; }\n";
+    w ~= text("  code { color: ", c.muted, "; font-size: 0.9em; margin-left: 0.6em; }\n");
+    if (opt.hasDarkChrome)
+    {
+        const d = opt.darkChrome;
+        w ~= text("  html.dark body { background: ", d.background, "; color: ",
+            d.text, "; }\n");
+        w ~= text("  html.dark p, html.dark code { color: ", d.muted, "; }\n");
+        w ~= text("  html.dark li { border-bottom-color: ", d.border, "; }\n");
+        w ~= text("  html.dark a { color: ", d.link, "; }\n");
+    }
+    return w[];
+}
 
 // ---------------------------------------------------------------------------
 
@@ -290,6 +312,40 @@ unittest
     assert(tree.nodes.length == 1 && tree.nodes[0].relPath == "");
     assert(tree.nodes[0].dirs.length == 0);
     assert(tree.nodes[0].files == [IndexRow("01-hover.html", "01-hover", "")]);
+}
+
+@("site_tree.directoryIndex.chromeFollowsTheThemeAndTheDarkHalf")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import gallery : ChromePalette;
+
+    // A directory index used to be a fixed dark palette, so a light-theme
+    // gallery had light file pages and dark indexes between them.
+    const opt = SiteOptions(
+        chrome: ChromePalette(background: "#ffffff", surface: "#f2f2f2",
+            border: "#d3d4d5", text: "#24292e", muted: "#717477",
+            faint: "#acaeb0", link: "#0055cc"),
+        darkChrome: ChromePalette(background: "#101010", surface: "#1a1a1a",
+            border: "#2a2a2a", text: "#eeeeee", muted: "#bbbbbb",
+            faint: "#777777", link: "#88aaff"));
+    const node = DirNode(relPath: "",
+        files: [IndexRow("a.d.html", "a.d", "d · 1 line")]);
+    const idx = directoryIndex(node, opt);
+
+    assert(idx.canFind("background: #ffffff; color: #24292e"), idx);
+    assert(idx.canFind("a { color: #0055cc"), idx);
+    assert(!idx.canFind("#11111b"), "the fixed index background leaked");
+    assert(!idx.canFind("#89b4fa"), "the fixed link colour leaked");
+
+    // …and the dark half switches it, so a two-theme run does not come apart
+    // between a page and the index that links to it.
+    assert(idx.canFind("html.dark body { background: #101010; color: #eeeeee"), idx);
+    assert(idx.canFind("html.dark a { color: #88aaff"), idx);
+
+    const single = directoryIndex(node, SiteOptions(chrome: opt.chrome));
+    assert(!single.canFind("html.dark"), single);
 }
 
 @("site_tree.directoryIndex.nestedIndexLinksUpAndDown")
