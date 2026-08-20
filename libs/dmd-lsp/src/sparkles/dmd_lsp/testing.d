@@ -258,6 +258,7 @@ void checkTip(AnalyzedModule m, uint line, uint col, string expected,
     assert(!errors.canFind!(e => e.canFind("#include")),
         text("the C preprocessor did not run: ", errors));
     assert(errors.length == 0, errors.text);
+}
 
 @("dmd_lsp.testing.checkErrors.editionReachesAnalysis")
 @system unittest
