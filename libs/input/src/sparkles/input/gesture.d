@@ -26,14 +26,11 @@ filed under an application (`IXR16`).
 module sparkles.input.gesture;
 
 import sparkles.input.events;
+import sparkles.math : ScreenPosition;
 
 /// Device-space position: sub-cell, because recognition thresholds are
 /// physical distances rather than grid steps.
-struct PointF
-{
-    float x = 0;
-    float y = 0;
-}
+alias PointF = ScreenPosition!float;
 
 /// Recognition tunables, in physical pixels. A caller scales `slopPx` by its
 /// cell height so the radius tracks the rendered text size.

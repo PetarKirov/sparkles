@@ -26,27 +26,6 @@ import sparkles.input;
 import sparkles.ui_sdl3.sdl3_c;
 
 /**
-The cells→pixels mapping a pointer position is divided by.
-
-The same `cellW`/`cellH`/origin the canvas paints with — a pointer must land on
-the cell it visually points at, so the two cannot be derived independently.
-*/
-struct CellMetrics
-{
-    int cellW = 1;
-    int cellH = 1;
-    int originX;
-    int originY;
-
-    /// A device-space position as a 0-based cell. SDL reports pixels as
-    /// floats; the toolkit's grid is integral, so this is where that ends.
-    Point toCell(float px, float py) const @safe pure nothrow @nogc
-        => Point(
-            (cast(int) px - originX) / (cellW > 0 ? cellW : 1),
-            (cast(int) py - originY) / (cellH > 0 ? cellH : 1));
-}
-
-/**
 SDL's `SDLK_SCANCODE_MASK`: the bit that marks a keycode with no character.
 
 Spelled out because it is a function-like macro in

@@ -133,6 +133,13 @@ Proposed. Required by the [application host](../ui-app/index.md) and by migratin
 > would strand every `@safe` consumer. One keystroke is one code point; the cap
 > (`maxKeyText`) covers a dead-key or IME composition and truncates beyond.
 
+## Shared producer primitives (`INP19`–`INP20`)
+
+| ID    | Requirement                                                                                                                                                                                                                                             | Status | Traces to                                                       |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------- |
+| INP19 | Every pixel producer must use one cells-to-device mapping value, including its origin and zero-divisor policy, so SDL, raylib, and native WSI cannot quantize the same pointer differently.                                                             | full   | `sparkles.input.metrics` `CellMetrics`; SDL and raylib adapters |
+| INP20 | Pixel gestures must reuse `ScreenPosition!float`, and consumers must be able to import the shared `PointerShape` through `sparkles:input`. The enum remains defined in lower-level `sparkles:base` so compatibility does not create a dependency cycle. | full   | `sparkles.input.gesture` `PointF`; `sparkles.input.pointer`     |
+
 ## Hit testing (`INP10`)
 
 | ID    | Requirement                                                                                                                                                                                                                                       | Status  | Traces to                                                                                                                                                                                                                                                                                  |
@@ -185,7 +192,7 @@ order, or equivalently a culled top-down frame-tree descent. The rules:
 
 | Source file                                         | Requirements                   |
 | --------------------------------------------------- | ------------------------------ |
-| `libs/input/src/sparkles/input/`                    | `INP1`–`INP6`, `INP11`–`INP16` |
+| `libs/input/src/sparkles/input/`                    | `INP1`–`INP6`, `INP11`–`INP20` |
 | `libs/tui/src/sparkles/tui/input.d`                 | `INP7`                         |
 | `libs/ui-raylib/src/`                               | `INP8`, `INP9`                 |
 | `libs/ui/src/sparkles/ui/state.d`                   | `INP10` (the consumer)         |

@@ -22,8 +22,8 @@ to [feature-requirements.md](./feature-requirements.md)._
 
 | Milestone | Deliverable                                            | Requirements                               | Status      |
 | --------- | ------------------------------------------------------ | ------------------------------------------ | ----------- |
-| M0        | normative docs, prior-art matrix, cross-spec ownership | `WSI1`–`WSI8`, `INT6`                      | in progress |
-| M1        | shared geometry/input/text primitives                  | `WSI8`, `F06`, `F07`, `F11`, `F12`, `INT5` | planned     |
+| M0        | normative docs, prior-art matrix, cross-spec ownership | `WSI1`–`WSI8`, `INT6`                      | complete    |
+| M1        | shared geometry/input/text primitives                  | `WSI8`, `F06`, `F07`, `F11`, `F12`, `INT5` | in progress |
 | M2        | Event Horizon/native-loop spikes on all four backends  | `WSI3`, `WSI4`, `F03`–`F05`, `F17`         | planned     |
 | M3        | package core and lifecycle (`F01`–`F05`, `F17`)        | `WSI1`–`WSI6`, `F01`–`F05`, `F17`, `INT1`  | planned     |
 | M4        | input, DPI, outputs, capture and cursors               | `F06`–`F12`                                | planned     |
@@ -53,8 +53,9 @@ Make the common types genuinely common before WSI copies them:
 
 1. alias `sparkles.input.events.PointF` to `ScreenPosition!float` and prove source and
    ABI expectations in tests;
-2. move canonical `PointerShape` ownership from terminal control to
-   `sparkles:input`, leaving a compatibility re-export;
+2. expose canonical `PointerShape` through `sparkles:input` while retaining its
+   leaf definition in `sparkles:base` (moving the definition upward would create
+   the forbidden base↔input dependency cycle);
 3. move `CellMetrics` and pixel-to-cell conversion from the SDL/raylib producers into
    one pure input helper;
 4. add allocation-conscious UTF-8/UTF-16 conversion to `sparkles:base`, with malformed
