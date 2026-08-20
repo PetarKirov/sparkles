@@ -79,7 +79,18 @@ jobs:
     # the dub files, so bumping the `dmd:frontend` pin invalidates it and the
     # leg pays a cold frontend build — ~7m under dmd, which overran a 12m cap.
     # That is a build cost, not a runtime one, and it recurs on every pin bump.
-    timeout-minutes: 20
+    #
+    # Raised to 30 for the OS-API windowing demos below, which add ~4m30s to the
+    # Linux ldc2 leg (41 dub packages built and run under xvfb/weston). That leg
+    # measured 19m23s against the old 20m cap — a 37-second margin, and the next
+    # thing to grow the job pushed it over: a run cancelled mid-demo at 20m07s.
+    # A cap this tight fails as a *cancellation* in the middle of a step, which
+    # reads as a hang rather than as "out of budget".
+    #
+    # The demos are a research sweep bolted onto the D test gate and now eat a
+    # quarter of its budget; moving them to their own parallel job is the better
+    # fix, left as follow-up so this stack does not restructure shared CI.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
