@@ -1,0 +1,75 @@
+/** Typed failures at the native-window/Vulkan boundary. */
+module sparkles.vulkan_wsi.error;
+
+import expected : Expected, err, ok;
+
+import sparkles.vulkan : VkResult;
+import sparkles.wsi : BackendKind, InlineUtf8;
+
+@safe:
+
+enum VulkanWsiErrorKind : ubyte
+{
+    unsupported,
+    mismatchedHandles,
+    loaderUnavailable,
+    missingExtension,
+    incompleteDispatch,
+    noPresentDevice,
+    vulkanFailure,
+}
+
+enum VulkanWsiOperation : ubyte
+{
+    none,
+    planSurface,
+    load,
+    createInstance,
+    createSurface,
+    selectDevice,
+    createDevice,
+}
+
+struct VulkanWsiError
+{
+    VulkanWsiErrorKind kind;
+    VulkanWsiOperation operation;
+    BackendKind backend;
+    VkResult vkResult;
+    InlineUtf8!128 diagnostic;
+}
+
+struct VulkanWsiExpectedHook
+{
+    static immutable bool enableDefaultConstructor = false;
+
+    static void onAccessEmptyValue(E)(E error) pure nothrow @nogc
+        => assert(false, "accessed the value of an error VulkanWsiResult");
+}
+
+alias VulkanWsiResult(T = void) =
+    Expected!(T, VulkanWsiError, VulkanWsiExpectedHook);
+
+VulkanWsiResult!T vulkanWsiOk(T)(auto ref T value)
+{
+    import core.lifetime : forward;
+
+    return ok!(VulkanWsiError, VulkanWsiExpectedHook)(forward!value);
+}
+
+VulkanWsiResult!void vulkanWsiOk() pure nothrow @nogc
+    => ok!(VulkanWsiError, VulkanWsiExpectedHook)();
+
+VulkanWsiResult!T vulkanWsiErr(T)(VulkanWsiError error) pure nothrow @nogc
+    => err!(T, VulkanWsiExpectedHook)(error);
+
+VulkanWsiError vulkanWsiError(VulkanWsiErrorKind kind,
+    VulkanWsiOperation operation, BackendKind backend,
+    VkResult result = VkResult.VK_SUCCESS,
+    scope const(char)[] diagnostic = null) pure nothrow @nogc
+{
+    VulkanWsiError error = VulkanWsiError(kind, operation, backend, result);
+    if (!error.diagnostic.assign(diagnostic))
+        cast(void) error.diagnostic.assign("diagnostic exceeds inline capacity");
+    return error;
+}

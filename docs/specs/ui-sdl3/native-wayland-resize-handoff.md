@@ -10,8 +10,10 @@
 > than being deleted globally.
 
 **Status:** the `sparkles:wsi` native Wayland lifecycle and Event Horizon
-prepare-read seam are implemented and pass under headless Weston. The Vulkan triangle
-renderer consumer and Mutter live-resize measurement are still pending; keep the SDL
+prepare-read seam are implemented and pass under headless Weston. The first
+`sparkles:vulkan-wsi` bridge now creates a native Wayland `VkSurfaceKHR` and selects a
+present device while holding the shared-display I/O borrow. Swapchain/frame extraction,
+the Vulkan triangle and Mutter live-resize measurement are still pending; keep the SDL
 triangle until those gates pass.
 **Date:** 2026-08-20.
 **Branch:** `feat/ui-sdl3-input`. The measured X11-good loop (`32c323f71`) and the Darwin `events.d` fix (`1faff458a`) are **committed** — see [§3 Working tree](#3-working-tree).
@@ -544,6 +546,14 @@ This is the first real codegen+ImportC job in-tree. The research example **stops
 **Listeners are `extern (C) nothrow @nogc`.** Store pending size + a flag in the listener; apply on the main loop after `dispatch_pending`. vkcube resizes **in** the configure handler; either is fine if you **ack first**. If a listener must call GC / throwing D, use the same cast-to-`nothrow @nogc` trampoline as `liveResizeWatch` in the current triangle.
 
 ### 8.4 Vulkan surface without SDL — load-bearing constraints
+
+> [!NOTE]
+> This section records the original example-first proposal. The current architecture
+> deliberately supersedes its “keep `sparkles:vulkan` platform-free” recommendation:
+> target-gated platform declarations/dispatch now live in `sparkles:vulkan`, while all
+> WSI handle policy and surface ownership live in `sparkles:vulkan-wsi`. The latter
+> also brackets Mesa calls with `WaylandWsi.beginNativeIo`/`endNativeIo`; otherwise the
+> ICD can deadlock against Event Horizon's outstanding prepared read.
 
 `sparkles:vulkan` is deliberately platform-free:
 

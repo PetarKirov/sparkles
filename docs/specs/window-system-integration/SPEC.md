@@ -9,7 +9,7 @@ document is normative. Requirements are enumerated in
 
 **Status:** M0 specification; implementation in progress
 
-**Last reviewed:** August 20, 2026
+**Last reviewed:** August 21, 2026
 
 ## 1. Purpose and scope
 
@@ -46,7 +46,7 @@ contract; the renderer above WSI paints them.
 | Source root     | `libs/wsi/src/sparkles/wsi/` |
 | Package module  | `sparkles.wsi`               |
 | Optional SDL    | future `sparkles:wsi-sdl3`   |
-| Vulkan bridge   | future `sparkles:vulkan-wsi` |
+| Vulkan bridge   | `sparkles:vulkan-wsi`        |
 
 The native package's direct Sparkles dependencies are deliberately small:
 
@@ -145,7 +145,11 @@ callback cannot outlive the WSI owner.
 Wayland obeys the prepare-read protocol exactly: dispatch pending events, prepare the
 read, flush requests, let Event Horizon wait, then read and dispatch; cancellation
 cancels the prepared read. A writable poll is armed only while `wl_display_flush`
-reports backpressure.
+reports backpressure. A renderer API may itself read the shared display: such calls
+run inside the owner-thread `beginNativeIo`/`endNativeIo` pair, which synchronously
+cancels and reaps the prepared poll before lending the display and restores it after.
+Holding a prepared read across a Mesa Vulkan WSI round trip deadlocks because neither
+reader can make progress; raw-handle stability alone is not sufficient synchronization.
 
 ### 4.2 Windows
 
@@ -301,6 +305,8 @@ Each variant contains only the exact native objects a renderer needs. Wayland ex
 Win32 exposes `HINSTANCE` and `HWND`; AppKit exposes `NSWindow*` and `NSView*`. The
 variant is queryable only after `ready` and until destruction begins. Backends may add
 new variants only in a versioned API change; field reinterpretation is forbidden.
+On Wayland, any consumer that may dispatch or round-trip the display—including a
+Vulkan ICD—must additionally hold the backend's owner-thread native-I/O borrow.
 
 ## 9. Platform contracts
 
@@ -362,9 +368,11 @@ bring-up and regression comparison; it is not part of the native package and can
 claim a native feature that SDL does not expose publicly.
 
 `sparkles:vulkan-wsi` owns Vulkan instance extension selection, native surface creation,
-swapchain/frame synchronization, and present/rebuild policy. It reuses the Vulkan
-loader/command types in `sparkles:vulkan` and extracts the proven resource-retirement
-logic from `sparkles:ui-sdl3`; WSI itself contains no Vulkan type.
+swapchain/frame synchronization, and present/rebuild policy. Its first slice is
+delivered: it validates the closed WSI handle pair, reuses the loader and per-instance
+dispatch in `sparkles:vulkan`, creates Wayland/XCB/Win32 surfaces, and selects a
+graphics+present device. Extraction of swapchain/frame retirement from
+`sparkles:ui-sdl3` remains. WSI itself contains no Vulkan type.
 
 Skia Graphite sits above those seams:
 

@@ -28,7 +28,7 @@ to [feature-requirements.md](./feature-requirements.md)._
 | M3        | package core and lifecycle (`F01`–`F05`, `F17`)        | `WSI1`–`WSI6`, `F01`–`F05`, `F17`, `INT1`  | in progress |
 | M4        | input, DPI, outputs, capture and cursors               | `F06`–`F12`                                | in progress |
 | M5        | decorations, state, popup, clipboard and DnD           | `F13`–`F16`                                | planned     |
-| M6        | SDL compatibility and Vulkan bridge                    | `WSI7`, `INT2`                             | planned     |
+| M6        | SDL compatibility and Vulkan bridge                    | `WSI7`, `INT2`                             | in progress |
 | M7        | Skia Graphite native and SDL hosts                     | `INT3`                                     | planned     |
 | M8        | `ui-app` configurations and migration                  | `INT4`, `INT5`                             | planned     |
 | M9        | Win32 TSF                                              | `POST1`                                    | deferred    |
@@ -110,9 +110,11 @@ backend for tests, and the four platform modules. Implement in vertical feature 
 5. `F04` native frame opportunity plus `Ticker` fallback;
 6. `F05` readiness, wake and external Event Horizon work.
 
-The native Wayland triangle is M3's first renderer consumer. Extract no public package
-from the example until its immediate configure acknowledgement and live-resize trace
-match the measured target in the
+The native Wayland surface probe is delivered as M3's first renderer consumer. It
+exposed and fixed the shared-display rule: Mesa Vulkan WSI calls run while the backend's
+prepared read is synchronously cancelled, then Event Horizon is re-armed. The full
+triangle stays gated on immediate configure acknowledgement and a live-resize trace
+matching the measured target in the
 [SDL handoff](../ui-sdl3/native-wayland-resize-handoff.md).
 
 Gate: all four platform columns for `F01`–`F05` and `F17` are verified; typed handles
@@ -172,6 +174,11 @@ entry condition for renderer integration.
 
 Gate: Vulkan validation clean on Wayland, X11, Win32/Wine and native Windows CI; native
 macOS uses the handle probe here but Metal in M7.
+
+Delivered first slice: target-native surface ABI/dispatch in `sparkles:vulkan`, typed
+handle-pair validation, instance/surface/device ownership in `sparkles:vulkan-wsi`, and
+a headless-Weston Wayland-to-present-device smoke. Swapchain/frame extraction, the
+triangle, X11/Win32 runtime surface probes, validation, and HITL resize remain.
 
 ## Milestone M7 — Skia Graphite
 
