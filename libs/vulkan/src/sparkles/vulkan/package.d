@@ -51,5 +51,6 @@ public import sparkles.vulkan.extensions;
 public import sparkles.vulkan.flags;
 public import sparkles.vulkan.loader;
 public import sparkles.vulkan.names;
+public import sparkles.vulkan.platform;
 public import sparkles.vulkan.result;
 public import sparkles.vulkan.structure_type;

@@ -21,6 +21,7 @@ ergonomic win ErupteD had over both C and raw ImportC, at zero runtime cost
 module sparkles.vulkan.structure_type;
 
 import sparkles.vulkan.vulkan_c;
+import sparkles.vulkan.platform;
 
 /**
 The `VK_STRUCTURE_TYPE_*` enumerator belonging to `T`.
@@ -34,7 +35,12 @@ template structureTypeOf(T)
     static assert(T.stringof.length > 2 && T.stringof[0 .. 2] == "Vk",
         T.stringof ~ " is not a Vk* type");
 
-    private enum name = "VK_STRUCTURE_TYPE_" ~ upperSnake(T.stringof[2 .. $]);
+    // Vulkan treats the platform name `Win32` as one token, unlike API
+    // version suffixes (`Vulkan11` -> `VULKAN_1_1`). It is the sole struct
+    // naming exception among the surface create infos.
+    private enum name = T.stringof == "VkWin32SurfaceCreateInfoKHR"
+        ? "VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR"
+        : "VK_STRUCTURE_TYPE_" ~ upperSnake(T.stringof[2 .. $]);
 
     static assert(__traits(hasMember, VkStructureType, name),
         "no `" ~ name ~ "` in VkStructureType (derived from " ~ T.stringof
@@ -132,6 +138,9 @@ T vkInfo(T)(T value = T.init) @safe pure nothrow @nogc
         == VkStructureType.VK_STRUCTURE_TYPE_RENDERING_INFO);
     static assert(structureTypeOf!VkPipelineRenderingCreateInfo
         == VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO);
+    version (Windows)
+        static assert(structureTypeOf!VkWin32SurfaceCreateInfoKHR
+            == VkStructureType.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR);
     static assert(structureTypeOf!VkPhysicalDeviceDynamicRenderingFeatures
         == VkStructureType.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES);
     static assert(structureTypeOf!VkRenderingAttachmentInfo
