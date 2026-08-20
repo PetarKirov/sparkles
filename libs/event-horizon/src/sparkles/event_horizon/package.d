@@ -22,11 +22,17 @@ public import sparkles.event_horizon.raw_pool;
 version (Windows)
 {
     public import sparkles.event_horizon.backend.iocp;
+    public import sparkles.event_horizon.loop;
+    public import sparkles.event_horizon.sched;
+    public import sparkles.event_horizon.io;
 }
 
 version (OSX)
 {
     public import sparkles.event_horizon.backend.kqueue;
+    public import sparkles.event_horizon.loop;
+    public import sparkles.event_horizon.sched;
+    public import sparkles.event_horizon.io;
 }
 
 version (linux)

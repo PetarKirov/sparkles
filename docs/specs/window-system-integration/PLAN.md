@@ -24,9 +24,9 @@ to [feature-requirements.md](./feature-requirements.md)._
 | --------- | ------------------------------------------------------ | ------------------------------------------ | ----------- |
 | M0        | normative docs, prior-art matrix, cross-spec ownership | `WSI1`–`WSI8`, `INT6`                      | complete    |
 | M1        | shared geometry/input/text primitives                  | `WSI8`, `F06`, `F07`, `F11`, `F12`, `INT5` | in progress |
-| M2        | Event Horizon/native-loop spikes on all four backends  | `WSI3`, `WSI4`, `F03`–`F05`, `F17`         | planned     |
+| M2        | Event Horizon/native-loop spikes on all four backends  | `WSI3`, `WSI4`, `F03`–`F05`, `F17`         | in progress |
 | M3        | package core and lifecycle (`F01`–`F05`, `F17`)        | `WSI1`–`WSI6`, `F01`–`F05`, `F17`, `INT1`  | in progress |
-| M4        | input, DPI, outputs, capture and cursors               | `F06`–`F12`                                | planned     |
+| M4        | input, DPI, outputs, capture and cursors               | `F06`–`F12`                                | in progress |
 | M5        | decorations, state, popup, clipboard and DnD           | `F13`–`F16`                                | planned     |
 | M6        | SDL compatibility and Vulkan bridge                    | `WSI7`, `INT2`                             | planned     |
 | M7        | Skia Graphite native and SDL hosts                     | `INT3`                                     | planned     |
@@ -113,6 +113,13 @@ unbounded native wait.
 Implement `F06`–`F12` one cross-platform semantic at a time. Windows IME is IMM32 in
 this milestone. The common event contract must be rich enough for TSF later without a
 breaking change.
+
+The first Win32 input slice is delivered: scan-code/VK key transitions, UTF-16
+`WM_CHAR` commits, and allocation-bounded IMM32 pre-edit attributes/cursor/result
+translation. Wine/Xvfb exercises a real `SCS_SETSTR` → `GCS_COMPSTR` →
+`CPS_COMPLETE`/`GCS_RESULTSTR` round trip. Logical key translation, candidate-window
+placement, raw input, pointer/cursor/DPI/output work, the other three platform input
+adapters, and native-Windows evidence remain.
 
 Required platform paths:
 
