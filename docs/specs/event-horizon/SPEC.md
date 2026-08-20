@@ -1571,7 +1571,7 @@ join order makes that natural.
 ## 15. The UI event loop
 
 The integration layer that lets an interactive application — `apps/hue`,
-`apps/terminal`, the planned `sparkles:ui-app` host
+`apps/terminal`, the `sparkles:ui-app` host
 ([ui-app spec](../ui-app/index.md), esp. `HST9`) — make event-horizon its
 **only** loop: one wait point observing input, frame pacing, subprocesses,
 file watches, and timers together. The window-system research
@@ -1579,6 +1579,14 @@ file watches, and timers together. The window-system research
 §2.2, §2.9) fixes the long-term shape — callback-first loop ownership, a
 frame clock folding native vsync sources; this section is the substrate
 those land on.
+
+The normative native consumer is now [`sparkles:wsi`](../window-system-integration/SPEC.md),
+whose [`WSI3`](../window-system-integration/feature-requirements.md#architecture-wsi)
+forbids a second application loop. Linux display fds use §15.1 directly;
+Win32/AppKit attach their OS-owned message/run-loop source through the smallest
+backend-neutral host hook proven by the WSI M2 spikes. WSI may add that hook here,
+but may not reproduce IOCP, kqueue, timers, channels, or wake accounting in its own
+package.
 
 ### 15.1 Foreign-fd readiness
 
@@ -1645,6 +1653,13 @@ to event-horizon. (A sampled-input tick is the honest v1: a _waited_ input
 path needs the display connection's fd, which raylib does not expose —
 that is the window-system replacement's §15.1 integration, not this
 spec's.)
+
+**The native GUI shape** (consumer: [`sparkles:wsi`](../window-system-integration/SPEC.md)):
+Wayland/X11 readiness and native Win32/AppKit callbacks append Regular events and
+wake this scheduler; the application drains them at one non-reentrant boundary.
+Native frame opportunities replace the fixed `Ticker` where reliable. The root
+fiber remains the one place application code runs, so a platform modal loop can
+perform mandatory native replies without re-entering the application.
 
 **Android.** Android is Linux, but its app seccomp policy denies
 `io_uring_setup` — and there is no epoll fallback in this library by

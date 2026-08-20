@@ -18,9 +18,16 @@ does not allocate. Phase 0 supplies those; phases 1–3 build on them.
 | **P1** | `libs/ui-app`: backend selection, the CLI, the host contract, the recording target         | P0         | shipped (P1.1–P1.6; `TST3` still open — see its row) |
 | **P2** | `apps/terminal` and `apps/hue` fully migrated onto the host                                | P1         | shipped (P2.A as `TVW1`–`TVW7`; P2.B1–B5)            |
 | **P3** | `apps/diagram` — a new dual-backend application that proves the abstraction                | P2         | open                                                 |
+| **P4** | Native WSI + Skia Graphite configurations; SDL/raylib retained explicitly                  | WSI M7     | planned                                              |
 
 Each phase must be green before the next starts, and every commit inside a phase
 must build, test and lint on its own.
+
+P4 is sequenced by the dedicated
+[`sparkles:wsi` plan](../window-system-integration/PLAN.md): native `F01`–`F17`
+must be verified before Graphite, and Graphite before this host changes its
+configuration graph. This plan owns only the final backend-neutral host migration;
+it does not duplicate the native platform or renderer milestones.
 
 ## Raising test coverage is an objective, not a side effect
 

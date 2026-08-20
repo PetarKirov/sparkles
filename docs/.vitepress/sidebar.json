@@ -730,6 +730,32 @@
         ]
       },
       {
+        "text": "Window System Integration",
+        "collapsed": false,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/window-system-integration/SPEC"
+          },
+          {
+            "text": "Feature Requirements",
+            "link": "/specs/window-system-integration/feature-requirements"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/window-system-integration/PLAN"
+          },
+          {
+            "text": "Supported Features",
+            "link": "/specs/window-system-integration/comparison"
+          },
+          {
+            "text": "Open Issues",
+            "link": "/specs/window-system-integration/open-issues"
+          }
+        ]
+      },
+      {
         "text": "Fuzzy",
         "collapsed": false,
         "items": [

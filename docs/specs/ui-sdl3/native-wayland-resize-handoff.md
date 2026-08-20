@@ -1,5 +1,14 @@
 # Handoff: drop SDL, native Wayland live-resize
 
+> [!IMPORTANT]
+> **Superseded as an implementation plan by the
+> [`sparkles:wsi` specification](../window-system-integration/SPEC.md) and
+> [delivery plan](../window-system-integration/PLAN.md).** The measurements,
+> vetoed workarounds, and immediate-ack requirement below remain primary evidence.
+> Native Wayland is now one vertical slice of a four-backend WSI library integrated
+> with Event Horizon; SDL remains an explicitly named compatibility backend rather
+> than being deleted globally.
+
 **Status:** decision taken, implementation **not started**. Working tree is **clean**.
 **Date:** 2026-08-20.
 **Branch:** `feat/ui-sdl3-input`. The measured X11-good loop (`32c323f71`) and the Darwin `events.d` fix (`1faff458a`) are **committed** — see [§3 Working tree](#3-working-tree).
@@ -69,17 +78,17 @@ Completion criterion: you can rebuild the current SDL triangle, `git status` is 
 
 4. Read, in this order (do not skip the research):
 
-   | Doc | Why |
-   | --- | --- |
-   | This file | Mission, vetoes, plan |
-   | [`os-apis/wayland`](../../research/window-system-integration/os-apis/wayland/index.md) | Handshake, loop, no-buffer-no-window |
-   | [`os-apis/wayland/example/`](../../research/window-system-integration/os-apis/wayland/example/) | ImportC pattern already in-repo |
-   | [`importc-c-libraries.md`](../../guidelines/importc-c-libraries.md) | pkg-config, `sourceLibrary` gotcha |
+   | Doc                                                                                                        | Why                                      |
+   | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+   | This file                                                                                                  | Mission, vetoes, plan                    |
+   | [`os-apis/wayland`](../../research/window-system-integration/os-apis/wayland/index.md)                     | Handshake, loop, no-buffer-no-window     |
+   | [`os-apis/wayland/example/`](../../research/window-system-integration/os-apis/wayland/example/)            | ImportC pattern already in-repo          |
+   | [`importc-c-libraries.md`](../../guidelines/importc-c-libraries.md)                                        | pkg-config, `sourceLibrary` gotcha       |
    | [`recommendations.md`](../../research/window-system-integration/recommendations.md) §2.1 + decorations row | Own the window; **no libdecor hard dep** |
-   | [`sdl3.md`](../../research/window-system-integration/sdl3.md) | Why SDL’s pump looks the way it does |
-   | [`smithay-libdecor.md`](../../research/window-system-integration/smithay-libdecor.md) | Why we will not take libdecor |
-   | `libs/ui-sdl3/examples/vulkan-triangle.d` `draw` / `rebuild` / `presentOnce` | GPU policy to port |
-   | `libs/ui-sdl3/src/sparkles/ui_sdl3/{swapchain,frame,vulkan_context}.d` | Reuse vs rewrite |
+   | [`sdl3.md`](../../research/window-system-integration/sdl3.md)                                              | Why SDL’s pump looks the way it does     |
+   | [`smithay-libdecor.md`](../../research/window-system-integration/smithay-libdecor.md)                      | Why we will not take libdecor            |
+   | `libs/ui-sdl3/examples/vulkan-triangle.d` `draw` / `rebuild` / `presentOnce`                               | GPU policy to port                       |
+   | `libs/ui-sdl3/src/sparkles/ui_sdl3/{swapchain,frame,vulkan_context}.d`                                     | Reuse vs rewrite                         |
 
 5. Existence proof on this desktop (optional, 30 s):
 
@@ -95,20 +104,20 @@ Completion criterion: you can rebuild the current SDL triangle, `git status` is 
 
 **On the branch** (`feat/ui-sdl3-input`):
 
-| SHA | Subject |
-| --- | --- |
-| `fcdd49745` | `feat(ui-sdl3): retire swapchain and present semaphores instead of idling` |
-| `bf9f3ae3c` | `feat(ui-sdl3/examples): rebuild the triangle swapchain without idling` |
-| `904eece94` | `feat(vulkan.dispatch): load optional dynamic-rendering commands` |
-| `e6d0d7bbe` | `feat(ui-sdl3): grow-only swapchains, dynamic rendering, idle before teardown` |
-| `13afb9c2c` | `feat(ui-sdl3/examples): dynamic-render the triangle and skip shrink rebuilds` |
-| `68b615b68` | `fix(ui-sdl3/examples): release color-attachment read after the acquire barrier` |
-| `c8f178744` | `feat(ui-sdl3): add --present-mode for the triangle swapchain` |
-| `b24020abe` | `feat(core-cli.args): parse enums through sparkles:wired wire names` |
-| `326f2016d` | `feat(ui-sdl3/examples): spell present mode as a wired enum` |
-| `83ed01c7f` | `docs(specs/ui-sdl3): hand off native Wayland live-resize` |
+| SHA         | Subject                                                                            |
+| ----------- | ---------------------------------------------------------------------------------- |
+| `fcdd49745` | `feat(ui-sdl3): retire swapchain and present semaphores instead of idling`         |
+| `bf9f3ae3c` | `feat(ui-sdl3/examples): rebuild the triangle swapchain without idling`            |
+| `904eece94` | `feat(vulkan.dispatch): load optional dynamic-rendering commands`                  |
+| `e6d0d7bbe` | `feat(ui-sdl3): grow-only swapchains, dynamic rendering, idle before teardown`     |
+| `13afb9c2c` | `feat(ui-sdl3/examples): dynamic-render the triangle and skip shrink rebuilds`     |
+| `68b615b68` | `fix(ui-sdl3/examples): release color-attachment read after the acquire barrier`   |
+| `c8f178744` | `feat(ui-sdl3): add --present-mode for the triangle swapchain`                     |
+| `b24020abe` | `feat(core-cli.args): parse enums through sparkles:wired wire names`               |
+| `326f2016d` | `feat(ui-sdl3/examples): spell present mode as a wired enum`                       |
+| `83ed01c7f` | `docs(specs/ui-sdl3): hand off native Wayland live-resize`                         |
 | `32c323f71` | `feat(ui-sdl3): grow-only live resize with amortized reap` — **the X11-good loop** |
-| `1faff458a` | `fix(ui-sdl3.events): disambiguate size_t on Darwin` — unrelated; already landed |
+| `1faff458a` | `fix(ui-sdl3.events): disambiguate size_t on Darwin` — unrelated; already landed   |
 
 `32c323f71` is what used to sit uncommitted: `--trace-ms`, `--decor`, `--video-driver`, pump+peep, mailbox 2 ms pace, live-resize watch, grow-only + `drawableExtent`, ASCII title, `Swapchain.recreate(..., growOnly=false)`, `reap(vk, limit)` on both `Swapchain` and `FrameSync`.
 
@@ -120,15 +129,15 @@ Keep `--trace-ms` / `RunReport` until the native example has the **same columns*
 
 Recorded 2026-08-19 on the developer’s desktop:
 
-| Item | Value |
-| --- | --- |
-| Session | GNOME, `XDG_SESSION_TYPE=wayland`, `WAYLAND_DISPLAY=wayland-0`, `DISPLAY=:0` |
-| GPU / driver | AMD Radeon RX Vega, **RADV VEGA10** |
-| SDL | 3.4.12 (`sdl3` + `sdl3.dev` in the nix shell) |
-| libdecor | 0.2.5, plugins `libdecor-gtk.so` (wins by priority) and `libdecor-cairo.so` |
-| Vulkan | triangle requests `apiVersion13`; dynamic rendering is core |
-| Present | mailbox offered; FIFO 16–17 ms; **IMMEDIATE not offered** on this RADV/Wayland |
-| Surface | Wayland `currentExtent = 0xFFFFFFFF` (`surfaceExtent: "app-defined"`); X11 `currentExtent` = window size |
+| Item         | Value                                                                                                    |
+| ------------ | -------------------------------------------------------------------------------------------------------- |
+| Session      | GNOME, `XDG_SESSION_TYPE=wayland`, `WAYLAND_DISPLAY=wayland-0`, `DISPLAY=:0`                             |
+| GPU / driver | AMD Radeon RX Vega, **RADV VEGA10**                                                                      |
+| SDL          | 3.4.12 (`sdl3` + `sdl3.dev` in the nix shell)                                                            |
+| libdecor     | 0.2.5, plugins `libdecor-gtk.so` (wins by priority) and `libdecor-cairo.so`                              |
+| Vulkan       | triangle requests `apiVersion13`; dynamic rendering is core                                              |
+| Present      | mailbox offered; FIFO 16–17 ms; **IMMEDIATE not offered** on this RADV/Wayland                           |
+| Surface      | Wayland `currentExtent = 0xFFFFFFFF` (`surfaceExtent: "app-defined"`); X11 `currentExtent` = window size |
 
 ### 4.1 Current SDL triangle
 
@@ -149,16 +158,16 @@ dub build --single vulkan-triangle.d -b debug
 # env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DISPLAY=:80 ./build/vulkan_triangle --frames 0
 ```
 
-| Flag | Meaning |
-| --- | --- |
-| `--frames 0` | Run until close. Default is 120 (too short to drag). |
-| `--present-mode mailbox\|fifo\|fifo-relaxed\|immediate\|auto` | Wired enum; values = `VkPresentModeKHR`. `auto` = mailbox if offered. |
-| `--trace-ms N` | Log any frame whose wall time is ≥ N ms, then a `RunReport` on close. |
-| `--video-driver x11\|wayland\|auto` | Sets `SDL_VIDEODRIVER` **before** `SDL_Init`. |
-| `--decor none\|cairo\|auto` | libdecor policy. Default is `none`. Irrelevant once SDL is gone. |
-| `--resize-stress` | `SDL_SetWindowSize` grow+shrink band. **Does not reproduce** the 100–1000 ms Mutter stall. |
-| `--validation` | Khronos layer. **Do not mix with `MANGOHUD=1`.** |
-| `--no-color` | For pasting `RunReport`. |
+| Flag                                                          | Meaning                                                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `--frames 0`                                                  | Run until close. Default is 120 (too short to drag).                                       |
+| `--present-mode mailbox\|fifo\|fifo-relaxed\|immediate\|auto` | Wired enum; values = `VkPresentModeKHR`. `auto` = mailbox if offered.                      |
+| `--trace-ms N`                                                | Log any frame whose wall time is ≥ N ms, then a `RunReport` on close.                      |
+| `--video-driver x11\|wayland\|auto`                           | Sets `SDL_VIDEODRIVER` **before** `SDL_Init`.                                              |
+| `--decor none\|cairo\|auto`                                   | libdecor policy. Default is `none`. Irrelevant once SDL is gone.                           |
+| `--resize-stress`                                             | `SDL_SetWindowSize` grow+shrink band. **Does not reproduce** the 100–1000 ms Mutter stall. |
+| `--validation`                                                | Khronos layer. **Do not mix with `MANGOHUD=1`.**                                           |
+| `--no-color`                                                  | For pasting `RunReport`.                                                                   |
 
 `--trace-ms` columns (keep these names in the native app):
 
@@ -188,7 +197,7 @@ vkcube   # “Selected WSI platform: wayland”
 
 Installed here as `/nix/store/…-vulkan-tools-1.4.328.0/bin/vkcube`.
 
-Source of truth: [KhronosGroup/Vulkan-Tools `cube/cube.c`](https://github.com/KhronosGroup/Vulkan-Tools/blob/main/cube/cube.c)
+Source of truth: [KhronosGroup/Vulkan-Tools `cube/cube.c`](https://github.com/KhronosGroup/Vulkan-Tools/blob/697e22d5d256b29e4d6cdd75b3cd42f1aa634113/cube/cube.c)
 
 - `demo_run` Wayland loop ~L3034
 - `handle_surface_configure` ~L3064
@@ -224,16 +233,16 @@ That policy is still the GPU contract. Item 9 was later **narrowed**: pad-to-dis
 
 Goal: live resize without `vkDeviceWaitIdle`.
 
-| What | Why | Trap we hit |
-| --- | --- | --- |
-| Retire old swapchain / `renderFinished`; destroy in `reap` | Present may still scan the old images | Immediate destroy → `VUID-vkDestroySwapchainKHR-swapchain-01282` under `--resize-stress` |
-| `FrameSync.waitAll` (in-flight fences) instead of `deviceWaitIdle` | Idle waits for the presentation engine (a vsync on FIFO) | `const previous` / `const action` failed dip1000/`Expected` — use `auto` |
-| Reuse pass + pipeline | Format and layout do not change with the window | — |
-| Dynamic rendering | Resize only rebuilds image views | Enabling `VK_KHR_dynamic_rendering` on API 1.1 failed `ppEnabledExtensionNames-01387`. Triangle requests `apiVersion13`. First barrier used `TOP_OF_PIPE` → `SYNC-HAZARD-WRITE-AFTER-READ`; srcStage must be `COLOR_ATTACHMENT_OUTPUT` to match the acquire wait. `beginRendering(in VkRenderingInfo)` failed ImportC non-const — use `ref`. |
-| Grow-only / `minAlloc` pad | Shrink without create | First create stayed exact so `--frames N` at 960×540 still reported that. Pad later caused the stamp (see 5.4). |
-| `decideResize` + `Swapchain.recreate` | Skip format/mode re-query; `oldSwapchain` | First-time `out` create wiped `_retired`; `create` became `ref`. `cast(VkFence) 1` is not `@safe`. |
-| `--resize-stress` | Exercise rebuild | After grow-only, the original 480–872 band never exceeded 960×540 → 40 frames / 1 swapchain. Later changed to grow **and** shrink past 960×540. |
-| `--present-mode` + wired `PresentMode` | Measure mailbox vs FIFO | Manual enum↔string replaced with `sparkles:wired` `@WireCase` like `vulkaninfo.d`. core-cli now parses every enum through `wireNames`. `--present-mode immediate` correctly errors on this RADV/Wayland. First PresentMode commit failed the end-of-file-fixer hook. |
+| What                                                               | Why                                                      | Trap we hit                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------ | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Retire old swapchain / `renderFinished`; destroy in `reap`         | Present may still scan the old images                    | Immediate destroy → `VUID-vkDestroySwapchainKHR-swapchain-01282` under `--resize-stress`                                                                                                                                                                                                                                                     |
+| `FrameSync.waitAll` (in-flight fences) instead of `deviceWaitIdle` | Idle waits for the presentation engine (a vsync on FIFO) | `const previous` / `const action` failed dip1000/`Expected` — use `auto`                                                                                                                                                                                                                                                                     |
+| Reuse pass + pipeline                                              | Format and layout do not change with the window          | —                                                                                                                                                                                                                                                                                                                                            |
+| Dynamic rendering                                                  | Resize only rebuilds image views                         | Enabling `VK_KHR_dynamic_rendering` on API 1.1 failed `ppEnabledExtensionNames-01387`. Triangle requests `apiVersion13`. First barrier used `TOP_OF_PIPE` → `SYNC-HAZARD-WRITE-AFTER-READ`; srcStage must be `COLOR_ATTACHMENT_OUTPUT` to match the acquire wait. `beginRendering(in VkRenderingInfo)` failed ImportC non-const — use `ref`. |
+| Grow-only / `minAlloc` pad                                         | Shrink without create                                    | First create stayed exact so `--frames N` at 960×540 still reported that. Pad later caused the stamp (see 5.4).                                                                                                                                                                                                                              |
+| `decideResize` + `Swapchain.recreate`                              | Skip format/mode re-query; `oldSwapchain`                | First-time `out` create wiped `_retired`; `create` became `ref`. `cast(VkFence) 1` is not `@safe`.                                                                                                                                                                                                                                           |
+| `--resize-stress`                                                  | Exercise rebuild                                         | After grow-only, the original 480–872 band never exceeded 960×540 → 40 frames / 1 swapchain. Later changed to grow **and** shrink past 960×540.                                                                                                                                                                                              |
+| `--present-mode` + wired `PresentMode`                             | Measure mailbox vs FIFO                                  | Manual enum↔string replaced with `sparkles:wired` `@WireCase` like `vulkaninfo.d`. core-cli now parses every enum through `wireNames`. `--present-mode immediate` correctly errors on this RADV/Wayland. First PresentMode commit failed the end-of-file-fixer hook.                                                                         |
 
 MangoHud path: see [§4.2](#42-mangohud). Adding `COLOR_ATTACHMENT_READ` did not fix their overlay.
 
@@ -249,17 +258,17 @@ We instrumented rather than guessing. `--trace-ms` splits `poll` into `pump` / `
 
 Representative mailbox traces (GNOME, no HUD):
 
-| Setup | Feel | Where the time went | Verdict |
-| --- | --- | --- | --- |
-| Tight `while (SDL_PollEvent)` + uncapped mailbox (~12 kHz) | Unusable | 200–2600 ms in `poll`. `maxPixelSizeEvents=1` hid a **motion flood**. Each `PollEvent` calls `PumpEvents`; each pump can wait **4 ms** on `wl_display.flush` EAGAIN (`Wayland_PumpEvents` in SDL 3.4.12). N×4 ms. | Amplifier. Fixed with peep + 2 ms mailbox floor. |
-| Pump once + `SDL_PeepEvents` + 2 ms mailbox floor | Flood gone; still 300–1200 ms | **100% `SDL_PumpEvents`**, 4 events `[resized, pixel, other, exposed]`. Vulkan create/present were &lt;1 ms. | Remaining stall is SDL/compositor, not GPU. |
-| libdecor **GTK** (default plugin) | up to 1.2 s | `libdecor-gtk` imports `g_main_context_iteration` and `wl_display_roundtrip`. | Amplifier. |
-| libdecor **cairo** (`--decor cairo`) | ~500 ms typical | Still `wl_display_roundtrip` in the cairo plugin. | Better than GTK, not good. |
-| `--decor none` (`SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR=0`) | still 400–1280 ms | Without a buffer, Mutter waits on configure. GNOME can also force CSD and SDL reloads libdecor anyway. | `decor: "none"` is **our flag**, not proof SDL stayed off libdecor. |
-| Present from `SDL_AddEventWatch` on `PIXEL_SIZE_CHANGED` (create allowed) | Subjectively smooth, “dragging behind”; metrics **worse** | Nested Wayland + **swapchain create in the watch** (one create 1781 ms, `rebuilt=true`). `watchPresents=7671` vs `pixelSizeEvents=798` = configure **feedback loop**. | Never create in a configure/watch callback. |
-| Cheap watch (timeout 0, no rebuild) + pad-to-display | Smooth, still behind; then **stamp** | Pad 2560×1440, viewport = window. This Mutter **scales** the whole buffer → triangle in a top-left navy rectangle. | Pad-to-display is wrong here. |
-| Viewport = swapchain + pad | “Clip” on shrink | Opposite assumption. A padded 16:9 buffer in a non-16:9 window looks cropped/letterboxed because Mutter scales, it does not crop. | — |
-| Exact window-sized swapchain | Visuals correct | Shrink and grow both recreate (or grow-only + window viewport — see X11). | Visuals first. |
+| Setup                                                                     | Feel                                                      | Where the time went                                                                                                                                                                                               | Verdict                                                             |
+| ------------------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Tight `while (SDL_PollEvent)` + uncapped mailbox (~12 kHz)                | Unusable                                                  | 200–2600 ms in `poll`. `maxPixelSizeEvents=1` hid a **motion flood**. Each `PollEvent` calls `PumpEvents`; each pump can wait **4 ms** on `wl_display.flush` EAGAIN (`Wayland_PumpEvents` in SDL 3.4.12). N×4 ms. | Amplifier. Fixed with peep + 2 ms mailbox floor.                    |
+| Pump once + `SDL_PeepEvents` + 2 ms mailbox floor                         | Flood gone; still 300–1200 ms                             | **100% `SDL_PumpEvents`**, 4 events `[resized, pixel, other, exposed]`. Vulkan create/present were &lt;1 ms.                                                                                                      | Remaining stall is SDL/compositor, not GPU.                         |
+| libdecor **GTK** (default plugin)                                         | up to 1.2 s                                               | `libdecor-gtk` imports `g_main_context_iteration` and `wl_display_roundtrip`.                                                                                                                                     | Amplifier.                                                          |
+| libdecor **cairo** (`--decor cairo`)                                      | ~500 ms typical                                           | Still `wl_display_roundtrip` in the cairo plugin.                                                                                                                                                                 | Better than GTK, not good.                                          |
+| `--decor none` (`SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR=0`)                     | still 400–1280 ms                                         | Without a buffer, Mutter waits on configure. GNOME can also force CSD and SDL reloads libdecor anyway.                                                                                                            | `decor: "none"` is **our flag**, not proof SDL stayed off libdecor. |
+| Present from `SDL_AddEventWatch` on `PIXEL_SIZE_CHANGED` (create allowed) | Subjectively smooth, “dragging behind”; metrics **worse** | Nested Wayland + **swapchain create in the watch** (one create 1781 ms, `rebuilt=true`). `watchPresents=7671` vs `pixelSizeEvents=798` = configure **feedback loop**.                                             | Never create in a configure/watch callback.                         |
+| Cheap watch (timeout 0, no rebuild) + pad-to-display                      | Smooth, still behind; then **stamp**                      | Pad 2560×1440, viewport = window. This Mutter **scales** the whole buffer → triangle in a top-left navy rectangle.                                                                                                | Pad-to-display is wrong here.                                       |
+| Viewport = swapchain + pad                                                | “Clip” on shrink                                          | Opposite assumption. A padded 16:9 buffer in a non-16:9 window looks cropped/letterboxed because Mutter scales, it does not crop.                                                                                 | —                                                                   |
+| Exact window-sized swapchain                                              | Visuals correct                                           | Shrink and grow both recreate (or grow-only + window viewport — see X11).                                                                                                                                         | Visuals first.                                                      |
 
 **Title bug:** `"sparkles — vulkan triangle"` (em dash U+2014) rendered as `sparkles ã vulkan triangle`. GNOME’s title bar treated UTF-8 as Latin-1. Fixed to ASCII hyphen: `"sparkles - vulkan triangle"`. Keep ASCII in `xdg_toplevel.set_title` until you prove UTF-8.
 
@@ -293,7 +302,7 @@ On libdecor 0.2.5, `LIBDECOR_WINDOW_STATE_RESIZING` does not exist (`#if SDL_LIB
 
 **You cannot fix this from outside SDL without owning `xdg_surface`.** That is why we drop SDL.
 
-vkcube does the opposite ([`handle_surface_configure`](https://github.com/KhronosGroup/Vulkan-Tools/blob/main/cube/cube.c) ~L3064):
+vkcube does the opposite ([`handle_surface_configure`](https://github.com/KhronosGroup/Vulkan-Tools/blob/697e22d5d256b29e4d6cdd75b3cd42f1aa634113/cube/cube.c) ~L3064):
 
 ```c
 xdg_surface_ack_configure(xdg_surface, serial);   // immediately
@@ -302,7 +311,7 @@ demo->xdg_surface_has_been_configured = 1;
 demo_resize(demo);                                // recreate swapchain here
 ```
 
-Its loop ([`demo_run`](https://github.com/KhronosGroup/Vulkan-Tools/blob/main/cube/cube.c) ~L3034):
+Its loop ([`demo_run`](https://github.com/KhronosGroup/Vulkan-Tools/blob/697e22d5d256b29e4d6cdd75b3cd42f1aa634113/cube/cube.c) ~L3034):
 
 ```c
 wl_display_flush(demo->wayland_display);
@@ -329,14 +338,14 @@ X11 `currentExtent` **is** the window. You **cannot** create a swapchain larger 
 - **Shrink:** keep the large images, set viewport / scissor / `renderArea` to the **window pixel size** (`drawableExtent`). X11 shows the top-left. Triangle tracks, no create.
 - **Grow:** must `vkCreateSwapchainKHR` at the new `currentExtent` or the triangle stays small in a larger window.
 
-| Policy | `swapchainsBuilt` | Feel | Notes |
-| --- | --- | --- | --- |
-| Recreate every pixel | ~800–1000 | Live, hiccups | `maxCreateMs` ~25–110 ms at 2K–5K; `queueWaitIdle` after every rebuild ~32 ms |
-| Recreate every pixel, reap only after 100 ms quiet | ~1000 | Live, still hiccups on large grow | `reaps: 8` then **one** `queueWaitIdle` of **308 ms** destroying the pile |
-| Debounce create 50 ms, present `SUBOPTIMAL` meanwhile | ~11 | **Smooth but triangle does not follow** | X11 does not scale the old buffer. Owner: live tracking is a **must-have**. |
-| Grow immediately, shrink viewport-only, amortized reap (no idle, 1 swapchain/frame) | ~200–335 | **“Much better”** | `framesOver50ms=0` except dual-monitor; `maxCreateMs` ~25 ms |
-| + 16 ms min gap between grows | ~322 | Still 20–30 ms on grow | Grow events are already &gt;16 ms apart; throttle never fired |
-| + 64 px grow slack | 92 | **“Feels worse”** | Stats prettier, triangle late by up to 64 px. **Reverted.** |
+| Policy                                                                              | `swapchainsBuilt` | Feel                                    | Notes                                                                         |
+| ----------------------------------------------------------------------------------- | ----------------- | --------------------------------------- | ----------------------------------------------------------------------------- |
+| Recreate every pixel                                                                | ~800–1000         | Live, hiccups                           | `maxCreateMs` ~25–110 ms at 2K–5K; `queueWaitIdle` after every rebuild ~32 ms |
+| Recreate every pixel, reap only after 100 ms quiet                                  | ~1000             | Live, still hiccups on large grow       | `reaps: 8` then **one** `queueWaitIdle` of **308 ms** destroying the pile     |
+| Debounce create 50 ms, present `SUBOPTIMAL` meanwhile                               | ~11               | **Smooth but triangle does not follow** | X11 does not scale the old buffer. Owner: live tracking is a **must-have**.   |
+| Grow immediately, shrink viewport-only, amortized reap (no idle, 1 swapchain/frame) | ~200–335          | **“Much better”**                       | `framesOver50ms=0` except dual-monitor; `maxCreateMs` ~25 ms                  |
+| + 16 ms min gap between grows                                                       | ~322              | Still 20–30 ms on grow                  | Grow events are already &gt;16 ms apart; throttle never fired                 |
+| + 64 px grow slack                                                                  | 92                | **“Feels worse”**                       | Stats prettier, triangle late by up to 64 px. **Reverted.**                   |
 
 **Settled X11 algorithm** (`32c323f71`, current `vulkan-triangle.d`):
 
@@ -383,21 +392,21 @@ Lots of clear-color (`0.05, 0.05, 0.08`) around it is **normal**. Do not “fix�
 
 Do not spend a week re-testing these.
 
-| Hypothesis | Verdict |
-| --- | --- |
-| `waitAll` / `vkDeviceWaitIdle` is the 100–1000 ms spike | **False** on this Mutter. `waitAll` was 0–10 ms. Idle was removed earlier. |
-| `OUT_OF_DATE` / `SUBOPTIMAL` force-rebuild storm | **False** on Wayland (0/0). **True-ish** on X11 (thousands of `SUBOPTIMAL` on shrink) but present still works; we do not force-rebuild. |
-| Uncapped mailbox + `PollEvent` loop | **True amplifier** (N×4 ms flush). Fixed with peep + 2 ms pace. Not the remaining Wayland stall. |
-| libdecor-gtk `g_main_context_iteration` | **True amplifier**. Cairo better, still roundtrips. |
-| Present-from-watch unblocks Mutter | **Subjectively yes**, **metrics no** (nested dispatch + create-in-watch). Cheap watch + exact size is OK on X11; do not put create in a configure callback without measuring. |
-| Pad to display + viewport = window | **Stamp** if compositor scales; **correct** if it clips. This Mutter/X11 pair: Wayland scales, X11 clips. |
-| Pad + viewport = swapchain | Letterbox / “clip” when aspect ≠ window. |
-| 50 ms create debounce | Smooth numbers, **triangle does not follow** on X11. Owner vetoed. |
-| 64 px grow slack | Same veto. |
-| 16 ms min gap between creates | Grow events already &gt;16 ms apart; no effect. |
-| `queueWaitIdle` after FIF+1 | 32 ms hitch **during** drag; then 308 ms after a pile. Replaced by quiet + amortized destroy. |
-| MangoHud RAW is our barrier | **False.** Overlay bug #1214. |
-| `--resize-stress` reproduces interactive stalls | **False.** Interactive Mutter configure only. |
+| Hypothesis                                              | Verdict                                                                                                                                                                       |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `waitAll` / `vkDeviceWaitIdle` is the 100–1000 ms spike | **False** on this Mutter. `waitAll` was 0–10 ms. Idle was removed earlier.                                                                                                    |
+| `OUT_OF_DATE` / `SUBOPTIMAL` force-rebuild storm        | **False** on Wayland (0/0). **True-ish** on X11 (thousands of `SUBOPTIMAL` on shrink) but present still works; we do not force-rebuild.                                       |
+| Uncapped mailbox + `PollEvent` loop                     | **True amplifier** (N×4 ms flush). Fixed with peep + 2 ms pace. Not the remaining Wayland stall.                                                                              |
+| libdecor-gtk `g_main_context_iteration`                 | **True amplifier**. Cairo better, still roundtrips.                                                                                                                           |
+| Present-from-watch unblocks Mutter                      | **Subjectively yes**, **metrics no** (nested dispatch + create-in-watch). Cheap watch + exact size is OK on X11; do not put create in a configure callback without measuring. |
+| Pad to display + viewport = window                      | **Stamp** if compositor scales; **correct** if it clips. This Mutter/X11 pair: Wayland scales, X11 clips.                                                                     |
+| Pad + viewport = swapchain                              | Letterbox / “clip” when aspect ≠ window.                                                                                                                                      |
+| 50 ms create debounce                                   | Smooth numbers, **triangle does not follow** on X11. Owner vetoed.                                                                                                            |
+| 64 px grow slack                                        | Same veto.                                                                                                                                                                    |
+| 16 ms min gap between creates                           | Grow events already &gt;16 ms apart; no effect.                                                                                                                               |
+| `queueWaitIdle` after FIF+1                             | 32 ms hitch **during** drag; then 308 ms after a pile. Replaced by quiet + amortized destroy.                                                                                 |
+| MangoHud RAW is our barrier                             | **False.** Overlay bug #1214.                                                                                                                                                 |
+| `--resize-stress` reproduces interactive stalls         | **False.** Interactive Mutter configure only.                                                                                                                                 |
 
 ---
 
@@ -557,7 +566,6 @@ For the native example:
 1. Load `vkGetInstanceProcAddr` via **`sparkles.vulkan.loader`** (already exists for non-SDL callers). Do not invent another `dlopen`.
 2. Enable instance extensions `VK_KHR_surface` + `VK_KHR_wayland_surface` yourself.
 3. Create the surface with `vkCreateWaylandSurfaceKHR`. Get the PFN via `vkGetInstanceProcAddr` after instance creation. You will need the `VkWaylandSurfaceCreateInfoKHR` layout — either:
-
    - a **second ImportC shim** that `#define VK_USE_PLATFORM_WAYLAND_KHR` and `#include <vulkan/vulkan.h>` (or `vulkan_wayland.h`) in the **example only**, so `sparkles:vulkan` stays platform-free; or
    - hand-write the small create-info struct (sType `VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR` = 1000006000) and the PFN typedef.
 
@@ -626,15 +634,15 @@ If the triangle is blurry on HiDPI, bind `wp_viewporter` + `wp_fractional_scale_
 
 Interactive, **this** machine, `MANGOHUD` optional, **no** validation. Same `--trace-ms 20` schema.
 
-| Metric | SDL Wayland (fail) | SDL X11 (bar) | Native Wayland (target) |
-| --- | --- | --- | --- |
-| Fast-drag `pump` / dispatch | 100–3500 ms | ≤ 20 ms | **≤ 20 ms** |
-| Triangle tracks window | hitchy / late | yes | **yes** (must-have) |
-| `framesOver100ms` | many | 0 | **0** |
-| Grow create at ~2K | n/a (blocked in pump) | ~20–25 ms | **~20–25 ms OK** |
-| Dual-monitor ~5K create | n/a | ~25 ms | **~25 ms OK** |
-| Reap hitch | mixed | ≤ 2 ms amortized | **≤ 2 ms** |
-| vs `vkcube` subjective | worse | comparable | **comparable** |
+| Metric                      | SDL Wayland (fail)    | SDL X11 (bar)    | Native Wayland (target) |
+| --------------------------- | --------------------- | ---------------- | ----------------------- |
+| Fast-drag `pump` / dispatch | 100–3500 ms           | ≤ 20 ms          | **≤ 20 ms**             |
+| Triangle tracks window      | hitchy / late         | yes              | **yes** (must-have)     |
+| `framesOver100ms`           | many                  | 0                | **0**                   |
+| Grow create at ~2K          | n/a (blocked in pump) | ~20–25 ms        | **~20–25 ms OK**        |
+| Dual-monitor ~5K create     | n/a                   | ~25 ms           | **~25 ms OK**           |
+| Reap hitch                  | mixed                 | ≤ 2 ms amortized | **≤ 2 ms**              |
+| vs `vkcube` subjective      | worse                 | comparable       | **comparable**          |
 
 CI: `--help` skip-or-run; no compositor → print `SKIP:` and exit 0 (same as the research Wayland example). Headless Xvfb is **not** required for the Wayland example.
 
@@ -642,15 +650,15 @@ CI: `--help` skip-or-run; no compositor → print `SKIP:` and exit 0 (same as th
 
 Each step has a completion criterion. Do not start the next step until it is met.
 
-| # | Step | Completion criterion |
-| --- | --- | --- |
-| 0 | ~~Commit the SDL/X11 triangle + `reap(limit)` / `growOnly`.~~ **Done** (`32c323f71`, `1faff458a`). Tree is clean. | `git status` clean. `dub build --single vulkan-triangle.d` still works. |
-| 1 | Skeleton window: ImportC + scanner, registry, `xdg_toplevel`, first configure, **ack**, commit empty, print configure sizes. No Vulkan. | Runs on Mutter; prints sizes while you drag; `SKIP:` + 0 with `env -u WAYLAND_DISPLAY`. Compare to `os-apis/wayland/example`. |
-| 2 | Vulkan surface on that `wl_surface`. One swapchain, one static triangle, no resize. | Window shows the navy clear + triangle. `--help` works. `--frames 120` presents 120 frames and exits. |
-| 3 | Resize: pending size from toplevel, ack + recreate (or grow-only) **after** dispatch, then draw. `--trace-ms 20`. | HITL on Mutter **before** decorations or input. Fast-drag dispatch ≤ 20 ms. Triangle tracks. |
-| 4 | Input enough to close: `xdg_toplevel.close`. Escape via `wl_keyboard` can wait. | Close button / compositor close quits cleanly and prints `RunReport`. |
-| 5 | SSD if the decoration manager exists; else undecorated. | No libdecor in `ldd`. Title is ASCII. |
-| 6 | Compare numbers to the X11 table. | [§8.7](#87-success-criteria-must-measure) filled in with a real `RunReport`. |
+| #   | Step                                                                                                                                    | Completion criterion                                                                                                          |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 0   | ~~Commit the SDL/X11 triangle + `reap(limit)` / `growOnly`.~~ **Done** (`32c323f71`, `1faff458a`). Tree is clean.                       | `git status` clean. `dub build --single vulkan-triangle.d` still works.                                                       |
+| 1   | Skeleton window: ImportC + scanner, registry, `xdg_toplevel`, first configure, **ack**, commit empty, print configure sizes. No Vulkan. | Runs on Mutter; prints sizes while you drag; `SKIP:` + 0 with `env -u WAYLAND_DISPLAY`. Compare to `os-apis/wayland/example`. |
+| 2   | Vulkan surface on that `wl_surface`. One swapchain, one static triangle, no resize.                                                     | Window shows the navy clear + triangle. `--help` works. `--frames 120` presents 120 frames and exits.                         |
+| 3   | Resize: pending size from toplevel, ack + recreate (or grow-only) **after** dispatch, then draw. `--trace-ms 20`.                       | HITL on Mutter **before** decorations or input. Fast-drag dispatch ≤ 20 ms. Triangle tracks.                                  |
+| 4   | Input enough to close: `xdg_toplevel.close`. Escape via `wl_keyboard` can wait.                                                         | Close button / compositor close quits cleanly and prints `RunReport`.                                                         |
+| 5   | SSD if the decoration manager exists; else undecorated.                                                                                 | No libdecor in `ldd`. Title is ASCII.                                                                                         |
+| 6   | Compare numbers to the X11 table.                                                                                                       | [§8.7](#87-success-criteria-must-measure) filled in with a real `RunReport`.                                                  |
 
 Do **not** start with a full windowing library, IME, clipboard, fractional scale, or Skia.
 
@@ -674,20 +682,20 @@ The research Wayland example’s `dub.sdl` is only `libs "wayland-client"` — i
 
 ## 9. Repository map
 
-| Path | Role |
-| --- | --- |
-| `libs/ui-sdl3/examples/vulkan-triangle.d` | Current SDL example. Owns triangle, CLI, frame loop, `RenderTarget`, `Pipeline`. Keep GPU bits. |
-| `libs/ui-sdl3/examples/shaders/` | `triangle.vert` / `.frag` + SPIR-V |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/swapchain.d` | `chooseExtent` / `choosePresentMode` / `decideResize` / `recreate` / `reap(limit)`. Reuse if the new window feeds `VulkanContext` + a pixel size. |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/frame.d` | `FrameSync`, `decideAcquire`. Reuse. |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/vulkan_context.d` | Instance / device / **SDL** surface. Needs a Wayland-native create path. |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/window.d` | SDL window + `PixelSize`. Do not use the window for the native app. |
-| `libs/ui-sdl3/src/sparkles/ui_sdl3/events.d` | SDL → `sparkles:input`. Darwin `size_t` fix is `1faff458a`. |
-| `libs/vulkan/src/sparkles/vulkan/vulkan_c.c` | `VK_NO_PROTOTYPES`, **no** `VK_USE_PLATFORM_*` |
-| `libs/vulkan/src/sparkles/vulkan/loader.d` | `vkGetInstanceProcAddr` without SDL |
-| `libs/vulkan/src/sparkles/vulkan/dispatch.d` | Has `khrSurface` + swapchain; **no** wayland surface |
-| `docs/research/window-system-integration/os-apis/wayland/example/` | Registry-only ImportC bootstrap |
-| `docs/guidelines/importc-c-libraries.md` | How we add C deps |
+| Path                                                               | Role                                                                                                                                              |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `libs/ui-sdl3/examples/vulkan-triangle.d`                          | Current SDL example. Owns triangle, CLI, frame loop, `RenderTarget`, `Pipeline`. Keep GPU bits.                                                   |
+| `libs/ui-sdl3/examples/shaders/`                                   | `triangle.vert` / `.frag` + SPIR-V                                                                                                                |
+| `libs/ui-sdl3/src/sparkles/ui_sdl3/swapchain.d`                    | `chooseExtent` / `choosePresentMode` / `decideResize` / `recreate` / `reap(limit)`. Reuse if the new window feeds `VulkanContext` + a pixel size. |
+| `libs/ui-sdl3/src/sparkles/ui_sdl3/frame.d`                        | `FrameSync`, `decideAcquire`. Reuse.                                                                                                              |
+| `libs/ui-sdl3/src/sparkles/ui_sdl3/vulkan_context.d`               | Instance / device / **SDL** surface. Needs a Wayland-native create path.                                                                          |
+| `libs/ui-sdl3/src/sparkles/ui_sdl3/window.d`                       | SDL window + `PixelSize`. Do not use the window for the native app.                                                                               |
+| `libs/ui-sdl3/src/sparkles/ui_sdl3/events.d`                       | SDL → `sparkles:input`. Darwin `size_t` fix is `1faff458a`.                                                                                       |
+| `libs/vulkan/src/sparkles/vulkan/vulkan_c.c`                       | `VK_NO_PROTOTYPES`, **no** `VK_USE_PLATFORM_*`                                                                                                    |
+| `libs/vulkan/src/sparkles/vulkan/loader.d`                         | `vkGetInstanceProcAddr` without SDL                                                                                                               |
+| `libs/vulkan/src/sparkles/vulkan/dispatch.d`                       | Has `khrSurface` + swapchain; **no** wayland surface                                                                                              |
+| `docs/research/window-system-integration/os-apis/wayland/example/` | Registry-only ImportC bootstrap                                                                                                                   |
+| `docs/guidelines/importc-c-libraries.md`                           | How we add C deps                                                                                                                                 |
 
 `sparkles:ui-skia` / Graphite is out of scope. Same rule as today: prove WSI without Skia.
 

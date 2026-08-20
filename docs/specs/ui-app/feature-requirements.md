@@ -14,6 +14,7 @@ package graph (`APP`) and the testability obligations (`TST`)._
 | APP3 | The host must ship **three configurations** — `tui` (default), `gui`, `full` — where `gui` keeps `sparkles:tui` out of the dependency closure entirely, because an Android build has no terminal and must not link one.                                                                                                                                                                                              | full                                                                                                                                                                           | `libs/ui-app/dub.sdl`                     |
 | APP4 | Each backend arm must additionally be **conditionally compiled**: the terminal arm behind **both** `version (UiAppTui)` (the configuration brought `sparkles:ui-tui` — the `gui` configuration deliberately did not) **and** `version (Posix)` (its session type exists only there); the GPU arm behind `version (UiAppGui)`. Neither gate implies the other, and every configuration type-checks on every platform. | full                                                                                                                                                                           | `tui_loop.d`; `gui_loop.d`                |
 | APP5 | Where the host's public API is a **template** (`run`, `Host`), the version-gated arms must be proven to resolve in the **consumer's** compilation, since a version identifier set by a dependency's configuration is what makes the arm visible there.                                                                                                                                                               | decided — proven by the `P1.0` spike; a dependency's configuration `versions` do reach the dependent, so `APP3`'s configurations stand ([UIAPP-O2](./open-issues.md#uiapp-o2)) | `run.d`                                   |
+| APP6 | After native WSI/Graphite lands, the host must expose explicit `tui`, `gui-skia`, `gui-skia-sdl`, `gui-raylib`, and `full` configurations. `gui-skia` is the default GUI route; SDL and raylib remain named compatibility choices, and application source names none of them.                                                                                                                                        | planned — owned by [`sparkles:wsi` M8](../window-system-integration/PLAN.md#milestone-m8-application-host)                                                                     | `libs/ui-app/dub.sdl`; GUI arm split      |
 
 > [!IMPORTANT]
 > `APP4` is not defensive, and both gates were each proven load-bearing by a
@@ -26,6 +27,12 @@ package graph (`APP`) and the testability obligations (`TST`)._
 > `sparkles:ui-tui` in its closure, so the terminal arm's imports cannot even
 > resolve there — which is what `version (UiAppTui)` (set by the `tui`/`full`/
 > `unittest` configurations' `versions`) gates.
+
+> [!NOTE]
+> `APP3` records the shipped phase-1 topology; `APP6` is its planned replacement,
+> not a second simultaneous default. The version-propagation proof remains valid,
+> while the generic `UiAppGui` arm will split into explicitly named renderer/WSI
+> arms during the [native integration milestone](../window-system-integration/PLAN.md#milestone-m8-application-host).
 
 ## Backend selection (`BKD`)
 
