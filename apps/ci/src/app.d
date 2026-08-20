@@ -2467,7 +2467,9 @@ private int runDubTestsMode(bool failFast, bool coverage)
                 .map!(l => l.to!string)
                 .array
                 .formatOutputLines(8, keepTail: result.status != 0);
-        }, (LogDelta d) => resultFooter(result.status == 0, result.usage, d));
+        },
+            () => resultVerdict(result.status == 0),
+            (LogDelta d) => resultFooterRight(result.usage, d));
 
         if (result.status != 0)
         {
@@ -2481,7 +2483,7 @@ private int runDubTestsMode(bool failFast, bool coverage)
                         .map!(l => l.to!string)
                         .array
                         .formatOutputLines(24, keepTail: true),
-                    footer: resultFooter(false, result.usage),
+                    footer: resultVerdict(false),
                 );
                 stoppedEarly = true;
                 processed = i + 1;
@@ -2755,7 +2757,9 @@ private int runExtractedTestsMode(bool failFast)
                 .map!(l => l.to!string)
                 .array
                 .formatOutputLines(8, keepTail: result.status != 0);
-        }, (LogDelta d) => resultFooter(result.status == 0, result.usage, d));
+        },
+            () => resultVerdict(result.status == 0),
+            (LogDelta d) => resultFooterRight(result.usage, d));
 
         processed = i + 1;
         if (result.status != 0)
@@ -3947,11 +3951,10 @@ unittest
     assert(formatOutputLines(lines, 99, keepTail: true) == lines);
 }
 
-/// Compact resource line for a result footer:
-/// `12.4s  usr 8.1s  sys 1.2s  842.2MiB`.
+/// Compact resource fragment: `(usr 8.1s/sys 1.2s) | 842.2MiB`.
 ///
-/// Wall is included when known (and `includeWall` is true); usr/sys/rss only
-/// when the sampler actually ran. Empty when there is nothing to show.
+/// Optional leading wall (`12.4s `) when `includeWall` is true and known.
+/// Empty when there is nothing to show.
 private string formatResourceStats(in ResourceUsage u, bool includeWall = true) @safe
 {
     import sparkles.base.smallbuffer : SmallBuffer;
@@ -3966,14 +3969,15 @@ private string formatResourceStats(in ResourceUsage u, bool includeWall = true) 
     if (u.sampled)
     {
         if (buf.length)
-            buf ~= "  ";
-        buf ~= "usr ";
+            buf ~= ' ';
+        buf ~= "(usr ";
         writeDuration(buf, u.userTime);
-        buf ~= "  sys ";
+        buf ~= "/sys ";
         writeDuration(buf, u.systemTime);
+        buf ~= ")";
         if (u.peakRssBytes)
         {
-            buf ~= "  ";
+            buf ~= " | ";
             writeBytes(buf, u.peakRssBytes);
         }
     }
@@ -4000,41 +4004,61 @@ unittest
         sampled: true,
     );
     const s = formatResourceStats(full);
-    assert(s.canFind("12.4s"), s);
-    assert(s.canFind("usr "), s);
-    assert(s.canFind("sys "), s);
-    assert(s.canFind("MiB"), s);
+    assert(s == "12.4s (usr 8.1s/sys 1.2s) | 842.0MiB", s);
 
     const noWall = formatResourceStats(full, includeWall: false);
-    assert(!noWall.canFind("12.4s"), noWall);
-    assert(noWall.canFind("usr "), noWall);
+    assert(noWall == "(usr 8.1s/sys 1.2s) | 842.0MiB", noWall);
 }
 
-private string resultFooter(bool success, in ResourceUsage usage,
-    LogDelta delta = LogDelta.init) @safe
-{
-    import sparkles.base.smallbuffer : SmallBuffer;
+/// Left-side result verdict: `✓ passed` / `✗ FAILED`.
+private string resultVerdict(bool success) @safe
+    => success
+        ? styledText(i"{green ✓ passed}")
+        : styledText(i"{red ✗ FAILED}");
 
+/// Dim `Δt … | Δtᵢ …`, matching the log prefix columns.
+private string formatLogDelta(in LogDelta delta) @safe
+{
     SmallBuffer!(char, 48) stamp;
     writeLogDelta(stamp, delta);
+    return styledText(i"{dim $(stamp[])}");
+}
+
+/// Right-side result footer: `Δt … | Δtᵢ … (usr …/sys …) | RSS`.
+private string resultFooterRight(in ResourceUsage usage, in LogDelta delta) @safe
+{
+    SmallBuffer!(char, 96) buf;
+    writeLogDelta(buf, delta);
     const stats = formatResourceStats(usage, includeWall: false);
     if (stats.length)
-        return success
-            ? styledText(i"{green ✓ passed} {dim $(stamp[])  $(stats)}")
-            : styledText(i"{red ✗ FAILED} {dim $(stamp[])  $(stats)}");
-    return success
-        ? styledText(i"{green ✓ passed} {dim $(stamp[])}")
-        : styledText(i"{red ✗ FAILED} {dim $(stamp[])}");
+    {
+        buf ~= ' ';
+        buf ~= stats;
+    }
+    return styledText(i"{dim $(buf[])}");
 }
 
-/// Stamp a header with the same `Δt | Δtᵢ` columns the log prefix uses.
-private string withDelta(string header, LogDelta delta) @safe
+@("ci.resultChrome.dualSided")
+@safe
+unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    const left = unstyle(resultVerdict(true));
+    assert(left == "✓ passed", left);
 
-    SmallBuffer!(char, 48) stamp;
-    writeLogDelta(stamp, delta);
-    return styledText(i"{dim $(stamp[])} {dim │} $(header)");
+    auto usage = ResourceUsage(
+        peakRssBytes: 16UL << 20,
+        userTime: 625.msecs,
+        systemTime: 58.msecs,
+        sampled: true,
+    );
+    const right = unstyle(resultFooterRight(usage, LogDelta(
+        sinceStart: 33_600.msecs, sincePrev: 30_000.msecs)));
+    assert(right.canFind("Δt "), right);
+    assert(right.canFind("Δtᵢ "), right);
+    assert(right.canFind("(usr "), right);
+    assert(right.canFind("/sys "), right);
+    assert(right.canFind(" | "), right);
+    assert(right.canFind("MiB"), right);
 }
 
 /// Content range that does not run `load` until the box has finished emitting
@@ -4079,17 +4103,26 @@ private struct DeferredLines
 
 /// Paint the box title immediately, then pull `loadLines` (the command) for
 /// the body, then the footer. Fixed-width `resultBox` is what makes the title
-/// emit before any content pull (`drawBoxLines` streaming path).
+/// emit before any content pull (`drawBoxLines` streaming path). Timing and
+/// resource stats sit on the right of each border; the original title and
+/// verdict stay on the left.
 private void streamResultBox(
     string header,
     scope string[] delegate() loadLines,
-    scope string delegate(LogDelta) makeFooter,
+    scope string delegate() makeFooter,
+    scope string delegate(LogDelta) makeFooterRight,
 )
 {
     const start = takeLogDelta();
     auto props = resultBox(null);
-    props.footerNow = () => makeFooter(takeLogDelta());
-    foreach (line; drawBoxLines(DeferredLines(loadLines), withDelta(header, start), props))
+    props.titleRight = formatLogDelta(start);
+    LogDelta end;
+    props.footerNow = () {
+        end = takeLogDelta();
+        return makeFooter();
+    };
+    props.footerRightNow = () => makeFooterRight(end);
+    foreach (line; drawBoxLines(DeferredLines(loadLines), header, props))
     {
         writeln(line);
         stdout.flush();
@@ -4103,14 +4136,16 @@ private void displayResultBox(
 )
 {
     const start = takeLogDelta();
+    auto props = resultBox(resultVerdict(success));
+    props.titleRight = formatLogDelta(start);
+    props.footerRight = resultFooterRight(usage, takeLogDelta());
     outputLines
         // A failing box keeps the TAIL: a compiler/test-runner puts its
         // diagnosis last, so head-truncation reports the failure while hiding
         // its cause (this box once showed a header and four passing tests for
         // a failure whose error was three lines further down).
         .formatOutputLines(8, keepTail: !success)
-        .drawBox(withDelta(header, start),
-            resultBox(resultFooter(success, usage, takeLogDelta())))
+        .drawBox(header, props)
         .writeln;
 }
 
