@@ -75,7 +75,11 @@ removals, then resolve `line`/`character` against the post-cut text.
 
 The twoslash overlay with no payload file: `apps/hue/src/live_types.d` runs a
 `twoslash-extract --dub --serve` oracle beside the open document and the
-existing overlay renders what it answers. The producer half of the contract is
+existing overlay renders what it answers. The static HTML gallery
+(`hue gallery --twoslash`) uses the same binary in **batch** instead:
+`--dub --stdout`, one eager payload per `.d` file, then exit — there is no
+oracle to resolve tips later ([`gallery.md` `GAL13`](./gallery.md)). The
+producer half of the contract is
 [`docs/specs/dmd-lsp/project.md`](../dmd-lsp/project.md) `PRJ12`-`PRJ16`
 (and `EXT7` for the `--serve` wire format).
 

@@ -83,7 +83,7 @@ hue-side requirements referencing those areas live in
 | `view` _(default)_ | View and syntax-highlight a file, directory, or twoslash overlay | `[paths]`, `--markdown`, `--raw`, `--patch`, `@Flatten("Output Sinks")`         |
 | `diff`             | Diff two files or git revisions with structural awareness        | `[targets]`, `--staged`, `@Flatten("Diff Options")`, `@Flatten("Output Sinks")` |
 | `pr`               | Open a GitHub/GitLab pull request as a diff session              | `<pr>`, `@Flatten("Diff Options")`, `@Flatten("Output Sinks")`                  |
-| `gallery`          | Batch render a directory into a static HTML syntax/theme gallery | `[dir]`, `--out`, `--markdown`, `--raw`                                         |
+| `gallery`          | Batch render a directory into a static HTML syntax/theme gallery | `[dir]`, `--out`, `--twoslash`, `--markdown`, `--raw`, `--recursive`            |
 | `theme`            | Inspect and list built-in color themes                           | `--list`, `[name]`                                                              |
 | `overlay`          | Inspect registered document overlays (twoslash, coverage, trace) | `--list`, `[kind]`                                                              |
 | `config`           | Display resolved configuration, fonts, and theme settings        | `--show`                                                                        |

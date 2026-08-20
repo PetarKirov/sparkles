@@ -50,7 +50,7 @@ import forge : CommentThread, PullRequest, ThreadSide;
 import diff_structural : StructuralPolicy;
 import diff_view : DiffLayout, DiffViewOptions;
 import sparkles.diff : WhitespaceMode;
-import source_set : SourceSet;
+import source_set : SourceEntry, SourceSet;
 import table_select : TableCopyFormat;
 import dsv_view : resolveTableCopy;
 
@@ -364,7 +364,7 @@ struct Gallery
     @(Option("out|o", description: "Output directory for the static HTML gallery (defaults to <dir>/html)."))
     string outDir;
 
-    @(Option("twoslash", description: "Render TypeScript twoslash JSON payloads in the gallery."))
+    @(Option("twoslash", description: "Render twoslash overlays: committed *.twoslash.json payloads, and .d sources extracted via twoslash-extract --dub."))
     bool twoslash;
 
     @(Option("markdown", description: "Treat input files as Markdown."))
@@ -852,6 +852,98 @@ private ResolvedTheme resolveNamedTheme(string name, LabelSet labels)
 private bool usesSharedStylesheet(in Gallery g) @safe pure nothrow @nogc
     => g.darkTheme.length != 0 || g.stylesheet.length != 0;
 
+/**
+Batch-extracts an eager twoslash payload for every `.d` entry in `set` —
+`twoslash-extract --dub --stdout`, not `--serve`. Committed `*.twoslash.json`
+payloads are left for `loadTwoslashFile` at render time. A missing extractor
+or a failed analysis drops that entry (`GAL9`).
+*/
+private TwoslashReturn[string] extractTwoslashSources(ref SourceSet set) @system
+{
+    import source_set : SourceEntry, isDSource, isTwoslashPayload, twoslashTally;
+
+    TwoslashReturn[string] payloads;
+    version (Posix)
+    {
+        import live_types : extractTwoslash, liveTypesBinary;
+
+        if (!liveTypesBinary().length)
+        {
+            size_t dropped;
+            SourceEntry[] kept;
+            foreach (ref e; set.entries)
+            {
+                if (isTwoslashPayload(e.path))
+                    kept ~= e;
+                else
+                    ++dropped;
+            }
+            if (dropped)
+                stderr.writeln("hue: twoslash-extract not found on PATH ",
+                    "(build it, or set $SPARKLES_TWOSLASH_EXTRACT); ",
+                    "skipping ", dropped, " .d source(s)");
+            set.entries = kept;
+            set.index = 0;
+            return payloads;
+        }
+
+        size_t nD;
+        foreach (ref e; set.entries)
+            if (isDSource(e.path))
+                ++nD;
+
+        SourceEntry[] kept;
+        size_t i;
+        foreach (ref e; set.entries)
+        {
+            if (!isDSource(e.path))
+            {
+                kept ~= e;
+                continue;
+            }
+            ++i;
+            stderr.writeln("hue: extracting ", e.path, " (", i, "/", nD, ")");
+            auto res = extractTwoslash(e.path);
+            if (res.hasError)
+            {
+                stderr.writeln("hue: skipping '", e.path, "': ", res.error);
+                continue;
+            }
+            e.summary = twoslashTally(res.value.nodes);
+            payloads[e.path] = res.value;
+            kept ~= e;
+        }
+        set.entries = kept;
+        set.index = 0;
+    }
+    else
+    {
+        SourceEntry[] kept;
+        foreach (ref e; set.entries)
+            if (isTwoslashPayload(e.path))
+                kept ~= e;
+        if (kept.length != set.entries.length)
+            stderr.writeln("hue: batch twoslash extract is not available on this ",
+                "platform; skipping .d sources");
+        set.entries = kept;
+        set.index = 0;
+    }
+    return payloads;
+}
+
+/// The payload `renderOne` paints: a batch-extracted `.d` source, or a
+/// committed `*.twoslash.json` loaded from disk.
+private TwoslashReturn twoslashPayloadFor(in SourceEntry e,
+    TwoslashReturn[string] payloads) @system
+{
+    if (auto p = e.path in payloads)
+        return *p;
+    auto twRes = loadTwoslashFile(e.path);
+    if (twRes.hasError)
+        throw new Exception(twRes.error.toString);
+    return twRes.value;
+}
+
 private int executeGallery(in HueCli root, in Gallery gallery)
 {
     initLogger(root.logLevel);
@@ -865,6 +957,9 @@ private int executeGallery(in HueCli root, in Gallery gallery)
     string dir = gallery.dir.length ? gallery.dir : ".";
     bool twoslash = gallery.twoslash || root.overlay.twoslash.length != 0;
     auto set = collectSources(dir, twoslash, gallery.recursive, gallery.root);
+    TwoslashReturn[string] payloads;
+    if (twoslash)
+        payloads = extractTwoslashSources(set);
     if (set.empty)
         warning(i"no renderable files in '$(dir)' — writing an empty gallery index");
 
@@ -891,10 +986,7 @@ private int executeGallery(in HueCli root, in Gallery gallery)
         SmallBuffer!HighlightEvent ev;
         if (twoslash)
         {
-            auto twRes = loadTwoslashFile(e.path);
-            if (twRes.hasError)
-                throw new Exception(twRes.error.toString);
-            const tw = twRes.value;
+            const tw = twoslashPayloadFor(e, payloads);
             if (highlightInjected(cache, tw.effectiveLanguage, tw.code, ev).hasError)
                 ev ~= HighlightEvent.sourceSpan(0, tw.code.length);
             return twoslashFragment(tw, ev[], theme, cache, fragOpt);
@@ -1079,6 +1171,7 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
     import source_set : collectSources, SourceEntry;
 
     auto set = collectSources(dir, twoslash);
+    TwoslashReturn[string] payloads;
 
     if (!isHtml)
     {
@@ -1094,6 +1187,8 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
         return 0;
     }
 
+    if (twoslash)
+        payloads = extractTwoslashSources(set);
     if (set.empty)
         warning(i"no renderable files in '$(dir)' — writing an empty gallery index");
 
@@ -1111,10 +1206,7 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
         SmallBuffer!HighlightEvent ev;
         if (twoslash)
         {
-            auto twRes = loadTwoslashFile(e.path);
-            if (twRes.hasError)
-                throw new Exception(twRes.error.toString);
-            const tw = twRes.value;
+            const tw = twoslashPayloadFor(e, payloads);
             if (highlightInjected(cache, tw.effectiveLanguage, tw.code, ev).hasError)
                 ev ~= HighlightEvent.sourceSpan(0, tw.code.length);
             return twoslashFragment(tw, ev[], theme, cache);

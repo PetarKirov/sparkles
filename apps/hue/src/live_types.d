@@ -5,6 +5,10 @@
 // underline immediately), and each later line answers a `{"tip": <node>}`
 // request with that node's resolved type text, ddoc body and tags.
 //
+// The static HTML gallery uses the same binary in batch instead of `--serve`:
+// `twoslash-extract --dub --stdout` writes one eager payload and exits, so a
+// page's hover popups have their text without an oracle to resolve them later.
+//
 // The constraint this module exists to honor is `PRJ13`: DMD-as-a-library is
 // one analysis per process (`COR2`/`EXT2`) and hue is long-lived, so hue must
 // never link `sparkles:dmd-lsp` — it SPAWNS the extractor and speaks JSON
@@ -18,6 +22,8 @@ module live_types;
 version (Posix):
 
 import std.json : JSONType, JSONValue, parseJSON;
+
+import expected : err, Expected, ok;
 
 import sparkles.core_cli.process_utils : isInPath, ResidentProcess;
 import sparkles.twoslash : parseTwoslash, TwoslashReturn;
@@ -152,6 +158,68 @@ string liveTypesBinary() @safe
 }
 
 /**
+The flags a spawn of the extractor shares across the live oracle and the
+batch gallery path: `--dub` for the enclosing project, `--quiet` so a
+`dub describe` summary cannot land on stdout ahead of the payload JSON, and
+`--unittest` so identifiers inside `unittest` / `version (unittest)` resolve.
+*/
+private enum extractorFlags = ["--dub", "--quiet", "--unittest"];
+
+/**
+Batch-extracts an eager twoslash payload for `filePath` — the same binary
+and `--dub --quiet --unittest` flags as $(LREF LiveTypesSession.start), but
+`--stdout` instead of `--serve`: one process, one JSON line, then exit.
+
+The static HTML gallery has no oracle to resolve tips later, so this path
+does not pass `--lazy`. Failures are a reason string, never an exception
+(`PRJ15` / `GAL9`).
+*/
+Expected!(TwoslashReturn, string) extractTwoslash(string filePath) @system
+{
+    const bin = liveTypesBinary();
+    if (!bin.length)
+        return err!TwoslashReturn("twoslash-extract not found on PATH " ~
+            "(build it, or set $SPARKLES_TWOSLASH_EXTRACT)");
+    return extractTwoslashWith([bin, filePath, "--stdout"] ~ extractorFlags);
+}
+
+/// ditto — with an explicit command line (the seam a test drives a scripted
+/// extractor through).
+Expected!(TwoslashReturn, string) extractTwoslashWith(const(string)[] argv) @system
+{
+    import std.array : appender;
+    import std.conv : text;
+    import std.process : pipeProcess, Redirect, wait;
+    import std.string : strip;
+
+    try
+    {
+        auto pipes = pipeProcess(argv, Redirect.stdout);
+        auto buf = appender!string;
+        int status = 1;
+        try
+        {
+            foreach (chunk; pipes.stdout.byChunk(4096))
+                buf ~= cast(const char[]) chunk;
+        }
+        finally
+        {
+            pipes.stdout.close();
+            status = wait(pipes.pid);
+        }
+        if (status != 0)
+            return err!TwoslashReturn(text(
+                "twoslash-extract exited (status ", status, ")"));
+        auto res = parseTwoslash(buf[].strip);
+        if (res.hasError)
+            return err!TwoslashReturn("twoslash-extract: " ~ res.error.toString);
+        return ok(res.value);
+    }
+    catch (Exception e)
+        return err!TwoslashReturn("could not start twoslash-extract: " ~ e.msg);
+}
+
+/**
 One live-types oracle: a `twoslash-extract --dub --serve` child for one open
 file, plus the payload and tip answers it has produced so far.
 
@@ -207,8 +275,8 @@ struct LiveTypesSession
         // analyzes those bodies when unittests are on, so without it roughly a
         // quarter of this repo's hover spans underlined a token the oracle
         // could not answer.
-        auto s = startWith([bin, filePath, "--dub", "--serve", "--quiet",
-            "--unittest"], reason, silenceChildStderr);
+        auto s = startWith([bin, filePath, "--serve"] ~ extractorFlags,
+            reason, silenceChildStderr);
         if (s !is null)
             s._samplePath = filePath;
         return s;
@@ -409,6 +477,47 @@ private struct StderrSilencer
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
+
+@("live_types.extractTwoslash.scriptedBatchPayload")
+@system unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!isInPath("sh"))
+        skipTest("no `sh` for the scripted extractor");
+
+    // A fake batch extractor: one eager JSON line on stdout, then exit 0.
+    // The gallery path has no `--serve` loop, so the payload must already
+    // carry hover text (unlike the lazy live-types payload).
+    enum payload = `{"code":"int x;","offsetEncoding":"utf-8",` ~
+        `"language":"d","nodes":[{"type":"hover","start":4,"length":1,` ~
+        `"line":0,"character":4,"text":"(variable) int x"}]}`;
+    enum script = `printf '%s\n' '` ~ payload ~ `'`;
+
+    auto res = extractTwoslashWith(["sh", "-c", script]);
+    assert(res.hasValue, res.hasError ? res.error : "expected a payload");
+    assert(res.value.code == "int x;");
+    assert(res.value.effectiveLanguage == "d");
+    assert(res.value.nodes.length == 1);
+    assert(res.value.nodes[0].text == "(variable) int x");
+}
+
+@("live_types.extractTwoslash.nonzeroStatusAndBadJsonAreErrors")
+@system unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!isInPath("sh"))
+        skipTest("no `sh` for the scripted extractor");
+
+    auto failed = extractTwoslashWith(["sh", "-c", "exit 2"]);
+    assert(failed.hasError);
+    assert(failed.error == "twoslash-extract exited (status 2)", failed.error);
+
+    auto garbage = extractTwoslashWith(["sh", "-c", "printf 'not json\n'"]);
+    assert(garbage.hasError);
+    assert(garbage.error.length, "a parse failure names the reason");
+}
 
 @("live_types.classifyServeLine.answerErrorAndGarbage")
 @safe unittest

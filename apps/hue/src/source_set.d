@@ -147,8 +147,19 @@ private immutable string[] textualBasenames = [
 ];
 
 /**
-`true` iff `path` is a document this set renders: a twoslash payload under
-`twoslash`, else any file with an extension that is not obviously binary
+`true` iff `path` is a committed `*.twoslash.json` payload.
+*/
+bool isTwoslashPayload(scope const(char)[] path) @safe pure nothrow @nogc
+    => path.endsWith(twoslashSuffix);
+
+/// `true` iff `path` is a D source file `twoslash-extract` can analyze.
+bool isDSource(scope const(char)[] path) @safe pure nothrow @nogc
+    => path.extension == ".d";
+
+/**
+`true` iff `path` is a document this set renders: under `twoslash`, a
+`*.twoslash.json` payload or a `.d` source (the gallery batch-extracts the
+latter); else any file with an extension that is not obviously binary
 ($(LREF binaryExtensions)), or an extensionless file whose base name is
 conventionally text ($(LREF textualBasenames)).
 
@@ -161,7 +172,7 @@ bool isRenderable(scope const(char)[] path, bool twoslash) @safe pure nothrow
     import std.algorithm.searching : canFind;
 
     if (twoslash)
-        return path.endsWith(twoslashSuffix);
+        return isTwoslashPayload(path) || isDSource(path);
 
     const base = path.baseName;
     if (base.extension.length == 0)
@@ -474,7 +485,7 @@ private string summarize(string path, bool twoslash) @system
 {
     import std.file : readText;
 
-    if (twoslash)
+    if (twoslash && isTwoslashPayload(path))
     {
         import sparkles.twoslash : loadTwoslashFile;
 
@@ -493,10 +504,12 @@ private string summarize(string path, bool twoslash) @system
 @safe pure nothrow
 unittest
 {
-    // Twoslash mode takes only the double-extension payloads.
+    // Twoslash mode takes committed payloads and D sources (the latter are
+    // batch-extracted). Other JSON stays out.
     assert(isRenderable("fixtures/01-hover.twoslash.json", true));
+    assert(isRenderable("src/app.d", true));
     assert(!isRenderable("fixtures/notes.json", true));
-    assert(!isRenderable("fixtures/app.d", true));
+    assert(!isRenderable("README.md", true));
 
     // Plain mode takes any text file — including extensions no grammar claims
     // (hue degrades those to plain text), but not binaries.
@@ -705,6 +718,34 @@ unittest
         .map!(e => e.relPath).array == ["a.d"]);
     assert(collectSources(target, false, recursive: true, buildPath(root, "elsewhere"))
         .entries.map!(e => e.relPath).array == ["a.d"]);
+}
+
+/// `--twoslash` collects both committed payloads and `.d` sources, and leaves
+/// other text out. A `.d` file is summarized as language + lines until the
+/// gallery extracts it; a payload tallies its nodes.
+@("source_set.collectSources.twoslashTakesDSourcesAndPayloads")
+@system
+unittest
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    import std.file : rmdirRecurse;
+
+    const root = makeTree("twoslash-set", [
+        ["src/app.d", "module app;\n"],
+        ["notes.md", "# no\n"],
+        ["01-hover.twoslash.json", `{"code":"x","nodes":[]}`],
+    ]);
+    scope (exit)
+        rmdirRecurse(root);
+
+    auto set = collectSources(root, true, recursive: true);
+    assert(set.entries.map!(e => e.relPath).array == ["01-hover", "src/app.d"]);
+    assert(set.entries[0].summary == "no nodes");
+    assert(set.entries[1].name == "app.d");
+    assert(set.entries[1].summary == "d · 1 line");
+    assert(set.entries.map!(e => e.outPath).array
+        == ["01-hover.html", "src/app.d.html"]);
 }
 
 @("source_set.move.clampsAtBothEnds")
