@@ -337,6 +337,47 @@ struct Sched
         return ioOk(r.value == RunStatus.drained ? RunStatus.timedOut : r.value);
     }
 
+    static if (__traits(hasMember, DefaultLoop, "runHostedOnce"))
+    {
+        /**
+        Scheduler iteration using the native-host wait bridge.
+
+        Ready fibers retain the same budget and FIFO discipline as `tick`.
+        Only the final wait changes: Event Horizon combines its completion
+        signal with the host's native source through `runHostedOnce`.
+        */
+        IoResult!RunStatus tickHosted(Host)(ref Host host,
+            Duration timeout = Duration.zero) @trusted
+        in (_running is null, "tickHosted from inside a fiber")
+        {
+            uint ran;
+            while (ran < _opts.resumeBudget)
+            {
+                auto t = dequeue();
+                if (t is null)
+                    break;
+                resume(t);
+                ++ran;
+            }
+            if (ran > 0 || _readyHead !is null)
+                return ioOk(RunStatus.dispatched);
+            if (_liveFibers == 0 && _loop.inFlight == 0)
+                return ioOk(RunStatus.drained);
+
+            auto r = _loop.runHostedOnce(host, timeout);
+            if (r.hasError)
+                return r;
+            if (_idleWaiter !is null && r.value == RunStatus.dispatched)
+            {
+                auto t = _idleWaiter;
+                _idleWaiter = null;
+                if (!t.enqueued)
+                    enqueue(t);
+            }
+            return r;
+        }
+    }
+
     /**
     Parks the current fiber until the loop makes progress — a wake
     completion, or any other CQE `tick` then treats as a reason to

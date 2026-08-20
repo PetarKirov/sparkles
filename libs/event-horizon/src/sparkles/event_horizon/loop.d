@@ -266,6 +266,69 @@ if (isCompletionBackend!Backend)
         return ioOk(n > 0 ? RunStatus.dispatched : RunStatus.timedOut);
     }
 
+    static if (hasNativeHostWait!Backend)
+    {
+        /**
+        One integrated iteration for an OS-owned native host source.
+
+        `host.dispatchPending()` drains native callbacks without running
+        application code. `host.wait(completionHandle, timeoutMs)` performs
+        the platform's one combined blocking wait and returns `IoResult!bool`:
+        `true` for native/completion readiness and `false` for timeout.
+
+        Event Horizon owns the ordering and deadline. In particular it resets
+        the backend's level signal *before* a closing zero-time completion
+        drain, so neither a queued completion nor one racing the drain can be
+        lost. This is the Win32/AppKit embedding seam; WSI does not grow a
+        second scheduler, timer wheel, or completion queue.
+        */
+        IoResult!RunStatus runHostedOnce(Host)(ref Host host,
+            Duration timeout = Duration.max)
+        if (__traits(compiles, {
+            bool dispatched = host.dispatchPending();
+            IoResult!bool waited = host.wait(cast(void*) null, uint.max);
+        }))
+        {
+            if (_stopRequested)
+                return ioOk(RunStatus.stopped);
+
+            bool hostWork = host.dispatchPending();
+            auto first = runOnce(Duration.zero);
+            if (first.hasError)
+                return first;
+            if (first.value == RunStatus.stopped)
+                return first;
+            if (hostWork || first.value == RunStatus.dispatched)
+                return ioOk(RunStatus.dispatched);
+
+            // Reset first, then drain: work queued before the reset is found
+            // by the drain; work queued after it restores the event signal.
+            _backend.prepareNativeHostDrain();
+            auto repaired = runOnce(Duration.zero);
+            if (repaired.hasError)
+                return repaired;
+            if (repaired.value == RunStatus.stopped)
+                return repaired;
+            if (repaired.value == RunStatus.dispatched)
+                return repaired;
+
+            uint timeoutMs = durationToHostMilliseconds(timeout);
+            timeoutMs = _backend.nativeHostWaitTimeout(timeoutMs);
+            auto waited = host.wait(_backend.nativeHostWaitHandle(), timeoutMs);
+            if (waited.hasError)
+                return ioErr!RunStatus(waited.error);
+
+            hostWork = host.dispatchPending();
+            auto after = runOnce(Duration.zero);
+            if (after.hasError)
+                return after;
+            if (after.value == RunStatus.stopped)
+                return after;
+            return ioOk(hostWork || after.value == RunStatus.dispatched
+                ? RunStatus.dispatched : RunStatus.timedOut);
+        }
+    }
+
     /// Runs until `stop()` or until drained (no live user/timer ops — an
     /// armed waker alone does not keep `run()` alive; SPEC §5.6).
     IoResult!void run()
@@ -393,6 +456,24 @@ if (isCompletionBackend!Backend)
     MonoTime now() const => MonoTime.currTime;
 
 private:
+    static uint durationToHostMilliseconds(Duration timeout)
+        @safe pure nothrow @nogc
+    {
+        if (timeout == Duration.max)
+            return uint.max;
+        if (timeout <= Duration.zero)
+            return 0;
+
+        long seconds, nanoseconds;
+        timeout.split!("seconds", "nsecs")(seconds, nanoseconds);
+        const ulong millis = cast(ulong) seconds * 1000
+            + cast(ulong)(nanoseconds / 1_000_000)
+            + cast(ulong)(nanoseconds % 1_000_000 != 0);
+        // uint.max is the Win32 INFINITE sentinel, so the largest finite
+        // timeout is one less.
+        return millis >= uint.max ? uint.max - 1 : cast(uint) millis;
+    }
+
     bool trySubmitWithRetry(Op)(in Op op, OpToken token, ref OpSlot slot)
     {
         if (_backend.trySubmit(op, token, slot))

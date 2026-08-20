@@ -1584,9 +1584,17 @@ The normative native consumer is now [`sparkles:wsi`](../window-system-integrati
 whose [`WSI3`](../window-system-integration/feature-requirements.md#architecture-wsi)
 forbids a second application loop. Linux display fds use §15.1 directly;
 Win32/AppKit attach their OS-owned message/run-loop source through the smallest
-backend-neutral host hook proven by the WSI M2 spikes. WSI may add that hook here,
-but may not reproduce IOCP, kqueue, timers, channels, or wake accounting in its own
-package.
+backend-neutral host hook proven by the WSI M2 spikes. The Win32 half is now concrete:
+`EventLoop.runHostedOnce` (and `Sched.tickHosted`) owns reset → non-blocking drain →
+combined wait → dispatch ordering. IOCP mirrors queued completions through one
+manual-reset event and narrows the host timeout to its next timer; the host combines
+that event with User32 through `MsgWaitForMultipleObjectsEx`. One shared event is safe
+despite each overlapped submission resetting `hEvent`: the backend repairs an older
+queued completion after issue, and the hosted loop resets before its closing drain, so
+both sides of the race preserve a wake. The AppKit half remains an M2 acceptance spike.
+
+WSI supplies only `dispatchPending` and the platform's combined `wait`; it may not
+reproduce IOCP, kqueue, timers, channels, or wake accounting in its own package.
 
 ### 15.1 Foreign-fd readiness
 
@@ -1681,21 +1689,21 @@ silent behavioral fork.
 
 Re-exported from `sparkles.event_horizon` (`package.d`):
 
-| Area         | Symbols                                                                                                                                                                                                           |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Errors       | `IoError`, `IoErrorStage`, `OpKind`, `NoGcHook`, `IoResult`, `ioOk`, `ioErr`, `fromRes`                                                                                                                           |
-| Causes       | `Cause`, `Interrupt`, `InterruptKind`, `Outcome`, `widen`                                                                                                                                                         |
-| Tier A       | `EventLoop`, `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle` |
-| Buffers      | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                            |
-| Probing      | `BackendCaps`, `BackendId`, `LoopMode`, `ModePolicy`, `probeSystem`                                                                                                                                               |
-| Tier B       | `Sched`, `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                             |
-| Subprocesses | `StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`, `isProc`, `SimProc`, `ChildProcess`, `spawnProcess`, `spawnPty`, `resizePty`, `wait`, `RingProc`                                                         |
-| Channels     | `Channel`                                                                                                                                                                                                         |
-| Scopes       | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                   |
-| Capabilities | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`   |
-| Schedules    | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                       |
-| Topology     | `LoopGroup`, `LoopGroupConfig`, `Topology`, `RawJob`, `RawCompletion`, `RawPoolResult`, `RawCpuPool`                                                                                                              |
-| Veneer (M12) | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                |
+| Area         | Symbols                                                                                                                                                                                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Errors       | `IoError`, `IoErrorStage`, `OpKind`, `NoGcHook`, `IoResult`, `ioOk`, `ioErr`, `fromRes`                                                                                                                                                                    |
+| Causes       | `Cause`, `Interrupt`, `InterruptKind`, `Outcome`, `widen`                                                                                                                                                                                                  |
+| Tier A       | `EventLoop` (`runOnce`, conditional `runHostedOnce`), `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle` |
+| Buffers      | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                                                                     |
+| Probing      | `BackendCaps`, `BackendId`, `LoopMode`, `ModePolicy`, `probeSystem`                                                                                                                                                                                        |
+| Tier B       | `Sched` (including conditional `tickHosted`), `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                                 |
+| Subprocesses | `StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`, `isProc`, `SimProc`, `ChildProcess`, `spawnProcess`, `spawnPty`, `resizePty`, `wait`, `RingProc`                                                                                                  |
+| Channels     | `Channel`                                                                                                                                                                                                                                                  |
+| Scopes       | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                                                            |
+| Capabilities | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`                                            |
+| Schedules    | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                                                                |
+| Topology     | `LoopGroup`, `LoopGroupConfig`, `Topology`, `RawJob`, `RawCompletion`, `RawPoolResult`, `RawCpuPool`                                                                                                                                                       |
+| Veneer (M12) | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                                                         |
 
 Memory-management policy (normative): allocating types follow the
 [composable-allocator guidelines](../../guidelines/allocators/index.md) —
