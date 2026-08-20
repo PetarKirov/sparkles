@@ -30,17 +30,28 @@
         pname = "ci";
         version = "0.1.0";
 
+        # `--audit-fences` classifies fence labels against the grammar bundle, so
+        # `ci` now links sparkles:syntax -> sparkles:tree-sitter, whose ImportC
+        # shim `#include`s <tree_sitter/api.h>. That header is found through
+        # pkg-config (dub#3085 feeds `--cflags` to ImportC), so the resolver has
+        # to be present at *build* time — without it the build dies on
+        # "tree_sitter/api.h: No such file or directory", which also breaks the
+        # dev shell, since it depends on this package.
+        nativeBuildInputs = [ pkgs.pkg-config ];
+
         # Runtime deps subtracted from buildSparklesApp's default scrub set:
         # - `ciCompiler` — shells out via PATH (see postFixup)
         # - `pkgs.ldc` / `pkgs.lld` / `pkgs.nodejs` — `--test-extracted --wasm`
         # - `pkgs.curl.out` — `--ci-stats` uses std.net.curl; Phobos bakes an
         #   absolute libcurl path
+        # - `pkgs.tree-sitter` — `libs "tree-sitter"` in libs/tree-sitter
         buildInputs = [
           ciCompiler
           pkgs.ldc
           pkgs.lld
           pkgs.nodejs
           pkgs.curl.out
+          pkgs.tree-sitter
         ];
 
         # ci shells out to `dub --single` at runtime to compile examples, so it
