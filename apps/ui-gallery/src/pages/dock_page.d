@@ -11,8 +11,9 @@ comes to disagree with the thing it is supposed to be under.
 So the page shows the layout as data first — the arena, rendered by walking it —
 and then the three interactions that read the same value: the divider drag, the
 tab strip, and drag-to-redock. The hint a drag paints is computed from the same
-`DockDrag` the drop will act on, which is the property worth seeing: the preview
-cannot promise a region the release will not fill.
+`DockDrag` the drop will act on, and is painted $(B over the arrangement) — the
+property worth seeing is that the preview cannot promise a region the release
+will not fill, and it is only worth seeing where the panes are.
 
 Everything here works from the keyboard too. Not politeness — `DCK12`: a
 container whose only route to a feature is a drag has no answer for a target
@@ -24,8 +25,8 @@ import std.conv : text;
 
 import sparkles.input : Event, Key, KeyEvent, Point, PointerEvent;
 import sparkles.ui.components.chrome : dockHint, tabStrip;
-import sparkles.ui.components.dock : DockAxis, DockContainer, DockKind,
-    DockLayout, DockZone, PaneId, RouteKind;
+import sparkles.ui.components.dock : DockAxis, DockContainer, DockDrag,
+    DockKind, DockLayout, dockHintRect, DockZone, PaneId, RouteKind;
 import sparkles.ui.geometry : Rect, Size, SizeSpec;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.style : Slot, TextStyle;
@@ -123,7 +124,21 @@ private uint viewWith(ref Builder b, in DockContainer c, in GalleryState s)
         height: SizeSpec.fixed(dockRows),
         hitId: hitDock,
     ));
-    body_ ~= section(b, "the arrangement", [arrangement]);
+
+    // The drop preview goes OVER the arrangement, which is the only place it
+    // means anything: a reader dragging a tab is looking at the panes, not at
+    // a readout further down the page — on a short terminal that readout is
+    // below the fold entirely, so the drag looked inert while working fine.
+    const drag = s.dock.dragHint();
+    const shown = drag.active && drag.willDock
+        ? b.add(Widget(
+            kind: WidgetKind.stack,
+            children: [arrangement, hintOver(b, drag)],
+            width: SizeSpec.grow(),
+            height: SizeSpec.fixed(dockRows),
+        ))
+        : arrangement;
+    body_ ~= section(b, "the arrangement", [shown]);
     body_ ~= spacer(b);
 
     body_ ~= section(b, "the container", [
@@ -136,9 +151,8 @@ private uint viewWith(ref Builder b, in DockContainer c, in GalleryState s)
     ]);
     body_ ~= spacer(b);
 
-    // The drag hint, when one is in flight. The same value that will be
-    // dropped — a host cannot show a region the release will not fill.
-    const drag = s.dock.dragHint();
+    // …and the same value in words, which is what a target with no colour
+    // has (a filled hint is a background, and a plain sink paints none).
     if (drag.active)
     {
         body_ ~= section(b, "drag in flight", [
@@ -146,7 +160,6 @@ private uint viewWith(ref Builder b, in DockContainer c, in GalleryState s)
             kv(b, "over", drag.target ? paneName(drag.target) : "nothing", 16),
             kv(b, "zone", zoneName(drag.zone), 16),
             kv(b, "would dock", drag.willDock ? "yes" : "no", 16),
-            specimen(b, "preview", dockHint(b, drag)),
         ]);
         body_ ~= spacer(b);
     }
@@ -176,6 +189,32 @@ private uint viewWith(ref Builder b, in DockContainer c, in GalleryState s)
         ~ "nothing to offer a target without a pointer.", w);
 
     return column(b, body_);
+}
+
+/**
+Places the container's own hint rect over the arrangement.
+
+`stack` children share an origin, and the toolkit has no absolute placement
+yet — that is the [popup spec](../../../../docs/specs/ui/popup.md)'s `adorn`
+band — so the offset is two spacers. The rect is $(B not) recomputed here:
+`dockHintRect` is the container's, from the same `DockDrag` the release will
+act on, which is the property worth having. A preview a host derives
+independently is a preview that can promise a region the drop will not fill.
+*/
+private uint hintOver(ref Builder b, in DockDrag drag)
+{
+    const r = dockHintRect(drag.targetRect, drag.zone);
+    uint[] row;
+    if (r.x > 0)
+        row ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(r.x)));
+    row ~= dockHint(b, drag);
+    const band = b.add(Widget(kind: WidgetKind.row, children: row));
+
+    uint[] col;
+    if (r.y > 0)
+        col ~= b.add(Widget(kind: WidgetKind.box, height: SizeSpec.fixed(r.y)));
+    col ~= band;
+    return b.add(Widget(kind: WidgetKind.column, children: col));
 }
 
 /// Renders one node of the arrangement by walking it — a split becomes a row
@@ -553,6 +592,25 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
             if (node.kind == WidgetKind.text && node.text == "drag in flight")
                 sawSection = true;
         assert(sawSection, "the view shows the drag while it is in flight");
+
+        // And the preview covers EXACTLY the region the drop will fill —
+        // measured from the laid-out frame, not from the widget's request,
+        // because a promise the layout does not keep is not a promise.
+        auto midFrames = layout(midTree, Constraints(maxW: s.surface.width,
+            maxH: s.surface.height));
+        size_t hintNode = size_t.max;
+        foreach (i, ref node; midTree.nodes)
+            if (node.kind == WidgetKind.box && node.slot == Slot.chromeFocused
+                && node.paintBackground)
+                hintNode = i;
+        assert(hintNode != size_t.max, "the hint is painted over the panes");
+
+        const want = dockHintRect(hint.targetRect, hint.zone);
+        const got = midFrames[hintNode].rect;
+        const origin = rectOf(midTree, midFrames, hitDock);
+        assert(got.width == want.width && got.height == want.height);
+        assert(got.x - origin.x == want.x && got.y - origin.y == want.y,
+            "and it sits where the container said, not where the page guessed");
     }
 
     const before = s.dock.layout.panes().length;
