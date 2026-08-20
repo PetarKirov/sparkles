@@ -367,6 +367,9 @@ struct Gallery
     @(Option("twoslash", description: "Render twoslash overlays: committed *.twoslash.json payloads, and .d sources extracted via twoslash-extract --dub."))
     bool twoslash;
 
+    @(Option("jobs|j", description: "Extractor processes to run at once for --twoslash (0 = one per usable CPU)."))
+    uint jobs;
+
     @(Option("markdown", description: "Treat input files as Markdown."))
     bool markdown;
 
@@ -857,15 +860,25 @@ Batch-extracts an eager twoslash payload for every `.d` entry in `set` —
 `twoslash-extract --dub --stdout`, not `--serve`. Committed `*.twoslash.json`
 payloads are left for `loadTwoslashFile` at render time. A missing extractor
 or a failed analysis drops that entry (`GAL9`).
+
+`jobs` extractions run at once (0 = `hwParallelism`). Results are folded back
+in set order, so the page set and index order do not depend on completion
+order — the page *contents* are not reproducible either way, see the note in
+the body.
 */
-private TwoslashReturn[string] extractTwoslashSources(ref SourceSet set) @system
+private TwoslashReturn[string] extractTwoslashSources(ref SourceSet set,
+    uint jobs) @system
 {
     import source_set : SourceEntry, isDSource, isTwoslashPayload, twoslashTally;
 
     TwoslashReturn[string] payloads;
     version (Posix)
     {
+        import core.atomic : atomicOp;
         import live_types : extractTwoslash, liveTypesBinary;
+        import sparkles.base.hw_caps : hwParallelism;
+        import std.parallelism : parallel, TaskPool;
+        import std.range : iota;
 
         if (!liveTypesBinary().length)
         {
@@ -887,24 +900,68 @@ private TwoslashReturn[string] extractTwoslashSources(ref SourceSet set) @system
             return payloads;
         }
 
-        size_t nD;
-        foreach (ref e; set.entries)
+        // Which entries need an analysis, in set order.
+        size_t[] dAt;
+        foreach (i, ref e; set.entries)
             if (isDSource(e.path))
-                ++nD;
+                dAt ~= i;
 
+        // One `twoslash-extract` per file, several at a time. Each is a whole
+        // DMD analysis in its own process (`PRJ13`), so this is process-level
+        // parallelism with nothing shared — no tree-sitter cache is touched
+        // here, and rendering stays single-threaded below.
+        // A plain result record rather than `Expected`, which disables default
+        // construction and so cannot back a preallocated array.
+        static struct Extracted
+        {
+            TwoslashReturn value;
+            string error;
+        }
+
+        auto results = new Extracted[dAt.length];
+        const workers = jobs ? jobs : hwParallelism();
+        shared size_t done;
+        if (dAt.length)
+        {
+            auto pool = new TaskPool(workers > 1 ? workers - 1 : 0);
+            scope (exit)
+                pool.finish(true);
+            foreach (k; pool.parallel(iota(dAt.length), 1))
+            {
+                auto r = extractTwoslash(set.entries[dAt[k]].path);
+                results[k] = r.hasError
+                    ? Extracted(TwoslashReturn.init, r.error)
+                    : Extracted(r.value, null);
+                // Completion order, not start order: with N in flight there is
+                // no meaningful "now starting" line to print.
+                const n = atomicOp!"+="(done, 1);
+                synchronized
+                    stderr.writeln("hue: extracted ", set.entries[dAt[k]].path,
+                        " (", n, "/", dAt.length, ")");
+            }
+        }
+
+        // Fold back in set order, so which pages exist and how the index is
+        // ordered never depend on completion order.
+        //
+        // That is as far as this can go: the pages themselves are not
+        // reproducible run-to-run even at `--jobs 1`, because the extractor
+        // is not. Three sequential `twoslash-extract --stdout` runs over one
+        // unchanged file produce three different payloads — the hover for a
+        // template instance names whichever `__unittest_LNNN_C1` DMD's
+        // instance cache walks to first. Nothing here can fix that; it is
+        // upstream of the seam (`PRJ13`).
         SourceEntry[] kept;
-        size_t i;
-        foreach (ref e; set.entries)
+        size_t k;
+        foreach (i, ref e; set.entries)
         {
             if (!isDSource(e.path))
             {
                 kept ~= e;
                 continue;
             }
-            ++i;
-            stderr.writeln("hue: extracting ", e.path, " (", i, "/", nD, ")");
-            auto res = extractTwoslash(e.path);
-            if (res.hasError)
+            auto res = results[k++];
+            if (res.error.length)
             {
                 stderr.writeln("hue: skipping '", e.path, "': ", res.error);
                 continue;
@@ -959,7 +1016,7 @@ private int executeGallery(in HueCli root, in Gallery gallery)
     auto set = collectSources(dir, twoslash, gallery.recursive, gallery.root);
     TwoslashReturn[string] payloads;
     if (twoslash)
-        payloads = extractTwoslashSources(set);
+        payloads = extractTwoslashSources(set, gallery.jobs);
     if (set.empty)
         warning(i"no renderable files in '$(dir)' — writing an empty gallery index");
 
@@ -1188,7 +1245,8 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
     }
 
     if (twoslash)
-        payloads = extractTwoslashSources(set);
+        // `view <dir> --html --overlay twoslash`: no --jobs of its own, so auto.
+        payloads = extractTwoslashSources(set, 0);
     if (set.empty)
         warning(i"no renderable files in '$(dir)' — writing an empty gallery index");
 
