@@ -38,7 +38,9 @@
       # `extraGrammars` covers the in-house ones (sdl) that live in neither
       # nixpkgs nor the pinned-source set, so the APK ships them too.
       languages =
-        langs.plain ++ langs.special ++ builtins.attrNames langs.fetched
+        langs.plain
+        ++ langs.special
+        ++ builtins.attrNames langs.fetched
         ++ builtins.attrNames extraGrammars;
 
       # Where each language's source comes from: a nixpkgs grammar, or — for
@@ -90,6 +92,18 @@
           pname = "ts-grammar-android-${lang}";
           inherit (from) version src;
 
+          # Some upstreams ship no generated `src/parser.c` and leave
+          # generation to the packager — `tree-sitter-latex` ships only
+          # `src/grammar.json`, `tree-sitter-sql` only `grammar.js`. The
+          # desktop side gets generation for free from nixpkgs' own grammar
+          # builder; this one compiles the C itself, so it needs the CLI. node
+          # comes along because `tree-sitter generate` evaluates a `grammar.js`
+          # with it (a `grammar.json` alone would not need it).
+          nativeBuildInputs = [
+            pkgs.tree-sitter
+            pkgs.nodejs
+          ];
+
           dontConfigure = true;
 
           buildPhase = ''
@@ -108,7 +122,29 @@
               fi
             done
             [ -n "$pick" ] || pick=$(echo "$candidates" | head -1)
-            [ -n "$pick" ] || { echo "no src/parser.c found for ${lang}" >&2; exit 1; }
+
+            # No generated parser anywhere: generate one. The grammar root is
+            # whatever holds `src/grammar.json` or `grammar.js`, chosen by the
+            # same basename-beats-first rule as the parser.c search above.
+            if [ -z "$pick" ]; then
+              roots=$(find . \( -path '*/src/grammar.json' -o -name 'grammar.js' \) \
+                | sed -e 's:/src/grammar\.json$::' -e 's:/grammar\.js$::' | sort -u)
+              groot=""
+              for r in $roots; do
+                base=$(basename "$r")
+                if [ "$base" = "${lang}" ] || [ "$base" = "tree-sitter-${lang}" ]; then
+                  groot=$r
+                  break
+                fi
+              done
+              [ -n "$groot" ] || groot=$(echo "$roots" | head -1)
+              [ -n "$groot" ] || { echo "no parser.c, grammar.json or grammar.js found for ${lang}" >&2; exit 1; }
+              ( cd "$groot" && tree-sitter generate )
+              pick="$groot/src/parser.c"
+              [ -f "$pick" ] || { echo "tree-sitter generate produced no parser.c for ${lang}" >&2; exit 1; }
+              echo "generated parser.c for ${lang} in $groot"
+            fi
+
             gsrc=$(dirname "$pick")
             echo "grammar root for ${lang}: $gsrc"
 
