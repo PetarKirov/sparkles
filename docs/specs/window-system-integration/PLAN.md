@@ -179,8 +179,16 @@ scale 2 through the kiosk-Weston lane, where the chord, click, and scroll
 properties also still pass. Win32's existing `GetDpiForWindow` path keeps its
 Wine caveat: a per-monitor-V2-aware window under Wine always sees a 96-DPI
 monitor whatever `LogPixels` says, so that column's scale evidence is owed to
-native Windows CI. X11 scale detection, cursor work, full output
-enumeration/hotplug, pointer capture, and native-Windows evidence remain.
+native Windows CI. The cursor slice puts the shared `PointerShape` vocabulary — CSS names, so
+Wayland's `cursor-shape-v1` maps one-to-one — behind `setCursor` and
+`setCursorVisible` on all four backends, with a conformance property that
+requires a standard shape to apply or fail with typed `unsupported`, plus
+platform-observable confirmation where one exists (`GetCursor` after
+`WM_SETCURSOR` under Wine, `NSCursor.currentCursor` on macOS). The
+cursor-shape protocol is vendored beside xdg-shell with its single unused
+tablet request stubbed rather than pulling in the tablet-v2 tables. X11 scale
+detection, custom cursor images, full output enumeration/hotplug, pointer
+capture, and native-Windows evidence remain.
 
 Required platform paths:
 

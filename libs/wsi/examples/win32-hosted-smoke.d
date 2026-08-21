@@ -21,6 +21,7 @@ import std.stdio : writeln;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.input.events : KeyAction;
+import sparkles.input.pointer : PointerShape;
 import sparkles.wsi;
 
 pragma(lib, "imm32");
@@ -98,6 +99,14 @@ private struct Win32Hooks
         SendMessageW(hwnd, WM_MOUSEMOVE, 0, at);
         SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, at);
         SendMessageW(hwnd, WM_LBUTTONUP, 0, at);
+    }
+
+    void checkCursorApplied(PointerShape shape)
+    {
+        assert(shape == PointerShape.text);
+        SendMessageW(hwnd, WM_SETCURSOR, cast(WPARAM) hwnd, HTCLIENT);
+        assert(GetCursor() == LoadCursorW(null, IDC_IBEAM),
+            "WM_SETCURSOR did not apply the stored cursor");
     }
 
     void injectScroll()

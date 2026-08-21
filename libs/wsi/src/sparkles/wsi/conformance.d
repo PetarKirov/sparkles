@@ -45,6 +45,9 @@ $(LIST
         environment's known scale factor: metrics must reach it with
         `physical == logical × scale`, waiting past ready because a
         compositor reports scale only once the surface maps.
+    * `void checkCursorApplied(PointerShape shape)` — platform-observable
+        confirmation that a successful `setCursor` took effect (the cursor
+        property itself runs whenever the backend has `setCursor`).
     * `enum expectFocusEvent = true` — the chord property additionally
         requires a `FocusChangedEvent(true)` before the keys.
     * `void checkHandles(in NativeHandles handles)` — backend-specific handle
@@ -68,6 +71,7 @@ import core.time : Duration, MonoTime, msecs, seconds;
 import sparkles.event_horizon.loop : DefaultLoop;
 import sparkles.event_horizon.op : Completion;
 import sparkles.input.events : KeyAction, PointerButton;
+import sparkles.input.pointer : PointerShape;
 import sparkles.wsi.events;
 import sparkles.wsi.types;
 
@@ -403,6 +407,27 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
     else
         ++outcome.skipped;
 
+    // Property: a standard cursor shape applies through the shared
+    // PointerShape or fails with a typed unsupported — never silently —
+    // and cursor visibility round-trips.
+    static if (is(typeof(wsi.setCursor(WindowId.init, PointerShape.init))))
+    {
+        auto shaped = wsi.setCursor(id, PointerShape.text);
+        assert(!shaped.hasError
+            || shaped.error.kind == WsiErrorKind.unsupported,
+            "setCursor failed with something other than typed unsupported");
+        static if (is(typeof(hooks.checkCursorApplied(PointerShape.init))))
+            if (!shaped.hasError)
+                hooks.checkCursorApplied(PointerShape.text);
+        assert(!wsi.setCursorVisible(id, false).hasError,
+            "hiding the cursor failed");
+        assert(!wsi.setCursorVisible(id, true).hasError,
+            "showing the cursor failed");
+        ++outcome.checked;
+    }
+    else
+        ++outcome.skipped;
+
     // Property: Event Horizon work still progresses through the backend's
     // single wait — a timer and a foreign-thread waker both land. The timer
     // callback runs on the owner thread inside step(), so no sharing.
@@ -555,5 +580,5 @@ unittest
     auto hooks = RecordingHooks(&wsi);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi recording conformance");
-    assert(outcome.checked == 6 && outcome.skipped == 7);
+    assert(outcome.checked == 6 && outcome.skipped == 8);
 }

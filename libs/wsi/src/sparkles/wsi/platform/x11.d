@@ -22,6 +22,7 @@ import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
 import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
 import sparkles.event_horizon.op : Completion, OpHandle, OpPollAdd, PollEvents;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
+import sparkles.input.pointer : PointerShape;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
 import sparkles.wsi.loop : EventQueue;
@@ -44,6 +45,7 @@ struct X11Wsi
         bool live;
         bool ready;
         SurfaceMetrics metrics;
+        uint cursor;
     }
 
     private struct Bootstrap
@@ -59,6 +61,7 @@ struct X11Wsi
 
     private xcb_connection_t* connection_;
     private Bootstrap bootstrap_;
+    private uint cursorFont_;
     private xkb_context* xkbContext_;
     private xkb_keymap* xkbKeymap_;
     private xkb_state* xkbState_;
@@ -332,6 +335,142 @@ struct X11Wsi
         return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
     }
 
+    /**
+    Applies a standard cursor shape from the core `cursor` font. CSS
+    `grab`/`grabbing` have no core glyph and use the `fleur` move cursor as
+    the documented nearest shape; custom images are a later slice.
+    */
+    WsiResult!void setCursor(WindowId id, PointerShape shape)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_[checked.value];
+        if (cursorFont_ == 0)
+        {
+            cursorFont_ = xcb_generate_id(connection_);
+            static immutable fontName = "cursor";
+            const opened = checkedRequest(xcb_open_font_checked(connection_,
+                cursorFont_, fontName.length, fontName.ptr));
+            if (opened != 0)
+            {
+                cursorFont_ = 0;
+                return x11Failure!void(WsiOperation.command, opened,
+                    "the core cursor font is unavailable",
+                    WsiErrorKind.unsupported);
+            }
+        }
+        const glyph = x11CursorGlyph(shape);
+        const cursor = xcb_generate_id(connection_);
+        const created = checkedRequest(xcb_create_glyph_cursor_checked(
+            connection_, cursor, cursorFont_, cursorFont_,
+            glyph, cast(ushort)(glyph + 1),
+            0, 0, 0, 0xFFFF, 0xFFFF, 0xFFFF));
+        if (created != 0)
+            return x11Failure!void(WsiOperation.command, created,
+                "xcb_create_glyph_cursor failed");
+        return installCursor(slot, cursor);
+    }
+
+    /// An invisible cursor is a 1x1 empty pixmap cursor; visible restores
+    /// the stored shape by simply removing the override.
+    WsiResult!void setCursorVisible(WindowId id, bool visible)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_[checked.value];
+        if (visible)
+        {
+            const none = 0u;
+            const changed = checkedRequest(
+                xcb_change_window_attributes_checked(connection_,
+                    slot.window, XCB_CW_CURSOR, &none));
+            if (changed != 0)
+                return x11Failure!void(WsiOperation.command, changed,
+                    "restoring the window cursor failed");
+            if (slot.cursor != 0)
+                return installCursor(slot, slot.cursor, false);
+            return flushCommands();
+        }
+        const pixmap = xcb_generate_id(connection_);
+        const made = checkedRequest(xcb_create_pixmap_checked(connection_, 1,
+            pixmap, bootstrap_.root, 1, 1));
+        if (made != 0)
+            return x11Failure!void(WsiOperation.command, made,
+                "creating the blank cursor pixmap failed");
+        const cursor = xcb_generate_id(connection_);
+        const created = checkedRequest(xcb_create_cursor_checked(connection_,
+            cursor, pixmap, pixmap, 0, 0, 0, 0, 0, 0, 0, 0));
+        xcb_free_pixmap(connection_, pixmap);
+        if (created != 0)
+            return x11Failure!void(WsiOperation.command, created,
+                "creating the blank cursor failed");
+        const changed = checkedRequest(xcb_change_window_attributes_checked(
+            connection_, slot.window, XCB_CW_CURSOR, &cursor));
+        xcb_free_cursor(connection_, cursor);
+        if (changed != 0)
+            return x11Failure!void(WsiOperation.command, changed,
+                "hiding the window cursor failed");
+        return flushCommands();
+    }
+
+    private WsiResult!void installCursor(ref Slot slot, uint cursor,
+        bool own = true)
+    {
+        const changed = checkedRequest(xcb_change_window_attributes_checked(
+            connection_, slot.window, XCB_CW_CURSOR, &cursor));
+        if (changed != 0)
+        {
+            if (own)
+                xcb_free_cursor(connection_, cursor);
+            return x11Failure!void(WsiOperation.command, changed,
+                "setting the window cursor failed");
+        }
+        if (own)
+        {
+            if (slot.cursor != 0 && slot.cursor != cursor)
+                xcb_free_cursor(connection_, slot.cursor);
+            slot.cursor = cursor;
+        }
+        return flushCommands();
+    }
+
+    private WsiResult!void flushCommands()
+    {
+        return xcb_flush(connection_) > 0
+            ? wsiOk()
+            : x11Failure!void(WsiOperation.command,
+                xcb_connection_has_error(connection_),
+                "XCB flush failed");
+    }
+
+    private int checkedRequest(xcb_void_cookie_t cookie)
+    {
+        auto error = xcb_request_check(connection_, cookie);
+        if (error is null)
+            return 0;
+        const code = error.error_code;
+        free(error);
+        return code;
+    }
+
+    /// Core `cursor` font glyphs (X11/cursorfont.h numbering).
+    package static ushort x11CursorGlyph(PointerShape shape)
+        @safe pure nothrow @nogc
+    {
+        final switch (shape)
+        {
+            case PointerShape.default_: return 68; // XC_left_ptr
+            case PointerShape.text: return 152; // XC_xterm
+            case PointerShape.pointer: return 60; // XC_hand2
+            case PointerShape.ewResize: return 108; // XC_sb_h_double_arrow
+            case PointerShape.nsResize: return 116; // XC_sb_v_double_arrow
+            case PointerShape.grab: return 52; // XC_fleur (nearest)
+            case PointerShape.grabbing: return 52; // XC_fleur (nearest)
+        }
+    }
+
     WsiResult!NativeHandles nativeHandles(WindowId id)
     {
         auto checked = checkedSlot(id, WsiOperation.queryHandle);
@@ -478,11 +617,21 @@ struct X11Wsi
         foreach (i; 0 .. windows_.length)
             if (windows_[i].live)
             {
+                if (windows_[i].cursor != 0)
+                {
+                    xcb_free_cursor(connection_, windows_[i].cursor);
+                    windows_[i].cursor = 0;
+                }
                 destroyNative(windows_[i].window);
                 windows_[i].live = false;
                 windows_[i].ready = false;
                 windows_[i].window = 0;
             }
+        if (cursorFont_ != 0)
+        {
+            xcb_close_font(connection_, cursorFont_);
+            cursorFont_ = 0;
+        }
         if (xkbState_ !is null)
         {
             xkb_state_unref(xkbState_);

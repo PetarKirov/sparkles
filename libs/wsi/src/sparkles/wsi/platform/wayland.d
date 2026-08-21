@@ -21,6 +21,7 @@ import std.math : isFinite;
 
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
+import sparkles.input.pointer : PointerShape;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
 import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
@@ -64,6 +65,8 @@ struct WaylandWsi
         SurfaceMetrics metrics;
         ubyte enteredOutputs;
         int scale = 1;
+        PointerShape cursorShape = PointerShape.default_;
+        bool cursorVisible = true;
     }
 
     private wl_display* display_;
@@ -86,6 +89,9 @@ struct WaylandWsi
 
     private Output[8] outputs_;
     private wl_pointer* pointer_;
+    private wp_cursor_shape_manager_v1* cursorShapeManager_;
+    private wp_cursor_shape_device_v1* cursorShapeDevice_;
+    private uint pointerEnterSerial_;
     private const(wl_surface)* pointerFocus_;
     private LogicalPosition pointerPosition_;
     private double pendingScrollDx_ = 0;
@@ -611,6 +617,11 @@ struct WaylandWsi
             bootstrapSync_ = null;
         }
         releasePointer();
+        if (cursorShapeManager_ !is null)
+        {
+            wp_cursor_shape_manager_v1_destroy(cursorShapeManager_);
+            cursorShapeManager_ = null;
+        }
         if (keyboard_ !is null)
         {
             if (seatVersion_ >= WL_KEYBOARD_RELEASE_SINCE_VERSION)
@@ -804,6 +815,20 @@ struct WaylandWsi
                 owner.remember(wsiError(WsiErrorKind.nativeFailure,
                     WsiOperation.open, BackendKind.wayland, 0,
                     "failed to install xdg_wm_base listener"));
+        }
+        else if (strcmp(interfaceName,
+            wp_cursor_shape_manager_v1_interface.name) == 0
+            && owner.cursorShapeManager_ is null)
+        {
+            owner.cursorShapeManager_ = cast(wp_cursor_shape_manager_v1*)
+                wl_registry_bind(registry, name,
+                    &wp_cursor_shape_manager_v1_interface, 1);
+            if (owner.pointer_ !is null
+                && owner.cursorShapeManager_ !is null
+                && owner.cursorShapeDevice_ is null)
+                owner.cursorShapeDevice_ =
+                    wp_cursor_shape_manager_v1_get_pointer(
+                        owner.cursorShapeManager_, owner.pointer_);
         }
         else if (strcmp(interfaceName, wl_output_interface.name) == 0)
         {
@@ -1008,6 +1033,11 @@ struct WaylandWsi
                 owner.remember(wsiError(WsiErrorKind.nativeFailure,
                     WsiOperation.dispatch, BackendKind.wayland, 0,
                     "failed to install wl_pointer listener"));
+            if (owner.pointer_ !is null
+                && owner.cursorShapeManager_ !is null)
+                owner.cursorShapeDevice_ =
+                    wp_cursor_shape_manager_v1_get_pointer(
+                        owner.cursorShapeManager_, owner.pointer_);
         }
         else if (!hasPointer && owner.pointer_ !is null)
         {
@@ -1043,10 +1073,93 @@ struct WaylandWsi
 
     // The keymap fd must be consumed; mapping it through xkbcommon is the
     // logical-key slice, so until then close it immediately.
+    /**
+    Stores the window's standard cursor shape and applies it while the
+    pointer is inside. Server-side shapes come from cursor-shape-v1; a
+    compositor without that global reports typed `unsupported`. Custom
+    images and cursor themes are a later slice.
+    */
+    WsiResult!void setCursor(WindowId id, PointerShape shape)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (cursorShapeManager_ is null)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "compositor lacks wp_cursor_shape_manager_v1",
+                WsiErrorKind.unsupported);
+        ref slot = windows_[checked.value];
+        slot.cursorShape = shape;
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        applyCursor(slot);
+        return prepareAndArm();
+    }
+
+    /// Visibility uses the core null-surface cursor, so it works with or
+    /// without the shape protocol.
+    WsiResult!void setCursorVisible(WindowId id, bool visible)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_[checked.value];
+        slot.cursorVisible = visible;
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        applyCursor(slot);
+        return prepareAndArm();
+    }
+
+    private void applyCursor(ref Slot slot) nothrow @nogc
+    {
+        if (pointer_ is null || pointerEnterSerial_ == 0
+            || pointerFocus_ !is slot.surface)
+            return;
+        if (!slot.cursorVisible)
+        {
+            wl_pointer_set_cursor(pointer_, pointerEnterSerial_, null, 0, 0);
+            return;
+        }
+        if (cursorShapeDevice_ !is null)
+            wp_cursor_shape_device_v1_set_shape(cursorShapeDevice_,
+                pointerEnterSerial_, cursorShapeFor(slot.cursorShape));
+    }
+
+    /// The shared shape names are CSS cursor names, as is cursor-shape-v1.
+    package static uint cursorShapeFor(PointerShape shape)
+        @safe pure nothrow @nogc
+    {
+        final switch (shape)
+        {
+            case PointerShape.default_:
+                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+            case PointerShape.text:
+                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
+            case PointerShape.pointer:
+                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER;
+            case PointerShape.ewResize:
+                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_EW_RESIZE;
+            case PointerShape.nsResize:
+                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NS_RESIZE;
+            case PointerShape.grab:
+                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB;
+            case PointerShape.grabbing:
+                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING;
+        }
+    }
+
     private void releasePointer() nothrow @nogc
     {
         if (pointer_ is null)
             return;
+        if (cursorShapeDevice_ !is null)
+        {
+            wp_cursor_shape_device_v1_destroy(cursorShapeDevice_);
+            cursorShapeDevice_ = null;
+        }
         if (seatVersion_ >= WL_POINTER_RELEASE_SINCE_VERSION)
             wl_pointer_release(pointer_);
         else
@@ -1075,14 +1188,21 @@ struct WaylandWsi
         emit(idAt(index), event);
     }
 
-    private extern (C) static void onPointerEnter(void* data, wl_pointer*,
-        uint, wl_surface* surface, wl_fixed_t sx, wl_fixed_t sy) nothrow @nogc
+    private extern (C) static void onPointerEnter(void* data,
+        wl_pointer*, uint serial, wl_surface* surface, wl_fixed_t sx,
+        wl_fixed_t sy) nothrow @nogc
     {
         auto owner = cast(WaylandWsi*) data;
+        owner.pointerEnterSerial_ = serial;
         owner.pointerFocus_ = surface;
         owner.pointerPosition_ =
             LogicalPosition(wl_fixed_to_double(sx), wl_fixed_to_double(sy));
         owner.emitPointer(PointerPhase.entered);
+        // The compositor resets the cursor on every enter; re-apply the
+        // focused window's stored shape and visibility.
+        const index = owner.indexOfSurface(surface);
+        if (index != size_t.max)
+            owner.applyCursor(owner.windows_[index]);
     }
 
     private extern (C) static void onPointerLeave(void* data, wl_pointer*,

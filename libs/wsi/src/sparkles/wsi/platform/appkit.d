@@ -15,6 +15,7 @@ import std.math : isFinite;
 
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
+import sparkles.input.pointer : PointerShape;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
     ioOk;
 import sparkles.wsi.events;
@@ -145,6 +146,22 @@ private extern class NSEvent : NSObject
 
 private extern class NSResponder : NSObject
 {
+}
+
+private extern class NSCursor : NSObject
+{
+    static NSCursor arrowCursor() @selector("arrowCursor");
+    static NSCursor IBeamCursor() @selector("IBeamCursor");
+    static NSCursor pointingHandCursor() @selector("pointingHandCursor");
+    static NSCursor resizeLeftRightCursor()
+        @selector("resizeLeftRightCursor");
+    static NSCursor resizeUpDownCursor() @selector("resizeUpDownCursor");
+    static NSCursor openHandCursor() @selector("openHandCursor");
+    static NSCursor closedHandCursor() @selector("closedHandCursor");
+    static NSCursor currentCursor() @selector("currentCursor");
+    static void hide() @selector("hide");
+    static void unhide() @selector("unhide");
+    void set() @selector("set");
 }
 
 private extern class NSApplication : NSResponder
@@ -650,6 +667,11 @@ struct AppKitWsi
             if (windows_[i].window !is null)
                 destroySlot(i, windows_[i].live);
         removeKqueueBridge();
+        if (cursorHidden_)
+        {
+            NSCursor.unhide();
+            cursorHidden_ = false;
+        }
         closed_ = true;
         open_ = false;
         if (activeOwner is &this)
@@ -856,6 +878,57 @@ struct AppKitWsi
             value = (value << 6) | (unit & 0x3F);
         }
         return cast(dchar) value;
+    }
+
+    private bool cursorHidden_;
+
+    /**
+    Applies a standard cursor shape immediately. All seven shared shapes
+    map to stock NSCursor instances; per-view cursor rectangles and custom
+    images are a later slice.
+    */
+    WsiResult!void setCursor(WindowId id, PointerShape shape)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        appKitCursor(shape).set();
+        return wsiOk();
+    }
+
+    /// NSCursor.hide/unhide is a balanced global counter, so the hidden
+    /// state is tracked and only toggled on transitions.
+    WsiResult!void setCursorVisible(WindowId id, bool visible)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (visible == !cursorHidden_)
+            return wsiOk();
+        if (visible)
+            NSCursor.unhide();
+        else
+            NSCursor.hide();
+        cursorHidden_ = !visible;
+        return wsiOk();
+    }
+
+    /// Every shared shape has a stock NSCursor.
+    package static NSCursor appKitCursor(PointerShape shape)
+    {
+        final switch (shape)
+        {
+            case PointerShape.default_: return NSCursor.arrowCursor();
+            case PointerShape.text: return NSCursor.IBeamCursor();
+            case PointerShape.pointer:
+                return NSCursor.pointingHandCursor();
+            case PointerShape.ewResize:
+                return NSCursor.resizeLeftRightCursor();
+            case PointerShape.nsResize:
+                return NSCursor.resizeUpDownCursor();
+            case PointerShape.grab: return NSCursor.openHandCursor();
+            case PointerShape.grabbing: return NSCursor.closedHandCursor();
+        }
     }
 
     /// One pointer per NSApplication event stream.
