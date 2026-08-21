@@ -10,7 +10,8 @@
 /**
  * The path as the node address (fork D3), in both directions.
  *
- * Grammar:  path := name ( "." name | "[" digits "]" )*
+ * Grammar:  path := seg ( "." name | "[" digits "]" | "[#" digits "]" )*
+ *           seg  := name | '["' quoted '"]'      (backslash-escaped ", \)
  *
  * Under test:
  *   C8.  The SAME path text resolves two ways: at compile time it becomes a
@@ -25,7 +26,21 @@
  *   C11. Index paths are POSITIONAL, and that is a real defect, not a
  *        nitpick: deleting element 0 silently re-points every later element's
  *        expansion, selection and in-progress edit (rjsf's synthetic-key
- *        finding). Demonstrated, then fixed with an adapter-owned element id.
+ *        finding).
+ *   C25. The fix is element-provided identity, not an adapter side table: an
+ *        element type opting in with `ulong propElementKey() const` makes
+ *        `[#7]` resolve BY KEY through the same generated walk, unmoved by
+ *        removal or reorder of earlier elements. A duplicate or absent key —
+ *        and `[#…]` on a collection that never opted in — is refused, never
+ *        resolved positionally. (Added with the spec review; the earlier
+ *        revision minted the id in an adapter-owned table, the ambient side
+ *        table PRN1/PRN2 argue against.)
+ *   C26. Names outside the identifier subset (erased children: JSON keys with
+ *        `.`, `[`, spaces, leading digits) use a QUOTED segment `["…"]` with
+ *        backslash escapes. The emitter picks bare exactly when the name is
+ *        identifier-shaped, so every emitted path re-parses to the same
+ *        segments; the quoted and bare spellings of the same member resolve
+ *        identically.
  *
  * Run: `dub run --single path-addressing.d`
  */
@@ -38,7 +53,7 @@ import std.traits : isAggregateType, isArray, isDynamicArray, isSomeString;
 
 // ── path segments ────────────────────────────────────────────────────────────
 
-struct Seg { string name; size_t index; bool isIndex; }
+struct Seg { string name; size_t index; bool isIndex; bool isKey; ulong key; }
 
 /// Parses at CTFE and at run time — the same function.
 Seg[] segments(const(char)[] path) pure
@@ -50,10 +65,34 @@ Seg[] segments(const(char)[] path) pure
         if (path[i] == '.') { i++; continue; }
         if (path[i] == '[')
         {
-            size_t j = ++i;
-            while (j < path.length && path[j] != ']') j++;
-            segs ~= Seg(null, to!size_t(path[i .. j]), true);
-            i = j + 1;
+            if (i + 1 < path.length && path[i + 1] == '#')       // [#key] (C25)
+            {
+                size_t j = i + 2;
+                while (j < path.length && path[j] != ']') j++;
+                Seg s = { isKey: true, key: to!ulong(path[i + 2 .. j]) };
+                segs ~= s;
+                i = j + 1;
+            }
+            else if (i + 1 < path.length && path[i + 1] == '"')  // ["name"] (C26)
+            {
+                size_t j = i + 2;
+                string name;
+                while (j < path.length && path[j] != '"')
+                {
+                    if (path[j] == '\\') j++;
+                    name ~= path[j];
+                    j++;
+                }
+                segs ~= Seg(name, 0, false);
+                i = j + 2;   // past the closing `"` and `]`
+            }
+            else
+            {
+                size_t j = ++i;
+                while (j < path.length && path[j] != ']') j++;
+                segs ~= Seg(null, to!size_t(path[i .. j]), true);
+                i = j + 1;
+            }
         }
         else
         {
@@ -66,12 +105,31 @@ Seg[] segments(const(char)[] path) pure
     return segs;
 }
 
-/// The inverse: how the walk mints a child's path.
+/// The inverse: how the walk mints a child's path. A name outside the bare
+/// identifier subset is emitted as a quoted segment, so every emitted path
+/// re-parses to the same segments (C26).
 string childPath(string parent, string member) pure nothrow
-    => parent.length ? parent ~ "." ~ member : member;
+{
+    bool bare = member.length > 0 && !(member[0] >= '0' && member[0] <= '9');
+    foreach (c; member)
+        bare &= c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9');
+    if (bare)
+        return parent.length ? parent ~ "." ~ member : member;
+    string q = `["`;
+    foreach (c; member)
+    {
+        if (c == '"' || c == '\\') q ~= '\\';
+        q ~= c;
+    }
+    return parent ~ q ~ `"]`;
+}
 /// ditto
 string elementPath(string parent, size_t i) pure
     => parent ~ "[" ~ i.to!string ~ "]";
+/// ditto — stable identity for an opted-in element (C25)
+string keyedPath(string parent, ulong key) pure
+    => parent ~ "[#" ~ key.to!string ~ "]";
 
 // ── C8: compile-time resolution ──────────────────────────────────────────────
 
@@ -120,6 +178,20 @@ bool resolve(alias sink, T)(ref T subject, in Seg[] segs, size_t at_ = 0)
     else static if (isArray!T && !isSomeString!T)
     {
         if (at_ == segs.length) { sink(subject, T.stringof); return true; }
+        static if (__traits(hasMember, typeof(subject[0]), "propElementKey"))
+        {
+            // C25: keyed identity — `[#k]` resolves by the element's OWN key.
+            // A duplicate or absent key is refused, never resolved positionally.
+            if (segs[at_].isKey)
+            {
+                size_t found, hits;
+                foreach (idx; 0 .. subject.length)
+                    if (subject[idx].propElementKey == segs[at_].key)
+                    { found = idx; hits++; }
+                if (hits != 1) return false;
+                return resolve!sink(subject[found], segs, at_ + 1);
+            }
+        }
         if (!segs[at_].isIndex || segs[at_].index >= subject.length) return false;
         return resolve!sink(subject[segs[at_].index], segs, at_ + 1);
     }
@@ -170,6 +242,16 @@ struct Layer
     Fill fill;
     Layer* parent;         // recursive: proves C9's termination
 }
+
+/// C25's subject: an element that OWNS its identity by opting in.
+struct KStop
+{
+    ulong id;
+    string name;
+    double weight = 0;
+    ulong propElementKey() const pure nothrow @nogc => id;
+}
+struct KRoot { KStop[] stops; }
 
 // ── driving ──────────────────────────────────────────────────────────────────
 
@@ -238,10 +320,32 @@ void main()
         readPath(l, opened ~ ".name"));
     writeln("    → expansion, selection and in-progress edits silently move.");
 
-    // The fix: the adapter mints a stable element id and the path carries it.
-    writeln("\n    with an adapter-owned element key the address is stable:");
-    struct Keyed { size_t id; Stop v; }
-    auto keyed = [Keyed(7, Stop("b", .5)), Keyed(9, Stop("c", 1))];
-    writefln("      fill.stops[#7] → %s   (unchanged by any reordering)",
-        keyed[0].v.name);
+    writeln("\nC25 — the fix is element-provided identity: `[#key]` resolves");
+    writeln("      by `propElementKey`, through the same generated walk:");
+    KRoot k;
+    k.stops = [KStop(7, "b", 0.5), KStop(9, "c", 1.0)];
+    writefln("    stops[#9].name          → %s", readPath(k, "stops[#9].name"));
+    k.stops = k.stops[1 .. $];                 // element 0 removed elsewhere
+    writefln("    after removing [#7]     → %s   (address unmoved)",
+        readPath(k, "stops[#9].name"));
+    writefln("    absent key stops[#3]    → %s", readPath(k, "stops[#3].name"));
+    k.stops = [KStop(7, "x"), KStop(7, "y")];  // a duplicate key
+    writefln("    duplicate key stops[#7] → %s (refused, never positional)",
+        readPath(k, "stops[#7].name"));
+    writefln("    unkeyed fill.stops[#7]  → %s (identity is opt-in)",
+        readPath(l, "fill.stops[#7].name"));
+    writefln("    the emitter mints it:   keyedPath(\"stops\", 9) = %s",
+        keyedPath("stops", 9));
+
+    writeln("\nC26 — quoted segments carry names the bare grammar cannot:");
+    writefln("    [\"fill\"].tint ≡ fill.tint → %s ≡ %s",
+        readPath(l, `["fill"].tint`), readPath(l, "fill.tint"));
+    const weird = `a.b [x] "q"`;
+    const minted = childPath("", weird);
+    const back = segments(minted);
+    writefln("    childPath of %(%s%) mints %s", [weird], minted);
+    writefln("    …which re-parses to one name segment (round-trip: %s)",
+        back.length == 1 && back[0].name == weird);
+    writefln("    identifier-shaped names stay bare: childPath(\"fill\", \"tint\") = %s",
+        childPath("fill", "tint"));
 }
