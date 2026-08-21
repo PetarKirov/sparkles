@@ -189,8 +189,14 @@ and Win32 runtime surface probes drive the live ICD through the same typed
 handles: XCB under Xvfb and winevulkan under Wine both create a real surface,
 select a present-capable device (falling through to lavapipe where hardware
 ICDs cannot present), and prove the integrated wait still dispatches after the
-driver ran. The HITL live-resize trace against the SDL handoff's measured
-target and native Windows CI remain.
+driver ran. The Wayland presentation gate is scripted: Weston's X11 backend
+inside Xvfb with the client pinned to lavapipe presents the full stress run
+under sync validation without a live desktop session (headless Weston loses
+the surface, and a hardware ICD's dmabufs crash a software Weston — the
+windowed backend avoids both), and the triangle now reports the SDL handoff's
+comparison counters (`framesOver50ms`/`framesOver100ms`, `reaps`,
+`maxDispatchMs`) so the HITL run can be read against the measured target in
+one glance. The HITL live-resize trace itself and native Windows CI remain.
 
 ## Milestone M7 — Skia Graphite
 
