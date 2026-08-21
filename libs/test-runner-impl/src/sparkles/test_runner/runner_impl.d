@@ -117,6 +117,49 @@ private bool testingRunnerItself(bool hostIsRunner)
     return args.length && args[0].baseName.canFind("test-runner");
 }
 
+/// Infers dub's `:subpackage` selector from its generated unittest executable
+/// name (`sparkles-core-cli-test-unittest` → `:core-cli`). The repository root
+/// package needs no selector; unknown/custom names remain useful best efforts.
+private string rerunPackageSelector(string executable) @safe pure nothrow
+{
+    import std.path : baseName, stripExtension;
+    import std.string : startsWith;
+
+    auto name = executable.baseName.stripExtension;
+    enum marker = "-test-";
+    size_t markerPos;
+    bool found;
+    if (name.length >= marker.length)
+        foreach_reverse (i; 0 .. name.length - marker.length + 1)
+            if (name[i .. i + marker.length] == marker)
+            {
+                markerPos = i;
+                found = true;
+                break;
+            }
+    if (!found || markerPos == 0)
+        return null;
+    name = name[0 .. markerPos];
+    if (name == "sparkles")
+        return null;
+    if (name.startsWith("sparkles-"))
+        name = name["sparkles-".length .. $];
+    return name.length ? ":" ~ name : null;
+}
+
+@("runner.rerunPackageSelector.generatedTargets")
+@safe pure nothrow
+unittest
+{
+    assert(rerunPackageSelector("libs/core-cli/build/sparkles-core-cli-test-unittest")
+        == ":core-cli");
+    assert(rerunPackageSelector("sparkles-test-runner-impl-test-unittest")
+        == ":test-runner-impl");
+    assert(rerunPackageSelector("apps/hue/build/hue-test-unittest") == ":hue");
+    assert(rerunPackageSelector("sparkles-test-unittest") is null);
+    assert(rerunPackageSelector("custom") is null);
+}
+
 /// The outcome of CLI parsing: either a populated `options`, a request for the
 /// help text, or a one-line `error` — never a thrown exception, which would
 /// escape the unittest hook as a raw stack trace.
@@ -691,7 +734,10 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
         import std.algorithm.sorting : sort;
 
         failures.sort!((a, b) => a.test.fullName < b.test.fullName);
-        stdout.write(formatFailedRecap(failures, colored));
+        const packageSelector = Runtime.args.length
+            ? rerunPackageSelector(Runtime.args[0]) : null;
+        stdout.write(formatFailedRecap(failures, colored,
+            options.verbose, packageSelector));
     }
 
     const executed = totals.passed + totals.failed + totals.ctfePassed;
