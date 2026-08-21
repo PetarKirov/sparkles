@@ -150,28 +150,27 @@ traced at the boundary — the requirement names the sparkles library and the
 concrete entry point `hue` calls; the library's own internals are specified in
 its own docs.
 
-| Source file                        | Primary spec + areas                                                                                                             |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/hue/src/app.d`               | general — `CLI`, `SRC`, `LNG`, `ENG`, `THM`, `CLR`, `MOD`, `ANS`, `HTM`, `DEG`                                                   |
-| `apps/hue/src/source_set.d`        | general — `SRC4`–`SRC6`; [gallery](./gallery.md) — `GAL1`, `GAL8`                                                                |
-| `apps/hue/src/gallery.d`           | general — `HTM4`, `HTM6`–`HTM8`; [gallery](./gallery.md) — `GAL2`–`GAL4`, `GAL6`, `GAL7`                                         |
-| `apps/hue/src/previewer.d`         | general — `PRV`, `NFR`                                                                                                           |
-| `apps/hue/src/gui.d`               | GUI — `WIN`, `FNT`, `RND`, `VIW`, `NUM`, `NAV`, `SCB`, `THG`, `FND`, `COD`, `SEL`, `FSC`, `DBG`                                  |
-| `apps/hue/src/gui_preview.d`       | GUI — `VIW`, `MDP` (the document model; rendering is the shared widget views)                                                    |
-| `apps/hue/src/viewer_model.d`      | GUI/TUI — `RND`, `WRP`, `NUM`, `FND` (the shared document-pipeline Whole; ui/migration `MIG9`)                                   |
-| `apps/hue/src/gui_ansi.d`          | GUI — `MDP` (the ` ```ansi ` fence decoder)                                                                                      |
-| `apps/hue/src/gui_text.d`          | GUI — `WRP`, `FND`, `NUM` (pure metrics/search)                                                                                  |
-| `apps/hue/src/table_select.d`      | GUI — `TBL1`, `TBL2`, `TBL5` (presentation-free smart-drag + serializers)                                                        |
-| `apps/hue/src/tui.d`               | [TUI](./tui.md) — `TIN`, `TSF`, `TSB`, `TSL`, `MDP-T`; general — `PRV` (the shipped viewer)                                      |
-| `apps/hue/src/ansi_model.d`        | GUI — `MDP12`; general — `NFR3` (ghostty-free presentation types shared by both painters)                                        |
-| `apps/hue/src/gui_canvas.d`        | [ui/backends](../ui/backends.md) — `TGT6` (the raylib canvas adapter)                                                            |
-| `apps/hue/src/tui_canvas.d`        | [ui/backends](../ui/backends.md) — `TGT6` (the cell-grid canvas adapter)                                                         |
-| `apps/hue/src/twoslash_tui.d`      | [twoslash](./twoslash.md) — `TWM`/`TWO`/`TWH`; [gallery](./gallery.md) — `GNV1`, `GNV2`                                          |
-| `apps/hue/src/android_glue.d`      | [Android](./android.md) — `AND2`, `AND4`, `AND9` (the NDK surface: logcat sink, asset extraction, debug env, clipboard entry)    |
-| `apps/hue/src/android_clipboard.d` | [Android](./android.md) — `AND6` (the JNI `ClipboardManager` bridge, over an ImportC'd `<jni.h>`)                                |
-| `apps/hue/src/android_paths.d`     | [Android](./android.md) — `AND2`, `AND9` (pure, host-tested: the extracted-asset layout, manifest-entry safety, `hue-debug.env`) |
-| `apps/hue/src/gui_touch.d`         | [Android](./android.md) — `AND6` (`TouchScroller`: tap / drag+fling / long-press / gesture cancel)                               |
-| `apps/hue/src/keymap.d`            | [lantern](./lantern.md) — `KEY` (the one binding table every backend resolves through), `LMP` (the map it holds)                 |
-| `apps/hue/src/lantern.d`           | [lantern](./lantern.md) — `LTN1`–`LTN4`, `LTN9`–`LTN12` (the prefix state machine and its wall-clock delay)                      |
-| `apps/hue/src/lantern_view.d`      | [lantern](./lantern.md) — `LTN5`–`LTN8`, `LTN14` (the panel as one widget tree, both backends)                                   |
-| `apps/hue/tools/capture-modes.d`   | [ui/backends](../ui/backends.md) — `TGT10` (the cross-backend parity harness)                                                    |
+| Source file                        | Primary spec + areas                                                                                                                                                       |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/hue/src/app.d`               | general — `CLI`, `SRC`, `LNG`, `ENG`, `THM`, `CLR`, `MOD`, `ANS`, `HTM`, `DEG`                                                                                             |
+| `libs/docs` (`sparkles:docs`)      | general — `SRC4`–`SRC6`, `HTM4`, `HTM6`–`HTM8`; [gallery](./gallery.md) — `GAL1`–`GAL4`, `GAL6`–`GAL8`, `GAL12`, `GAL14` (the doc-site library the gallery extracted into) |
+| `apps/hue/src/previewer.d`         | general — `PRV`, `NFR`                                                                                                                                                     |
+| `apps/hue/src/gui.d`               | GUI — `WIN`, `FNT`, `RND`, `VIW`, `NUM`, `NAV`, `SCB`, `THG`, `FND`, `COD`, `SEL`, `FSC`, `DBG`                                                                            |
+| `apps/hue/src/gui_preview.d`       | GUI — `VIW`, `MDP` (the document model; rendering is the shared widget views)                                                                                              |
+| `apps/hue/src/viewer_model.d`      | GUI/TUI — `RND`, `WRP`, `NUM`, `FND` (the shared document-pipeline Whole; ui/migration `MIG9`)                                                                             |
+| `apps/hue/src/gui_ansi.d`          | GUI — `MDP` (the ` ```ansi ` fence decoder)                                                                                                                                |
+| `apps/hue/src/gui_text.d`          | GUI — `WRP`, `FND`, `NUM` (pure metrics/search)                                                                                                                            |
+| `apps/hue/src/table_select.d`      | GUI — `TBL1`, `TBL2`, `TBL5` (presentation-free smart-drag + serializers)                                                                                                  |
+| `apps/hue/src/tui.d`               | [TUI](./tui.md) — `TIN`, `TSF`, `TSB`, `TSL`, `MDP-T`; general — `PRV` (the shipped viewer)                                                                                |
+| `apps/hue/src/ansi_model.d`        | GUI — `MDP12`; general — `NFR3` (ghostty-free presentation types shared by both painters)                                                                                  |
+| `apps/hue/src/gui_canvas.d`        | [ui/backends](../ui/backends.md) — `TGT6` (the raylib canvas adapter)                                                                                                      |
+| `apps/hue/src/tui_canvas.d`        | [ui/backends](../ui/backends.md) — `TGT6` (the cell-grid canvas adapter)                                                                                                   |
+| `apps/hue/src/twoslash_tui.d`      | [twoslash](./twoslash.md) — `TWM`/`TWO`/`TWH`; [gallery](./gallery.md) — `GNV1`, `GNV2`                                                                                    |
+| `apps/hue/src/android_glue.d`      | [Android](./android.md) — `AND2`, `AND4`, `AND9` (the NDK surface: logcat sink, asset extraction, debug env, clipboard entry)                                              |
+| `apps/hue/src/android_clipboard.d` | [Android](./android.md) — `AND6` (the JNI `ClipboardManager` bridge, over an ImportC'd `<jni.h>`)                                                                          |
+| `apps/hue/src/android_paths.d`     | [Android](./android.md) — `AND2`, `AND9` (pure, host-tested: the extracted-asset layout, manifest-entry safety, `hue-debug.env`)                                           |
+| `apps/hue/src/gui_touch.d`         | [Android](./android.md) — `AND6` (`TouchScroller`: tap / drag+fling / long-press / gesture cancel)                                                                         |
+| `apps/hue/src/keymap.d`            | [lantern](./lantern.md) — `KEY` (the one binding table every backend resolves through), `LMP` (the map it holds)                                                           |
+| `apps/hue/src/lantern.d`           | [lantern](./lantern.md) — `LTN1`–`LTN4`, `LTN9`–`LTN12` (the prefix state machine and its wall-clock delay)                                                                |
+| `apps/hue/src/lantern_view.d`      | [lantern](./lantern.md) — `LTN5`–`LTN8`, `LTN14` (the panel as one widget tree, both backends)                                                                             |
+| `apps/hue/tools/capture-modes.d`   | [ui/backends](../ui/backends.md) — `TGT10` (the cross-backend parity harness)                                                                                              |
