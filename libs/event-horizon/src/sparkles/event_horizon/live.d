@@ -1037,25 +1037,34 @@ unittest
 @safe
 unittest
 {
-    Sched s;
-    schedOrSkip(s);
+    version (OSX)
+    {
+        import sparkles.test_runner.skip : skipTest;
 
-    auto r = s.run(() {
-        // The child sees a real controlling terminal: `tty -s` succeeds
-        // only when stdin is a tty, and the winsize preset is observable.
-        auto spawned = spawnPty(["sh", "-c", "stty size"], 80, 24);
-        assert(spawned.hasValue);
-        auto child = spawned.value;
-        assert(child.ptyMaster.fd >= 0);
+        skipTest("PTY master is not pollable via kqueue on macOS");
+    }
+    else
+    {
+        Sched s;
+        schedOrSkip(s);
 
-        SmallBuffer!(ubyte, 512) out_;
-        drainInto(s, child.ptyMaster, out_);
-        assert(out_[] == cast(const(ubyte)[]) "24 80\r\n",
-            "the child ran on the slave with the preset winsize");
+        auto r = s.run(() {
+            // The child sees a real controlling terminal: `tty -s` succeeds
+            // only when stdin is a tty, and the winsize preset is observable.
+            auto spawned = spawnPty(["sh", "-c", "stty size"], 80, 24);
+            assert(spawned.hasValue);
+            auto child = spawned.value;
+            assert(child.ptyMaster.fd >= 0);
 
-        auto st = wait(s, child);
-        assert(st.hasValue && st.value.ok);
-        child.ptyMaster.close();
-    });
-    assert(!r.hasError);
+            SmallBuffer!(ubyte, 512) out_;
+            drainInto(s, child.ptyMaster, out_);
+            assert(out_[] == cast(const(ubyte)[]) "24 80\r\n",
+                "the child ran on the slave with the preset winsize");
+
+            auto st = wait(s, child);
+            assert(st.hasValue && st.value.ok);
+            child.ptyMaster.close();
+        });
+        assert(!r.hasError);
+    }
 }
