@@ -18,6 +18,7 @@ import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, PROT_READ, mmap,
 import core.sys.posix.unistd : posixClose = close;
 import core.time : Duration;
 import std.math : isFinite;
+import std.traits : Parameters;
 
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
@@ -1635,4 +1636,273 @@ private WsiResult!T waylandFailure(T)(WsiOperation operation,
 {
     return wsiErr!T(wsiError(kind, operation, BackendKind.wayland,
         nativeCode, diagnostic));
+}
+
+/*
+ImportC interop: dmd does not emit a C header's `static inline` helpers for
+use from another module ("statics defined in one module cannot be referenced
+from another"), so every protocol request wrapper this module needs is
+transcribed below in D, verbatim from the generating headers, over the
+exported `wl_proxy_*` ABI. The request opcodes (`WL_DISPLAY_SYNC`, ...) are
+the headers' own macros, which ImportC does export, and module-scope
+definitions shadow the imported C declarations, so call sites stay identical
+and ldc2 and dmd compile the same code. The C names are kept on purpose;
+keep each body a faithful transcription.
+*/
+
+private alias ListenerImpl = Parameters!wl_proxy_add_listener[1];
+
+private wl_callback* wl_display_sync()(wl_display* self)
+    => cast(wl_callback*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WL_DISPLAY_SYNC, &wl_callback_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null);
+
+private wl_registry* wl_display_get_registry()(wl_display* self)
+    => cast(wl_registry*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WL_DISPLAY_GET_REGISTRY, &wl_registry_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null);
+
+private int wl_registry_add_listener()(wl_registry* self,
+        const(wl_registry_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void* wl_registry_bind()(wl_registry* self, uint name,
+        const(wl_interface)* iface, uint ver)
+    // ImportC drops the C signature's `const`, so un-const the borrowed
+    // interface table the same way `listenerPtr` does.
+    => cast(void*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WL_REGISTRY_BIND, cast(wl_interface*) iface, ver, 0, name,
+        iface.name, ver, cast(void*) null);
+
+private int wl_callback_add_listener()(wl_callback* self,
+        const(wl_callback_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void wl_callback_destroy()(wl_callback* self)
+    => wl_proxy_destroy(cast(wl_proxy*) self);
+
+private wl_surface* wl_compositor_create_surface()(wl_compositor* self)
+    => cast(wl_surface*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WL_COMPOSITOR_CREATE_SURFACE, &wl_surface_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null);
+
+private int wl_surface_add_listener()(wl_surface* self,
+        const(wl_surface_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void wl_surface_commit()(wl_surface* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_SURFACE_COMMIT, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0);
+}
+
+private void wl_surface_destroy()(wl_surface* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_SURFACE_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private wl_callback* wl_surface_frame()(wl_surface* self)
+    => cast(wl_callback*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WL_SURFACE_FRAME, &wl_callback_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null);
+
+private void wl_surface_set_buffer_scale()(wl_surface* self, int scale)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_SURFACE_SET_BUFFER_SCALE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, scale);
+}
+
+private int wl_seat_add_listener()(wl_seat* self,
+        const(wl_seat_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private wl_keyboard* wl_seat_get_keyboard()(wl_seat* self)
+    => cast(wl_keyboard*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WL_SEAT_GET_KEYBOARD, &wl_keyboard_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null);
+
+private wl_pointer* wl_seat_get_pointer()(wl_seat* self)
+    => cast(wl_pointer*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WL_SEAT_GET_POINTER, &wl_pointer_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null);
+
+private void wl_seat_release()(wl_seat* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_SEAT_RELEASE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private void wl_seat_destroy()(wl_seat* self)
+    => wl_proxy_destroy(cast(wl_proxy*) self);
+
+private int wl_keyboard_add_listener()(wl_keyboard* self,
+        const(wl_keyboard_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void wl_keyboard_destroy()(wl_keyboard* self)
+    => wl_proxy_destroy(cast(wl_proxy*) self);
+
+private void wl_keyboard_release()(wl_keyboard* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_KEYBOARD_RELEASE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private int wl_pointer_add_listener()(wl_pointer* self,
+        const(wl_pointer_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void wl_pointer_destroy()(wl_pointer* self)
+    => wl_proxy_destroy(cast(wl_proxy*) self);
+
+private void wl_pointer_release()(wl_pointer* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_POINTER_RELEASE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private void wl_pointer_set_cursor()(wl_pointer* self, uint serial, wl_surface* surface, int hotspotX, int hotspotY)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_POINTER_SET_CURSOR, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, serial, surface, hotspotX, hotspotY);
+}
+
+private int wl_output_add_listener()(wl_output* self,
+        const(wl_output_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void wl_output_destroy()(wl_output* self)
+    => wl_proxy_destroy(cast(wl_proxy*) self);
+
+private double wl_fixed_to_double()(wl_fixed_t f)
+    => f / 256.0;
+
+private int xdg_wm_base_add_listener()(xdg_wm_base* self,
+        const(xdg_wm_base_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void xdg_wm_base_destroy()(xdg_wm_base* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_WM_BASE_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private xdg_surface* xdg_wm_base_get_xdg_surface()(xdg_wm_base* self, wl_surface* surface)
+    => cast(xdg_surface*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        XDG_WM_BASE_GET_XDG_SURFACE, &xdg_surface_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null,
+        surface);
+
+private void xdg_wm_base_pong()(xdg_wm_base* self, uint serial)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_WM_BASE_PONG, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, serial);
+}
+
+private int xdg_surface_add_listener()(xdg_surface* self,
+        const(xdg_surface_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void xdg_surface_ack_configure()(xdg_surface* self, uint serial)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_SURFACE_ACK_CONFIGURE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, serial);
+}
+
+private void xdg_surface_destroy()(xdg_surface* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_SURFACE_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private xdg_toplevel* xdg_surface_get_toplevel()(xdg_surface* self)
+    => cast(xdg_toplevel*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        XDG_SURFACE_GET_TOPLEVEL, &xdg_toplevel_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null);
+
+private int xdg_toplevel_add_listener()(xdg_toplevel* self,
+        const(xdg_toplevel_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void xdg_toplevel_destroy()(xdg_toplevel* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private void xdg_toplevel_set_app_id()(xdg_toplevel* self, const(char)* appId)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SET_APP_ID, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, appId);
+}
+
+private void xdg_toplevel_set_title()(xdg_toplevel* self, const(char)* title)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SET_TITLE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, title);
+}
+
+private void xdg_toplevel_set_fullscreen()(xdg_toplevel* self, wl_output* output)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SET_FULLSCREEN, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, output);
+}
+
+private void xdg_toplevel_set_maximized()(xdg_toplevel* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SET_MAXIMIZED, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0);
+}
+
+private void xdg_toplevel_unset_maximized()(xdg_toplevel* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_UNSET_MAXIMIZED, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0);
+}
+
+private void xdg_toplevel_set_max_size()(xdg_toplevel* self, int width, int height)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SET_MAX_SIZE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, width, height);
+}
+
+private void xdg_toplevel_set_min_size()(xdg_toplevel* self, int width, int height)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SET_MIN_SIZE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, width, height);
+}
+
+private wp_cursor_shape_device_v1* wp_cursor_shape_manager_v1_get_pointer()(wp_cursor_shape_manager_v1* self, wl_pointer* pointer)
+    => cast(wp_cursor_shape_device_v1*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WP_CURSOR_SHAPE_MANAGER_V1_GET_POINTER, &wp_cursor_shape_device_v1_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null,
+        pointer);
+
+private void wp_cursor_shape_manager_v1_destroy()(wp_cursor_shape_manager_v1* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WP_CURSOR_SHAPE_MANAGER_V1_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private void wp_cursor_shape_device_v1_set_shape()(wp_cursor_shape_device_v1* self, uint serial, uint shape)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WP_CURSOR_SHAPE_DEVICE_V1_SET_SHAPE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, serial, shape);
+}
+
+private void wp_cursor_shape_device_v1_destroy()(wp_cursor_shape_device_v1* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WP_CURSOR_SHAPE_DEVICE_V1_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
 }
